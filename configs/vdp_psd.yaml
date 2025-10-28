@@ -1,0 +1,45 @@
+model:
+  module: models.vdp_two_mode
+  function: build_sde
+  params:
+    omega_a: 0.005
+    omega_b: 0.0
+    gamma_a: 2.0
+    gamma_b: 1.0
+    Gamma: 0.01
+    g: 0.5
+    D: 1.0
+  ic: 
+    - ["7.0+0.0j", "0.0-7.0j"]
+  noise:
+    kind: independent
+
+profile:
+  backend: numpy       # B-class default
+  solver: euler        # B-class default
+  save:
+    root: runs
+    save_every: 10
+    save_timeseries: false
+    save_psd_complex: true
+    save_psd_modular: false
+  visualization:
+    psd:
+      legend: true
+      convention: symmetric
+      x_scale: linear
+      y_scale: linear
+
+run:
+  time:
+    dt: 0.001          # C-class required
+    steps: 500000      # shorter run to demo PSD
+  trajectories:
+    n_traj: 100        # C-class required
+    master_seed: 42    # C-class (optional); used to derive per-trajectory seeds
+  visualization:
+    psd:
+      - kind: complex
+        modes: [0, 1]
+        xlim: [-0.5, 0.5]
+        t_range: [20.0, 100.0]
