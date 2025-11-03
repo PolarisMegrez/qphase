@@ -164,8 +164,17 @@ def phase(
 				pass
 
 	if specs_json:
+		# Support passing a file path (or @file) to avoid shell quoting issues
+		payload = specs_json
+		from pathlib import Path as _Path
+		if payload.startswith('@') and _Path(payload[1:]).exists():
+			text = _Path(payload[1:]).read_text(encoding='utf-8')
+		elif _Path(payload).exists():
+			text = _Path(payload).read_text(encoding='utf-8')
+		else:
+			text = payload
 		try:
-			specs = json.loads(specs_json)
+			specs = json.loads(text)
 		except Exception as e:
 			raise typer.BadParameter(f"Invalid specs_json: {e}")
 
@@ -303,8 +312,17 @@ def psd(
 				pass
 
 	if specs_json:
+		# Support passing a file path (or @file) to avoid shell quoting issues
+		payload = specs_json
+		from pathlib import Path as _Path
+		if payload.startswith('@') and _Path(payload[1:]).exists():
+			text = _Path(payload[1:]).read_text(encoding='utf-8')
+		elif _Path(payload).exists():
+			text = _Path(payload).read_text(encoding='utf-8')
+		else:
+			text = payload
 		try:
-			psd_specs = json.loads(specs_json)
+			psd_specs = json.loads(text)
 		except Exception as e:
 			raise typer.BadParameter(f"Invalid specs_json: {e}")
 

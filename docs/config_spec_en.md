@@ -1,6 +1,6 @@
-# QPhaseSDE v0.1.1 Configuration Specification (Triad YAML)
+# QPhaseSDE v0.1.2 Configuration Specification (Triad YAML)
 
-This document describes the expected YAML configuration for the CLI `qps run sde` in v0.1.1. The configuration is organized into three sections ("triad"): `model`, `profile`, and `run`.
+This document describes the expected YAML configuration for the CLI `qps run sde` in v0.1.2. The configuration is organized into three sections ("triad"): `model`, `profile`, and `run`.
 
 - Audience: practitioners familiar with SDE modeling and reproducible simulations.
 - Goal: predictable, validated inputs with clear defaults and required fields.
@@ -51,7 +51,7 @@ Controls execution details that don’t affect the physics.
 
 Fields:
 - backend: "numpy" (default) | "numba" (reserved)
-- solver: "euler" (default) | "milstein" (placeholder in v0.1.1, falls back to euler)
+- solver: "euler" (default) | "milstein" (placeholder in v0.1.2, falls back to euler)
 - save:
   - root: string (default: `runs`) — output root directory
   - save_every: int (optional) — decimation factor for saved time series
@@ -105,6 +105,9 @@ Fields:
   - n_traj: int (required)
   - master_seed: int (optional) — master seed used to derive per-trajectory seeds, or
   - seed_file: string (optional) — path to a file with N seeds (one per trajectory)
+  - rng_stream: "per_trajectory" | "batched" (optional; default "per_trajectory") — controls RNG strategy:
+    - per_trajectory: independent RNG stream per trajectory (stable across n_traj changes)
+    - batched: single RNG stream for vectorized sampling (faster; sequence changes if n_traj/order changes)
 - visualization (optional):
   - phase_portrait: list of per-figure specifications
     - kind: "Re_Im" (preferred) or "re_im", or "abs_abs" (required)
@@ -160,7 +163,7 @@ run:
 
 ## Versioning notes and storage guard
 
-- v0.1.1 supports NumPy + Euler–Maruyama, placeholder Milstein, and multi-IC semantics:
+- v0.1.2 supports NumPy + Euler–Maruyama, placeholder Milstein, and multi-IC semantics:
   - If `model.ic` contains multiple vectors, each IC is simulated independently with the same settings.
   - Time series are saved per-IC as `time_series/timeseries_icXX.npz`.
   - Figures are saved per-IC under `figures/icXX/`.

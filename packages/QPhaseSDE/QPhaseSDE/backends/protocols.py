@@ -1,29 +1,52 @@
-from __future__ import annotations
+"""
+QPhaseSDE: Backend Protocols
+----------------------------
+Abstract contracts for backend implementations shared across the engine and
+domain modules. Defines the minimal `BackendBase` interface and optional
+`ExtendedBackend` capabilities without importing any concrete array library.
 
-"""Backend domain-level protocols.
+Behavior
+--------
+- (*Design principles*) Keep the interface surface minimal and stable;
+  advanced helpers or specialized extensions should be implemented in
+  `ExtendedBackend` rather than the base interface.
+- (*Capability introspection*) The `capabilities()` method must expose backend
+  features using unified, backend-agnostic keys for consistent discovery and
+  compatibility checks.
 
-Inherits minimal interfaces from core.protocols.BackendBase and declares
-optional capabilities that concrete backends may implement for performance.
-
-Implementer guide
------------------
-- Implement all methods in BackendBase.
-- Optional methods should raise BackendCapabilityError if explicitly called
-  when not supported, or be omitted entirely.
-- Provide capability metadata via a 'capabilities() -> dict' method when
-  possible to aid factories in selecting optimal paths.
+Notes
+-----
+- This module is dependency-light and safe to import in any environment.
+  Do not import `numpy`, `torch`, `cupy`, or similar libraries here.
 """
 
 from typing import Any, Dict, Optional, Protocol, Tuple
-
 from ..core.protocols import BackendBase
 
+__all__ = [
+  "ExtendedBackend",
+]
 
 class ExtendedBackend(BackendBase, Protocol):
-    """Optional/extended backend capabilities (may not be present).
+    """Optional backend protocol for advanced capabilities.
 
-    These are not required by core but can be used opportunistically by states
-    and visualizers when available.
+    Provides non-essential helpers that backends may expose in addition to the
+    minimal `BackendBase` surface. Core components don't require these methods,
+    but states, visualizers, or analysis code can opportunistically use them
+    when present to improve performance or ergonomics.
+
+    Methods
+    -------
+    stack(arrays, axis=0) -> Any
+        Stack arrays along a new axis.
+    to_device(x, device) -> Any
+        Move or adapt an array to the target device if supported.
+    complex_view(x_realimag) -> Any
+        Create a zero-copy complex view from real/imag storage if supported.
+    real_imag_split(x_complex) -> Tuple[Any, Any]
+        Split a complex array into real/imag zero-copy views if supported.
+    capabilities() -> Dict[str, Any]
+        Report optional features using backend-agnostic keys.
     """
 
     # Commonly used helpers

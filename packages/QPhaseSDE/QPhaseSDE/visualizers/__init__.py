@@ -1,7 +1,21 @@
-"""Visualizers package.
+"""
+QPhaseSDE: Visualizers Subpackage
+---------------------------------
+Figure renderers and services for simulation outputs (phase portraits, PSD),
+validated by specs and plugged via the central registry.
 
-Registers visualization renderers in the global registry. We register lazily
-so importing QPhaseSDE doesn't pull heavy plotting deps until needed.
+Usage
+-----
+Registry keys:
+`visualization:phase_portrait` | `visualization:psd`
+
+Service:
+>>> from QPhaseSDE.visualizers.service import render_from_spec
+
+Notes
+-----
+- Renderers are registered lazily; plotting dependencies are imported only
+  when needed.
 """
 
 from ..core.registry import register_lazy

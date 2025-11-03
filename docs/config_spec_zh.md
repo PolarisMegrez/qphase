@@ -1,6 +1,6 @@
-# QPhaseSDE v0.1.1 配置说明（Triad YAML）
+# QPhaseSDE v0.1.2 配置说明（Triad YAML）
 
-本文档描述 v0.1.1 版本中 `qps run sde` 所需的 YAML 配置结构。配置分为三个部分：`model`、`profile`、`run`。
+本文档描述 v0.1.2 版本中 `qps run sde` 所需的 YAML 配置结构。配置分为三个部分：`model`、`profile`、`run`。
 
 ## 1. model
 
@@ -48,7 +48,7 @@ model:
 
 字段：
 - backend：`numpy`（默认）| `numba`（预留）
-- solver：`euler`（默认）| `milstein`（v0.1.1 中占位，回退至 euler）
+- solver：`euler`（默认）| `milstein`（v0.1.2 中占位，回退至 euler）
 - save：
   - root：字符串（默认 `runs`）——输出根目录
   - save_every：整数（可选）——时序数据保存抽样间隔
@@ -102,6 +102,9 @@ profile:
   - n_traj：整数（必填）
   - master_seed：整数（可选）——主随机种子（用于派生每条轨迹的种子），或
   - seed_file：字符串（可选）——包含 N 个种子的文件路径（每轨迹一个）
+  - rng_stream：`per_trajectory` | `batched`（可选；默认 `per_trajectory`）——控制随机数流策略：
+    - `per_trajectory`：每条轨迹独立 RNG 流（当 n_traj 改变时序仍稳定）
+    - `batched`：单一 RNG 流进行向量化采样（更快；当 n_traj/顺序改变时序会改变）
 - visualization（可选）：
   - phase_portrait：图列表（每项对应一张图）
     - kind：`Re_Im`（推荐）或 `re_im`，或 `abs_abs`（必填）
@@ -157,7 +160,7 @@ run:
 
 ## 版本说明与容量保护
 
-- v0.1.1 支持 NumPy + Euler–Maruyama，Milstein 为占位实现；支持多 IC 语义：
+- v0.1.2 支持 NumPy + Euler–Maruyama，Milstein 为占位实现；支持多 IC 语义：
   - 当 `model.ic` 包含多个向量时，视为多个独立配置（除 IC 不同外皆相同）逐一仿真。
   - 每个 IC 的时序保存为 `time_series/timeseries_icXX.npz`。
   - 每个 IC 的图片保存到 `figures/icXX/`。

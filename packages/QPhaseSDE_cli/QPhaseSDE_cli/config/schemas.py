@@ -16,7 +16,7 @@ try:
     from pydantic import ConfigDict  # pydantic v2
 except Exception:
     ConfigDict = None  # type: ignore
-from QPhaseSDE.core.errors import ConfigError
+from QPhaseSDE.core.errors import QPSConfigError
 
 
 class NoiseConfig(BaseModel):
@@ -27,7 +27,7 @@ class NoiseConfig(BaseModel):
     @model_validator(mode="after")
     def _check_cov(self):
         if self.kind == "correlated" and self.covariance is None:
-            raise ConfigError("[510] noise.covariance is required for kind='correlated'")
+            raise QPSConfigError("[510] noise.covariance is required for kind='correlated'")
         return self
 
 
@@ -64,10 +64,10 @@ class ModelConfig(BaseModel):
                 try:
                     complex(s)
                 except Exception as e:
-                    raise ConfigError(f"[511] ic contains non-complex-parsable value: {s!r}") from e
+                    raise QPSConfigError(f"[511] ic contains non-complex-parsable value: {s!r}") from e
         # Ensure non-empty
         if not self.ic or not self.ic[0]:
-            raise ConfigError("[512] ic must contain at least one vector of complex values")
+            raise QPSConfigError("[512] ic must contain at least one vector of complex values")
         return self
 
 
@@ -89,7 +89,7 @@ class ProfileVizPhaseConfig(BaseModel):
 
 class ProfileConfig(BaseModel):
     # B-class: defaults allowed for backend and solver
-    backend: Literal["numpy", "numba"] = Field(default="numpy")
+    backend: Literal["numpy", "numba", "torch", "cupy"] = Field(default="numpy")
     solver: Literal["euler", "milstein"] = Field(default="euler")
     save: SaveConfig
     # Preferred key: visualization, with nested phase_portrait kinds
@@ -117,6 +117,8 @@ class TrajConfig(BaseModel):
     # New seed strategy (no legacy seed)
     seed_file: Optional[str] = None
     master_seed: Optional[int] = None
+    # RNG stream strategy for noise sampling
+    rng_stream: Optional[Literal["per_trajectory", "batched"]] = Field(default="per_trajectory")
 
     # Forbid unknown fields (e.g., legacy 'seed')
     if ConfigDict is not None:
@@ -132,6 +134,8 @@ class VizPhaseConfig(BaseModel):
     kind: Literal["re_im", "Re_Im", "abs_abs", "Abs_Abs"]
     modes: List[int]
     t_range: Optional[List[float]] = None
+    # New: subsampling factor for plotting only (does not affect saved data)
+    plot_every: Optional[int] = None
 
     @model_validator(mode="after")
     def _check_modes(self):
@@ -141,15 +145,22 @@ class VizPhaseConfig(BaseModel):
         elif self.kind in ("Abs_Abs", "abs_abs"):
             self.kind = "abs_abs"
         else:
-            raise ConfigError("[513] Unsupported kind for phase portrait")
+            raise QPSConfigError("[513] Unsupported kind for phase portrait")
 
         if self.kind == "re_im" and len(self.modes) != 1:
-            raise ConfigError("[514] re_im requires exactly one mode index in modes")
+            raise QPSConfigError("[514] re_im requires exactly one mode index in modes")
         if self.kind == "abs_abs" and len(self.modes) != 2:
-            raise ConfigError("[515] abs_abs requires exactly two mode indices in modes")
+            raise QPSConfigError("[515] abs_abs requires exactly two mode indices in modes")
         if self.t_range is not None:
             if len(self.t_range) != 2 or float(self.t_range[1]) <= float(self.t_range[0]):
-                raise ConfigError("[516] t_range must be [t_start, t_end] with t_end > t_start")
+                raise QPSConfigError("[516] t_range must be [t_start, t_end] with t_end > t_start")
+        if self.plot_every is not None:
+            try:
+                pe = int(self.plot_every)
+            except Exception:
+                raise QPSConfigError("[520] plot_every must be an integer >= 1")
+            if pe < 1:
+                raise QPSConfigError("[520] plot_every must be an integer >= 1")
         return self
 
 
@@ -166,14 +177,14 @@ class VizPSDConfig(BaseModel):
     @model_validator(mode="after")
     def _check(self):
         if not self.modes:
-            raise ConfigError("[517] psd.modes must contain at least one index")
+            raise QPSConfigError("[517] psd.modes must contain at least one index")
         if self.t_range is not None:
             if len(self.t_range) != 2 or float(self.t_range[1]) <= float(self.t_range[0]):
-                raise ConfigError("[518] t_range must be [t_start, t_end] with t_end > t_start")
+                raise QPSConfigError("[518] t_range must be [t_start, t_end] with t_end > t_start")
         # validate xlim size if provided
         if self.xlim is not None:
             if len(self.xlim) != 2:
-                raise ConfigError("[519] xlim must be [xmin, xmax]")
+                raise QPSConfigError("[519] xlim must be [xmin, xmax]")
         return self
 
 

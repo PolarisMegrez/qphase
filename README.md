@@ -1,4 +1,4 @@
-# QPhaseSDE v0.1.0
+# QPhaseSDE v0.1.2
 
 QPhaseSDE is a configuration-driven framework for simulating complex-valued stochastic differential equations (SDEs) in quantum optics. It supports multi-trajectory simulations, time-series data output, and automatic generation of phase portraits and power spectral density (PSD) plots — all managed through a simple YAML configuration file.
 

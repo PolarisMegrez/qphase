@@ -4,18 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "QPhaseSDE"
-version = "0.1.1"
+version = "0.1.2"
 description = "Quantum optics multi-trajectory SDE engine with complex-valued modes"
 authors = [ { name = "Your Name" } ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
 	"numpy>=1.23",
-	"scipy>=1.10",
-	"numba>=0.57",
-	"matplotlib>=3.6",
-	"joblib>=1.3",
-	"pydantic>=2.4",
 ]
 
 [tool.setuptools.packages.find]
@@ -23,6 +18,16 @@ where = ["."]
 include = ["QPhaseSDE*"]
 
 [project.optional-dependencies]
+accel = [
+	"numba>=0.57",
+]
+viz = [
+	"matplotlib>=3.6",
+]
+config = [
+	"pydantic>=2.4",
+	"joblib>=1.3",
+]
 dev = [
 	"pytest>=7.0",
 	"ruff>=0.5",

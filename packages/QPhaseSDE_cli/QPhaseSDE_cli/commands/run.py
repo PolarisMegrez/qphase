@@ -17,11 +17,12 @@ from typing import Dict, List, Optional, Any
 import numpy as np
 import typer
 from QPhaseSDE.core.errors import (
-	QPhaseSDEError,
-	ConfigError,
+	QPSError,
+	QPSConfigError,
 	get_logger,
 	configure_logging,
 )
+from QPhaseSDE.core.xputil import to_numpy as _to_numpy_array
 
 
 app = typer.Typer()
@@ -60,6 +61,9 @@ def _parse_kv(pairs: List[str]) -> Dict:
 	return out
 
 
+## Removed local _to_numpy_array; now using QPhaseSDE.core.xputil.to_numpy
+
+
 def _load_model_from_path(path: str):
 	p = Path(path)
 	"""Load a Python module from a file path and verify it exposes build_sde()."""
@@ -68,7 +72,7 @@ def _load_model_from_path(path: str):
 	mod = importlib.util.module_from_spec(spec)
 	spec.loader.exec_module(mod)  # type: ignore
 	if not hasattr(mod, "build_sde"):
-			raise ConfigError("[501] Model file must define build_sde(params) -> SDEModel")
+			raise QPSConfigError("[501] Model file must define build_sde(params) -> SDEModel")
 	return mod  # type: ignore
 
 
@@ -76,7 +80,7 @@ def _load_model_from_path(path: str):
 def sde(
 	config: Optional[str] = typer.Option(None, help="YAML config with sections: model/profile/run"),
 	model_path: Optional[str] = typer.Option(None, help="Path to model .py exposing build_sde(params); ignored if --config provided"),
-	backend: str = typer.Option("numpy", help="Backend: numpy|numba; overridden by profile.backend if --config provided"),
+	backend: str = typer.Option("numpy", help="Backend: numpy|numba|torch|cupy; overridden by profile.backend if --config provided"),
 	solver: str = typer.Option("euler", help="Solver: euler|milstein; overridden by profile.solver if --config provided"),
 	dt: float = typer.Option(1e-3, help="Time step; ignored if --config provided"),
 	steps: int = typer.Option(1000, help="Number of steps; ignored if --config provided"),
@@ -88,6 +92,7 @@ def sde(
 	ic: Optional[str] = typer.Option(None, help="Initial condition JSON list of complex; ignored if --config provided"),
 	noise_kind: str = typer.Option("independent", help="Noise: independent|correlated; ignored if --config provided"),
 	cov_json: Optional[str] = typer.Option(None, help="Covariance JSON when correlated; ignored if --config provided"),
+	rng_stream: Optional[str] = typer.Option(None, help="RNG stream: per_trajectory|batched; overridden by run.trajectories.rng_stream if --config provided"),
 	verbose: bool = typer.Option(False, help="Enable verbose logging"),
 	log_file: Optional[str] = typer.Option(None, help="Write logs to file path"),
 	log_json: bool = typer.Option(False, help="Log in JSON format"),
@@ -139,7 +144,7 @@ def sde(
 					if candidate.exists():
 						mod = _load_model_from_path(str(candidate))
 					else:
-						raise ConfigError(f"[504] Model module not found: {module_spec}")
+						raise QPSConfigError(f"[504] Model module not found: {module_spec}")
 			build_fn = getattr(mod, triad.model.function)
 			model = build_fn(triad.model.params)
 			# Prepare IC sets
@@ -148,7 +153,7 @@ def sde(
 			for vec in ic_sets_str:
 				vec_c = [complex(s) for s in vec]
 				if len(vec_c) != model.n_modes:
-					raise ConfigError(f"[502] IC length {len(vec_c)} does not match model.n_modes={model.n_modes}")
+					raise QPSConfigError(f"[502] IC length {len(vec_c)} does not match model.n_modes={model.n_modes}")
 				ic_sets.append(vec_c)
 
 			real_dim = 2 * model.noise_dim if model.noise_basis == "complex" else model.noise_dim
@@ -169,12 +174,14 @@ def sde(
 			n_traj = triad.run.trajectories.n_traj
 			seed_file = getattr(triad.run.trajectories, 'seed_file', None)
 			master_seed_cfg = getattr(triad.run.trajectories, 'master_seed', None)
+			rng_stream_cfg = getattr(triad.run.trajectories, 'rng_stream', 'per_trajectory')
 			model_path = None
 			noise_kind = triad.model.noise.kind
 		else:
 			# Legacy CLI path
+			log.warning("[991] Legacy flag-based CLI path is deprecated and will be removed in a future release; please use triad YAML via --config.")
 			if model_path is None:
-				raise ConfigError("[500] When --config is not provided, --model-path is required.")
+				raise QPSConfigError("[500] When --config is not provided, --model-path is required.")
 			model_path = str(_coerce_option_default(model_path))
 			backend = _coerce_option_default(backend, fallback="numpy")
 			solver = _coerce_option_default(solver, fallback="euler")
@@ -184,6 +191,7 @@ def sde(
 			seed = _coerce_option_default(seed)
 			seed_file = None
 			master_seed_cfg = None  # legacy flags don't expose these; will auto-generate in RNG strategy if needed
+			rng_stream_cfg = str(_coerce_option_default(rng_stream, fallback="per_trajectory")) if rng_stream is not None else "per_trajectory"
 			save_every = int(_coerce_option_default(save_every, fallback=1))
 			run_root = _coerce_option_default(run_root, fallback="runs")
 			params = list(params or [])
@@ -201,7 +209,7 @@ def sde(
 				noise_spec = NoiseSpec(kind="independent", dim=real_dim)
 			else:
 				if cov_json is None:
-					raise ConfigError("[503] Covariance JSON required for correlated noise")
+					raise QPSConfigError("[503] Covariance JSON required for correlated noise")
 				C = np.array(json.loads(cov_json), dtype=float)
 				noise_spec = NoiseSpec(kind="correlated", dim=real_dim, covariance=C)
 
@@ -218,8 +226,8 @@ def sde(
 				est_bytes = ic_num * n_traj * saved_steps * n_modes * bytes_per_complex
 				threshold = int((max_storage_gb if max_storage_gb is not None else 1.0) * (1024**3))
 				if est_bytes > threshold:
-					raise ConfigError(f"[520] Estimated time-series size {est_bytes/1024**3:.2f} GiB exceeds limit ({threshold/1024**3:.2f} GiB). Disable profile.save.save_timeseries or increase --max-storage-gb.")
-		except QPhaseSDEError:
+					raise QPSConfigError(f"[520] Estimated time-series size {est_bytes/1024**3:.2f} GiB exceeds limit ({threshold/1024**3:.2f} GiB). Disable profile.save.save_timeseries or increase --max-storage-gb.")
+		except QPSError:
 			raise
 		except Exception:
 			# Non-fatal estimation failure
@@ -249,6 +257,7 @@ def sde(
 			"time": time_spec,
 			"n_traj": n_traj,
 			"save_every": save_every,
+			"rng_stream": rng_stream_cfg,
 			"noise": {"kind": noise_kind, "dim": real_dim},
 		}
 		write_run_snapshot = getattr(io_snapshot, 'write_run_snapshot')
@@ -290,9 +299,9 @@ def sde(
 				with open(seed_file, 'r', encoding='utf-8') as f:
 					per_traj_seeds = [int(line.strip()) for line in f if str(line).strip()]
 			except Exception as e:
-				raise ConfigError(f"[506] Failed to read seed_file: {seed_file}: {e}")
+				raise QPSConfigError(f"[506] Failed to read seed_file: {seed_file}: {e}")
 			if len(per_traj_seeds) != n_traj:
-				raise ConfigError(f"[507] seed_file contains {len(per_traj_seeds)} seeds, expected n_traj={n_traj}")
+				raise QPSConfigError(f"[507] seed_file contains {len(per_traj_seeds)} seeds, expected n_traj={n_traj}")
 			# Log warning if master_seed also provided
 			if master_seed_cfg is not None:
 				log.warning("[900] seed_file provided; master_seed is ignored")
@@ -379,6 +388,8 @@ def sde(
 					master_seed=rng_info.get("master_seed") if rng_info else None,
 					per_traj_seeds=per_traj_seeds,
 					save_every=save_every,
+					return_stride=1,
+					rng_stream=rng_stream_cfg,
 					progress_cb=_progress_cb,
 					progress_interval_seconds=1.0,
 					ic_index=ic_idx,
@@ -390,7 +401,13 @@ def sde(
 				fname = f"timeseries_ic{ic_idx:02d}.npz"
 				# Save timeseries if enabled
 				if bool(getattr(triad.profile.save, 'save_timeseries', False)):
-					save_time_series(ts_obj, run_dir, filename=fname)
+					# Decimate only for saving using save_every, keeping analysis at full resolution
+					from QPhaseSDE.states.numpy_state import TrajectorySet as _NpTS
+					se = max(1, int(save_every) if save_every is not None else 1)
+					data_s = ts_obj.data[:, ::se, :]
+					data_s_np = _to_numpy_array(data_s)
+					ts_s = _NpTS(data=data_s_np, t0=ts_obj.t0, dt=ts_obj.dt * se, meta=getattr(ts_obj, 'meta', {}))
+					save_time_series(ts_s, run_dir, filename=fname)
 
 				# Compute/save PSD data if requested in profile.save
 				psd_conf = (triad.profile.visualization or {}).get('psd', {}) if isinstance(getattr(triad.profile, 'visualization', None), dict) else {}
@@ -405,11 +422,12 @@ def sde(
 				from QPhaseSDE.analysis.psd import compute_psd_for_modes as _compute_psd_batch
 				save_psd_npz = getattr(io_results, 'save_psd')
 				ic_tag = f"ic{ic_idx:02d}"
+				_ts_data_np = _to_numpy_array(ts_obj.data)
 				if bool(getattr(triad.profile.save, 'save_psd_complex', False)):
-					res = _compute_psd_batch(ts_obj.data, ts_obj.dt, modes_psd, kind='complex', convention=convention)
+					res = _compute_psd_batch(_ts_data_np, ts_obj.dt, modes_psd, kind='complex', convention=convention)
 					save_psd_npz(run_dir, ic_tag, kind='complex', convention=convention, axis=res['axis'], psd=res['psd'], modes=res['modes'])
 				if bool(getattr(triad.profile.save, 'save_psd_modular', False)):
-					res = _compute_psd_batch(ts_obj.data, ts_obj.dt, modes_psd, kind='modular', convention=convention)
+					res = _compute_psd_batch(_ts_data_np, ts_obj.dt, modes_psd, kind='modular', convention=convention)
 					save_psd_npz(run_dir, ic_tag, kind='modular', convention=convention, axis=res['axis'], psd=res['psd'], modes=res['modes'])
 				if viz_specs or viz_psd_specs:
 					out_dir = Path(run_dir) / 'figures' / f'ic{ic_idx:02d}'
@@ -424,17 +442,18 @@ def sde(
 					if viz_specs:
 						specs_serialized = [s.model_dump() for s in viz_specs]
 						# Render phase-portrait specs via service
+						_render_data_np = _ts_data_np
 						for spec in specs_serialized:
 							k = spec.get('kind') if isinstance(spec, dict) else None
 							per_kind_style = style_cfg.get(str(k)) if isinstance(style_cfg, dict) and k is not None else None
-							_ = render_from_spec(spec, ts_obj.data, t0=ts_obj.t0, dt=ts_obj.dt, outdir=out_dir, style_overrides=per_kind_style, save=True)
+							_ = render_from_spec(spec, _render_data_np, t0=ts_obj.t0, dt=ts_obj.dt, outdir=out_dir, style_overrides=per_kind_style, save=True)
 					if viz_psd_specs:
 						psd_specs_serialized = [s.model_dump() for s in viz_psd_specs]
 						for spec in psd_specs_serialized:
 							# Ensure the PSD spec is marked with kind='psd' for service dispatch
 							spec.setdefault('kind', 'psd')
 							per_kind_style = style_psd_cfg if isinstance(style_psd_cfg, dict) else None
-							_ = render_from_spec(spec, ts_obj.data, t0=ts_obj.t0, dt=ts_obj.dt, outdir=out_dir, style_overrides=per_kind_style, save=True)
+							_ = render_from_spec(spec, _ts_data_np, t0=ts_obj.t0, dt=ts_obj.dt, outdir=out_dir, style_overrides=per_kind_style, save=True)
 		else:
 			# Legacy single run
 			ts_obj = engine_run(
@@ -449,15 +468,22 @@ def sde(
 				master_seed=rng_info.get("master_seed") if rng_info else None,
 				per_traj_seeds=per_traj_seeds,
 				save_every=save_every,
+				return_stride=1,
+				rng_stream=rng_stream_cfg,
 			)
-			# Save default time series filename
-			save_time_series(ts_obj, run_dir)
+			# Save default time series filename with decimation for saving
+			from QPhaseSDE.states.numpy_state import TrajectorySet as _NpTS
+			se = max(1, int(save_every) if save_every is not None else 1)
+			data_s = ts_obj.data[:, ::se, :]
+			data_s_np = _to_numpy_array(data_s)
+			ts_s = _NpTS(data=data_s_np, t0=ts_obj.t0, dt=ts_obj.dt * se, meta=getattr(ts_obj, 'meta', {}))
+			save_time_series(ts_s, run_dir)
 
 		# Save manifest and echo run dir
-		manifest = {"run_id": run_id, "package": "QPhaseSDE", "version": "0.1.1"}
+		manifest = {"run_id": run_id, "package": "QPhaseSDE", "version": "0.1.2"}
 		save_manifest(run_dir, manifest)
 		typer.echo(str(run_dir))
-	except QPhaseSDEError as e:
+	except QPSError as e:
 		log.error(str(e))
 		raise typer.Exit(code=1)
 

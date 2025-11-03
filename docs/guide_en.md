@@ -1,4 +1,4 @@
-# QPhaseSDE User Guide (v0.1.1)
+# QPhaseSDE User Guide (v0.1.2)
 
 Audience: Physicists with basic Python familiarity who want to run stochastic simulations of complex-valued mode dynamics and visualize results.
 

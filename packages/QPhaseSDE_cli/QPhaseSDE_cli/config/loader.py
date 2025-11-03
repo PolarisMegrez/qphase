@@ -35,7 +35,7 @@ except Exception:
         _YAML_BACKEND = 'none'
 
 from .schemas import TriadConfig
-from QPhaseSDE.core.errors import ConfigError, SDEIOError
+from QPhaseSDE.core.errors import QPSConfigError, QPSIOError
 
 
 def load_triad_config(path: str | Path) -> TriadConfig:
@@ -49,8 +49,8 @@ def load_triad_config(path: str | Path) -> TriadConfig:
         with p.open("r", encoding="utf-8") as f:
             data = pyyaml.safe_load(f)  # type: ignore
     else:
-        raise SDEIOError("[600] No YAML loader available. Install 'ruamel.yaml' or 'PyYAML'.")
+        raise QPSIOError("[001] No YAML loader available. Install 'ruamel.yaml' or 'PyYAML'.")
 
     if not isinstance(data, dict):
-        raise ConfigError("[505] Config must be a mapping with sections: model, profile, run")
+        raise QPSConfigError("[505] Config must be a mapping with sections: model, profile, run")
     return TriadConfig.model_validate(data)

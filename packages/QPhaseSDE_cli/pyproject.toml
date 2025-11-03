@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "QPhaseSDE_cli"
-version = "0.1.1"
+version = "0.1.2"
 description = "CLI for QPhaseSDE SDE engine"
 authors = [ { name = "Your Name" } ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
-	"QPhaseSDE>=0.1.1",
+	"QPhaseSDE>=0.1.2",
 	"typer>=0.9",
 	"rich>=13.0",
 	"ruamel.yaml>=0.17",

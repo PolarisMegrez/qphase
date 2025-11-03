@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import numpy as np
 from typing import Dict
+from QPhaseSDE.core.xputil import get_xp
 
 
 def build_sde(params: Dict):
@@ -17,7 +17,8 @@ def build_sde(params: Dict):
 	We set L_c = diag( sqrt(max(D_α^c, 0)), sqrt(max(D_β^c, 0)) ).
 	"""
 	# Required params: omega_a, omega_b, gamma_a, gamma_b, Gamma, g, D
-	def drift(y: np.ndarray, t: float, p: Dict) -> np.ndarray:
+	def drift(y, t: float, p: Dict):
+		xp = get_xp(y)
 		# y: (n_traj, 2) complex, y[:,0]=α, y[:,1]=β
 		alpha = y[:, 0]
 		beta = y[:, 1]
@@ -28,28 +29,29 @@ def build_sde(params: Dict):
 		Gamma = p["Gamma"]
 		g = p["g"]
 
-		dalpha = ((-1j * omega_a) + (gamma_a / 2.0) + Gamma * (1.0 - np.abs(alpha) ** 2)) * alpha - 1j * g * beta
+		dalpha = ((-1j * omega_a) + (gamma_a / 2.0) + Gamma * (1.0 - xp.abs(alpha) ** 2)) * alpha - 1j * g * beta
 		dbeta = ((-1j * omega_b) - (gamma_b / 2.0)) * beta - 1j * g * alpha
-		out = np.empty_like(y)
+		out = xp.empty_like(y)
 		out[:, 0] = dalpha
 		out[:, 1] = dbeta
 		return out
 
-	def diffusion(y: np.ndarray, t: float, p: Dict) -> np.ndarray:
+	def diffusion(y, t: float, p: Dict):
+		xp = get_xp(y)
 		alpha = y[:, 0]
 		gamma_a = p["gamma_a"]
 		gamma_b = p["gamma_b"]
 		Gamma = p["Gamma"]
 		D = p["D"]
 
-		D_alpha = D * (gamma_a / 2.0 + Gamma * (2.0 * np.abs(alpha) ** 2 - 1.0))
+		D_alpha = D * (gamma_a / 2.0 + Gamma * (2.0 * xp.abs(alpha) ** 2 - 1.0))
 		D_beta = D * (gamma_b / 2.0)
 		# Clip to non-negative for numerical stability
-		D_alpha = np.clip(D_alpha, 0.0, None)
-		D_beta = np.clip(D_beta, 0.0, None)
-		Lc = np.zeros((y.shape[0], 2, 2), dtype=np.complex128)
-		Lc[:, 0, 0] = np.sqrt(D_alpha)
-		Lc[:, 1, 1] = np.sqrt(D_beta)
+		D_alpha = xp.clip(D_alpha, 0.0, None)
+		D_beta = xp.clip(D_beta, 0.0, None)
+		Lc = xp.zeros((y.shape[0], 2, 2), dtype=y.dtype)
+		Lc[:, 0, 0] = xp.sqrt(D_alpha)
+		Lc[:, 1, 1] = xp.sqrt(D_beta)
 		return Lc
 
 	class _Model:

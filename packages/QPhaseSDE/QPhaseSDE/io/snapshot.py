@@ -1,11 +1,28 @@
-from __future__ import annotations
+"""
+QPhaseSDE: Run Snapshot
+-----------------------
+Create reproducible run snapshots (config, visualization, RNG metadata, optional
+model copy) in a stable directory layout under each run.
 
-"""Snapshot utilities to capture run configuration and seed for reproducibility."""
+Behavior
+--------
+- Persist configuration and optional artifacts under ``config_snapshot/``,
+  deferring exact filenames and payload shapes to function docstrings.
+
+Notes
+-----
+- Prefers ruamel.yaml; falls back to PyYAML when available. Raises if neither is installed.
+- Certain legacy visualization keys may be stripped for forward compatibility.
+"""
+
+__all__ = [
+	"write_run_snapshot",
+]
 
 import shutil
 from pathlib import Path
 from typing import Dict, Optional, List
-from ..core.errors import SDEIOError
+from ..core.errors import QPSIOError
 
 # Prefer ruamel.yaml for YAML writing; fall back to PyYAML if available
 _USE_RUAMEL = False
@@ -20,10 +37,10 @@ except Exception:
 	except Exception:
 		_USE_PYYAML = False
 
-
 def _dump_yaml(path: Path, data: Dict) -> None:
+	"""Write a dict to YAML using ruamel.yaml or PyYAML (internal helper)."""
 	if not (_USE_RUAMEL or _USE_PYYAML):
-		raise SDEIOError("[600] YAML library not found. Please install 'ruamel.yaml' or 'PyYAML'.")
+		raise QPSIOError("[002] YAML library not found. Please install 'ruamel.yaml' or 'PyYAML'.")
 	if _USE_RUAMEL:
 		yaml_obj = _RUYAML()
 		yaml_obj.default_flow_style = False
@@ -32,7 +49,6 @@ def _dump_yaml(path: Path, data: Dict) -> None:
 	elif _USE_PYYAML:
 		with open(path, "w", encoding="utf-8") as f:
 			_PYYAML.safe_dump(data, f, sort_keys=False, allow_unicode=True)
-
 
 def write_run_snapshot(run_dir: str | Path,
 					   config: Dict,
@@ -44,13 +60,42 @@ def write_run_snapshot(run_dir: str | Path,
 					   per_traj_seeds: Optional[List[int]] = None,
 					   seed_file_used: Optional[str] = None,
 					   registry_meta: Optional[Dict] = None) -> None:
-	"""Persist snapshot files in run_dir/config_snapshot.
+	"""Write reproducible run snapshot files under ``run_dir/config_snapshot``.
 
-	Writes:
-	- config.json: core run configuration (excluding visualization fields)
-	- visualization.json: contains { "visualization": ..., "profile_visualization": ... }
-	- seed.txt: random seed (if provided)
-	- a copy of the model file (if provided)
+	Persists config, visualization, RNG metadata, per-trajectory seeds, model copy,
+	and registry provenance as YAML or text files in a stable directory layout.
+
+	Parameters
+	----------
+	run_dir : str or pathlib.Path
+		Run directory under which the ``config_snapshot`` folder will be created.
+	config : dict
+		Core run configuration (visualization keys are stripped).
+	model_path : str or pathlib.Path, optional
+		Path to the model file to copy for provenance.
+	seed : int, optional
+		Random seed (legacy; now stored in ``rng_info``).
+	visualization : dict, optional
+		Visualization configuration payload.
+	profile_visualization : dict, optional
+		Profile visualization configuration payload.
+	rng_info : dict, optional
+		RNG metadata to write to ``seed.yaml``.
+	per_traj_seeds : list[int], optional
+		List of per-trajectory seeds to write to ``seeds.txt``.
+	seed_file_used : str, optional
+		Path to the seed file used (for provenance).
+	registry_meta : dict, optional
+		Registry metadata to write to ``registry.yaml``.
+
+	Raises
+	------
+	QPSIOError
+		- [002] YAML library not found (ruamel.yaml or PyYAML required).
+
+	Examples
+	--------
+	>>> write_run_snapshot(run_dir, config, model_path="model.py", rng_info={"seed": 42})  # doctest: +SKIP
 	"""
 	run_dir = Path(run_dir)
 	snap = run_dir / "config_snapshot"

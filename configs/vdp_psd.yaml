@@ -15,7 +15,7 @@ model:
     kind: independent
 
 profile:
-  backend: numpy       # B-class default
+  backend: numba       # B-class default
   solver: euler        # B-class default
   save:
     root: runs

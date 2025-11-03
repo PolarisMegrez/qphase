@@ -1,12 +1,26 @@
-from __future__ import annotations
+"""
+QPhaseSDE: Visualizer service
+-----------------------------
+High-level entry for turning a validated visualization spec and data into a
+saved figure plus metadata.
 
-"""Visualizer service layer.
+Behavior
+- Validates the input spec (``PhasePortraitSpec`` or ``PsdSpec``) and
+    normalizes deprecated fields when present.
+- Slices time based on ``t0``, ``dt``, and optional ``t_range``; optionally
+    decimates samples for plotting-only views.
+- Selects a renderer from the registry (``renderer:phase_portrait`` or
+    ``renderer:psd``), merges style overrides, and renders into a Matplotlib
+    figure/axes.
+- Optionally saves the figure and returns metadata (filename, path, hash,
+    tags, duration, renderer name).
 
-Responsibilities:
-- Validate specs
-- Select renderer via registry (function or class)
-- Merge style layers (renderer defaults < profile < call overrides)
-- Call renderer and handle saving and metadata
+Notes
+- Deprecated fields ``psd_type`` and ``kind: psd`` are accepted for backward
+    compatibility and will emit warnings; prefer the newer ``kind`` values
+    (``complex`` or ``modular``).
+- Detailed parameter, return, and error semantics are documented in
+    ``render_from_spec``.
 """
 
 from pathlib import Path
@@ -15,23 +29,15 @@ import time
 
 import matplotlib.pyplot as plt
 
+__all__ = [
+    "render_from_spec",
+]
+
 from .specs import PhasePortraitSpec, PsdSpec
 from .utils import _ensure_outdir, spec_short_hash, _time_to_index
 from ..core.registry import registry
-
-
-def _merge_styles(*layers: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for layer in layers:
-        if not layer:
-            continue
-        for k, v in layer.items():
-            if isinstance(v, dict) and isinstance(out.get(k), dict):
-                out[k] = {**out[k], **v}  # shallow deep-merge
-            else:
-                out[k] = v
-    return out
-
+from ..core.errors import QPSConfigError, get_logger
+from pydantic import ValidationError
 
 def render_from_spec(
     spec: Mapping[str, Any],
@@ -43,40 +49,93 @@ def render_from_spec(
     style_overrides: Optional[Mapping[str, Any]] = None,
     save: bool = True,
 ) -> Mapping[str, Any]:
-    """Render a figure based on a validated spec dict.
+    """
+    Render a figure based on a validated visualization spec.
 
     Dispatches to the appropriate renderer based on the spec content. Supports
-    PhasePortraitSpec and PsdSpec.
+    PhasePortraitSpec and PsdSpec. Handles validation, slicing, style merging,
+    figure creation, saving, and metadata collection.
+
+    Parameters
+    ----------
+    spec : Mapping[str, Any]
+        Visualization specification dictionary.
+    data : Any
+        Data to visualize (typically ndarray or similar).
+    t0 : float
+        Initial time for slicing.
+    dt : float
+        Time step for slicing and PSD.
+    outdir : Path
+        Output directory for saving figures.
+    style_overrides : Mapping[str, Any], optional
+        Style overrides for rendering.
+    save : bool, default True
+        Whether to save the figure to disk.
+
+    Returns
+    -------
+    dict
+        Metadata including filename, path, hash, tags, duration, renderer name.
+
+    Raises
+    ------
+    QPSConfigError
+        - [530] Invalid phase-portrait spec
+        - [531] Invalid PSD spec
+        - [532] Invalid visualization spec
+
+    Examples
+    --------
+    >>> meta = render_from_spec(spec, data, t0=0.0, dt=0.01, outdir=Path("./out"))
+    >>> print(meta["generated_filename"])
     """
     # Try dispatch by explicit kind field
     spec_kind = str(spec.get("kind", "")) if isinstance(spec, Mapping) else ""
     renderer_key: str
     if spec_kind in ("re_im", "Re_Im", "abs_abs", "Abs_Abs"):
-        vspec = PhasePortraitSpec.model_validate(spec)
-        renderer_key = "visualization:phase_portrait"
+        try:
+            vspec = PhasePortraitSpec.model_validate(spec)
+        except ValidationError as e:  # normalize to framework error
+            raise QPSConfigError(f"[530] Invalid phase-portrait spec: {e}")
+        renderer_key = "renderer:phase_portrait"
         psd_mode = False
     elif spec_kind in ("complex", "modular") or "psd_type" in spec or spec_kind == "psd":
         # Allow back-compat: if psd_type provided or kind=='psd', map to new fields
         payload = dict(spec)
         if payload.get("psd_type") and not payload.get("kind"):
+            try:
+                get_logger().warning("[992] 'psd_type' is deprecated; use 'kind' with values 'complex'|'modular'.")
+            except Exception:
+                pass
             payload["kind"] = payload["psd_type"]
         if payload.get("kind") == "psd" and payload.get("psd_type"):
+            try:
+                get_logger().warning("[993] 'kind: psd' with 'psd_type' is deprecated; use 'kind' only.")
+            except Exception:
+                pass
             payload["kind"] = payload["psd_type"]
-        vspec = PsdSpec.model_validate(payload)
-        renderer_key = "visualization:psd"
+        try:
+            vspec = PsdSpec.model_validate(payload)
+        except ValidationError as e:
+            raise QPSConfigError(f"[531] Invalid PSD spec: {e}")
+        renderer_key = "renderer:psd"
         psd_mode = True
     else:
         # Fallback: try to validate as PhasePortrait then PSD
         try:
             vspec = PhasePortraitSpec.model_validate(spec)
-            renderer_key = "visualization:phase_portrait"
+            renderer_key = "renderer:phase_portrait"
             psd_mode = False
-        except Exception:
+        except ValidationError:
             payload = dict(spec)
             if payload.get("psd_type") and not payload.get("kind"):
                 payload["kind"] = payload["psd_type"]
-            vspec = PsdSpec.model_validate(payload)  # type: ignore[arg-type]
-            renderer_key = "visualization:psd"
+            try:
+                vspec = PsdSpec.model_validate(payload)  # type: ignore[arg-type]
+            except ValidationError as e:
+                raise QPSConfigError(f"[532] Invalid visualization spec: {e}")
+            renderer_key = "renderer:psd"
             psd_mode = True
 
     # Slice time range
@@ -84,6 +143,16 @@ def render_from_spec(
     t_range = getattr(vspec, "t_range", None)
     k0, k1 = _time_to_index(t0, dt, int(n_keep), t_range)
     sliced = data[:, k0 : k1 + 1, :]
+
+    # Optional decimation for plotting-only (phase portraits)
+    if not 'psd_mode' in locals():
+        psd_mode = False
+    if not psd_mode:
+        plot_every = getattr(vspec, 'plot_every', None)
+        if plot_every is not None:
+            pe = max(1, int(plot_every))
+            if pe > 1:
+                sliced = sliced[:, ::pe, :]
 
     # Resolve renderer via registry (function-style expected)
     renderer = registry.create(renderer_key)
@@ -122,7 +191,12 @@ def render_from_spec(
             "t_range": vdict.get("t_range"),
         })
     else:
-        h = spec_short_hash({"kind": vdict.get("kind"), "modes": vdict.get("modes"), "t_range": vdict.get("t_range")})
+        h = spec_short_hash({
+            "kind": vdict.get("kind"),
+            "modes": vdict.get("modes"),
+            "t_range": vdict.get("t_range"),
+            "plot_every": vdict.get("plot_every"),
+        })
     fname = f"{h}_{category}.png"
     fpath = outdir / fname
     if save:

@@ -72,8 +72,15 @@ bundles/
 # Sphinx or docs build
 /docs/_build/
 
+# Local LaTeX manual sources (kept out of git; copy PDFs into docs/ manually)
+manual/
+
 # Optional local configs
 *.local.yaml
 *.env
 .env.*
 *_local.*
+
+# Incomplete doc files
+**/docstring_guide.md
+**/error_code.md

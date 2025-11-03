@@ -1,65 +1,58 @@
 """
-QPhaseSDE: NumPy State Containers
----------------------------------
-NumPy implementations of the State and TrajectorySet protocols for storing
-multi-trajectory, complex-valued state vectors and time series.
+QPhaseSDE: CuPy State Containers
+--------------------------------
+GPU-backed implementations of State and TrajectorySet using CuPy arrays.
+Intended for experimental acceleration on NVIDIA GPUs.
 
 Behavior
 --------
-- Provide NumPy-backed containers adhering to core protocols; view/copy and
-  conversion semantics are documented on the classes and methods.
+- Provide CuPy-backed containers adhering to core protocols; slicing/view,
+  copy, and backend conversion semantics are documented on the classes.
 
 Notes
 -----
-- Callers should respect view semantics when using data_view().
+- Requires CuPy; experimental status — APIs may evolve.
 """
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
-import numpy as np
 
 __all__ = [
     "State",
     "TrajectorySet",
 ]
 
+try:
+    import cupy as cp  # type: ignore
+except Exception as _e:  # pragma: no cover
+    cp = None  # type: ignore
+
 from ..core.protocols import StateBase as StateLike, TrajectorySetBase as TrajectorySetLike
 from ..core.errors import QPSStateError
-
-
-def complex_to_real(y: np.ndarray) -> np.ndarray:
-    return np.concatenate([y.real, y.imag], axis=-1)
-
-
-def real_to_complex(x: np.ndarray) -> np.ndarray:
-    n2 = x.shape[-1]
-    assert n2 % 2 == 0, "real_to_complex expects even last dimension"
-    n = n2 // 2
-    return x[..., :n] + 1j * x[..., n:]
 
 
 @dataclass
 class State(StateLike):
     """
-    NumPy-backed quantum state container for multi-trajectory, complex-valued states.
+    GPU-backed quantum state container using CuPy arrays.
 
-    Ensures 2D shape (n_traj, n_modes) and complex dtype. Slicing returns views when possible.
-    Conversion to real representation and backend migration supported.
+    Ensures 2D shape (n_traj, n_modes) and complex dtype. Supports view/slice operations
+    without unnecessary copies. Conversion to NumPy is supported for interoperability.
 
     Parameters
     ----------
-    y : np.ndarray
+    y : cp.ndarray
         State array of shape (n_traj, n_modes), complex dtype.
     t : float
         Time associated with the state.
     attrs : dict, optional
         Additional metadata for the state.
     backend : Any, optional
-        Backend instance (usually NumPy).
+        Backend instance (usually CuPy or NumPy).
 
     Attributes
     ----------
-    y : np.ndarray
+    y : cp.ndarray
         State data.
     t : float
         Time.
@@ -75,48 +68,52 @@ class State(StateLike):
     data_view
     view
     copy
-    as_real
-    from_real
     select_modes
     slice_trajectories
     to_backend
+    to_numpy
 
     Examples
     --------
-    >>> import numpy as np
-    >>> from QPhaseSDE.states.numpy_state import State
-    >>> s = State(y=np.ones((2, 3), dtype=np.complex128), t=0.0)
+    >>> import cupy as cp
+    >>> from QPhaseSDE.states.cupy_state import State
+    >>> s = State(y=cp.ones((2, 3), dtype=cp.complex128), t=0.0)
     >>> s.n_traj
     2
     >>> s.n_modes
     3
+    >>> s.to_numpy().shape
+    (2, 3)
     """
-    y: np.ndarray
+    y: Any  # cp.ndarray
     t: float
     attrs: Dict = field(default_factory=dict)
     backend: Any | None = None
 
     def __post_init__(self):
         """
-        Ensure state array is 2D and complex dtype.
+        Ensure CuPy is available and state array is 2D and complex dtype.
         """
-        if self.y.ndim == 1:
+        if cp is None:
+            raise QPSStateError("cupy is required for cupy_state.State")
+        if getattr(self.y, 'ndim', 1) == 1:
             self.y = self.y[None, ...]
-        if not np.iscomplexobj(self.y):
-            self.y = self.y.astype(np.complex128)
+        # Ensure complex dtype
+        if self.y.dtype not in (cp.complex64, cp.complex128):
+            self.y = self.y.astype(cp.complex128)
 
     @property
     def n_traj(self) -> int:
         """Number of trajectories."""
-        return self.y.shape[0]
+        return int(self.y.shape[0])
 
     @property
     def n_modes(self) -> int:
         """Number of modes."""
-        return self.y.shape[1]
+        return int(self.y.shape[1])
 
-    def data_view(self) -> np.ndarray:
-        """Return the underlying NumPy array view."""
+    def data_view(self) -> Any:
+        """Return the underlying CuPy array view."""
         return self.y
 
     def view(self, *, modes: Optional[Any] = None, trajectories: Optional[Any] = None) -> "State":
@@ -140,37 +137,11 @@ class State(StateLike):
             y = y[trajectories, :]
         if modes is not None:
             y = y[:, modes]
-        # Views in NumPy are non-copying when slicing
         return State(y=y, t=self.t, attrs=self.attrs.copy(), backend=self.backend)
 
     def copy(self) -> "State":
         """Return a deep copy of the state."""
         return State(y=self.y.copy(), t=self.t, attrs=self.attrs.copy(), backend=self.backend)
-
-    def as_real(self) -> np.ndarray:
-        """Convert the complex state to real representation."""
-        return complex_to_real(self.y)
-
-    @classmethod
-    def from_real(cls, x: np.ndarray, t: float, attrs: Optional[Dict] = None) -> "State":
-        """
-        Construct a State from real-valued representation.
-
-        Parameters
-        ----------
-        x : np.ndarray
-            Real-valued array (last dimension must be even).
-        t : float
-            Time associated with the state.
-        attrs : dict, optional
-            Additional metadata.
-
-        Returns
-        -------
-        State
-            New State instance with complex-valued data.
-        """
-        return cls(y=real_to_complex(x), t=t, attrs=attrs or {})
 
     def select_modes(self, idx) -> "State":
         """Return a new state with selected modes."""
@@ -180,9 +151,9 @@ class State(StateLike):
         """Return a new state with selected trajectories."""
         return State(y=self.y[idx, :], t=self.t, attrs=self.attrs.copy(), backend=self.backend)
 
-    def to_backend(self, target_backend: Any, *, copy_if_needed: bool = True) -> "State":
+    def to_backend(self, target_backend: Any, *, copy_if_needed: bool = True) -> Any:
         """
-        Convert the state to a different backend (NumPy only).
+        Convert the state to a different backend (NumPy, CuPy, or custom).
 
         Parameters
         ----------
@@ -193,38 +164,62 @@ class State(StateLike):
 
         Returns
         -------
-        State
-            Converted state instance.
+        State or Any
+            Converted state instance or backend-specific object.
 
         Raises
         ------
         QPSStateError
-            - [700] Only NumPy backend is supported in this version.
+            - [704] Unsupported target backend or conversion failed.
 
         Examples
         --------
-        >>> s = State(y=np.ones((2, 3), dtype=np.complex128), t=0.0)
+        >>> s = State(y=cp.ones((2, 3), dtype=cp.complex128), t=0.0)
         >>> s.to_backend(numpy_backend)
         """
-        name = str(getattr(target_backend, 'backend_name', lambda: '')()).lower()
-        if name in ("numpy", "np", ""):
-            # Already numpy; optionally copy
+        name = None
+        try:
+            name = str(target_backend.backend_name()).lower()
+        except Exception:
+            name = str(getattr(target_backend, 'backend_name', lambda: '')()).lower()
+        if name in ("numpy", "np"):  # to numpy
+            import numpy as _np
+            arr = cp.asnumpy(self.y)  # type: ignore[attr-defined]
+            if copy_if_needed:
+                arr = _np.array(arr, copy=True)
+            from .numpy_state import State as _NpState
+            return _NpState(y=arr, t=self.t, attrs=self.attrs.copy(), backend=target_backend)
+        if name in ("cupy", "cp", ""):
             y = self.y.copy() if copy_if_needed else self.y
             return State(y=y, t=self.t, attrs=self.attrs.copy(), backend=target_backend)
-        raise QPSStateError("[700] to_backend: numpy_state only supports numpy target in this version")
+        # Fallback: convert via numpy then let target handle
+        import numpy as _np
+        arr = cp.asnumpy(self.y)  # type: ignore[attr-defined]
+        if copy_if_needed:
+            arr = _np.array(arr, copy=True)
+        try:
+            return target_backend.asarray(arr)
+        except Exception as e:
+            raise QPSStateError(f"[704] to_backend: unsupported target backend '{name}': {e}")
+
+    # Convenience
+    def to_numpy(self):
+        """Convert the state to a NumPy array."""
+        import numpy as _np
+        return _np.asarray(cp.asnumpy(self.y))  # type: ignore[attr-defined]
 
 
 @dataclass
 class TrajectorySet(TrajectorySetLike):
     """
-    NumPy-backed trajectory set container for multi-trajectory time series.
+    GPU-backed trajectory set container using CuPy arrays.
 
-    Stores arrays of shape (n_traj, n_steps, n_modes). Provides times() for NumPy-based
-    time axis extraction.
+    Stores (n_traj, n_steps, n_modes) simulation results on GPU. Provides times()
+    for NumPy-based time axis extraction and to_numpy() for conversion.
 
     Parameters
     ----------
-    data : np.ndarray
+    data : cp.ndarray
         Trajectory data of shape (n_traj, n_steps, n_modes).
     t0 : float
         Initial time.
@@ -235,7 +230,7 @@ class TrajectorySet(TrajectorySetLike):
 
     Attributes
     ----------
-    data : np.ndarray
+    data : cp.ndarray
         Trajectory data.
     t0 : float
         Initial time.
@@ -250,12 +245,13 @@ class TrajectorySet(TrajectorySetLike):
     n_steps
     n_modes
     times
+    to_numpy
 
     Examples
     --------
-    >>> import numpy as np
-    >>> from QPhaseSDE.states.numpy_state import TrajectorySet
-    >>> ts = TrajectorySet(data=np.ones((2, 10, 3)), t0=0.0, dt=0.1)
+    >>> import cupy as cp
+    >>> from QPhaseSDE.states.cupy_state import TrajectorySet
+    >>> ts = TrajectorySet(data=cp.ones((2, 10, 3)), t0=0.0, dt=0.1)
     >>> ts.n_traj
     2
     >>> ts.n_steps
@@ -265,7 +261,7 @@ class TrajectorySet(TrajectorySetLike):
     >>> ts.times().shape
     (10,)
     """
-    data: np.ndarray
+    data: Any  # cp.ndarray of shape (n_traj, n_steps, n_modes)
     t0: float
     dt: float
     meta: Dict = field(default_factory=dict)
@@ -273,21 +269,26 @@ class TrajectorySet(TrajectorySetLike):
     @property
     def n_traj(self) -> int:
         """Number of trajectories."""
-        return self.data.shape[0]
+        return int(self.data.shape[0])
 
     @property
     def n_steps(self) -> int:
         """Number of time steps."""
-        return self.data.shape[1]
+        return int(self.data.shape[1])
 
     @property
     def n_modes(self) -> int:
         """Number of modes."""
-        return self.data.shape[2]
+        return int(self.data.shape[2])
 
-    def times(self) -> np.ndarray:
+    def times(self) -> Any:
         """
         Return the time axis as a NumPy array for plotting or analysis.
         """
-        return self.t0 + self.dt * np.arange(self.n_steps)
+        import numpy as _np
+        return self.t0 + self.dt * _np.arange(self.n_steps)
 
+    def to_numpy(self):
+        """Convert the trajectory set to a NumPy array."""
+        import numpy as _np
+        return _np.asarray(cp.asnumpy(self.data))  # type: ignore[attr-defined]

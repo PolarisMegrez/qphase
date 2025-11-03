@@ -1,9 +1,25 @@
-from __future__ import annotations
+"""
+QPhaseSDE: PSD Renderer
+-----------------------
+Render power spectral density (PSD) for one or more modes from multi-trajectory
+time series using analysis utilities and plot onto Matplotlib axes.
+
+Behavior
+--------
+- Delegate PSD computation to analysis.psd; choose plot scales (linear/log)
+    and sidedness based on spec and style. Details are documented by functions.
+"""
+
+__all__ = [
+    "render_psd",
+]
 
 from typing import Any, Dict, List, Optional
 import numpy as np
 from matplotlib.axes import Axes
 from ...analysis.psd import compute_psd_for_modes
+from ...core.errors import QPSConfigError
+
 
 
 def _compute_psd(
@@ -14,20 +30,35 @@ def _compute_psd(
     convention: str = "symmetric",
 ) -> Dict[str, np.ndarray]:
     """
-    Compute two-sided PSD for a batch of trajectories and a single mode.
+    Compute two-sided power spectral density (PSD) for a batch of trajectories and a single mode.
 
-    x: shape (n_traj, n_time) complex array (time series for one mode across trajectories)
-    dt: sample spacing
-    mode: 'complex' uses x directly; 'modular' uses |x|
-    convention:
-      - 'symmetric' or 'unitary': use unitary FFT (norm='ortho') and angular frequency axis ω=2πf
-      - 'pragmatic': use standard FFT (norm=None) and frequency axis f
-    Returns dict with keys 'axis' (ω or f) and 'psd'
+    Parameters
+    ----------
+    x : np.ndarray
+        Array of shape (n_traj, n_time), time series for one mode across trajectories.
+    dt : float
+        Sample spacing.
+    mode : str, optional
+        'complex' uses x directly; 'modular' uses |x|.
+    convention : str, optional
+        'symmetric' or 'unitary': use unitary FFT (norm='ortho') and angular frequency axis ω=2πf;
+        'pragmatic': use standard FFT (norm=None) and frequency axis f.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys 'axis' (ω or f) and 'psd'.
+
+    Raises
+    ------
+    QPSConfigError
+        [524] If mode is not 'complex' or 'modular'.
+        [525] If convention is not one of 'symmetric', 'unitary', 'pragmatic'.
     """
     if mode not in ("complex", "modular"):
-        raise ValueError("mode must be 'complex' or 'modular'")
+        raise QPSConfigError("[524] mode must be 'complex' or 'modular'")
     if convention not in ("symmetric", "unitary", "pragmatic"):
-        raise ValueError("convention must be 'symmetric'|'unitary'|'pragmatic'")
+        raise QPSConfigError("[525] convention must be 'symmetric'|'unitary'|'pragmatic'")
 
     x_proc = np.abs(x) if mode == "modular" else x
     n_traj, n_time = x_proc.shape
@@ -47,14 +78,44 @@ def _compute_psd(
     return {"axis": axis, "psd": P}
 
 
-def render_psd(ax: Axes, data: np.ndarray, spec: Dict[str, Any], plot_style: Optional[Dict] = None) -> str:
+def render_psd(
+    ax: Axes,
+    data: np.ndarray,
+    spec: Dict[str, Any],
+    plot_style: Optional[Dict] = None
+) -> str:
     """
-    Render PSD for one or more modes on a single Axes and return a category string
-    used in filenames (e.g., 'psd_complex').
+    Render power spectral density (PSD) for one or more modes on a matplotlib Axes.
 
-    data: shape (n_traj, n_time, n_modes) complex
-    spec: dict validated via PsdSpec with keys: psd_type, modes, convention, t_range
-    plot_style: optional dict for styling (color/linestyle/alpha/yscale/xlim/ylim)
+    This function computes and plots the PSD for specified modes, using the provided
+    data and configuration spec. It supports various conventions and plot styles.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axes object to plot on.
+    data : np.ndarray
+        Array of shape (n_traj, n_time, n_modes), complex time series data.
+    spec : dict
+        Visualization spec validated via PsdSpec, with keys: kind, modes, convention, t_range, etc.
+    plot_style : dict, optional
+        Optional dict for styling (color, linestyle, alpha, yscale, xlim, ylim, legend).
+
+    Returns
+    -------
+    str
+        Category string used in filenames (e.g., 'psd_complex').
+
+    Raises
+    ------
+    QPSConfigError
+        [526] If spec['modes'] is empty.
+
+    Examples
+    --------
+    >>> fig, ax = plt.subplots()
+    >>> category = render_psd(ax, data, spec, plot_style={"x_scale": "log", "legend": True})
+    >>> plt.show()
     """
     kind: str = str(spec.get("kind"))  # 'complex' | 'modular'
     convention: str = str(spec.get("convention", "symmetric"))
@@ -81,7 +142,7 @@ def render_psd(ax: Axes, data: np.ndarray, spec: Dict[str, Any], plot_style: Opt
     sided = "two" if kind == "complex" else "one"
 
     if len(modes) == 0:
-        raise ValueError("PsdSpec.modes must include at least one mode index")
+        raise QPSConfigError("[526] PsdSpec.modes must include at least one mode index")
 
     # Draw
     # Compute PSDs in batch
