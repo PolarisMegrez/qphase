@@ -1,7 +1,7 @@
 """
 QPhaseSDE: Visualizer service
 -----------------------------
-High-level entry for turning a validated visualization spec and data into a
+High-level entry for turning a validated visualizer spec and data into a
 saved figure plus metadata.
 
 Behavior
@@ -9,8 +9,8 @@ Behavior
     normalizes deprecated fields when present.
 - Slices time based on ``t0``, ``dt``, and optional ``t_range``; optionally
     decimates samples for plotting-only views.
-- Selects a renderer from the registry (``renderer:phase_portrait`` or
-    ``renderer:psd``), merges style overrides, and renders into a Matplotlib
+- Selects a renderer from the registry (``visualizer:phase_portrait`` or
+    ``visualizer:psd``), merges style overrides, and renders into a Matplotlib
     figure/axes.
 - Optionally saves the figure and returns metadata (filename, path, hash,
     tags, duration, renderer name).
@@ -50,7 +50,7 @@ def render_from_spec(
     save: bool = True,
 ) -> Mapping[str, Any]:
     """
-    Render a figure based on a validated visualization spec.
+    Render a figure based on a validated visualizer spec.
 
     Dispatches to the appropriate renderer based on the spec content. Supports
     PhasePortraitSpec and PsdSpec. Handles validation, slicing, style merging,
@@ -83,7 +83,7 @@ def render_from_spec(
     QPSConfigError
         - [530] Invalid phase-portrait spec
         - [531] Invalid PSD spec
-        - [532] Invalid visualization spec
+        - [532] Invalid visualizer spec
 
     Examples
     --------
@@ -98,7 +98,7 @@ def render_from_spec(
             vspec = PhasePortraitSpec.model_validate(spec)
         except ValidationError as e:  # normalize to framework error
             raise QPSConfigError(f"[530] Invalid phase-portrait spec: {e}")
-        renderer_key = "renderer:phase_portrait"
+        renderer_key = "visualizer:phase_portrait"
         psd_mode = False
     elif spec_kind in ("complex", "modular") or "psd_type" in spec or spec_kind == "psd":
         # Allow back-compat: if psd_type provided or kind=='psd', map to new fields
@@ -119,13 +119,13 @@ def render_from_spec(
             vspec = PsdSpec.model_validate(payload)
         except ValidationError as e:
             raise QPSConfigError(f"[531] Invalid PSD spec: {e}")
-        renderer_key = "renderer:psd"
+        renderer_key = "visualizer:psd"
         psd_mode = True
     else:
         # Fallback: try to validate as PhasePortrait then PSD
         try:
             vspec = PhasePortraitSpec.model_validate(spec)
-            renderer_key = "renderer:phase_portrait"
+            renderer_key = "visualizer:phase_portrait"
             psd_mode = False
         except ValidationError:
             payload = dict(spec)
@@ -134,8 +134,8 @@ def render_from_spec(
             try:
                 vspec = PsdSpec.model_validate(payload)  # type: ignore[arg-type]
             except ValidationError as e:
-                raise QPSConfigError(f"[532] Invalid visualization spec: {e}")
-            renderer_key = "renderer:psd"
+                raise QPSConfigError(f"[532] Invalid visualizer spec: {e}")
+            renderer_key = "visualizer:psd"
             psd_mode = True
 
     # Slice time range
@@ -155,6 +155,10 @@ def render_from_spec(
                 sliced = sliced[:, ::pe, :]
 
     # Resolve renderer via registry (function-style expected)
+    # Namespace: use 'visualizer' consistently (was mistakenly 'renderer').
+    # Map any legacy 'visualizer:*' keys to 'visualizer:*'.
+    if renderer_key.startswith("visualizer:"):
+        renderer_key = "visualizer:" + renderer_key.split(":", 1)[1]
     renderer = registry.create(renderer_key)
     # Merge styles (renderer defaults < profile < overrides). Currently we have no profile, so just overrides
     plot_style = dict(style_overrides or {})

@@ -1,20 +1,3 @@
-model:
-  module: models.vdp_two_mode
-  function: build_sde
-  params:
-    omega_a: 0.005
-    omega_b: 0.0
-    gamma_a: 2.0
-    gamma_b: 1.0
-    Gamma: 0.01
-    g: 0.5
-    D: 1.0
-  ic: 
-    - ["7.0+0.0j", "0.0-7.0j"]
-    - ["0.0-7.0j", "7.0+0.0j"]
-  noise:
-    kind: independent
-
 profile:
   backend: numpy       # B-class default
   solver: euler        # B-class default
@@ -24,7 +7,7 @@ profile:
     save_timeseries: true
     save_psd_complex: false
     save_psd_modular: false
-  visualization:
+  visualizer:
     phase_portrait:
       Re_Im:
         linewidth: 0.8
@@ -32,18 +15,60 @@ profile:
       abs_abs:
         linewidth: 0.8
         alpha: 0.6
+    psd:
+      complex:
+        xlim: [-0.5, 0.5]
 
 run:
   time:
     dt: 0.001          # C-class required
-    steps: 200000      # C-class required
+    steps: 2000        # C-class required
   trajectories:
     n_traj: 10         # C-class required
     master_seed: 42    # C-class (optional); used to derive per-trajectory seeds
-  visualization:
-    phase_portrait:
-      - kind: Re_Im
-        modes: [0]
-      - kind: abs_abs
-        modes: [0, 1]
-        t_range: [10.0, 200.0]
+
+jobs:
+  - name: vdp_phase_portrait
+    module: models.vdp_two_mode
+    function: build_sde
+    params:
+      omega_a: 0.005
+      omega_b: 0.0
+      gamma_a: 2.0
+      gamma_b: 1.0
+      Gamma: 0.01
+      g: 0.5
+      D: 1.0
+    ic: 
+      - ["7.0+0.0j", "0.0-7.0j"]
+      - ["0.0-7.0j", "7.0+0.0j"]
+    noise:
+      kind: independent
+    visualizer:
+      phase_portrait:
+        - kind: Re_Im
+          modes: [0]
+        - kind: abs_abs
+          modes: [0, 1]
+          t_range: [10.0, 200.0]
+  - name: vdp_psd
+    module: models.vdp_two_mode
+    function: build_sde
+    params:
+      omega_a: 0.005
+      omega_b: 0.0
+      gamma_a: 2.0
+      gamma_b: 1.0
+      Gamma: 0.01
+      g: 0.5
+      D: 1.0
+    ic: 
+      - ["7.0+0.0j", "0.0-7.0j"]
+      - ["0.0-7.0j", "7.0+0.0j"]
+    noise:
+      kind: independent
+    visualizer:
+      psd:
+        - kind: complex
+          modes: [0, 1]
+          t_range: [20.0, 100.0]

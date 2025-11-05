@@ -11,7 +11,7 @@ Behavior
 
 Notes
 -----
-- Avoid importing heavy visualization libraries at module import time.
+- Avoid importing heavy visualizer libraries at module import time.
 """
 
 from typing import Any, Dict, Mapping, Protocol
@@ -24,7 +24,7 @@ class Renderer(Protocol):
   """
   Protocol for visualizer renderer implementations.
 
-  Defines the contract for validating visualization specs and rendering outputs to figure-like targets or buffers.
+  Defines the contract for validating visualizer specs and rendering outputs to figure-like targets or buffers.
   Implementations must return standardized metadata for downstream analysis.
 
   Parameters
@@ -49,7 +49,7 @@ class Renderer(Protocol):
 
   def validate(self, spec: Mapping[str, Any]) -> None:
     """
-    Validate the visualization specification.
+    Validate the visualizer specification.
 
     Parameters
     ----------
@@ -69,7 +69,7 @@ class Renderer(Protocol):
 
   def render(self, ax_or_buffer: Any, data: Any, spec: Mapping[str, Any], style: Mapping[str, Any]) -> Mapping[str, Any]:
     """
-    Render the visualization to a target and return standardized metadata.
+    Render the visualizer to a target and return standardized metadata.
 
     Parameters
     ----------

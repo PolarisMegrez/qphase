@@ -1,4 +1,4 @@
-# QPhaseSDE User Guide (v0.1.2)
+# QPhaseSDE User Guide (v0.1.3)
 
 Audience: Physicists with basic Python familiarity who want to run stochastic simulations of complex-valued mode dynamics and visualize results.
 
@@ -40,17 +40,17 @@ Tip: `model.ic` can be a single vector or a list of vectors. When multiple ICs a
 
 Two classes of built-in plots are available. You can request multiple figures in one run.
 
-- Phase portraits (`run.visualization.phase_portrait`):
+- Phase portraits (`run.visualizer.phase_portrait`):
   - `kind: re_im` with 1 mode index → Re(α) vs Im(α)
   - `kind: abs_abs` with 2 mode indices → |α_i| vs |α_j|
   - Optional `t_range: [t_start, t_end]` selects the time window
-  - Style under `profile.visualization.phase_portrait.{re_im|abs_abs}`
+  - Style under `profile.visualizer.phase_portrait.{re_im|abs_abs}`
 
-- Power spectral density (PSD) (`run.visualization.psd`):
+- Power spectral density (PSD) (`run.visualizer.psd`):
   - `kind: complex` (FFT of complex signal) or `modular` (FFT of |signal|)
   - `modes: [...]` — one or more modes per figure
   - Optional `xlim: [xmin, xmax]` and `t_range: [t_start, t_end]`
-  - Global PSD style under `profile.visualization.psd`:
+  - Global PSD style under `profile.visualizer.psd`:
     - `convention: symmetric|unitary|pragmatic`
     - `x_scale: linear|log`, `y_scale: linear|log`
   - Data are averaged across trajectories. For complex PSD we plot two-sided; for modular PSD we plot one-sided.
@@ -91,4 +91,4 @@ qps analyze phase --from-run runs\<run_id> --use-snapshot false --specs-json "[{
 - Explore the registry to discover available components:
   - `integrator: euler, milstein (alias of euler)`
   - `backend: numpy`
-  - `visualization: phase_portrait, psd`
+  - `visualizer: phase_portrait, psd`

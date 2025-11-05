@@ -21,11 +21,24 @@ Notes
 from typing import Dict, List, Tuple
 import numpy as np
 from ..core.errors import QPSConfigError
+from ..core.registry import namespaced as _ns
+_analysis_register, _analysis_register_lazy = _ns("analysis")
 
 __all__ = [
     "compute_psd_single",
     "compute_psd_for_modes",
 ]
+
+# Register a naming callable for PSD artifacts under the existing 'analysis' namespace.
+# This lets the scheduler derive stable filenames without introducing a new namespace.
+try:
+    def _psd_namer(*, kind: str, convention: str, **_: Dict) -> str:
+        return f"psd_{kind}_{convention}"
+
+    _analysis_register("psd_namer", lambda: _psd_namer, return_callable=True, tags=["builtin", "namer"])  # type: ignore[arg-type]
+except Exception:
+    # Be tolerant in constrained environments
+    pass
 
 def compute_psd_single(x: np.ndarray, dt: float, *, kind: str = "complex", convention: str = "symmetric") -> Tuple[np.ndarray, np.ndarray]:
     """Compute two-sided power spectral density (PSD) for a single mode.

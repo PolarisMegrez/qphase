@@ -53,25 +53,25 @@ def phase(
 	style_psd_cfg = None
 	replot_mode = 'append'
 	snap_cfg_yaml = run_dir / "config_snapshot" / "config.yaml"
-	snap_viz_yaml = run_dir / "config_snapshot" / "visualization.yaml"
+	snap_viz_yaml = run_dir / "config_snapshot" / "visualizer.yaml"
 	# Back-compat JSON fallbacks
 	snap_cfg_json = run_dir / "config_snapshot" / "config.json"
-	snap_viz_json = run_dir / "config_snapshot" / "visualization.json"
+	snap_viz_json = run_dir / "config_snapshot" / "visualizer.json"
 	snap_triad_yaml = run_dir / "config_snapshot" / "triad.yaml"
 
 	if use_snapshot:
-		# prefer visualization.yaml (decoupled from config.yaml)
+		# prefer visualizer.yaml (decoupled from config.yaml)
 		if snap_viz_yaml.exists():
 			try:
 				meta = yaml.safe_load(snap_viz_yaml.read_text(encoding='utf-8')) or {}
-				viz_meta = meta.get('visualization') or {}
+				viz_meta = meta.get('visualizer') or {}
 				phase_meta = viz_meta.get('phase_portrait') if isinstance(viz_meta, dict) else None
 				if isinstance(phase_meta, list):
 					specs = phase_meta
 				psd_meta = viz_meta.get('psd') if isinstance(viz_meta, dict) else None
 				if isinstance(psd_meta, list):
 					psd_specs = psd_meta
-				style_all = meta.get('profile_visualization', {})
+				style_all = meta.get('profile_visualizer', {})
 				if isinstance(style_all, dict):
 					style_cfg = style_all.get('phase_portrait') or style_all.get('phase')
 					style_psd_cfg = style_all.get('psd')
@@ -82,18 +82,18 @@ def phase(
 						replot_mode = style_all.get('replot_mode')  # type: ignore
 			except Exception:
 				pass
-		# fallback to visualization.json if yaml not present
+		# fallback to visualizer.json if yaml not present
 		if not (specs or psd_specs) and snap_viz_json.exists():
 			try:
 				meta = json.loads(snap_viz_json.read_text(encoding='utf-8'))
-				viz_meta = meta.get('visualization') or {}
+				viz_meta = meta.get('visualizer') or {}
 				phase_meta = viz_meta.get('phase_portrait') if isinstance(viz_meta, dict) else None
 				if isinstance(phase_meta, list):
 					specs = phase_meta
 				psd_meta = viz_meta.get('psd') if isinstance(viz_meta, dict) else None
 				if isinstance(psd_meta, list):
 					psd_specs = psd_meta
-				style_all = meta.get('profile_visualization', {})
+				style_all = meta.get('profile_visualizer', {})
 				if isinstance(style_all, dict):
 					style_cfg = style_all.get('phase_portrait') or style_all.get('phase')
 					style_psd_cfg = style_all.get('psd')
@@ -109,14 +109,14 @@ def phase(
 			try:
 				from QPhaseSDE_cli.config.loader import load_triad_config
 				triad = load_triad_config(snap_triad_yaml)
-				rv = getattr(triad.run, 'visualization', None) or getattr(triad.run, 'viz', None)
+				rv = getattr(triad.run, 'visualizer', None) or getattr(triad.run, 'viz', None)
 				viz_phase = getattr(rv, 'phase_portrait', None) or getattr(rv, 'phase', None)
 				if viz_phase:
 					specs = [s.model_dump() for s in viz_phase]
 				viz_psd = getattr(rv, 'psd', None)
 				if viz_psd:
 					psd_specs = [s.model_dump() for s in viz_psd]
-				prof_viz = getattr(triad.profile, 'visualization', None) or getattr(triad.profile, 'viz', None)
+				prof_viz = getattr(triad.profile, 'visualizer', None) or getattr(triad.profile, 'viz', None)
 				if isinstance(prof_viz, dict):
 					style_cfg = prof_viz.get('phase_portrait') or prof_viz.get('phase')
 					style_psd_cfg = prof_viz.get('psd')
@@ -133,14 +133,14 @@ def phase(
 		if not (specs or psd_specs) and snap_cfg_yaml.exists():
 			try:
 				meta = yaml.safe_load(snap_cfg_yaml.read_text(encoding='utf-8')) or {}
-				viz_meta = meta.get('visualization') or meta.get('viz') or {}
+				viz_meta = meta.get('visualizer') or meta.get('viz') or {}
 				phase_meta = viz_meta.get('phase_portrait') if isinstance(viz_meta, dict) else None
 				if isinstance(phase_meta, list):
 					specs = phase_meta
 				psd_meta = viz_meta.get('psd') if isinstance(viz_meta, dict) else None
 				if isinstance(psd_meta, list):
 					psd_specs = psd_meta
-				style_all = meta.get('profile_visualization', {})
+				style_all = meta.get('profile_visualizer', {})
 				if isinstance(style_all, dict):
 					style_cfg = style_all.get('phase_portrait') or style_all.get('phase')
 					style_psd_cfg = style_all.get('psd')
@@ -149,14 +149,14 @@ def phase(
 		if not (specs or psd_specs) and snap_cfg_json.exists():
 			try:
 				meta = json.loads(snap_cfg_json.read_text(encoding='utf-8'))
-				viz_meta = meta.get('visualization') or meta.get('viz') or {}
+				viz_meta = meta.get('visualizer') or meta.get('viz') or {}
 				phase_meta = viz_meta.get('phase_portrait') if isinstance(viz_meta, dict) else None
 				if isinstance(phase_meta, list):
 					specs = phase_meta
 				psd_meta = viz_meta.get('psd') if isinstance(viz_meta, dict) else None
 				if isinstance(psd_meta, list):
 					psd_specs = psd_meta
-				style_all = meta.get('profile_visualization', {})
+				style_all = meta.get('profile_visualizer', {})
 				if isinstance(style_all, dict):
 					style_cfg = style_all.get('phase_portrait') or style_all.get('phase')
 					style_psd_cfg = style_all.get('psd')
@@ -248,8 +248,8 @@ def psd(
 	psd_specs: List[Dict[str, Any]] = []
 	style_psd_cfg = None
 	# snapshot sources
-	snap_viz_yaml = run_dir / "config_snapshot" / "visualization.yaml"
-	snap_viz_json = run_dir / "config_snapshot" / "visualization.json"
+	snap_viz_yaml = run_dir / "config_snapshot" / "visualizer.yaml"
+	snap_viz_json = run_dir / "config_snapshot" / "visualizer.json"
 	snap_triad_yaml = run_dir / "config_snapshot" / "triad.yaml"
 	snap_cfg_yaml = run_dir / "config_snapshot" / "config.yaml"
 	snap_cfg_json = run_dir / "config_snapshot" / "config.json"
@@ -258,11 +258,11 @@ def psd(
 		if snap_viz_yaml.exists():
 			try:
 				meta = yaml.safe_load(snap_viz_yaml.read_text(encoding='utf-8')) or {}
-				viz_meta = meta.get('visualization') or {}
+				viz_meta = meta.get('visualizer') or {}
 				psd_meta = viz_meta.get('psd') if isinstance(viz_meta, dict) else None
 				if isinstance(psd_meta, list):
 					psd_specs = psd_meta
-				style_all = meta.get('profile_visualization', {})
+				style_all = meta.get('profile_visualizer', {})
 				if isinstance(style_all, dict):
 					style_psd_cfg = style_all.get('psd')
 			except Exception:
@@ -270,11 +270,11 @@ def psd(
 		if not psd_specs and snap_viz_json.exists():
 			try:
 				meta = json.loads(snap_viz_json.read_text(encoding='utf-8'))
-				viz_meta = meta.get('visualization') or {}
+				viz_meta = meta.get('visualizer') or {}
 				psd_meta = viz_meta.get('psd') if isinstance(viz_meta, dict) else None
 				if isinstance(psd_meta, list):
 					psd_specs = psd_meta
-				style_all = meta.get('profile_visualization', {})
+				style_all = meta.get('profile_visualizer', {})
 				if isinstance(style_all, dict):
 					style_psd_cfg = style_all.get('psd')
 			except Exception:
@@ -283,11 +283,11 @@ def psd(
 			try:
 				from QPhaseSDE_cli.config.loader import load_triad_config
 				triad = load_triad_config(snap_triad_yaml)
-				rv = getattr(triad.run, 'visualization', None) or getattr(triad.run, 'viz', None)
+				rv = getattr(triad.run, 'visualizer', None) or getattr(triad.run, 'viz', None)
 				viz_psd = getattr(rv, 'psd', None)
 				if viz_psd:
 					psd_specs = [s.model_dump() for s in viz_psd]
-				prof_viz = getattr(triad.profile, 'visualization', None) or getattr(triad.profile, 'viz', None)
+				prof_viz = getattr(triad.profile, 'visualizer', None) or getattr(triad.profile, 'viz', None)
 				if isinstance(prof_viz, dict):
 					style_psd_cfg = prof_viz.get('psd')
 			except Exception:
@@ -295,7 +295,7 @@ def psd(
 		if not psd_specs and snap_cfg_yaml.exists():
 			try:
 				meta = yaml.safe_load(snap_cfg_yaml.read_text(encoding='utf-8')) or {}
-				viz_meta = meta.get('visualization') or meta.get('viz') or {}
+				viz_meta = meta.get('visualizer') or meta.get('viz') or {}
 				psd_meta = viz_meta.get('psd') if isinstance(viz_meta, dict) else None
 				if isinstance(psd_meta, list):
 					psd_specs = psd_meta
@@ -304,7 +304,7 @@ def psd(
 		if not psd_specs and snap_cfg_json.exists():
 			try:
 				meta = json.loads(snap_cfg_json.read_text(encoding='utf-8'))
-				viz_meta = meta.get('visualization') or meta.get('viz') or {}
+				viz_meta = meta.get('visualizer') or meta.get('viz') or {}
 				psd_meta = viz_meta.get('psd') if isinstance(viz_meta, dict) else None
 				if isinstance(psd_meta, list):
 					psd_specs = psd_meta

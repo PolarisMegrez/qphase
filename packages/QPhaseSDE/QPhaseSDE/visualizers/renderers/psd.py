@@ -21,63 +21,6 @@ from ...analysis.psd import compute_psd_for_modes
 from ...core.errors import QPSConfigError
 
 
-
-def _compute_psd(
-    x: np.ndarray,
-    dt: float,
-    *,
-    mode: str = "complex",
-    convention: str = "symmetric",
-) -> Dict[str, np.ndarray]:
-    """
-    Compute two-sided power spectral density (PSD) for a batch of trajectories and a single mode.
-
-    Parameters
-    ----------
-    x : np.ndarray
-        Array of shape (n_traj, n_time), time series for one mode across trajectories.
-    dt : float
-        Sample spacing.
-    mode : str, optional
-        'complex' uses x directly; 'modular' uses |x|.
-    convention : str, optional
-        'symmetric' or 'unitary': use unitary FFT (norm='ortho') and angular frequency axis ω=2πf;
-        'pragmatic': use standard FFT (norm=None) and frequency axis f.
-
-    Returns
-    -------
-    dict
-        Dictionary with keys 'axis' (ω or f) and 'psd'.
-
-    Raises
-    ------
-    QPSConfigError
-        [524] If mode is not 'complex' or 'modular'.
-        [525] If convention is not one of 'symmetric', 'unitary', 'pragmatic'.
-    """
-    if mode not in ("complex", "modular"):
-        raise QPSConfigError("[524] mode must be 'complex' or 'modular'")
-    if convention not in ("symmetric", "unitary", "pragmatic"):
-        raise QPSConfigError("[525] convention must be 'symmetric'|'unitary'|'pragmatic'")
-
-    x_proc = np.abs(x) if mode == "modular" else x
-    n_traj, n_time = x_proc.shape
-
-    if convention in ("symmetric", "unitary"):
-        X = np.fft.fft(x_proc, axis=1, norm="ortho")
-        P = np.mean(np.abs(X) ** 2, axis=0)
-        f = np.fft.fftfreq(n_time, d=dt)
-        w = 2.0 * np.pi * f
-        axis = w
-    else:  # pragmatic
-        X = np.fft.fft(x_proc, axis=1, norm=None)
-        # Scale by N for Parseval-like invariance
-        P = np.mean(np.abs(X) ** 2, axis=0) / float(n_time)
-        axis = np.fft.fftfreq(n_time, d=dt)
-
-    return {"axis": axis, "psd": P}
-
-
 def render_psd(
     ax: Axes,
     data: np.ndarray,

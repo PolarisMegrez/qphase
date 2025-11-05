@@ -149,10 +149,8 @@ class EulerMaruyama(Integrator):
 
 # Register commonly used aliases mapping to Euler–Maruyama
 try:
-    _registry.register("integrator", "euler", EulerMaruyama)
-    _registry.register("integrator", "em", EulerMaruyama)
-    # Temporary alias: map 'milstein' to EM in v0.1.2
-    _registry.register("integrator", "milstein", EulerMaruyama)
+	_registry.register("integrator", "euler", EulerMaruyama)
+	_registry.register("integrator", "em", EulerMaruyama)
 except Exception:
-    # Ignore duplicate-registration errors during reloads/tests
-    pass
+	# Ignore duplicate-registration errors during reloads/tests
+	pass

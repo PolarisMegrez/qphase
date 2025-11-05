@@ -1,4 +1,4 @@
-# QPhaseSDE 用户指南（v0.1.2）
+# QPhaseSDE 用户指南（v0.1.3）
 
 目标读者：具备基础 Python 知识的物理学研究者，希望进行复数模态的随机微分方程仿真与可视化。
 
@@ -35,17 +35,17 @@ qps run sde --config configs\vdp_run.yaml
 
 内置两类图形，可在同一次运行中请求多张图：
 
-- 相图（`run.visualization.phase_portrait`）：
+- 相图（`run.visualizer.phase_portrait`）：
   - `kind: re_im` 且 `modes` 含 1 个索引 → 绘制 Re(α) vs Im(α)
   - `kind: abs_abs` 且 `modes` 含 2 个索引 → 绘制 |α_i| vs |α_j|
   - 可选 `t_range: [t_start, t_end]` 指定时间窗口
-  - 样式位于 `profile.visualization.phase_portrait.{re_im|abs_abs}`
+  - 样式位于 `profile.visualizer.phase_portrait.{re_im|abs_abs}`
 
-- 功率谱密度（PSD，`run.visualization.psd`）：
+- 功率谱密度（PSD，`run.visualizer.psd`）：
   - `kind: complex`（对复信号 FFT）或 `modular`（对 |信号| FFT）
   - `modes: [...]` —— 一张图可包含多个模式
   - 可选 `xlim: [xmin, xmax]` 与 `t_range: [t_start, t_end]`
-  - 全局样式位于 `profile.visualization.psd`：
+  - 全局样式位于 `profile.visualizer.psd`：
     - `convention: symmetric|unitary|pragmatic`
     - `x_scale: linear|log`, `y_scale: linear|log`
   - 数据对轨迹求平均。`complex` 采用双边；`modular` 采用单边显示。
@@ -86,4 +86,4 @@ qps analyze phase --from-run runs\<run_id> --use-snapshot false --specs-json "[{
 - 使用注册中心探索可用组件：
   - `integrator`：euler，milstein（当前为 euler 的别名）
   - `backend`：numpy
-  - `visualization`：phase_portrait，psd
+  - `visualizer`：phase_portrait，psd

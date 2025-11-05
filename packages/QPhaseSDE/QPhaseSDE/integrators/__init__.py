@@ -7,5 +7,6 @@ methods may be added in future releases.
 """
 
 from .euler_maruyama import EulerMaruyama
+from .milstein import Milstein  # register via decorator on import
 
-__all__ = ["EulerMaruyama"]
+__all__ = ["EulerMaruyama", "Milstein"]

@@ -8,7 +8,7 @@ Author : Yu Xue-hao (GitHub: @PolarisMegrez)
 Affiliation : School of Physical Sciences, UCAS
 Contact : yuxuehao23@mails.ucas.ac.cn
 License : MIT
-Version : 0.1.2 (Nov 2025)
+Version : 0.1.3 (Nov 2025)
 
 Notes
 -----
@@ -32,7 +32,7 @@ from . import noise_models as _qps_noise_models  # noqa: F401
 from . import backends as _qps_backends  # noqa: F401
 
 # Public version string
-__version__ = "0.1.2 (Nov 2025)"
+__version__ = "0.1.3 (Nov 2025)"
 
 __all__ = [
 	"registry",

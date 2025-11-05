@@ -41,6 +41,7 @@ from ..noise_models.factory import make_noise_model
 from ..states.factory import make_state, make_trajectory_set
 from ..core.registry import registry
 from .errors import QPSBackendError, QPSRegistryError, get_logger
+from .config import get_default as _get_default
 
 __all__ = [
     "run",
@@ -143,7 +144,9 @@ def run(model: SDEModel,
     dt = float(time['dt'])
     steps = int(time['steps'])
 
-    # Backend selection via registry or accept instance
+    # Backend selection via registry or accept instance; allow None -> default
+    if backend is None:
+        backend = _get_default("engine.default_backend", "numpy")
     if isinstance(backend, str):
         key = backend if ":" in backend else f"backend:{backend}"
         try:
@@ -221,10 +224,10 @@ def run(model: SDEModel,
     warmup_time_thr = max(0.0, float(warmup_min_seconds))
     # Resolve integrator once per run (avoid per-step registry lookup)
     key = solver if ":" in solver else f"integrator:{solver}"
-    # Temporary deprecation notice for milstein alias in v0.1.2
+    # Temporary deprecation notice for milstein alias in v0.1.3
     try:
         if str(solver).lower() == "milstein":
-            get_logger().warning("[994] 'milstein' currently aliases to Euler–Maruyama in v0.1.2; true Milstein will arrive in a future release.")
+            get_logger().warning("[994] 'milstein' currently aliases to Euler–Maruyama in v0.1.3; true Milstein will arrive in a future release.")
     except Exception:
         pass
     integrator = registry.create(key)

@@ -1,7 +1,7 @@
 """
 QPhaseSDE: Visualizer utilities
 -------------------------------
-Shared helpers used by the visualization service and renderers.
+Shared helpers used by the visualizer service and renderers.
 
 Behavior
 - Compute short, stable identifiers from spec content for figure/cache naming.
@@ -25,7 +25,7 @@ import hashlib
 
 def spec_short_hash(spec: Dict[str, Any], length: int = 8) -> str:
     """
-    Compute a short, deterministic hash from a visualization spec.
+    Compute a short, deterministic hash from a visualizer spec.
 
     The hash is generated using only the content of the spec (such as kind, modes, t_range),
     ignoring styling and cosmetic fields so that visual changes do not affect identity.

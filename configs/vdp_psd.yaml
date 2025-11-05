@@ -23,7 +23,7 @@ profile:
     save_timeseries: false
     save_psd_complex: true
     save_psd_modular: false
-  visualization:
+  visualizer:
     psd:
       legend: true
       convention: symmetric
@@ -37,7 +37,7 @@ run:
   trajectories:
     n_traj: 100        # C-class required
     master_seed: 42    # C-class (optional); used to derive per-trajectory seeds
-  visualization:
+  visualizer:
     psd:
       - kind: complex
         modes: [0, 1]

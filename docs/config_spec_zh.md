@@ -1,6 +1,6 @@
-# QPhaseSDE v0.1.2 配置说明（Triad YAML）
+# QPhaseSDE v0.1.3 配置说明（Triad YAML）
 
-本文档描述 v0.1.2 版本中 `qps run sde` 所需的 YAML 配置结构。配置分为三个部分：`model`、`profile`、`run`。
+本文档描述 v0.1.3 版本中 `qps run sde` 所需的 YAML 配置结构。配置分为三个部分：`model`、`profile`、`run`。
 
 ## 1. model
 
@@ -48,14 +48,14 @@ model:
 
 字段：
 - backend：`numpy`（默认）| `numba`（预留）
-- solver：`euler`（默认）| `milstein`（v0.1.2 中占位，回退至 euler）
+- solver：`euler`（默认）| `milstein`（v0.1.3 中占位，回退至 euler）
 - save：
   - root：字符串（默认 `runs`）——输出根目录
   - save_every：整数（可选）——时序数据保存抽样间隔
   - save_timeseries：布尔（必填）——是否保存每个 IC 的时序 NPZ
   - save_psd_complex：布尔（必填）——是否计算/保存复信号 PSD NPZ
   - save_psd_modular：布尔（必填）——是否计算/保存模值 PSD NPZ
-- visualization（可选）：matplotlib 参数与 PSD 规范
+- visualizer（可选）：matplotlib 参数与 PSD 规范
   - phase_portrait：
     - Re_Im：`Re-Im` 相图的绘图参数（推荐；接受 `re_im`）
     - abs_abs：`|.|-|.|` 相图的绘图参数
@@ -75,7 +75,7 @@ profile:
     save_timeseries: true
     save_psd_complex: true
     save_psd_modular: false
-  visualization:
+  visualizer:
     phase_portrait:
       re_im:
         linewidth: 0.8
@@ -105,7 +105,7 @@ profile:
   - rng_stream：`per_trajectory` | `batched`（可选；默认 `per_trajectory`）——控制随机数流策略：
     - `per_trajectory`：每条轨迹独立 RNG 流（当 n_traj 改变时序仍稳定）
     - `batched`：单一 RNG 流进行向量化采样（更快；当 n_traj/顺序改变时序会改变）
-- visualization（可选）：
+- visualizer（可选）：
   - phase_portrait：图列表（每项对应一张图）
     - kind：`Re_Im`（推荐）或 `re_im`，或 `abs_abs`（必填）
     - modes：整数列表——`re_im` 需 1 个索引；`abs_abs` 需 2 个索引（必填）
@@ -125,7 +125,7 @@ run:
   trajectories:
     n_traj: 4
     master_seed: 42
-  visualization：
+  visualizer：
     phase_portrait：
       - kind: Re_Im
         modes: [0]
@@ -160,7 +160,7 @@ run:
 
 ## 版本说明与容量保护
 
-- v0.1.2 支持 NumPy + Euler–Maruyama，Milstein 为占位实现；支持多 IC 语义：
+- v0.1.3 支持 NumPy + Euler–Maruyama，Milstein 为占位实现；支持多 IC 语义：
   - 当 `model.ic` 包含多个向量时，视为多个独立配置（除 IC 不同外皆相同）逐一仿真。
   - 每个 IC 的时序保存为 `time_series/timeseries_icXX.npz`。
   - 每个 IC 的图片保存到 `figures/icXX/`。

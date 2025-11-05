@@ -1,7 +1,7 @@
 """
 QPhaseSDE: Run Snapshot
 -----------------------
-Create reproducible run snapshots (config, visualization, RNG metadata, optional
+Create reproducible run snapshots (config, visualizer, RNG metadata, optional
 model copy) in a stable directory layout under each run.
 
 Behavior
@@ -12,7 +12,7 @@ Behavior
 Notes
 -----
 - Prefers ruamel.yaml; falls back to PyYAML when available. Raises if neither is installed.
-- Certain legacy visualization keys may be stripped for forward compatibility.
+- Certain legacy visualizer keys may be stripped for forward compatibility.
 """
 
 __all__ = [
@@ -54,15 +54,15 @@ def write_run_snapshot(run_dir: str | Path,
 					   config: Dict,
 					   model_path: Optional[str | Path] = None,
 					   seed: Optional[int] = None,
-					   visualization: Optional[Dict] = None,
-					   profile_visualization: Optional[Dict] = None,
+					   visualizer: Optional[Dict] = None,
+					   profile_visualizer: Optional[Dict] = None,
 					   rng_info: Optional[Dict] = None,
 					   per_traj_seeds: Optional[List[int]] = None,
 					   seed_file_used: Optional[str] = None,
 					   registry_meta: Optional[Dict] = None) -> None:
 	"""Write reproducible run snapshot files under ``run_dir/config_snapshot``.
 
-	Persists config, visualization, RNG metadata, per-trajectory seeds, model copy,
+	Persists config, visualizer, RNG metadata, per-trajectory seeds, model copy,
 	and registry provenance as YAML or text files in a stable directory layout.
 
 	Parameters
@@ -70,15 +70,15 @@ def write_run_snapshot(run_dir: str | Path,
 	run_dir : str or pathlib.Path
 		Run directory under which the ``config_snapshot`` folder will be created.
 	config : dict
-		Core run configuration (visualization keys are stripped).
+		Core run configuration (visualizer keys are stripped).
 	model_path : str or pathlib.Path, optional
 		Path to the model file to copy for provenance.
 	seed : int, optional
 		Random seed (legacy; now stored in ``rng_info``).
-	visualization : dict, optional
+	visualizer : dict, optional
 		Visualization configuration payload.
-	profile_visualization : dict, optional
-		Profile visualization configuration payload.
+	profile_visualizer : dict, optional
+		Profile visualizer configuration payload.
 	rng_info : dict, optional
 		RNG metadata to write to ``seed.yaml``.
 	per_traj_seeds : list[int], optional
@@ -102,27 +102,42 @@ def write_run_snapshot(run_dir: str | Path,
 	logs = run_dir / "logs"
 	snap.mkdir(parents=True, exist_ok=True)
 	logs.mkdir(parents=True, exist_ok=True)
-	# Remove any legacy visualization keys from config.json to keep it focused
-	cfg_clean = dict(config)
-	for k in ("visualization", "profile_visualization", "viz"):
-		if k in cfg_clean:
-			cfg_clean.pop(k, None)
-	_dump_yaml(snap / "config.yaml", cfg_clean)
-	# Write separate visualization.yaml if provided
-	if visualization is not None or profile_visualization is not None:
-		# drop legacy 'phase' key if present under visualization
+	# Prepare config snapshot content
+	cfg_in = dict(config or {})
+	if "engine_config" in cfg_in and "engine_job" in cfg_in:
+		# Only persist EngineConfig and EngineJob sections plus minimal labels
+		cfg_out = {
+			"engine_config": cfg_in.get("engine_config"),
+			"engine_job": cfg_in.get("engine_job"),
+		}
+		# Optional labels for convenience (non-critical)
+		if "job_index" in cfg_in:
+			cfg_out["job_index"] = cfg_in.get("job_index")
+		if "job_name" in cfg_in:
+			cfg_out["job_name"] = cfg_in.get("job_name")
+		_dump_yaml(snap / "config.yaml", cfg_out)
+	else:
+		# Legacy/flat payload: strip visualizer keys and persist as-is
+		cfg_clean = dict(cfg_in)
+		for k in ("visualizer", "profile_visualizer", "viz"):
+			if k in cfg_clean:
+				cfg_clean.pop(k, None)
+		_dump_yaml(snap / "config.yaml", cfg_clean)
+	# Write separate visualizer.yaml if provided
+	if visualizer is not None or profile_visualizer is not None:
+		# drop legacy 'phase' key if present under visualizer
 		viz_clean = None
-		if isinstance(visualization, dict):
-			viz_clean = dict(visualization)
+		if isinstance(visualizer, dict):
+			viz_clean = dict(visualizer)
 			if 'phase' in viz_clean:
 				viz_clean.pop('phase', None)
 		else:
-			viz_clean = visualization
+			viz_clean = visualizer
 		viz_payload = {
-			"visualization": viz_clean,
-			"profile_visualization": profile_visualization,
+			"visualizer": viz_clean,
+			"profile_visualizer": profile_visualizer,
 		}
-		_dump_yaml(snap / "visualization.yaml", viz_payload)
+		_dump_yaml(snap / "visualizer.yaml", viz_payload)
 	# seed.txt removed in favor of seed.yaml + seeds.txt only
 	# RNG metadata snapshot
 	if rng_info is not None:

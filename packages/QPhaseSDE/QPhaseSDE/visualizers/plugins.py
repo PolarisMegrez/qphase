@@ -1,7 +1,7 @@
 """
 QPhaseSDE: Visualizer plugins
 -----------------------------
-Discover and register visualization plugins provided by third-party packages or
+Discover and register visualizer plugins provided by third-party packages or
 local modules.
 
 Behavior
@@ -25,7 +25,8 @@ __all__ = [
     "register_from_paths",
 ]
 
-from .register import register_lazy
+from ..core.registry import namespaced
+register, register_lazy = namespaced("visualizer")
 
 def register_entry_points(group: str = "qphasesde.visualizers") -> None:
     """

@@ -1,6 +1,8 @@
-# QPhaseSDE v0.1.2 Configuration Specification (Triad YAML)
+# QPhaseSDE v0.1.3 Configuration Specification (Triad YAML)
 
-This document describes the expected YAML configuration for the CLI `qps run sde` in v0.1.2. The configuration is organized into three sections ("triad"): `model`, `profile`, and `run`.
+> Note: This document describes the legacy triad format. For the new jobs-based configuration with sweep DSL, see `config_spec_en_v2.md`.
+
+This document describes the expected YAML configuration for the CLI `qps run sde` in v0.1.3. The configuration is organized into three sections ("triad"): `model`, `profile`, and `run`.
 
 - Audience: practitioners familiar with SDE modeling and reproducible simulations.
 - Goal: predictable, validated inputs with clear defaults and required fields.
@@ -51,14 +53,14 @@ Controls execution details that don’t affect the physics.
 
 Fields:
 - backend: "numpy" (default) | "numba" (reserved)
-- solver: "euler" (default) | "milstein" (placeholder in v0.1.2, falls back to euler)
+- solver: "euler" (default) | "milstein" (placeholder in v0.1.3, falls back to euler)
 - save:
   - root: string (default: `runs`) — output root directory
   - save_every: int (optional) — decimation factor for saved time series
   - save_timeseries: bool (required) — whether to persist NPZ time series per IC
   - save_psd_complex: bool (required) — whether to compute/save complex-PSD NPZ per IC
   - save_psd_modular: bool (required) — whether to compute/save modular-PSD NPZ per IC
-- visualization (optional): matplotlib kwargs and PSD conventions
+- visualizer (optional): matplotlib kwargs and PSD conventions
   - phase_portrait:
     - Re_Im: mapping for `Re-Im` portraits (preferred key; also accepts `re_im`)
     - abs_abs: mapping for `|.|-|.|` portraits
@@ -78,7 +80,7 @@ profile:
     save_timeseries: true
     save_psd_complex: true
     save_psd_modular: false
-  visualization:
+  visualizer:
     phase_portrait:
       re_im:
         linewidth: 0.8
@@ -94,7 +96,7 @@ profile:
 
 ## 3. run (C-class, required where specified)
 
-Defines the numeric integration and the requested visualizations.
+Defines the numeric integration and the requested visualizers.
 
 Fields:
 - time:
@@ -108,7 +110,7 @@ Fields:
   - rng_stream: "per_trajectory" | "batched" (optional; default "per_trajectory") — controls RNG strategy:
     - per_trajectory: independent RNG stream per trajectory (stable across n_traj changes)
     - batched: single RNG stream for vectorized sampling (faster; sequence changes if n_traj/order changes)
-- visualization (optional):
+- visualizer (optional):
   - phase_portrait: list of per-figure specifications
     - kind: "Re_Im" (preferred) or "re_im", or "abs_abs" (required)
     - modes: list[int] — 1 index for "re_im"; 2 indices for "abs_abs" (required)
@@ -128,7 +130,7 @@ run:
   trajectories:
     n_traj: 4
     master_seed: 42
-  visualization:
+  visualizer:
     phase_portrait:
       - kind: Re_Im
         modes: [0]
@@ -163,10 +165,10 @@ run:
 
 ## Versioning notes and storage guard
 
-- v0.1.2 supports NumPy + Euler–Maruyama, placeholder Milstein, and multi-IC semantics:
+- v0.1.3 supports NumPy + Euler–Maruyama, placeholder Milstein, and multi-IC semantics:
   - If `model.ic` contains multiple vectors, each IC is simulated independently with the same settings.
   - Time series are saved per-IC as `time_series/timeseries_icXX.npz`.
   - Figures are saved per-IC under `figures/icXX/`.
   - PSD files are saved per-IC when toggles are enabled.
 - To prevent runaway disk usage, the CLI estimates time-series storage and aborts if it exceeds a default 1 GiB threshold. Override with `--max-storage-gb`.
-- Future versions will expand solvers, backends, and visualization types.
+- Future versions will expand solvers, backends, and visualizer types.

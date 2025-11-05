@@ -1,4 +1,4 @@
-# QPhaseSDE v0.1.2
+# QPhaseSDE v0.1.3
 
 QPhaseSDE is a configuration-driven framework for simulating complex-valued stochastic differential equations (SDEs) in quantum optics. It supports multi-trajectory simulations, time-series data output, and automatic generation of phase portraits and power spectral density (PSD) plots — all managed through a simple YAML configuration file.
 
@@ -68,7 +68,7 @@ profile:
     save_timeseries: true
     save_psd_complex: false
     save_psd_modular: false
-  visualization:
+  visualizer:
     psd:
       convention: symmetric         # or pragmatic
       x_scale: linear               # x/y axis scales: linear or log
@@ -77,7 +77,7 @@ profile:
 run:
   time: { dt: 0.001, steps: 200000 }
   trajectories: { n_traj: 10, master_seed: 42 }
-  visualization:
+  visualizer:
     phase_portrait:
       - kind: Re_Im
         modes: [0]
@@ -113,7 +113,7 @@ Notes for YAML users
 - `docs/` — configuration specs and user guides (EN/ZH)
 - `tests/` — local smoke tests
 
-Internals rely on a central registry (`QPhaseSDE.core.registry.registry`) to create pluggable components by name (e.g., `visualization:psd`). The visualizer service validates specs, slices time windows, merges styles, dispatches renderers, and saves images.
+Internals rely on a central registry (`QPhaseSDE.core.registry.registry`) to create pluggable components by name (e.g., `visualizer:psd`). The visualizer service validates specs, slices time windows, merges styles, dispatches renderers, and saves images.
 
 ## Notes
 

@@ -15,7 +15,6 @@ Notes
 
 __all__ = [
     "render_phase_portrait",
-    "validate_phase_spec",
 ]
 
 from ..utils import _time_to_index
@@ -98,64 +97,4 @@ def render_phase_portrait(
         raise QPSConfigError(f'[523] Unknown phase kind: {kind}')
 
 
-def validate_phase_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalize and validate a phase-portrait spec dict.
-
-    Ensures keys:
-        - kind ('re_im'|'abs_abs')
-        - modes (list[int])
-        - optional t_range (list[float] length 2 with t_end > t_start)
-
-    Parameters
-    ----------
-    spec : dict
-        Input spec dictionary to validate and normalize.
-
-    Returns
-    -------
-    dict
-        Normalized spec dict with keys: kind, modes, t_range.
-
-    Raises
-    ------
-    QPSConfigError
-        [524] If kind is unsupported.
-        [525] If 're_im' kind and modes does not contain exactly one index.
-        [526] If 'abs_abs' kind and modes does not contain exactly two indices.
-        [527] If t_range is not a valid [t_start, t_end] list.
-        [528] If t_range does not satisfy t_end > t_start.
-
-    Examples
-    --------
-    >>> spec = {"kind": "re_im", "modes": [0], "t_range": [0.0, 10.0]}
-    >>> out = validate_phase_spec(spec)
-    >>> print(out)
-    {'kind': 're_im', 'modes': [0], 't_range': [0.0, 10.0]}
-    """
-    out: Dict[str, Any] = {}
-    kind = str(spec.get("kind"))
-    if kind in ("Re_Im", "re_im"):
-        kind = "re_im"
-    elif kind in ("Abs_Abs", "abs_abs"):
-        kind = "abs_abs"
-    else:
-        raise QPSConfigError("[524] Unsupported kind for phase portrait")
-    modes = list(spec.get("modes", []))
-    if kind == "re_im" and len(modes) != 1:
-        raise QPSConfigError("[525] re_im requires exactly one mode index in modes")
-    if kind == "abs_abs" and len(modes) != 2:
-        raise QPSConfigError("[526] abs_abs requires exactly two mode indices in modes")
-    t_range = spec.get("t_range")
-    if t_range is not None:
-        if not (isinstance(t_range, (list, tuple)) and len(t_range) == 2):
-            raise QPSConfigError("[527] t_range must be [t_start, t_end]")
-        t0, t1 = float(t_range[0]), float(t_range[1])
-        if not (t1 > t0):
-            raise QPSConfigError("[528] t_range must satisfy t_end > t_start")
-        out["t_range"] = [t0, t1]
-    else:
-        out["t_range"] = None
-    out["kind"] = kind
-    out["modes"] = modes
-    return out
+## Note: Validation moved to Pydantic models in visualizers/specs.py.

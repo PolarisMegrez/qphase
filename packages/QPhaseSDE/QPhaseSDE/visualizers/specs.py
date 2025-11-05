@@ -1,8 +1,8 @@
 """
 QPhaseSDE: Visualization specs
 ------------------------------
-Pydantic models that describe the input schema for visualization requests used
-by the visualization service and renderers.
+Pydantic models that describe the input schema for visualizer requests used
+by the visualizer service and renderers.
 
 Behavior
 - Provide strict validation and light normalization (e.g., defaults) before a
@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field, model_validator
 
 class BaseSpec(BaseModel):
     """
-    Base class for visualization specification schemas.
+    Base class for visualizer specification schemas.
 
     Parameters
     ----------

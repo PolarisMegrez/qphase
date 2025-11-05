@@ -26,6 +26,7 @@ from ..core.errors import QPSIOError
 __all__ = [
 	"save_time_series",
 	"save_manifest",
+	"save_npz",
 	"save_psd",
 	"load_time_series",
 ]
@@ -87,25 +88,21 @@ def save_manifest(run_dir: str | Path, manifest: dict) -> None:
 	except Exception as e:
 		raise QPSIOError(f"[103] Failed to write manifest: {e}")
 
-def save_psd(run_dir: str | Path, ic_tag: str, *, kind: str, convention: str, axis: np.ndarray, psd: np.ndarray, modes: list[int]) -> Path:
-	"""Save PSD arrays into ``run_dir/psd/<ic_tag>/psd_<kind>_<convention>.npz``.
+def save_npz(run_dir: str | Path, ic_tag: str, name: str, payload: dict) -> Path:
+	"""Save an analysis artifact payload into ``run_dir/<prefix>/<ic_tag>/<name>.npz``.
 
 	Parameters
 	----------
 	run_dir : str or pathlib.Path
-		Run directory where the ``psd/<ic_tag>`` folder will be created.
+		Run directory where the artifact subfolder will be created.
 	ic_tag : str
 		Identifier for the initial condition bucket; used as a subfolder name.
-	kind : str
-		PSD kind (e.g., "complex" or "modular").
-	convention : str
-		PSD normalization convention (e.g., "symmetric" | "unitary" | "pragmatic").
-	axis : numpy.ndarray
-		Frequency axis with shape ``(n_freq,)``.
-	psd : numpy.ndarray
-		PSD values with shape ``(n_freq, n_modes)``.
-	modes : list[int]
-		Indices of modes included in the PSD.
+	name : str
+		Base artifact name (without extension). The first token before '_' is used
+		as the top-level subfolder under the run directory (e.g., 'psd_...').
+	payload : dict
+		A JSON/NumPy-serializable mapping to persist into the NPZ file. Arrays
+		will be saved directly; lists will be converted as-is.
 
 	Returns
 	-------
@@ -115,29 +112,40 @@ def save_psd(run_dir: str | Path, ic_tag: str, *, kind: str, convention: str, ax
 	Raises
 	------
 	QPSIOError
-		- [103] Failed to save the PSD NPZ due to an IO error.
+		- [103] Failed to save the NPZ due to an IO error.
 
 	Examples
 	--------
-	>>> # save_psd(run_dir, "ic0", kind="complex", convention="symmetric", axis=axis, psd=psd, modes=[0,1])  # doctest: +SKIP
+	>>> # save_npz(run_dir, "ic00", "psd_complex_symmetric", {"axis": axis, "psd": psd})  # doctest: +SKIP
 	"""
 	try:
 		run_dir = Path(run_dir)
-		psd_dir = run_dir / "psd" / ic_tag
-		psd_dir.mkdir(parents=True, exist_ok=True)
-		fname = f"psd_{kind}_{convention}.npz"
-		fpath = psd_dir / fname
-		np.savez_compressed(
-			fpath,
-			axis=axis,
-			psd=psd,
-			modes=np.array(modes, dtype=int),
-			kind=kind,
-			convention=convention,
-		)
+		prefix = str(name).split("_", 1)[0] if "_" in str(name) else str(name)
+		art_dir = run_dir / prefix / ic_tag
+		art_dir.mkdir(parents=True, exist_ok=True)
+		fpath = art_dir / f"{name}.npz"
+		# Flatten dict to savez kwargs
+		kwargs = {k: (np.asarray(v) if hasattr(v, "__array__") else v) for k, v in (payload or {}).items()}
+		np.savez_compressed(fpath, **kwargs)
 		return fpath
 	except Exception as e:
-		raise QPSIOError(f"[103] Failed to save PSD: {e}")
+		raise QPSIOError(f"[103] Failed to save artifact '{name}': {e}")
+
+def save_psd(run_dir: str | Path, ic_tag: str, *, kind: str, convention: str, axis: np.ndarray, psd: np.ndarray, modes: list[int]) -> Path:
+	"""Compatibility wrapper: delegate PSD saving to ``save_npz``.
+
+	Uses artifact name ``psd_{kind}_{convention}`` and stores the standard keys
+	(axis, psd, modes, kind, convention).
+	"""
+	name = f"psd_{kind}_{convention}"
+	payload = {
+		"axis": axis,
+		"psd": psd,
+		"modes": np.asarray(modes, dtype=int),
+		"kind": kind,
+		"convention": convention,
+	}
+	return save_npz(run_dir, ic_tag, name, payload)
 
 def load_time_series(run_dir: str | Path, filename: str = "timeseries.npz") -> TrajectorySetLike:
 	"""Load a trajectory set saved by ``save_time_series``.

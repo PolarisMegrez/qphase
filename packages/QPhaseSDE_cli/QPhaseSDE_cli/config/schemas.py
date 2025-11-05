@@ -10,7 +10,7 @@ Key highlights:
 - profile.viz.phase carries per-kind matplotlib kwargs to style the plots.
 """
 
-from typing import Dict, List, Literal, Optional, Any
+from typing import Dict, List, Literal, Optional, Any, Union
 from pydantic import BaseModel, Field, model_validator
 try:
     from pydantic import ConfigDict  # pydantic v2
@@ -73,7 +73,7 @@ class ModelConfig(BaseModel):
 
 class SaveConfig(BaseModel):
     """Save parameters: root directory and optional save decimation."""
-    root: str = Field(default="runs")
+    root: str
     save_every: Optional[int] = None
     # Required save toggles
     save_timeseries: bool
@@ -88,20 +88,20 @@ class ProfileVizPhaseConfig(BaseModel):
 
 
 class ProfileConfig(BaseModel):
-    # B-class: defaults allowed for backend and solver
-    backend: Literal["numpy", "numba", "torch", "cupy"] = Field(default="numpy")
-    solver: Literal["euler", "milstein"] = Field(default="euler")
+    # B-class: backend/integrator selection and IO + style knobs
+    backend: Literal["numpy", "numba", "torch", "cupy"]
+    solver: Literal["euler", "milstein"]
     save: SaveConfig
-    # Preferred key: visualization, with nested phase_portrait kinds
-    visualization: Optional[Dict[str, Dict]] = None  # e.g., { phase_portrait: { Re_Im: {...}, abs_abs: {...} } }
+    # Style: matplotlib kwargs and PSD conventions moved here (centralized)
+    visualizer: Optional[Dict[str, Dict]] = None  # e.g., { phase_portrait: { Re_Im: {...}, abs_abs: {...} }, psd: { convention: 'symmetric', x_scale: 'log', y_scale: 'log', xlim: [...] } }
     # Back-compat alias
     viz: Optional[Dict[str, Dict]] = None
 
     @model_validator(mode="after")
     def _migrate_viz(self):
-        if self.visualization is None and self.viz is not None:
-            # migrate old 'viz' to 'visualization'
-            self.visualization = self.viz
+        if self.visualizer is None and self.viz is not None:
+            # migrate old 'viz' to 'visualizer'
+            self.visualizer = self.viz
         return self
 
 
@@ -118,7 +118,7 @@ class TrajConfig(BaseModel):
     seed_file: Optional[str] = None
     master_seed: Optional[int] = None
     # RNG stream strategy for noise sampling
-    rng_stream: Optional[Literal["per_trajectory", "batched"]] = Field(default="per_trajectory")
+    rng_stream: Optional[Literal["per_trajectory", "batched"]] = None
 
     # Forbid unknown fields (e.g., legacy 'seed')
     if ConfigDict is not None:
@@ -167,7 +167,7 @@ class VizPhaseConfig(BaseModel):
 class VizPSDConfig(BaseModel):
     kind: Literal["complex", "modular"]
     modes: List[int]
-    # convention now belongs to profile.visualization.psd; removed here
+    # convention now belongs to profile.visualizer.psd; removed here
     xlim: Optional[List[float]] = None
     t_range: Optional[List[float]] = None
     # placeholders for future features
@@ -189,7 +189,7 @@ class VizPSDConfig(BaseModel):
 
 
 class RunVizConfig(BaseModel):
-    # Preferred: visualization.phase_portrait
+    # Preferred: visualizer.phase_portrait
     phase_portrait: Optional[List[VizPhaseConfig]] = None
     # Back-compat: viz.phase
     phase: Optional[List[VizPhaseConfig]] = None
@@ -198,27 +198,43 @@ class RunVizConfig(BaseModel):
 
 
 class RunConfig(BaseModel):
-    # C-class: dt/steps/n_traj/seed required per instruction.
+    # C-class (runtime numeric knobs only): time + trajectories
     time: TimeConfig
     trajectories: TrajConfig
-    visualization: Optional[RunVizConfig] = None
-    # Back-compat alias
-    viz: Optional[RunVizConfig] = None
 
     @model_validator(mode="after")
     def _migrate_viz(self):
-        if self.visualization is None and self.viz is not None:
-            self.visualization = self.viz
-        # migrate inner key from phase to phase_portrait if needed
-        if self.visualization is not None:
-            rv = self.visualization
-            if getattr(rv, 'phase_portrait', None) is None and getattr(rv, 'phase', None) is not None:
-                rv.phase_portrait = rv.phase
         return self
 
 
 class TriadConfig(BaseModel):
-    """Root triad container with model, profile, and run sections."""
+    """Legacy triad config (model/profile/run). Used for migration to jobs-based config."""
     model: ModelConfig
     profile: ProfileConfig
     run: RunConfig
+
+# New jobs-based schema
+
+class JobSpec(BaseModel):
+    # Unified figure spec list: either phase-portrait or PSD entries
+    kind: Literal["re_im", "Re_Im", "abs_abs", "Abs_Abs", "complex", "modular"]
+    modes: List[int]
+    t_range: Optional[List[float]] = None
+    # Note: xlim now belongs to profile.visualizer.psd (style)
+
+class JobConfig(BaseModel):
+    # Required model section
+    module: str
+    function: str
+    params: Dict
+    ic: List[List[str]]
+    noise: NoiseConfig
+    # Optional metadata and figure requests
+    name: Optional[str] = None
+    combinator: Optional[Literal["cartesian", "zipped"]] = None
+    visualizer: Optional[List[JobSpec]] = None
+
+class RootConfig(BaseModel):
+    profile: ProfileConfig
+    run: RunConfig
+    jobs: List[JobConfig]

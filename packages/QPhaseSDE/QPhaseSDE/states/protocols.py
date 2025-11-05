@@ -2,7 +2,7 @@
 QPhaseSDE: State Protocols
 --------------------------
 Contracts extending StateBase with optional higher-level conveniences used by
-downstream analysis and visualization. Implementations must remain backend-
+downstream analysis and visualizer. Implementations must remain backend-
 agnostic and delegate array logic to BackendBase.
 
 Notes
@@ -24,7 +24,7 @@ class ExtendedState(StateBase, Protocol):
   """
   Protocol for extended state operations supporting slicing, conversion, and persistence.
 
-  Provides higher-level conveniences for downstream analysis and visualization, while remaining backend-agnostic.
+  Provides higher-level conveniences for downstream analysis and visualizer, while remaining backend-agnostic.
 
   Parameters
   ----------

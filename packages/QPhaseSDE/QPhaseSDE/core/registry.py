@@ -2,7 +2,7 @@
 QPhaseSDE: Registry
 -------------------
 Lightweight, centralized registries for classes and functions across QPhaseSDE
-namespaces (integrator, noise_model, backend, visualization) with a unified
+namespaces (integrator, noise_model, backend, visualizer) with a unified
 factory interface.
 
 Behavior
@@ -33,6 +33,7 @@ __all__ = [
     "registry",
     "register",
     "register_lazy",
+    "namespaced",
 ]
 
 Namespace = str
@@ -90,7 +91,7 @@ class RegistryCenter:
     3
     """
 
-    VALID_NAMESPACES = {"integrator", "noise_model", "backend", "visualization", "default"}
+    VALID_NAMESPACES = {"integrator", "noise_model", "backend", "visualizer", "default"}
 
     def __init__(self) -> None:
         self._tables: Dict[Namespace, Dict[Name, _Entry]] = {}
@@ -438,3 +439,18 @@ def register_lazy(namespace: Namespace, name: Name, target: str, **meta: Any) ->
         Triggers import/instantiation of lazy entries on first use.
     """
     registry.register_lazy(namespace, name, target, **meta)
+
+def namespaced(namespace: Namespace):
+    """Return bound register helpers for a specific namespace.
+
+    Examples
+    --------
+    >>> register, register_lazy = namespaced("backend")
+    >>> register_lazy("numpy", "QPhaseSDE.backends.numpy_backend:NumpyBackend")  # doctest: +SKIP
+    """
+    ns = str(namespace)
+    def _reg(name: Name, builder: Builder, **meta: Any) -> None:
+        registry.register(ns, name, builder, **meta)
+    def _reg_lazy(name: Name, target: str, **meta: Any) -> None:
+        registry.register_lazy(ns, name, target, **meta)
+    return _reg, _reg_lazy

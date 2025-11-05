@@ -1,0 +1,22 @@
+# System-level parameters (advanced): centralize here for expert control.
+# These affect the behavior/semantics of the system and are not intended to be
+# casually modified by end users. Do NOT snapshot these into per-run archives.
+
+rng:
+  strategy: "per_trajectory"      # 'per_trajectory' | 'batched'
+
+numeric:
+  float_dtype: "float64"           # default floating dtype for internal ops
+
+engine:
+  integrator_alias:
+    milstein: "euler_maruyama"    # temporary alias until Milstein ships
+
+registry:
+  lazy_import: true
+  introspection:
+    expose_builtin_tags: true
+
+# Job orchestration policy (system-level)
+jobs:
+  allow_parallel: false

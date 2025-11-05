@@ -1,0 +1,33 @@
+
+profile:
+  backend: numpy
+  solver: euler
+  save:
+    root: runs
+    save_every: 10
+    save_timeseries: true
+    save_psd_complex: false
+    save_psd_modular: false
+run:
+  time:
+    dt: 0.001
+    steps: 120
+  trajectories:
+    n_traj: 4
+    master_seed: 111
+jobs:
+  - name: sweep_str_cart
+    module: models.vdp_two_mode
+    function: build_sde
+    params:
+      g: lin(0.4, 0.5, 2)
+      D: [0.01, 0.02]
+      omega_a: 0.005
+      omega_b: 0.0
+      gamma_a: 2.0
+      gamma_b: 1.0
+      Gamma: 0.01
+    ic:
+      - ["7.0+0.0j", "0.0-7.0j"]
+    noise:
+      kind: independent

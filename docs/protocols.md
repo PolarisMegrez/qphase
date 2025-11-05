@@ -27,8 +27,8 @@ Semantics: view returns aliasing views when possible; copy returns independent s
 - Service layer selects renderer via registry, merges styles, renders and saves figures, and returns metadata. Supports function-style and class-style renderers.
 
 Current built-ins and conventions:
-- Phase portraits: kinds `re_im` and `abs_abs` via `visualization:phase_portrait`
-- Power spectral density (PSD): kinds `complex` and `modular` via `visualization:psd`
+- Phase portraits: kinds `re_im` and `abs_abs` via `visualizer:phase_portrait`
+- Power spectral density (PSD): kinds `complex` and `modular` via `visualizer:psd`
 	- Convention `symmetric`/`unitary`: unitary FFT and angular frequency axis ω
 	- Convention `pragmatic`: engineering FFT and frequency axis f
 	- Axis scales are controlled via style keys `x_scale`/`y_scale` = `linear` or `log`
@@ -44,7 +44,7 @@ Examples:
 from QPhaseSDE.core.registry import registry
 
 # Get a function-style renderer and call it
-render_pp = registry.create("visualization:phase_portrait")
+render_pp = registry.create("visualizer:phase_portrait")
 meta = render_pp(ax, data, {"kind":"re_im", "modes":[0]}, {"linewidth":0.8})
 
 # Use the service to handle validation, slicing, and saving
