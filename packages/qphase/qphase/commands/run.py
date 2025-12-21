@@ -18,7 +18,6 @@ from typing import cast
 
 import typer
 
-from qphase.core.system_config import load_system_config
 from qphase.core import JobProgressUpdate, Scheduler
 from qphase.core.config_loader import load_jobs_from_files
 from qphase.core.errors import (
@@ -27,6 +26,7 @@ from qphase.core.errors import (
     get_logger,
 )
 from qphase.core.registry import discovery, registry
+from qphase.core.system_config import load_system_config
 
 app = typer.Typer()
 

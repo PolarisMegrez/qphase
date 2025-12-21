@@ -179,21 +179,21 @@ def list_available_jobs(system_config: SystemConfig) -> list[str]:
 # =============================================================================
 
 
-def load_global_config(global_config_path: Path) -> dict[str, Any]:
+def load_global_config(global_path: Path) -> dict[str, Any]:
     """Load the global plugin configuration from YAML file."""
-    if not global_config_path.exists():
+    if not global_path.exists():
         # Silent Generation: Create empty global config if missing
         try:
-            global_config_path.parent.mkdir(parents=True, exist_ok=True)
-            save_yaml({}, global_config_path)
-            logger.info(f"Created empty global config at {global_config_path}")
+            global_path.parent.mkdir(parents=True, exist_ok=True)
+            save_yaml({}, global_path)
+            logger.info(f"Created empty global config at {global_path}")
             return {}
         except Exception as e:
-            logger.warning(f"Failed to create global config at {global_config_path}: {e}")
+            logger.warning(f"Failed to create global config at {global_path}: {e}")
             return {}
             
     try:
-        return load_yaml(global_config_path)
+        return load_yaml(global_path)
     except (QPhaseIOError, QPhaseConfigError):
         return {}
 

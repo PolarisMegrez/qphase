@@ -20,7 +20,6 @@ import typer
 from rich.console import Console
 from rich.syntax import Syntax
 
-from qphase.core.system_config import load_system_config, save_user_config
 from qphase.core import (
     SystemConfig,
 )
@@ -30,6 +29,7 @@ from qphase.core.config_loader import (
     save_global_config,
 )
 from qphase.core.registry import registry
+from qphase.core.system_config import load_system_config, save_user_config
 
 app = typer.Typer(help="Manage configuration")
 console = Console()
@@ -92,6 +92,7 @@ def show_config(
 
     # Use rich Syntax to print YAML
     from io import StringIO
+
     from ruamel.yaml import YAML
 
     yaml = YAML()
@@ -176,6 +177,7 @@ def reset_config(
             # Reset system config
             # 1. Load package default
             import importlib.resources as ilr
+
             from qphase.core.utils import load_yaml
             
             system_yaml_path = ilr.files("qphase.core").joinpath("system.yaml")

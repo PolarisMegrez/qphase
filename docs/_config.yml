@@ -1,0 +1,48 @@
+# Site settings
+title: QPhase
+description: Modular Quantum Phase-Space Simulation Framework
+author: Yu Xue-Hao
+url: https://polmegrez.github.io/qphase
+repo: https://github.com/PolarisMegrez/qphase
+baseurl: ""
+
+# Build settings
+markdown: kramdown
+highlighter: rouge
+safe: true
+incremental: false
+
+# Kramdown configuration (MathJax support)
+kramdown:
+  math_engine: mathjax
+  input: GFM
+  auto_ids: true
+  hard_wrap: false
+  syntax_highlighter: rouge
+
+# Exclude files from processing
+exclude:
+  - README.md
+  - LICENSE
+  - .gitignore
+  - requirements.txt
+  - setup.py
+  - pyproject.toml
+  - packages/
+
+# Theme (using a built-in theme compatible with GitHub Pages)
+remote_theme: jekyll/minima
+
+# Navigation (using Jekyll's native navigation)
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+
+# Permalinks
+permalink: pretty
+
+# Gist support (disabled noscript)
+gist:
+  noscript: false

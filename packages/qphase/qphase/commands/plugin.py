@@ -20,9 +20,9 @@ from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
 
-from qphase.core.utils import schema_to_yaml_map
 from qphase.core.config_loader import load_global_config
 from qphase.core.registry import discovery, registry
+from qphase.core.utils import schema_to_yaml_map
 
 plugin_app = typer.Typer(help="Manage and discover plugins")
 

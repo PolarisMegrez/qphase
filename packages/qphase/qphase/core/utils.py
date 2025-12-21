@@ -21,9 +21,9 @@ from pydantic_core import PydanticUndefined
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
-_ruamel_yaml: Any = YAML(typ="safe")
-
 from .errors import QPhaseConfigError, QPhaseIOError
+
+_ruamel_yaml: Any = YAML(typ="safe")
 
 
 def load_yaml(path: Path) -> dict[str, Any]:

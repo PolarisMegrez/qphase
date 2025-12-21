@@ -20,7 +20,6 @@ Notes
 """
 
 import importlib.metadata
-import importlib.util
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,11 +27,11 @@ from datetime import datetime, timezone
 from importlib import import_module
 from typing import Any
 
-from .system_config import load_system_config
 from .errors import (
     QPhaseConfigError,
     QPhasePluginError,
 )
+from .system_config import load_system_config
 from .utils import load_yaml
 
 # Get UTC timezone
@@ -415,7 +414,7 @@ class RegistryCenter:
 
                     scanable_params[field_name] = is_scanable
         except Exception as e:
-            print(f"DEBUG: get_scanable_params failed for {plugin_type}:{name}: {e}")
+            print(f"DEBUG: get_scanable_params failed for {namespace}:{name}: {e}")
             # If we can't inspect the schema, return empty dict
             # The scheduler will fall back to heuristic detection
             pass
@@ -576,7 +575,7 @@ class DiscoveryService:
                 continue
 
             try:
-                data = load_yaml_file(plugins_file)
+                data = load_yaml(plugins_file)
             except Exception:
                 continue
 

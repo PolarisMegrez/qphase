@@ -25,7 +25,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from .errors import QPhaseConfigError, get_logger
-from .utils import save_yaml, deep_merge_dicts, load_yaml
+from .utils import deep_merge_dicts, load_yaml, save_yaml
 
 __all__ = ["SystemConfig", "PathsConfig"]
 

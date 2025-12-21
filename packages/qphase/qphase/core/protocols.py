@@ -23,7 +23,7 @@ Notes
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 # Self type for factory methods
 _R = TypeVar("_R", bound="ResultBase")

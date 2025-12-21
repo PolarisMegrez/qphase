@@ -15,12 +15,12 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from qphase.core.system_config import load_system_config
 from qphase.core.config_loader import (
     construct_plugins_config,
     save_global_config,
 )
 from qphase.core.registry import discovery, registry
+from qphase.core.system_config import load_system_config
 
 
 def init_command(

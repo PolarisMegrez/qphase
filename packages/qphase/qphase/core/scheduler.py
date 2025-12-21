@@ -39,7 +39,7 @@ from .errors import (
     get_logger,
 )
 from .job_expansion import JobExpander
-from .protocols import ResultBase, ResultProtocol
+from .protocols import ResultProtocol
 from .registry import registry
 from .system_config import SystemConfig, load_system_config
 
