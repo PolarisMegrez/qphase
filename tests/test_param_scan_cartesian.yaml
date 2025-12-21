@@ -1,0 +1,30 @@
+# Test Parameter Scan - Cartesian Product
+# This tests scanning parameters using cartesian product expansion
+
+name: "test_cartesian_scan"
+
+# Engine configuration
+engine:
+  sde:
+    t_end: [5.0, 10.0]
+
+# Plugin configurations
+backend:
+  numpy:
+    float_dtype: float64
+
+integrator:
+  euler:
+    dt: [0.001, 0.01]  # 2 values - marked as scanable in schema
+
+model:
+  vdp_two_mode:
+    D: 1.0
+    omega_a: 1.0
+    omega_b: 1.0
+    gamma_a: 0.1
+    gamma_b: 0.1
+    Gamma: 1.0
+    g: 0.5
+
+# Expected: 2 × 1 = 2 jobs (dt has 2 values)

@@ -1,0 +1,17 @@
+# Test Visualization Job - Single Job Format
+name: "test_visualization"
+# Engine configuration
+engine:
+  viz:
+    specs:
+      - kind: "re_im"
+        modes: [0]
+      - kind: "complex"
+        modes: [0]
+        convention: "symmetric"
+
+# Input dependency
+input: "test_simulation"
+
+# Output destination
+output: "visualized_data"
