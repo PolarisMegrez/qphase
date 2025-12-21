@@ -18,14 +18,15 @@ from typing import cast
 
 import typer
 
+from qphase.core.system_config import load_system_config
 from qphase.core import JobProgressUpdate, Scheduler
-from qphase.core.config_loader import load_jobs_from_files, load_system_config
+from qphase.core.config_loader import load_jobs_from_files
 from qphase.core.errors import (
     QPhaseError,
     configure_logging,
     get_logger,
 )
-from qphase.core.registry import registry
+from qphase.core.registry import discovery, registry
 
 app = typer.Typer()
 
@@ -41,6 +42,10 @@ def list(
     from rich.table import Table
 
     console = Console()
+
+    # Ensure plugins are discovered
+    discovery.discover_plugins()
+    discovery.discover_local_plugins()
 
     # Get engine plugins from registry
     engine_plugins = registry.list(namespace="engine")
@@ -145,6 +150,10 @@ def jobs(
     log = get_logger()
 
     try:
+        # Ensure plugins are discovered
+        discovery.discover_plugins()
+        discovery.discover_local_plugins()
+
         # Resolve all config file paths
         cfg_paths = []
         for config in configs:

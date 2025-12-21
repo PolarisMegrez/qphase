@@ -7,128 +7,18 @@ configuration I/O, replacing the legacy `loader.py` and `system_loader.py`.
 
 from __future__ import annotations
 
-import importlib.resources as ilr
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from .config import JobConfig, JobList
 from .errors import QPhaseConfigError, QPhaseIOError, get_logger
-from .system_config import SystemConfig
-from .utils import deep_copy, deep_merge_dicts, load_yaml_file
+from .system_config import SystemConfig, load_system_config
+from .utils import deep_copy, deep_merge_dicts, load_yaml, save_yaml
 
 if TYPE_CHECKING:
     from .registry import RegistryCenter
 
 logger = get_logger()
-
-# Cache for system config
-_SYSTEM_CONFIG_CACHE: SystemConfig | None = None
-
-
-# =============================================================================
-# System Configuration
-# =============================================================================
-
-
-def load_system_config(
-    *, force_reload: bool = False, config_path: str | Path | None = None
-) -> SystemConfig:
-    """Load system configuration with override chain.
-
-    Search order (later overrides earlier):
-    1. Package default (qphase.core/system.yaml)
-    2. /etc/qphase/config.yaml (System-wide)
-    3. ~/.qphase/config.yaml (User-specific)
-    4. QPHASE_CONFIG environment variable
-    5. Explicitly provided config_path
-
-    Parameters
-    ----------
-    force_reload : bool
-        If True, ignore cache and reload
-    config_path : str or Path, optional
-        Path to specific config file to override everything else
-
-    Returns
-    -------
-    SystemConfig
-        Loaded system configuration
-
-    """
-    global _SYSTEM_CONFIG_CACHE
-
-    if _SYSTEM_CONFIG_CACHE is not None and not force_reload and config_path is None:
-        return _SYSTEM_CONFIG_CACHE
-
-    # 1. Load package default
-    try:
-        system_yaml_path = ilr.files("qphase.core").joinpath("system.yaml")
-        config_dict = load_yaml_file(Path(str(system_yaml_path)))
-    except Exception:
-        logger.warning("Could not load default system.yaml from package")
-        config_dict = {}
-
-    # 2. System-wide config
-    sys_path = Path("/etc/qphase/config.yaml")
-    if sys_path.exists():
-        try:
-            sys_dict = load_yaml_file(sys_path)
-            config_dict = deep_merge_dicts(config_dict, sys_dict)
-        except Exception as e:
-            logger.warning(f"Failed to load system config {sys_path}: {e}")
-
-    # 3. User config
-    user_path = Path.home() / ".qphase" / "config.yaml"
-    if user_path.exists():
-        try:
-            user_dict = load_yaml_file(user_path)
-            config_dict = deep_merge_dicts(config_dict, user_dict)
-        except Exception as e:
-            logger.warning(f"Failed to load user config {user_path}: {e}")
-
-    # 4. Environment variable
-    env_path = os.environ.get("QPHASE_SYSTEM_CONFIG")
-    if env_path:
-        path = Path(env_path)
-        if path.exists():
-            try:
-                env_dict = load_yaml_file(path)
-                config_dict = deep_merge_dicts(config_dict, env_dict)
-            except Exception as e:
-                logger.warning(f"Failed to load env config {path}: {e}")
-
-    # 5. Explicit path
-    if config_path:
-        path = Path(config_path)
-        if path.exists():
-            try:
-                explicit_dict = load_yaml_file(path)
-                config_dict = deep_merge_dicts(config_dict, explicit_dict)
-            except Exception as e:
-                raise QPhaseConfigError(
-                    f"Failed to load explicit config {path}: {e}"
-                ) from e
-
-    try:
-        _SYSTEM_CONFIG_CACHE = SystemConfig(**config_dict)
-        return _SYSTEM_CONFIG_CACHE
-    except Exception as e:
-        raise QPhaseConfigError(f"Invalid system configuration: {e}") from e
-
-
-def save_user_config(config: SystemConfig) -> None:
-    """Save system configuration to user home directory."""
-    user_config_dir = Path.home() / ".qphase"
-    user_config_dir.mkdir(exist_ok=True)
-    user_config_path = user_config_dir / "config.yaml"
-
-    config_dict = config.model_dump()
-    _save_yaml(config_dict, user_config_path)
-
-    global _SYSTEM_CONFIG_CACHE
-    _SYSTEM_CONFIG_CACHE = None
-
 
 def get_system_param(path: str, default: Any = None) -> Any:
     """Get a specific system parameter by dot-separated path."""
@@ -187,7 +77,7 @@ def load_jobs_from_files(file_paths: list[Path]) -> JobList:
 
 def _load_single_job_file(path: Path) -> JobConfig | list[JobConfig]:
     """Load a single job file (can contain one job or a list)."""
-    data = load_yaml_file(path)
+    data = load_yaml(path)
 
     # Case 1: List of jobs
     if isinstance(data, list):
@@ -292,16 +182,25 @@ def list_available_jobs(system_config: SystemConfig) -> list[str]:
 def load_global_config(global_config_path: Path) -> dict[str, Any]:
     """Load the global plugin configuration from YAML file."""
     if not global_config_path.exists():
-        return {}
+        # Silent Generation: Create empty global config if missing
+        try:
+            global_config_path.parent.mkdir(parents=True, exist_ok=True)
+            save_yaml({}, global_config_path)
+            logger.info(f"Created empty global config at {global_config_path}")
+            return {}
+        except Exception as e:
+            logger.warning(f"Failed to create global config at {global_config_path}: {e}")
+            return {}
+            
     try:
-        return load_yaml_file(global_config_path)
+        return load_yaml(global_config_path)
     except (QPhaseIOError, QPhaseConfigError):
         return {}
 
 
 def save_global_config(config: dict[str, Any], path: Path) -> None:
     """Save global configuration to YAML file."""
-    _save_yaml(config, path)
+    save_yaml(config, path)
 
 
 def merge_configs(
@@ -332,7 +231,7 @@ def get_config_for_job(
                 f"Job configuration not found for '{job_name}'. "
                 f"Searched in: {system_config.paths.config_dirs}"
             )
-        job_config = load_yaml_file(job_config_path)
+        job_config = load_yaml(job_config_path)
     else:
         job_config = {}
 
@@ -357,10 +256,17 @@ def construct_plugins_config(reg: RegistryCenter) -> dict[str, dict[str, Any]]:
 
         for plugin_name in ns_plugins:
             try:
-                reg.get_plugin_schema(ns_name, plugin_name)
-                # This would require extract_defaults_from_schema from utils
-                # For now, we skip implementation details as this is rarely used
-                pass
+                schema = reg.get_plugin_schema(ns_name, plugin_name)
+                if schema:
+                    # Use schema_to_yaml_map to generate commented config
+                    from .utils import schema_to_yaml_map
+                    
+                    if ns_name not in plugins_config:
+                        plugins_config[ns_name] = {}
+                        
+                    plugins_config[ns_name][plugin_name] = schema_to_yaml_map(
+                        schema, {}, plugin_name
+                    )
             except Exception:
                 continue
 
@@ -383,20 +289,3 @@ def _find_job_config(config_paths: list[str], job_name: str) -> Path | None:
             if candidate.exists():
                 return candidate
     return None
-
-
-def _save_yaml(data: dict[str, Any], path: Path) -> None:
-    """Save YAML using available library."""
-    try:
-        from ruamel.yaml import YAML
-
-        y = YAML()
-        with open(path, "w", encoding="utf-8") as f:
-            y.dump(data, f)
-    except ImportError:
-        import yaml  # type: ignore[import-untyped]
-
-        with open(path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f)
-    except Exception as e:
-        raise QPhaseIOError(f"Failed to save config to {path}: {e}") from e

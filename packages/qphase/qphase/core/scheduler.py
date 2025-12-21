@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import JobConfig, JobList
-from .config_loader import get_config_for_job, load_system_config
+from .config_loader import get_config_for_job
 from .errors import (
     QPhaseConfigError,
     QPhasePluginError,
@@ -41,7 +41,7 @@ from .errors import (
 from .job_expansion import JobExpander
 from .protocols import ResultBase, ResultProtocol
 from .registry import registry
-from .system_config import SystemConfig
+from .system_config import SystemConfig, load_system_config
 
 log = get_logger()
 
@@ -257,24 +257,12 @@ class Scheduler:
         # Check if input is an external file
         input_path = Path(job.input)
         if input_path.exists():
-            if job.input_loader:
-                try:
-                    loader = registry.create(f"loader:{job.input_loader}")
-                    loaded_data = loader.load(str(input_path))
-                    # Wrap loaded data in a simple Result
-                    from .protocols import ResultBase
-
-                    return ResultBase(data=loaded_data)
-                except Exception as e:
-                    raise QPhasePluginError(
-                        f"Failed to load input '{job.input}' using loader "
-                        f"'{job.input_loader}': {e}"
-                    ) from e
-            else:
-                raise QPhaseConfigError(
-                    f"Job '{job.name}' has file input '{job.input}' but no "
-                    "input_loader specified"
-                )
+            # External file input is not supported without a loader mechanism
+            # which has been removed.
+            raise QPhaseConfigError(
+                f"Job '{job.name}' specifies file input '{job.input}', "
+                "but file loading is not currently supported."
+            )
 
         # Input not found
         raise QPhaseConfigError(

@@ -17,17 +17,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-try:
-    from ruamel.yaml import YAML
+from pydantic_core import PydanticUndefined
+from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedMap
 
-    _ruamel_yaml: Any = YAML(typ="safe")
-except ImportError:
-    import yaml as _ruamel_yaml  # type: ignore[import-untyped,no-redef]
+_ruamel_yaml: Any = YAML(typ="safe")
 
 from .errors import QPhaseConfigError, QPhaseIOError
 
 
-def load_yaml_file(path: Path) -> dict[str, Any]:
+def load_yaml(path: Path) -> dict[str, Any]:
     """Load YAML file using available parser with error handling.
 
     Parameters
@@ -51,14 +50,21 @@ def load_yaml_file(path: Path) -> dict[str, Any]:
 
     try:
         with open(path, encoding="utf-8") as f:
-            if hasattr(_ruamel_yaml, "safe_load"):
-                return dict(_ruamel_yaml.safe_load(f) or {})
-            elif hasattr(_ruamel_yaml, "load"):
-                return dict(_ruamel_yaml.load(f) or {})
-            else:
-                raise RuntimeError("No YAML parser available")
+            return dict(_ruamel_yaml.load(f) or {})
     except Exception as e:
         raise QPhaseConfigError(f"Failed to parse YAML file {path}: {e}") from e
+
+
+def save_yaml(data: dict[str, Any], path: Path) -> None:
+    """Save YAML using available library."""
+    try:
+        from ruamel.yaml import YAML
+
+        y = YAML()
+        with open(path, "w", encoding="utf-8") as f:
+            y.dump(data, f)
+    except Exception as e:
+        raise QPhaseIOError(f"Failed to save config to {path}: {e}") from e
 
 
 def deep_merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -108,35 +114,52 @@ def deep_copy(data: Any) -> Any:
         return data
 
 
-def extract_defaults_from_schema(schema: type[Any]) -> dict[str, Any]:
-    """Extract default values from a Pydantic schema.
+def schema_to_yaml_map(
+    model_cls: type[Any], existing_values: dict[str, Any], plugin_name: str
+) -> CommentedMap:
+    """Convert a Pydantic model class to a CommentedMap for YAML output.
+
+    Merges existing values from global config if provided. The 'name' field is
+    excluded as it's implicit in the nested config structure.
 
     Parameters
     ----------
-    schema : Type[Any]
-        Pydantic model class (BaseModel subclass).
+    model_cls : type
+        Pydantic model class with model_fields
+    existing_values : dict[str, Any]
+        Existing values from global.yaml to merge
+    plugin_name : str
+        Plugin name (unused, kept for API compatibility)
 
     Returns
     -------
-    Dict[str, Any]
-        Dictionary of field names to their default values.
-        Fields without defaults are omitted.
+    CommentedMap
+        YAML-compatible map with field descriptions as comments
 
     """
-    defaults: dict[str, Any] = {}
+    data = CommentedMap()
 
-    if not hasattr(schema, "model_fields"):
-        return defaults
+    for field_name, field in model_cls.model_fields.items():
 
-    for field_name, field_info in schema.model_fields.items():
-        # Check if field has a default value (not PydanticUndefined)
-        default_val = field_info.default
-        if default_val is not None and "PydanticUndefined" not in repr(default_val):
-            defaults[field_name] = default_val
-        elif field_info.default_factory is not None:
+        # Determine value
+        if field_name in existing_values:
+            value = existing_values[field_name]
+        elif field.default is not PydanticUndefined:
+            value = field.default
+        elif field.default_factory is not None:
             try:
-                defaults[field_name] = field_info.default_factory()
+                value = field.default_factory()
             except Exception:
-                pass
+                value = "<generated>"
+        else:
+            type_str = str(field.annotation).replace("typing.", "")
+            value = f"[REQUIRED] {type_str}"
 
-    return defaults
+        data[field_name] = value
+
+        # Add comment
+        if field.description:
+            comment = field.description
+            data.yaml_add_eol_comment(comment, field_name)
+
+    return data

@@ -45,36 +45,6 @@ class PluginConfigBase(BaseModel):
     # tolerant to user-provided / future fields in plugin configs.
     model_config = ConfigDict(extra="allow")
 
-    @classmethod
-    def from_raw(
-        cls: type["PluginConfigBase"], raw: Any | None = None
-    ) -> "PluginConfigBase":
-        """Normalize and validate `raw` into an instance of this config class.
-
-        Accepts:
-        - None -> produce default instance (using defaults)
-        - dict-like -> validate and construct
-        - already an instance of cls -> returned as-is
-
-        Raises:
-        - pydantic.ValidationError on invalid input (preserved)
-
-        """
-        # 1) None -> produce defaults
-        if raw is None:
-            return cls.model_validate({})
-
-        # 2) already the correct model instance
-        if isinstance(raw, cls):
-            return raw
-
-        # 3) validate dict-like input
-        try:
-            return cls.model_validate(raw)
-        except ValidationError:
-            # let callers handle the ValidationError; preserve traceback
-            raise
-
 
 @runtime_checkable
 class PluginBase(Protocol):
@@ -214,7 +184,7 @@ class EngineBase(PluginBase, Protocol):
         """
         ...
 
-    def run(self, data: Any | None = None) -> ResultBase | Any:
+    def run(self, data: Any | None = None) -> ResultProtocol:
         """Execute the main computational task and return the result.
 
         Parameters
@@ -225,7 +195,7 @@ class EngineBase(PluginBase, Protocol):
 
         Returns
         -------
-        ResultBase | Any
+        ResultProtocol
             The result of the computation.
 
         """

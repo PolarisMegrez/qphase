@@ -16,14 +16,13 @@ from pathlib import Path
 from typing import Any
 
 import typer
-from pydantic_core import PydanticUndefined
 from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
-from ruamel.yaml.comments import CommentedMap
 
+from qphase.core.utils import schema_to_yaml_map
 from qphase.core.config_loader import load_global_config
-from qphase.core.registry import registry
+from qphase.core.registry import discovery, registry
 
 plugin_app = typer.Typer(help="Manage and discover plugins")
 
@@ -39,6 +38,10 @@ def list_command(
     console = Console()
 
     try:
+        # Ensure plugins are discovered
+        discovery.discover_plugins()
+        discovery.discover_local_plugins()
+
         # Parse categories
         if categories is None or categories.strip() == ".":
             category_list = None
@@ -265,8 +268,8 @@ def show_command(
 
     try:
         # Ensure plugins are discovered (including local plugins)
-        registry.discover_plugins()
-        registry.discover_local_plugins()
+        discovery.discover_plugins()
+        discovery.discover_local_plugins()
 
         # Process each plugin
         for i, plugin_spec in enumerate(plugins):
@@ -505,8 +508,8 @@ def template_command(
 
     try:
         # Ensure plugins are discovered (including local plugins)
-        registry.discover_plugins()
-        registry.discover_local_plugins()
+        discovery.discover_plugins()
+        discovery.discover_local_plugins()
 
         # Collect all plugin configs organized by namespace
         all_configs: dict[str, dict[str, Any]] = {}
@@ -551,7 +554,7 @@ def template_command(
                     existing_values = {}
 
                 # Generate template without 'name' field
-                template_data = _model_to_commented_map(schema, existing_values, name)
+                template_data = schema_to_yaml_map(schema, existing_values, name)
 
                 # Organize by namespace
                 if namespace not in all_configs:
@@ -578,57 +581,6 @@ def template_command(
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1) from e
-
-
-def _model_to_commented_map(
-    model_cls, existing_values: dict[str, Any], plugin_name: str
-) -> CommentedMap:
-    """Convert a Pydantic model class to a CommentedMap for YAML output.
-
-    Merges existing values from global config if provided. The 'name' field is
-    excluded as it's implicit in the nested config structure.
-
-    Parameters
-    ----------
-    model_cls : type
-        Pydantic model class with model_fields
-    existing_values : dict[str, Any]
-        Existing values from global.yaml to merge
-    plugin_name : str
-        Plugin name (unused, kept for API compatibility)
-
-    Returns
-    -------
-    CommentedMap
-        YAML-compatible map with field descriptions as comments
-
-    """
-    data = CommentedMap()
-
-    for field_name, field in model_cls.model_fields.items():
-
-        # Determine value
-        if field_name in existing_values:
-            value = existing_values[field_name]
-        elif field.default is not PydanticUndefined:
-            value = field.default
-        elif field.default_factory is not None:
-            try:
-                value = field.default_factory()
-            except Exception:
-                value = "<generated>"
-        else:
-            type_str = str(field.annotation).replace("typing.", "")
-            value = f"[REQUIRED] {type_str}"
-
-        data[field_name] = value
-
-        # Add comment
-        if field.description:
-            comment = field.description
-            data.yaml_add_eol_comment(comment, field_name)
-
-    return data
 
 
 def _display_config(config: Any, fmt: str, output: str) -> None:

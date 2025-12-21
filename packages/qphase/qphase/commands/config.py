@@ -20,10 +20,9 @@ import typer
 from rich.console import Console
 from rich.syntax import Syntax
 
+from qphase.core.system_config import load_system_config, save_user_config
 from qphase.core import (
     SystemConfig,
-    load_system_config,
-    save_user_config,
 )
 from qphase.core.config_loader import (
     construct_plugins_config,
@@ -92,9 +91,14 @@ def show_config(
     console.print(f"\n[bold cyan]{title}[/bold cyan]")
 
     # Use rich Syntax to print YAML
-    import yaml  # type: ignore[import-untyped]
+    from io import StringIO
+    from ruamel.yaml import YAML
 
-    yaml_str = yaml.dump(data, default_flow_style=False)
+    yaml = YAML()
+    stream = StringIO()
+    yaml.dump(data, stream)
+    yaml_str = stream.getvalue()
+    
     syntax = Syntax(yaml_str, "yaml", theme="monokai", line_numbers=True)
     console.print(syntax)
 
@@ -169,8 +173,18 @@ def reset_config(
             raise typer.Abort()
 
         try:
-            default_config = SystemConfig()
-            save_user_config(default_config)
+            # Reset system config
+            # 1. Load package default
+            import importlib.resources as ilr
+            from qphase.core.utils import load_yaml
+            
+            system_yaml_path = ilr.files("qphase.core").joinpath("system.yaml")
+            default_config_dict = load_yaml(Path(str(system_yaml_path)))
+            
+            # 2. Save to user config path
+            config_obj = SystemConfig(**default_config_dict)
+            save_user_config(config_obj)
+            
             console.print("[green]System configuration reset to defaults.[/green]")
         except Exception as e:
             console.print(f"[red]Failed to reset system config: {e}[/red]")

@@ -87,7 +87,6 @@ bundles/
 # Local development folders
 configs/
 models/
-docs/archive/
 tests/
 prompt*
 run_tests.py

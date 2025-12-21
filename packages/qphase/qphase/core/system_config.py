@@ -17,13 +17,19 @@ Notes
 
 """
 
+import importlib.resources as ilr
+import os
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from .errors import QPhaseConfigError, get_logger
+from .utils import save_yaml, deep_merge_dicts, load_yaml
+
 __all__ = ["SystemConfig", "PathsConfig"]
 
+logger = get_logger()
 
 class PathsConfig(BaseModel):
     """Unified path configuration for the system.
@@ -137,3 +143,112 @@ class SystemConfig(BaseModel):
 
         frozen = False
         extra = "forbid"
+
+# Cache for system config
+_SYSTEM_CONFIG_CACHE: SystemConfig | None = None
+
+def load_system_config(
+    *, force_reload: bool = False, config_path: str | Path | None = None
+) -> SystemConfig:
+    """Load system configuration with override chain.
+
+    Search order (later overrides earlier):
+    1. Package default (qphase.core/system.yaml)
+    2. /etc/qphase/config.yaml (System-wide)
+    3. ~/.qphase/config.yaml (User-specific)
+    4. QPHASE_CONFIG environment variable
+    5. Explicitly provided config_path
+
+    Parameters
+    ----------
+    force_reload : bool
+        If True, ignore cache and reload
+    config_path : str or Path, optional
+        Path to specific config file to override everything else
+
+    Returns
+    -------
+    SystemConfig
+        Loaded system configuration
+
+    """
+    global _SYSTEM_CONFIG_CACHE
+
+    if _SYSTEM_CONFIG_CACHE is not None and not force_reload and config_path is None:
+        return _SYSTEM_CONFIG_CACHE
+
+    # 1. Load package default
+    try:
+        system_yaml_path = ilr.files("qphase.core").joinpath("system.yaml")
+        config_dict = load_yaml(Path(str(system_yaml_path)))
+    except Exception:
+        logger.warning("Could not load default system.yaml from package")
+        config_dict = {}
+
+    # 2. System-wide config
+    sys_path = Path("/etc/qphase/config.yaml")
+    if sys_path.exists():
+        try:
+            sys_dict = load_yaml(sys_path)
+            config_dict = deep_merge_dicts(config_dict, sys_dict)
+        except Exception as e:
+            logger.warning(f"Failed to load system config {sys_path}: {e}")
+
+    # 3. User config
+    user_path = Path.home() / ".qphase" / "config.yaml"
+    if user_path.exists():
+        try:
+            user_dict = load_yaml(user_path)
+            config_dict = deep_merge_dicts(config_dict, user_dict)
+        except Exception as e:
+            logger.warning(f"Failed to load user config {user_path}: {e}")
+    else:
+        # Silent Generation: Create user config from package default if missing
+        try:
+            user_path.parent.mkdir(parents=True, exist_ok=True)
+            save_yaml(config_dict, user_path)
+            logger.info(f"Created default user config at {user_path}")
+        except Exception as e:
+            logger.warning(f"Failed to create default user config at {user_path}: {e}")
+
+    # 4. Environment variable
+    env_path = os.environ.get("QPHASE_SYSTEM_CONFIG")
+    if env_path:
+        path = Path(env_path)
+        if path.exists():
+            try:
+                env_dict = load_yaml(path)
+                config_dict = deep_merge_dicts(config_dict, env_dict)
+            except Exception as e:
+                logger.warning(f"Failed to load env config {path}: {e}")
+
+    # 5. Explicit path
+    if config_path:
+        path = Path(config_path)
+        if path.exists():
+            try:
+                explicit_dict = load_yaml(path)
+                config_dict = deep_merge_dicts(config_dict, explicit_dict)
+            except Exception as e:
+                raise QPhaseConfigError(
+                    f"Failed to load explicit config {path}: {e}"
+                ) from e
+
+    try:
+        _SYSTEM_CONFIG_CACHE = SystemConfig(**config_dict)
+        return _SYSTEM_CONFIG_CACHE
+    except Exception as e:
+        raise QPhaseConfigError(f"Invalid system configuration: {e}") from e
+
+
+def save_user_config(config: SystemConfig) -> None:
+    """Save system configuration to user home directory."""
+    user_config_dir = Path.home() / ".qphase"
+    user_config_dir.mkdir(exist_ok=True)
+    user_config_path = user_config_dir / "config.yaml"
+
+    config_dict = config.model_dump()
+    save_yaml(config_dict, user_config_path)
+
+    global _SYSTEM_CONFIG_CACHE
+    _SYSTEM_CONFIG_CACHE = None

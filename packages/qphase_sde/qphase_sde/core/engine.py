@@ -168,8 +168,6 @@ class Engine:
         """
         self.config = config
         self.plugins = plugins or {}
-        print(f"DEBUG: Engine initialized with plugins: {list(self.plugins.keys())}")
-
         self._default_backend = self.plugins.get("backend", backend)
         self._default_integrator = self.plugins.get("integrator", integrator)
 

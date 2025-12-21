@@ -15,12 +15,12 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from qphase.core.system_config import load_system_config
 from qphase.core.config_loader import (
     construct_plugins_config,
-    load_system_config,
     save_global_config,
 )
-from qphase.core.registry import registry
+from qphase.core.registry import discovery, registry
 
 
 def init_command(
@@ -53,9 +53,10 @@ def init_command(
     # 1. Reset Registry and Re-discover
     console.print("  [dim]Resetting registry...[/dim]")
     registry.reset()
+    discovery.reset()
     console.print("  [dim]Discovering plugins...[/dim]")
-    registry.discover_plugins()
-    n_local = registry.discover_local_plugins()
+    discovery.discover_plugins()
+    n_local = discovery.discover_local_plugins()
     console.print(f"    Discovered {n_local} local plugin(s)")
 
     # 2. Load System Config (to get paths)

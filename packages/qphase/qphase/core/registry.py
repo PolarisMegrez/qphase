@@ -28,12 +28,12 @@ from datetime import datetime, timezone
 from importlib import import_module
 from typing import Any
 
-from .config_loader import load_system_config
+from .system_config import load_system_config
 from .errors import (
     QPhaseConfigError,
     QPhasePluginError,
 )
-from .utils import load_yaml_file
+from .utils import load_yaml
 
 # Get UTC timezone
 UTC = timezone.utc
@@ -42,7 +42,9 @@ Builder = Callable[..., Any]
 
 __all__ = [
     "RegistryCenter",
+    "DiscoveryService",
     "registry",
+    "discovery",
 ]
 
 
@@ -81,12 +83,10 @@ class RegistryCenter:
 
     def __init__(self) -> None:
         self._tables: dict[Namespace, dict[Name, _Entry]] = {}
-        self._discovered_entry_points: set[str] = set()
 
     def reset(self) -> None:
         """Reset the registry to its initial state."""
         self._tables.clear()
-        self._discovered_entry_points.clear()
 
     # --------------------------- utilities ---------------------------
     @staticmethod
@@ -328,8 +328,6 @@ class RegistryCenter:
                 # Use model_validate for Pydantic v2, or direct instantiation
                 if hasattr(schema, "model_validate"):
                     config_obj = schema.model_validate(merged_kwargs)
-                elif hasattr(schema, "parse_obj"):  # Pydantic v1 fallback
-                    config_obj = schema.parse_obj(merged_kwargs)
                 else:
                     config_obj = schema(**merged_kwargs)
 
@@ -416,7 +414,8 @@ class RegistryCenter:
                                     is_scanable = True
 
                     scanable_params[field_name] = is_scanable
-        except Exception:
+        except Exception as e:
+            print(f"DEBUG: get_scanable_params failed for {plugin_type}:{name}: {e}")
             # If we can't inspect the schema, return empty dict
             # The scheduler will fall back to heuristic detection
             pass
@@ -456,17 +455,54 @@ class RegistryCenter:
         try:
             if hasattr(schema, "model_validate"):
                 return schema.model_validate(params)
-            elif hasattr(schema, "parse_obj"):
-                return schema.parse_obj(params)
             return schema(**params)
         except Exception as e:
             raise QPhaseConfigError(
                 f"Invalid configuration for '{plugin_type}:{name}': {e}"
             ) from e
 
-    # --------------------------- plugin discovery ---------------------------
+    # --------------------------- introspection ---------------------------
+    def list(self, namespace: Namespace | None = None) -> dict[str, Any]:
+        """List available entries with metadata."""
+        if namespace is None:
+            return {ns: sorted(list(tbl.keys())) for ns, tbl in self._tables.items()}
+        ns = namespace.strip().lower()
+        table = self._tables.get(ns, {})
+        return {
+            name: {
+                "kind": ("callable" if e.kind == "callable" else "dotted"),
+                **(e.meta or {}),
+            }
+            for name, e in table.items()
+        }
+
+    @staticmethod
+    def _infer_builder_type(obj: Any) -> str:
+        try:
+            if callable(obj):
+                return "class" if hasattr(obj, "__mro__") else "function"
+        except Exception:
+            pass
+        return type(obj).__name__.lower()
+
+
+class DiscoveryService:
+    """Service for discovering plugins from entry points and local files."""
+
+    def __init__(self, registry_center: RegistryCenter):
+        self.registry = registry_center
+        self._discovered_entry_points: set[str] = set()
+
+    def reset(self) -> None:
+        """Reset discovery state."""
+        self._discovered_entry_points.clear()
+
     def discover_plugins(self, group: str = "qphase") -> None:
-        """Automatically discover and register plugins from entry points."""
+        """Automatically discover and register plugins from entry points.
+
+        Expects entry points in the group 'qphase' with names in the format
+        'category.name'.
+        """
         eps = importlib.metadata.entry_points(group=group)
 
         for ep in eps:
@@ -476,22 +512,15 @@ class RegistryCenter:
             self._discovered_entry_points.add(ep.name)
 
             # Parse entry point name
-            # Format: "plugin.category.name" or "category.name"
+            # Format: "category.name"
             name_parts = ep.name.split(".")
 
-            if name_parts[0] == "plugin":
-                if len(name_parts) < 3:
-                    continue
-                namespace = name_parts[1]
-                name = ".".join(name_parts[2:])
-            else:
-                # Legacy support or simple format
-                if len(name_parts) == 1:
-                    namespace = "default"
-                    name = name_parts[0]
-                else:
-                    namespace = name_parts[0]
-                    name = ".".join(name_parts[1:])
+            if len(name_parts) < 2:
+                # Invalid format, skip
+                continue
+
+            namespace = name_parts[0]
+            name = ".".join(name_parts[1:])
 
             # Extract package information from entry point
             package_name = None
@@ -507,7 +536,7 @@ class RegistryCenter:
                 # If we can't get package info, just continue
                 pass
 
-            self.register_lazy(
+            self.registry.register_lazy(
                 namespace=namespace,
                 name=name,
                 target=ep.value,
@@ -586,7 +615,7 @@ class RegistryCenter:
                 name = name.strip().lower()
 
                 # Register the plugin
-                self.register_lazy(
+                self.registry.register_lazy(
                     namespace=namespace,
                     name=name,
                     target=target,
@@ -597,37 +626,9 @@ class RegistryCenter:
 
         return discovered_count
 
-    # --------------------------- introspection ---------------------------
-    def list(self, namespace: Namespace | None = None) -> dict[str, Any]:
-        """List available entries with metadata."""
-        if namespace is None:
-            return {ns: sorted(list(tbl.keys())) for ns, tbl in self._tables.items()}
-        ns = namespace.strip().lower()
-        table = self._tables.get(ns, {})
-        return {
-            name: {
-                "kind": ("callable" if e.kind == "callable" else "dotted"),
-                **(e.meta or {}),
-            }
-            for name, e in table.items()
-        }
-
-    @staticmethod
-    def _infer_builder_type(obj: Any) -> str:
-        try:
-            if callable(obj):
-                return "class" if hasattr(obj, "__mro__") else "function"
-        except Exception:
-            pass
-        return type(obj).__name__.lower()
-
 
 # Global singleton
 registry = RegistryCenter()
+discovery = DiscoveryService(registry)
 
-# Auto-discover entry points on import
-try:
-    registry.discover_plugins()
-    registry.discover_local_plugins()
-except Exception:
-    pass
+

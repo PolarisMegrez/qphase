@@ -82,13 +82,6 @@ class JobConfig(BaseModel):
         description="Input data source (upstream job name or file path)",
     )
 
-    # Input loader plugin name (optional)
-    # Used when input is a file path to specify how to load it
-    input_loader: str | None = Field(
-        default=None,
-        description="Plugin name of the loader to use for input file",
-    )
-
     # Output destination (optional)
     # Can be a job name (for passing to downstream job) or a file path
     # (filename only, no extension)
