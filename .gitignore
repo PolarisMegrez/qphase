@@ -48,6 +48,11 @@ desktop.ini
 # Logs and temp
 *.log
 *.tmp
+
+# User Data
+configs/
+models/
+runs/
 *.temp
 ~$*
 
