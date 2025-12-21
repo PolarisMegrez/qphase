@@ -93,4 +93,4 @@ def main(
     return result
 
 
-main.config_schema = EngineConfig
+main.config_schema = EngineConfig  # type: ignore[attr-defined]

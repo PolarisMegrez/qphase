@@ -15,7 +15,7 @@ Notes
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 __all__ = [
     "State",
@@ -23,10 +23,13 @@ __all__ = [
 ]
 from ..core.errors import QPSBackendError
 
-try:
+if TYPE_CHECKING:
     import torch as _torch
-except Exception:  # pragma: no cover
-    _torch = None
+else:
+    try:
+        import torch as _torch
+    except Exception:  # pragma: no cover
+        _torch = None
 
 from qphase_sde.states.base import StateBase as StateLike
 

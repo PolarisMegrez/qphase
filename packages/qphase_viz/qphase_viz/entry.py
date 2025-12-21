@@ -58,9 +58,9 @@ def render_from_spec(
     # Try dispatch by explicit kind field
     spec_kind = str(spec.get("kind", "")) if isinstance(spec, Mapping) else ""
 
-    visualizer = None
+    visualizer: PhasePortraitPlotter | PsdPlotter | None = None
     psd_mode = False
-    vspec = None
+    vspec: PhasePortraitSpec | PsdSpec | None = None
 
     # Determine renderer and validate spec
     if spec_kind in ("re_im", "Re_Im", "abs_abs", "Abs_Abs"):
@@ -150,6 +150,7 @@ def render_from_spec(
     # Render
     if psd_mode:
         # Run analysis
+        assert isinstance(vspec, PsdSpec)
         analyzer_config = PsdAnalyzerConfig(
             kind=vspec.kind, modes=vspec.modes, convention=vspec.convention, dt=dt
         )
@@ -158,8 +159,10 @@ def render_from_spec(
         analysis_result = analyzer.analyze(sliced)
 
         # Pass result to visualizer
+        assert isinstance(visualizer, PsdPlotter)
         category = visualizer.render(ax, analysis_result, plot_style=plot_style)
     else:
+        assert isinstance(visualizer, PhasePortraitPlotter)
         category = visualizer.render(ax, sliced, plot_style=plot_style)
 
     if title:
@@ -243,7 +246,7 @@ class VizEngine:
 
         """
         if config is None:
-            config = VizEngineConfig()
+            config = VizEngineConfig()  # type: ignore[call-arg]
         elif isinstance(config, dict):
             config = VizEngineConfig.model_validate(config)
 

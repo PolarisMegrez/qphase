@@ -31,6 +31,7 @@ __all__ = ["SystemConfig", "PathsConfig"]
 
 logger = get_logger()
 
+
 class PathsConfig(BaseModel):
     """Unified path configuration for the system.
 
@@ -144,8 +145,10 @@ class SystemConfig(BaseModel):
         frozen = False
         extra = "forbid"
 
+
 # Cache for system config
 _SYSTEM_CONFIG_CACHE: SystemConfig | None = None
+
 
 def load_system_config(
     *, force_reload: bool = False, config_path: str | Path | None = None

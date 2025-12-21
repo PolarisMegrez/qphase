@@ -1,32 +1,36 @@
 ---
 layout: default
-title: 6 Backend 系统 - 统一计算接口与多后端兼容
+title: Backend System
+parent: Developer Guide
+nav_order: 3
 ---
 
-# 6 Backend 系统 - 统一计算接口与多后端兼容
+# Backend System
 
-### 6.0 设计目标与架构
+The **Backend System** is the computational abstraction layer of QPhase. It defines a unified interface via the `BackendBase` Protocol, solving the problem of multi-backend compatibility (CPU/GPU, NumPy/Torch).
 
-Backend 系统是 qphase 核心的"计算抽象层"，通过 BackendBase Protocol 定义统一的计算接口，解决多后端兼容问题。
+## Design Goals
 
-**核心动机**：
-- **解耦计算与算法**：算法代码只依赖 Backend 接口，不依赖具体库
-- **无缝切换后端**：通过配置选择 NumPy/Numba/PyTorch/CuPy，无需修改算法
-- **性能优化**：不同场景可选择不同后端（CPU/GPU、JIT/解释执行）
-- **依赖隔离**：算法代码不直接引入 NumPy、PyTorch 等重型依赖
+*   **Decoupling**: Algorithm code depends only on the Backend interface, not on specific libraries.
+*   **Seamless Switching**: Switch between NumPy, PyTorch, or CuPy via configuration without modifying algorithm code.
+*   **Performance**: Choose the right backend for the job (CPU vs. GPU, JIT vs. Interpreted).
+*   **Dependency Isolation**: Algorithm code does not directly import heavy dependencies like PyTorch.
 
-**BackendBase 协议定义**：
+## The Backend Protocol
+
+The `BackendBase` protocol defines the minimal set of operations required for scientific computing.
+
 ```python
 @runtime_checkable
 class BackendBase(Protocol):
     """Minimal backend protocol for array ops, linalg, RNG, and helpers."""
 
-    # 识别信息
+    # Identification
     def backend_name(self) -> str: ...
     def device(self) -> str | None: ...
     def capabilities(self) -> dict[str, Any]: ...
 
-    # 数组创建与转换
+    # Array Creation & Conversion
     def array(self, obj: Any, dtype: Any | None = None) -> Any: ...
     def asarray(self, obj: Any, dtype: Any | None = None) -> Any: ...
     def zeros(self, shape: tuple[int, ...], dtype: Any) -> Any: ...
@@ -34,17 +38,17 @@ class BackendBase(Protocol):
     def empty_like(self, x: Any) -> Any: ...
     def copy(self, x: Any) -> Any: ...
 
-    # 数学运算
+    # Math Operations
     def einsum(self, subscripts: str, *operands: Any) -> Any: ...
     def concatenate(self, arrays: tuple[Any, ...], axis: int = -1) -> Any: ...
     def cholesky(self, a: Any) -> Any: ...
 
-    # 随机数生成
+    # Random Number Generation
     def rng(self, seed: int | None) -> Any: ...
     def randn(self, rng: Any, shape: tuple[int, ...], dtype: Any) -> Any: ...
     def spawn_rngs(self, master_seed: int, n: int) -> list[Any]: ...
 
-    # 复杂数支持
+    # Complex Number Support
     def real(self, x: Any) -> Any: ...
     def imag(self, x: Any) -> Any: ...
     def abs(self, x: Any) -> Any: ...
@@ -55,249 +59,69 @@ class BackendBase(Protocol):
     def fftfreq(self, n: int, d: float = 1.0) -> Any: ...
 ```
 
-**设计原则**：
-- **最小接口**：只定义必需的 20+ 个方法，覆盖 80% 常用计算场景
-- **领域无关**：不包含 SDE 特定概念，通用性适用于所有科学计算
-- **可选方法**：`stack()` 和 `to_device()` 用 `hasattr()` 检查是否支持
-- **类型一致**：所有方法接受和返回相同抽象类型（Any），避免泛型约束
+### Design Principles
 
-### 6.1 核心接口分类 - 统一计算抽象
+*   **Minimal Interface**: Defines only ~20 essential methods covering 80% of common computational scenarios.
+*   **Domain Agnostic**: Contains no SDE-specific concepts; applicable to general scientific computing.
+*   **Type Consistency**: All methods accept and return the same abstract type (`Any`), avoiding generic constraints that complicate implementation.
 
-**1. 识别与元数据**：
-```python
-def backend_name(self) -> str: ...
-def device(self) -> str | None: ...
-def capabilities(self) -> dict[str, Any]: ...
-```
-- `backend_name()`：返回后端标识符（"numpy"、"torch" 等）
-- `device()`：返回设备字符串（"cpu"、"cuda:0"、None）
-- `capabilities()`：报告支持的特性和环境标志
+## Core Interface Categories
 
-**2. 数组创建与转换**：
-```python
-def asarray(x, dtype=None)        # 统一转换（推荐）
-def array(x, dtype=None)          # 创建副本
-def zeros(shape, dtype)           # 零数组
-def empty(shape, dtype)           # 未初始化数组
-def empty_like(x)                 # 仿制数组
-def copy(x)                       # 深拷贝
-```
-- `asarray()`：不复制直接转换（如果可能），性能最佳
-- `array()`：始终创建新数组
-- `empty_like()`：使用输入数组的形状和 dtype，但内容未初始化
+### 1. Identification & Metadata
+*   `backend_name()`: Returns the backend identifier (e.g., "numpy", "torch").
+*   `device()`: Returns the device string (e.g., "cpu", "cuda:0").
+*   `capabilities()`: Reports supported features and environment flags.
 
-**3. 数学运算**：
-```python
-def einsum(subscripts, *operands)      # 爱因斯坦求和（高效张量运算）
-def concatenate(arrays, axis=-1)       # 数组连接
-def cholesky(a)                        # Cholesky 分解
-```
-- `einsum()`：使用爱因斯坦求和记号表示张量运算，高度紧凑
-  - 示例：`einsum("ijk,kl->ijl", A, B)` 表示矩阵乘法
-  - 比 `np.matmul()` 更灵活，支持高维张量 contraction
+### 2. Array Creation
+*   `asarray()`: Zero-copy conversion if possible (Recommended).
+*   `array()`: Always creates a copy.
+*   `empty_like()`: Creates an uninitialized array with the same shape and dtype.
 
-**4. 随机数生成**：
-```python
-def rng(seed)                # 创建 RNG 句柄
-def randn(rng, shape, dtype) # 标准正态分布采样
-def spawn_rngs(seed, n)      # 生成 n 个独立 RNG
-```
-- **句柄模式**：rng() 返回一个可传递的 RNG 对象（非纯函数）
-- **确定性**：相同 seed 产生相同序列，保证可重现性
-- **独立流**：spawn_rngs() 生成多个独立 RNG（多轨迹模拟）
+### 3. Math Operations
+*   `einsum()`: Einstein summation convention. Highly compact and efficient for tensor operations.
+    *   Example: `einsum("ijk,kl->ijl", A, B)` for tensor contraction.
 
-**5. 复杂数支持**：
-```python
-def real(x) / imag(x)  # 复数实部/虚部视图
-def abs(x)             # 模长
-def mean(x, axis)      # 平均值
-```
-- `real()`/`imag()`：返回视图而非副本（零拷贝）
-- 支持沿指定轴计算均值
+### 4. Random Number Generation (RNG)
+*   **Handle-based**: `rng()` returns a passable RNG object, not a pure function.
+*   **Deterministic**: Same seed produces the same sequence.
+*   **Independent Streams**: `spawn_rngs()` generates multiple independent RNGs for parallel trajectories.
 
-**6. FFT 操作**：
-```python
-def fft(x, axis=-1, norm=None)  # 快速傅里叶变换
-def fftfreq(n, d=1.0)           # FFT 频率网格
-```
-- 与 NumPy 的 FFT API 保持一致
-- norm 参数控制归一化方式（"backward"、"ortho"、"forward"）
+### 5. Complex Numbers
+*   `real()` / `imag()`: Returns views (zero-copy) where possible.
 
-### 6.2 NumPy Backend - 参考 CPU 实现
+## Implementations
 
-**定位**：作为兼容性基线和性能参考，所有其他后端应与之行为一致。
+### NumPy Backend (Reference)
+The baseline CPU implementation. All other backends should match its behavior.
 
-**核心实现**：
-```python
-class NumpyBackend(Backend):
-    def backend_name(self) -> str:
-        return "numpy"
+*   **Optimization**: Enables `optimize=True` for `einsum` path optimization.
+*   **RNG**: Uses `numpy.random.SeedSequence` for robust seeding.
 
-    def device(self) -> str | None:
-        return None  # CPU，无设备概念
+### PyTorch Backend
+Supports dynamic device selection (CPU/GPU) and automatic type mapping.
 
-    def asarray(self, x: Any, dtype: Any | None = None) -> Any:
-        return np.asarray(x, dtype=dtype) if dtype is not None else np.asarray(x)
+*   **Type Mapping**: Automatically maps Python `float` to `torch.float64` and `complex` to `torch.complex128`.
+*   **Device Awareness**: `zeros` and `asarray` accept a device context.
+*   **RNG Adapter**: Wraps `torch.Generator` to provide a unified interface compatible with NumPy's seeding logic.
 
-    def zeros(self, shape: tuple[int, ...], dtype: Any) -> Any:
-        return np.zeros(shape, dtype=dtype)
+## Capability Negotiation
 
-    def einsum(self, subscripts: str, *operands: Any) -> Any:
-        # 启用 NumPy 的 contraction 路径优化
-        return np.einsum(subscripts, *operands, optimize=True)
-```
+Backends report their capabilities via a dictionary:
 
-**RNG 实现**：
-```python
-def rng(self, seed: int | None) -> Any:
-    return np.random.default_rng(seed)
-
-def spawn_rngs(self, master_seed: int, n: int) -> list[Any]:
-    ss = np.random.SeedSequence(master_seed)
-    children = ss.spawn(n)
-    return [np.random.default_rng(child) for child in children]
-
-def randn(self, rng: Any, shape: tuple[int, ...], dtype: Any) -> Any:
-    out = rng.normal(size=shape)
-    # 类型转换：避免复制（copy=False）
-    return out.astype(dtype if dtype is not None else np.float64, copy=False)
-```
-
-**设计细节**：
-- **SeedSequence**：NumPy 的现代种子管理，支持派生独立流
-- **copy=False**：类型转换时尽可能视图共享，避免内存拷贝
-- **einsum 优化**：`optimize=True` 启用子表达式消除，性能提升 10-100%
-
-**能力报告**：
 ```python
 def capabilities(self) -> dict:
     return {
-        "device": None,
-        "optimized_contractions": False,  # 无 JIT 优化
-        "supports_complex_view": False,   # 复数视图（NumPy 的限制）
-        "real_imag_split": True,          # 实部/虚部分离
+        "device": self.device(),
+        "optimized_contractions": True,  # Is einsum optimized?
+        "supports_complex_view": False,  # Do real/imag return views?
+        "real_imag_split": True,
         "stack": True,
-        "to_device": False,               # CPU 后端不支持设备迁移
-        "numpy": True,
+        "to_device": True,
+        "numpy": True,  # Is underlying implementation NumPy-based?
     }
 ```
 
-### 6.3 PyTorch Backend - 设备感知与复杂类型
-
-**定位**：支持 CPU/GPU 的通用后端，动态设备选择，复杂类型映射。
-
-**设备检测**：
-```python
-def device(self) -> str | None:
-    try:
-        import torch as torch
-        if torch.cuda.is_available():
-            idx = torch.cuda.current_device()
-            return f"cuda:{idx}"  # 多 GPU 支持
-    except Exception:
-        return None
-    return "cpu"
-```
-
-**类型映射**（`_to_torch_dtype()`）：
-```python
-def _to_torch_dtype(dtype: Any | None):
-    """将 Python/NumPy dtypes 映射到 torch dtypes"""
-    if dtype is None:
-        return None
-    try:
-        import numpy as _nplocal
-        import torch as torch
-
-        if dtype is complex or str(dtype) == "complex":
-            return torch.complex128
-        if dtype is float or str(dtype) in ("float", "float64"):
-            return torch.float64
-        # ... 更多映射
-    except Exception:
-        return dtype
-    return dtype
-```
-
-**类型映射逻辑**：
-- **Python 原生类型**：`complex` → `torch.complex128`、`float` → `torch.float64`
-- **NumPy dtypes**：`np.complex128` → `torch.complex128`、`np.float64` → `torch.float64`
-- **容错设计**：映射失败时返回原始 dtype（假设已兼容）
-
-**GPU 数组创建**：
-```python
-def zeros(self, shape: tuple[int, ...], dtype: Any) -> Any:
-    import torch as torch
-    dev = self.device() or "cpu"  # 默认 CPU
-    td = _to_torch_dtype(dtype)
-    return torch.zeros(*shape, dtype=td, device=dev)
-
-def asarray(self, obj: Any, dtype: Any | None = None) -> Any:
-    import torch as torch
-    td = _to_torch_dtype(dtype)
-    t = torch.as_tensor(obj, dtype=td)
-    return t
-```
-
-**Torch RNG 适配**（`_TorchRNG`）：
-```python
-class _TorchRNG:
-    """Torch Generator 的适配器，提供标准 RNG 接口"""
-
-    def __init__(self, seed: int | None = None, device: str | None = None):
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._gen = torch.Generator(device=self.device)  # 设备特定生成器
-        if seed is None:
-            seed = int(_np.random.SeedSequence().generate_state(1, dtype=_np.uint64)[0])
-        self._gen.manual_seed(int(seed))
-
-    def seed(self, value: int | None) -> None:
-        if value is None:
-            value = int(_np.random.SeedSequence().generate_state(1, dtype=_np.uint64)[0])
-        self._gen.manual_seed(int(value))
-
-    def spawn(self, n: int) -> list["_TorchRNG"]:
-        ss = _np.random.SeedSequence()
-        children = ss.spawn(n)
-        return [_TorchRNG(int(c.generate_state(1, dtype=_np.uint64)[0]), device=self.device)
-                for c in children]
-
-    @property
-    def generator(self):
-        return self._gen  # 暴露底层生成器
-```
-
-**设计优势**：
-- **设备特定 RNG**：每个设备有独立的 Generator，避免 GPU/CPU 同步开销
-- **种子管理**：使用 NumPy SeedSequence 确保种子序列兼容性
-- **spawn() 优化**：为每个设备创建独立的 RNG，保持设备一致性
-
-**randn 实现**：
-```python
-def randn(self, rng: Any, shape: tuple[int, ...], dtype: Any) -> Any:
-    import torch as torch
-    g = cast(_TorchRNG, rng).generator  # 获取底层 Generator
-    dev = self.device() or "cpu"
-    t = torch.randn(*shape, generator=g, device=dev)  # 在正确设备上生成
-    td = _to_torch_dtype(dtype)
-    return t.to(dtype=td) if td is not None else t
-```
-
-**设备迁移**（`to_device()`）：
-```python
-def to_device(self, x: Any, device: str | None) -> Any:
-    if device is None:
-        return x
-    try:
-        return x.to(device)  # 迁移到目标设备
-    except Exception:
-        return x  # 迁移失败时返回原对象（容错）
-```
-
-**能力报告**：
-```python
-def capabilities(self) -> dict:
-    return {
+Callers should check `capabilities()` rather than assuming all backends support all features.
         "device": self.device(),
         "optimized_contractions": True,   # cuDNN 优化
         "supports_complex_view": True,    # PyTorch 原生支持复数视图

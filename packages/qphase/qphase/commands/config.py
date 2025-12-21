@@ -38,7 +38,8 @@ console = Console()
 def _get_global_config_path() -> tuple[Path, bool]:
     """Get the path to global.yaml, following config_dirs from system config.
 
-    Returns:
+    Returns
+    -------
         tuple: (Path to global.yaml, whether it's in config_dirs)
 
     """
@@ -99,7 +100,7 @@ def show_config(
     stream = StringIO()
     yaml.dump(data, stream)
     yaml_str = stream.getvalue()
-    
+
     syntax = Syntax(yaml_str, "yaml", theme="monokai", line_numbers=True)
     console.print(syntax)
 
@@ -179,14 +180,14 @@ def reset_config(
             import importlib.resources as ilr
 
             from qphase.core.utils import load_yaml
-            
+
             system_yaml_path = ilr.files("qphase.core").joinpath("system.yaml")
             default_config_dict = load_yaml(Path(str(system_yaml_path)))
-            
+
             # 2. Save to user config path
             config_obj = SystemConfig(**default_config_dict)
             save_user_config(config_obj)
-            
+
             console.print("[green]System configuration reset to defaults.[/green]")
         except Exception as e:
             console.print(f"[red]Failed to reset system config: {e}[/red]")

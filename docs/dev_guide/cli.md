@@ -1,6 +1,8 @@
 ---
 layout: default
 title: CLI Development
+parent: Developer Guide
+nav_order: 7
 ---
 
 # CLI Development
@@ -82,9 +84,9 @@ import typer
 @app.command()
 def process(
     # Positional Argument
-    filename: str, 
+    filename: str,
     # Option with default value
-    force: bool = False, 
+    force: bool = False,
     # Option with metadata (help text)
     retries: Annotated[int, typer.Option(help="Number of retries")] = 3
 ):
@@ -152,4 +154,3 @@ def test_hello_world():
     assert result.exit_code == 0
     assert "Hello, Test!" in result.stdout
 ```
-

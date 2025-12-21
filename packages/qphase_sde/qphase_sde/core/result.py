@@ -112,7 +112,7 @@ class SDEResult:
 
                 traj = MinimalTrajectory(data, t0, dt)
 
-                return cls(trajectory=traj, meta=meta, kind=kind)
+                return cls(trajectory=traj, meta=meta, kind=kind)  # type: ignore[arg-type]
 
         except Exception as e:
             raise QPSError(f"Failed to load SDEResult from {path}: {e}") from e

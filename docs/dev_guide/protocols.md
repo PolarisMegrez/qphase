@@ -1,6 +1,8 @@
 ---
 layout: default
 title: Protocol System
+parent: Developer Guide
+nav_order: 3
 ---
 
 # Protocol System
@@ -31,7 +33,7 @@ The fundamental contract for all plugins.
 @runtime_checkable
 class PluginBase(Protocol):
     """The minimal contract for any QPhase plugin."""
-    
+
     # Metadata (Class Variables)
     name: ClassVar[str]                 # Unique identifier
     description: ClassVar[str]          # Human-readable description
@@ -40,7 +42,7 @@ class PluginBase(Protocol):
     def __init__(self, config: Any | None = None, **kwargs: Any) -> None:
         """
         Initialize the plugin.
-        
+
         Args:
             config: A validated configuration object (instance of config_schema).
             **kwargs: Alternative way to pass configuration parameters.
@@ -57,13 +59,13 @@ class EngineBase(PluginBase, Protocol):
     """Contract for simulation engines."""
 
     def __init__(
-        self, 
-        config: Any, 
-        plugins: dict[str, Any], 
+        self,
+        config: Any,
+        plugins: dict[str, Any],
         **kwargs: Any
     ) -> None:
         """
-        Engines receive a dictionary of other instantiated plugins 
+        Engines receive a dictionary of other instantiated plugins
         (e.g., backend, integrator) upon initialization.
         """
         ...
@@ -71,10 +73,10 @@ class EngineBase(PluginBase, Protocol):
     def run(self, data: Any | None = None) -> Any:
         """
         Execute the main logic.
-        
+
         Args:
             data: Input data from a previous job (or None).
-            
+
         Returns:
             The result of the computation (preferably a ResultBase).
         """
@@ -140,7 +142,7 @@ While not a formal Python Protocol, all configuration classes must adhere to the
 ```python
 class PluginConfigBase(BaseModel):
     """Base class for all plugin configurations."""
-    
+
     model_config = ConfigDict(extra="allow")  # Allow unknown fields for forward compatibility
 
     @classmethod
@@ -150,4 +152,3 @@ class PluginConfigBase(BaseModel):
 ```
 
 This ensures that every plugin has a strongly-typed, self-validating configuration.
-

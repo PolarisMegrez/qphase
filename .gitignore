@@ -88,5 +88,3 @@ bundles/
 configs/
 models/
 tests/
-prompt*
-run_tests.py

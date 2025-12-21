@@ -26,10 +26,3 @@ gem "wdm", "~> 0.1.1", :platforms => [:mingw, :x64_mingw, :mswin]
 # Lock `http_parser.rb` gem to `v0.6.x` on JRuby runs since newer versions of the gem
 # do not have a Java counterpart
 gem "http_parser.rb", "~> 0.6.0", :platforms => [:jruby]
-
-# Load local Gemfile if it exists
-begin
-  eval(File.read(File.join(__dir__, 'Gemfile.lock')), binding)
-rescue SyntaxError, NameError
-  # Silently ignore if Gemfile.lock is invalid or missing
-end

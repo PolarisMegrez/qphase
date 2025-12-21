@@ -1,6 +1,8 @@
 ---
 layout: default
 title: Configuration System
+parent: Developer Guide
+nav_order: 8
 ---
 
 # Configuration System
@@ -75,7 +77,7 @@ class VDPConfig(BaseModel):
     """Configuration schema for the Van der Pol model."""
     mu: float = Field(1.0, description="Non-linearity parameter")
     eta: PositiveFloat = Field(0.1, description="Noise strength")
-    
+
 class VDPModel:
     # Link the schema to the class
     config_schema = VDPConfig
@@ -143,8 +145,7 @@ class MyEngine(EngineBase):
     def run(self):
         # Access job-level params
         t_end = self.config.engine['sde']['t_end']
-        
+
         # Access system-level paths
         out_dir = self.context.system_config.paths.output_dir
 ```
-

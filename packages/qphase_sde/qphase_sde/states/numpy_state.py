@@ -318,4 +318,4 @@ class TrajectorySet(TrajectorySetLike):
         if not p.endswith(".npz"):
             p += ".npz"
         # meta might contain non-serializable objects, but for now let's try
-        np.savez(p, data=self.data, t0=self.t0, dt=self.dt, meta=self.meta)
+        np.savez(p, data=self.data, t0=self.t0, dt=self.dt, meta=self.meta)  # type: ignore[arg-type]

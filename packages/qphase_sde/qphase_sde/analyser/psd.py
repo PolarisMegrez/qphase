@@ -54,10 +54,12 @@ class PsdAnalyzerConfig(BaseModel):
 class PsdAnalyzer(Analyzer):
     """Analyzer for Power Spectral Density."""
 
-    config_schema: ClassVar[type[PsdAnalyzerConfig]] = PsdAnalyzerConfig
+    name: ClassVar[str] = "psd"
+    description: ClassVar[str] = "Power Spectral Density analyzer"
+    config_schema: ClassVar[type[PsdAnalyzerConfig]] = PsdAnalyzerConfig  # type: ignore[assignment]
 
     def __init__(self, config: PsdAnalyzerConfig | None = None, **kwargs):
-        super().__init__(config, **kwargs)
+        super().__init__(config, **kwargs)  # type: ignore[arg-type]
 
     def analyze(self, data: Any, **kwargs) -> dict:
         """Compute PSD for multiple modes.
@@ -110,7 +112,7 @@ class PsdAnalyzer(Analyzer):
         *,
         kind: str = "complex",
         convention: str = "symmetric",
-        backend: Any | None = None
+        backend: Any | None = None,
     ) -> tuple[Any, Any]:
         """Compute two-sided power spectral density (PSD) for a single mode."""
         if backend is None:
@@ -148,7 +150,7 @@ class PsdAnalyzer(Analyzer):
             norm = None
 
         # FFT
-        X = backend.fft(x_proc, axis=-1, norm=norm)
+        X = backend.fft(x_proc, axis=-1, norm=norm)  # type: ignore[arg-type]
 
         # Power: |X|^2
         absX = backend.abs(X)

@@ -1,237 +1,100 @@
 ---
 layout: default
-title: 5 调度器 (Scheduler) - 任务执行与生命周期管理
+title: Scheduler System
+parent: Developer Guide
+nav_order: 2
 ---
 
-# 5 调度器 (Scheduler) - 任务执行与生命周期管理
+# Scheduler System
 
-### 5.0 设计目标与架构
+The **Scheduler** is the execution management layer of QPhase. It is responsible for translating a `JobList` into an actual computational workflow.
 
-调度器是 qphase 核心的"执行管理层"，负责将 JobList 中的任务转换为实际的计算执行。
+## Design Goals
 
-**核心职责**：
-- **任务编排**：将 JobList 转换为可执行的计算流程
-- **依赖管理**：处理任务间的输入/输出传递
-- **插件协调**：构建并协调 Backend、Integrator 等插件
-- **运行隔离**：为每次运行创建独立的目录和环境
-- **容错处理**：单个任务失败不影响其他任务
+*   **Orchestration**: Convert high-level job definitions into executable steps.
+*   **Dependency Management**: Handle data flow between jobs (input/output).
+*   **Plugin Coordination**: Build and coordinate Backends, Integrators, and Engines.
+*   **Isolation**: Create independent directories and environments for each run.
+*   **Fault Tolerance**: Ensure that a single failed job does not crash the entire batch.
 
-**设计权衡**：
-- **串行 vs 并行**：当前版本采用串行执行，简化错误处理和资源管理
-- **隔离 vs 共享**：每次运行创建独立目录，避免相互干扰
-- **容错 vs 快速失败**：单个任务失败后继续执行其他任务
+## JobResult: Encapsulating Execution
 
-### 5.1 JobResult - 任务结果封装
+The `JobResult` dataclass encapsulates the outcome of a single job execution.
 
-**功能**：封装单个任务的执行结果，包括元数据、运行目录和状态信息。
-
-**结构**：
 ```python
 @dataclass
 class JobResult:
-    job_index: int           # 任务在列表中的位置（从0开始）
-    job_name: str            # 任务名称（用于日志和调试）
-    run_dir: Path            # 运行目录路径
-    run_id: str              # 运行唯一标识
-    success: bool            # 执行是否成功
-    error: str | None = None # 错误信息（失败时）
+    job_index: int           # Position in the job list (0-based)
+    job_name: str            # Job name (for logging)
+    run_dir: Path            # Path to the run directory
+    run_id: str              # Unique run identifier
+    success: bool            # Whether execution was successful
+    error: str | None = None # Error message (if failed)
 ```
 
-**字段设计**：
+### Key Fields
 
-1. **执行位置**（`job_index`）：
-   - 反映任务在 JobList 中的顺序
-   - 用于进度显示和日志记录
-   - 不依赖任务名称（名称可能重复）
+1.  **`run_id`**: A unique string like `"2024-01-01T12-00-00Z_abc123ef"`. It combines a UTC timestamp (to avoid timezone confusion) with a UUID suffix (to prevent filename collisions).
+2.  **`run_dir`**: The directory where all outputs for this job are saved. This ensures isolation between runs.
+3.  **`success` / `error`**: Provides a clear status signal to the scheduler, allowing it to decide whether to proceed with dependent jobs.
 
-2. **运行标识**（`run_id`）：
-   - 格式：`"2024-01-01T12-00-00Z_abc123ef"`
-   - 包含 UTC 时间戳（避免时区问题）
-   - 包含 UUID 前缀（避免文件名冲突）
+## Execution Flow
 
-3. **运行目录**（`run_dir`）：
-   - 任务的所有输出保存在此目录
-   - 便于隔离不同运行的输出
-   - 支持任务级别的输出目录覆盖
+The `Scheduler.run()` method implements a serial execution loop.
 
-4. **状态信息**（`success` + `error`）：
-   - 区分成功和失败两种情况
-   - 错误信息便于调试和重试
-   - 为上层调度逻辑提供决策依据
-
-### 5.2 串行执行模式 - run() 方法
-
-**核心流程**：
 ```python
 def run(self, job_list: JobList) -> list[JobResult]:
-    # 0. 参数扫描预处理：展开包含列表参数的作业
+    # 0. Pre-processing: Expand parameter scans
     job_list = self._expand_parameter_scans(job_list)
 
     results: list[JobResult] = []
-    job_outputs: dict[str, Any] = {}  # 任务输出缓存
+    job_outputs: dict[str, Any] = {}  # Cache for job outputs
 
     for job_idx, job in enumerate(job_list.jobs):
-        # 1. 解析任务输入（内存/文件/loader）
+        # 1. Resolve Input (Memory / File / Loader)
         input_data = self._resolve_input(job, job_outputs)
 
-        # 2. 执行任务（构建插件、创建引擎、执行计算）
+        # 2. Execute Job (Build plugins, create engine, run)
         result, output = self._run_job(job, job_idx, len(job_list.jobs), input_data)
         results.append(result)
 
-        # 3. 缓存成功任务的输出（供后续任务使用）
+        # 3. Cache Output (if successful)
         if result.success:
             job_outputs[job.name] = output
 
     return results
 ```
 
-**第 0 步：参数扫描预处理**：
-```python
-job_list = self._expand_parameter_scans(job_list)
-```
-在正式执行前，调度器会自动展开包含列表参数的作业：
-- 检测所有作业中的列表值参数（仅支持插件特定路径）
-- 根据配置的扩展方法（cartesian 或 zipped）生成作业组合
-- 为每个组合创建独立的作业实例（自动编号）
-- 如果参数扫描已禁用，直接返回原始作业列表
+### Step 0: Parameter Scan Expansion
+Before execution, the scheduler detects any parameters that are lists (e.g., `mu: [1.0, 2.0]`) and expands them into multiple individual jobs. This allows for easy parameter sweeps without modifying the core execution logic.
 
-**设计特点**：
+### Step 1: Input Resolution
+The `_resolve_input` method handles data dependency.
 
-1. **串行执行**：
-   - 优点：内存使用可预测、错误隔离简单、无需锁机制
-   - 缺点：无法利用多核 CPU、总体执行时间长
-   - 未来可能支持并行执行（`depends_on` 字段已预留）
+*   **No Input**: If `job.input` is None, the job runs independently.
+*   **Memory Transfer**: If `job.input` matches the name of a previous job, its output object is passed directly in memory. This avoids serialization overhead for complex objects like GPU tensors.
+*   **File Loading**: If `job.input` is a file path, a configured `Loader` plugin is used to read it.
 
-2. **任务输出缓存**（`job_outputs`）：
-   - 键：任务名称（唯一标识）
-   - 值：任务的输出对象（内存传递）
-   - 作用：实现任务间的数据依赖传递
+### Step 2: Job Execution (`_run_job`)
 
-3. **容错设计**：
-   - 单个任务异常不影响其他任务
-   - 异常被捕获并记录在 JobResult.error 中
-   - 失败任务的输出不加入缓存（避免污染下游任务）
+This method manages the lifecycle of a single job:
 
-4. **进度回调**（可选）：
-   - `on_progress` 回调：实时显示执行进度
-   - `on_run_dir` 回调：每个任务完成后调用（用于 UI 更新）
+1.  **Generate ID**: Create a unique `run_id` and `run_dir`.
+2.  **Merge Config**: Combine global defaults with job-specific overrides.
+3.  **Build Plugins**: Instantiate all required plugins (Backend, Integrator, etc.).
+4.  **Instantiate Engine**: Create the Engine, passing the plugins to it.
+5.  **Run**: Call `engine.run(data=input_data)`.
+6.  **Snapshot**: Save the full configuration to `config_snapshot.json`.
 
-### 5.3 任务输入解析 - _resolve_input() 方法
+## Plugin Construction
 
-**功能**：根据 JobConfig.input 字段解析任务输入数据，支持三种输入模式。
+The `_build_plugins` method unifies the instantiation of all plugins.
 
-**三种输入模式**：
-
-**1. 无输入**（`job.input` 为 None）：
-```python
-def _resolve_input(job: JobConfig, job_outputs: Dict[str, Any]) -> Any:
-    if not job.input:
-        return None  # 首次运行或独立任务
-```
-
-**2. 内存传递**（上游任务输出）：
-```python
-if job.input in job_outputs:
-    return job_outputs[job.input]  # 直接使用缓存的输出对象
-```
-
-**3. 文件或 Loader 加载**：
-```python
-# 检查是否为外部文件
-input_path = Path(job.input)
-if input_path.exists():
-    if job.input_loader:
-        # 使用插件加载器（支持自定义格式）
-        loader = registry.create(f"loader:{job.input_loader}")
-        return loader.load(job.input)
-    else:
-        # 强制要求指定 Loader，避免歧义
-        raise QPhaseConfigError(f"Job '{job.name}' has file input but no input_loader")
-```
-
-**设计灵活性**：
-
-1. **即插即用 Loader**：
-   - Loader 是插件，可在 Registry 中注册
-   - 支持 CSV、HDF5、自定义格式等
-   - 通过 `job.input_loader` 指定使用的 Loader
-
-2. **透明传递**：
-   - 上游任务输出对象直接传递给下游
-   - 避免不必要的序列化/反序列化
-   - 支持复杂对象（numpy 数组、PyTorch 张量等）
-
-3. **严格校验**：
-   - 明确区分"任务引用"和"文件路径"
-   - 文件输入必须指定 Loader，防止隐式错误
-   - 输入不存在时抛出明确的配置错误
-
-### 5.4 任务执行流程 - _run_job() 方法
-
-**执行流程**（6 步）：
-
-**第 1 步：生成运行 ID 和目录**：
-```python
-run_id = self._generate_run_id()
-run_dir = self._create_run_dir(job, run_id)
-```
-
-**第 2 步：确定系统配置**：
-```python
-system_cfg = job.system if job.system is not None else self.system_config
-# 任务级配置覆盖全局配置
-```
-
-**第 3 步：合并配置**：
-```python
-job_override = {
-    "plugins": job.plugins,  # 插件选择和参数
-    "engine": job.engine,    # 引擎配置
-    "params": job.params     # 任务参数
-}
-merged_config = get_config_for_job(system_cfg, job_name=job.name, job_config_dict=job_override)
-```
-
-**第 4 步：构建插件实例**：
-```python
-plugins = self._build_plugins(merged_config.get("plugins", {}))
-```
-
-**第 5 步：实例化引擎**：
-```python
-# 处理引擎配置的嵌套结构 {"engine_name": {params...}}
-engine_config_dict = merged_config.get("engine", {})
-if engine_config_dict:
-    engine_name = list(engine_config_dict.keys())[0]
-    engine_config_raw = engine_config_dict[engine_name].copy()
-    engine_config_raw["name"] = engine_name  # 注入 name 字段
-else:
-    # 回退逻辑
-    engine_name = job.get_engine_name()
-    engine_config_raw = job.engine.get(engine_name, {}).copy()
-    engine_config_raw["name"] = engine_name
-
-engine = registry.create_plugin_instance("engine", engine_config_raw, plugins=plugins)
-```
-
-**第 6 步：执行引擎**：
-```python
-output = engine.run(data=input_data)
-```
-
-### 5.5 插件构建机制 - _build_plugins() 方法
-
-**功能**：根据插件配置字典构建插件实例，统一处理不同类型的插件。
-
-**构建流程**：
 ```python
 def _build_plugins(self, plugins_config: dict[str, Any]) -> dict[str, Any]:
     plugins: dict[str, Any] = {}
 
     for plugin_type, config_data in plugins_config.items():
-        if not config_data:
-            continue  # 跳过空配置
-
         # config_data: {name: "...", params: {...}}
         instance = registry.create_plugin_instance(plugin_type, config_data)
         plugins[plugin_type] = instance
@@ -239,65 +102,23 @@ def _build_plugins(self, plugins_config: dict[str, Any]) -> dict[str, Any]:
     return plugins
 ```
 
-**设计优势**：
+This design ensures that the Scheduler doesn't need to know about specific plugin types. It simply delegates creation to the Registry based on the configuration.
 
-1. **统一接口**：
-   - 所有插件使用相同的构建方式
-   - 减少调度器对插件类型的感知
-   - 支持动态发现的新插件类型
+## Engine Instantiation
 
-2. **配置驱动**：
-   - 通过配置控制插件选择和参数
-   - 无需修改代码即可更换插件
-   - 支持 A/B 测试和参数扫描
-
-3. **错误隔离**：
-   - 单个插件构建失败不影响其他插件
-   - 详细错误信息便于定位问题
-   - 使用 QPhasePluginError 统一异常类型
-
-**常见插件类型**：
-- `backend`：计算后端（NumPy、PyTorch 等）
-- `integrator`：数值积分器（Euler、Milstein 等）
-- `state`：状态管理（NumPy、CuPy 等）
-- `noise`：噪声模型（Gaussian、Poisson 等）
-
-### 5.6 引擎实例化与执行
-
-**引擎特殊性**：
-引擎是特殊的插件，需要额外的 `plugins` 参数：
+The Engine is a special plugin that receives the other plugins as dependencies.
 
 ```python
 engine = registry.create_plugin_instance(
     "engine",
     engine_config_raw,
-    plugins=plugins  # 引擎管理其他插件
+    plugins=plugins  # Engine manages other plugins
 )
 ```
 
-**为什么引擎需要 plugins 参数？**
-
-1. **管理职责**：
-   - Engine 需要协调 Backend、Integrator 等组件
-   - plugins 字典提供组件访问接口
-   - 例如：`self.backend = plugins.get("backend")`
-
-2. **生命周期管理**：
-   - Engine 负责插件的初始化和销毁
-   - 插件共享同一资源（如 GPU 设备）
-   - 确保插件间的兼容性
-
-3. **配置传递**：
-   - 插件配置通过 plugins 传递
-   - 引擎可检查插件配置的有效性
-   - 支持插件间的参数依赖
-
-**执行接口**：
-```python
-output = engine.run(data=input_data)
-```
-
-**输入**：
+**Why pass plugins to the Engine?**
+1.  **Coordination**: The Engine needs to use the Backend to perform math and the Integrator to advance time.
+2.  **Lifecycle**: The Engine is responsible for the simulation loop, so it "owns" the execution context.
 - `data` 参数：来自 `_resolve_input()` 的结果
 - 支持 None、内存对象、文件路径
 

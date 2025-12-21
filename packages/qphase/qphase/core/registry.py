@@ -629,5 +629,3 @@ class DiscoveryService:
 # Global singleton
 registry = RegistryCenter()
 discovery = DiscoveryService(registry)
-
-

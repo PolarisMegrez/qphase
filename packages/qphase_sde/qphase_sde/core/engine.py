@@ -203,14 +203,20 @@ class Engine:
 
         if name in ("torch", "pytorch"):
             try:
-                from ..states.torch_state import State, TrajectorySet
+                from ..states.torch_state import (  # type: ignore[assignment]
+                    State,
+                    TrajectorySet,
+                )
 
                 return State, TrajectorySet
             except ImportError:
                 pass
 
         # Default to NumPy
-        from ..states.numpy_state import State, TrajectorySet
+        from ..states.numpy_state import (  # type: ignore[assignment]
+            State,
+            TrajectorySet,
+        )
 
         return State, TrajectorySet
 

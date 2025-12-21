@@ -1,6 +1,8 @@
 ---
 layout: default
 title: Registry System
+parent: Developer Guide
+nav_order: 4
 ---
 
 # Registry System
@@ -122,4 +124,3 @@ all_plugins = registry.list()
 backends = registry.list("backend")
 # Output: {'numpy': {'kind': 'callable'}, 'torch': {'kind': 'dotted'}}
 ```
-

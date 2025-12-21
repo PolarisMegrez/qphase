@@ -140,7 +140,6 @@ def schema_to_yaml_map(
     data = CommentedMap()
 
     for field_name, field in model_cls.model_fields.items():
-
         # Determine value
         if field_name in existing_values:
             value = existing_values[field_name]

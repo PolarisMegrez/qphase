@@ -100,7 +100,7 @@ def _to_torch_dtype(dtype: Any | None):
             elif dtype == _nplocal.bool_:
                 res = torch.bool
             else:
-                res = dtype
+                res = cast(Any, dtype)
             _DTYPE_MAP[dtype] = res
             return res
 

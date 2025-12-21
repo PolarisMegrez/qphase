@@ -207,7 +207,7 @@ class CuPyBackend(Backend):
 
     def normal(self, rng: Any, shape: tuple[int, ...], dtype: Any) -> Any:
         rr = cast(_CuPyRNG, rng)
-        out = rr._rs.standard_normal(size=shape)
+        out = rr._gen.standard_normal(size=shape)
         # Cast on device if needed
         return out.astype(dtype if dtype is not None else cp.float64, copy=False)
 

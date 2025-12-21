@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 logger = get_logger()
 
+
 def get_system_param(path: str, default: Any = None) -> Any:
     """Get a specific system parameter by dot-separated path."""
     config = load_system_config()
@@ -88,8 +89,7 @@ def _load_single_job_file(path: Path) -> JobConfig | list[JobConfig]:
         # Check if it's a "job list" wrapper
         if "jobs" in data and isinstance(data["jobs"], list):
             return [
-                JobConfig(**cast(dict[str, Any], job_data))
-                for job_data in data["jobs"]
+                JobConfig(**cast(dict[str, Any], job_data)) for job_data in data["jobs"]
             ]
 
         # If name is missing, use filename as job name
@@ -191,7 +191,7 @@ def load_global_config(global_path: Path) -> dict[str, Any]:
         except Exception as e:
             logger.warning(f"Failed to create global config at {global_path}: {e}")
             return {}
-            
+
     try:
         return load_yaml(global_path)
     except (QPhaseIOError, QPhaseConfigError):
@@ -260,10 +260,10 @@ def construct_plugins_config(reg: RegistryCenter) -> dict[str, dict[str, Any]]:
                 if schema:
                     # Use schema_to_yaml_map to generate commented config
                     from .utils import schema_to_yaml_map
-                    
+
                     if ns_name not in plugins_config:
                         plugins_config[ns_name] = {}
-                        
+
                     plugins_config[ns_name][plugin_name] = schema_to_yaml_map(
                         schema, {}, plugin_name
                     )
