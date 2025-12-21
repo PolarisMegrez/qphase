@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qphase"
+version = "0.9.0"
+description = "Modular Quantum Phase-Space Simulation Framework (Core & CLI)"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [
+  { name = "Yu Xue-Hao", email = "yuxuehao23@mails.ucas.ac.cn" }
+]
+urls = { Homepage = "https://github.com/PolarisMegrez/qphase", Repository = "https://github.com/PolarisMegrez/qphase", Issues = "https://github.com/PolarisMegrez/qphase/issues" }
+keywords = [
+  "quantum optics", "SDE", "simulation", "CLI", "Typer"
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Topic :: Software Development :: Libraries"
+]
+dependencies = [
+  "typer>=0.9",
+  "rich>=13.0",
+  "ruamel.yaml>=0.17",
+  "PyYAML>=6.0",
+  "pydantic>=2.0"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "ruff>=0.5"]
+accel = ["numba>=0.57", "cupy-cuda12x>=12.0"]
+torch = ["torch>=2.0"]
+
+[project.scripts]
+qps = "qphase.main:app"
+
+[project.entry-points.qphase]
+# Backend plugin
+"backend.numpy" = "qphase.backend.numpy_backend:NumpyBackend"
+"backend.numba" = "qphase.backend.numba_backend:NumbaBackend"
+"backend.torch" = "qphase.backend.torch_backend:TorchBackend"
+"backend.cupy" = "qphase.backend.cupy_backend:CuPyBackend"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.mypy]
+exclude = ["build/"]
+ignore_missing_imports = true
+

@@ -22,6 +22,7 @@ dist/
 pip-wheel-metadata/
 
 # Tool caches
+.claude/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
@@ -55,11 +56,11 @@ desktop.ini
 runs/
 
 # CLI caches
-packages/QPhaseSDE_cli/QPhaseSDE_cli/cache/
+packages/qphase/qphase/cache/
 
 # Build metadata inside packages
-packages/**/QPhaseSDE.egg-info/
-packages/**/QPhaseSDE_cli.egg-info/
+packages/**/qphase_sde.egg-info/
+packages/**/qphase.egg-info/
 
 # Bundled artifacts (if any)
 bundles/
@@ -72,15 +73,16 @@ bundles/
 # Sphinx or docs build
 /docs/_build/
 
-# Local LaTeX manual sources (kept out of git; copy PDFs into docs/ manually)
-manual/
-
 # Optional local configs
 *.local.yaml
 *.env
 .env.*
 *_local.*
 
-# Incomplete doc files
-**/docstring_guide.md
-**/error_code.md
+# Local development folders
+configs/
+models/
+docs/archive/
+tests/
+prompt*
+run_tests.py

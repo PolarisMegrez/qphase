@@ -1,119 +1,106 @@
-# QPhaseSDE v0.1.3
+# qphase - Modular Quantum Phase-Space Simulation Framework
 
-QPhaseSDE is a configuration-driven framework for simulating complex-valued stochastic differential equations (SDEs) in quantum optics. It supports multi-trajectory simulations, time-series data output, and automatic generation of phase portraits and power spectral density (PSD) plots — all managed through a simple YAML configuration file.
+qphase is a Python framework designed for simulating quantum optical systems using Stochastic Differential Equations (SDEs) in the phase space. It decouples the simulation engine from the model definition, allowing researchers to focus on the physics while the framework handles parameter scanning, parallel execution, and data management. With a plugin-based architecture, it supports various numerical integrators and backend accelerators (NumPy, PyTorch, etc.).
 
-**Authors: Yu Xue‑Hao and Qiao Cong‑Feng (University of Chinese Academy of Sciences, UCAS)**
+**Authors: Yu Xue-Hao (University of Chinese Academy of Sciences, UCAS)**
 
-## Feature overview
+- **Configuration-Driven**: Define simulations using declarative YAML files for full reproducibility.
+- **Plugin Architecture**: Easily extend the framework with custom models, integrators, and backends.
+- **High Performance**: Support for multiple backends including NumPy, PyTorch, and Numba.
+- **Automated Workflow**: Built-in tools for parameter scanning, parallel execution, and result management.
+- **Type-Safe Design**: Built on robust protocols and Pydantic validation for reliability.
 
-- Multi‑trajectory SDE engine (Itô) for complex modes
-- Euler–Maruyama solver (built‑in); Milstein alias (currently same as EM)
-- Gaussian noise (independent or correlated)
-- Reproducible runs: master seed, per‑trajectory seeds, config snapshot, manifest, NPZ time‑series
-- Visualizations
-  - Phase portraits: Re–Im and |.|–|.| views
-  - PSD: complex (two‑sided) and modular (one‑sided); averaged across trajectories
+## Installation
 
-## Install and use (Windows PowerShell)
+Requirements:
+- Python >= 3.10
 
-The quickest way to try QPhaseSDE:
-
-```powershell
-# Create and activate a virtual environment (recommended)
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-
-# Install the core and CLI packages (editable mode for local use)
-pip install -e packages\QPhaseSDE
-pip install -e packages\QPhaseSDE_cli
-
-# Install a YAML loader
-python -m pip install ruamel.yaml   # or: python -m pip install pyyaml
-
-# Run the example configuration
-qps run sde --config configs\vdp_run.yaml
-```
-
-Results are written to `runs/<timestamp>_<id>/`:
-- `time_series/` — NPZ time‑series per initial condition (IC)
-- `figures/` — images for requested plots
-- `psd/` — PSD data (NPZ) when enabled
-- `config_snapshot/` and `manifest.json` — provenance and metadata
-
-Re‑render figures later without recomputing trajectories:
+Install dependencies:
 
 ```powershell
-qps analyze phase --from-run runs\<run_id>
-qps analyze psd   --from-run runs\<run_id>
+pip install -r requirements.txt
 ```
 
-## A minimal YAML guide
+Install from source (editable for development):
 
-A configuration has three parts: `model`, `profile`, and `run`.
+```powershell
+git clone https://github.com/PolarisMegrez/qphase.git
+cd qphase
+pip install -r requirements.txt
+pip install -e packages/qphase
+pip install -e packages/qphase_sde
+pip install -e packages/qphase_viz
+```
+
+Or install directly from a local checkout without editable mode:
+
+```powershell
+pip install packages/qphase
+pip install packages/qphase_sde
+pip install packages/qphase_viz
+```
+
+## Quick Start
+
+To run a simulation, you need a configuration file. Here is a minimal example:
 
 ```yaml
-model:
-  module: models.vdp_two_mode
-  function: build_sde
-  params: { omega_a: 0.005, omega_b: 0.0, gamma_a: 2.0, gamma_b: 1.0, Gamma: 0.01, g: 0.5, D: 1.0 }
-  ic: ["7.0+0.0j", "0.0-7.0j"]      # single vector; you can also provide a list of vectors
-  noise: { kind: independent }
-
-profile:
+# config.yaml
+version: "1.0"
+engine:
+  type: sde
   backend: numpy
-  solver: euler
-  save:
-    root: runs
-    save_every: 20
-    save_timeseries: true
-    save_psd_complex: false
-    save_psd_modular: false
-  visualizer:
-    psd:
-      convention: symmetric         # or pragmatic
-      x_scale: linear               # x/y axis scales: linear or log
-      y_scale: log
+  integrator: euler
 
-run:
-  time: { dt: 0.001, steps: 200000 }
-  trajectories: { n_traj: 10, master_seed: 42 }
-  visualizer:
-    phase_portrait:
-      - kind: Re_Im
-        modes: [0]
-      - kind: abs_abs
-        modes: [0, 1]
-        t_range: [10.0, 200.0]
-    psd:
-      - kind: complex
-        modes: [0, 1]
-        xlim: [-0.5, 0.5]
-        t_range: [20.0, 100.0]
+model:
+  type: kerr_cavity
+  params:
+    chi: 1.0
+    delta: 0.0
+    kappa: 1.0
+    epsilon: 2.0
+
+simulation:
+  t_start: 0.0
+  t_end: 10.0
+  dt: 0.01
+  trajectories: 100
 ```
 
-Notes for YAML users
-- `model.ic` can be a single vector (broadcast to all trajectories) or a list of IC vectors; internally it is normalized to a list of vectors.
-- `profile.save` decides what to persist: time‑series and/or PSD data.
-- PSD “convention” sets normalization and frequency axis: symmetric/unitary (ω) or pragmatic (f).
-- For full details, see `docs/config_spec_en.md` and `docs/config_spec_zh.md`.
+Run the simulation using the CLI:
 
-## Project structure
+```powershell
+qps run config.yaml
+```
 
-- `packages/QPhaseSDE` — core library (engine, protocols, backends, integrators, IO, visualizer)
+## Project Structure
+
+The project is organized as a monorepo containing three main packages:
+
+- `packages/qphase`: The core framework, CLI, and plugin system.
+- `packages/qphase_sde`: The physics engine implementing SDE solvers and models.
+- `packages/qphase_viz`: Visualization tools for analyzing simulation results.
+
+## Acknowledgements and License
+
+This project was developed with the assistance of Copilot. Licensed under the MIT License. See LICENSE for details.
+
+
+- `packages/qphase_sde` — core library (engine, protocols, backends, integrators, IO, visualizer)
   - `core/` — minimal protocols, registry, and integration engine
   - `backends/` — backend registrations (NumPy built‑in)
   - `integrators/` — Euler–Maruyama (Milstein alias)
   - `visualizer/` — Spec (Pydantic) → Renderer → Service; PSD and phase portraits
   - `analysis/` — reusable analysis (e.g., PSD computation)
   - `io/` — results saving/loading; snapshots
-- `packages/QPhaseSDE_cli` — Typer‑based CLI (`qps`) for running and analyzing
+- `packages/qphase` — Typer‑based CLI (`qps`) for running and analyzing
 - `models/` — example models (e.g., `vdp_two_mode.py`)
 - `configs/` — example YAMLs (run and PSD)
 - `runs/` — generated outputs
 - `docs/` — configuration specs and user guides (EN/ZH)
 - `tests/` — local smoke tests
 
-Internals rely on a central registry (`QPhaseSDE.core.registry.registry`) to create pluggable components by name (e.g., `visualizer:psd`). The visualizer service validates specs, slices time windows, merges styles, dispatches plotters, and saves images.
+Internals rely on a central registry (`qphase_sde.core.registry.registry`) to create pluggable components by name (e.g., `visualizer:psd`). The visualizer service validates specs, slices time windows, merges styles, dispatches plotters, and saves images.
 
 ## Notes
 

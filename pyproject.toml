@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qphase"
+version = "0.0.1"
+description = "Meta package for development; does not install code."
+authors = [{ name = "Yu Xue-Hao" }]
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = []
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+# 启用的规则集：
+#   E: pycodestyle errors（PEP8 基本错误）
+#   F: pyflakes（未使用变量、未定义名等）
+#   I: isort（导入排序）
+#   B: bugbear（常见易错点和安全隐患）
+#   N: pep8-naming（命名规范）
+#   D: pydocstyle（文档字符串规范）
+#   UP: pyupgrade（自动升级语法到新版本 Python）
+#   C90: mccabe（圈复杂度检查）
+select = ["E", "F", "I", "B", "N", "D", "UP", "C90"]
+exclude = [
+	".git",
+	"__pycache__",
+	"build",
+	"dist",
+	".venv",
+	"venv",
+	".mypy_cache",
+	".pytest_cache",
+	".tox"
+]
+ignore = [
+	"D100", # 模块缺少 docstring
+	"D101", # 缺少模块 docstring
+	"D102", # 缺少类 docstring
+	"D103", # 函数或方法缺少 docstring
+	"D104", # 类 docstring 应包含属性说明
+	"D107", # 方法 docstring 应包含参数说明
+	"D203", # 类定义前需要一个空行（与 D211 冲突，已忽略）
+	"D205", # docstring 中的空行应为一行
+	"D213", # 多行 docstring 摘要应在第二行（与 D212 冲突，已忽略）
+	"D400", # docstring 第一行应以句号结尾
+	"D415", # docstring 第一行应以句号、问号或感叹号结尾
+	"C901", # 函数复杂度过高
+	"N803", # 方法名应为小写
+	"N806", # 命名不符合规范
+]
+
+[tool.black]
+line-length = 88
+skip-string-normalization = false
+[tool.mypy]
+python_version = "3.10"
+exclude = ["build/", "**/build/"]
+ignore_missing_imports = true
+check_untyped_defs = true
+disallow_untyped_defs = false
+warn_unused_ignores = true
+
+# 你可以根据需要调整上述配置。
+# 例如：
+# disallow_untyped_defs = true  # 强制所有函数都要有类型注解
+# strict = true  # 开启更严格的类型检查

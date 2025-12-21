@@ -1,0 +1,2 @@
+-r packages/qphase_sde/requirements.txt
+-r packages/qphase/requirements.txt
