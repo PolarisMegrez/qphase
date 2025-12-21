@@ -85,6 +85,11 @@ dev = [
     "ruff>=0.14.10",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v"
+
 # 你可以根据需要调整上述配置。
 # 例如：
 # disallow_untyped_defs = true  # 强制所有函数都要有类型注解
