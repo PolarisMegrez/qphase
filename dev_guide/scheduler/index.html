@@ -766,6 +766,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Parameter Scanning Logic">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#detection-mechanism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detection Mechanism
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#expansion-strategies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expansion Strategies
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -776,6 +804,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Runtime Isolation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#directory-naming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Directory Naming
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1202,6 +1247,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Parameter Scanning Logic">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#detection-mechanism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detection Mechanism
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#expansion-strategies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expansion Strategies
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1212,6 +1285,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Runtime Isolation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#directory-naming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Directory Naming
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1283,18 +1373,44 @@
 <a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">error</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span> <span class="c1"># Exception trace if failed</span>
 </code></pre></div>
 <h2 id="parameter-scanning-logic">Parameter Scanning Logic</h2>
-<p>The Scheduler integrates with the <code>JobExpander</code> to support parameter sweeps.</p>
-<ul>
-<li><strong>Cartesian Product</strong>: By default, lists in the configuration are interpreted as axes for a grid search. The expander generates the Cartesian product of all iterable parameters.</li>
-<li><strong>Zipped Expansion</strong>: For correlated parameters, the expander supports a "zipped" mode, iterating over parameter lists in lockstep.</li>
-</ul>
-<h2 id="runtime-isolation">Runtime Isolation</h2>
-<p>To ensure reproducibility, the Scheduler enforces strict runtime isolation:</p>
+<p>The Scheduler integrates with the <code>JobExpander</code> to support parameter sweeps. This process transforms a single "Job Definition" (which may contain lists of values) into multiple atomic "Job Configurations".</p>
+<h3 id="detection-mechanism">Detection Mechanism</h3>
+<p>The <code>JobExpander</code> inspects the configuration dictionary for lists.
+*   <strong>Scanable Parameters</strong>: By default, <strong>any list</strong> found in a plugin configuration (e.g., <code>model.chi: [0.1, 0.2, 0.3]</code>) is treated as a parameter to be scanned.
+*   <strong>Non-Scanable Lists</strong>: To pass a list as a literal value (e.g., a vector <code>[1, 0, 0]</code>), the plugin must explicitly mark that field as non-scanable in its schema, or the user must wrap it (implementation dependent, currently all lists are candidates for expansion if the plugin registers them as scanable).</p>
+<h3 id="expansion-strategies">Expansion Strategies</h3>
 <ol>
-<li><strong>Directory Provisioning</strong>: For each job, a directory is created following the pattern <code>runs/{timestamp}_{job_name}/</code>.</li>
-<li><strong>Configuration Snapshot</strong>: Before execution begins, the fully resolved configuration (including all defaults and overrides) is serialized to <code>config_snapshot.json</code> within the run directory.</li>
-<li><strong>State Reset</strong>: The Registry and Engine are re-initialized for each job to prevent state leakage (e.g., GPU memory fragmentation or global variable pollution) between iterations.</li>
+<li>
+<p><strong>Cartesian Product (Default)</strong>:</p>
+<ul>
+<li>If multiple parameters are lists, QPhase generates every possible combination.</li>
+<li>Example: <code>A=[1, 2]</code>, <code>B=[3, 4]</code> -&gt; <code>(1,3), (1,4), (2,3), (2,4)</code>.</li>
+<li>Result: 4 separate Jobs.</li>
+</ul>
+</li>
+<li>
+<p><strong>Zipped Expansion</strong>:</p>
+<ul>
+<li>Iterates over parameters in lockstep. Requires all lists to have the same length.</li>
+<li>Example: <code>A=[1, 2]</code>, <code>B=[3, 4]</code> -&gt; <code>(1,3), (2,4)</code>.</li>
+<li>Result: 2 separate Jobs.</li>
+</ul>
+</li>
 </ol>
+<h2 id="runtime-isolation">Runtime Isolation</h2>
+<p>QPhase enforces <strong>Job-Level Isolation</strong>. This is critical for parameter scans.</p>
+<ul>
+<li><strong>One Job = One Directory</strong>: If a parameter scan generates 100 jobs, QPhase creates <strong>100 separate directories</strong>.</li>
+<li><strong>Rationale</strong>:<ol>
+<li><strong>Concurrency Safety</strong>: Jobs can be run in parallel (future feature) without race conditions on output files.</li>
+<li><strong>Traceability</strong>: Each directory contains a <code>config_snapshot.json</code> that records the <em>exact</em> scalar values used for that specific run. You don't need to parse a master config to figure out which file corresponds to <code>chi=0.1</code>.</li>
+<li><strong>Failure Containment</strong>: If Job 50 crashes, it does not corrupt the files of Job 49.</li>
+</ol>
+</li>
+</ul>
+<h3 id="directory-naming">Directory Naming</h3>
+<p>Directories are named using a timestamp and the job name (which usually includes the index in the scan):
+<code>runs/{timestamp}_{job_name}_{index}/</code></p>
 
 
 

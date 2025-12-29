@@ -697,6 +697,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#core-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Concepts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Concepts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-the-job" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The Job
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-job-configuration-jobconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Job Configuration (JobConfig)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-job-result-jobresult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Job Result (JobResult)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#core-architectural-patterns" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -776,6 +826,34 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Directory Structure">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#source-code-packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source Code (packages/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runtime-artifacts-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime Artifacts (runs/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1189,6 +1267,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#core-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Concepts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Concepts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-the-job" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The Job
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-job-configuration-jobconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Job Configuration (JobConfig)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-job-result-jobresult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Job Result (JobResult)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#core-architectural-patterns" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1269,6 +1397,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Directory Structure">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#source-code-packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source Code (packages/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runtime-artifacts-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime Artifacts (runs/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1313,6 +1469,20 @@
 </ul>
 </li>
 </ol>
+<h2 id="core-concepts">Core Concepts</h2>
+<p>Before diving into the architectural patterns, it is essential to define the fundamental units of work within QPhase.</p>
+<h3 id="1-the-job">1. The Job</h3>
+<p>A <strong>Job</strong> is the atomic unit of execution in QPhase. It represents a single, self-contained simulation run with a fully resolved configuration.
+*   <strong>State</strong>: A Job is stateless until execution. It is defined entirely by its configuration.
+*   <strong>Lifecycle</strong>: Created by the <code>JobExpander</code>, executed by the <code>Scheduler</code>, and finalized by the persistence layer.
+*   <strong>Isolation</strong>: Each Job runs in its own isolated directory and process context (logically), ensuring that side effects from one simulation do not contaminate another.</p>
+<h3 id="2-job-configuration-jobconfig">2. Job Configuration (<code>JobConfig</code>)</h3>
+<p>The static definition of a Job. It contains all the parameters necessary to reconstruct the simulation state, including:
+*   <strong>Engine Selection</strong>: Which simulation engine to use (e.g., <code>sde</code>, <code>viz</code>).
+*   <strong>Plugin Configurations</strong>: Parameters for the Model, Backend, Integrator, etc.
+*   <strong>Runtime Settings</strong>: Output directories, random seeds, and precision settings.</p>
+<h3 id="3-job-result-jobresult">3. Job Result (<code>JobResult</code>)</h3>
+<p>The outcome of a Job execution. It encapsulates the success/failure status, the path to the results on disk, and any runtime metadata (execution time, errors).</p>
 <h2 id="core-architectural-patterns">Core Architectural Patterns</h2>
 <h3 id="1-registry-pattern-dependency-injection">1. Registry Pattern &amp; Dependency Injection</h3>
 <p>To achieve modularity, QPhase avoids hardcoded dependencies. Instead, it utilizes a <strong>Registry Pattern</strong> combined with <strong>Dependency Injection</strong>.</p>
@@ -1358,11 +1528,35 @@
 </li>
 </ol>
 <h2 id="directory-structure">Directory Structure</h2>
+<p>The project follows a monorepo structure managed by <code>uv</code> workspaces.</p>
+<h3 id="source-code-packages">Source Code (<code>packages/</code>)</h3>
 <ul>
-<li><code>packages/qphase/core/</code>: <strong>The Shell</strong>. Contains the Scheduler, Registry, Configuration system, and Protocol definitions.</li>
-<li><code>packages/qphase_sde/</code>: <strong>Reference Engine</strong>. A standard implementation of a Stochastic Differential Equation solver.</li>
-<li><code>packages/qphase_viz/</code>: <strong>Visualization Engine</strong>. A modular plotting system.</li>
+<li><code>qphase/</code>: <strong>The Core Framework (Shell)</strong>.<ul>
+<li><code>core/</code>: Scheduler, Registry, Configuration, Protocols.</li>
+<li><code>commands/</code>: CLI implementation.</li>
 </ul>
+</li>
+<li><code>qphase_sde/</code>: <strong>Standard Engine</strong>.<ul>
+<li>Implements SDE solvers (Euler-Maruyama, SRK).</li>
+<li>Contains standard physics models (Kerr Cavity, VdP).</li>
+</ul>
+</li>
+<li><code>qphase_viz/</code>: <strong>Visualization Engine</strong>.<ul>
+<li>Handles plotting and data post-processing.</li>
+</ul>
+</li>
+</ul>
+<h3 id="runtime-artifacts-runs">Runtime Artifacts (<code>runs/</code>)</h3>
+<p>When simulations are executed, QPhase organizes outputs hierarchically:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>runs/
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── 2025-12-29T10-00-00Z_scan_job_0/   # Job 1 (chi=0.1)
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│   ├── config_snapshot.json           # Full config for this specific point
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   └── results.h5                     # Simulation data
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├── 2025-12-29T10-00-05Z_scan_job_1/   # Job 2 (chi=0.2)
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│   ├── config_snapshot.json
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│   └── results.h5
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>└── ...
+</code></pre></div>
 
 
 
