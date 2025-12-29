@@ -709,10 +709,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-the-job" class="md-nav__link">
+  <a href="#1-the-job-the-intent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. The Job
+        1. The Job (The "Intent")
       
     </span>
   </a>
@@ -720,10 +720,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-job-configuration-jobconfig" class="md-nav__link">
+  <a href="#2-the-engine-the-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Job Configuration (JobConfig)
+        2. The Engine (The "Workflow")
       
     </span>
   </a>
@@ -731,10 +731,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-job-result-jobresult" class="md-nav__link">
+  <a href="#3-the-plugin-the-building-block" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Job Result (JobResult)
+        3. The Plugin (The "Building Block")
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-relationship-dependency-injection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Relationship: Dependency Injection
       
     </span>
   </a>
@@ -1279,10 +1290,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-the-job" class="md-nav__link">
+  <a href="#1-the-job-the-intent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. The Job
+        1. The Job (The "Intent")
       
     </span>
   </a>
@@ -1290,10 +1301,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-job-configuration-jobconfig" class="md-nav__link">
+  <a href="#2-the-engine-the-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Job Configuration (JobConfig)
+        2. The Engine (The "Workflow")
       
     </span>
   </a>
@@ -1301,10 +1312,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-job-result-jobresult" class="md-nav__link">
+  <a href="#3-the-plugin-the-building-block" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Job Result (JobResult)
+        3. The Plugin (The "Building Block")
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-relationship-dependency-injection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Relationship: Dependency Injection
       
     </span>
   </a>
@@ -1470,19 +1492,31 @@
 </li>
 </ol>
 <h2 id="core-concepts">Core Concepts</h2>
-<p>Before diving into the architectural patterns, it is essential to define the fundamental units of work within QPhase.</p>
-<h3 id="1-the-job">1. The Job</h3>
-<p>A <strong>Job</strong> is the atomic unit of execution in QPhase. It represents a single, self-contained simulation run with a fully resolved configuration.
-*   <strong>State</strong>: A Job is stateless until execution. It is defined entirely by its configuration.
-*   <strong>Lifecycle</strong>: Created by the <code>JobExpander</code>, executed by the <code>Scheduler</code>, and finalized by the persistence layer.
-*   <strong>Isolation</strong>: Each Job runs in its own isolated directory and process context (logically), ensuring that side effects from one simulation do not contaminate another.</p>
-<h3 id="2-job-configuration-jobconfig">2. Job Configuration (<code>JobConfig</code>)</h3>
-<p>The static definition of a Job. It contains all the parameters necessary to reconstruct the simulation state, including:
-*   <strong>Engine Selection</strong>: Which simulation engine to use (e.g., <code>sde</code>, <code>viz</code>).
-*   <strong>Plugin Configurations</strong>: Parameters for the Model, Backend, Integrator, etc.
-*   <strong>Runtime Settings</strong>: Output directories, random seeds, and precision settings.</p>
-<h3 id="3-job-result-jobresult">3. Job Result (<code>JobResult</code>)</h3>
-<p>The outcome of a Job execution. It encapsulates the success/failure status, the path to the results on disk, and any runtime metadata (execution time, errors).</p>
+<p>To understand how QPhase operates, it is essential to distinguish between three fundamental concepts: the <strong>Job</strong>, the <strong>Engine</strong>, and the <strong>Plugin</strong>.</p>
+<h3 id="1-the-job-the-intent">1. The Job (The "Intent")</h3>
+<p>A <strong>Job</strong> represents a single, atomic execution request. It answers the question: <em>"What simulation do I want to run?"</em>
+*   <strong>Definition</strong>: A Job is defined entirely by its configuration (a resolved YAML document). It contains all the parameters needed to reproduce a simulation.
+*   <strong>Isolation</strong>: Each Job runs in its own isolated directory (<code>runs/{timestamp}_{job_name}/</code>). This ensures that side effects (like file I/O) from one simulation do not contaminate another.
+*   <strong>Lifecycle</strong>: A Job is created by the Scheduler (often by expanding a parameter scan), executed, and then finalized when its results are saved.</p>
+<h3 id="2-the-engine-the-workflow">2. The Engine (The "Workflow")</h3>
+<p>An <strong>Engine</strong> is a special type of plugin that defines the <em>lifecycle</em> of a simulation. It answers the question: <em>"How should the simulation proceed?"</em>
+*   <strong>Role</strong>: The Engine acts as the "main loop" or orchestrator.
+    *   The <code>sde</code> engine runs a time-stepping loop for stochastic differential equations.
+    *   The <code>viz</code> engine runs a data processing and plotting pipeline.
+*   <strong>Orchestration</strong>: The Engine does not perform the low-level physics or math itself. Instead, it requests other plugins (like Models or Backends) to do the actual work.</p>
+<h3 id="3-the-plugin-the-building-block">3. The Plugin (The "Building Block")</h3>
+<p>A <strong>Plugin</strong> is a modular component that implements a specific capability. Plugins are the "Lego blocks" that the Engine assembles to build a simulation.
+*   <strong>Model</strong>: Defines the physical system (e.g., drift and diffusion vectors).
+*   <strong>Backend</strong>: Provides the computational primitives (e.g., NumPy for CPU, PyTorch for GPU).
+*   <strong>Integrator</strong>: Implements the numerical solver (e.g., Euler-Maruyama).
+*   <strong>Analyser</strong>: Processes raw simulation data into metrics.</p>
+<h3 id="the-relationship-dependency-injection">The Relationship: Dependency Injection</h3>
+<p>The power of QPhase lies in how these components connect. You do not write code to wire them together; the <strong>Scheduler</strong> does it for you based on the configuration.</p>
+<ol>
+<li><strong>Selection</strong>: The <strong>Job</strong> configuration selects an <strong>Engine</strong> (e.g., <code>engine: sde</code>).</li>
+<li><strong>Declaration</strong>: The <strong>Engine</strong> declares what it needs via a <strong>Manifest</strong> (e.g., "I require a <code>model</code> and a <code>backend</code>").</li>
+<li><strong>Injection</strong>: The <strong>Scheduler</strong> reads the Manifest, looks up the requested plugins in the Job config, instantiates them via the <strong>Registry</strong>, and <em>injects</em> them into the Engine's constructor.</li>
+</ol>
 <h2 id="core-architectural-patterns">Core Architectural Patterns</h2>
 <h3 id="1-registry-pattern-dependency-injection">1. Registry Pattern &amp; Dependency Injection</h3>
 <p>To achieve modularity, QPhase avoids hardcoded dependencies. Instead, it utilizes a <strong>Registry Pattern</strong> combined with <strong>Dependency Injection</strong>.</p>
