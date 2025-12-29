@@ -16,6 +16,32 @@ The **Scheduler** is the execution orchestration layer of QPhase. It is responsi
 3.  **Context Management**: Provisioning isolated execution environments (directories) for each job to prevent data contamination.
 4.  **Error Handling**: Intercepting runtime exceptions to prevent batch failures (i.e., a single failed job should not terminate the entire campaign).
 
+## Dependency Validation
+
+The Scheduler enforces explicit dependency contracts declared by Engines via the `EngineManifest`.
+
+1.  **Manifest Declaration**: Each Engine declares its required and optional plugins.
+    ```python
+    class MyEngine(EngineBase):
+        manifest = EngineManifest(
+            required_plugins={"backend", "model"},
+            optional_plugins={"analyser"}
+        )
+    ```
+2.  **Pre-flight Check**: Before any job is executed, the Scheduler validates that the job configuration provides all `required_plugins` declared by the target Engine. This prevents runtime failures due to missing dependencies.
+
+## Plugin Instantiation
+
+For each job, the Scheduler performs the following steps to instantiate the environment:
+
+1.  **Engine Resolution**: The `engine` plugin is instantiated first.
+2.  **Manifest Inspection**: The Scheduler reads `engine.manifest`.
+3.  **Dependency Injection**: The Scheduler iterates through `required_plugins` and `optional_plugins`.
+    *   It looks up the corresponding configuration in the Job Config.
+    *   It calls `registry.create()` for each plugin.
+    *   It collects these instances into a dictionary.
+4.  **Engine Execution**: Finally, the Engine is initialized with the dictionary of instantiated plugins and the simulation is launched.
+
 ## The Execution Graph
 
 While the current implementation primarily supports serial execution, the underlying data structure (`JobList`) is designed as a directed acyclic graph (DAG).

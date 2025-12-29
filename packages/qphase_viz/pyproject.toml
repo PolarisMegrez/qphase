@@ -19,8 +19,9 @@ dependencies = [
 
 [project.entry-points.qphase]
 "engine.viz" = "qphase_viz.engine:VizEngine"
-"visualizer.phase_portrait" = "qphase_viz.plotters.phase_plane:PhasePortraitPlotter"
-"visualizer.psd" = "qphase_viz.plotters.psd:PsdPlotter"
+"visualizer.phase_plane" = "qphase_viz.plotters.phase:PhasePlanePlotter"
+"visualizer.power_spectrum" = "qphase_viz.plotters.spectrum:PowerSpectrumPlotter"
+"visualizer.time_series" = "qphase_viz.plotters.evolution:TimeSeriesPlotter"
 
 [tool.setuptools.packages.find]
 where = ["."]

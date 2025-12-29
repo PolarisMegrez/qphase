@@ -44,3 +44,13 @@ def jobs(
 ### Extensibility
 
 While the core commands are hardcoded, the CLI architecture allows for future extensibility. The Registry System includes a `command` namespace, which is reserved for dynamically loading additional CLI sub-commands from plugins. This will allow third-party packages to extend the `qps` tool with custom functionality (e.g., `qps plot`, `qps analyze`).
+
+## Integration with Scheduler
+
+The CLI acts as a thin client for the `Scheduler`. When `qps run jobs` is invoked:
+1.  It parses the command line arguments.
+2.  It loads the `SystemConfig`.
+3.  It instantiates the `Scheduler`.
+4.  It delegates the execution to `scheduler.run_jobs()`.
+
+This separation ensures that the core execution logic is not coupled to the CLI interface, allowing simulations to be triggered programmatically (e.g., from a Jupyter notebook) if needed.

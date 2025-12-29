@@ -45,6 +45,12 @@ QPhase uses Pydantic for validation. Common issues include:
 *   **Missing Fields**: A required field (no default value) is missing from the YAML.
 *   **Extra Fields**: Your YAML has fields not defined in the schema. Set `model_config = ConfigDict(extra="allow")` if you want to permit this.
 
+### Why does my Engine fail with "missing required plugins"?
+
+This error comes from the `EngineManifest` validation. Your Engine class likely declares a `manifest` with `required_plugins={"model", ...}`. If the user's Job Configuration does not provide a `model` plugin in the `plugins` section, the Scheduler will block execution.
+
+**Fix**: Ensure your YAML configuration includes all plugins listed in the Engine's `required_plugins`.
+
 ## Architecture & Internals
 
 ### What is the difference between Eager and Lazy registration?

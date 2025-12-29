@@ -15,11 +15,11 @@ from typing import Any, ClassVar
 import numpy as np
 from pydantic import BaseModel, Field
 from qphase.backend.base import BackendBase
-from qphase.core.protocols import EngineBase
+from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 
 from qphase_sde.integrator.base import Integrator
 from qphase_sde.model import NoiseSpec, SDEModel
-from qphase_sde.result import SDEResult
+from qphase_sde.result import AnalysisResult, SDEResult
 from qphase_sde.state import State, TrajectorySet
 
 __all__ = ["Engine", "EngineConfig"]
@@ -61,11 +61,6 @@ class EngineConfig(BaseModel):
     ic: Any | None = Field(
         None,
         description="Initial conditions",
-    )
-    analysis: dict[str, Any] | None = Field(
-        None,
-        description="Analysis configuration (e.g. {'type': 'psd', ...})",
-        json_schema_extra={"scanable": False},
     )
 
     class ConfigSchema:
@@ -152,6 +147,11 @@ class Engine(EngineBase):
     name: ClassVar[str] = "sde"
     description: ClassVar[str] = "Stochastic Differential Equation Simulation Engine"
     config_schema: ClassVar[type[EngineConfig]] = EngineConfig
+    manifest: ClassVar[EngineManifest] = EngineManifest(
+        required_plugins={"backend", "model"},
+        optional_plugins={"integrator", "analyser"},
+        defaults={"integrator": "euler_maruyama"},
+    )
 
     def __init__(
         self,
@@ -187,7 +187,7 @@ class Engine(EngineBase):
         *,
         progress_cb: Callable[[float | None, float | None, str, str | None], None]
         | None = None,
-    ) -> SDEResult:
+    ) -> ResultProtocol:
         """Execute the engine (Plugin Protocol)."""
         if not self.config:
             raise RuntimeError("Engine not configured.")
@@ -246,32 +246,22 @@ class Engine(EngineBase):
             progress_cb=sde_progress_cb,
         )
 
-        if self.config.analysis:
-            analysis_type = self.config.analysis.get("type")
-            if analysis_type == "psd":
-                from qphase_sde.analyser import PsdAnalyzer
+        # Check for analysers
+        analysers = self.plugins.get("analyser")
+        if not analysers:
+            return SDEResult(trajectory=traj_set, kind="trajectory")
 
-                # Prepare config for analyzer
-                ana_config_dict = self.config.analysis.copy()
-                ana_config_dict.pop("type", None)
+        # If analysers is a single instance (backward compat), wrap it
+        if not isinstance(analysers, dict):
+            analysers = {"default": analysers}
 
-                # Ensure dt is passed if not present (use simulation dt * stride)
-                if "dt" not in ana_config_dict:
-                    ana_config_dict["dt"] = traj_set.dt
+        results = {}
+        for name, analyser in analysers.items():
+            # analyser.analyze(data, backend)
+            # Note: analyser.analyze returns a ResultProtocol
+            results[name] = analyser.analyze(traj_set, self._default_backend)
 
-                # Instantiate analyzer
-                analyzer = PsdAnalyzer(**ana_config_dict)
-
-                # Run analysis
-                result = analyzer.analyze(traj_set.data, backend=self._default_backend)
-
-                return SDEResult(
-                    trajectory=result,
-                    kind="psd",
-                    meta={"analysis": self.config.analysis},
-                )
-
-        return SDEResult(trajectory=traj_set, kind="trajectory")
+        return AnalysisResult(results=results, meta={})
 
     def run_sde(
         self,

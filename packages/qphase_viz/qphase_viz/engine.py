@@ -7,6 +7,7 @@ Implements the EngineBase protocol for visualization tasks.
 from pathlib import Path
 from typing import Any, ClassVar
 
+import matplotlib.pyplot as plt
 from qphase.core.errors import QPhaseConfigError, QPhaseRuntimeError
 from qphase.core.protocols import EngineBase, ResultProtocol
 
@@ -21,6 +22,19 @@ from .plotters.base import PlotterProtocol
 from .plotters.evolution import TimeSeriesPlotter
 from .plotters.phase import PhasePlanePlotter
 from .plotters.spectrum import PowerSpectrumPlotter
+
+
+def _set_default_rcparams() -> None:
+    """Apply project-wide default Matplotlib font/mathtext settings."""
+    plt.rcParams["font.family"] = "sans-serif"
+    plt.rcParams["font.sans-serif"] = ["Arial"]
+    plt.rcParams["mathtext.fontset"] = "custom"
+    plt.rcParams["mathtext.rm"] = "sans"
+    plt.rcParams["mathtext.it"] = "sans:italic"
+    plt.rcParams["mathtext.bf"] = "sans:bold"
+    plt.rcParams["axes.labelsize"] = 18
+    plt.rcParams["xtick.labelsize"] = 15
+    plt.rcParams["ytick.labelsize"] = 15
 
 
 class VizResult(ResultProtocol):
@@ -82,6 +96,11 @@ class VizEngine(EngineBase):
         if data is None:
             raise QPhaseRuntimeError("VizEngine requires input data.")
 
+        # Apply global styles
+        _set_default_rcparams()
+        if self.config.style_overrides:
+            plt.rcParams.update(self.config.style_overrides)
+
         # Ensure data is ArrayBase-compatible or a dict (for pre-computed analysis)
         # if not hasattr(data, "data") or not hasattr(data, "to_numpy"):
         #      # Try to wrap or cast? For now, assume it's compatible.
@@ -122,12 +141,6 @@ class VizEngine(EngineBase):
                 raise QPhaseConfigError(f"Invalid spec for '{kind}': {e}") from e
 
             if plotter:
-                # Apply global style overrides
-                if self.config.style_overrides:
-                    import matplotlib.pyplot as plt
-
-                    plt.rcParams.update(self.config.style_overrides)
-
                 # Execute plot
                 try:
                     out_path = plotter.plot(

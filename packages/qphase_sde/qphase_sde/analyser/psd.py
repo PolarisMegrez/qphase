@@ -22,7 +22,10 @@ from typing import Any, ClassVar, Literal, cast
 
 import numpy as _np
 from pydantic import BaseModel, Field, model_validator
+from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
+
+from qphase_sde.result import SDEResult
 
 from .base import Analyzer
 
@@ -61,20 +64,21 @@ class PsdAnalyzer(Analyzer):
     def __init__(self, config: PsdAnalyzerConfig | None = None, **kwargs):
         super().__init__(config, **kwargs)  # type: ignore[arg-type]
 
-    def analyze(self, data: Any, **kwargs) -> dict:
+    def analyze(self, data: Any, backend: BackendBase) -> SDEResult:
         """Compute PSD for multiple modes.
 
         Parameters
         ----------
-        data : numpy.ndarray
-            Complex-like time series array of shape ``(n_traj, n_time, n_modes)``.
-        **kwargs : Any
-            Additional arguments (ignored).
+        data : Any
+            Complex-like time series array of shape ``(n_traj, n_time, n_modes)``
+            or TrajectorySet.
+        backend : BackendBase
+            Backend to use for computation.
 
         Returns
         -------
-        dict
-            Dictionary with keys 'axis', 'psd', 'modes', 'kind', 'convention'.
+        SDEResult
+            Result containing PSD data.
 
         """
         config = cast(PsdAnalyzerConfig, self.config)
@@ -83,27 +87,41 @@ class PsdAnalyzer(Analyzer):
         kind = config.kind
         convention = config.convention
 
-        # Optional backend override from kwargs
-        backend = kwargs.get("backend")
+        # Extract data array
+        if hasattr(data, "data"):
+            data_arr = data.data
+        else:
+            data_arr = data
 
         # Compute first to get axis
         axis0, P0 = self._compute_single(
-            data[:, :, modes[0]], dt, kind=kind, convention=convention, backend=backend
+            data_arr[:, :, modes[0]],
+            dt,
+            kind=kind,
+            convention=convention,
+            backend=backend,
         )
         P_list = [P0]
         for m in modes[1:]:
             _, Pm = self._compute_single(
-                data[:, :, m], dt, kind=kind, convention=convention, backend=backend
+                data_arr[:, :, m],
+                dt,
+                kind=kind,
+                convention=convention,
+                backend=backend,
             )
             P_list.append(Pm)
         P_mat = _np.vstack(P_list).T  # shape (n_freq, n_modes)
-        return {
+
+        result_dict = {
             "axis": axis0,
             "psd": P_mat,
             "modes": modes,
             "kind": kind,
             "convention": convention,
         }
+
+        return SDEResult(trajectory=result_dict, kind="psd", meta=result_dict)
 
     def _compute_single(
         self,

@@ -33,7 +33,8 @@ class QPhaseIOError(QPhaseError):
 ## Error Propagation
 
 1.  **Validation Phase**: Errors during configuration loading (e.g., missing fields, invalid types) are caught early and raised as `QPhaseConfigError`. The CLI displays the specific validation message from Pydantic.
-2.  **Execution Phase**: Exceptions occurring within a job (e.g., numerical instability, runtime assertions) are caught by the `Scheduler`.
+2.  **Dependency Check**: If a job is missing required plugins (as defined in `EngineManifest`), a `QPhaseConfigError` is raised before execution begins.
+3.  **Execution Phase**: Exceptions occurring within a job (e.g., numerical instability, runtime assertions) are caught by the `Scheduler`.
     *   The exception is logged.
     *   The job is marked as `failed` in the `JobResult`.
     *   The scheduler proceeds to the next independent job (unless `fail_fast` is enabled).

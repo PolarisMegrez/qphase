@@ -58,3 +58,14 @@ class KerrCavityConfig(BaseModel):
 ```
 
 If a user provides a string for `chi` or a negative value, the Pydantic validator will raise a descriptive error during the loading phase, preventing runtime failures deep in the simulation loop.
+
+## Parameter Scanning Support
+
+The configuration system includes metadata support for parameter scanning. Fields in Pydantic models can be marked as `scanable` via `json_schema_extra`.
+
+```python
+class SDEConfig(BaseModel):
+    dt: float = Field(..., json_schema_extra={"scanable": True})
+```
+
+The `JobExpander` uses this metadata to determine which fields are eligible for expansion when a list of values is provided in the YAML configuration.

@@ -5,9 +5,17 @@ Base class for all analyzers in the qphase_sde package.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
-from qphase.core.protocols import PluginBase, PluginConfigBase
+from qphase.backend.base import BackendBase
+from qphase.core.protocols import PluginBase, PluginConfigBase, ResultProtocol
+
+
+@runtime_checkable
+class AnalyzerProtocol(Protocol):
+    """Protocol for analyzers."""
+
+    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol: ...
 
 
 class Analyzer(PluginBase, ABC):
@@ -41,19 +49,19 @@ class Analyzer(PluginBase, ABC):
             self.config = config
 
     @abstractmethod
-    def analyze(self, data: Any, **kwargs) -> Any:
+    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         """Perform analysis on the data.
 
         Parameters
         ----------
         data : Any
             Input data for analysis.
-        **kwargs : Any
-            Additional arguments.
+        backend : BackendBase
+            Backend to use for computation.
 
         Returns
         -------
-        Any
+        ResultProtocol
             Analysis results.
 
         """

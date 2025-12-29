@@ -525,10 +525,41 @@ class Scheduler:
         # Stage 1: Check each job has exactly one engine
         self._validate_single_engine_per_job(job_list)
 
-        # Stage 2: Validate data flow
+        # Stage 2: Validate engine dependencies
+        for job in job_list.jobs:
+            self._validate_job_dependencies(job)
+
+        # Stage 3: Validate data flow
         self._validate_data_flow(job_list)
 
         log.info("Job validation completed successfully")
+
+    def _validate_job_dependencies(self, job: JobConfig) -> None:
+        """Validate that the job provides all plugins required by its engine."""
+        engine_name = job.get_engine_name()
+        try:
+            engine_cls = registry.get_plugin_class("engine", engine_name)
+        except Exception as e:
+            # If we can't find the engine class, we can't validate dependencies.
+            log.warning(
+                f"Could not validate dependencies for engine '{engine_name}': {e}"
+            )
+            return
+
+        if not hasattr(engine_cls, "manifest"):
+            # Engine does not declare dependencies
+            return
+
+        manifest = engine_cls.manifest
+        provided_plugins = set(job.plugins.keys())
+
+        # Check required plugins
+        missing = manifest.required_plugins - provided_plugins
+        if missing:
+            raise QPhaseConfigError(
+                f"Job '{job.name}' uses engine '{engine_name}' but is missing "
+                f"required plugins: {missing}"
+            )
 
     def _expand_parameter_scans(self, job_list: JobList) -> list[JobConfig]:
         """Expand jobs with scanable list parameters into multiple jobs.
@@ -709,6 +740,7 @@ class Scheduler:
             elif isinstance(config_data, dict):
                 # Nested format: {plugin_name: config, ...}
                 # Create instances for each plugin
+                type_instances = {}
                 for plugin_name, plugin_config in config_data.items():
                     if not isinstance(plugin_config, dict):
                         continue
@@ -721,13 +753,21 @@ class Scheduler:
                         instance = registry.create_plugin_instance(
                             plugin_type, flat_config
                         )
+                        # Store by specific name (e.g. "analyser.psd")
                         plugins[f"{plugin_type}.{plugin_name}"] = instance
-                        plugins[plugin_type] = instance
+                        type_instances[plugin_name] = instance
                     except Exception as e:
                         raise QPhasePluginError(
                             f"Failed to create plugin "
                             f"'{plugin_type}.{plugin_name}': {e}"
                         ) from e
+
+                # Store single instance directly, multiple instances as dict
+                if len(type_instances) == 1:
+                    plugins[plugin_type] = list(type_instances.values())[0]
+                else:
+                    plugins[plugin_type] = type_instances
+
             else:
                 raise QPhasePluginError(f"Invalid plugin config for '{plugin_type}'")
 

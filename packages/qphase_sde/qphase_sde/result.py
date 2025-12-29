@@ -125,3 +125,46 @@ class SDEResult:
 
 # Alias for backward compatibility if needed
 SimulationResult = SDEResult
+
+
+@dataclass
+class AnalysisResult:
+    """Container for analysis results."""
+
+    results: dict[str, Any]
+    meta: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def data(self) -> Any:
+        return self.results
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return self.meta
+
+    def save(self, path: str | Path) -> None:
+        """Save analysis results.
+
+        If results contains ResultProtocol objects, delegates saving to them
+        with suffixed filenames. Otherwise saves as dictionary pickle/json?
+        For now, assumes results are ResultProtocol.
+        """
+        base_path = Path(path)
+        base_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # If path has extension, strip it for directory-like usage or suffixing
+        if base_path.suffix:
+            stem = base_path.stem
+            parent = base_path.parent
+        else:
+            stem = base_path.name
+            parent = base_path.parent
+
+        for name, res in self.results.items():
+            if hasattr(res, "save"):
+                # e.g. path/job_name_psd
+                sub_path = parent / f"{stem}_{name}"
+                res.save(sub_path)
+            else:
+                # Fallback?
+                pass

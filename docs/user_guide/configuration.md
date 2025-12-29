@@ -53,6 +53,14 @@ plugins:
       epsilon: 2.5
       kappa: 0.5
 
+  # [Optional] Analyser Configuration
+  # If provided, the engine will perform analysis (e.g., PSD) instead of just outputting trajectories.
+  analyser:
+    psd:
+      kind: complex
+      modes: [0]
+      convention: symmetric
+
 # [Optional] Job Metadata
 tags: ["test", "kerr", "sde"]
 

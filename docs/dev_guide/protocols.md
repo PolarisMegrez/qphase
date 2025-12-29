@@ -49,18 +49,50 @@ class PluginBase(Protocol):
         ...
 ```
 
-### 2. `EngineBase`
-The contract for simulation engines.
+### 2. `EngineBase` & `EngineManifest`
+The contract for simulation engines. Engines must declare their dependencies via a manifest.
 
 ```python
+@dataclass
+class EngineManifest:
+    """
+    Declares the dependencies of an Engine.
+    """
+    required_plugins: set[str] = field(default_factory=set)
+    optional_plugins: set[str] = field(default_factory=set)
+
 @runtime_checkable
 class EngineBase(PluginBase, Protocol):
+    # Manifest declaring dependencies
+    manifest: ClassVar[EngineManifest] = EngineManifest()
+
     def run(self) -> ResultBase:
         """Execute the simulation and return a result object."""
         ...
 ```
 
-### 3. `BackendBase`
+### 3. `AnalyserProtocol`
+The contract for analysis plugins that process simulation results.
+
+```python
+@runtime_checkable
+class AnalyserProtocol(PluginBase, Protocol):
+    """Contract for analysis plugins."""
+
+    def analyze(self, result: Any) -> dict[str, Any]:
+        """
+        Process a simulation result and return metrics.
+
+        Args:
+            result: The raw result object from the Engine.
+
+        Returns:
+            A dictionary of computed metrics.
+        """
+        ...
+```
+
+### 4. `BackendBase`
 The contract for computational backends (see [Backend System](backend.md)).
 
 ## Runtime Verification

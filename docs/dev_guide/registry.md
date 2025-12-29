@@ -23,6 +23,7 @@ To ensure modularity and prevent naming collisions, plugins are segregated into 
 | `engine`  | Simulation engines | `sde`, `viz` |
 | `model`   | Physical models | `kerr_cavity`, `vdp` |
 | `integrator`| Numerical integrators | `euler_maruyama`, `srk` |
+| `analyser`| Result analysis tools | `mean_photon`, `wigner` |
 
 ### Entry Management Strategy
 
@@ -41,19 +42,18 @@ The registry employs a dual-strategy for entry management to balance startup lat
 QPhase supports two primary discovery mechanisms:
 
 ### 1. Entry Points (Package-based)
-For distributable Python packages, QPhase utilizes the standard `entry_points` mechanism (defined in `pyproject.toml`). The registry scans the `qphase.plugins` group at startup.
+For distributable Python packages, QPhase utilizes the standard `entry_points` mechanism (defined in `pyproject.toml`). The registry scans the `qphase` group at startup.
 
 ```toml
-[project.entry-points."qphase.plugins"]
-"model:my_model" = "my_package.models:MyModel"
+[project.entry-points.qphase]
+"model.my_model" = "my_package.models:MyModel"
 ```
 
 ### 2. Local Configuration (Development-based)
 For local development and ad-hoc extensions, the registry parses a `.qphase_plugins.yaml` file located in the project root. This allows researchers to register scripts without packaging them.
 
 ```yaml
-model:
-  custom_hamiltonian: "plugins.physics:Hamiltonian"
+model.custom_hamiltonian: "plugins.physics:Hamiltonian"
 ```
 
 ## Instantiation Factory
@@ -72,3 +72,7 @@ model = registry.create(
     backend=numpy_backend_instance
 )
 ```
+
+## Dependency Resolution
+
+While the Registry provides the mechanism to create plugins, the **Scheduler** acts as the orchestrator. It uses the `EngineManifest` of the selected Engine to determine which plugins to request from the Registry.

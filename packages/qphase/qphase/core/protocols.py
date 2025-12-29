@@ -21,6 +21,7 @@ Notes
 """
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
 
@@ -32,6 +33,18 @@ _R = TypeVar("_R", bound="ResultBase")
 # Progress callback signature
 # args: percent (0.0-1.0), total_duration_estimate (s), message, stage
 ProgressCallback = Callable[[float | None, float | None, str, str | None], None]
+
+
+@dataclass
+class EngineManifest:
+    """Manifest declaring engine dependencies."""
+
+    # Required plugin types (e.g., {'backend', 'model'})
+    required_plugins: set[str]
+    # Optional plugin types (e.g., {'integrator', 'analyzer'})
+    optional_plugins: set[str] = field(default_factory=set)
+    # Default plugin implementations (e.g., {'integrator': 'euler_maruyama'})
+    defaults: dict[str, str] = field(default_factory=dict)
 
 
 class PluginConfigBase(BaseModel):
@@ -173,6 +186,8 @@ class EngineBase(PluginBase, Protocol):
     The Engine is the entry point for a Resource Package. It is instantiated
     by the Scheduler via the Registry.
     """
+
+    manifest: ClassVar[EngineManifest]
 
     def __init__(self, config: Any, plugins: dict[str, Any], **kwargs: Any) -> None:
         """Initialize the Engine.

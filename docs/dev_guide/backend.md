@@ -18,7 +18,9 @@ The primary objective is to decouple the **Physical Model** from the **Computati
 
 ## The Backend Protocol
 
-The core of this system is the `BackendBase` Protocol, which defines the contract for all computational backends. It standardizes the API for array creation, linear algebra, and random number generation.
+The core of this system is the `BackendBase` Protocol, which defines the contract for all computational backends. It standardizes the API for array creation, linear algebra, random number generation, and common utility functions.
+
+**Strict Hardware Agnosticism**: The protocol is designed to prevent "host transfers" (moving data between CPU and GPU) during the simulation loop. All operations, including reshaping and indexing, must be performed via the backend interface.
 
 ```python
 @runtime_checkable
@@ -29,13 +31,24 @@ class BackendBase(Protocol):
     def backend_name(self) -> str: ...
     def device(self) -> str | None: ...
 
-    # Array Operations
+    # Array Creation
     def array(self, obj: Any, dtype: Any | None = None) -> Any: ...
     def zeros(self, shape: tuple[int, ...], dtype: Any) -> Any: ...
+    def arange(self, start: int, stop: int | None = None, step: int = 1, dtype: Any | None = None) -> Any: ...
 
-    # Linear Algebra
+    # Shape Manipulation
+    def expand_dims(self, x: Any, axis: int) -> Any: ...
+    def repeat(self, x: Any, repeats: int, axis: int | None = None) -> Any: ...
+    def stack(self, arrays: tuple[Any, ...], axis: int = 0) -> Any: ...
+    def concatenate(self, arrays: tuple[Any, ...], axis: int = -1) -> Any: ...
+
+    # Math & Linear Algebra
     def einsum(self, subscripts: str, *operands: Any) -> Any: ...
     def cholesky(self, a: Any) -> Any: ...
+    def isnan(self, x: Any) -> Any: ...
+
+    @property
+    def pi(self) -> float: ...
 
     # Random Number Generation
     def rng(self, seed: int | None) -> Any: ...
@@ -45,7 +58,7 @@ class BackendBase(Protocol):
 ## Implementation Strategy
 
 ### Wrapper Pattern
-Concrete backends (e.g., `NumpyBackend`, `TorchBackend`) implement the `BackendBase` protocol by wrapping the respective library calls. This ensures that method signatures (arguments, return types) are consistent across all implementations, smoothing over API differences between libraries (e.g., `np.concatenate` vs `torch.cat`).
+Concrete backends (e.g., `NumpyBackend`, `TorchBackend`) implement the `BackendBase` protocol by wrapping the respective library calls. This ensures that method signatures (arguments, return types) are consistent across all implementations, smoothing over API differences between libraries (e.g., `np.concatenate` vs `torch.cat`, `np.repeat` vs `torch.repeat_interleave`).
 
 ### Tensor Dispatching
 In the simulation kernel, the backend instance is typically injected as `self.xp` (following the array API standard convention). All mathematical operations are dispatched through this instance.
@@ -55,7 +68,9 @@ In the simulation kernel, the backend instance is typically injected as `self.xp
 # Hardware-agnostic implementation
 def drift(self, state):
     # self.xp could be numpy or torch
-    return -1j * self.xp.einsum("ij,j->i", self.hamiltonian, state)
+    # Using self.xp.pi ensures we use the correct scalar type if needed
+    phase = 2.0 * self.xp.pi * state
+    return -1j * self.xp.einsum("ij,j->i", self.hamiltonian, phase)
 ```
 
 ## Available Backends
@@ -68,7 +83,7 @@ def drift(self, state):
 ### 2. PyTorch Backend (`backend: torch`)
 *   **Target**: CPU / GPU (CUDA/MPS).
 *   **Use Case**: Large-scale parallel simulations, gradient-based optimization.
-*   **Characteristics**: Supports `float32`/`float64`, automatic device management, batched operations.
+*   **Characteristics**: Supports `float32`/`float64`, automatic device management, batched operations. Implements `repeat` using `torch.repeat_interleave`.
 
 ### 3. CuPy Backend (`backend: cupy`)
 *   **Target**: NVIDIA GPU.

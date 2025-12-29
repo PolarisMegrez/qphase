@@ -198,6 +198,29 @@ class RegistryCenter:
             meta=full_meta,
         )
 
+    def get_plugin_class(self, namespace: str, name: str) -> Any:
+        """Retrieve the plugin class (or callable) without instantiation."""
+        table = self._tables.get(namespace, {})
+        entry = table.get(name)
+        if entry is None:
+            raise QPhasePluginError(
+                f"Plugin '{name}' not found in namespace '{namespace}'"
+            )
+
+        if entry.kind == "callable":
+            assert entry.builder is not None
+            return entry.builder
+
+        # dotted path import
+        assert entry.target is not None
+        try:
+            obj = self._import_target(entry.target)
+            return obj
+        except Exception as e:
+            raise QPhasePluginError(
+                f"Failed to import plugin '{name}' from '{entry.target}': {e}"
+            ) from e
+
     # --------------------------- factory ---------------------------
     def create(self, full_name: FullName, /, **kwargs: Any) -> Any:
         """Resolve and construct a plugin instance.

@@ -85,6 +85,65 @@ class MyModel:
         return self.xp.sqrt(self.cfg.kappa)
 ```
 
+### Example: Analyser Implementation
+
+Analysers process the raw simulation results.
+
+```python
+from typing import Any, ClassVar
+# Note: AnalyserProtocol is a reference, you don't strictly need to inherit it
+# but it helps with type checking.
+
+class MyAnalyser:
+    name: ClassVar[str] = "my_analyser"
+    description: ClassVar[str] = "Calculates mean photon number"
+    config_schema: ClassVar[type] = MyAnalyserConfig
+
+    def __init__(self, config: MyAnalyserConfig, backend: Any):
+        self.cfg = config
+        self.xp = backend
+
+    def analyze(self, result: Any) -> dict[str, Any]:
+        """
+        Process the simulation result.
+        """
+        # Example: Calculate mean of trajectory
+        # result.trajectory is expected to be a tensor
+        mean_val = self.xp.mean(result.trajectory, axis=0)
+        return {"mean_photon_number": self.xp.abs(mean_val)**2}
+```
+
+### Example: Engine Implementation with Manifest
+
+Engines orchestrate the simulation. They must declare their dependencies using `EngineManifest`.
+
+```python
+from typing import ClassVar
+from qphase.core.protocols import EngineManifest
+
+class MyEngine:
+    name: ClassVar[str] = "my_engine"
+    description: ClassVar[str] = "Custom simulation engine"
+    config_schema: ClassVar[type] = MyEngineConfig
+
+    # Declare dependencies
+    manifest: ClassVar[EngineManifest] = EngineManifest(
+        required_plugins={"model", "backend"},
+        optional_plugins={"analyser"}
+    )
+
+    def __init__(self, config: MyEngineConfig, plugins: dict):
+        self.cfg = config
+        self.model = plugins["model"]
+        self.backend = plugins["backend"]
+        # Handle optional plugin
+        self.analyser = plugins.get("analyser")
+
+    def run(self):
+        # ... simulation loop ...
+        pass
+```
+
 ---
 
 ## 3. Registration
@@ -92,17 +151,18 @@ class MyModel:
 Plugins can be registered via two mechanisms:
 
 ### A. Local Registration (Development)
-Create a `.qphase_plugins.yaml` file in your project root. This maps the plugin name to the Python class path.
+Create a `.qphase_plugins.yaml` file in your project root. This maps the plugin namespace and name to the Python class path.
 
 ```yaml
-model:
-  my_model: "plugins.my_physics:MyModel"
+model.my_model: "plugins.my_physics:MyModel"
+analyser.my_analyser: "plugins.my_analysis:MyAnalyser"
 ```
 
 ### B. Package Registration (Distribution)
 If distributing the plugin as a Python package, use standard entry points in `pyproject.toml`.
 
 ```toml
-[project.entry-points."qphase.plugins"]
-"model:my_model" = "my_package.models:MyModel"
+[project.entry-points.qphase]
+"model.my_model" = "my_package.models:MyModel"
+"analyser.my_analyser" = "my_package.analysis:MyAnalyser"
 ```
