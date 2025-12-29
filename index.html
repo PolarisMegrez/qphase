@@ -27,7 +27,7 @@
     
     
       
-        <title>Home - QPhase</title>
+        <title>QPhase</title>
       
     
     
@@ -438,7 +438,7 @@
   <a href="#focus-on-physics" class="md-nav__link">
     <span class="md-ellipsis">
       
-        🎯 Focus on Physics
+        Focus on Physics
       
     </span>
   </a>
@@ -449,7 +449,7 @@
   <a href="#reproducibility" class="md-nav__link">
     <span class="md-ellipsis">
       
-        🔄 Reproducibility
+        Reproducibility
       
     </span>
   </a>
@@ -460,7 +460,7 @@
   <a href="#hardware-switching" class="md-nav__link">
     <span class="md-ellipsis">
       
-        🚀 Hardware Switching
+        Hardware Switching
       
     </span>
   </a>
@@ -471,7 +471,7 @@
   <a href="#parameter-sweeps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        📊 Parameter Sweeps
+        Parameter Sweeps
       
     </span>
   </a>
@@ -1202,7 +1202,7 @@
   <a href="#focus-on-physics" class="md-nav__link">
     <span class="md-ellipsis">
       
-        🎯 Focus on Physics
+        Focus on Physics
       
     </span>
   </a>
@@ -1213,7 +1213,7 @@
   <a href="#reproducibility" class="md-nav__link">
     <span class="md-ellipsis">
       
-        🔄 Reproducibility
+        Reproducibility
       
     </span>
   </a>
@@ -1224,7 +1224,7 @@
   <a href="#hardware-switching" class="md-nav__link">
     <span class="md-ellipsis">
       
-        🚀 Hardware Switching
+        Hardware Switching
       
     </span>
   </a>
@@ -1235,7 +1235,7 @@
   <a href="#parameter-sweeps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        📊 Parameter Sweeps
+        Parameter Sweeps
       
     </span>
   </a>
@@ -1329,30 +1329,31 @@
 
 
 <h1 id="qphase">QPhase</h1>
-<p>{: .fs-9 }</p>
-<p class="fs-6 fw-300"><strong>Modular Quantum Phase-Space Simulation Framework</strong></p>
-<p><a class="btn btn-primary fs-5 mb-4 mb-md-0 mr-2" href="user_guide/quick_start/">Get Started</a> <a class="btn fs-5 mb-4 mb-md-0" href="https://github.com/PolarisMegrez/qphase">View on GitHub</a></p>
+<p><strong>Modular Quantum Phase-Space Simulation Framework</strong></p>
+<p><a class="md-button md-button--primary" href="user_guide/quick_start/">Get Started</a> <a class="md-button" href="https://github.com/PolarisMegrez/qphase">View on GitHub</a></p>
 <hr />
 <h2 id="overview">Overview</h2>
 <p><strong>QPhase</strong> is a lightweight, modular simulation toolset designed for physics research. It solves a common problem in scientific computing: the repetitive rewriting of "boilerplate" code for every new experiment.</p>
-<p>{: .note }</p>
-<blockquote>
-<p><strong>The Problem:</strong> In typical physics research, we often rewrite the same supporting code:
-*   How do I pass parameters? (Argparse/Config)
-*   How do I save results safely?
-*   How do I switch to GPU?
-*   How do I scan parameters?</p>
-</blockquote>
+<div class="admonition note">
+<p class="admonition-title">The Problem</p>
+<p>In typical physics research, we often rewrite the same supporting code:</p>
+<ul>
+<li>How do I pass parameters? (Argparse/Config)</li>
+<li>How do I save results safely?</li>
+<li>How do I switch to GPU?</li>
+<li>How do I scan parameters?</li>
+</ul>
+</div>
 <p><strong>QPhase</strong> separates these "operational" concerns from the actual "physics". It provides a stable <strong>Shell</strong> that handles configuration, data saving, and parallel execution, allowing you to write only the <strong>Kernel</strong>—the equations of motion.</p>
 <hr />
 <h2 id="key-features">Key Features</h2>
-<h3 id="focus-on-physics">🎯 Focus on Physics</h3>
+<h3 id="focus-on-physics">Focus on Physics</h3>
 <p>You write the model (e.g., <code>dx/dt = ...</code>), and the framework handles the integration loop, progress bars, and file I/O.</p>
-<h3 id="reproducibility">🔄 Reproducibility</h3>
+<h3 id="reproducibility">Reproducibility</h3>
 <p>Every run automatically saves a snapshot of the exact configuration used. Never lose track of what parameters produced a specific plot.</p>
-<h3 id="hardware-switching">🚀 Hardware Switching</h3>
+<h3 id="hardware-switching">Hardware Switching</h3>
 <p>Switch between <strong>NumPy</strong> (CPU) and <strong>PyTorch/CuPy</strong> (GPU) just by changing a line in the config file, without rewriting your model.</p>
-<h3 id="parameter-sweeps">📊 Parameter Sweeps</h3>
+<h3 id="parameter-sweeps">Parameter Sweeps</h3>
 <p>Define a list of parameters in the config, and QPhase automatically generates and runs the batch jobs.</p>
 <hr />
 <h2 id="quick-start">Quick Start</h2>
