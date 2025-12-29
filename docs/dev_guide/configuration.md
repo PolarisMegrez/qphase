@@ -2,7 +2,7 @@
 layout: default
 title: Configuration System
 parent: Developer Guide
-nav_order: 5
+nav_order: 8
 ---
 
 # Configuration System

@@ -2,7 +2,7 @@
 layout: default
 title: CLI Architecture
 parent: Developer Guide
-nav_order: 6
+nav_order: 9
 ---
 
 # CLI Architecture

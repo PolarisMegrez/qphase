@@ -2,7 +2,7 @@
 layout: default
 title: Developer FAQ
 parent: Developer Guide
-nav_order: 6
+nav_order: 11
 ---
 
 # Developer FAQ

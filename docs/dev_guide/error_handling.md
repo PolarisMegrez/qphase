@@ -2,7 +2,7 @@
 layout: default
 title: Error Handling
 parent: Developer Guide
-nav_order: 7
+nav_order: 10
 ---
 
 # Error Handling Strategy

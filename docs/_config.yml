@@ -19,6 +19,9 @@ kramdown:
   auto_ids: true
   hard_wrap: false
   syntax_highlighter: rouge
+  toc:
+    separator: "|"
+    toc_levels: 1..6
 
 # Exclude files from processing
 exclude:
@@ -30,15 +33,49 @@ exclude:
   - pyproject.toml
   - packages/
 
-# Theme (using a built-in theme compatible with GitHub Pages)
-remote_theme: jekyll/minima
+# Theme (Just the Docs - modern technical documentation theme)
+remote_theme: pmarsceill/just-the-docs
 
-# Navigation (using Jekyll's native navigation)
+# Just the Docs theme configuration
+# See: https://pmarsceill.github.io/just-the-docs/
+# Navigation structure
+nav_order: 1
+nav_fold: true
+
+# Theme features
+color_scheme: light
+back_to_top: true
+footer_last_modified: true
+
+# Search configuration
+search:
+  tokenizer_separator: /[\s/]+/
+  min_search_length: 2
+
+# Heading anchor links
+heading_anchors: true
+
+# Table of contents settings
+toc:
+  title: "On this page"
+
+# Aux links (top right corner)
+aux_links:
+  "QPhase on GitHub":
+    - "//github.com/PolarisMegrez/qphase"
+
+# Footer configuration
+footer:
+  content: '<p>Copyright © 2025 Yu Xue-Hao. Maintained on <a href="https://github.com/PolarisMegrez/qphase">GitHub</a>.</p>'
+
+# Default values for front matter
 defaults:
   - scope:
       path: ""
     values:
       layout: default
+      has_toc: true
+      nav_order: 1
 
 # Permalinks
 permalink: pretty
