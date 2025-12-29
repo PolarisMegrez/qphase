@@ -1,11 +1,11 @@
-"""qphase_sde: Array Namespace Utilities
+"""qphase: Array Namespace Utilities
 ------------------------------------
 Helpers to select a NumPy-like array namespace for model code and to convert
 arrays to NumPy when needed, keeping models backend-agnostic.
 
 Behavior
 --------
-- Expose ``get_xp`` and ``to_numpy`` for common array conversions and a small
+- Expose ``get_xp`` and ``convert_to_numpy`` for common array conversions and a small
     device-aware torch shim when appropriate; see function docstrings for exact
     behaviors and supported operations.
 
@@ -18,9 +18,11 @@ Notes
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
+
 __all__ = [
     "get_xp",
-    "to_numpy",
+    "convert_to_numpy",
 ]
 
 
@@ -120,7 +122,7 @@ def x_device(arr: Any) -> Any:
     return "cpu"
 
 
-def to_numpy(x: Any):
+def convert_to_numpy(x: Any) -> np.ndarray:
     """Convert a torch/cupy/numpy array to a NumPy ``ndarray``.
 
     Converts common backend arrays into a CPU NumPy array for downstream
@@ -135,19 +137,19 @@ def to_numpy(x: Any):
 
     Returns
     -------
-    Any
+    np.ndarray
         A ``numpy.ndarray`` view or copy of ``x`` when possible; otherwise the
         result of ``numpy.asarray(x)``.
 
     Examples
     --------
     >>> import numpy as np
-    >>> to_numpy(np.array([1, 2, 3])).dtype.kind in {'i', 'u'}
+    >>> convert_to_numpy(np.array([1, 2, 3])).dtype.kind in {'i', 'u'}
     True
 
     >>> import torch
     >>> t = torch.tensor([1.0, 2.0])
-    >>> a = to_numpy(t)
+    >>> a = convert_to_numpy(t)
     >>> isinstance(a, np.ndarray)
     True
 

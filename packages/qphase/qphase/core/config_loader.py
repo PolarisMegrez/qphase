@@ -88,9 +88,14 @@ def _load_single_job_file(path: Path) -> JobConfig | list[JobConfig]:
     if isinstance(data, dict):
         # Check if it's a "job list" wrapper
         if "jobs" in data and isinstance(data["jobs"], list):
-            return [
-                JobConfig(**cast(dict[str, Any], job_data)) for job_data in data["jobs"]
-            ]
+            jobs = []
+            for job_data in data["jobs"]:
+                # Handle plugin fields extraction for each job
+                j_data, p_data = _extract_plugin_fields(job_data)
+                if "plugins" in j_data:
+                    p_data = deep_merge_dicts(j_data["plugins"], p_data)
+                jobs.append(JobConfig(**j_data, plugins=p_data))
+            return jobs
 
         # If name is missing, use filename as job name
         if "name" not in data:

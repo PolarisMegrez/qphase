@@ -1,0 +1,4 @@
+plugins:
+  - type: engine.viz
+    target: qphase_viz.engine:VizEngine
+    description: Visualization Engine

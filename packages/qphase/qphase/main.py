@@ -17,7 +17,7 @@ import typer
 from .commands import config as config_cmd
 from .commands import run as run_cmd
 from .commands.init import init_command
-from .commands.plugin import plugin_app
+from .commands.plugin import list_command, show_command, template_command
 
 app = typer.Typer(help="QPhase CLI")
 
@@ -30,9 +30,11 @@ def main():
 
 # Register commands
 app.command("init")(init_command)
+app.command("list")(list_command)
+app.command("show")(show_command)
+app.command("template")(template_command)
 
 # Command groups
-app.add_typer(plugin_app, name="plugin", help="Manage plugins")
 app.add_typer(run_cmd.app, name="run", help="Run SDE simulations")
 
 # Config command group

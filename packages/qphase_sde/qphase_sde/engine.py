@@ -12,12 +12,15 @@ import time as _time
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+import numpy as np
 from pydantic import BaseModel, Field
+from qphase.backend.base import BackendBase
+from qphase.core.protocols import EngineBase
 
-from qphase_sde.core.protocols import SDEBackend
 from qphase_sde.integrator.base import Integrator
-from qphase_sde.models.base import NoiseSpec, SDEModel
-from qphase_sde.states.base import TrajectorySetBase
+from qphase_sde.model import NoiseSpec, SDEModel
+from qphase_sde.result import SDEResult
+from qphase_sde.state import State, TrajectorySet
 
 __all__ = ["Engine", "EngineConfig"]
 
@@ -45,7 +48,7 @@ class EngineConfig(BaseModel):
         description="End time (alias for t1)",
         json_schema_extra={"scanable": True},
     )
-    n_trajectories: int = Field(
+    n_traj: int = Field(
         1,
         description="Number of trajectories",
         json_schema_extra={"scanable": True},
@@ -58,6 +61,11 @@ class EngineConfig(BaseModel):
     ic: Any | None = Field(
         None,
         description="Initial conditions",
+    )
+    analysis: dict[str, Any] | None = Field(
+        None,
+        description="Analysis configuration (e.g. {'type': 'psd', ...})",
+        json_schema_extra={"scanable": False},
     )
 
     class ConfigSchema:
@@ -73,16 +81,16 @@ class EngineContext:
     """Engine runtime context for dependency injection."""
 
     def __init__(self):
-        self.backend: SDEBackend | None = None
+        self.backend: BackendBase | None = None
         self.integrator: Integrator | None = None
 
-    def set_backend(self, backend: SDEBackend) -> None:
+    def set_backend(self, backend: BackendBase) -> None:
         self.backend = backend
 
     def set_integrator(self, integrator: Integrator) -> None:
         self.integrator = integrator
 
-    def get_backend(self) -> SDEBackend:
+    def get_backend(self) -> BackendBase:
         if self.backend is None:
             raise RuntimeError(
                 "Backend not set. Use set_backend() or pass backend to engine."
@@ -100,7 +108,7 @@ class EngineContext:
 _context = EngineContext()
 
 
-def set_backend(backend: SDEBackend) -> None:
+def set_backend(backend: BackendBase) -> None:
     """Set global backend for dependency injection."""
     _context.set_backend(backend)
 
@@ -110,7 +118,7 @@ def set_integrator(integrator: Integrator) -> None:
     _context.set_integrator(integrator)
 
 
-def get_backend() -> SDEBackend:
+def get_backend() -> BackendBase:
     """Get global backend from dependency injection."""
     return _context.get_backend()
 
@@ -125,7 +133,7 @@ def get_integrator() -> Integrator:
 # -----------------------------------------------------------------------------
 
 
-class Engine:
+class Engine(EngineBase):
     """SDE simulation engine with dependency injection support.
 
     The Engine class provides both high-level simulation methods and
@@ -134,10 +142,10 @@ class Engine:
 
     Parameters
     ----------
-    backend : SDEBackend, optional
-        Backend instance to use. If None, uses global backend.
-    integrator : Integrator, optional
-        Integrator instance to use. If None, uses global integrator.
+    config : EngineConfig, optional
+        Configuration object.
+    plugins : dict, optional
+        Plugin dictionary.
 
     """
 
@@ -149,8 +157,7 @@ class Engine:
         self,
         config: EngineConfig | None = None,
         plugins: dict[str, Any] | None = None,
-        backend: SDEBackend | None = None,
-        integrator: Integrator | None = None,
+        **kwargs: Any,
     ):
         """Initialize Engine with optional default backend and integrator.
 
@@ -160,67 +167,27 @@ class Engine:
             Configuration object (injected by Registry)
         plugins : dict, optional
             Plugin dictionary (injected by Registry)
-        backend : SDEBackend, optional
-            Default backend instance (legacy/manual)
-        integrator : Integrator, optional
-            Default integrator instance (legacy/manual)
+        **kwargs : Any
+            Additional arguments (e.g. 'backend', 'integrator' for legacy support)
 
         """
         self.config = config
         self.plugins = plugins or {}
+
+        # Legacy support for direct injection via kwargs
+        backend = kwargs.get("backend")
+        integrator = kwargs.get("integrator")
+
         self._default_backend = self.plugins.get("backend", backend)
         self._default_integrator = self.plugins.get("integrator", integrator)
 
-    @staticmethod
-    def _get_state_classes(backend: SDEBackend) -> tuple[type, type]:
-        """Resolve State and TrajectorySet classes for the given backend.
-
-        This method determines which state classes to use based on the backend.
-
-        Parameters
-        ----------
-        backend : SDEBackend
-            Backend instance to resolve state classes for.
-
-        Returns
-        -------
-        tuple[type, type]
-            (State class, TrajectorySet class) for the backend.
-
-        """
-        try:
-            name = str(backend.backend_name()).lower()
-        except Exception:
-            name = "numpy"
-
-        if name in ("cupy", "cp"):
-            try:
-                from ..states.cupy_state import State, TrajectorySet
-
-                return State, TrajectorySet
-            except ImportError:
-                pass
-
-        if name in ("torch", "pytorch"):
-            try:
-                from ..states.torch_state import (  # type: ignore[assignment]
-                    State,
-                    TrajectorySet,
-                )
-
-                return State, TrajectorySet
-            except ImportError:
-                pass
-
-        # Default to NumPy
-        from ..states.numpy_state import (  # type: ignore[assignment]
-            State,
-            TrajectorySet,
-        )
-
-        return State, TrajectorySet
-
-    def run(self, data: Any | None = None) -> Any:
+    def run(
+        self,
+        data: Any | None = None,
+        *,
+        progress_cb: Callable[[float | None, float | None, str, str | None], None]
+        | None = None,
+    ) -> SDEResult:
         """Execute the engine (Plugin Protocol)."""
         if not self.config:
             raise RuntimeError("Engine not configured.")
@@ -244,13 +211,67 @@ class Engine:
             else:
                 raise RuntimeError("No IC provided.")
 
-        return self.run_sde(
+        # Adapter for progress callback
+        # SDE engine uses: (k, steps, eta, ic_index, ic_total)
+        # Protocol expects: (percent, total_duration_estimate, message, stage)
+        sde_progress_cb = None
+        if progress_cb is not None:
+
+            def _sde_cb(
+                k: int, steps: int, eta: float, ic_index: int, ic_total: int
+            ) -> None:
+                percent = k / steps if steps > 0 else 0.0
+
+                # Calculate total duration estimate from ETA
+                # ETA = Remaining = Total * (1 - p)
+                # Total = ETA / (1 - p)
+                total_est = None
+                if eta is not None and not np.isnan(eta) and percent < 1.0:
+                    try:
+                        total_est = eta / (1.0 - percent)
+                    except ZeroDivisionError:
+                        pass
+
+                msg = f"Traj {ic_index + 1}/{ic_total} | Step {k}/{steps}"
+                progress_cb(percent, total_est, msg, "sampling")
+
+            sde_progress_cb = _sde_cb
+
+        traj_set = self.run_sde(
             model=model,
             ic=ic,
             time=time_cfg,
-            n_traj=self.config.n_trajectories,
+            n_traj=self.config.n_traj,
             seed=self.config.seed,
+            progress_cb=sde_progress_cb,
         )
+
+        if self.config.analysis:
+            analysis_type = self.config.analysis.get("type")
+            if analysis_type == "psd":
+                from qphase_sde.analyser import PsdAnalyzer
+
+                # Prepare config for analyzer
+                ana_config_dict = self.config.analysis.copy()
+                ana_config_dict.pop("type", None)
+
+                # Ensure dt is passed if not present (use simulation dt * stride)
+                if "dt" not in ana_config_dict:
+                    ana_config_dict["dt"] = traj_set.dt
+
+                # Instantiate analyzer
+                analyzer = PsdAnalyzer(**ana_config_dict)
+
+                # Run analysis
+                result = analyzer.analyze(traj_set.data, backend=self._default_backend)
+
+                return SDEResult(
+                    trajectory=result,
+                    kind="psd",
+                    meta={"analysis": self.config.analysis},
+                )
+
+        return SDEResult(trajectory=traj_set, kind="trajectory")
 
     def run_sde(
         self,
@@ -259,7 +280,7 @@ class Engine:
         time: dict,
         n_traj: int,
         solver: Integrator | None = None,
-        backend: SDEBackend | None = None,
+        backend: BackendBase | None = None,
         noise_spec: NoiseSpec | None = None,
         seed: int | None = None,
         master_seed: int | None = None,
@@ -273,10 +294,8 @@ class Engine:
         ic_total: int = 1,
         warmup_min_steps: int = 0,
         warmup_min_seconds: float = 0.0,
-        StateCls: type | None = None,
-        TrajectorySetCls: type | None = None,
         rng: Any | None = None,
-    ) -> TrajectorySetBase:
+    ) -> TrajectorySet:
         """Run a multi-trajectory SDE simulation.
 
         This method implements the full simulation logic, including:
@@ -303,7 +322,7 @@ class Engine:
             Number of trajectories
         solver : Integrator, optional
             Solver instance; overrides Engine default if provided
-        backend : SDEBackend, optional
+        backend : BackendBase, optional
             Backend instance; overrides Engine default if provided
         noise_spec : NoiseSpec, optional
             Noise specification
@@ -329,67 +348,75 @@ class Engine:
             Minimum steps before ETA estimation
         warmup_min_seconds : float
             Minimum time before ETA estimation
-        StateCls : type, optional
-            Pre-configured State class (from scheduler)
-        TrajectorySetCls : type, optional
-            Pre-configured TrajectorySet class (from scheduler)
         rng : any, optional
             Pre-configured RNG handle(s) (from scheduler)
 
         Returns
         -------
-        TrajectorySetBase
-            Backend-aware trajectory container
+        TrajectorySet
+            The simulation result.
 
         """
-        # Resolve backend and integrator
-        if backend is None:
-            be = self._default_backend
-            if be is None:
+        # Resolve dependencies
+        be = backend or self._default_backend
+        if be is None:
+            # Fallback to global default if available
+            try:
                 be = get_backend()
-        else:
-            be = backend
+            except RuntimeError as err:
+                raise RuntimeError("No backend provided or configured.") from err
 
-        if solver is None:
-            integrator = self._default_integrator
-            if integrator is None:
+        integrator = solver or self._default_integrator
+        if integrator is None:
+            try:
                 integrator = get_integrator()
-        else:
-            integrator = solver
+            except RuntimeError as err:
+                raise RuntimeError("No integrator provided or configured.") from err
 
-        # Resolve state classes
-        if StateCls is None or TrajectorySetCls is None:
-            StateCls, TrajectorySetCls = self._get_state_classes(be)
-
-        # Use default noise spec if not provided
-        if noise_spec is None:
-            noise_spec = NoiseSpec(kind="independent", dim=model.noise_dim)
-
-        # Time grid
+        # Parse time config
         t0 = float(time.get("t0", 0.0))
         dt = float(time["dt"])
         steps = int(time["steps"])
 
-        # Initialize state; broadcast single-vector IC to all trajectories
-        y0 = be.asarray(ic)
-        if getattr(y0, "ndim", 1) == 1:
-            n_modes = int(y0.shape[0])
-            # Vectorized broadcast
-            y_full = be.zeros((n_traj, n_modes), dtype=complex)
-            try:
-                y_full[:] = y0  # broadcast along first axis
-            except Exception:
-                # Fallback for backends that don't support broadcasting assignment
-                import numpy as _np
+        # Initialize state
+        # Ensure IC is on the correct backend
+        if hasattr(ic, "to_backend"):
+            ic_be = ic.to_backend(be)
+            y0 = ic_be.data
+        else:
+            # Handle string ICs (e.g. from YAML)
+            def _parse_complex(val):
+                if isinstance(val, str):
+                    try:
+                        return complex(val.replace(" ", ""))
+                    except ValueError:
+                        return val
+                return val
 
-                y_full = be.asarray(_np.tile(be.asarray(y0), (n_traj, 1)))
-            y0 = y_full
+            if isinstance(ic, list):
+                # Handle 1D or 2D lists
+                if ic and isinstance(ic[0], list):
+                    ic = [[_parse_complex(x) for x in row] for row in ic]
+                else:
+                    ic = [_parse_complex(x) for x in ic]
 
-        state = StateCls(
-            y=y0,
+            y0 = be.asarray(ic)
+
+        # Broadcast IC if necessary to match n_traj
+        # Expected shape: (n_traj, n_modes)
+        if y0.ndim == 1:
+            y0 = be.expand_dims(y0, 0)
+
+        if y0.shape[0] != n_traj:
+            if y0.shape[0] == 1:
+                # Broadcast
+                y0 = be.repeat(y0, n_traj, axis=0)
+
+        state = State(
+            data=y0,
             t=t0,
-            attrs={
-                "backend": getattr(be, "backend_name", lambda: "backend")(),
+            meta={
+                "back": getattr(be, "backend_name", lambda: "backend")(),
                 "interpretation": "ito",
             },
         )
@@ -411,13 +438,12 @@ class Engine:
                     rng = be.rng(seed)
             except Exception as e:
                 raise RuntimeError(f"Failed to initialize RNG: {e}") from e
-        # else: use pre-configured rng
 
-        # Storage for returned data
+        # Prepare output
         rs = max(1, int(return_stride))
         n_keep = (steps // rs) + 1
         out = be.empty((n_traj, n_keep, model.n_modes), dtype=complex)
-        out[:, 0, :] = state.y
+        out[:, 0, :] = state.data
         keep_counter = 1
 
         t = t0
@@ -439,14 +465,14 @@ class Engine:
             dW = be.randn(rng, (state.n_traj, model.noise_dim), dtype=float) * (dt**0.5)
 
             # Integrate one step
-            dy = integrator.step(state.y, t, dt, model, dW, be)
+            dy = integrator.step(state.data, t, dt, model, dW, be)
 
-            state = StateCls(y=state.y + dy, t=t + dt, attrs=state.attrs)
+            state = State(data=state.data + dy, t=t + dt, meta=state.meta)
             t += dt
 
             # Save data at stride intervals
             if (k % rs) == 0:
-                out[:, keep_counter, :] = state.y
+                out[:, keep_counter, :] = state.data
                 keep_counter += 1
 
             # Progress reporting
@@ -486,4 +512,4 @@ class Engine:
                         # Never let progress reporting break the simulation
                         pass
 
-        return TrajectorySetCls(data=out, t0=t0, dt=dt * rs, meta={})
+        return TrajectorySet(data=out, t0=t0, dt=dt * rs, meta={})

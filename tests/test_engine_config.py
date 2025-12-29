@@ -21,7 +21,7 @@ def test_engine_config_viz():
     """Test visualization engine configuration."""
     job = JobConfig(
         name="viz_job",
-        engine={"viz": {"specs": [{"kind": "re_im"}]}},
+        engine={"viz": {"specs": [{"kind": "time_series"}]}},
         params={},
     )
 

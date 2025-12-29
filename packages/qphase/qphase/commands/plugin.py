@@ -1,15 +1,16 @@
 """qphase: Plugin Management CLI Commands
 ---------------------------------------------------------
-Implements the ``qps plugin`` command group, offering introspection capabilities for
-the plugin ecosystem. It allows users to list registered plugins by namespace, view
-detailed metadata and configuration schemas for specific plugins, and generate
-commented YAML/JSON configuration templates to facilitate job setup.
+Implements the `qps` plugin-related commands (list, show, template),
+offering introspection capabilities for the plugin ecosystem. It allows users
+to list registered plugins by namespace, view detailed metadata and configuration
+schemas for specific plugins, and generate commented YAML/JSON configuration
+templates to facilitate job setup.
 
 Public API
 ----------
-``list`` : List plugins by category with source and descriptions
-``show`` : Display detailed plugin info and configuration parameters
-``template`` : Generate YAML/JSON configuration templates for plugins
+`list` : List plugins by category with source and descriptions
+`show` : Display detailed plugin info and configuration parameters
+`template` : Generate YAML/JSON configuration templates for plugins
 """
 
 from pathlib import Path
@@ -255,7 +256,8 @@ def show_command(
 
     Accepts one or more plugin specifications in dotted notation (namespace.name).
 
-    Examples:
+    Examples
+    --------
         qps show model.vdp_two_mode
         qps show backend.numpy integrator.euler
         qps show model.vdp_two_mode backend.cupy
@@ -298,7 +300,7 @@ def show_command(
             # Display plugin header
             if len(plugins) > 1:
                 console.print(
-                    f"\n[bold cyan]Plugin {i+1}/{len(plugins)}:[/bold cyan] "
+                    f"\n[bold cyan]Plugin {i + 1}/{len(plugins)}:[/bold cyan] "
                     f"[yellow]{plugin_spec}[/yellow]"
                 )
             else:
@@ -495,7 +497,8 @@ def template_command(
 
     Accepts one or more plugin specifications in dotted notation (namespace.name).
 
-    Examples:
+    Examples
+    --------
         qps template model.vdp_two_mode
         qps template backend.numpy integrator.euler
         qps template model.vdp_two_mode backend.cupy

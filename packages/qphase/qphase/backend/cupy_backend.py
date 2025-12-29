@@ -247,6 +247,28 @@ class CuPyBackend(Backend):
     def to_device(self, x: Any, device: str | None) -> Any:
         return x  # cp arrays already on device
 
+    def expand_dims(self, x: Any, axis: int) -> Any:
+        return cp.expand_dims(x, axis=axis)
+
+    def repeat(self, x: Any, repeats: int, axis: int | None = None) -> Any:
+        return cp.repeat(x, repeats, axis=axis)
+
+    def isnan(self, x: Any) -> Any:
+        return cp.isnan(x)
+
+    def arange(
+        self,
+        start: int,
+        stop: int | None = None,
+        step: int = 1,
+        dtype: Any | None = None,
+    ) -> Any:
+        return cp.arange(start, stop, step, dtype=dtype)
+
+    @property
+    def pi(self) -> float:
+        return cp.pi
+
     # Capabilities
     def capabilities(self) -> dict:
         return {

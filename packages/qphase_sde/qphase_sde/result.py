@@ -9,10 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
-
-from qphase_sde.core.registry import register_loader
-
-from .errors import QPSError
+from qphase.core.errors import QPhaseError
 
 
 @dataclass
@@ -33,6 +30,16 @@ class SDEResult:
     trajectory: Any = None
     meta: dict[str, Any] = field(default_factory=dict)
     kind: Literal["trajectory", "psd"] = "trajectory"
+
+    @property
+    def data(self) -> Any:
+        """Alias for trajectory to satisfy ResultProtocol."""
+        return self.trajectory
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Alias for meta to satisfy ResultProtocol."""
+        return self.meta
 
     def save(self, path: str | Path) -> None:
         """Save the result to a file.
@@ -63,10 +70,9 @@ class SDEResult:
                 path, data=data_to_save, t0=t0, dt=dt, meta=meta_arr, kind=self.kind
             )
         except Exception as e:
-            raise QPSError(f"Failed to save SDEResult to {path}: {e}") from e
+            raise QPhaseError(f"Failed to save SDEResult to {path}: {e}") from e
 
     @classmethod
-    @register_loader("loader", "sde_result")
     def load(cls, path: str | Path) -> "SDEResult":
         """Load a result from a file.
 
@@ -83,8 +89,7 @@ class SDEResult:
         """
         path = Path(path)
         if not path.exists():
-            raise QPSError(f"File not found: {path}")
-
+            raise QPhaseError(f"File not found: {path}")
         try:
             with np.load(path, allow_pickle=True) as npz:
                 data = npz["data"]
@@ -115,7 +120,7 @@ class SDEResult:
                 return cls(trajectory=traj, meta=meta, kind=kind)  # type: ignore[arg-type]
 
         except Exception as e:
-            raise QPSError(f"Failed to load SDEResult from {path}: {e}") from e
+            raise QPhaseError(f"Failed to load SDEResult from {path}: {e}") from e
 
 
 # Alias for backward compatibility if needed

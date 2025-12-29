@@ -53,11 +53,11 @@ class JobProgressUpdate:
     job_name: str
     job_index: int
     total_jobs: int
-    percent: float
     message: str
-    stage: str | None
-    total_duration_estimate: float | None
-    has_progress: bool
+    percent: float | None = None
+    job_eta: float | None = None
+    global_eta: float | None = None
+    stage: str | None = None
 
 
 @dataclass
@@ -206,13 +206,14 @@ class Scheduler:
         # Determine the output destination
         output_dest = job.output if job.output else job.name
 
-        # Check if output is a downstream job name
-        if output_dest in job_results:
-            # Store result for downstream job
-            job_results[output_dest] = output_result
-            log.debug(
-                f"Job '{job.name}' output stored for downstream job '{output_dest}'"
-            )
+        # Store result for downstream jobs
+        # We store by job name so downstream jobs can reference it
+        job_results[job.name] = output_result
+
+        # If output is explicitly set, we might also want to store it under that name
+        # (though usually output refers to filename or downstream job name)
+        if job.output:
+            job_results[job.output] = output_result
 
         # Save to disk if auto_save_results is enabled
         if self.system_config.auto_save_results:
@@ -361,26 +362,96 @@ class Scheduler:
                     job_name=job.name,
                     job_index=job_idx,
                     total_jobs=job_total,
-                    percent=0.0,
                     message="Starting job...",
-                    stage=None,
-                    total_duration_estimate=None,
-                    has_progress=False,
                 )
             )
 
         try:
-            # Check if engine supports progress reporting (Duck Typing)
-            supports_progress = hasattr(engine, "get_progress")
+            # Prepare progress callback
+            progress_cb = None
+            if self.on_progress is not None:
+                import time
 
-            if supports_progress and self.on_progress is not None:
-                # Start progress monitoring for engines that support it
-                self._monitor_engine_progress(engine, job, job_idx, job_total)
+                last_update_time = 0.0
+                min_interval = self.system_config.progress_update_interval
+
+                def _on_engine_progress(
+                    percent: float | None,
+                    total_duration_estimate: float | None,
+                    message: str,
+                    stage: str | None,
+                ) -> None:
+                    nonlocal last_update_time
+                    now = time.monotonic()
+
+                    # Rate limiting: only update if interval passed or job finished
+                    # (percent=1.0)
+                    if (
+                        now - last_update_time < min_interval
+                        and percent is not None
+                        and percent < 1.0
+                    ):
+                        return
+
+                    last_update_time = now
+
+                    # Calculate Job ETA
+                    job_eta = None
+                    if (
+                        percent is not None
+                        and total_duration_estimate is not None
+                        and percent > 0
+                    ):
+                        job_eta = total_duration_estimate * (1.0 - percent)
+
+                    # Calculate Global ETA (only for expanded jobs)
+                    # Heuristic: if total_jobs > 1, assume homogeneous expansion
+                    global_eta = None
+                    if (
+                        job_total > 1
+                        and job_eta is not None
+                        and total_duration_estimate is not None
+                    ):
+                        # Simple extrapolation: remaining jobs * current job total
+                        # duration
+                        remaining_jobs = job_total - job_idx
+                        global_eta = job_eta + (
+                            remaining_jobs * total_duration_estimate
+                        )
+
+                    if self.on_progress is not None:
+                        self.on_progress(
+                            JobProgressUpdate(
+                                job_name=job.name,
+                                job_index=job_idx,
+                                total_jobs=job_total,
+                                message=message,
+                                percent=percent,
+                                job_eta=job_eta,
+                                global_eta=global_eta,
+                                stage=stage,
+                            )
+                        )
+
+                progress_cb = _on_engine_progress
 
             # Execute engine
             # Pass input result's data to engine
             input_data = input_result.data if input_result else None
-            output_result = engine.run(data=input_data)
+
+            # Check if engine accepts progress_cb (Duck Typing / Inspection)
+            # Since EngineBase protocol defines it as optional kwarg, we try passing it.
+            # However, some legacy engines might not accept **kwargs or progress_cb.
+            # Ideally, all engines should accept **kwargs.
+            try:
+                output_result = engine.run(data=input_data, progress_cb=progress_cb)
+            except TypeError:
+                # Fallback for engines that don't accept progress_cb
+                log.warning(
+                    f"Engine '{job.get_engine_name()}' does not accept progress_cb. "
+                    "Progress reporting disabled."
+                )
+                output_result = engine.run(data=input_data)
 
             # Ensure output is a ResultBase object
             if not isinstance(output_result, ResultProtocol):
@@ -398,11 +469,8 @@ class Scheduler:
                         job_name=job.name,
                         job_index=job_idx,
                         total_jobs=job_total,
-                        percent=100.0,
                         message="Completed successfully",
-                        stage=None,
-                        total_duration_estimate=0.0,
-                        has_progress=supports_progress,
+                        percent=1.0,
                     )
                 )
 
@@ -428,11 +496,8 @@ class Scheduler:
                         job_name=job.name,
                         job_index=job_idx,
                         total_jobs=job_total,
-                        percent=0.0,
                         message=f"Failed: {e}",
-                        stage=None,
-                        total_duration_estimate=None,
-                        has_progress=False,
+                        percent=0.0,
                     )
                 )
 
@@ -441,67 +506,6 @@ class Scheduler:
                 f"Job '{job.name}' execution failed in engine "
                 f"'{job.get_engine_name()}': {e}"
             ) from e
-
-    def _monitor_engine_progress(self, engine, job, job_idx, job_total):
-        """Monitor engine progress using Duck Typing.
-
-        This method polls the engine's get_progress() method if available,
-        and reports progress updates through the on_progress callback.
-        """
-        import time
-
-        last_percent = -1.0
-
-        # Poll progress while engine is running
-        # Note: This is a simple polling approach. In a more sophisticated
-        # implementation, you might want to run this in a background thread
-        # or use an event-based approach.
-        while True:
-            try:
-                # Duck Typing: safely call get_progress()
-                if hasattr(engine, "get_progress"):
-                    progress = engine.get_progress()
-                else:
-                    break  # Engine no longer supports progress
-
-                if progress is None:
-                    break  # Engine returned None, stop monitoring
-
-                # Extract progress information
-                percent = progress.get("percent", 0.0)
-                message = progress.get("message", "Running...")
-                stage = progress.get("stage", None)
-                total_duration_estimate = progress.get("total_duration_estimate", None)
-
-                # Only report if progress has changed significantly
-                if abs(percent - last_percent) >= 0.1:
-                    last_percent = percent
-
-                    if self.on_progress is not None:
-                        self.on_progress(
-                            JobProgressUpdate(
-                                job_name=job.name,
-                                job_index=job_idx,
-                                total_jobs=job_total,
-                                percent=percent,
-                                message=message,
-                                stage=stage,
-                                total_duration_estimate=total_duration_estimate,
-                                has_progress=True,
-                            )
-                        )
-
-                # Check if engine has finished (percent >= 100 or no progress)
-                if percent >= 100.0:
-                    break
-
-                # Sleep before next poll
-                time.sleep(0.5)
-
-            except Exception as e:
-                # If progress monitoring fails, log and stop
-                log.debug(f"Progress monitoring failed for job {job.name}: {e}")
-                break
 
     def _validate_jobs(self, job_list: JobList) -> None:
         """Validate job configurations and data flow.

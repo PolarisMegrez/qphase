@@ -328,3 +328,43 @@ class TorchBackend(Backend):
             return x.to(device)
         except Exception:
             return x
+
+    def expand_dims(self, x: Any, axis: int) -> Any:
+        import torch as torch
+
+        return torch.unsqueeze(x, dim=axis)
+
+    def repeat(self, x: Any, repeats: int, axis: int | None = None) -> Any:
+        import torch as torch
+
+        if axis is None:
+            # Torch repeat_interleave flattens if dim is None, matching numpy behavior
+            return torch.repeat_interleave(x, repeats, dim=None)
+        else:
+            return torch.repeat_interleave(x, repeats, dim=axis)
+
+    def isnan(self, x: Any) -> Any:
+        import torch as torch
+
+        return torch.isnan(x)
+
+    def arange(
+        self,
+        start: int,
+        stop: int | None = None,
+        step: int = 1,
+        dtype: Any | None = None,
+    ) -> Any:
+        import torch as torch
+
+        td = _to_torch_dtype(dtype)
+        # Handle None stop: if stop is None, use start as stop and 0 as start
+        if stop is None:
+            return torch.arange(0, start, step, dtype=td, device=self.device())
+        return torch.arange(start, stop, step, dtype=td, device=self.device())
+
+    @property
+    def pi(self) -> float:
+        import numpy as np
+
+        return np.pi

@@ -7,120 +7,68 @@ nav_order: 4
 
 # Registry System
 
-The **Registry System** is the central nervous system of QPhase. It provides a unified mechanism for registering, discovering, configuring, and instantiating plugins across the entire application.
+The **Registry System** functions as the central service locator and dependency injection container for QPhase. It manages the lifecycle of all extensible components, providing a unified mechanism for registration, discovery, and instantiation.
 
 ## Core Architecture
 
-The registry is implemented as a singleton `RegistryCenter` that manages a two-level lookup table: `Namespace -> Name -> Entry`.
+The registry is implemented as a singleton `RegistryCenter` that maintains a hierarchical lookup table: `Namespace -> Name -> Entry`.
 
 ### Namespaces
 
-To prevent naming collisions, plugins are organized into namespaces. Common namespaces include:
+To ensure modularity and prevent naming collisions, plugins are segregated into namespaces. Standard namespaces include:
 
 | Namespace | Description | Example |
 |-----------|-------------|---------|
-| `backend` | Computational backends | `numpy`, `torch`, `cupy` |
-| `engine`  | Simulation engines | `sde`, `ode` |
-| `model`   | Physics models | `kerr_cavity`, `vdp` |
-| `command` | CLI commands | `run`, `config` |
+| `backend` | Computational backends | `numpy`, `torch` |
+| `engine`  | Simulation engines | `sde`, `viz` |
+| `model`   | Physical models | `kerr_cavity`, `vdp` |
+| `integrator`| Numerical integrators | `euler_maruyama`, `srk` |
 
-### Entry Types
+### Entry Management Strategy
 
-The registry supports two types of entries to balance startup performance with flexibility:
+The registry employs a dual-strategy for entry management to balance startup latency with runtime flexibility:
 
-1.  **Callable Entry (Eager)**:
-    *   **Description**: The plugin class or factory function is imported and stored directly.
-    *   **Use Case**: Core plugins, testing, or when immediate availability is required.
-    *   **Pros**: Fast instantiation.
-    *   **Cons**: Increases application startup time (imports dependencies immediately).
+1.  **Eager Entries (Callable)**:
+    *   **Mechanism**: The plugin class or factory function is imported and stored directly in memory during initialization.
+    *   **Application**: Used for core plugins and testing scenarios where immediate availability is required.
 
-2.  **Dotted Entry (Lazy)**:
-    *   **Description**: Stores a string path (e.g., `"pkg.module:ClassName"`) instead of the object.
-    *   **Use Case**: Third-party plugins, optional dependencies.
-    *   **Pros**: Zero startup cost. The module is only imported when the plugin is requested.
-    *   **Cons**: Slight delay on first use.
+2.  **Lazy Entries (Dotted Path)**:
+    *   **Mechanism**: The registry stores a string reference (e.g., `"pkg.module:ClassName"`). The actual module import is deferred until the first request for instantiation.
+    *   **Application**: Used for third-party plugins and optional dependencies. This minimizes the application's startup time and memory footprint.
 
-## Registration
+## Discovery Mechanisms
 
-### Manual Registration
+QPhase supports two primary discovery mechanisms:
 
-You can manually register plugins using the `register` (eager) or `register_lazy` (lazy) methods.
-
-```python
-from qphase.core.registry import registry
-
-# Eager Registration
-class MyBackend:
-    ...
-registry.register("backend", "my_backend", MyBackend)
-
-# Lazy Registration
-registry.register_lazy("backend", "heavy_backend", "my_pkg.heavy:HeavyBackend")
-```
-
-### Decorator Registration
-
-For internal or core plugins, the `@register` decorator is often the most convenient method.
-
-```python
-from qphase.core.registry import register
-
-@register("backend", "numpy")
-class NumpyBackend:
-    ...
-```
-
-## Discovery Mechanism
-
-QPhase automatically discovers plugins installed in the environment using Python's standard `entry_points` mechanism. This allows other packages (like `qphase_sde` or `qphase_viz`) to register plugins without modifying the core code.
-
-### `pyproject.toml` Configuration
-
-To expose a plugin to QPhase, add it to the `[project.entry-points.qphase]` section of your `pyproject.toml`:
+### 1. Entry Points (Package-based)
+For distributable Python packages, QPhase utilizes the standard `entry_points` mechanism (defined in `pyproject.toml`). The registry scans the `qphase.plugins` group at startup.
 
 ```toml
-[project.entry-points.qphase]
-# Format: "namespace.name" = "package.module:Class"
-
-"backend.custom" = "my_plugin.backend:CustomBackend"
-"model.new_physics" = "my_plugin.models:NewPhysicsModel"
+[project.entry-points."qphase.plugins"]
+"model:my_model" = "my_package.models:MyModel"
 ```
 
-When `qphase` starts, it scans these entry points and registers them as **Lazy Entries**.
+### 2. Local Configuration (Development-based)
+For local development and ad-hoc extensions, the registry parses a `.qphase_plugins.yaml` file located in the project root. This allows researchers to register scripts without packaging them.
 
-## Instantiation
-
-Plugins are instantiated via the `create` method. The registry handles the logic of resolving the entry, importing the module (if lazy), and validating the configuration.
-
-```python
-# Basic instantiation
-backend = registry.create("backend:numpy")
-
-# With configuration
-config = {"precision": "float64"}
-backend = registry.create("backend:numpy", **config)
+```yaml
+model:
+  custom_hamiltonian: "plugins.physics:Hamiltonian"
 ```
 
-### Configuration Validation
+## Instantiation Factory
 
-If a plugin defines a `config_schema` (a Pydantic model), the registry can automatically validate the configuration before instantiation.
-
-```python
-# 1. Registry looks up "backend:numpy"
-# 2. Registry sees it has a config_schema
-# 3. Registry validates `kwargs` against the schema
-# 4. Registry passes validated config to the constructor
-```
-
-## Introspection
-
-The registry provides tools to inspect available plugins, which is useful for CLI help generation and debugging.
+The `create()` method serves as the universal factory for all components. It handles:
+1.  **Resolution**: Looking up the entry by namespace and name.
+2.  **Loading**: Importing the module if it is a lazy entry.
+3.  **Validation**: Validating the provided configuration dictionary against the plugin's `config_schema` (Pydantic model).
+4.  **Injection**: Instantiating the class with the validated configuration and any additional dependencies (e.g., injecting the `backend` instance into a `model`).
 
 ```python
-# List all namespaces
-all_plugins = registry.list()
-
-# List plugins in a specific namespace
-backends = registry.list("backend")
-# Output: {'numpy': {'kind': 'callable'}, 'torch': {'kind': 'dotted'}}
+# Example: Instantiating a model with dependency injection
+model = registry.create(
+    "model:kerr_cavity",
+    config={"chi": 1.0},
+    backend=numpy_backend_instance
+)
 ```

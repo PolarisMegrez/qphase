@@ -11,7 +11,6 @@ Public API
 ``jobs`` : Execute job configurations from YAML/JSON files
 """
 
-import builtins
 import sys
 from pathlib import Path
 from typing import cast
@@ -19,7 +18,11 @@ from typing import cast
 import typer
 
 from qphase.core import JobProgressUpdate, Scheduler
-from qphase.core.config_loader import load_jobs_from_files
+from qphase.core.config_loader import (
+    _find_job_config,
+    list_available_jobs,
+    load_jobs_from_files,
+)
 from qphase.core.errors import (
     QPhaseError,
     configure_logging,
@@ -32,82 +35,13 @@ app = typer.Typer()
 
 
 @app.command()
-def list(
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Show detailed engine information"
-    ),
-):
-    """List available engine packages."""
-    from rich.console import Console
-    from rich.table import Table
-
-    console = Console()
-
-    # Ensure plugins are discovered
-    discovery.discover_plugins()
-    discovery.discover_local_plugins()
-
-    # Get engine plugins from registry
-    engine_plugins = registry.list(namespace="engine")
-
-    if not engine_plugins:
-        console.print("[yellow]No engine packages found[/yellow]")
-        return
-
-    # Display results
-    console.print("\nAvailable Engine Packages", style="blue")
-    console.print("=" * 60, style="blue")
-
-    table = Table(title="Engine Packages")
-    table.add_column("Name", style="cyan")
-    table.add_column("Module Path", style="dim")
-    table.add_column("Description", style="yellow")
-
-    for engine_name in sorted(engine_plugins.keys()):
-        plugin_info = engine_plugins.get(engine_name, {})
-        module_path = plugin_info.get("module_path", "")
-
-        # Try to get description from plugin class
-        description = ""
-        try:
-            target = plugin_info.get("target") or plugin_info.get("module_path")
-            if target:
-                cls = registry._import_target(target)
-                if hasattr(cls, "description"):
-                    desc = cls.description
-                    if isinstance(desc, str) and desc.strip():
-                        description = desc
-        except Exception:
-            pass
-
-        if verbose:
-            table.add_row(
-                engine_name,
-                module_path if module_path else "N/A",
-                description if description else "No description available",
-            )
-        else:
-            table.add_row(
-                engine_name,
-                module_path if module_path else "",
-                description if description else "",
-            )
-
-    console.print(table)
-    console.print("\n" + "=" * 60, style="blue")
-    console.print(
-        f"Total: {len(engine_plugins)} engine package"
-        f"{'s' if len(engine_plugins) != 1 else ''}",
-        style="green",
-    )
-
-
-@app.command()
 def jobs(
-    # noqa: B008 - typer.Argument is a decorator, not a function call in default value
-    configs: builtins.list[str] = typer.Argument(  # noqa: B008
+    job_name: str = typer.Argument(
         ...,
-        help="Path to one or more job YAML/JSON configuration files",
+        help="Name of the job to run (searched in configs/jobs/ directory)",
+    ),
+    list_jobs: bool = typer.Option(
+        False, "--list", help="List available jobs and exit"
     ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Enable verbose logging"
@@ -116,28 +50,31 @@ def jobs(
     log_json: bool = typer.Option(False, help="Log in JSON format"),
     suppress_warnings: bool = typer.Option(False, help="Suppress warnings output"),
 ):
-    """Run SDE simulation jobs from one or more configuration files.
+    """Run SDE simulation jobs by name from configs/jobs/ directory.
 
-    Each CONFIG argument should be a path to a YAML or JSON file containing
-    a single job configuration. Each file must contain:
-    - A single JobConfig with one engine per job
+    JOBS_NAME should be the name of a job configuration file (without extension)
+    located in the configs/jobs/ directory. The command will automatically search
+    for .yaml or .yml files with that name.
 
-    Job file format:
+    Job file format (in configs/jobs/):
         name: job_name
-        engine: engine_name
-        backend:
-          numpy:
-            float_dtype: float64
-        model:
-          vdp_two_mode:
-            D: 1.0
+        engine: sde
+        plugins:
+          backend:
+            numpy:
+              float_dtype: float64
+          model:
+            vdp_two_mode:
+              D: 1.0
         engine:
           sde:
             t_end: 10.0
 
-    Examples:
-        qps run jobs job1.yaml job2.yaml
-        qps run jobs simulation.yaml visualization.yaml
+    Examples
+    --------
+        qps run jobs my_simulation
+        qps run jobs --list
+        qps run jobs --verbose my_job
 
     """
     # Configure logging
@@ -154,29 +91,45 @@ def jobs(
         discovery.discover_plugins()
         discovery.discover_local_plugins()
 
-        # Resolve all config file paths
-        cfg_paths = []
-        for config in configs:
-            cfg_path = Path(config).resolve()
+        # Load system configuration to get config directories
+        system_cfg = load_system_config()
 
-            # Check if file exists
-            if not cfg_path.exists():
-                log.error(f"Configuration file not found: {cfg_path}")
-                raise typer.Exit(code=1)
+        # Handle --list option
+        if list_jobs:
+            available_jobs = list_available_jobs(system_cfg)
+            if not available_jobs:
+                typer.echo("No jobs found in configs/jobs/ directory.")
+            else:
+                typer.echo("\nAvailable jobs:")
+                for job in available_jobs:
+                    typer.echo(f"  - {job}")
+                typer.echo(f"\nTotal: {len(available_jobs)} job(s)")
+            return
 
-            cfg_paths.append(cfg_path)
+        # Find job configuration file
+        cfg_path = _find_job_config(system_cfg.paths.config_dirs, job_name)
+
+        if cfg_path is None or not cfg_path.exists():
+            log.error(f"Job '{job_name}' not found in configs/jobs/ directories")
+            log.error(f"Searched in: {system_cfg.paths.config_dirs}")
+            available_jobs = list_available_jobs(system_cfg)
+            if available_jobs:
+                log.error(f"Available jobs: {', '.join(available_jobs)}")
+            raise typer.Exit(code=1)
+
+        log.info(f"Found job configuration: {cfg_path}")
 
         # Add config directories to Python path for model imports
-        for cfg_path in cfg_paths:
-            for cand in (cfg_path.parent, cfg_path.parent.parent):
+        for config_path in [cfg_path]:
+            for cand in (config_path.parent, config_path.parent.parent):
                 if cand.exists():
                     pstr = str(cand)
                     if pstr not in sys.path:
                         sys.path.insert(0, pstr)
 
         # Load JobList from YAML files
-        log.info(f"Loading {len(cfg_paths)} configuration file(s)")
-        job_list = load_jobs_from_files(cfg_paths)
+        log.info("Loading 1 configuration file(s)")
+        job_list = load_jobs_from_files([cfg_path])
 
         log.info(f"Loaded {len(job_list.jobs)} jobs")
 
@@ -227,14 +180,15 @@ def _make_progress_callback():
 
     def _on_progress(update: JobProgressUpdate):
         # Format total duration estimate (total estimated time including elapsed)
-        total_est = update.total_duration_estimate
+        total_est = update.global_eta
         est_ok = total_est is not None and total_est == total_est and total_est >= 0.0
         mm = int(cast(float, total_est) // 60) if est_ok else 0
         ss = int(cast(float, total_est) % 60) if est_ok else 0
         est_str = f"~{mm:02d}:{ss:02d}" if est_ok else "--:--"
 
         # Build progress message
-        if update.has_progress:
+        has_progress = update.percent is not None
+        if has_progress:
             msg = f"[{update.job_name}] {update.percent:5.1f}% {est_str}"
         else:
             msg = f"[{update.job_name}] {update.message}"
@@ -252,3 +206,24 @@ def _make_run_dir_callback():
         pass
 
     return _on_run_dir
+
+
+@app.command()
+def list():
+    """List available engine packages that can be used in job configurations."""
+    # Ensure plugins are discovered
+    discovery.discover_plugins()
+    discovery.discover_local_plugins()
+
+    # Get all engine plugins
+    engines = registry.list(namespace="engine")
+
+    if not engines:
+        typer.echo("No engine packages found.")
+        return
+
+    typer.echo("Available Engines:")
+    for engine_name in sorted(engines.keys()):
+        typer.echo(f"  - {engine_name}")
+
+    typer.echo(f"\nTotal: {len(engines)} engine package(s)")

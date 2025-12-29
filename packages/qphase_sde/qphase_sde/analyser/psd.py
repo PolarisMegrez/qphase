@@ -22,8 +22,8 @@ from typing import Any, ClassVar, Literal, cast
 
 import numpy as _np
 from pydantic import BaseModel, Field, model_validator
+from qphase.backend.xputil import convert_to_numpy
 
-from ..core.xputil import to_numpy
 from .base import Analyzer
 
 __all__ = [
@@ -164,17 +164,17 @@ class PsdAnalyzer(Analyzer):
 
         # Scaling
         if convention in ("symmetric", "unitary"):
-            scale_p = dt / (2.0 * _np.pi)
+            scale_p = dt / (2.0 * backend.pi)
             P_backend = P_backend * scale_p
 
-            scale_axis = 2.0 * _np.pi
+            scale_axis = 2.0 * backend.pi
             axis_backend = axis_backend * scale_axis
         else:
             scale_p = dt / float(n_time)
             P_backend = P_backend * scale_p
 
         # Convert to numpy for return
-        axis = to_numpy(axis_backend)
-        P = to_numpy(P_backend)
+        axis = convert_to_numpy(axis_backend)
+        P = convert_to_numpy(P_backend)
 
         return axis, P

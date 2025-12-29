@@ -7,142 +7,106 @@ nav_order: 1
 
 # Quick Start Guide
 
-This tutorial will guide you through the complete workflow of using QPhase: from installation to running your first physics simulation and analyzing the results.
-
-## Prerequisites
-
-*   **Python 3.10** or newer.
-*   Basic familiarity with command-line interfaces.
+This guide will help you set up QPhase and run your first simulation.
 
 ## 1. Installation
 
-QPhase is available as a Python package. We recommend installing it in a virtual environment.
+We strongly recommend using a virtual environment to keep your project dependencies clean.
 
-### Standard Installation
-For most users, the standard installation includes all necessary scientific libraries (NumPy, SciPy, etc.):
+### Step 1: Create a Virtual Environment
+Open your terminal (PowerShell or Bash) and run:
 
 ```bash
-pip install "qphase[standard]"
+# Create a virtual environment named '.venv'
+python -m venv .venv
+
+# Activate it
+# Windows (PowerShell):
+.venv\Scripts\Activate.ps1
+# Linux/macOS:
+source .venv/bin/activate
 ```
 
-### Minimal Installation
-If you want to manage dependencies manually:
+### Step 2: Install QPhase
+Install the package using pip:
 
 ```bash
 pip install qphase
 ```
 
-## 2. Project Initialization
+## 2. Initialize a Project
 
-QPhase enforces a structured workspace to keep your simulations organized. Let's create a new project directory.
+QPhase works best when you have a dedicated folder for your simulations. This keeps your configuration files and results organized.
 
 ```bash
-mkdir my_simulation_project
-cd my_simulation_project
+# Create a folder for your research project
+mkdir my_research
+cd my_research
+
+# Initialize the QPhase structure
 qps init
 ```
 
-The `qps init` command scaffolds the following directory structure:
+This creates the following folders:
+*   `configs/`: Where you tell QPhase *what* to run.
+*   `plugins/`: Where you put your custom physics code.
+*   `runs/`: Where QPhase saves your data.
 
-```text
-my_simulation_project/
-├── configs/          # Configuration files
-│   ├── global.yaml   # Project-wide defaults
-│   └── jobs/         # Job definitions (where you define simulations)
-├── plugins/          # Custom plugins (models, backends)
-└── runs/             # Output directory for simulation results
+## 3. Create Your First Job
+
+A "Job" is a single simulation run. You define it in a YAML file.
+Create a new file named `configs/jobs/test_run.yaml` and paste the following:
+
+```yaml
+# configs/jobs/test_run.yaml
+name: test_run
+
+# 1. Choose the Engine (SDE Solver)
+engine:
+  sde:
+    t_end: 10.0
+    dt: 0.01
+    n_traj: 100
+
+# 2. Choose the Physics Model
+# (Here we use a built-in example model if available, or you can define your own)
+# For this example, let's assume we have a 'vdp_oscillator' model available.
+# If not, you might need to write a plugin first (see Developer Guide).
+plugins:
+  model:
+    vdp_two_mode:  # This is a built-in example model
+      D: 1.0       # Diffusion strength
+
+  backend:
+    numpy:         # Run on CPU
+      float_dtype: float64
 ```
 
-## 3. Running a Demo Simulation
+## 4. Run the Simulation
 
-To verify your installation, run the built-in demo job. This runs a simple simulation using the default settings.
+Now, tell QPhase to run the job you just defined:
 
 ```bash
-qps run jobs demo
+qps run jobs test_run
 ```
 
-**What happens?**
-1.  QPhase loads the `demo` job configuration.
-2.  It initializes the simulation engine (SDE solver).
-3.  It executes the simulation, showing a progress bar.
-4.  Results are saved to a timestamped folder in `runs/`.
-
-You should see output similar to:
+You should see a progress bar:
 ```text
 [INFO] Loading 1 configuration file(s)
 [INFO] Starting job execution
-[demo] 100.0% ~00:00
+[test_run] 100.0% ~00:00
 [INFO] All 1 jobs completed successfully
-
-Run directories:
-  [demo] /path/to/my_simulation_project/runs/2023-10-27T10-00-00Z_a1b2c3d4
 ```
 
-## 4. Defining Your First Simulation
+## 5. Check the Results
 
-Simulations are defined in **YAML** files located in `configs/jobs/`. Let's create a simulation for a **Van der Pol oscillator**.
+Look in the `runs/` folder. You will see a new directory with a timestamp:
 
-Create a file named `configs/jobs/vdp_sim.yaml`:
-
-```yaml
-name: vdp_simulation  # Unique identifier for this job
-
-# Engine Configuration: Controls the time evolution
-engine:
-  sde:
-    t_end: 20.0       # Simulate for 20 time units
-    dt: 0.01          # Time step size
-    n_trajectories: 100 # Number of parallel stochastic paths
-
-# Plugin Configuration: Selects the components to use
-plugins:
-  # Backend: Choose 'numpy' (CPU) or 'torch'/'cupy' (GPU)
-  backend:
-    name: numpy
-    params:
-      float_dtype: float64
-
-  # Integrator: Numerical method for solving the SDE
-  integrator:
-    name: srk  # Stochastic Runge-Kutta
-  
-  # Model: The physics system to simulate
-  model:
-    name: vdp_oscillator
-    params:
-      mu: 2.0     # Nonlinearity parameter
-      eta: 0.1    # Noise strength
+```text
+runs/
+└── 2025-12-29T12-00-00Z_test_run/
+    ├── config_snapshot.json  # The exact settings used
+    └── results.h5            # The simulation data (format depends on engine)
 ```
 
-## 5. Executing the Job
-
-Run your newly defined job using the `qps run jobs` command:
-
-```bash
-qps run jobs vdp_sim
-```
-
-QPhase will automatically find `vdp_sim.yaml` in the `configs/jobs/` directory.
-
-## 6. Inspecting Results
-
-Navigate to the output directory printed in the console (e.g., `runs/<timestamp>_<uuid>/`). You will find:
-
-*   `config_snapshot.json`: A complete record of the configuration used for this run (for reproducibility).
-*   `vdp_simulation.npz` (or similar): The simulation data file.
-
-You can load this data using Python:
-
-```python
-import numpy as np
-
-# Load the results
-data = np.load("runs/YOUR_TIMESTAMP/vdp_simulation.npz")
-print(data.files)  # See available arrays (e.g., 't', 'x', 'y')
-```
-
-## 7. Next Steps
-
-*   **[Configuration Guide](configuration.md)**: Learn how to run parameter scans (e.g., simulate for `mu = [0.5, 1.0, 2.0]` in one go).
-*   **[Architecture Overview](../dev_guide/architecture.md)**: Understand how QPhase works under the hood.
-
+**Congratulations!** You have successfully run a reproducible physics simulation without writing any boilerplate code.

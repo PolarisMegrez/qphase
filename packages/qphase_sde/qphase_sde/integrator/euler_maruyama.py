@@ -14,8 +14,7 @@ from collections.abc import Callable
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
-
-from qphase_sde.core.protocols import SDEBackend as Backend
+from qphase.backend.base import BackendBase as Backend
 
 from .base import Integrator
 

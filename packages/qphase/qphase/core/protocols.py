@@ -20,6 +20,7 @@ Notes
 
 """
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
 
@@ -27,6 +28,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Self type for factory methods
 _R = TypeVar("_R", bound="ResultBase")
+
+# Progress callback signature
+# args: percent (0.0-1.0), total_duration_estimate (s), message, stage
+ProgressCallback = Callable[[float | None, float | None, str, str | None], None]
 
 
 class PluginConfigBase(BaseModel):
@@ -184,7 +189,12 @@ class EngineBase(PluginBase, Protocol):
         """
         ...
 
-    def run(self, data: Any | None = None) -> ResultProtocol:
+    def run(
+        self,
+        data: Any | None = None,
+        *,
+        progress_cb: ProgressCallback | None = None,
+    ) -> ResultProtocol:
         """Execute the main computational task and return the result.
 
         Parameters
@@ -192,6 +202,13 @@ class EngineBase(PluginBase, Protocol):
         data : Any | None
             Input data from upstream jobs or external sources.
             Can be a Python object (in-memory transfer) or a Path (file transfer).
+        progress_cb : ProgressCallback | None, optional
+            Callback for progress reporting.
+            Signature: (percent, total_duration_estimate, message, stage) -> None
+            - percent: float | None (0.0-1.0)
+            - total_duration_estimate: float | None (seconds)
+            - message: str (status message)
+            - stage: str | None (e.g., "warmup", "sampling")
 
         Returns
         -------
@@ -200,28 +217,3 @@ class EngineBase(PluginBase, Protocol):
 
         """
         ...
-
-    # ===== OPTIONAL PROGRESS METHODS =====
-    # These methods are OPTIONAL. Engine packages may implement them
-    # to provide progress reporting, but are NOT required to do so.
-    # Engine packages should NOT import anything from qphase.core.
-
-    def get_progress(self) -> dict[str, Any] | None:
-        """Get current progress state.
-
-        OPTIONAL: If implemented, should return a dict with progress information.
-
-        Expected dict keys (all optional):
-        - 'percent': float (0.0-100.0)
-        - 'message': str - Current status message
-        - 'stage': str - Current stage name
-        - 'total_duration_estimate': float - Estimated total duration
-          (including elapsed time)
-
-        Returns
-        -------
-        dict[str, Any] | None
-            Progress state dict, or None if progress reporting not supported.
-
-        """
-        return None

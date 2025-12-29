@@ -1,21 +1,28 @@
-"""qphase_sde: Visualizers Subpackage
----------------------------------
-Figure plotters and services for simulation outputs (phase portraits, PSD),
-validated by specs and plugged via the central registry.
+"""qphase_viz: Visualization Package
+--------------------------------
+
+Visualization engine and plotters for qphase.
 
 Usage
 -----
-Registry keys:
-`visualizer:phase_portrait` | `visualizer:psd`
-
-Service:
->>> from qphase_sde.visualizer.service import render_from_spec
-
-Notes
------
-- Renderers are registered lazily; plotting dependencies are imported only
-  when needed.
-
+>>> from qphase_viz import VizEngine, VizEngineConfig
+>>> config = VizEngineConfig(output_dir="plots", specs=[...])
+>>> engine = VizEngine(config)
+>>> engine.run(data)
 """
 
-__all__ = []
+from .config import (
+    PhasePlaneConfig,
+    PowerSpectrumConfig,
+    TimeSeriesConfig,
+    VizEngineConfig,
+)
+from .engine import VizEngine
+
+__all__ = [
+    "VizEngine",
+    "VizEngineConfig",
+    "TimeSeriesConfig",
+    "PhasePlaneConfig",
+    "PowerSpectrumConfig",
+]

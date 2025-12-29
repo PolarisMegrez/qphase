@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qphase"
-version = "0.9.2"
+version = "0.9.4"
 description = "Modular Quantum Phase-Space Simulation Framework (Core & CLI)"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -39,6 +39,7 @@ dev = ["pytest>=7.0", "ruff>=0.5"]
 numba = ["numba>=0.57"]
 cupy = ["cupy-cuda12x>=12.0"]
 torch = ["torch>=2.0"]
+standard = ["numba>=0.57", "torch>=2.0"]
 
 [project.scripts]
 qps = "qphase.main:app"

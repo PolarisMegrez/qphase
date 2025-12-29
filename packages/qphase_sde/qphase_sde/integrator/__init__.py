@@ -10,7 +10,7 @@ its own configuration schema.
 
 from .base import Integrator
 from .euler_maruyama import EulerMaruyama
-from .milstein import Milstein  # register via decorator on import
+from .milstein import Milstein
 
 __all__ = [
     # Base protocol

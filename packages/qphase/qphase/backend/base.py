@@ -18,16 +18,94 @@ libraries. Concrete implementations in backend/*.py must implement all methods.
 
 """
 
+from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
+import numpy as np
 from pydantic import Field
 
+from qphase.core.errors import QPhaseRuntimeError
 from qphase.core.protocols import PluginBase, PluginConfigBase
+
+from .xputil import convert_to_numpy, get_xp
 
 __all__ = [
     "BackendConfigBase",
     "BackendBase",
+    "ArrayBase",
 ]
+
+
+@dataclass
+class ArrayBase:
+    """Backend-agnostic array container.
+
+    Attributes
+    ----------
+    data : Any
+        The underlying data array (numpy.ndarray, torch.Tensor, cupy.ndarray).
+    meta : dict
+        Metadata dictionary.
+
+    """
+
+    data: Any
+    meta: dict = field(default_factory=dict)
+
+    @property
+    def xp(self):
+        """Get the array namespace (numpy/cupy/torch-shim) for this state."""
+        return get_xp(self.data)
+
+    def to_numpy(self) -> np.ndarray:
+        """Convert data to a NumPy array."""
+        return convert_to_numpy(self.data)
+
+    def copy(self) -> "ArrayBase":
+        """Return a deep copy of the object."""
+        # Try standard copy/clone methods
+        if hasattr(self.data, "clone"):  # Torch
+            new_data = self.data.clone()
+        elif hasattr(self.data, "copy"):  # NumPy/CuPy
+            new_data = self.data.copy()
+        else:
+            # Fallback
+            import copy
+
+            new_data = copy.deepcopy(self.data)
+
+        # Use replace to handle subclasses with extra fields automatically
+        return replace(self, data=new_data, meta=self.meta.copy())
+
+    def to_backend(self, target_backend: Any) -> "ArrayBase":
+        """Convert data to the target backend.
+
+        Parameters
+        ----------
+        target_backend : BackendBase
+            The target backend instance.
+
+        Returns
+        -------
+        ArrayBase
+            A new instance with data on the target backend.
+
+        """
+        try:
+            # Try direct conversion if backend supports it
+            if hasattr(target_backend, "asarray"):
+                new_data = target_backend.asarray(self.data)
+            else:
+                # Fallback: convert to numpy first
+                np_data = self.to_numpy()
+                new_data = target_backend.asarray(np_data)
+
+            # Use replace to preserve other fields (like t, t0, dt in subclasses)
+            return replace(self, data=new_data, meta=self.meta.copy())
+        except Exception as e:
+            raise QPhaseRuntimeError(
+                f"Failed to convert to backend '{target_backend}': {e}"
+            ) from e
 
 
 class BackendConfigBase(PluginConfigBase):
@@ -144,5 +222,18 @@ class BackendBase(PluginBase, Protocol):
 
     # Optional convenience (not required by core, but used opportunistically)
     # Implementers may raise AttributeError if not supported; callers must guard.
-    def stack(self, arrays: tuple[Any, ...], axis: int = 0) -> Any: ...  # optional
+    def stack(self, arrays: tuple[Any, ...], axis: int = 0) -> Any: ...
     def to_device(self, x: Any, device: str | None) -> Any: ...  # optional
+    def expand_dims(self, x: Any, axis: int) -> Any: ...
+    def repeat(self, x: Any, repeats: int, axis: int | None = None) -> Any: ...
+    def isnan(self, x: Any) -> Any: ...
+    def arange(
+        self,
+        start: int,
+        stop: int | None = None,
+        step: int = 1,
+        dtype: Any | None = None,
+    ) -> Any: ...
+
+    @property
+    def pi(self) -> float: ...

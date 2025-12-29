@@ -138,6 +138,12 @@ class SystemConfig(BaseModel):
         },
         description="Parameter scan configuration for batch execution",
     )
+    progress_update_interval: float = Field(
+        default=0.5,
+        description=(
+            "Minimum interval (in seconds) between progress updates from scheduler."
+        ),
+    )
 
     class Config:
         """Pydantic config."""

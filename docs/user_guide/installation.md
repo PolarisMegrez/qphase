@@ -55,6 +55,14 @@ Currently, QPhase is installed directly from the source code.
     pip install -e packages/qphase
     ```
 
+    For most users, we recommend installing with the `standard` optional dependencies which include commonly used packages:
+
+    ```bash
+    pip install -e packages/qphase[standard]
+    ```
+
+    This includes Numba (for JIT compilation) and PyTorch (for GPU acceleration).
+
 3.  **Install Official Plugins**
 
     QPhase is modular. You can install only the components you need.

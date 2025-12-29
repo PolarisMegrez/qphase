@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qphase-viz"
-version = "0.9.2"
+version = "0.9.4"
 description = "Visualization plugin for QPhase: Phase Portraits and PSD Analysis"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,12 +12,13 @@ urls = { Homepage = "https://github.com/PolarisMegrez/qphase", Repository = "htt
 dependencies = [
     "matplotlib>=3.6",
     "numpy>=1.23",
-    "qphase>=0.9.2",
-    "qphase-sde>=0.9.2"
+    "scipy>=1.10",
+    "qphase>=0.9.4",
+    "qphase-sde>=0.9.4"
 ]
 
 [project.entry-points.qphase]
-"engine.viz" = "qphase_viz.entry:VizEngine"
+"engine.viz" = "qphase_viz.engine:VizEngine"
 "visualizer.phase_portrait" = "qphase_viz.plotters.phase_plane:PhasePortraitPlotter"
 "visualizer.psd" = "qphase_viz.plotters.psd:PsdPlotter"
 

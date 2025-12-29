@@ -2,150 +2,59 @@
 layout: default
 title: Configuration System
 parent: Developer Guide
-nav_order: 8
+nav_order: 5
 ---
 
 # Configuration System
 
-The QPhase configuration system is designed to be hierarchical, type-safe, and extensible. It separates **system-level** settings (paths, environment) from **job-level** settings (physics parameters, solver options).
+The **Configuration System** is responsible for parsing, validating, and merging simulation parameters. It employs a hierarchical loading strategy and leverages **Pydantic** for strict schema validation.
 
-## Architecture
+## Configuration Hierarchy
 
-The configuration is loaded in layers, with each layer overriding the previous one:
+The system constructs the final execution context by merging configuration data from three distinct layers, in increasing order of precedence:
 
-1.  **System Config** (`system.yaml`): Defines global paths, plugin directories, and runtime behavior.
-2.  **Global Config** (`configs/global.yaml`): Defines project-wide defaults for physics and solvers.
-3.  **Job Config** (`configs/jobs/*.yaml`): Defines specific parameters for a single simulation run.
+1.  **System Defaults**: Hardcoded defaults within the package and plugin definitions.
+2.  **Global Configuration** (`configs/global.yaml`): User-defined project-wide settings (e.g., default backend, logging verbosity).
+3.  **Job Configuration** (`configs/jobs/*.yaml`): Experiment-specific parameters.
 
-## System Configuration
+## The Loading Pipeline
 
-The `SystemConfig` controls *where* QPhase looks for things and *how* it behaves.
+The configuration loading process follows a strict pipeline:
 
-### Loading Priority
-1.  **Environment Variable**: `QPHASE_SYSTEM_CONFIG` (Highest priority)
-2.  **User Config**: `~/.qphase/system.yaml`
-3.  **Default Config**: Built-in package defaults (Lowest priority)
+1.  **File I/O**: The YAML file is read and parsed into a raw Python dictionary.
+2.  **Structure Normalization**: The raw dictionary is normalized to ensure consistent structure (e.g., handling shorthand notations).
+3.  **Plugin Extraction**: The system identifies keys that correspond to registered plugin namespaces (e.g., `backend`, `model`).
+4.  **Schema Validation**:
+    *   The core job structure is validated against the `JobConfig` model.
+    *   Each plugin configuration block is validated against its respective `config_schema` defined by the plugin class.
+5.  **Merging**: Global defaults are merged into the job configuration, filling in missing optional fields.
 
-### Schema
-```python
-class SystemConfig(BaseModel):
-    paths: PathsConfig = Field(default_factory=PathsConfig)
-    auto_save_results: bool = True
-    parameter_scan: dict = Field(default_factory=lambda: {"enabled": True})
+## Schema Validation with Pydantic
 
-class PathsConfig(BaseModel):
-    output_dir: str = "./runs"
-    global_file: str = "./configs/global.yaml"
-    plugin_dirs: list[str] = ["./plugins"]
-    config_dirs: list[str] = ["./configs"]
-```
+QPhase uses Pydantic v2 to enforce type safety and data integrity.
 
-## Job Configuration
+### `JobConfig` Model
 
-A `JobConfig` defines a single unit of work. It is typically loaded from a YAML file in `configs/jobs/`.
-
-```yaml
-# configs/jobs/my_simulation.yaml
-name: my_simulation
-engine:
-  sde:
-    t_end: 10.0
-    dt: 0.01
-plugins:
-  backend:
-    name: numpy
-    params:
-      precision: float64
-  model:
-    name: vdp_oscillator
-    params:
-      mu: 2.0
-```
-
-## Plugin Configuration (For Developers)
-
-The most important feature for developers is **Schema Validation**. QPhase uses [Pydantic](https://docs.pydantic.dev/) to validate plugin configurations automatically.
-
-### Defining a Schema
-
-When creating a plugin, you should define a Pydantic model for its configuration.
+The `JobConfig` model defines the structural skeleton of a simulation job.
 
 ```python
-from pydantic import BaseModel, Field, PositiveFloat
-
-class VDPConfig(BaseModel):
-    """Configuration schema for the Van der Pol model."""
-    mu: float = Field(1.0, description="Non-linearity parameter")
-    eta: PositiveFloat = Field(0.1, description="Noise strength")
-
-class VDPModel:
-    # Link the schema to the class
-    config_schema = VDPConfig
-
-    def __init__(self, config: VDPConfig):
-        self.mu = config.mu
-        self.eta = config.eta
+class JobConfig(BaseModel):
+    name: str
+    engine: dict[str, Any]
+    plugins: dict[str, dict[str, Any]]
+    params: dict[str, Any]
+    # ...
 ```
 
-### Automatic Validation
+### Plugin Schemas
 
-When the Registry instantiates your plugin:
-1.  It detects the `config_schema` attribute.
-2.  It extracts the `params` dictionary from the YAML config.
-3.  It validates `params` against your Pydantic model.
-4.  It passes the *validated model instance* to your `__init__` method.
+Each plugin must define a `config_schema` class variable pointing to a Pydantic model. This allows the Registry to validate plugin-specific parameters *before* the plugin is instantiated.
 
-If the YAML contains invalid types (e.g., `mu: "string"` instead of float), QPhase will raise a clear error message before the simulation starts.
-
-## Configuration Merging
-
-QPhase uses a **Deep Merge** strategy.
-
-*   **Dictionaries** are merged recursively.
-*   **Lists** and **Scalars** in the higher-priority config *replace* the values in the lower-priority config.
-
-### Example
-
-**Global Config (`global.yaml`):**
-```yaml
-plugins:
-  backend:
-    name: numpy
-    params:
-      precision: float64
-      device: cpu
-```
-
-**Job Config (`job.yaml`):**
-```yaml
-plugins:
-  backend:
-    params:
-      device: cuda  # Overrides 'cpu'
-      # 'precision' is inherited as 'float64'
-```
-
-**Result:**
+**Example:**
 ```python
-{
-    "name": "numpy",
-    "params": {
-        "precision": "float64",
-        "device": "cuda"
-    }
-}
+class KerrCavityConfig(BaseModel):
+    chi: float = Field(..., gt=0, description="Nonlinearity")
+    detuning: float = Field(0.0, description="Frequency detuning")
 ```
 
-## Accessing Configuration in Code
-
-In most core components (like Engines), the full configuration is available via `self.config`.
-
-```python
-class MyEngine(EngineBase):
-    def run(self):
-        # Access job-level params
-        t_end = self.config.engine['sde']['t_end']
-
-        # Access system-level paths
-        out_dir = self.context.system_config.paths.output_dir
-```
+If a user provides a string for `chi` or a negative value, the Pydantic validator will raise a descriptive error during the loading phase, preventing runtime failures deep in the simulation loop.

@@ -40,17 +40,17 @@ def test_config_show_system(temp_workspace):
 
 
 def test_plugin_list():
-    """Test 'plugin list'."""
-    result = runner.invoke(app, ["plugin", "list"])
+    """Test 'list' command."""
+    result = runner.invoke(app, ["list"])
     assert result.exit_code == 0
     assert "engine" in result.stdout
     assert "backend" in result.stdout
 
 
 def test_plugin_show():
-    """Test 'plugin show'."""
+    """Test 'show' command."""
     # Assuming 'dummy' backend is available
-    result = runner.invoke(app, ["plugin", "show", "backend.dummy"])
+    result = runner.invoke(app, ["show", "backend.dummy"])
     if result.exit_code != 0:
         print(f"Plugin show failed stdout: {result.stdout}")
         if result.exception:
@@ -72,7 +72,7 @@ def test_run_list():
 
 def test_template_command():
     """Test 'template' command."""
-    result = runner.invoke(app, ["plugin", "template", "engine.dummy"])
+    result = runner.invoke(app, ["template", "engine.dummy"])
     if result.exit_code != 0:
         print(f"Template command failed: {result.stdout}")
         if result.exception:
@@ -90,8 +90,8 @@ def test_run_jobs_command(temp_workspace, sample_job_file, dummy_model):
     # dummy_model fixture registers the 'dummy' model used in sample_job_file
 
     # Run the job
-    # We need to pass the path to the job file
-    result = runner.invoke(app, ["run", "jobs", str(sample_job_file)])
+    # We need to pass the job name (without extension), not the file path
+    result = runner.invoke(app, ["run", "jobs", "test_job"])
 
     # Note: This might fail if the engine/backend implementation has issues
     # But we are testing the CLI invocation here
@@ -99,7 +99,9 @@ def test_run_jobs_command(temp_workspace, sample_job_file, dummy_model):
         print(result.stdout)
 
     assert result.exit_code == 0
-    assert "Completed successfully" in result.stdout
+    # Check that job ran (output shows run directory)
+    assert "[test_job]" in result.stdout
+    assert "Run directories:" in result.stdout
 
     # Check if output was created
     output_dir = temp_workspace / "runs"

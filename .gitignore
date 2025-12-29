@@ -51,7 +51,7 @@ desktop.ini
 
 # User Data
 configs/
-models/
+/models/
 runs/
 *.temp
 ~$*
@@ -83,7 +83,3 @@ bundles/
 *.env
 .env.*
 *_local.*
-
-# Local development folders
-configs/
-models/

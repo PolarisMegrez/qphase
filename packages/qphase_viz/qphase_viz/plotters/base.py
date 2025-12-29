@@ -1,46 +1,39 @@
 """qphase_viz: Plotter Protocol
---------------------------
+---------------------------
 
-Protocol definition for visualizers/plotters.
+Defines the interface for all plotters.
 """
 
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-__all__ = [
-    "Plotter",
-]
+from qphase.backend.base import ArrayBase
 
 
 @runtime_checkable
-class Plotter(Protocol):
-    """Protocol for visualizer implementations.
+class PlotterProtocol(Protocol):
+    """Protocol for visualization plotters."""
 
-    Plotters are plugins that render data onto a matplotlib Axes.
-    They must satisfy the PluginBase protocol (Config + __init__) implicitly,
-    and implement the render method defined here.
-    """
-
-    def render(
-        self,
-        ax: Any,
-        data: Any,
-        plot_style: dict[str, Any] | None = None,
-    ) -> str:
-        """Render the visualization onto an existing matplotlib Axes.
+    def plot(
+        self, data: ArrayBase, config: dict[str, Any], output_dir: Path, format: str
+    ) -> Path:
+        """Render a plot based on data and configuration.
 
         Parameters
         ----------
-        ax : matplotlib.axes.Axes
-            Axes object to plot on.
-        data : Any
-            Data to visualize (numpy array, dict, etc. depending on implementation).
-        plot_style : dict, optional
-            Matplotlib styling arguments.
+        data : ArrayBase
+            The simulation data (TrajectorySet or similar).
+        config : dict
+            The validated configuration dictionary for this specific plot.
+        output_dir : Path
+            Directory to save the output file.
+        format : str
+            Output file format (e.g., 'png', 'pdf').
 
         Returns
         -------
-        str
-            Category tag for filenames.
+        Path
+            Path to the generated file.
 
         """
         ...

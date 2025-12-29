@@ -11,8 +11,9 @@ This module is dependency-light and safe to import in any environment.
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from qphase_sde.core.protocols import SDEBackend
-    from qphase_sde.models.base import NoiseSpec, SDEModel
+    from qphase.backend.base import BackendBase
+
+    from qphase_sde.model import NoiseSpec, SDEModel
 
 __all__ = [
     "Integrator",
@@ -46,7 +47,7 @@ class Integrator(Protocol):
           SDE model providing drift and diffusion functions.
         noise : NoiseSpec
           Noise specification for the integration.
-        backend : SDEBackend
+        backend : BackendBase
           Active backend providing array operations.
 
     Returns
@@ -79,7 +80,7 @@ class Integrator(Protocol):
         dt: float,
         model: "SDEModel",
         noise: "NoiseSpec",
-        backend: "SDEBackend",
+        backend: "BackendBase",
     ) -> Any:
         """Compute one-step increment ``dy`` without mutating inputs.
 
@@ -95,7 +96,7 @@ class Integrator(Protocol):
             SDE model providing drift and diffusion.
         noise : NoiseSpec
             Noise specification for the integration.
-        backend : SDEBackend
+        backend : BackendBase
             Active backend providing array operations.
 
         Returns

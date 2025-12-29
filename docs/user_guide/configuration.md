@@ -7,21 +7,23 @@ nav_order: 2
 
 # Configuration Guide
 
-QPhase employs a hierarchical, YAML-based configuration system designed to ensure **reproducibility** and **flexibility**. Instead of hardcoding parameters in Python scripts, you define them in declarative configuration files.
+QPhase utilizes a hierarchical, YAML-based configuration system designed to ensure reproducibility, flexibility, and ease of use. By defining simulation parameters in declarative configuration files, users can manage complex experimental setups without modifying the underlying codebase.
 
 ## Configuration Hierarchy
 
-QPhase merges configurations from multiple sources to determine the final settings for a job. The priority order (highest to lowest) is:
+To determine the final settings for a simulation job, QPhase merges configurations from multiple sources. The priority order, from highest to lowest, is as follows:
 
-1.  **Job Configuration** (`configs/jobs/*.yaml`): Settings specific to a single run.
-2.  **Global Configuration** (`configs/global.yaml`): Project-wide defaults (e.g., default backend, logging level).
-3.  **System Defaults**: Built-in defaults provided by the QPhase package.
+1.  **Job Configuration** (`configs/jobs/*.yaml`): Settings specific to a single simulation run. These settings override all others.
+2.  **Global Configuration** (`configs/global.yaml`): Project-wide defaults (e.g., default backend, logging preferences).
+3.  **System Defaults**: Built-in defaults provided by the QPhase package and its plugins.
 
-**Best Practice**: Use `global.yaml` for settings that rarely change (like your preferred backend or precision) and Job Configs for experiment-specific parameters.
+**Recommendation**: Utilize `global.yaml` for settings that remain consistent across most experiments (such as the preferred computational backend or precision level) and reserve Job Configurations for experiment-specific parameters.
 
 ## Anatomy of a Job Configuration
 
-A job configuration file defines *what* to run and *how* to run it.
+A job configuration file defines the specific parameters for a simulation. It specifies the engine to be used, the plugins to be loaded, and the parameters for the physical model.
+
+Below is an example of a complete job configuration:
 
 ```yaml
 # configs/jobs/example_job.yaml
@@ -30,39 +32,54 @@ A job configuration file defines *what* to run and *how* to run it.
 name: example_experiment
 
 # [Required] Engine Configuration
-# Defines the simulation loop parameters.
+# Specifies the simulation engine and its parameters.
+# The key must match a registered engine name (e.g., 'sde', 'viz').
 engine:
-  sde:  # The engine type (Stochastic Differential Equation)
+  sde:
     t_end: 100.0
     dt: 0.01
-    n_trajectories: 1000
+    n_traj: 1000
 
 # [Optional] Plugin Configuration
-# Overrides defaults for specific components.
+# Overrides defaults for specific components like backends, models, or integrators.
 plugins:
   backend:
-    name: torch
-    params:
-      device: "cuda:0"  # Use GPU
-      float_dtype: float32
+    numpy:  # The specific plugin implementation to use
+      float_dtype: float64
 
   model:
-    name: kerr_cavity
-    params:
+    kerr_cavity:
       chi: 1.0
       epsilon: 2.5
       kappa: 0.5
 
+# [Optional] Job Metadata
+tags: ["test", "kerr", "sde"]
+
 # [Optional] I/O Configuration
-output: custom_filename  # Defaults to job name
+# input: upstream_job_name  # For chained jobs
+# output: custom_filename   # Defaults to the job name
 ```
+
+### Key Fields
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `name` | `str` | **Required.** A unique identifier for the job. This name is used for logging and output file generation. |
+| `engine` | `dict` | **Required.** Configuration for the simulation engine. Must contain exactly one key corresponding to the engine name (e.g., `sde`), with its configuration as the value. |
+| `plugins` | `dict` | **Optional.** Configuration for plugins. Keys are plugin types (e.g., `backend`, `model`), and values are dictionaries mapping plugin names to their configurations. |
+| `params` | `dict` | **Optional.** A flexible dictionary for job-specific parameters that do not fit into the engine or plugin schemas. |
+| `tags` | `list[str]` | **Optional.** A list of tags for categorizing and filtering jobs. |
+| `input` | `str` | **Optional.** Specifies an input source, such as the name of an upstream job or a file path. |
+| `output` | `str` | **Optional.** Specifies the output destination. If omitted, the job name is used as the filename. |
+| `depends_on` | `list[str]` | **Optional.** A list of job names that this job depends on. Used for scheduling execution order. |
 
 ## Parameter Scanning
 
-QPhase has built-in support for **parameter sweeps**. You can define a list of values for any parameter, and the scheduler will automatically expand it into multiple jobs.
+QPhase includes built-in support for parameter sweeps, allowing users to define ranges of values for parameters. The scheduler automatically expands these ranges into multiple individual jobs.
 
 ### Cartesian Product (Grid Search)
-By default, if you provide lists for multiple parameters, QPhase generates a job for every combination (Cartesian product).
+By default, if lists are provided for multiple parameters, QPhase generates a job for every possible combination (Cartesian product).
 
 ```yaml
 model:
@@ -71,45 +88,23 @@ model:
     epsilon: [0.1, 0.5, 1.0]
 ```
 
-This generates **6 jobs** ($2 \times 3$):
+In this example, QPhase will generate **6 jobs** ($2 \times 3$):
 1. `chi=1.0, epsilon=0.1`
 2. `chi=1.0, epsilon=0.5`
 ...
 6. `chi=2.0, epsilon=1.0`
 
-### Zipped Expansion (One-to-One)
-If you want to vary parameters in lockstep (e.g., scanning along a specific diagonal in phase space), you can configure the scan method in `system.yaml` (advanced usage) or rely on future CLI flags. *Note: The default behavior is Cartesian.*
+### Zipped Expansion
+For scenarios requiring parameters to vary in lockstep (e.g., scanning along a specific trajectory in parameter space), the "zipped" expansion method can be used. This is configured via the system settings or CLI flags.
 
 ## Configuration Snapshots
 
-Reproducibility is a core tenet of QPhase. Every time a job runs, QPhase saves a **Configuration Snapshot** (`config_snapshot.json`) in the output directory.
+To ensure reproducibility, QPhase saves a **Configuration Snapshot** (`config_snapshot.json`) in the output directory for every executed job.
 
-This snapshot contains:
+This snapshot includes:
 *   The fully merged configuration (Global + Job).
-*   The exact versions of all plugins used.
+*   The versions of all active plugins.
 *   The random seed used (if applicable).
 *   System metadata (timestamp, user, machine).
 
-**You never need to guess which parameters produced a specific result file.**
-
-## Generating Templates
-
-To avoid looking up documentation for every parameter, QPhase can generate configuration templates for any registered plugin.
-
-```bash
-# Generate a template for the 'vdp_oscillator' model
-qps template model.vdp_oscillator
-```
-
-Output:
-```yaml
-model:
-  vdp_oscillator:
-    # Nonlinear damping parameter
-    mu: 1.0
-    # Noise strength
-    eta: 0.1
-```
-
-You can copy-paste this output directly into your job file.
-
+This mechanism ensures that every result file can be traced back to the exact parameters and software environment that produced it.

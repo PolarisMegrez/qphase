@@ -7,16 +7,16 @@ nav_order: 3
 
 # CLI Reference
 
-The `qps` (QPhase Shell) command-line interface is the primary tool for interacting with the QPhase framework. It handles project initialization, job execution, plugin management, and configuration.
+The `qps` (QPhase Shell) command-line interface is the primary tool for interacting with the QPhase framework. It facilitates project initialization, job execution, plugin management, and configuration generation.
 
 ## Global Options
 
 All commands support the following global flags:
 
-*   `--help`: Show help message and exit.
-*   `--version`: Show the version number.
-*   `--verbose` / `-v`: Enable debug logging.
-*   `--log-file PATH`: Save logs to a specific file.
+*   `--help`: Display the help message and exit.
+*   `--version`: Display the installed version number.
+*   `--verbose` / `-v`: Enable verbose debug logging.
+*   `--log-file PATH`: Redirect logs to a specific file.
 
 ---
 
@@ -30,12 +30,12 @@ Initializes a new QPhase project in the current directory.
 qps init
 ```
 
-**What it does:**
+**Functionality:**
 1.  Creates the standard directory structure:
     *   `configs/`: Configuration files.
-    *   `plugins/`: Local user plugins.
+    *   `plugins/`: Directory for local user plugins.
     *   `runs/`: Output directory for simulation results.
-2.  Generates a default `configs/global.yaml`.
+2.  Generates a default `configs/global.yaml` file.
 
 ---
 
@@ -43,53 +43,54 @@ qps init
 
 ### `qps run jobs`
 
-Runs a simulation job defined in a YAML file.
+Executes a simulation job defined in the `configs/jobs/` directory.
 
 ```bash
 qps run jobs [JOB_NAME] [OPTIONS]
 ```
 
 *   **Arguments**:
-    *   `JOB_NAME`: The name of the job file located in `configs/jobs/` (without the `.yaml` extension).
+    *   `JOB_NAME`: The name of the job configuration file (without the extension) located in `configs/jobs/`.
 *   **Options**:
-    *   `--dry-run`: Parse the configuration and build plugins but do not execute the simulation loop. Useful for validation.
-    *   `--parallel / --serial`: (Experimental) Force parallel or serial execution.
+    *   `--list`: List all available job configurations in the `configs/jobs/` directory and exit.
+    *   `--dry-run`: Parse the configuration and build plugins without executing the simulation loop. Useful for validation.
+    *   `--parallel` / `--serial`: (Experimental) Force parallel or serial execution modes.
 
-**Example**:
+**Examples**:
 ```bash
-# Runs configs/jobs/vdp_oscillator.yaml
+# Execute the job defined in configs/jobs/vdp_oscillator.yaml
 qps run jobs vdp_oscillator
-```
 
-### `qps run list`
+# List all available jobs
+qps run jobs --list
 
-Lists all available job configurations found in the `configs/jobs/` directory.
-
-```bash
-qps run list
+# Run with verbose logging enabled
+qps run jobs --verbose my_simulation
 ```
 
 ---
 
-## Plugin System
+## Plugin Management
 
 ### `qps list`
 
 Lists all registered plugins available in the current environment.
 
 ```bash
-qps list [NAMESPACE]
+qps list [CATEGORIES]
 ```
 
 *   **Arguments**:
-    *   `NAMESPACE` (Optional): Filter by namespace (e.g., `backend`, `model`).
+    *   `CATEGORIES` (Optional): A comma-separated list of namespaces to filter by (e.g., `backend`, `model`). Use `.` to list all categories.
 
 **Example**:
 ```bash
 qps list backend
 # Output:
-# - numpy (qphase.backend.numpy)
-# - torch (qphase.backend.torch)
+# Available Plugins
+# backend: (2 plugins)
+#   numpy  (qphase.backend.numpy)
+#   torch  (qphase.backend.torch)
 ```
 
 ### `qps show`
@@ -100,49 +101,35 @@ Displays detailed information about a specific plugin, including its description
 qps show [PLUGIN_ID]
 ```
 
-**Example**:
-```bash
-qps show model.kerr_cavity
-```
+*   **Arguments**:
+    *   `PLUGIN_ID`: The full identifier of the plugin (e.g., `backend.numpy` or `model.kerr_cavity`).
 
 ### `qps template`
 
-Generates a configuration template for a specific plugin. This is extremely useful for creating new job files.
+Generates a configuration template for a specific plugin. This is useful for quickly creating new configuration files.
 
 ```bash
 qps template [PLUGIN_ID]
 ```
 
+*   **Arguments**:
+    *   `PLUGIN_ID`: The full identifier of the plugin.
+
 **Example**:
 ```bash
-qps template engine.sde > my_config.yaml
+qps template model.kerr_cavity
+# Output:
+# # Configuration for model.kerr_cavity
+# chi: 1.0  # Nonlinearity parameter
+# ...
 ```
 
 ---
 
-## Configuration
+## Configuration Management
 
-### `qps config show`
+### `qps config`
 
-Displays the current effective configuration. This combines the system defaults (from `qphase` package) and the project overrides (from `configs/global.yaml`).
+Manages the system configuration.
 
-```bash
-qps config show
-```
-
-### `qps config set`
-
-Updates a value in the project's `configs/global.yaml` file.
-
-```bash
-qps config set [KEY] [VALUE]
-```
-
-**Example**:
-```bash
-# Change the default output directory
-qps config set paths.output_dir ./results_v2
-
-# Enable debug mode globally
-qps config set debug true
-```
+*(Detailed documentation for `qps config` subcommands to be added)*

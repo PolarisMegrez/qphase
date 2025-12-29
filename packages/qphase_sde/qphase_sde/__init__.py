@@ -25,19 +25,18 @@ dependencies (install extras 'viz' or use qphase for CLI/plots).
 from . import integrator as _qps_integrators  # noqa: F401
 
 # Import Engine class (v0.2 OO interface)
-from .core.engine import Engine  # noqa: F401
-
-# Import main function
-from .entry import main  # noqa: F401
-from .models.base import NoiseSpec, SDEModel  # noqa: F401
+from .engine import Engine  # noqa: F401
+from .model import NoiseSpec, SDEModel  # noqa: F401
+from .state import State, TrajectorySet  # noqa: F401
 
 # Public version string
 __version__ = "0.1.3 (Nov 2025)"
 
 __all__ = [
     "Engine",
-    "main",
     "SDEModel",
     "NoiseSpec",
+    "State",
+    "TrajectorySet",
     "__version__",
 ]

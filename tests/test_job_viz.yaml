@@ -4,11 +4,14 @@ name: "test_visualization"
 engine:
   viz:
     specs:
-      - kind: "re_im"
-        modes: [0]
-      - kind: "complex"
-        modes: [0]
-        convention: "symmetric"
+      - kind: "time_series"
+        channels: [0]
+        transform: "real"
+        title: "Real Part Evolution"
+      - kind: "phase_plane"
+        channel_x: 0
+        mode: "hist2d"
+        title: "Phase Space Density"
 
 # Input dependency
 input: "test_simulation"
