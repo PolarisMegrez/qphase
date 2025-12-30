@@ -23,12 +23,13 @@ Notes
 from __future__ import annotations
 
 import copy
+import json
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from .config import JobConfig, JobList
 from .config_loader import get_config_for_job
@@ -72,6 +73,15 @@ class JobResult:
     error: str | None = None
 
 
+class SessionManifest(TypedDict):
+    """Type definition for session manifest."""
+
+    session_id: str
+    start_time: str
+    status: str
+    jobs: dict[str, dict[str, Any]]
+
+
 class Scheduler:
     """Scheduler for executing simulation jobs.
 
@@ -93,6 +103,9 @@ class Scheduler:
 
     system_config: SystemConfig
     default_output_dir: str
+    session_id: str | None
+    session_dir: Path | None
+    manifest: SessionManifest | None
 
     def __init__(
         self,
@@ -116,14 +129,71 @@ class Scheduler:
         from .registry import registry
 
         self._registry = registry
+        self.session_id = None
+        self.session_dir = None
+        self.manifest = None
 
-    def run(self, job_list: JobList) -> list[JobResult]:
+    def _initialize_session(self) -> None:
+        """Initialize a new execution session."""
+        # Generate session ID
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+        short_uuid = uuid.uuid4().hex[:6]
+        self.session_id = f"{ts}_{short_uuid}"
+
+        # Create session directory
+        output_root = Path(self.default_output_dir).resolve()
+        self.session_dir = output_root / self.session_id
+        self.session_dir.mkdir(parents=True, exist_ok=True)
+
+        # Initialize manifest
+        self.manifest = {
+            "session_id": self.session_id,
+            "start_time": datetime.now(timezone.utc).isoformat(),
+            "status": "running",
+            "jobs": {},
+        }
+        self._save_manifest()
+        log.info(f"Initialized session {self.session_id} at {self.session_dir}")
+
+    def _save_manifest(self) -> None:
+        """Save session manifest to disk."""
+        if self.session_dir and self.manifest:
+            manifest_path = self.session_dir / "session_manifest.json"
+            try:
+                with open(manifest_path, "w", encoding="utf-8") as f:
+                    json.dump(self.manifest, f, indent=2)
+            except Exception as e:
+                log.warning(f"Failed to save session manifest: {e}")
+
+    def _update_job_status(
+        self, job_name: str, status: str, metadata: dict[str, Any] | None = None
+    ) -> None:
+        """Update job status in manifest."""
+        if self.manifest:
+            if job_name not in self.manifest["jobs"]:
+                self.manifest["jobs"][job_name] = {}
+
+            self.manifest["jobs"][job_name]["status"] = status
+            if metadata:
+                self.manifest["jobs"][job_name].update(metadata)
+            self._save_manifest()
+
+    def run(
+        self,
+        job_list: JobList,
+        dry_run: bool = False,
+        resume_from: Path | None = None,
+    ) -> list[JobResult]:
         """Execute all jobs in the job list serially.
 
         Parameters
         ----------
         job_list : JobList
             List of jobs to execute
+        dry_run : bool, optional
+            If True, simulate execution without running engines.
+        resume_from : Path | None, optional
+            Path to a previous session directory to resume from.
 
         Returns
         -------
@@ -131,6 +201,15 @@ class Scheduler:
             Results for each executed job, in order
 
         """
+        # Step 0: Initialize Session
+        if resume_from:
+            self._resume_session(resume_from)
+        else:
+            self._initialize_session()
+
+        if dry_run:
+            log.info("Starting DRY RUN execution plan...")
+
         # Step 1: Validate jobs before execution
         self._validate_jobs(job_list)
 
@@ -141,7 +220,51 @@ class Scheduler:
         job_results: dict[str, ResultProtocol] = {}
 
         for job_idx, job in enumerate(expanded_jobs):
+            # Check if job is already completed (Resume Mode)
+            if self.manifest and job.name in self.manifest["jobs"]:
+                job_status = self.manifest["jobs"][job.name].get("status")
+                if job_status == "completed":
+                    log.info(f"Skipping completed job: {job.name}")
+                    # Result loading is handled lazily in _resolve_input when needed
+                    # by downstream jobs.
+                    continue
+
+            # Register job in manifest
+            if not dry_run:
+                self._update_job_status(job.name, "pending")
+
             try:
+                if dry_run:
+                    # Dry Run Logic
+                    log.info(f"[DRY-RUN] Would execute job: {job.name}")
+                    log.info(f"          Engine: {job.get_engine_name()}")
+                    log.info(f"          Input: {job.input}")
+                    # Mock success result for dry run
+                    results.append(
+                        JobResult(
+                            job_index=job_idx,
+                            job_name=job.name,
+                            run_dir=Path("dry_run"),
+                            run_id="dry_run",
+                            success=True,
+                        )
+                    )
+
+                    # Mock output for downstream dependency check
+                    # We need a dummy object that satisfies ResultProtocol
+                    class MockResult:
+                        data = None
+                        metadata: dict[str, Any] = {}
+
+                        def save(self, path):
+                            pass
+
+                    job_results[job.name] = MockResult()
+                    if job.output:
+                        job_results[job.output] = MockResult()
+                    continue
+
+                # Normal Execution
                 input_result = self._resolve_input(job, job_results)
                 job_result, output_result = self._run_job(
                     job, job_idx, len(expanded_jobs), input_result
@@ -153,9 +276,25 @@ class Scheduler:
                     self._handle_job_output(
                         job, output_result, job_results, job_result.run_dir
                     )
+                    # Update manifest with success
+                    assert self.session_dir is not None
+                    self._update_job_status(
+                        job.name,
+                        "completed",
+                        {
+                            "run_id": job_result.run_id,
+                            "output_dir": str(
+                                job_result.run_dir.relative_to(self.session_dir)
+                            ),
+                        },
+                    )
+                else:
+                    self._update_job_status(job.name, "failed")
 
             except Exception as e:
                 log.error(f"Job {job.name} failed: {e}")
+                if not dry_run:
+                    self._update_job_status(job.name, "failed", {"error": str(e)})
                 results.append(
                     JobResult(
                         job_index=job_idx,
@@ -167,7 +306,34 @@ class Scheduler:
                     )
                 )
 
+        # Finalize session
+        if self.manifest and not dry_run:
+            self.manifest["status"] = (
+                "completed" if all(r.success for r in results) else "failed"
+            )
+            self._save_manifest()
+
         return results
+
+    def _resume_session(self, session_path: Path) -> None:
+        """Resume an existing session."""
+        if not session_path.exists():
+            raise QPhaseConfigError(f"Session directory not found: {session_path}")
+
+        manifest_path = session_path / "session_manifest.json"
+        if not manifest_path.exists():
+            raise QPhaseConfigError(f"Session manifest not found in: {session_path}")
+
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                self.manifest = json.load(f)
+        except Exception as e:
+            raise QPhaseConfigError(f"Failed to load session manifest: {e}") from e
+
+        assert self.manifest is not None
+        self.session_id = self.manifest["session_id"]
+        self.session_dir = session_path
+        log.info(f"Resuming session {self.session_id} from {self.session_dir}")
 
     def _handle_job_output(
         self,
@@ -251,9 +417,29 @@ class Scheduler:
         if not job.input:
             return None
 
-        # Check if input is from a previous job
+        # Check if input is from a previous job in current session
         if job.input in job_results:
             return job_results[job.input]
+
+        # Check if input is in manifest (from a previous run in same session context)
+        if self.manifest and job.input in self.manifest["jobs"]:
+            job_entry = self.manifest["jobs"][job.input]
+            if job_entry.get("status") == "completed" and self.session_dir:
+                output_rel_path = job_entry.get("output_dir")
+                if output_rel_path:
+                    job_dir = self.session_dir / output_rel_path
+                    try:
+                        from .result_loader import load_result
+
+                        log.info(f"Loading result for '{job.input}' from disk...")
+                        result = load_result(job.input, job_dir)
+                        # Cache it
+                        job_results[job.input] = result
+                        return result
+                    except Exception as e:
+                        log.warning(
+                            f"Failed to load result for '{job.input}' from disk: {e}"
+                        )
 
         # Check if input is an external file
         input_path = Path(job.input)
@@ -775,11 +961,20 @@ class Scheduler:
 
     def _generate_run_id(self) -> str:
         """Generate a unique run ID with timestamp and UUID suffix."""
+        # In session mode, run_id can be simpler or just a UUID,
+        # but we keep the timestamp for consistency.
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
         return f"{ts}_{uuid.uuid4().hex[:8]}"
 
     def _create_run_dir(self, job: JobConfig, run_id: str) -> Path:
         """Create and return the run directory for a job."""
+        # If session is active, create directory inside session dir
+        if self.session_dir:
+            run_dir = self.session_dir / job.name
+            run_dir.mkdir(parents=True, exist_ok=True)
+            return run_dir
+
+        # Fallback for non-session execution (should not happen in normal flow
         # Get the effective system config (job.system overrides global)
         effective_system = job.system if job.system is not None else self.system_config
         output_dir = effective_system.paths.output_dir

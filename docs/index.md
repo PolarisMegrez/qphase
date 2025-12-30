@@ -1,18 +1,10 @@
 ---
-layout: default
-title: Home
-nav_order: 1
 description: "Modular Quantum Phase-Space Simulation Framework"
-permalink: /
 ---
 
-# QPhase
-{: .fs-9 }
+# QPhase - Modular Quantum Phase-Space Simulation Framework
 
-**Modular Quantum Phase-Space Simulation Framework**
-{: .fs-6 .fw-300 }
-
-[Get Started](user_guide/quick_start.md){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 } [View on GitHub](https://github.com/PolarisMegrez/qphase){: .btn .fs-5 .mb-4 .mb-md-0 }
+[Get Started](user_guide/quick_start.md){ .md-button .md-button--primary } [View on GitHub](https://github.com/PolarisMegrez/qphase){ .md-button }
 
 ---
 
@@ -20,12 +12,13 @@ permalink: /
 
 **QPhase** is a lightweight, modular simulation toolset designed for physics research. It solves a common problem in scientific computing: the repetitive rewriting of "boilerplate" code for every new experiment.
 
-{: .note }
-> **The Problem:** In typical physics research, we often rewrite the same supporting code:
-> *   How do I pass parameters? (Argparse/Config)
-> *   How do I save results safely?
-> *   How do I switch to GPU?
-> *   How do I scan parameters?
+!!! note "The Problem"
+    In typical physics research, we often rewrite the same supporting code:
+
+    *   How do I pass parameters? (Argparse/Config)
+    *   How do I save results safely?
+    *   How do I switch to GPU?
+    *   How do I scan parameters?
 
 **QPhase** separates these "operational" concerns from the actual "physics". It provides a stable **Shell** that handles configuration, data saving, and parallel execution, allowing you to write only the **Kernel**—the equations of motion.
 
@@ -33,16 +26,16 @@ permalink: /
 
 ## Key Features
 
-### 🎯 Focus on Physics
+### Focus on Physics
 You write the model (e.g., `dx/dt = ...`), and the framework handles the integration loop, progress bars, and file I/O.
 
-### 🔄 Reproducibility
+### Reproducibility
 Every run automatically saves a snapshot of the exact configuration used. Never lose track of what parameters produced a specific plot.
 
-### 🚀 Hardware Switching
+### Hardware Switching
 Switch between **NumPy** (CPU) and **PyTorch/CuPy** (GPU) just by changing a line in the config file, without rewriting your model.
 
-### 📊 Parameter Sweeps
+### Parameter Sweeps
 Define a list of parameters in the config, and QPhase automatically generates and runs the batch jobs.
 
 ---

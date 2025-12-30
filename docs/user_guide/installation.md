@@ -1,8 +1,5 @@
 ---
-layout: default
-title: Installation
-parent: User Guide
-nav_order: 2
+description: Installation
 ---
 
 # Installation

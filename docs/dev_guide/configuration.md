@@ -1,8 +1,5 @@
 ---
-layout: default
-title: Configuration System
-parent: Developer Guide
-nav_order: 8
+description: Configuration System
 ---
 
 # Configuration System

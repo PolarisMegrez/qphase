@@ -1,8 +1,5 @@
 ---
-layout: default
-title: Architecture Overview
-parent: Developer Guide
-nav_order: 1
+description: Architecture Overview
 ---
 
 # Architecture Overview
@@ -24,6 +21,37 @@ The framework is conceptually divided into two distinct layers:
 2.  **The Kernel (Domain Layer)**:
     *   **Responsibility**: Encapsulates the scientific logic. This includes physical models (Hamiltonians, Drift/Diffusion vectors), numerical integrators, and backend implementations.
     *   **Characteristics**: Domain-specific, modular, and extensible. Users primarily interact with this layer by implementing plugins.
+
+## Core Concepts
+
+To understand how QPhase operates, it is essential to distinguish between three fundamental concepts: the **Job**, the **Engine**, and the **Plugin**.
+
+### 1. The Job (The "Intent")
+A **Job** represents a single, atomic execution request. It answers the question: *"What simulation do I want to run?"*
+*   **Definition**: A Job is defined entirely by its configuration (a resolved YAML document). It contains all the parameters needed to reproduce a simulation.
+*   **Isolation**: Each Job runs in its own isolated directory (`runs/{timestamp}_{job_name}/`). This ensures that side effects (like file I/O) from one simulation do not contaminate another.
+*   **Lifecycle**: A Job is created by the Scheduler (often by expanding a parameter scan), executed, and then finalized when its results are saved.
+
+### 2. The Engine (The "Workflow")
+An **Engine** is a special type of plugin that defines the *lifecycle* of a simulation. It answers the question: *"How should the simulation proceed?"*
+*   **Role**: The Engine acts as the "main loop" or orchestrator.
+    *   The `sde` engine runs a time-stepping loop for stochastic differential equations.
+    *   The `viz` engine runs a data processing and plotting pipeline.
+*   **Orchestration**: The Engine does not perform the low-level physics or math itself. Instead, it requests other plugins (like Models or Backends) to do the actual work.
+
+### 3. The Plugin (The "Building Block")
+A **Plugin** is a modular component that implements a specific capability. Plugins are the "Lego blocks" that the Engine assembles to build a simulation.
+*   **Model**: Defines the physical system (e.g., drift and diffusion vectors).
+*   **Backend**: Provides the computational primitives (e.g., NumPy for CPU, PyTorch for GPU).
+*   **Integrator**: Implements the numerical solver (e.g., Euler-Maruyama).
+*   **Analyser**: Processes raw simulation data into metrics.
+
+### The Relationship: Dependency Injection
+The power of QPhase lies in how these components connect. You do not write code to wire them together; the **Scheduler** does it for you based on the configuration.
+
+1.  **Selection**: The **Job** configuration selects an **Engine** (e.g., `engine: sde`).
+2.  **Declaration**: The **Engine** declares what it needs via a **Manifest** (e.g., "I require a `model` and a `backend`").
+3.  **Injection**: The **Scheduler** reads the Manifest, looks up the requested plugins in the Job config, instantiates them via the **Registry**, and *injects* them into the Engine's constructor.
 
 ## Core Architectural Patterns
 
@@ -75,6 +103,28 @@ The execution of a simulation follows a deterministic lifecycle managed by the `
 
 ## Directory Structure
 
-*   `packages/qphase/core/`: **The Shell**. Contains the Scheduler, Registry, Configuration system, and Protocol definitions.
-*   `packages/qphase_sde/`: **Reference Engine**. A standard implementation of a Stochastic Differential Equation solver.
-*   `packages/qphase_viz/`: **Visualization Engine**. A modular plotting system.
+The project follows a monorepo structure managed by `uv` workspaces.
+
+### Source Code (`packages/`)
+*   `qphase/`: **The Core Framework (Shell)**.
+    *   `core/`: Scheduler, Registry, Configuration, Protocols.
+    *   `commands/`: CLI implementation.
+*   `qphase_sde/`: **Standard Engine**.
+    *   Implements SDE solvers (Euler-Maruyama, SRK).
+    *   Contains standard physics models (Kerr Cavity, VdP).
+*   `qphase_viz/`: **Visualization Engine**.
+    *   Handles plotting and data post-processing.
+
+### Runtime Artifacts (`runs/`)
+When simulations are executed, QPhase organizes outputs hierarchically:
+
+```text
+runs/
+├── 2025-12-29T10-00-00Z_scan_job_0/   # Job 1 (chi=0.1)
+│   ├── config_snapshot.json           # Full config for this specific point
+│   └── results.h5                     # Simulation data
+├── 2025-12-29T10-00-05Z_scan_job_1/   # Job 2 (chi=0.2)
+│   ├── config_snapshot.json
+│   └── results.h5
+└── ...
+```

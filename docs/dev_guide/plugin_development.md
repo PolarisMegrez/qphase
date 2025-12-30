@@ -1,8 +1,5 @@
 ---
-layout: default
-title: Plugin Development
-parent: Developer Guide
-nav_order: 7
+description: Plugin Development Guide
 ---
 
 # Plugin Development Guide

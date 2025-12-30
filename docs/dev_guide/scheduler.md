@@ -1,8 +1,5 @@
 ---
-layout: default
-title: Scheduler System
-parent: Developer Guide
-nav_order: 5
+description: Scheduler System
 ---
 
 # Scheduler System
@@ -63,15 +60,53 @@ class JobResult:
 
 ## Parameter Scanning Logic
 
-The Scheduler integrates with the `JobExpander` to support parameter sweeps.
+The Scheduler integrates with the `JobExpander` to support parameter sweeps. This process transforms a single "Job Definition" (which may contain lists of values) into multiple atomic "Job Configurations".
 
-*   **Cartesian Product**: By default, lists in the configuration are interpreted as axes for a grid search. The expander generates the Cartesian product of all iterable parameters.
-*   **Zipped Expansion**: For correlated parameters, the expander supports a "zipped" mode, iterating over parameter lists in lockstep.
+### Detection Mechanism
+The `JobExpander` inspects the configuration dictionary for lists.
+*   **Scanable Parameters**: By default, **any list** found in a plugin configuration (e.g., `model.chi: [0.1, 0.2, 0.3]`) is treated as a parameter to be scanned.
+*   **Non-Scanable Lists**: To pass a list as a literal value (e.g., a vector `[1, 0, 0]`), the plugin must explicitly mark that field as non-scanable in its schema, or the user must wrap it (implementation dependent, currently all lists are candidates for expansion if the plugin registers them as scanable).
 
-## Runtime Isolation
+### Expansion Strategies
+1.  **Cartesian Product (Default)**:
+    *   If multiple parameters are lists, QPhase generates every possible combination.
+    *   Example: `A=[1, 2]`, `B=[3, 4]` -> `(1,3), (1,4), (2,3), (2,4)`.
+    *   Result: 4 separate Jobs.
 
-To ensure reproducibility, the Scheduler enforces strict runtime isolation:
+2.  **Zipped Expansion**:
+    *   Iterates over parameters in lockstep. Requires all lists to have the same length.
+    *   Example: `A=[1, 2]`, `B=[3, 4]` -> `(1,3), (2,4)`.
+    *   Result: 2 separate Jobs.
 
-1.  **Directory Provisioning**: For each job, a directory is created following the pattern `runs/{timestamp}_{job_name}/`.
-2.  **Configuration Snapshot**: Before execution begins, the fully resolved configuration (including all defaults and overrides) is serialized to `config_snapshot.json` within the run directory.
-3.  **State Reset**: The Registry and Engine are re-initialized for each job to prevent state leakage (e.g., GPU memory fragmentation or global variable pollution) between iterations.
+## Runtime Isolation & Session Management
+
+QPhase uses a **Session-Based I/O** strategy to manage execution contexts.
+
+### Session Structure
+Every execution command (e.g., `qps run ...`) initiates a new **Session**. A session acts as a container for all jobs executed in that command, providing a shared context for data exchange and logging.
+
+**Directory Layout:**
+```text
+runs/
+  2025-12-31T10-00-00_a1b2c3/      <-- Session Root (Timestamp + Short UUID)
+    ├── session_manifest.json      <-- Session Metadata & State
+    ├── job_01_sde/                <-- Job Directory
+    │     ├── config_snapshot.json
+    │     └── result.h5
+    └── job_02_viz/                <-- Job Directory
+          ├── config_snapshot.json
+          └── plot.png
+```
+
+### Session Manifest
+The `session_manifest.json` file serves as the "brain" of the session, recording:
+- **Session ID**: Unique identifier.
+- **Status**: Global status (running, completed, failed).
+- **Job Registry**: A map of all jobs, their status, output paths, and dependencies.
+
+This manifest enables downstream features like **Resume Capability** (restarting failed jobs) and **DAG Visualization**.
+
+### Job Isolation
+Within a session, each job runs in its own subdirectory (`session_dir / job_name`).
+*   **Concurrency Safety**: Jobs write to exclusive paths.
+*   **Traceability**: Each directory contains a `config_snapshot.json` that records the *exact* scalar values used for that specific run.

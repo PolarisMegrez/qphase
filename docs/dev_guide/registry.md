@@ -1,8 +1,5 @@
 ---
-layout: default
-title: Registry System
-parent: Developer Guide
-nav_order: 4
+description: Registry System
 ---
 
 # Registry System

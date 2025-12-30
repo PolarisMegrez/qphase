@@ -1,8 +1,5 @@
 ---
-layout: default
-title: CLI Reference
-parent: User Guide
-nav_order: 4
+description: CLI Reference
 ---
 
 # CLI Reference
@@ -43,29 +40,47 @@ qps init
 
 ### `qps run jobs`
 
-Executes a simulation job defined in the `configs/jobs/` directory.
+Executes simulation jobs defined in the `configs/jobs/` directory.
 
 ```bash
-qps run jobs [JOB_NAME] [OPTIONS]
+qps run jobs [JOB_NAMES]... [OPTIONS]
 ```
 
 *   **Arguments**:
-    *   `JOB_NAME`: The name of the job configuration file (without the extension) located in `configs/jobs/`.
+    *   `JOB_NAMES`: One or more names of job configuration files (without extension) located in `configs/jobs/`.
 *   **Options**:
-    *   `--list`: List all available job configurations in the `configs/jobs/` directory and exit.
-    *   `--dry-run`: Parse the configuration and build plugins without executing the simulation loop. Useful for validation.
-    *   `--parallel` / `--serial`: (Experimental) Force parallel or serial execution modes.
+    *   `--list`: List all available job configurations and exit.
+    *   `--dry-run`: Simulate execution without running engines. Useful for checking dependency resolution and parameter expansion.
+    *   `--resume PATH`: Resume a previous session from the specified directory. Skips already completed jobs.
 
 **Examples**:
 ```bash
-# Execute the job defined in configs/jobs/vdp_oscillator.yaml
-qps run jobs vdp_oscillator
+# Execute a single job
+qps run jobs vdp_sde
 
-# List all available jobs
-qps run jobs --list
+# Execute a pipeline (multiple jobs)
+qps run jobs vdp_sde vdp_viz
 
-# Run with verbose logging enabled
-qps run jobs --verbose my_simulation
+# Dry run to check execution plan
+qps run jobs --dry-run vdp_sde
+
+# Resume a failed or interrupted session
+qps run jobs --resume runs/2025-12-31T10-00-00_a1b2c3 vdp_sde vdp_viz
+```
+
+### `qps run validate`
+
+Validates job configurations without running them.
+
+```bash
+qps run validate [JOB_NAMES]...
+```
+
+Checks for YAML syntax errors, missing required fields, and invalid plugin dependencies.
+
+**Example**:
+```bash
+qps run validate vdp_sde
 ```
 
 ---

@@ -1,8 +1,5 @@
 ---
-layout: default
-title: Developer FAQ
-parent: Developer Guide
-nav_order: 11
+description: Developer FAQ
 ---
 
 # Developer FAQ

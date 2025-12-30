@@ -1,8 +1,5 @@
 ---
-layout: default
-title: Protocol System
-parent: Developer Guide
-nav_order: 2
+description: Protocol System
 ---
 
 # Protocol System

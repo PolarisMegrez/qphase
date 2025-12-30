@@ -1,8 +1,5 @@
 ---
-layout: default
-title: Core API Reference
-parent: API Reference
-nav_order: 1
+description: Core API Reference
 ---
 
 # Core API Reference

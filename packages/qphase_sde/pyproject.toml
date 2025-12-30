@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qphase-sde"
-version = "0.9.4"
+version = "0.9.5"
 description = "Physics engine for QPhase: Stochastic Differential Equations in Phase Space"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -28,7 +28,7 @@ classifiers = [
 ]
 dependencies = [
   "numpy>=1.23",
-  "qphase>=0.9.4"
+  "qphase>=0.9.5"
 ]
 
 [project.optional-dependencies]

@@ -1,8 +1,5 @@
 ---
-layout: default
-title: Quick Start Guide
-parent: User Guide
-nav_order: 1
+description: Quick Start Guide
 ---
 
 # Quick Start Guide

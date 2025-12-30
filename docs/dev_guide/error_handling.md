@@ -1,8 +1,5 @@
 ---
-layout: default
-title: Error Handling
-parent: Developer Guide
-nav_order: 10
+description: Error Handling Strategy
 ---
 
 # Error Handling Strategy

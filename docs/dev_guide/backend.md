@@ -1,8 +1,5 @@
 ---
-layout: default
-title: Backend System
-parent: Developer Guide
-nav_order: 6
+description: Backend System
 ---
 
 # Backend System
