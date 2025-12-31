@@ -22,20 +22,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Pages
-        id: pages
-        uses: actions/configure-pages@v4
-
-      - name: Build with Jekyll
-        uses: actions/jekyll-build-pages@v1
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          source: ./docs
-          destination: ./_site
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install mkdocs-material
+
+      - name: Build with MkDocs
+        run: mkdocs build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./_site
+          path: ./site
 
   deploy:
     environment:

@@ -1,6 +1,18 @@
 site_name: QPhase Documentation
+site_url: https://polarismegrez.github.io/qphase/
 theme:
   name: material
+
+markdown_extensions:
+  - attr_list
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+
 nav:
   - Home: index.md
   - User Guide:
