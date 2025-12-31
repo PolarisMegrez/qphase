@@ -33,6 +33,12 @@ from qphase.core.system_config import load_system_config
 
 app = typer.Typer()
 
+# Module-level singleton for typer.Argument to avoid function call in default (B008)
+JOB_NAMES_ARG = typer.Argument(
+    ...,
+    help="Name(s) of the job(s) to run (searched in configs/jobs/ directory)",
+)
+
 
 def _list_engines():
     """List available engine packages."""
@@ -56,10 +62,7 @@ def _list_engines():
 
 @app.command()
 def jobs(
-    job_name: str = typer.Argument(
-        ...,
-        help="Name of the job to run (searched in configs/jobs/ directory)",
-    ),
+    job_names: list[str] = JOB_NAMES_ARG,
     list_jobs: bool = typer.Option(
         False, "--list", help="List available jobs and exit"
     ),
@@ -72,7 +75,7 @@ def jobs(
 ):
     """Run SDE simulation jobs by name from configs/jobs/ directory.
 
-    JOBS_NAME should be the name of a job configuration file (without extension)
+    JOB_NAMES should be the name(s) of job configuration file(s) (without extension)
     located in the configs/jobs/ directory. The command will automatically search
     for .yaml or .yml files with that name.
 
@@ -93,12 +96,13 @@ def jobs(
     Examples
     --------
         qps run jobs my_simulation
+        qps run jobs job1 job2
         qps run jobs --list
         qps run jobs --verbose my_job
 
     """
     # Handle "list" argument as a command to list engines
-    if job_name == "list":
+    if "list" in job_names:
         _list_engines()
         return
 
@@ -131,30 +135,35 @@ def jobs(
                 typer.echo(f"\nTotal: {len(available_jobs)} job(s)")
             return
 
-        # Find job configuration file
-        cfg_path = _find_job_config(system_cfg.paths.config_dirs, job_name)
+        # Find job configuration files
+        cfg_paths = []
+        for job_name in job_names:
+            cfg_path = _find_job_config(system_cfg.paths.config_dirs, job_name)
 
-        if cfg_path is None or not cfg_path.exists():
-            log.error(f"Job '{job_name}' not found in configs/jobs/ directories")
-            log.error(f"Searched in: {system_cfg.paths.config_dirs}")
-            available_jobs = list_available_jobs(system_cfg)
-            if available_jobs:
-                log.error(f"Available jobs: {', '.join(available_jobs)}")
-            raise typer.Exit(code=1)
+            if cfg_path is None or not cfg_path.exists():
+                log.error(f"Job '{job_name}' not found in configs/jobs/ directories")
+                log.error(f"Searched in: {system_cfg.paths.config_dirs}")
+                available_jobs = list_available_jobs(system_cfg)
+                if available_jobs:
+                    log.error(f"Available jobs: {', '.join(available_jobs)}")
+                raise typer.Exit(code=1)
 
-        log.info(f"Found job configuration: {cfg_path}")
+            log.info(f"Found job configuration: {cfg_path}")
+            cfg_paths.append(cfg_path)
 
         # Add config directories to Python path for model imports
-        for config_path in [cfg_path]:
+        added_paths = set()
+        for config_path in cfg_paths:
             for cand in (config_path.parent, config_path.parent.parent):
                 if cand.exists():
                     pstr = str(cand)
-                    if pstr not in sys.path:
+                    if pstr not in sys.path and pstr not in added_paths:
                         sys.path.insert(0, pstr)
+                        added_paths.add(pstr)
 
         # Load JobList from YAML files
-        log.info("Loading 1 configuration file(s)")
-        job_list = load_jobs_from_files([cfg_path])
+        log.info(f"Loading {len(cfg_paths)} configuration file(s)")
+        job_list = load_jobs_from_files(cfg_paths)
 
         log.info(f"Loaded {len(job_list.jobs)} jobs")
 
@@ -211,15 +220,34 @@ def _make_progress_callback():
         ss = int(cast(float, total_est) % 60) if est_ok else 0
         est_str = f"~{mm:02d}:{ss:02d}" if est_ok else "--:--"
 
+        # Job counter (1-based)
+        job_str = f"[{update.job_index + 1}/{update.total_jobs}]"
+
         # Build progress message
         has_progress = update.percent is not None
         if has_progress:
-            msg = f"[{update.job_name}] {update.percent:5.1f}% {est_str}"
-        else:
-            msg = f"[{update.job_name}] {update.message}"
+            # Ensure percent is float
+            p_val = float(update.percent) if update.percent is not None else 0.0
+            percent = p_val * 100.0
 
-        typer.echo(msg, nl=False)
-        print("\r", end="")
+            # Visual bar
+            bar_len = 20
+            filled = int(p_val * bar_len)
+            # Clamp filled to bar_len
+            filled = max(0, min(filled, bar_len))
+            bar = "=" * filled + "-" * (bar_len - filled)
+
+            msg = (
+                f"{job_str} [{update.job_name}] {percent:5.1f}% [{bar}] ETA: {est_str}"
+            )
+        else:
+            msg = f"{job_str} [{update.job_name}] {update.message}"
+
+        # Clear line and print
+        # Use ANSI escape code to clear line if supported, or just padding
+        # \033[K clears from cursor to end of line
+        sys.stdout.write(f"\r{msg:<80}")
+        sys.stdout.flush()
 
     return _on_progress
 
@@ -233,8 +261,8 @@ def _make_run_dir_callback():
     return _on_run_dir
 
 
-@app.command()
-def list():
+@app.command(name="list")
+def list_engines():
     """List available engine packages that can be used in job configurations."""
     _list_engines()
 

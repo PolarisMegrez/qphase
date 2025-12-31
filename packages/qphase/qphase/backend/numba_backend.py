@@ -258,6 +258,28 @@ class NumbaBackend(Backend):
     def to_device(self, x: Any, device: str | None) -> Any:
         return x
 
+    def expand_dims(self, x: Any, axis: int) -> Any:
+        return np.expand_dims(x, axis=axis)
+
+    def repeat(self, x: Any, repeats: int, axis: int | None = None) -> Any:
+        return np.repeat(x, repeats, axis=axis)
+
+    def isnan(self, x: Any) -> Any:
+        return np.isnan(x)
+
+    def arange(
+        self,
+        start: int,
+        stop: int | None = None,
+        step: int = 1,
+        dtype: Any | None = None,
+    ) -> Any:
+        return np.arange(start, stop, step, dtype=dtype)
+
+    @property
+    def pi(self) -> float:
+        return np.pi
+
     # Capabilities
     def capabilities(self) -> dict:
         return {

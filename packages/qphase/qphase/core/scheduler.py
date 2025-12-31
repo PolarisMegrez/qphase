@@ -506,13 +506,54 @@ class Scheduler:
             system_cfg, job_name=job.name, job_config_dict=job_override
         )
 
+        # Normalize config: move top-level plugin keys to 'plugins' if not present
+        # This supports the simplified config format where plugins are at the root
+        plugin_keys = ["backend", "integrator", "model", "analyser", "visualizer"]
+        plugins_cfg = merged_config.get("plugins", {}).copy()
+        for key in plugin_keys:
+            if key in merged_config and key not in plugins_cfg:
+                plugins_cfg[key] = merged_config[key]
+
+        # Filter plugins to instantiate based on JobConfig intent
+        # If a namespace is explicitly defined in the job, we only instantiate
+        # the plugins listed in the job, ignoring others merged from global.
+        job_extra = job.model_extra or {}
+        explicit_namespaces = set(job.plugins.keys())
+        for key in plugin_keys:
+            if key in job_extra:
+                explicit_namespaces.add(key)
+
+        final_plugins_cfg = {}
+        for ns, ns_config in plugins_cfg.items():
+            if ns in explicit_namespaces:
+                # Job explicitly configured this namespace.
+                # Identify allowed plugins from job config
+                allowed_plugins = set(job.plugins.get(ns, {}).keys())
+                if ns in job_extra and isinstance(job_extra[ns], dict):
+                    allowed_plugins.update(job_extra[ns].keys())
+
+                # Filter merged config
+                final_plugins_cfg[ns] = {
+                    k: v for k, v in ns_config.items() if k in allowed_plugins
+                }
+            else:
+                # Inherit defaults from global
+                final_plugins_cfg[ns] = ns_config
+
         # Build plugins (backend, integrator, state, etc.)
-        plugins = self._build_plugins(merged_config.get("plugins", {}))
+        plugins = self._build_plugins(final_plugins_cfg)
 
         # Extract engine name and config
         engine_config_dict = merged_config.get("engine", {})
         if engine_config_dict:
-            engine_name = list(engine_config_dict.keys())[0]
+            # Prioritize the engine specified in the job config
+            job_engine_name = job.get_engine_name()
+            if job_engine_name and job_engine_name in engine_config_dict:
+                engine_name = job_engine_name
+            else:
+                # Fallback (might be ambiguous if global config adds engines)
+                engine_name = list(engine_config_dict.keys())[0]
+
             engine_config_raw = engine_config_dict[engine_name].copy()
             engine_config_raw["name"] = engine_name
         else:
@@ -520,6 +561,12 @@ class Scheduler:
             engine_name = job.get_engine_name()
             engine_config_raw = job.engine.get(engine_name, {}).copy()
             engine_config_raw["name"] = engine_name
+
+        # Inject run_dir as output_dir for engines that support it
+        # (e.g. VizEngine). We cast to str because config expects str.
+        # Engines that don't support this field should have extra="allow"
+        # in their config schema.
+        engine_config_raw["output_dir"] = str(run_dir)
 
         # Instantiate engine via registry
         try:
@@ -745,6 +792,8 @@ class Scheduler:
 
         This method scans job configurations for parameters marked as 'scanable'
         and expands them into multiple jobs based on the configured expansion method.
+        It also handles dependency expansion: if a job depends on an upstream job
+        that was expanded, the downstream job is also expanded to match.
 
         Parameters
         ----------
@@ -770,29 +819,86 @@ class Scheduler:
 
         expander = JobExpander(self._registry)
 
-        for job in job_list.jobs:
-            new_jobs = expander.expand(job, method=method)
+        # Map original job name to list of expanded job names
+        # e.g. "vdp_sde" -> ["vdp_sde_001", "vdp_sde_002"]
+        expansion_map: dict[str, list[str]] = {}
 
-            if len(new_jobs) > 1:
+        for job in job_list.jobs:
+            # 1. Check if this job needs to be expanded due to upstream dependency
+            upstream_expansion = []
+            if job.input and job.input in expansion_map:
+                upstream_expansion = expansion_map[job.input]
+
+            # 2. Check if this job has its own parameter scan
+            scan_expansion = expander.expand(job, method=method)
+
+            # Logic for combining expansions:
+            # Case A: Upstream expanded, Current NOT scanned -> 1-to-1 mapping
+            # Case B: Upstream NOT expanded, Current scanned -> Standard scan
+            # Case C: Upstream expanded, Current scanned -> Cartesian or zipped?
+            #         For now, assume if upstream is expanded, follow it (Case A).
+            #         If both, it's complicated. Prioritize upstream for consistency
+            #         in pipelines like SDE -> Viz.
+
+            final_expansion = []
+
+            if upstream_expansion:
+                # Case A: Follow upstream expansion
+                if len(scan_expansion) > 1:
+                    # If both are present, we might need a more complex strategy.
+                    # For now, warn and prioritize upstream to maintain flow.
+                    log.warning(
+                        f"Job '{job.name}' has both upstream expansion "
+                        f"(from '{job.input}') and internal parameter scan. "
+                        "Prioritizing upstream expansion structure."
+                    )
+
+                # Create N copies of the job, each pointing to one upstream output
+                for idx, upstream_job_name in enumerate(upstream_expansion):
+                    new_job = copy.deepcopy(job)
+                    # Update input to point to specific upstream job
+                    new_job.input = upstream_job_name
+
+                    # Apply numbering to match upstream index
+                    # We use the same index (1-based)
+                    # Only apply numbering if upstream was actually expanded (count > 1)
+                    if numbering_enabled and len(upstream_expansion) > 1:
+                        # Determine padding based on total count
+                        total_count = len(upstream_expansion)
+                        new_job = self._apply_job_numbering(
+                            new_job, job.name, idx + 1, total_count
+                        )
+
+                    final_expansion.append(new_job)
+
+            elif len(scan_expansion) > 1:
+                # Case B: Standard scan expansion
                 log.debug(
-                    f"Job '{job.name}' expanded to {len(new_jobs)} jobs "
+                    f"Job '{job.name}' expanded to {len(scan_expansion)} jobs "
                     f"using {method} expansion"
                 )
 
-                # Apply numbering to outputs if enabled
                 if numbering_enabled:
-                    for idx, new_job in enumerate(new_jobs, start=1):
-                        new_job = self._apply_job_numbering(new_job, job.name, idx)
-                        expanded_jobs.append(new_job)
+                    total_count = len(scan_expansion)
+                    for idx, new_job in enumerate(scan_expansion, start=1):
+                        new_job = self._apply_job_numbering(
+                            new_job, job.name, idx, total_count
+                        )
+                        final_expansion.append(new_job)
                 else:
-                    expanded_jobs.extend(new_jobs)
+                    final_expansion.extend(scan_expansion)
             else:
-                expanded_jobs.extend(new_jobs)
+                # No expansion
+                final_expansion.append(scan_expansion[0])
+
+            # Register expansion in map
+            expansion_map[job.name] = [j.name for j in final_expansion]
+            expanded_jobs.extend(final_expansion)
 
         return expanded_jobs
 
     def _apply_job_numbering(
-        self, job: JobConfig, base_name: str, index: int
+        self, job: JobConfig, base_name: str, index: int, total: int
     ) -> JobConfig:
         """Apply numbering to a job name and output.
 
@@ -804,6 +910,8 @@ class Scheduler:
             Base name to which numbering will be appended
         index : int
             Index number (1-based)
+        total : int
+            Total number of jobs in this expansion group (used for padding)
 
         Returns
         -------
@@ -814,12 +922,21 @@ class Scheduler:
         # Create a copy to avoid modifying the original
         job = copy.deepcopy(job)
 
+        # Determine padding width
+        # e.g. total=10 -> width=2, total=100 -> width=3
+        width = len(str(total))
+        # Ensure minimum width of 3 for consistency with previous behavior if desired,
+        # or just use dynamic width. User asked for >100 support.
+        width = max(3, width)
+
+        suffix = f"{index:0{width}d}"
+
         # Update job name
-        job.name = f"{base_name}_{index:03d}"
+        job.name = f"{base_name}_{suffix}"
 
         # Update output name if specified
         if job.output:
-            job.output = f"{job.output}_{index:03d}"
+            job.output = f"{job.output}_{suffix}"
 
         return job
 

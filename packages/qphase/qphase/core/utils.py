@@ -119,7 +119,10 @@ def deep_copy(data: Any) -> Any:
 
 
 def schema_to_yaml_map(
-    model_cls: type[Any], existing_values: dict[str, Any], plugin_name: str
+    model_cls: type[Any],
+    existing_values: dict[str, Any],
+    plugin_name: str,
+    mode: str = "global",
 ) -> CommentedMap:
     """Convert a Pydantic model class to a CommentedMap for YAML output.
 
@@ -134,6 +137,9 @@ def schema_to_yaml_map(
         Existing values from global.yaml to merge
     plugin_name : str
         Plugin name (unused, kept for API compatibility)
+    mode : str, optional
+        Generation mode: "global" (skip required) or "template" (placeholder).
+        Defaults to "global".
 
     Returns
     -------
@@ -144,6 +150,8 @@ def schema_to_yaml_map(
     data = CommentedMap()
 
     for field_name, field in model_cls.model_fields.items():
+        comment = field.description
+
         # Determine value
         if field_name in existing_values:
             value = existing_values[field_name]
@@ -155,16 +163,40 @@ def schema_to_yaml_map(
             except Exception:
                 value = "<generated>"
         else:
-            # Skip required fields for global.yaml generation
-            # We only want to populate defaults that can be overridden.
-            # Required fields must be provided in the job config.
-            continue
+            # Required field (no default)
+            if mode == "template":
+                # Add placeholder for template generation
+                # We use None which dumps as null/empty in YAML
+                value = None
+
+                # Add type hint to comment
+                type_hint = str(field.annotation).replace("typing.", "")
+                # Clean up <class 'float'> to just float
+                if type_hint.startswith("<class '") and type_hint.endswith("'>"):
+                    type_hint = type_hint[8:-2]
+
+                if comment:
+                    comment = f"[REQUIRED] <{type_hint}> {comment}"
+                else:
+                    comment = f"[REQUIRED] <{type_hint}>"
+            else:
+                # Skip required fields for global.yaml generation
+                # We only want to populate defaults that can be overridden.
+                continue
+
+        # Filter empty values in global mode
+        if mode == "global":
+            # Skip None values
+            if value is None:
+                continue
+            # Skip empty collections (dict, list)
+            if isinstance(value, (dict, list)) and not value:
+                continue
 
         data[field_name] = value
 
         # Add comment
-        if field.description:
-            comment = field.description
+        if comment:
             data.yaml_add_eol_comment(comment, field_name)
 
     return data

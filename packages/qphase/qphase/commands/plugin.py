@@ -557,7 +557,9 @@ def template_command(
                     existing_values = {}
 
                 # Generate template without 'name' field
-                template_data = schema_to_yaml_map(schema, existing_values, name)
+                template_data = schema_to_yaml_map(
+                    schema, existing_values, name, mode="template"
+                )
 
                 # Organize by namespace
                 if namespace not in all_configs:

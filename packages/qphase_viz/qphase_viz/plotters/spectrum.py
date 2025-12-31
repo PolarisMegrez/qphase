@@ -104,6 +104,9 @@ class PowerSpectrumPlotter(PlotterProtocol):
                 # Compute PSD for each trajectory and average
                 # y[:, :, ch] is (N, T)
 
+                # Check if data is complex
+                is_complex = np.iscomplexobj(y)
+
                 f, Pxx = signal.welch(
                     y[:, :, ch],
                     fs=fs,
@@ -112,11 +115,16 @@ class PowerSpectrumPlotter(PlotterProtocol):
                     detrend=detrend,
                     axis=1,  # Time axis is 1
                     scaling="density",
+                    return_onesided=not is_complex,
                 )
 
                 # Pxx is (N, F)
                 # Average over trajectories
                 Pxx_mean = np.mean(Pxx, axis=0)
+
+                if is_complex:
+                    f = np.fft.fftshift(f)
+                    Pxx_mean = np.fft.fftshift(Pxx_mean)
 
                 if scale == "dB":
                     val = 10 * np.log10(Pxx_mean + 1e-20)

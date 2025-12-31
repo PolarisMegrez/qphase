@@ -282,7 +282,8 @@ def get_config_for_job(
 def construct_plugins_config(reg: RegistryCenter) -> dict[str, dict[str, Any]]:
     """Construct plugins section from discovered plugins."""
     # Plugin namespaces to exclude from global config
-    exclude_namespaces = {"engine", "resource", "loader", "default"}
+    # We exclude 'model' because models are job-specific and often have required params
+    exclude_namespaces = {"resource", "loader", "default", "model"}
 
     plugins_config: dict[str, dict[str, Any]] = {}
     all_namespaces = reg.list(namespace=None)
@@ -302,16 +303,20 @@ def construct_plugins_config(reg: RegistryCenter) -> dict[str, dict[str, Any]]:
                     # Use schema_to_yaml_map to generate commented config
                     from .utils import schema_to_yaml_map
 
-                    if ns_name not in plugins_config:
-                        plugins_config[ns_name] = {}
-
-                    plugins_config[ns_name][plugin_name] = schema_to_yaml_map(
-                        schema, {}, plugin_name
+                    config_map = schema_to_yaml_map(
+                        schema, {}, plugin_name, mode="global"
                     )
+
+                    # Only add if config is not empty
+                    if config_map:
+                        if ns_name not in plugins_config:
+                            plugins_config[ns_name] = {}
+                        plugins_config[ns_name][plugin_name] = config_map
             except Exception:
                 continue
 
-    return plugins_config
+    # Remove empty namespaces
+    return {k: v for k, v in plugins_config.items() if v}
 
 
 # =============================================================================

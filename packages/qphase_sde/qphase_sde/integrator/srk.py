@@ -5,7 +5,7 @@ Implements a generic SRK solver that can be configured to behave as
 Euler-Maruyama, Heun, or higher-order schemes. Supports adaptive stepping.
 """
 
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -18,9 +18,9 @@ from qphase_sde.model import NoiseSpec, SDEModel
 class GenericSRKConfig(BaseModel):
     """Configuration for Generic SRK integrator."""
 
-    method: Literal["euler", "heun"] = Field(
+    method: str = Field(
         "heun",
-        description="Integration scheme (euler, heun)",
+        description="Integration scheme (euler, heun, or custom)",
     )
 
 
@@ -162,8 +162,9 @@ class GenericSRK(Integrator):
         next_dt = dt * factor
         next_dt = min(self.max_dt, max(self.min_dt, next_dt))
 
-        if error <= tol:
+        if error <= tol or dt <= self.min_dt:
             # Accept: return fine solution (better accuracy)
+            # If dt <= min_dt, we force acceptance to avoid infinite loops
             return y_fine, t + dt, next_dt, error
         else:
             # Reject: return old state

@@ -500,12 +500,27 @@ class Engine(EngineBase):
         # Adaptive stepping setup
         use_adaptive = False
         noise_spec = None
+        # Ensure config is not None (use default if None)
+        config = self.config if self.config is not None else EngineConfig()
         if (
-            hasattr(integrator, "supports_adaptive_step")
+            config.adaptive
+            and hasattr(integrator, "supports_adaptive_step")
             and integrator.supports_adaptive_step()
         ):  # noqa: E501
             use_adaptive = True
-            tol = getattr(integrator, "tol", 1e-3)
+            # Use config tolerance if available, else fallback to integrator default
+            tol = (
+                config.atol
+                if config.atol is not None
+                else getattr(integrator, "tol", 1e-3)
+            )
+
+            # Update integrator bounds from config
+            if hasattr(integrator, "min_dt"):
+                integrator.min_dt = config.min_dt
+            if hasattr(integrator, "max_dt"):
+                integrator.max_dt = config.max_dt
+
             noise_spec = NoiseSpec(kind="independent", dim=model.noise_dim)
 
         current_dt = dt
