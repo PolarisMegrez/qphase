@@ -1,15 +1,12 @@
-"""State Containers
-================
-
+"""qphase_sde: State Containers
+---------------------------------------------------------
 Unified, backend-agnostic state containers for SDE simulations.
 Inherits from qphase.backend.state.ArrayBase.
 
 Public API
 ----------
-State
-    Container for a single simulation state.
-TrajectorySet
-    Container for a set of trajectories.
+``State`` : Container for a single simulation state.
+``TrajectorySet`` : Container for a set of trajectories.
 """
 
 from dataclasses import dataclass

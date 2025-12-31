@@ -1,5 +1,5 @@
 """qphase: Array Namespace Utilities
-------------------------------------
+---------------------------------------------------------
 Helpers to select a NumPy-like array namespace for model code and to convert
 arrays to NumPy when needed, keeping models backend-agnostic.
 
@@ -8,6 +8,11 @@ Behavior
 - Expose ``get_xp`` and ``convert_to_numpy`` for common array conversions and a small
     device-aware torch shim when appropriate; see function docstrings for exact
     behaviors and supported operations.
+
+Public API
+----------
+``get_xp`` : Select a NumPy-like array namespace for a given array.
+``convert_to_numpy`` : Convert an array to a NumPy array.
 
 Notes
 -----

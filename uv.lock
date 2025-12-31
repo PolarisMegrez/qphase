@@ -548,15 +548,6 @@ wheels = [
 ]
 
 [[package]]
-name = "joblib"
-version = "1.5.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/41/f2/d34e8b3a08a9cc79a50b2208a93dce981fe615b64d5a4d4abee421d898df/joblib-1.5.3.tar.gz", hash = "sha256:8561a3269e6801106863fd0d6d84bb737be9e7631e33aaed3fb9ce5953688da3", size = 331603, upload-time = "2025-12-15T08:41:46.427Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7b/91/984aca2ec129e2757d1e4e3c81c3fcda9d0f85b74670a094cc443d9ee949/joblib-1.5.3-py3-none-any.whl", hash = "sha256:5fc3c5039fc5ca8c0276333a188bbd59d6b7ab37fe6632daa76bc7f9ec18e713", size = 309071, upload-time = "2025-12-15T08:41:44.973Z" },
-]
-
-[[package]]
 name = "kiwisolver"
 version = "1.4.9"
 source = { registry = "https://pypi.org/simple" }
@@ -1879,7 +1870,7 @@ wheels = [
 
 [[package]]
 name = "qphase"
-version = "0.10.1"
+version = "1.0.0"
 source = { editable = "packages/qphase" }
 dependencies = [
     { name = "pydantic" },
@@ -1892,10 +1883,6 @@ dependencies = [
 [package.optional-dependencies]
 cupy = [
     { name = "cupy-cuda12x" },
-]
-dev = [
-    { name = "pytest" },
-    { name = "ruff" },
 ]
 numba = [
     { name = "numba" },
@@ -1914,20 +1901,18 @@ requires-dist = [
     { name = "numba", marker = "extra == 'numba'", specifier = ">=0.57" },
     { name = "numba", marker = "extra == 'standard'", specifier = ">=0.57" },
     { name = "pydantic", specifier = ">=2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0" },
     { name = "ruamel-yaml", specifier = ">=0.17" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "torch", marker = "extra == 'standard'", specifier = ">=2.0" },
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.0" },
     { name = "typer", specifier = ">=0.9" },
 ]
-provides-extras = ["dev", "numba", "cupy", "torch", "standard"]
+provides-extras = ["numba", "cupy", "torch", "standard"]
 
 [[package]]
 name = "qphase-sde"
-version = "0.10.1"
+version = "1.0.0"
 source = { editable = "packages/qphase_sde" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1940,37 +1925,21 @@ accel = [
     { name = "numba" },
 ]
 config = [
-    { name = "joblib" },
     { name = "pydantic" },
-]
-dev = [
-    { name = "pytest" },
-    { name = "ruff" },
-]
-symbolic = [
-    { name = "sympy" },
-]
-viz = [
-    { name = "matplotlib" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "joblib", marker = "extra == 'config'", specifier = ">=1.3" },
-    { name = "matplotlib", marker = "extra == 'viz'", specifier = ">=3.6" },
     { name = "numba", marker = "extra == 'accel'", specifier = ">=0.57" },
     { name = "numpy", specifier = ">=1.23" },
     { name = "pydantic", marker = "extra == 'config'", specifier = ">=2.4" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "qphase", editable = "packages/qphase" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
-    { name = "sympy", marker = "extra == 'symbolic'", specifier = ">=1.12" },
 ]
-provides-extras = ["accel", "viz", "config", "dev", "symbolic"]
+provides-extras = ["accel", "config"]
 
 [[package]]
 name = "qphase-viz"
-version = "0.10.1"
+version = "1.0.0"
 source = { editable = "packages/qphase_viz" }
 dependencies = [
     { name = "matplotlib" },

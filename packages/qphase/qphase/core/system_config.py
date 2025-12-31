@@ -1,6 +1,5 @@
-"""System Configuration Models
-===========================
-
+"""qphase: System Configuration Models
+---------------------------------------------------------
 Defines the Pydantic models for system-level configuration (``system.yaml``). This
 includes settings for file paths (output directories, config locations), global
 behavior flags (auto-save), and parameter scan defaults, serving as the root

@@ -83,4 +83,4 @@ integrator:
 
 To simulate a system, you need to define a model that implements the `SDEModel` protocol. This involves specifying the `drift` and `diffusion` functions.
 
-See the [Plugin Development](../ecosystem/plugin_development.md) guide for details on how to write and register custom models.
+See the [Plugin Development](../dev_guide/plugin_development.md) guide for details on how to write and register custom models.

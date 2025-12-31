@@ -1,12 +1,10 @@
-"""Phase Plane Plotters
-====================
-
+"""qphase_viz: Phase Plane Plotters
+---------------------------------------------------------
 Plotters for phase space correlations.
 
 Public API
 ----------
-PhasePlanePlotter
-    Plots phase plane data (Im vs Re or Ch_j vs Ch_i).
+``PhasePlanePlotter`` : Plots phase plane data (Im vs Re or Ch_j vs Ch_i).
 """
 
 from pathlib import Path

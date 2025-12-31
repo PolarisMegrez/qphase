@@ -1,6 +1,5 @@
-"""Exceptions and Logging
-======================
-
+"""qphase: Exceptions and Logging
+---------------------------------------------------------
 Establishes the unified exception hierarchy and logging infrastructure for the
 control layer. It defines categorized error types (e.g., ``QPhaseConfigError``,
 ``QPhasePluginError``) to facilitate precise error handling and provides a

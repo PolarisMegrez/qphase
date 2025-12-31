@@ -1,1 +1,5 @@
+matplotlib>=3.6
 numpy>=1.23
+scipy>=1.10
+qphase>=1.0.0
+qphase-sde>=1.0.0

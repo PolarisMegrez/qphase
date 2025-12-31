@@ -1,11 +1,17 @@
 """qphase_sde: Integrator Subpackage
----------------------------------
-
+---------------------------------------------------------
 This subpackage defines and provides integrator plugin implementations.
 Integrators solve stochastic differential equations using numerical methods.
 
 Each integrator implementation must adhere to the Integrator protocol and can have
 its own configuration schema.
+
+Public API
+----------
+``Integrator`` : Base protocol for integrators.
+``EulerMaruyama`` : Euler-Maruyama integrator implementation.
+``Milstein`` : Milstein integrator implementation.
+``GenericSRK`` : Generic Stochastic Runge-Kutta integrator implementation.
 """
 
 from .base import Integrator

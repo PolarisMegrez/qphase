@@ -1,19 +1,13 @@
-"""SDE Simulation Framework
-========================
-
+"""qphase-sde - SDE Simulation Framework
+====================================
 A lightweight, extensible framework for phase-space stochastic differential
 equation (SDE) simulation and analysis, designed for quantum optics research.
 
-Public API
-----------
-Engine
-    Main simulation engine.
-SDEModel
-    Base class for SDE models.
-SimulationResult
-    Container for simulation results.
-SimulationState
-    Container for simulation state.
+Author : Yu Xue-hao (GitHub: @PolarisMegrez)
+Affiliation : School of Physical Sciences, UCAS
+Contact : yuxuehao23@mails.ucas.ac.cn
+License : MIT
+Version : 1.0.0 (Jan 2026)
 """
 
 # Import protocols from CLI
@@ -28,7 +22,7 @@ from .model import NoiseSpec, SDEModel  # noqa: F401
 from .state import State, TrajectorySet  # noqa: F401
 
 # Public version string
-__version__ = "0.10.0 (Dec 2025)"
+__version__ = "1.0.0"
 
 __all__ = [
     "Engine",

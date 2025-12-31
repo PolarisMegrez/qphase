@@ -1,6 +1,5 @@
-"""SDE Engine
-==========
-
+"""qphase_sde: SDE Engine
+---------------------------------------------------------
 Object-oriented wrapper around the core simulation logic that supports
 dependency injection of backend and integrator via constructor.
 
@@ -9,10 +8,8 @@ functional run() interface a simple wrapper for backward compatibility.
 
 Public API
 ----------
-Engine
-    Main simulation engine class.
-EngineConfig
-    Configuration model for the engine.
+``Engine`` : Main simulation engine class.
+``EngineConfig`` : Configuration model for the engine.
 """
 
 import time as _time

@@ -1,6 +1,5 @@
-"""Core Subpackage
-===============
-
+"""qphase: core subpackage
+---------------------------------------------------------
 This subpackage implements the foundational architecture of the control layer,
 providing the essential building blocks for plugin management and job orchestration.
 It includes the ``RegistryCenter`` for dynamic plugin discovery and instantiation,
@@ -11,23 +10,15 @@ exception hierarchy and logging infrastructure used throughout the framework.
 
 Public API
 ----------
-JobConfig, JobList
-    Job configuration and batch job definitions.
-Scheduler, JobResult, JobProgressUpdate
-    Task scheduling and execution.
-RegistryCenter, registry
-    Plugin discovery, registration, and instantiation.
-SystemConfig
-    System-level configuration model.
-load_system_config, save_user_config, get_system_param
-    System config I/O.
-load_global_config, save_global_config
-    Global plugin configuration I/O.
-merge_configs, get_config_for_job, list_available_jobs
-    Config utilities.
-QPhaseError
-    Unified exception hierarchy base class.
-get_logger, configure_logging
+``JobConfig``, ``JobList`` : Job configuration and batch job definitions.
+``Scheduler``, ``JobResult``, ``JobProgressUpdate`` : Task scheduling and execution.
+``RegistryCenter``, ``registry`` : Plugin discovery, registration, and instantiation.
+``SystemConfig`` : System-level configuration model.
+``load_system_config``, ``save_user_config``, ``get_system_param`` : System config I/O.
+``load_global_config``, ``save_global_config`` : Global plugin configuration I/O.
+``merge_configs``, ``get_config_for_job``, ``list_available_jobs`` : Config utilities.
+``QPhaseError`` : Unified exception hierarchy base class.
+``get_logger``, ``configure_logging``
     Logging utilities.
 """
 

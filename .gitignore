@@ -52,7 +52,6 @@ desktop.ini
 # User Data
 configs/
 models/
-runs/
 *.temp
 ~$*
 
@@ -77,6 +76,7 @@ bundles/
 
 # Sphinx or docs build
 /docs/_build/
+site/
 
 # Optional local configs
 *.local.yaml

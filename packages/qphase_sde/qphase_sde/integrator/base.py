@@ -1,11 +1,14 @@
 """qphase_sde: Integrator Base Protocols
---------------------------------------
-
+---------------------------------------------------------
 Minimal contracts for single-step SDE integrators.
 These protocols define the core integration interface for
 stochastic differential equations.
 
 This module is dependency-light and safe to import in any environment.
+
+Public API
+----------
+``Integrator`` : Protocol for SDE integrators.
 """
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable

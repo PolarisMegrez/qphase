@@ -1,15 +1,13 @@
-"""Visualization Package
-=====================
-
+"""qphase-viz - Visualization Package
+=================================
 Visualization engine and plotters for qphase, providing time-series, phase-plane,
 and power spectrum analysis visualization capabilities.
 
-Public API
-----------
-VizEngine
-    Main visualization engine.
-VizEngineConfig
-    Configuration for the visualization engine.
+Author : Yu Xue-hao (GitHub: @PolarisMegrez)
+Affiliation : School of Physical Sciences, UCAS
+Contact : yuxuehao23@mails.ucas.ac.cn
+License : MIT
+Version : 1.0.0 (Jan 2026)
 """
 
 from .config import (

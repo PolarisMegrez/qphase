@@ -1,6 +1,5 @@
-"""Configuration Snapshot
-======================
-
+"""qphase: Configuration Snapshot
+---------------------------------------------------------
 Manages the creation and storage of configuration snapshots to ensure reproducibility.
 It captures the complete state of a job execution, including the merged configuration,
 system settings, plugin versions, and random seeds, serializing this metadata into

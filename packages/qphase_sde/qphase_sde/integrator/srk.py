@@ -1,8 +1,12 @@
-"""Generic Stochastic Runge-Kutta (SRK) Integrator
-------------------------------------------------
-
+"""qphase_sde: Generic SRK Integrator
+---------------------------------------------------------
 Implements a generic SRK solver that can be configured to behave as
 Euler-Maruyama, Heun, or higher-order schemes. Supports adaptive stepping.
+
+Public API
+----------
+``GenericSRK`` : Generic Stochastic Runge-Kutta integrator implementation.
+``GenericSRKConfig`` : Configuration for Generic SRK integrator.
 """
 
 from typing import Any, ClassVar

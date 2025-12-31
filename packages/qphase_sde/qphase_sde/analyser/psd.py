@@ -1,5 +1,5 @@
 """qphase_sde: Power Spectral Density
----------------------------------
+---------------------------------------------------------
 Compute power spectral density (PSD) from multi-trajectory time series for one
 or more modes using FFT-based periodograms.
 
@@ -7,9 +7,14 @@ Behavior
 --------
 - Support two input interpretations: complex-valued directly (``kind='complex'``)
     or magnitude-based (``kind='modular'``).
-- Provide common PSD conventions: unitary/symmetric (angular frequency ω) and
+- Provide common PSD conventions: unitary/symmetric (angular frequency 蠅) and
     pragmatic (frequency f). Exact scaling, return shapes, and error semantics are
     specified by the function docstrings.
+
+Public API
+----------
+``PsdAnalyzer`` : Power spectral density analyzer.
+``PsdAnalyzerConfig`` : Configuration for PSD analyzer.
 
 Notes
 -----

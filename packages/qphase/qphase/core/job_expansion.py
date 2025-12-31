@@ -1,6 +1,5 @@
-"""Job Expansion Logic
-===================
-
+"""qphase: Job Expansion Logic
+---------------------------------------------------------
 Handles the expansion of parameter scans into multiple job configurations.
 
 Public API

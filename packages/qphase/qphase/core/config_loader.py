@@ -1,6 +1,5 @@
-"""Configuration Loader
-====================
-
+"""qphase: Configuration Loader
+---------------------------------------------------------
 Configuration loading utilities.
 
 This module handles loading and parsing of both Job configurations and System

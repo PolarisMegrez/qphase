@@ -1,7 +1,10 @@
 """qphase_sde: Analyzer Base Class
-------------------------------
-
+---------------------------------------------------------
 Base class for all analyzers in the qphase_sde package.
+
+Public API
+----------
+``AnalyzerProtocol`` : Protocol for analyzers.
 """
 
 from abc import ABC, abstractmethod

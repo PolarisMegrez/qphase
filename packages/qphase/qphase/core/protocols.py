@@ -1,6 +1,5 @@
-"""Protocol Definitions
-====================
-
+"""qphase: Protocol Definitions
+---------------------------------------------------------
 Defines the structural contracts (Protocols) that underpin the plugin architecture.
 It specifies the interfaces for configuration models (``PluginConfigBase``), plugin
 implementations (``PluginBase``), execution engines (``EngineBase``), and result

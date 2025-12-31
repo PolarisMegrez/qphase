@@ -1,13 +1,17 @@
 """qphase_sde: Euler-Maruyama Integrator
-------------------------------------
-Reference Itô SDE solver with backend-optimized contractions, integrated with
+---------------------------------------------------------
+Reference It么 SDE solver with backend-optimized contractions, integrated with
 the central registry for discovery and composition.
 
 Behavior
 --------
-- Backend-agnostic step rule ``dy = a(y,t)·dt + L(y,t) @ dW``; contraction over
+- Backend-agnostic step rule ``dy = a(y,t)路dt + L(y,t) @ dW``; contraction over
   noise channels is specialized per backend when possible. Complex noise bases
   are expanded to an equivalent real basis prior to contraction.
+
+Public API
+----------
+``EulerMaruyama`` : Euler-Maruyama integrator implementation.
 """
 
 from collections.abc import Callable

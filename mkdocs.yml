@@ -1,0 +1,29 @@
+site_name: QPhase Documentation
+theme:
+  name: material
+nav:
+  - Home: index.md
+  - User Guide:
+    - Introduction: user_guide/index.md
+    - Installation: user_guide/installation.md
+    - Quick Start: user_guide/quick_start.md
+    - CLI: user_guide/cli.md
+    - Configuration: user_guide/configuration.md
+    - SDE Modeling: user_guide/sde_modeling.md
+    - SDE Simulation: user_guide/sde_simulation.md
+  - API Reference:
+    - Overview: api/index.md
+    - Core: api/core.md
+    - SDE: api/sde.md
+  - Developer Guide:
+    - Introduction: dev_guide/index.md
+    - Architecture: dev_guide/architecture.md
+    - Backend: dev_guide/backend.md
+    - CLI: dev_guide/cli.md
+    - Configuration: dev_guide/configuration.md
+    - Error Handling: dev_guide/error_handling.md
+    - Plugin Development: dev_guide/plugin_development.md
+    - Protocols: dev_guide/protocols.md
+    - Registry: dev_guide/registry.md
+    - Scheduler: dev_guide/scheduler.md
+    - FAQ: dev_guide/faq.md

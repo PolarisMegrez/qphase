@@ -1,5 +1,5 @@
 """qphase_sde: Milstein Integrator
-------------------------------
+---------------------------------------------------------
 Strong order-1.0 Milstein scheme for Itô SDEs under the commutative-noise
 assumption (diagonal or commuting diffusion fields). Falls back to
 Euler–Maruyama when a diffusion Jacobian is unavailable or the model uses a
@@ -15,6 +15,10 @@ Behavior
             ]
   where L_{:,k} is the k-th diffusion column, and ∂L_{:,k}/∂y_j denotes the
   Jacobian slice of L along the state dimension.
+
+Public API
+----------
+``Milstein`` : Milstein integrator implementation.
 
 Notes
 -----

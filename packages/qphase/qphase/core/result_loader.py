@@ -1,6 +1,5 @@
-"""Result Loader
-=============
-
+"""qphase: Result Loader
+---------------------------------------------------------
 Utilities for loading results from disk, primarily for resume capability.
 
 Public API

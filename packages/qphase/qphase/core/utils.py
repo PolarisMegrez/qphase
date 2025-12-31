@@ -1,6 +1,5 @@
-"""Core Utilities
-==============
-
+"""qphase: Core Utilities
+---------------------------------------------------------
 Provides a collection of shared utility functions used throughout the control layer.
 This includes robust YAML parsing (with fallback), deep dictionary merging and
 copying for configuration management, and helper functions for Pydantic schema

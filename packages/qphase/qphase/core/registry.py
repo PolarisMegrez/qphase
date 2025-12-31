@@ -1,6 +1,5 @@
-"""Plugin Registry
-===============
-
+"""qphase: Plugin Registry
+---------------------------------------------------------
 Implements the central registry for plugin management, supporting dynamic discovery,
 registration, and factory-style instantiation. It handles both Python entry points
 for installed packages and local ``.qphase_plugins.yaml`` files for development,

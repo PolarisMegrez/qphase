@@ -1,6 +1,5 @@
-"""Job Configuration Models
-========================
-
+"""qphase: Job Configuration Models
+---------------------------------------------------------
 Defines the Pydantic models that structure job configurations, including the
 ``JobConfig`` for individual task specification and ``JobList`` for batch execution
 containers. These models provide built-in validation, default value handling, and

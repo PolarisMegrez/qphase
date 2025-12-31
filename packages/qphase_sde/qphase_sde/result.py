@@ -1,14 +1,11 @@
-"""Simulation Result
-=================
-
+"""qphase_sde: Simulation Result
+---------------------------------------------------------
 Container for SDE simulation results, supporting serialization and deserialization.
 
 Public API
 ----------
-SDEResult
-    Container for SDE simulation results.
-AnalysisResult
-    Container for analysis results.
+``SDEResult`` : Container for SDE simulation results.
+``AnalysisResult`` : Container for analysis results.
 """
 
 from dataclasses import dataclass, field
