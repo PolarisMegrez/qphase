@@ -1,91 +1,311 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
     <url>
-         <loc>https://polarismegrez.github.io/qphase/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/api/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/api/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/api/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/api/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/api/core/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/api/core/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/api/core/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/api/core/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/api/sde/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/api/sde/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/api/sde/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/api/sde/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/dev_guide/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/dev_guide/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/dev_guide/architecture/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/dev_guide/architecture/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/architecture/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/architecture/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/dev_guide/backend/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/dev_guide/backend/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/backend/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/backend/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/dev_guide/cli/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/dev_guide/cli/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/cli/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/cli/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/dev_guide/configuration/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/dev_guide/configuration/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/configuration/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/configuration/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/dev_guide/error_handling/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/dev_guide/error_handling/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/error_handling/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/error_handling/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/dev_guide/faq/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/dev_guide/faq/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/faq/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/faq/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/dev_guide/plugin_development/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/dev_guide/plugin_development/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/plugin_development/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/plugin_development/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/dev_guide/protocols/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/dev_guide/protocols/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/protocols/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/protocols/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/dev_guide/registry/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/dev_guide/registry/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/registry/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/registry/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/dev_guide/scheduler/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/dev_guide/scheduler/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/scheduler/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/scheduler/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/user_guide/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/user_guide/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/user_guide/cli/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/user_guide/cli/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/cli/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/cli/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/user_guide/configuration/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/user_guide/configuration/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/configuration/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/configuration/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/user_guide/installation/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/user_guide/installation/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/installation/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/installation/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/user_guide/quick_start/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/user_guide/quick_start/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/quick_start/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/quick_start/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/user_guide/sde_modeling/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/user_guide/sde_modeling/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/sde_modeling/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/sde_modeling/"/>
     </url>
     <url>
-         <loc>https://polarismegrez.github.io/qphase/user_guide/sde_simulation/</loc>
-         <lastmod>2025-12-31</lastmod>
+        <loc>https://polarismegrez.github.io/qphase/user_guide/sde_simulation/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/sde_simulation/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/sde_simulation/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/api/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/api/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/api/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/api/core/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/api/core/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/api/core/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/api/sde/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/api/sde/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/api/sde/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/dev_guide/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/dev_guide/architecture/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/architecture/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/architecture/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/dev_guide/backend/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/backend/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/backend/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/dev_guide/cli/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/cli/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/cli/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/dev_guide/configuration/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/configuration/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/configuration/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/dev_guide/error_handling/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/error_handling/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/error_handling/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/dev_guide/faq/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/faq/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/faq/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/dev_guide/plugin_development/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/plugin_development/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/plugin_development/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/dev_guide/protocols/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/protocols/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/protocols/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/dev_guide/registry/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/registry/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/registry/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/dev_guide/scheduler/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/dev_guide/scheduler/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/dev_guide/scheduler/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/user_guide/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/user_guide/cli/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/cli/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/cli/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/user_guide/configuration/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/configuration/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/configuration/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/user_guide/installation/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/installation/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/installation/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/user_guide/quick_start/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/quick_start/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/quick_start/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/user_guide/sde_modeling/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/sde_modeling/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/sde_modeling/"/>
+    </url>
+    <url>
+        <loc>https://polarismegrez.github.io/qphase/zh/user_guide/sde_simulation/</loc>
+        <lastmod>2025-12-31</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://polarismegrez.github.io/qphase/zh/user_guide/sde_simulation/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://polarismegrez.github.io/qphase/user_guide/sde_simulation/"/>
     </url>
 </urlset>
