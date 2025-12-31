@@ -1366,8 +1366,8 @@
 <h2 id="project-management">Project Management</h2>
 <h3 id="qps-init"><code>qps init</code></h3>
 <p>Initializes a new QPhase project in the current directory.</p>
-<pre><code class="language-bash">qps init
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>qps<span class="w"> </span>init
+</code></pre></div>
 <p><strong>Functionality:</strong>
 1.  Creates the standard directory structure:
     *   <code>configs/</code>: Configuration files.
@@ -1378,8 +1378,8 @@
 <h2 id="simulation-execution">Simulation Execution</h2>
 <h3 id="qps-run"><code>qps run</code></h3>
 <p>Executes simulation jobs defined in the <code>configs/jobs/</code> directory.</p>
-<pre><code class="language-bash">qps run [JOB_NAME] [OPTIONS]
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>qps<span class="w"> </span>run<span class="w"> </span><span class="o">[</span>JOB_NAME<span class="o">]</span><span class="w"> </span><span class="o">[</span>OPTIONS<span class="o">]</span>
+</code></pre></div>
 <ul>
 <li><strong>Arguments</strong>:<ul>
 <li><code>JOB_NAME</code>: The name of the job configuration file (without extension) located in <code>configs/jobs/</code>.</li>
@@ -1391,40 +1391,40 @@
 </ul>
 </li>
 </ul>
-<p><strong>Examples</strong>:</p>
-<pre><code class="language-bash"># Execute a single job
-qps run vdp_sde
-
-# List available jobs
-qps run --list
-
-# Run with verbose logging
-qps run --verbose vdp_sde
-</code></pre>
+<p><strong>Examples</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Execute a single job</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>qps<span class="w"> </span>run<span class="w"> </span>vdp_sde
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># List available jobs</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>qps<span class="w"> </span>run<span class="w"> </span>--list
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># Run with verbose logging</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>qps<span class="w"> </span>run<span class="w"> </span>--verbose<span class="w"> </span>vdp_sde
+</code></pre></div></p>
 <hr />
 <h2 id="plugin-management">Plugin Management</h2>
 <h3 id="qps-list"><code>qps list</code></h3>
 <p>Lists all registered plugins available in the current environment.</p>
-<pre><code class="language-bash">qps list [CATEGORIES]
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>qps<span class="w"> </span>list<span class="w"> </span><span class="o">[</span>CATEGORIES<span class="o">]</span>
+</code></pre></div>
 <ul>
 <li><strong>Arguments</strong>:<ul>
 <li><code>CATEGORIES</code> (Optional): A comma-separated list of namespaces to filter by (e.g., <code>backend</code>, <code>model</code>). Use <code>.</code> to list all categories.</li>
 </ul>
 </li>
 </ul>
-<p><strong>Example</strong>:</p>
-<pre><code class="language-bash">qps list backend
-# Output:
-# Available Plugins
-# backend: (2 plugins)
-#   numpy  (qphase.backend.numpy)
-#   torch  (qphase.backend.torch)
-</code></pre>
+<p><strong>Example</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>qps<span class="w"> </span>list<span class="w"> </span>backend
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="c1"># Output:</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="c1"># Available Plugins</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># backend: (2 plugins)</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="c1">#   numpy  (qphase.backend.numpy)</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1">#   torch  (qphase.backend.torch)</span>
+</code></pre></div></p>
 <h3 id="qps-show"><code>qps show</code></h3>
 <p>Displays detailed information about a specific plugin, including its description, source code location, and configuration schema.</p>
-<pre><code class="language-bash">qps show [PLUGIN_ID]
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>qps<span class="w"> </span>show<span class="w"> </span><span class="o">[</span>PLUGIN_ID<span class="o">]</span>
+</code></pre></div>
 <ul>
 <li><strong>Arguments</strong>:<ul>
 <li><code>PLUGIN_ID</code>: The full identifier of the plugin (e.g., <code>backend.numpy</code> or <code>model.kerr_cavity</code>).</li>
@@ -1433,21 +1433,21 @@ qps run --verbose vdp_sde
 </ul>
 <h3 id="qps-template"><code>qps template</code></h3>
 <p>Generates a configuration template for a specific plugin. This is useful for quickly creating new configuration files.</p>
-<pre><code class="language-bash">qps template [PLUGIN_ID]
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>qps<span class="w"> </span>template<span class="w"> </span><span class="o">[</span>PLUGIN_ID<span class="o">]</span>
+</code></pre></div>
 <ul>
 <li><strong>Arguments</strong>:<ul>
 <li><code>PLUGIN_ID</code>: The full identifier of the plugin.</li>
 </ul>
 </li>
 </ul>
-<p><strong>Example</strong>:</p>
-<pre><code class="language-bash">qps template model.kerr_cavity
-# Output:
-# # Configuration for model.kerr_cavity
-# chi: 1.0  # Nonlinearity parameter
-# ...
-</code></pre>
+<p><strong>Example</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>qps<span class="w"> </span>template<span class="w"> </span>model.kerr_cavity
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="c1"># Output:</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="c1"># # Configuration for model.kerr_cavity</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1"># chi: 1.0  # Nonlinearity parameter</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="c1"># ...</span>
+</code></pre></div></p>
 <hr />
 <h2 id="configuration-management">Configuration Management</h2>
 <h3 id="qps-config"><code>qps config</code></h3>

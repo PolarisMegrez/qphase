@@ -1078,81 +1078,81 @@
 
   <h1>SDE Modeling</h1>
 
-<pre><code class="language-markdown">---
-layout: default
-title: SDE Modeling Guide
-parent: User Guide
-nav_order: 3
----
-
-# SDE Modeling Guide
-
-QPhase SDE adopts a three-level architecture for modeling physical systems. This hierarchy allows for separation of concerns between the physical definition (Quantum/Phase Space) and the numerical implementation (SDE).
-
-## The Three-Level Architecture
-
-### Level 1: Master Equation (ME)
-**Class:** `qphase_sde.model.MasterEquation`
-
-Describes the system in the Hilbert space using the Hamiltonian ($\hat{H}$) and Lindblad collapse operators ($\hat{L}_k$). This is the most fundamental physical description.
-
-*   **Use case:** Defining the physics from first principles.
-*   **Components:** Hamiltonian, Lindblad operators.
-
-### Level 2: Phase Space Model (FPE)
-**Class:** `qphase_sde.model.PhaseSpaceModel`
-
-Describes the system dynamics in phase space (e.g., Wigner, P-representation, Q-function). It is defined by the Kramers-Moyal expansion coefficients of the Fokker-Planck Equation (FPE).
-
-$$ \frac{\partial P}{\partial t} = \sum_{n=1}^\infty \frac{(-1)^n}{n!} \frac{\partial^n}{\partial \alpha^n} [D_n(\alpha) P] $$
-
-*   **Use case:** Analytical derivation, studying phase space distributions.
-*   **Components:** Drift vector ($D_1$), Diffusion tensor ($D_2$), and potentially higher-order terms ($D_3, \dots$).
-
-### Level 3: Stochastic Model (SDE)
-**Classes:** `qphase_sde.model.DiffusiveSDEModel`, `qphase_sde.model.JumpSDEModel`
-
-Describes the stochastic trajectories for numerical simulation. This is the level consumed by the simulation engine.
-
-*   **DiffusiveSDEModel (Langevin):** For systems with only 1st and 2nd order terms (Gaussian noise).
-    $$ d\mathbf{y} = \mathbf{a}(\mathbf{y}, t) dt + \mathbf{b}(\mathbf{y}, t) d\mathbf{W} $$
-*   **JumpSDEModel:** For systems with higher-order terms mapped to jump processes.
-
-## Workflow
-
-1.  **Define Physics:** Start by defining a `PhaseSpaceModel` (Level 2) containing the drift ($D_1$) and diffusion ($D_2$) coefficients.
-2.  **Convert:** Use `qphase_sde.model.fpe_to_sde()` to automatically convert the FPE model to a `DiffusiveSDEModel` (Level 3).
-3.  **Simulate:** Pass the Level 3 model to the `Engine`.
-
-Alternatively, advanced users can define a `DiffusiveSDEModel` directly if they want manual control over the noise decomposition.
-
-## Example: Van der Pol Oscillator
-
-### Level 2 Definition
-```python
-from qphase_sde.model import PhaseSpaceModel
-
-def drift_fn(y, t, p):
-    # ... calculate D1 ...
-    return d1
-
-def diffusion_fn(y, t, p):
-    # ... calculate D2 ...
-    return d2
-
-fpe_model = PhaseSpaceModel(
-    name=&quot;vdp_fpe&quot;,
-    n_modes=1,
-    terms={1: drift_fn, 2: diffusion_fn},
-    params={...}
-)
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>---
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>layout: default
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>title: SDE Modeling Guide
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>parent: User Guide
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="gu">nav_order: 3</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="gu">---</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="gh"># SDE Modeling Guide</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>QPhase SDE adopts a three-level architecture for modeling physical systems. This hierarchy allows for separation of concerns between the physical definition (Quantum/Phase Space) and the numerical implementation (SDE).
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="gu">## The Three-Level Architecture</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="gu">### Level 1: Master Equation (ME)</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="gs">**Class:**</span> <span class="sb">`qphase_sde.model.MasterEquation`</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>Describes the system in the Hilbert space using the Hamiltonian ($\hat{H}$) and Lindblad collapse operators ($\hat{L}_k$). This is the most fundamental physical description.
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="k">*</span><span class="w"> </span>  <span class="gs">**Use case:**</span> Defining the physics from first principles.
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="k">*</span><span class="w"> </span>  <span class="gs">**Components:**</span> Hamiltonian, Lindblad operators.
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="gu">### Level 2: Phase Space Model (FPE)</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="gs">**Class:**</span> <span class="sb">`qphase_sde.model.PhaseSpaceModel`</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>Describes the system dynamics in phase space (e.g., Wigner, P-representation, Q-function). It is defined by the Kramers-Moyal expansion coefficients of the Fokker-Planck Equation (FPE).
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>$$ \frac{\partial P}{\partial t} = \sum_{n=1}^\infty \frac{(-1)^n}{n!} \frac{\partial^n}{\partial \alpha^n} [D_n(\alpha) P] $$
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="k">*</span><span class="w"> </span>  <span class="gs">**Use case:**</span> Analytical derivation, studying phase space distributions.
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="k">*</span><span class="w"> </span>  <span class="gs">**Components:**</span> Drift vector ($D_1$), Diffusion tensor ($D_2$), and potentially higher-order terms ($D_3, \dots$).
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="gu">### Level 3: Stochastic Model (SDE)</span>
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="gs">**Classes:**</span> <span class="sb">`qphase_sde.model.DiffusiveSDEModel`</span>, <span class="sb">`qphase_sde.model.JumpSDEModel`</span>
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>Describes the stochastic trajectories for numerical simulation. This is the level consumed by the simulation engine.
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="k">*</span><span class="w"> </span>  <span class="gs">**DiffusiveSDEModel (Langevin):**</span> For systems with only 1st and 2nd order terms (Gaussian noise).
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>    $$ d\mathbf{y} = \mathbf{a}(\mathbf{y}, t) dt + \mathbf{b}(\mathbf{y}, t) d\mathbf{W} $$
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a><span class="k">*</span><span class="w"> </span>  <span class="gs">**JumpSDEModel:**</span> For systems with higher-order terms mapped to jump processes.
+<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>
+<a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a><span class="gu">## Workflow</span>
+<a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a>
+<a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a><span class="k">1.</span>  <span class="gs">**Define Physics:**</span> Start by defining a <span class="sb">`PhaseSpaceModel`</span> (Level 2) containing the drift ($D_1$) and diffusion ($D_2$) coefficients.
+<a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a><span class="k">2.</span>  <span class="gs">**Convert:**</span> Use <span class="sb">`qphase_sde.model.fpe_to_sde()`</span> to automatically convert the FPE model to a <span class="sb">`DiffusiveSDEModel`</span> (Level 3).
+<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a><span class="k">3.</span>  <span class="gs">**Simulate:**</span> Pass the Level 3 model to the <span class="sb">`Engine`</span>.
+<a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a>
+<a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a>Alternatively, advanced users can define a <span class="sb">`DiffusiveSDEModel`</span> directly if they want manual control over the noise decomposition.
+<a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a>
+<a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a><span class="gu">## Example: Van der Pol Oscillator</span>
+<a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a>
+<a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a><span class="gu">### Level 2 Definition</span>
+<a id="__codelineno-0-52" name="__codelineno-0-52" href="#__codelineno-0-52"></a>```python
+<a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a>from qphase_sde.model import PhaseSpaceModel
+<a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a>
+<a id="__codelineno-0-55" name="__codelineno-0-55" href="#__codelineno-0-55"></a>def drift_fn(y, t, p):
+<a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a>    # ... calculate D1 ...
+<a id="__codelineno-0-57" name="__codelineno-0-57" href="#__codelineno-0-57"></a>    return d1
+<a id="__codelineno-0-58" name="__codelineno-0-58" href="#__codelineno-0-58"></a>
+<a id="__codelineno-0-59" name="__codelineno-0-59" href="#__codelineno-0-59"></a>def diffusion_fn(y, t, p):
+<a id="__codelineno-0-60" name="__codelineno-0-60" href="#__codelineno-0-60"></a>    # ... calculate D2 ...
+<a id="__codelineno-0-61" name="__codelineno-0-61" href="#__codelineno-0-61"></a>    return d2
+<a id="__codelineno-0-62" name="__codelineno-0-62" href="#__codelineno-0-62"></a>
+<a id="__codelineno-0-63" name="__codelineno-0-63" href="#__codelineno-0-63"></a>fpe_model = PhaseSpaceModel(
+<a id="__codelineno-0-64" name="__codelineno-0-64" href="#__codelineno-0-64"></a>    name=&quot;vdp_fpe&quot;,
+<a id="__codelineno-0-65" name="__codelineno-0-65" href="#__codelineno-0-65"></a>    n_modes=1,
+<a id="__codelineno-0-66" name="__codelineno-0-66" href="#__codelineno-0-66"></a>    terms={1: drift_fn, 2: diffusion_fn},
+<a id="__codelineno-0-67" name="__codelineno-0-67" href="#__codelineno-0-67"></a>    params={...}
+<a id="__codelineno-0-68" name="__codelineno-0-68" href="#__codelineno-0-68"></a>)
+</code></pre></div>
 <h3 id="conversion">Conversion</h3>
-<pre><code class="language-python">from qphase_sde.model import fpe_to_sde
-
-sde_model = fpe_to_sde(fpe_model)
-</code></pre>
-<p>```</p>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">qphase_sde.model</span><span class="w"> </span><span class="kn">import</span> <span class="n">fpe_to_sde</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">sde_model</span> <span class="o">=</span> <span class="n">fpe_to_sde</span><span class="p">(</span><span class="n">fpe_model</span><span class="p">)</span>
+</code></pre></div>
+```</p>
 
 
 

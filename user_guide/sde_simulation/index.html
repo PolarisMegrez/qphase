@@ -1250,17 +1250,17 @@
 *   $d\mathbf{W}$ is the Wiener process increment (noise).</p>
 <h2 id="configuration">Configuration</h2>
 <p>To use the SDE engine, you need to specify it in your job configuration file (e.g., <code>job.yaml</code>).</p>
-<pre><code class="language-yaml">engine:
-  sde:
-    dt: 1e-3              # Time step size
-    t_max: 10.0           # Total simulation time
-    n_traj: 1000          # Number of trajectories
-    integrator:           # Integrator configuration
-      name: &quot;srk&quot;         # Use the Generic SRK solver
-      method: &quot;heun&quot;      # Specific method (heun, euler)
-      tol: 1e-4           # Tolerance for adaptive stepping
-    backend: &quot;numpy&quot;      # Backend (numpy, torch, cupy)
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">engine</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">sde</span><span class="p">:</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">dt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1e-3</span><span class="w">              </span><span class="c1"># Time step size</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">t_max</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.0</span><span class="w">           </span><span class="c1"># Total simulation time</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="nt">n_traj</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000</span><span class="w">          </span><span class="c1"># Number of trajectories</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="nt">integrator</span><span class="p">:</span><span class="w">           </span><span class="c1"># Integrator configuration</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;srk&quot;</span><span class="w">         </span><span class="c1"># Use the Generic SRK solver</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">      </span><span class="nt">method</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;heun&quot;</span><span class="w">      </span><span class="c1"># Specific method (heun, euler)</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">tol</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1e-4</span><span class="w">           </span><span class="c1"># Tolerance for adaptive stepping</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;numpy&quot;</span><span class="w">      </span><span class="c1"># Backend (numpy, torch, cupy)</span>
+</code></pre></div>
 <h3 id="key-parameters">Key Parameters</h3>
 <table>
 <thead>
@@ -1322,11 +1322,11 @@
 <h3 id="adaptive-stepping">Adaptive Stepping</h3>
 <p>The <code>srk</code> integrator supports <strong>adaptive stepping</strong> using Richardson extrapolation (step doubling). This allows the solver to automatically reduce the step size <code>dt</code> when the error is high (e.g., during fast dynamics) and increase it when the system is stable.</p>
 <p>To enable adaptive stepping, simply provide a <code>tol</code> (tolerance) parameter in the integrator config.</p>
-<pre><code class="language-yaml">integrator:
-  name: &quot;srk&quot;
-  method: &quot;heun&quot;
-  tol: 1e-5  # Enables adaptive stepping with target error 1e-5
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">integrator</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;srk&quot;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">method</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;heun&quot;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">tol</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1e-5</span><span class="w">  </span><span class="c1"># Enables adaptive stepping with target error 1e-5</span>
+</code></pre></div>
 <p><strong>Note</strong>: Even with adaptive stepping, the engine will interpolate the results to save data at fixed intervals defined by <code>dt</code> and <code>return_stride</code>. This ensures that your output data is always on a regular time grid, simplifying analysis.</p>
 <h2 id="defining-models">Defining Models</h2>
 <p>To simulate a system, you need to define a model that implements the <code>SDEModel</code> protocol. This involves specifying the <code>drift</code> and <code>diffusion</code> functions.</p>

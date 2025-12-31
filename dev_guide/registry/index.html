@@ -1326,26 +1326,26 @@
 <p>QPhase supports two primary discovery mechanisms:</p>
 <h3 id="1-entry-points-package-based">1. Entry Points (Package-based)</h3>
 <p>For distributable Python packages, QPhase utilizes the standard <code>entry_points</code> mechanism (defined in <code>pyproject.toml</code>). The registry scans the <code>qphase</code> group at startup.</p>
-<pre><code class="language-toml">[project.entry-points.qphase]
-&quot;model.my_model&quot; = &quot;my_package.models:MyModel&quot;
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[project.entry-points.qphase]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="s2">&quot;model.my_model&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;my_package.models:MyModel&quot;</span>
+</code></pre></div>
 <h3 id="2-local-configuration-development-based">2. Local Configuration (Development-based)</h3>
 <p>For local development and ad-hoc extensions, the registry parses a <code>.qphase_plugins.yaml</code> file located in the project root. This allows researchers to register scripts without packaging them.</p>
-<pre><code class="language-yaml">model.custom_hamiltonian: &quot;plugins.physics:Hamiltonian&quot;
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">model.custom_hamiltonian</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;plugins.physics:Hamiltonian&quot;</span>
+</code></pre></div>
 <h2 id="instantiation-factory">Instantiation Factory</h2>
 <p>The <code>create()</code> method serves as the universal factory for all components. It handles:
 1.  <strong>Resolution</strong>: Looking up the entry by namespace and name.
 2.  <strong>Loading</strong>: Importing the module if it is a lazy entry.
 3.  <strong>Validation</strong>: Validating the provided configuration dictionary against the plugin's <code>config_schema</code> (Pydantic model).
 4.  <strong>Injection</strong>: Instantiating the class with the validated configuration and any additional dependencies (e.g., injecting the <code>backend</code> instance into a <code>model</code>).</p>
-<pre><code class="language-python"># Example: Instantiating a model with dependency injection
-model = registry.create(
-    &quot;model:kerr_cavity&quot;,
-    config={&quot;chi&quot;: 1.0},
-    backend=numpy_backend_instance
-)
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Example: Instantiating a model with dependency injection</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">model</span> <span class="o">=</span> <span class="n">registry</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="s2">&quot;model:kerr_cavity&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">config</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;chi&quot;</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">},</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">backend</span><span class="o">=</span><span class="n">numpy_backend_instance</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
+</code></pre></div>
 <h2 id="dependency-resolution">Dependency Resolution</h2>
 <p>While the Registry provides the mechanism to create plugins, the <strong>Scheduler</strong> acts as the orchestrator. It uses the <code>EngineManifest</code> of the selected Engine to determine which plugins to request from the Registry.</p>
 

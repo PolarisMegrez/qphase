@@ -1325,17 +1325,20 @@
 
 
 <h1 id="qphase-a-modular-toolkit-for-phase-space-simulation-in-quantum-optics">QPhase - A Modular Toolkit for Phase-Space Simulation in Quantum Optics</h1>
-<p><a href="user_guide/quick_start/">Get Started</a>{ .md-button .md-button--primary } <a href="https://github.com/PolarisMegrez/qphase">View on GitHub</a>{ .md-button }</p>
+<p><a class="md-button md-button--primary" href="user_guide/quick_start/">Get Started</a> <a class="md-button" href="https://github.com/PolarisMegrez/qphase">View on GitHub</a></p>
 <hr />
 <h2 id="overview">Overview</h2>
 <p><strong>QPhase</strong> is a lightweight, modular simulation toolset designed for physics research. It solves a common problem in scientific computing: the repetitive rewriting of "boilerplate" code for every new experiment.</p>
-<p>!!! note "The Problem"
-    In typical physics research, we often rewrite the same supporting code:</p>
-<pre><code>*   How do I pass parameters? (Argparse/Config)
-*   How do I save results safely?
-*   How do I switch to GPU?
-*   How do I scan parameters?
-</code></pre>
+<div class="admonition note">
+<p class="admonition-title">The Problem</p>
+<p>In typical physics research, we often rewrite the same supporting code:</p>
+<ul>
+<li>How do I pass parameters? (Argparse/Config)</li>
+<li>How do I save results safely?</li>
+<li>How do I switch to GPU?</li>
+<li>How do I scan parameters?</li>
+</ul>
+</div>
 <p><strong>QPhase</strong> separates these "operational" concerns from the actual "physics". It provides a stable <strong>Shell</strong> that handles configuration, data saving, and parallel execution, allowing you to write only the <strong>Kernel</strong>—the equations of motion.</p>
 <hr />
 <h2 id="key-features">Key Features</h2>
@@ -1350,11 +1353,11 @@
 <hr />
 <h2 id="quick-start">Quick Start</h2>
 <h3 id="1-installation">1. Installation</h3>
-<pre><code class="language-bash">pip install qphase
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>qphase
+</code></pre></div>
 <h3 id="2-run-a-simulation">2. Run a Simulation</h3>
-<pre><code class="language-bash">qphase run config.yaml
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>qphase<span class="w"> </span>run<span class="w"> </span>config.yaml
+</code></pre></div>
 <hr />
 <h2 id="documentation">Documentation</h2>
 <table>

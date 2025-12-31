@@ -1375,12 +1375,12 @@
 <p>The Scheduler enforces explicit dependency contracts declared by Engines via the <code>EngineManifest</code>.</p>
 <ol>
 <li><strong>Manifest Declaration</strong>: Each Engine declares its required and optional plugins.
-    <code>python
-    class MyEngine(EngineBase):
-        manifest = EngineManifest(
-            required_plugins={"backend", "model"},
-            optional_plugins={"analyser"}
-        )</code></li>
+    <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyEngine</span><span class="p">(</span><span class="n">EngineBase</span><span class="p">):</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">manifest</span> <span class="o">=</span> <span class="n">EngineManifest</span><span class="p">(</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>        <span class="n">required_plugins</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;backend&quot;</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">},</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>        <span class="n">optional_plugins</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;analyser&quot;</span><span class="p">}</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="p">)</span>
+</code></pre></div></li>
 <li><strong>Pre-flight Check</strong>: Before any job is executed, the Scheduler validates that the job configuration provides all <code>required_plugins</code> declared by the target Engine. This prevents runtime failures due to missing dependencies.</li>
 </ol>
 <h2 id="plugin-instantiation">Plugin Instantiation</h2>
@@ -1400,15 +1400,15 @@
 <p>While the current implementation primarily supports serial execution, the underlying data structure (<code>JobList</code>) is designed as a directed acyclic graph (DAG).</p>
 <h3 id="jobresult-encapsulation">JobResult Encapsulation</h3>
 <p>The outcome of every execution is encapsulated in a <code>JobResult</code> object, which serves as the contract between the Scheduler and the reporting system.</p>
-<pre><code class="language-python">@dataclass
-class JobResult:
-    job_index: int           # Topological index
-    job_name: str            # Unique identifier
-    run_dir: Path            # Isolated output directory
-    run_id: str              # Timestamped UUID
-    success: bool            # Execution status
-    error: str | None = None # Exception trace if failed
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">JobResult</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">job_index</span><span class="p">:</span> <span class="nb">int</span>           <span class="c1"># Topological index</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">job_name</span><span class="p">:</span> <span class="nb">str</span>            <span class="c1"># Unique identifier</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">run_dir</span><span class="p">:</span> <span class="n">Path</span>            <span class="c1"># Isolated output directory</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">run_id</span><span class="p">:</span> <span class="nb">str</span>              <span class="c1"># Timestamped UUID</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">success</span><span class="p">:</span> <span class="nb">bool</span>            <span class="c1"># Execution status</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">error</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span> <span class="c1"># Exception trace if failed</span>
+</code></pre></div>
 <h2 id="parameter-scanning-logic">Parameter Scanning Logic</h2>
 <p>The Scheduler integrates with the <code>JobExpander</code> to support parameter sweeps. This process transforms a single "Job Definition" (which may contain lists of values) into multiple atomic "Job Configurations".</p>
 <h3 id="detection-mechanism">Detection Mechanism</h3>
@@ -1438,17 +1438,17 @@ class JobResult:
 <p>QPhase uses a <strong>Session-Based I/O</strong> strategy to manage execution contexts.</p>
 <h3 id="session-structure">Session Structure</h3>
 <p>Every execution command (e.g., <code>qps run ...</code>) initiates a new <strong>Session</strong>. A session acts as a container for all jobs executed in that command, providing a shared context for data exchange and logging.</p>
-<p><strong>Directory Layout:</strong></p>
-<pre><code class="language-text">runs/
-  2025-12-31T10-00-00_a1b2c3/      &lt;-- Session Root (Timestamp + Short UUID)
-    ├── session_manifest.json      &lt;-- Session Metadata &amp; State
-    ├── job_01_sde/                &lt;-- Job Directory
-    │     ├── config_snapshot.json
-    │     └── result.h5
-    └── job_02_viz/                &lt;-- Job Directory
-          ├── config_snapshot.json
-          └── plot.png
-</code></pre>
+<p><strong>Directory Layout:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>runs/
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  2025-12-31T10-00-00_a1b2c3/      &lt;-- Session Root (Timestamp + Short UUID)
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    ├── session_manifest.json      &lt;-- Session Metadata &amp; State
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    ├── job_01_sde/                &lt;-- Job Directory
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    │     ├── config_snapshot.json
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    │     └── result.h5
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    └── job_02_viz/                &lt;-- Job Directory
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>          ├── config_snapshot.json
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>          └── plot.png
+</code></pre></div></p>
 <h3 id="session-manifest">Session Manifest</h3>
 <p>The <code>session_manifest.json</code> file serves as the "brain" of the session, recording:
 - <strong>Session ID</strong>: Unique identifier.

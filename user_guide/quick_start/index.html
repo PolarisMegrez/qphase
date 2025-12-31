@@ -1234,28 +1234,28 @@
 <p>We strongly recommend using a virtual environment to keep your project dependencies clean.</p>
 <h3 id="step-1-create-a-virtual-environment">Step 1: Create a Virtual Environment</h3>
 <p>Open your terminal (PowerShell or Bash) and run:</p>
-<pre><code class="language-bash"># Create a virtual environment named '.venv'
-python -m venv .venv
-
-# Activate it
-# Windows (PowerShell):
-.venv\Scripts\Activate.ps1
-# Linux/macOS:
-source .venv/bin/activate
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Create a virtual environment named &#39;.venv&#39;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Activate it</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># Windows (PowerShell):</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>.venv<span class="se">\S</span>cripts<span class="se">\A</span>ctivate.ps1
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># Linux/macOS:</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+</code></pre></div>
 <h3 id="step-2-install-qphase">Step 2: Install QPhase</h3>
 <p>Install the package using pip:</p>
-<pre><code class="language-bash">pip install qphase
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span>qphase
+</code></pre></div>
 <h2 id="2-initialize-a-project">2. Initialize a Project</h2>
 <p>QPhase works best when you have a dedicated folder for your simulations. This keeps your configuration files and results organized.</p>
-<pre><code class="language-bash"># Create a folder for your research project
-mkdir my_research
-cd my_research
-
-# Initialize the QPhase structure
-qps init
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Create a folder for your research project</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>mkdir<span class="w"> </span>my_research
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nb">cd</span><span class="w"> </span>my_research
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># Initialize the QPhase structure</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>qps<span class="w"> </span>init
+</code></pre></div>
 <p>This creates the following folders:
 *   <code>configs/</code>: Where you tell QPhase <em>what</em> to run.
 *   <code>plugins/</code>: Where you put your custom physics code.
@@ -1263,46 +1263,46 @@ qps init
 <h2 id="3-create-your-first-job">3. Create Your First Job</h2>
 <p>A "Job" is a single simulation run. You define it in a YAML file.
 Create a new file named <code>configs/jobs/test_run.yaml</code> and paste the following:</p>
-<pre><code class="language-yaml"># configs/jobs/test_run.yaml
-name: test_run
-
-# 1. Choose the Engine (SDE Solver)
-engine:
-  sde:
-    t_end: 10.0
-    dt: 0.01
-    n_traj: 100
-
-# 2. Choose the Physics Model
-# (Here we use a built-in example model if available, or you can define your own)
-# For this example, let's assume we have a 'vdp_oscillator' model available.
-# If not, you might need to write a plugin first (see Developer Guide).
-plugins:
-  model:
-    vdp_two_mode:  # This is a built-in example model
-      D: 1.0       # Diffusion strength
-
-  backend:
-    numpy:         # Run on CPU
-      float_dtype: float64
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># configs/jobs/test_run.yaml</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">test_run</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># 1. Choose the Engine (SDE Solver)</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="nt">engine</span><span class="p">:</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">sde</span><span class="p">:</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">t_end</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.0</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="nt">dt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.01</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="nt">n_traj</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="c1"># 2. Choose the Physics Model</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="c1"># (Here we use a built-in example model if available, or you can define your own)</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="c1"># For this example, let&#39;s assume we have a &#39;vdp_oscillator&#39; model available.</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="c1"># If not, you might need to write a plugin first (see Developer Guide).</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="nt">plugins</span><span class="p">:</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="w">    </span><span class="nt">vdp_two_mode</span><span class="p">:</span><span class="w">  </span><span class="c1"># This is a built-in example model</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">      </span><span class="nt">D</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0</span><span class="w">       </span><span class="c1"># Diffusion strength</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="w">    </span><span class="nt">numpy</span><span class="p">:</span><span class="w">         </span><span class="c1"># Run on CPU</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="w">      </span><span class="nt">float_dtype</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">float64</span>
+</code></pre></div>
 <h2 id="4-run-the-simulation">4. Run the Simulation</h2>
 <p>Now, tell QPhase to run the job you just defined:</p>
-<pre><code class="language-bash">qps run test_run
-</code></pre>
-<p>You should see a progress bar:</p>
-<pre><code class="language-text">[INFO] Loading 1 configuration file(s)
-[INFO] Starting job execution
-[test_run] 100.0% ~00:00
-[INFO] All 1 jobs completed successfully
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>qps<span class="w"> </span>run<span class="w"> </span>test_run
+</code></pre></div>
+<p>You should see a progress bar:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>[INFO] Loading 1 configuration file(s)
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>[INFO] Starting job execution
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>[test_run] 100.0% ~00:00
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>[INFO] All 1 jobs completed successfully
+</code></pre></div></p>
 <h2 id="5-check-the-results">5. Check the Results</h2>
 <p>Look in the <code>runs/</code> folder. You will see a new directory with a timestamp:</p>
-<pre><code class="language-text">runs/
-└── 2025-12-29T12-00-00Z_test_run/
-    ├── config_snapshot.json  # The exact settings used
-    └── results.h5            # The simulation data (format depends on engine)
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>runs/
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>└── 2025-12-29T12-00-00Z_test_run/
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    ├── config_snapshot.json  # The exact settings used
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    └── results.h5            # The simulation data (format depends on engine)
+</code></pre></div>
 <p><strong>Congratulations!</strong> You have successfully run a reproducible physics simulation without writing any boilerplate code.</p>
 
 

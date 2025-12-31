@@ -1132,21 +1132,21 @@
 <p>QPhase implements a structured error handling strategy designed to provide clear, actionable feedback to users while maintaining robust execution control for the scheduler.</p>
 <h2 id="exception-hierarchy">Exception Hierarchy</h2>
 <p>All framework-specific exceptions inherit from a common base class, <code>QPhaseError</code>. This allows the top-level CLI wrapper to catch known errors and display clean messages without printing stack traces (unless verbose mode is enabled).</p>
-<pre><code class="language-python">class QPhaseError(Exception):
-    &quot;&quot;&quot;Base class for all QPhase exceptions.&quot;&quot;&quot;
-
-class QPhaseConfigError(QPhaseError):
-    &quot;&quot;&quot;Raised when configuration validation fails.&quot;&quot;&quot;
-
-class QPhasePluginError(QPhaseError):
-    &quot;&quot;&quot;Raised when plugin loading or instantiation fails.&quot;&quot;&quot;
-
-class QPhaseRuntimeError(QPhaseError):
-    &quot;&quot;&quot;Raised during simulation execution.&quot;&quot;&quot;
-
-class QPhaseIOError(QPhaseError):
-    &quot;&quot;&quot;Raised during file input/output operations.&quot;&quot;&quot;
-</code></pre>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">QPhaseError</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Base class for all QPhase exceptions.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">QPhaseConfigError</span><span class="p">(</span><span class="n">QPhaseError</span><span class="p">):</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Raised when configuration validation fails.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">QPhasePluginError</span><span class="p">(</span><span class="n">QPhaseError</span><span class="p">):</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Raised when plugin loading or instantiation fails.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="k">class</span><span class="w"> </span><span class="nc">QPhaseRuntimeError</span><span class="p">(</span><span class="n">QPhaseError</span><span class="p">):</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Raised during simulation execution.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="k">class</span><span class="w"> </span><span class="nc">QPhaseIOError</span><span class="p">(</span><span class="n">QPhaseError</span><span class="p">):</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Raised during file input/output operations.&quot;&quot;&quot;</span>
+</code></pre></div>
 <h2 id="error-propagation">Error Propagation</h2>
 <ol>
 <li><strong>Validation Phase</strong>: Errors during configuration loading (e.g., missing fields, invalid types) are caught early and raised as <code>QPhaseConfigError</code>. The CLI displays the specific validation message from Pydantic.</li>
