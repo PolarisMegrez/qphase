@@ -2,78 +2,90 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://polarismegrez.github.io/qphase/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/api/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/api/core/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
+    </url>
+    <url>
+         <loc>https://polarismegrez.github.io/qphase/api/sde/</loc>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/dev_guide/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/dev_guide/architecture/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/dev_guide/backend/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/dev_guide/cli/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/dev_guide/configuration/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/dev_guide/error_handling/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/dev_guide/faq/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/dev_guide/plugin_development/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/dev_guide/protocols/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/dev_guide/registry/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/dev_guide/scheduler/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/user_guide/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/user_guide/cli/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/user_guide/configuration/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/user_guide/installation/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
     </url>
     <url>
          <loc>https://polarismegrez.github.io/qphase/user_guide/quick_start/</loc>
-         <lastmod>2025-12-29</lastmod>
+         <lastmod>2025-12-31</lastmod>
+    </url>
+    <url>
+         <loc>https://polarismegrez.github.io/qphase/user_guide/sde_modeling/</loc>
+         <lastmod>2025-12-31</lastmod>
+    </url>
+    <url>
+         <loc>https://polarismegrez.github.io/qphase/user_guide/sde_simulation/</loc>
+         <lastmod>2025-12-31</lastmod>
     </url>
 </urlset>

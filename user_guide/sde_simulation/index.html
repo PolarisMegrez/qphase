@@ -6,15 +6,15 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Developer FAQ">
       
       
+        <link rel="canonical" href="https://polarismegrez.github.io/qphase/user_guide/sde_simulation/">
       
-        <link rel="canonical" href="https://polarismegrez.github.io/qphase/dev_guide/faq/">
+      
+        <link rel="prev" href="../sde_modeling/">
       
       
-        <link rel="prev" href="../scheduler/">
-      
+        <link rel="next" href="../../api/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>FAQ - QPhase Documentation</title>
+        <title>SDE Simulation - QPhase Documentation</title>
       
     
     
@@ -66,7 +66,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#developer-faq" class="md-skip">
+        <a href="#sde-simulation-guide" class="md-skip">
           Skip to content
         </a>
       
@@ -102,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              FAQ
+              SDE Simulation
             
           </span>
         </div>
@@ -222,18 +222,20 @@
       
   
   
+    
   
   
+  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -254,7 +256,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -272,7 +274,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user_guide/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -300,7 +302,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user_guide/installation/" class="md-nav__link">
+      <a href="../installation/" class="md-nav__link">
         
   
   
@@ -328,7 +330,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user_guide/quick_start/" class="md-nav__link">
+      <a href="../quick_start/" class="md-nav__link">
         
   
   
@@ -356,7 +358,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user_guide/cli/" class="md-nav__link">
+      <a href="../cli/" class="md-nav__link">
         
   
   
@@ -384,7 +386,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user_guide/configuration/" class="md-nav__link">
+      <a href="../configuration/" class="md-nav__link">
         
   
   
@@ -412,7 +414,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user_guide/sde_modeling/" class="md-nav__link">
+      <a href="../sde_modeling/" class="md-nav__link">
         
   
   
@@ -437,10 +439,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../user_guide/sde_simulation/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDE Simulation
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -456,6 +485,115 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#integrators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integrators
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Integrators">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#available-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Available Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adaptive-stepping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adaptive Stepping
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#defining-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defining Models
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -610,20 +748,18 @@
       
   
   
-    
   
   
-  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
           <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
@@ -644,7 +780,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -662,7 +798,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../dev_guide/" class="md-nav__link">
         
   
   
@@ -690,7 +826,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../architecture/" class="md-nav__link">
+      <a href="../../dev_guide/architecture/" class="md-nav__link">
         
   
   
@@ -718,7 +854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../backend/" class="md-nav__link">
+      <a href="../../dev_guide/backend/" class="md-nav__link">
         
   
   
@@ -746,7 +882,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/" class="md-nav__link">
+      <a href="../../dev_guide/cli/" class="md-nav__link">
         
   
   
@@ -774,7 +910,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/" class="md-nav__link">
+      <a href="../../dev_guide/configuration/" class="md-nav__link">
         
   
   
@@ -802,7 +938,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../error_handling/" class="md-nav__link">
+      <a href="../../dev_guide/error_handling/" class="md-nav__link">
         
   
   
@@ -830,7 +966,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../plugin_development/" class="md-nav__link">
+      <a href="../../dev_guide/plugin_development/" class="md-nav__link">
         
   
   
@@ -858,7 +994,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../protocols/" class="md-nav__link">
+      <a href="../../dev_guide/protocols/" class="md-nav__link">
         
   
   
@@ -886,7 +1022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../registry/" class="md-nav__link">
+      <a href="../../dev_guide/registry/" class="md-nav__link">
         
   
   
@@ -914,7 +1050,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../scheduler/" class="md-nav__link">
+      <a href="../../dev_guide/scheduler/" class="md-nav__link">
         
   
   
@@ -939,37 +1075,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    FAQ
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../dev_guide/faq/" class="md-nav__link">
         
   
   
@@ -985,137 +1094,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#plugin-development" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Plugin Development
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Plugin Development">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#why-is-my-plugin-not-showing-up-in-qps-list" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Why is my plugin not showing up in qps list?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#how-do-i-handle-optional-dependencies" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How do I handle optional dependencies?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-is-my-configuration-validation-failing" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Why is my configuration validation failing?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-does-my-engine-fail-with-missing-required-plugins" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Why does my Engine fail with "missing required plugins"?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#architecture-internals" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Architecture &amp; Internals
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Architecture &amp; Internals">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#what-is-the-difference-between-eager-and-lazy-registration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What is the difference between Eager and Lazy registration?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#how-does-the-registry-find-plugins" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How does the Registry find plugins?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#can-i-override-a-core-plugin" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Can I override a core plugin?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1155,55 +1133,33 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#plugin-development" class="md-nav__link">
+  <a href="#overview" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Plugin Development
+        Overview
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Plugin Development">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#why-is-my-plugin-not-showing-up-in-qps-list" class="md-nav__link">
+  <a href="#key-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why is my plugin not showing up in qps list?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#how-do-i-handle-optional-dependencies" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How do I handle optional dependencies?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-is-my-configuration-validation-failing" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Why is my configuration validation failing?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-does-my-engine-fail-with-missing-required-plugins" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Why does my Engine fail with "missing required plugins"?
+        Key Parameters
       
     </span>
   </a>
@@ -1216,22 +1172,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#architecture-internals" class="md-nav__link">
+  <a href="#integrators" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Architecture &amp; Internals
+        Integrators
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Architecture &amp; Internals">
+    <nav class="md-nav" aria-label="Integrators">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#what-is-the-difference-between-eager-and-lazy-registration" class="md-nav__link">
+  <a href="#available-methods" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What is the difference between Eager and Lazy registration?
+        Available Methods
       
     </span>
   </a>
@@ -1239,21 +1195,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#how-does-the-registry-find-plugins" class="md-nav__link">
+  <a href="#adaptive-stepping" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How does the Registry find plugins?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#can-i-override-a-core-plugin" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Can I override a core plugin?
+        Adaptive Stepping
       
     </span>
   </a>
@@ -1262,6 +1207,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#defining-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defining Models
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1282,51 +1238,99 @@
 
 
 
-<h1 id="developer-faq">Developer FAQ</h1>
-<p>This guide addresses common questions and issues encountered when developing plugins for QPhase.</p>
-<h2 id="plugin-development">Plugin Development</h2>
-<h3 id="why-is-my-plugin-not-showing-up-in-qps-list">Why is my plugin not showing up in <code>qps list</code>?</h3>
-<p>If your plugin is not appearing in the registry, check the following:</p>
-<ol>
-<li><strong>Entry Point Configuration</strong>: Ensure your <code>pyproject.toml</code> has the correct entry point group <code>[project.entry-points.qphase]</code>.</li>
-<li><strong>Installation</strong>: Did you install your package? If you are developing locally, use <code>pip install -e .</code> to install in editable mode.</li>
-<li><strong>Namespace</strong>: Ensure your entry point key follows the <code>namespace.name</code> format (e.g., <code>"backend.my_backend"</code>).</li>
-<li><strong>Cache</strong>: QPhase caches entry points. Try reinstalling your package to refresh the metadata.</li>
-</ol>
-<h3 id="how-do-i-handle-optional-dependencies">How do I handle optional dependencies?</h3>
-<p>If your plugin requires a heavy library (like <code>torch</code> or <code>cupy</code>) that shouldn't be a hard dependency for QPhase, follow these steps:</p>
-<ol>
-<li><strong>Use Lazy Registration</strong>: Register your plugin using a dotted path string so the module isn't imported at startup.</li>
-<li><strong>Import Inside Methods</strong>: Import the heavy library inside your <code>__init__</code> or <code>run</code> method, not at the top level of your module.</li>
-<li><strong>Fail Gracefully</strong>: Raise a clear <code>ImportError</code> if the dependency is missing.</li>
-</ol>
-<pre><code class="language-python">class MyHeavyPlugin:
-    def __init__(self, config):
-        try:
-            import torch
-        except ImportError:
-            raise ImportError(&quot;This plugin requires 'torch'. Please install it.&quot;)
+<h1 id="sde-simulation-guide">SDE Simulation Guide</h1>
+<p>The <code>qphase_sde</code> package provides a robust engine for solving Stochastic Differential Equations (SDEs) in the phase space. It is designed to be modular, allowing you to easily switch between different integration schemes and noise models.</p>
+<h2 id="overview">Overview</h2>
+<p>The SDE engine solves equations of the form:</p>
+<p>$$ d\mathbf{y} = \mathbf{a}(\mathbf{y}, t) dt + \mathbf{b}(\mathbf{y}, t) d\mathbf{W} $$</p>
+<p>where:
+*   $\mathbf{y}$ is the state vector (e.g., phase-space coordinates).
+*   $\mathbf{a}(\mathbf{y}, t)$ is the <strong>drift</strong> vector.
+*   $\mathbf{b}(\mathbf{y}, t)$ is the <strong>diffusion</strong> matrix.
+*   $d\mathbf{W}$ is the Wiener process increment (noise).</p>
+<h2 id="configuration">Configuration</h2>
+<p>To use the SDE engine, you need to specify it in your job configuration file (e.g., <code>job.yaml</code>).</p>
+<pre><code class="language-yaml">engine:
+  sde:
+    dt: 1e-3              # Time step size
+    t_max: 10.0           # Total simulation time
+    n_traj: 1000          # Number of trajectories
+    integrator:           # Integrator configuration
+      name: &quot;srk&quot;         # Use the Generic SRK solver
+      method: &quot;heun&quot;      # Specific method (heun, euler)
+      tol: 1e-4           # Tolerance for adaptive stepping
+    backend: &quot;numpy&quot;      # Backend (numpy, torch, cupy)
 </code></pre>
-<h3 id="why-is-my-configuration-validation-failing">Why is my configuration validation failing?</h3>
-<p>QPhase uses Pydantic for validation. Common issues include:</p>
+<h3 id="key-parameters">Key Parameters</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Parameter</th>
+<th style="text-align: left;">Type</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>dt</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">The base time step size. For fixed-step solvers, this is the step used. For adaptive solvers, this is the initial step guess.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>t_max</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">The end time of the simulation (starts at t=0).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>n_traj</code></td>
+<td style="text-align: left;"><code>int</code></td>
+<td style="text-align: left;">The number of parallel trajectories to simulate.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>integrator</code></td>
+<td style="text-align: left;"><code>dict</code></td>
+<td style="text-align: left;">Configuration for the numerical solver.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>backend</code></td>
+<td style="text-align: left;"><code>str</code></td>
+<td style="text-align: left;">The computational backend to use.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="integrators">Integrators</h2>
+<p>The framework supports several integration schemes via the <code>GenericSRK</code> (Stochastic Runge-Kutta) class.</p>
+<h3 id="available-methods">Available Methods</h3>
 <ul>
-<li><strong>Type Mismatch</strong>: Passing a string <code>"1e-3"</code> to a <code>float</code> field. Pydantic usually coerces this, but strict mode might fail.</li>
-<li><strong>Missing Fields</strong>: A required field (no default value) is missing from the YAML.</li>
-<li><strong>Extra Fields</strong>: Your YAML has fields not defined in the schema. Set <code>model_config = ConfigDict(extra="allow")</code> if you want to permit this.</li>
-</ul>
-<h3 id="why-does-my-engine-fail-with-missing-required-plugins">Why does my Engine fail with "missing required plugins"?</h3>
-<p>This error comes from the <code>EngineManifest</code> validation. Your Engine class likely declares a <code>manifest</code> with <code>required_plugins={"model", ...}</code>. If the user's Job Configuration does not provide a <code>model</code> plugin in the <code>plugins</code> section, the Scheduler will block execution.</p>
-<p><strong>Fix</strong>: Ensure your YAML configuration includes all plugins listed in the Engine's <code>required_plugins</code>.</p>
-<h2 id="architecture-internals">Architecture &amp; Internals</h2>
-<h3 id="what-is-the-difference-between-eager-and-lazy-registration">What is the difference between Eager and Lazy registration?</h3>
+<li>
+<p><strong><code>euler</code> (Euler-Maruyama)</strong>:</p>
 <ul>
-<li><strong>Eager (<code>register</code>)</strong>: You pass the class object directly. The class is imported immediately when the registry is initialized. This is good for core plugins but bad for startup time.</li>
-<li><strong>Lazy (<code>register_lazy</code>)</strong>: You pass a string path (<code>"pkg.mod:Class"</code>). The class is only imported when someone calls <code>registry.create()</code> or asks for its schema. This is the recommended way for most plugins.</li>
+<li><strong>Order</strong>: Strong 0.5, Weak 1.0.</li>
+<li><strong>Use case</strong>: Simple additive noise or when speed is critical and high accuracy is not required.</li>
+<li><strong>Interpretation</strong>: Ito.</li>
 </ul>
-<h3 id="how-does-the-registry-find-plugins">How does the Registry find plugins?</h3>
-<p>The Registry uses Python's standard <code>importlib.metadata</code> to scan for entry points in the <code>qphase</code> group. It does this once at startup. It also scans directories defined in <code>SystemConfig.paths.plugin_dirs</code> for <code>.qphase_plugins.yaml</code> files to support local, non-installed plugins.</p>
-<h3 id="can-i-override-a-core-plugin">Can I override a core plugin?</h3>
-<p>Yes. If you register a plugin with the same namespace and name as an existing one (e.g., <code>backend.numpy</code>), and set <code>overwrite=True</code> (or use a higher priority loading mechanism), your plugin will replace the core one. This allows for powerful customization but should be done with caution.</p>
+</li>
+<li>
+<p><strong><code>heun</code> (Stochastic Heun)</strong>:</p>
+<ul>
+<li><strong>Order</strong>: Strong 1.0 (approx), Weak 2.0.</li>
+<li><strong>Use case</strong>: Multiplicative noise where Stratonovich interpretation is desired.</li>
+<li><strong>Interpretation</strong>: Stratonovich.</li>
+</ul>
+</li>
+</ul>
+<h3 id="adaptive-stepping">Adaptive Stepping</h3>
+<p>The <code>srk</code> integrator supports <strong>adaptive stepping</strong> using Richardson extrapolation (step doubling). This allows the solver to automatically reduce the step size <code>dt</code> when the error is high (e.g., during fast dynamics) and increase it when the system is stable.</p>
+<p>To enable adaptive stepping, simply provide a <code>tol</code> (tolerance) parameter in the integrator config.</p>
+<pre><code class="language-yaml">integrator:
+  name: &quot;srk&quot;
+  method: &quot;heun&quot;
+  tol: 1e-5  # Enables adaptive stepping with target error 1e-5
+</code></pre>
+<p><strong>Note</strong>: Even with adaptive stepping, the engine will interpolate the results to save data at fixed intervals defined by <code>dt</code> and <code>return_stride</code>. This ensures that your output data is always on a regular time grid, simplifying analysis.</p>
+<h2 id="defining-models">Defining Models</h2>
+<p>To simulate a system, you need to define a model that implements the <code>SDEModel</code> protocol. This involves specifying the <code>drift</code> and <code>diffusion</code> functions.</p>
+<p>See the <a href="../../dev_guide/plugin_development/">Plugin Development</a> guide for details on how to write and register custom models.</p>
 
 
 
