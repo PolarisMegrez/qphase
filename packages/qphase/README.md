@@ -1,28 +1,47 @@
-# qphase
+# qphase — A Modular Toolkit for Phase-Space Simulation in Quantum Optics
 
-Typer-based command-line interface (CLI) to configure, run, and analyze phase-space SDE simulations using YAML/JSON configuration files.
+`qphase` is a small command-line tool for configuring and running phase-space simulations in quantum optics. It serves as the main entry point for the project, handling configuration loading and job execution.
 
-- Easy-to-use CLI for running and analyzing quantum optics SDE simulations
-- Supports configuration-driven workflows and batch processing
-- Generates time-series, phase portraits, and PSD plots
-- Integrates with the qphase-sde core engine
+## Features
+
+- **CLI Interface (`qps`)**: A simple command-line interface to run simulations and analysis tasks.
+- **Plugin Support**: Loads external packages (like `qphase-sde` and `qphase-viz`) to extend functionality.
+- **Session Management**: Basic job tracking with support for resuming interrupted runs and dry-run validation.
+- **Configuration**: Uses YAML/JSON files to define simulation parameters and workflows.
+- **Parameter Scanning**: Supports simple parameter sweeps (Cartesian and Zipped).
 
 ## Installation
 
-```sh
+```bash
 pip install qphase
+# Optional: Install standard backends (Numba, PyTorch)
+pip install qphase[standard]
 ```
 
-## Usage
+## Quick Start
 
-Example:
+1.  **Initialize a project**:
+    ```bash
+    qps init
+    ```
 
-```sh
-qps run sde --config configs/vdp_run.yaml
-qps analyze phase --from-run runs/<run_id>
-```
+2.  **Run a simulation**:
+    ```bash
+    qps run my_simulation
+    ```
 
-See the main project documentation for configuration file details and advanced usage.
+3.  **List available jobs**:
+    ```bash
+    qps run --list
+    ```
+
+## Project Structure
+
+This repository contains the following packages:
+- **`qphase`**: The main CLI and scheduler.
+- **`qphase-sde`**: The numerical solver for SDEs.
+- **`qphase-viz`**: Plotting utilities for simulation data.
 
 ## License
-MIT
+
+MIT License

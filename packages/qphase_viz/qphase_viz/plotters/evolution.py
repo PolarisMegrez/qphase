@@ -1,25 +1,45 @@
 """qphase_viz: Evolution Plotters
------------------------------
-
+---------------------------------------------------------
 Plotters for time-evolution data.
+
+Public API
+----------
+``TimeSeriesPlotter``
 """
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
 import numpy as np
 from qphase.backend.base import ArrayBase
 
+from ..config import TimeSeriesConfig, TimeSeriesSpec
 from .base import PlotterProtocol
 
 
 class TimeSeriesPlotter(PlotterProtocol):
     """Plots time series data (y vs t)."""
 
-    def plot(
-        self, data: ArrayBase, config: dict[str, Any], output_dir: Path, format: str
+    name: ClassVar[str] = "time_series"
+    description: ClassVar[str] = "Time Series Plotter"
+    config_schema: ClassVar[type[TimeSeriesConfig]] = TimeSeriesConfig
+
+    def __init__(self, config: TimeSeriesConfig | None = None, **kwargs: Any) -> None:
+        if config is None:
+            config = TimeSeriesConfig(**kwargs)
+        self.config = config
+
+    def plot(self, data: ArrayBase, output_dir: Path, format: str) -> list[Path]:
+        generated_files = []
+        for spec in self.config.plots:
+            generated_files.append(self._plot_single(data, spec, output_dir, format))
+        return generated_files
+
+    def _plot_single(
+        self, data: ArrayBase, spec: TimeSeriesSpec, output_dir: Path, format: str
     ) -> Path:
+        config = spec.model_dump()
         # Extract data
         # Expecting TrajectorySet: (n_traj, n_steps, n_modes)
         # or State: (n_traj, n_modes) - but State has no time axis usually?

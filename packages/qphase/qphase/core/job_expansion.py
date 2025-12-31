@@ -1,6 +1,12 @@
-"""qphase: Job Expansion Logic
----------------------------------------------------------
+"""Job Expansion Logic
+===================
+
 Handles the expansion of parameter scans into multiple job configurations.
+
+Public API
+----------
+JobExpander
+    Class for expanding jobs based on parameter scans.
 """
 
 from __future__ import annotations
@@ -15,7 +21,14 @@ from .registry import RegistryCenter
 
 
 class JobExpander:
-    """Expands jobs based on scanable parameters."""
+    """Expands jobs based on scanable parameters.
+
+    Parameters
+    ----------
+    registry : RegistryCenter
+        The registry center to look up scanable parameters.
+
+    """
 
     def __init__(self, registry: RegistryCenter):
         self.registry = registry

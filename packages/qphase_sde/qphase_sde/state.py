@@ -1,7 +1,15 @@
-"""qphase_sde: State Containers
-----------------------------
+"""State Containers
+================
+
 Unified, backend-agnostic state containers for SDE simulations.
 Inherits from qphase.backend.state.ArrayBase.
+
+Public API
+----------
+State
+    Container for a single simulation state.
+TrajectorySet
+    Container for a set of trajectories.
 """
 
 from dataclasses import dataclass
@@ -41,10 +49,12 @@ class State(ArrayBase):
 
     @property
     def n_traj(self) -> int:
+        """Get number of trajectories."""
         return int(self.data.shape[0])
 
     @property
     def n_modes(self) -> int:
+        """Get number of modes."""
         return int(self.data.shape[1])
 
     def view(self, *, modes=None, trajectories=None) -> "State":

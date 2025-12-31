@@ -1,30 +1,30 @@
 """qphase_viz: Plotter Protocol
----------------------------
-
+---------------------------------------------------------
 Defines the interface for all plotters.
+
+Public API
+----------
+``PlotterProtocol``
 """
 
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from qphase.backend.base import ArrayBase
+from qphase.core.protocols import PluginBase
 
 
 @runtime_checkable
-class PlotterProtocol(Protocol):
+class PlotterProtocol(PluginBase, Protocol):
     """Protocol for visualization plotters."""
 
-    def plot(
-        self, data: ArrayBase, config: dict[str, Any], output_dir: Path, format: str
-    ) -> Path:
-        """Render a plot based on data and configuration.
+    def plot(self, data: ArrayBase, output_dir: Path, format: str) -> list[Path]:
+        """Render plots based on data and internal configuration.
 
         Parameters
         ----------
         data : ArrayBase
             The simulation data (TrajectorySet or similar).
-        config : dict
-            The validated configuration dictionary for this specific plot.
         output_dir : Path
             Directory to save the output file.
         format : str
@@ -32,8 +32,8 @@ class PlotterProtocol(Protocol):
 
         Returns
         -------
-        Path
-            Path to the generated file.
+        list[Path]
+            Paths to the generated files.
 
         """
         ...

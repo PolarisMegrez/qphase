@@ -1,14 +1,15 @@
-"""qphase_viz: Visualization Package
---------------------------------
+"""Visualization Package
+=====================
 
-Visualization engine and plotters for qphase.
+Visualization engine and plotters for qphase, providing time-series, phase-plane,
+and power spectrum analysis visualization capabilities.
 
-Usage
------
->>> from qphase_viz import VizEngine, VizEngineConfig
->>> config = VizEngineConfig(output_dir="plots", specs=[...])
->>> engine = VizEngine(config)
->>> engine.run(data)
+Public API
+----------
+VizEngine
+    Main visualization engine.
+VizEngineConfig
+    Configuration for the visualization engine.
 """
 
 from .config import (

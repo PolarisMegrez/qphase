@@ -1,5 +1,6 @@
-"""qphase: Protocol Definitions
----------------------------------------------------------
+"""Protocol Definitions
+====================
+
 Defines the structural contracts (Protocols) that underpin the plugin architecture.
 It specifies the interfaces for configuration models (``PluginConfigBase``), plugin
 implementations (``PluginBase``), execution engines (``EngineBase``), and result
@@ -8,16 +9,14 @@ supporting duck typing for resource packages.
 
 Public API
 ----------
-``PluginConfigBase`` : Base Pydantic model for plugin configuration
-``PluginBase`` : Protocol for plugin implementation classes
-``EngineBase`` : Protocol for engine classes with run() method
-``ResultBase`` : Base class for serializable result containers
-
-Notes
------
-- These protocols define structural contracts for type checking and documentation
-- Duck typing is supported; resource packages need not inherit from them at runtime
-
+PluginConfigBase
+    Base Pydantic model for plugin configuration.
+PluginBase
+    Protocol for plugin implementation classes.
+EngineBase
+    Protocol for engine classes with run() method.
+ResultBase
+    Base class for serializable result containers.
 """
 
 from collections.abc import Callable
@@ -37,7 +36,18 @@ ProgressCallback = Callable[[float | None, float | None, str, str | None], None]
 
 @dataclass
 class EngineManifest:
-    """Manifest declaring engine dependencies."""
+    """Manifest declaring engine dependencies.
+
+    Attributes
+    ----------
+    required_plugins : set[str]
+        Required plugin types (e.g., {'backend', 'model'}).
+    optional_plugins : set[str]
+        Optional plugin types (e.g., {'integrator', 'analyzer'}).
+    defaults : dict[str, str]
+        Default plugin implementations (e.g., {'integrator': 'euler_maruyama'}).
+
+    """
 
     # Required plugin types (e.g., {'backend', 'model'})
     required_plugins: set[str]

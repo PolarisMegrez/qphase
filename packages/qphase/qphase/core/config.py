@@ -1,5 +1,6 @@
-"""qphase: Job Configuration Models
----------------------------------------------------------
+"""Job Configuration Models
+========================
+
 Defines the Pydantic models that structure job configurations, including the
 ``JobConfig`` for individual task specification and ``JobList`` for batch execution
 containers. These models provide built-in validation, default value handling, and
@@ -7,15 +8,10 @@ support for parameter scanning specifications.
 
 Public API
 ----------
-``JobConfig`` : Configuration for a single job with engine, plugins, and parameters
-``JobList`` : Container for multiple JobConfig instances
-
-Notes
------
-- Each job specifies one engine plus optional plugins (backend, model, integrator, etc.)
-- Supports parameter scanning via scanable fields for batch execution
-- Dynamic plugin types are resolved through the registry at runtime
-
+JobConfig
+    Configuration for a single job with engine, plugins, and parameters.
+JobList
+    Container for multiple JobConfig instances.
 """
 
 from typing import Any
@@ -32,15 +28,25 @@ class JobConfig(BaseModel):
     A job represents a single unit of work to be executed by a
     resource package (e.g., an SDE simulation, a visualization task).
 
-    Each job has:
-    - A name for identification
-    - A target package (sde, viz, etc.)
-    - A system configuration (can override global defaults)
-    - Dynamic plugin configurations (discovered via registry)
-    - Job-specific parameters (model-specific, task-specific)
+    Attributes
+    ----------
+    name : str
+        Unique name for this job.
+    engine : dict[str, Any]
+        Engine configuration (must include 'name' field).
+    system : SystemConfig | None
+        System configuration (overrides global if provided).
+    plugins : dict[str, dict[str, Any]]
+        Plugin configurations by type (backend, integrator, etc.).
+    params : dict[str, Any]
+        Job-specific parameters.
+    input : str | None
+        Input data source (upstream job name or file path).
+    output : str | None
+        Output destination (downstream job name or filename without extension).
+    tags : list[str]
+        Tags for job categorization.
 
-    Plugin configurations are stored as raw dictionaries and validated
-    at load time using the registry's config schemas.
     """
 
     # Basic job information
@@ -110,7 +116,14 @@ class JobConfig(BaseModel):
     )
 
     def __init__(self, **data):
-        """Initialize JobConfig and validate plugins."""
+        """Initialize JobConfig and validate plugins.
+
+        Parameters
+        ----------
+        **data : Any
+            Keyword arguments for the configuration.
+
+        """
         super().__init__(**data)
         self._validated_plugins: dict[str, Any] = {}
 
@@ -124,6 +137,22 @@ class JobConfig(BaseModel):
 
         The engine configuration should be a dictionary with engine name as key
         and engine config as value, e.g., {"sde": {"t_end": 10.0}}.
+
+        Parameters
+        ----------
+        v : dict[str, Any]
+            The engine configuration dictionary.
+
+        Returns
+        -------
+        dict[str, Any]
+            The validated engine configuration.
+
+        Raises
+        ------
+        QPhaseConfigError
+            If the configuration is invalid.
+
         """
         if not isinstance(v, dict):
             raise QPhaseConfigError("Engine configuration must be a dictionary")
@@ -293,6 +322,18 @@ class JobList(BaseModel):
 
     This model represents a collection of jobs that can be executed
     together as part of a session or workflow.
+
+    Attributes
+    ----------
+    jobs : list[JobConfig]
+        List of job configurations.
+    system : SystemConfig | None
+        Global system configuration (applied to all jobs unless overridden).
+    name : str | None
+        Name of this job list/workflow.
+    description : str | None
+        Description of this job list/workflow.
+
     """
 
     # List of jobs

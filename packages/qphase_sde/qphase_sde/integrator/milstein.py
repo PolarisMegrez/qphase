@@ -30,7 +30,7 @@ Notes
 from collections.abc import Callable
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from qphase.backend.base import BackendBase as Backend
 
 from .base import Integrator
@@ -44,8 +44,8 @@ __all__ = [
 class MilsteinConfig(BaseModel):
     """Configuration for Milstein integrator."""
 
-    dt: float = Field(1e-3, gt=0, description="Time step size")
-    adaptive: bool = Field(False, description="Use adaptive stepping (not implemented)")
+    # No specific configuration needed for standard Milstein
+    pass
 
 
 def _expand_complex_noise_backend(Lc: Any, backend: Backend) -> Any:
@@ -78,11 +78,20 @@ class Milstein(Integrator):
 
     Attributes
     ----------
+    name : str
+        Unique identifier for this integrator.
+    description : str
+        Human-readable description of this integrator.
     config_schema : type
         Configuration schema for this integrator.
 
     """
 
+    name: ClassVar[str] = "milstein"
+    description: ClassVar[str] = (
+        "Milstein integrator (commutative-noise variant). "
+        "Strong order 1.0 scheme for Itô SDEs."
+    )
     config_schema: ClassVar[type[MilsteinConfig]] = MilsteinConfig
 
     def __init__(self, config: MilsteinConfig | None = None, **kwargs) -> None:
@@ -113,7 +122,7 @@ class Milstein(Integrator):
         return self._contract_fn(backend, L, dW)
 
     def step(
-        self, y: Any, t: float, dt: float, model: Any, dW: Any, backend: Backend
+        self, y: Any, t: float, dt: float, model: Any, noise: Any, backend: Backend
     ) -> Any:
         """Compute one-step increment ``dy`` using the Milstein scheme.
 
@@ -137,8 +146,8 @@ class Milstein(Integrator):
         model : Any
             Object providing ``drift(y, t, params)`` and ``diffusion(y, t, params)``
             evaluated on ``y``; may define ``noise_basis`` in {'real','complex'}.
-        dW : Any
-            Noise increment array with shape ``(n_traj, M)`` (real).
+        noise : Any
+            Noise increment array (dW) with shape ``(n_traj, M)`` (real).
             Note: In this version, dW is expected to be Gaussian noise
             scaled by sqrt(dt).
             The engine is responsible for generating this noise.
@@ -155,6 +164,7 @@ class Milstein(Integrator):
         >>> # dy = milstein.step(y, t, dt, model, dW, backend)  # doctest: +SKIP
 
         """
+        dW = noise
         a = model.drift(y, t, model.params)  # (T, N)
         L = model.diffusion(y, t, model.params)  # (T, N, M_b)
 
@@ -186,3 +196,28 @@ class Milstein(Integrator):
         except Exception:
             # Shape/capability mismatch — fall back to EM increment
             return dy
+
+    def supports_adaptive_step(self) -> bool:
+        return False
+
+    def reset(self) -> None:
+        """Reset internal caches (no-op for Milstein)."""
+        self._contract_fn = None
+
+    def step_adaptive(
+        self,
+        y: Any,
+        t: float,
+        dt: float,
+        tol: float,
+        model: Any,
+        noise: Any,
+        backend: Backend,
+        rng: Any = None,
+    ) -> tuple[Any, float, float, float]:
+        """Adaptive stepping not supported by Milstein."""
+        raise NotImplementedError("Milstein does not support adaptive stepping")
+
+    def supports_strided_state(self) -> bool:
+        """Strided state not supported by Milstein."""
+        return False

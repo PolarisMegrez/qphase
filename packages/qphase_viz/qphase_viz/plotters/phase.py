@@ -1,25 +1,104 @@
-"""qphase_viz: Phase Plane Plotters
--------------------------------
+"""Phase Plane Plotters
+====================
 
 Plotters for phase space correlations.
+
+Public API
+----------
+PhasePlanePlotter
+    Plots phase plane data (Im vs Re or Ch_j vs Ch_i).
 """
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
 import numpy as np
 from qphase.backend.base import ArrayBase
 
+from ..config import PhasePlaneConfig, PhasePlaneSpec
 from .base import PlotterProtocol
 
 
 class PhasePlanePlotter(PlotterProtocol):
-    """Plots phase plane data (Im vs Re or Ch_j vs Ch_i)."""
+    """Plots phase plane data (Im vs Re or Ch_j vs Ch_i).
 
-    def plot(
-        self, data: ArrayBase, config: dict[str, Any], output_dir: Path, format: str
+    Attributes
+    ----------
+    name : ClassVar[str]
+        The name of the plotter ("phase_plane").
+    description : ClassVar[str]
+        A description of the plotter.
+    config_schema : ClassVar[type[PhasePlaneConfig]]
+        The configuration schema for this plotter.
+
+    """
+
+    name: ClassVar[str] = "phase_plane"
+    description: ClassVar[str] = "Phase Plane Plotter"
+    config_schema: ClassVar[type[PhasePlaneConfig]] = PhasePlaneConfig
+
+    def __init__(self, config: PhasePlaneConfig | None = None, **kwargs: Any) -> None:
+        """Initialize the PhasePlanePlotter.
+
+        Parameters
+        ----------
+        config : PhasePlaneConfig | None, optional
+            The configuration object.
+        **kwargs : Any
+            Keyword arguments to create a configuration if none is provided.
+
+        """
+        if config is None:
+            config = PhasePlaneConfig(**kwargs)
+        self.config = config
+
+    def plot(self, data: ArrayBase, output_dir: Path, format: str) -> list[Path]:
+        """Generate phase plane plots from the provided data.
+
+        Parameters
+        ----------
+        data : ArrayBase
+            The simulation data.
+        output_dir : Path
+            The directory to save the plots to.
+        format : str
+            The file format for the plots (e.g., "png", "pdf").
+
+        Returns
+        -------
+        list[Path]
+            A list of paths to the generated plot files.
+
+        """
+        generated_files = []
+        for spec in self.config.plots:
+            generated_files.append(self._plot_single(data, spec, output_dir, format))
+        return generated_files
+
+    def _plot_single(
+        self, data: ArrayBase, spec: PhasePlaneSpec, output_dir: Path, format: str
     ) -> Path:
+        """Generate a single phase plane plot.
+
+        Parameters
+        ----------
+        data : ArrayBase
+            The simulation data.
+        spec : PhasePlaneSpec
+            The specification for the single plot.
+        output_dir : Path
+            The directory to save the plot to.
+        format : str
+            The file format for the plot.
+
+        Returns
+        -------
+        Path
+            The path to the generated plot file.
+
+        """
+        config = spec.model_dump()
         # Expecting TrajectorySet: (n_traj, n_steps, n_modes)
         y = data.to_numpy()
 

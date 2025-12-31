@@ -1,5 +1,6 @@
-"""qphase: Core Utilities
----------------------------------------------------------
+"""Core Utilities
+==============
+
 Provides a collection of shared utility functions used throughout the control layer.
 This includes robust YAML parsing (with fallback), deep dictionary merging and
 copying for configuration management, and helper functions for Pydantic schema
@@ -7,9 +8,12 @@ introspection.
 
 Public API
 ----------
-``load_yaml_file`` : Load YAML with error handling and fallback parser
-``deep_merge_dicts``, ``deep_copy`` : Dictionary manipulation utilities
-``extract_defaults_from_schema`` : Get default values from Pydantic model
+load_yaml
+    Load YAML with error handling and fallback parser.
+deep_merge_dicts, deep_copy
+    Dictionary manipulation utilities.
+extract_defaults_from_schema
+    Get default values from Pydantic model.
 """
 
 from __future__ import annotations
@@ -151,8 +155,10 @@ def schema_to_yaml_map(
             except Exception:
                 value = "<generated>"
         else:
-            type_str = str(field.annotation).replace("typing.", "")
-            value = f"[REQUIRED] {type_str}"
+            # Skip required fields for global.yaml generation
+            # We only want to populate defaults that can be overridden.
+            # Required fields must be provided in the job config.
+            continue
 
         data[field_name] = value
 

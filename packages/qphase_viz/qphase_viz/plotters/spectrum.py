@@ -1,25 +1,48 @@
 """qphase_viz: Spectrum Plotters
---------------------------
-
+---------------------------------------------------------
 Plotters for spectral analysis (PSD).
+
+Public API
+----------
+`PowerSpectrumPlotter` : Plots Power Spectral Density (PSD).
 """
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
 import numpy as np
+from qphase.backend.base import ArrayBase
 from scipy import signal
 
+from ..config import PowerSpectrumConfig, PowerSpectrumSpec
 from .base import PlotterProtocol
 
 
 class PowerSpectrumPlotter(PlotterProtocol):
     """Plots Power Spectral Density (PSD)."""
 
-    def plot(
-        self, data: Any, config: dict[str, Any], output_dir: Path, format: str
+    name: ClassVar[str] = "power_spectrum"
+    description: ClassVar[str] = "Power Spectrum Plotter"
+    config_schema: ClassVar[type[PowerSpectrumConfig]] = PowerSpectrumConfig
+
+    def __init__(
+        self, config: PowerSpectrumConfig | None = None, **kwargs: Any
+    ) -> None:
+        if config is None:
+            config = PowerSpectrumConfig(**kwargs)
+        self.config = config
+
+    def plot(self, data: ArrayBase, output_dir: Path, format: str) -> list[Path]:
+        generated_files = []
+        for spec in self.config.plots:
+            generated_files.append(self._plot_single(data, spec, output_dir, format))
+        return generated_files
+
+    def _plot_single(
+        self, data: ArrayBase, spec: PowerSpectrumSpec, output_dir: Path, format: str
     ) -> Path:
+        config = spec.model_dump()
         fig, ax = plt.subplots(figsize=config["figsize"], dpi=config["dpi"])
         channels = config["channels"]
         scale = config["scale"]
@@ -31,13 +54,6 @@ class PowerSpectrumPlotter(PlotterProtocol):
             # data['axis'] shape: (n_freq,)
             f = data["axis"]
             Pxx_all = data["psd"]
-
-            # Map channels to columns in Pxx_all
-            # Assuming channels correspond to indices in Pxx_all
-            # But wait, Pxx_all has n_modes columns.
-            # If the analysis was run for specific modes, we need to know which
-            # column corresponds to which mode. The analysis result should
-            # probably include 'modes' list.
 
             available_modes = data.get("modes", list(range(Pxx_all.shape[1])))
 
@@ -132,7 +148,7 @@ class PowerSpectrumPlotter(PlotterProtocol):
             ax.set_ylim(config["ylim"])
         if config["grid"]:
             ax.grid(True, alpha=0.3, which="both")
-        if config["legend"]:
+        if config.get("legend", True):
             ax.legend()
 
         # Save

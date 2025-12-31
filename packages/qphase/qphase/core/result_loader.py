@@ -1,7 +1,14 @@
-"""qphase: Result Loader
-----------------------
+"""Result Loader
+=============
 
 Utilities for loading results from disk, primarily for resume capability.
+
+Public API
+----------
+load_result
+    Load a result from a file.
+GenericResult
+    Generic container for loaded results.
 """
 
 from dataclasses import dataclass
@@ -14,20 +21,44 @@ from .protocols import ResultProtocol
 
 @dataclass
 class GenericResult:
-    """Generic container for loaded results."""
+    """Generic container for loaded results.
+
+    Parameters
+    ----------
+    _data : Any
+        The result data.
+    _metadata : dict[str, Any]
+        Metadata associated with the result.
+
+    """
 
     _data: Any
     _metadata: dict[str, Any]
 
     @property
     def data(self) -> Any:
+        """Get the result data."""
         return self._data
 
     @property
     def metadata(self) -> dict[str, Any]:
+        """Get the result metadata."""
         return self._metadata
 
     def save(self, path: str | Path) -> None:
+        """Save the result (Not Implemented).
+
+        Parameters
+        ----------
+        path : str | Path
+            Path to save to.
+
+        Raises
+        ------
+        NotImplementedError
+            Always raises as GenericResult is read-only.
+
+        """
         raise NotImplementedError("GenericResult is read-only")
 
 

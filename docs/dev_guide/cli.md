@@ -12,8 +12,7 @@ The CLI is organized into a hierarchical command group structure, rooted at the 
 
 *   `qps` (Root)
     *   `init`: Project bootstrapping.
-    *   `run`: Simulation execution group.
-        *   `jobs`: Execute job configurations.
+    *   `run`: Simulation execution.
     *   `list`: Plugin discovery and listing.
     *   `show`: Plugin introspection.
     *   `template`: Configuration scaffolding.
@@ -44,10 +43,10 @@ While the core commands are hardcoded, the CLI architecture allows for future ex
 
 ## Integration with Scheduler
 
-The CLI acts as a thin client for the `Scheduler`. When `qps run jobs` is invoked:
+The CLI acts as a thin client for the `Scheduler`. When `qps run` is invoked:
 1.  It parses the command line arguments.
 2.  It loads the `SystemConfig`.
 3.  It instantiates the `Scheduler`.
-4.  It delegates the execution to `scheduler.run_jobs()`.
+4.  It delegates the execution to `scheduler.run()`.
 
 This separation ensures that the core execution logic is not coupled to the CLI interface, allowing simulations to be triggered programmatically (e.g., from a Jupyter notebook) if needed.

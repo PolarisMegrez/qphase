@@ -1,15 +1,13 @@
-# qphase - Modular Quantum Phase-Space Simulation Framework
+# QPhase — A Modular Toolkit for Phase-Space Simulation in Quantum Optics
 
-qphase is a high-performance, modular Python framework designed for simulating quantum optical systems using Stochastic Differential Equations (SDEs) in the phase space, decoupling the physics model from the numerical engine to allow researchers to focus on equations while the framework handles parameter scanning, parallel execution, and data management.
+QPhase is a small, research-oriented Python project for running phase-space simulations in quantum optics. The main goal is to reduce repeated “boilerplate” work (configuration, parameter sweeps, and result saving) so you can focus on the model equations.
 
 **Authors: Yu Xue-Hao (University of Chinese Academy of Sciences, UCAS)**
 
-- Modular architecture separates Core orchestration, Physics Engine, and Visualization tools.
-- Plugin-based system supports extensible Backends (NumPy, PyTorch, CuPy), Integrators, and Models.
-- Configuration-driven simulations ensure full reproducibility via declarative YAML files.
-- High-performance execution is achieved through GPU acceleration and JIT compilation support.
-- Automated workflow manages parameter scanning, job scheduling, and result persistence.
-- Type-safe design relies on robust Protocols and Pydantic validation for reliability.
+- Modular structure separates the CLI/scheduler, the SDE engine, and plotting utilities.
+- Plugin-based design allows different backends and engines to be added over time.
+- Configuration-driven runs save a snapshot of the exact configuration used.
+- Built-in helpers for parameter sweeps and organized run output.
 
 ## Installation
 
@@ -42,7 +40,7 @@ pip install packages/qphase packages/qphase_sde packages/qphase_viz
 
 ## Physical Foundations
 
-The framework solves Stochastic Differential Equations (SDEs) derived from quantum master equations using phase-space representations such as the Positive-P or Wigner distributions. This approach maps quantum dynamics onto classical stochastic trajectories, enabling efficient simulation of high-dimensional systems.
+QPhase currently focuses on SDE-based phase-space methods commonly used in quantum optics. The long-term goal is to expand support around phase-space representations and quantum-optics system workflows, while keeping the “Shell vs Kernel” separation (operational tooling vs. physics model).
 
 ## Module Overview
 
@@ -80,16 +78,16 @@ params:
 output: "results/demo_run"
 ```
 
-Run the simulation using the CLI:
+Run the simulation using the CLI (assuming the config is in `configs/jobs/`):
 
 ```powershell
-qps run simulation.yaml
+qps run quick_start_demo
 ```
 
 ## Notes
 
 - Python 3.10 or higher is required.
-- Reproducibility is guaranteed for the same backend and package version.
+- Runs aim to be reproducible by recording configuration snapshots; numerical details can still depend on backend and library versions.
 - Storage guard aborts execution if estimated disk usage exceeds the default 1 GiB limit.
 
 ## Acknowledgements and License

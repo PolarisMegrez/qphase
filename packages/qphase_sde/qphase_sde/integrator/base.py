@@ -79,7 +79,7 @@ class Integrator(Protocol):
         t: float,
         dt: float,
         model: "SDEModel",
-        noise: "NoiseSpec",
+        noise: Any,
         backend: "BackendBase",
     ) -> Any:
         """Compute one-step increment ``dy`` without mutating inputs.
@@ -94,8 +94,8 @@ class Integrator(Protocol):
             Time step size (positive).
         model : SDEModel
             SDE model providing drift and diffusion.
-        noise : NoiseSpec
-            Noise specification for the integration.
+        noise : Any
+            Noise specification or increment (dW) for the integration.
         backend : BackendBase
             Active backend providing array operations.
 
@@ -103,6 +103,46 @@ class Integrator(Protocol):
         -------
         Any
             Increment ``dy`` with the same shape as ``y``.
+
+        """
+        ...
+
+    def step_adaptive(
+        self,
+        y: Any,
+        t: float,
+        dt: float,
+        tol: float,
+        model: "SDEModel",
+        noise: "NoiseSpec",
+        backend: "BackendBase",
+        rng: Any = None,
+    ) -> tuple[Any, float, float, float]:
+        """Perform one adaptive step (optional).
+
+        Parameters
+        ----------
+        y : Any
+            State array.
+        t : float
+            Current time.
+        dt : float
+            Proposed step size.
+        tol : float
+            Error tolerance.
+        model : SDEModel
+            Model definition.
+        noise : NoiseSpec
+            Noise specification.
+        backend : BackendBase
+            Backend for array ops.
+        rng : Any, optional
+            Random number generator state/object.
+
+        Returns
+        -------
+        tuple[Any, float, float, float]
+            (y_next, t_next, dt_next, error)
 
         """
         ...

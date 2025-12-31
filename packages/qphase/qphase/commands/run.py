@@ -7,8 +7,8 @@ for displaying available engine packages that can be used in job configurations.
 
 Public API
 ----------
-``list`` : List available engine packages with descriptions
-``jobs`` : Execute job configurations from YAML/JSON files
+`list` : List available engine packages with descriptions.
+`jobs` : Execute job configurations from YAML/JSON files.
 """
 
 import sys
@@ -32,6 +32,26 @@ from qphase.core.registry import discovery, registry
 from qphase.core.system_config import load_system_config
 
 app = typer.Typer()
+
+
+def _list_engines():
+    """List available engine packages."""
+    # Ensure plugins are discovered
+    discovery.discover_plugins()
+    discovery.discover_local_plugins()
+
+    # Get all engine plugins
+    engines = registry.list(namespace="engine")
+
+    if not engines:
+        typer.echo("No engine packages found.")
+        return
+
+    typer.echo("Available Engines:")
+    for engine_name in sorted(engines.keys()):
+        typer.echo(f"  - {engine_name}")
+
+    typer.echo(f"\nTotal: {len(engines)} engine package(s)")
 
 
 @app.command()
@@ -77,6 +97,11 @@ def jobs(
         qps run jobs --verbose my_job
 
     """
+    # Handle "list" argument as a command to list engines
+    if job_name == "list":
+        _list_engines()
+        return
+
     # Configure logging
     configure_logging(
         verbose=verbose,
@@ -211,19 +236,7 @@ def _make_run_dir_callback():
 @app.command()
 def list():
     """List available engine packages that can be used in job configurations."""
-    # Ensure plugins are discovered
-    discovery.discover_plugins()
-    discovery.discover_local_plugins()
+    _list_engines()
 
-    # Get all engine plugins
-    engines = registry.list(namespace="engine")
 
-    if not engines:
-        typer.echo("No engine packages found.")
-        return
-
-    typer.echo("Available Engines:")
-    for engine_name in sorted(engines.keys()):
-        typer.echo(f"  - {engine_name}")
-
-    typer.echo(f"\nTotal: {len(engines)} engine package(s)")
+run_command = jobs

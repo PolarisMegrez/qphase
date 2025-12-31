@@ -48,6 +48,7 @@ An SDE model typically implements `drift` and `diffusion` methods.
 
 ```python
 from typing import Any, ClassVar
+from qphase.backend.xputil import get_xp
 
 class MyModel:
     # Metadata for the Registry
@@ -55,31 +56,33 @@ class MyModel:
     description: ClassVar[str] = "Kerr oscillator with additive noise"
     config_schema: ClassVar[type] = MyModelConfig
 
-    def __init__(self, config: MyModelConfig, backend: Any):
+    def __init__(self, config: MyModelConfig, **kwargs: Any):
         self.cfg = config
-        self.xp = backend  # Abstract backend (numpy/torch/cupy)
+        # Backend is inferred from data in drift/diffusion
 
-    def drift(self, t: float, state: Any) -> Any:
+    def drift(self, state: Any, t: float, params: dict) -> Any:
         """
         Calculate the deterministic drift vector: A(X, t)
         dx = A(X, t)dt + B(X, t)dW
         """
+        xp = get_xp(state)
         x = state
         chi = self.cfg.chi
         kappa = self.cfg.kappa
 
-        # Use self.xp for tensor operations
+        # Use xp for tensor operations
         # -1j * chi * |x|^2 * x - kappa * x
-        term1 = -1j * chi * (self.xp.abs(x)**2) * x
+        term1 = -1j * chi * (xp.abs(x)**2) * x
         term2 = -kappa * x
         return term1 + term2
 
-    def diffusion(self, t: float, state: Any) -> Any:
+    def diffusion(self, state: Any, t: float, params: dict) -> Any:
         """
         Calculate the diffusion matrix: B(X, t)
         """
+        xp = get_xp(state)
         # Additive noise: returns a scalar or constant tensor
-        return self.xp.sqrt(self.cfg.kappa)
+        return xp.sqrt(self.cfg.kappa)
 ```
 
 ### Example: Analyser Implementation
@@ -88,26 +91,33 @@ Analysers process the raw simulation results.
 
 ```python
 from typing import Any, ClassVar
-# Note: AnalyserProtocol is a reference, you don't strictly need to inherit it
-# but it helps with type checking.
+from qphase.backend.base import BackendBase
+from qphase.core.protocols import ResultProtocol
+from qphase_sde.result import SDEResult
 
 class MyAnalyser:
     name: ClassVar[str] = "my_analyser"
     description: ClassVar[str] = "Calculates mean photon number"
     config_schema: ClassVar[type] = MyAnalyserConfig
 
-    def __init__(self, config: MyAnalyserConfig, backend: Any):
+    def __init__(self, config: MyAnalyserConfig, **kwargs: Any):
         self.cfg = config
-        self.xp = backend
 
-    def analyze(self, result: Any) -> dict[str, Any]:
+    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         """
         Process the simulation result.
         """
         # Example: Calculate mean of trajectory
-        # result.trajectory is expected to be a tensor
-        mean_val = self.xp.mean(result.trajectory, axis=0)
-        return {"mean_photon_number": self.xp.abs(mean_val)**2}
+        # data is expected to be a tensor or TrajectorySet
+        if hasattr(data, "data"):
+            traj = data.data
+        else:
+            traj = data
+
+        mean_val = backend.mean(traj, axis=0)
+        result_data = backend.abs(mean_val)**2
+
+        return SDEResult(trajectory=result_data, kind="trajectory")
 ```
 
 ### Example: Engine Implementation with Manifest

@@ -1,11 +1,18 @@
-"""Engine Class (v0.2 Architecture)
-----------------------------------
+"""SDE Engine
+==========
 
 Object-oriented wrapper around the core simulation logic that supports
 dependency injection of backend and integrator via constructor.
 
 The Engine class now contains the full simulation logic, making the
 functional run() interface a simple wrapper for backward compatibility.
+
+Public API
+----------
+Engine
+    Main simulation engine class.
+EngineConfig
+    Configuration model for the engine.
 """
 
 import time as _time
@@ -26,13 +33,16 @@ __all__ = ["Engine", "EngineConfig"]
 
 
 class EngineConfig(BaseModel):
-    """Configuration for the SDE Engine."""
+    """Configuration for the SDE Engine.
 
-    dt: float = Field(
-        1e-3,
-        description="Time step size",
-        json_schema_extra={"scanable": True},
-    )
+    Organized into logical groups:
+    1. Time Domain: t0, t1, dt
+    2. Ensemble: n_traj, seed, ic
+    3. Adaptive Stepping: adaptive, atol, rtol, min_dt, max_dt
+    4. Output Control: save_stride
+    """
+
+    # --- Time Domain ---
     t0: float = Field(
         0.0,
         description="Start time",
@@ -43,11 +53,13 @@ class EngineConfig(BaseModel):
         description="End time",
         json_schema_extra={"scanable": True},
     )
-    t_end: float | None = Field(
-        None,
-        description="End time (alias for t1)",
+    dt: float = Field(
+        1e-3,
+        description="Time step size (initial step for adaptive)",
         json_schema_extra={"scanable": True},
     )
+
+    # --- Ensemble ---
     n_traj: int = Field(
         1,
         description="Number of trajectories",
@@ -60,7 +72,40 @@ class EngineConfig(BaseModel):
     )
     ic: Any | None = Field(
         None,
-        description="Initial conditions",
+        description="Initial conditions (list or array)",
+        json_schema_extra={"scanable": True},
+    )
+
+    # --- Adaptive Stepping ---
+    adaptive: bool = Field(
+        False,
+        description="Enable adaptive stepping (if supported by integrator)",
+        json_schema_extra={"scanable": True},
+    )
+    atol: float = Field(
+        1e-6,
+        description="Absolute tolerance for adaptive stepping",
+        json_schema_extra={"scanable": True},
+    )
+    rtol: float = Field(
+        1e-3,
+        description="Relative tolerance for adaptive stepping",
+        json_schema_extra={"scanable": True},
+    )
+    min_dt: float = Field(
+        1e-9,
+        description="Minimum time step for adaptive stepping",
+    )
+    max_dt: float = Field(
+        1.0,
+        description="Maximum time step for adaptive stepping",
+    )
+
+    # --- Output Control ---
+    save_stride: int = Field(
+        1,
+        ge=1,
+        description="Save every N-th step to the result trajectory",
     )
 
     class ConfigSchema:
@@ -243,6 +288,7 @@ class Engine(EngineBase):
             time=time_cfg,
             n_traj=self.config.n_traj,
             seed=self.config.seed,
+            return_stride=self.config.save_stride,
             progress_cb=sde_progress_cb,
         )
 
@@ -444,62 +490,94 @@ class Engine(EngineBase):
         next_report_time = start_time + max(0.1, float(progress_interval_seconds))
         s_ema = None
         alpha = 0.2
-        warmup_steps_thr = max(0, int(warmup_min_steps))
         warmup_time_thr = max(0.0, float(warmup_min_seconds))
 
         # Main simulation loop
-        for k in range(1, steps + 1):
-            # Sample noise increment: dW ~ N(0, dt)
-            # rng must be set by this point
-            assert rng is not None, "RNG not initialized"
-            dW = be.randn(rng, (state.n_traj, model.noise_dim), dtype=float) * (dt**0.5)
+        t_end = t0 + steps * dt
+        save_dt = dt * rs
+        next_save_time = t0 + save_dt
 
-            # Integrate one step
-            dy = integrator.step(state.data, t, dt, model, dW, be)
+        # Adaptive stepping setup
+        use_adaptive = False
+        noise_spec = None
+        if (
+            hasattr(integrator, "supports_adaptive_step")
+            and integrator.supports_adaptive_step()
+        ):  # noqa: E501
+            use_adaptive = True
+            tol = getattr(integrator, "tol", 1e-3)
+            noise_spec = NoiseSpec(kind="independent", dim=model.noise_dim)
 
-            state = State(data=state.data + dy, t=t + dt, meta=state.meta)
-            t += dt
+        current_dt = dt
+        k = 0
 
-            # Save data at stride intervals
-            if (k % rs) == 0:
-                out[:, keep_counter, :] = state.data
+        while t < t_end - 1e-12:
+            k += 1
+            state_prev = state
+
+            if use_adaptive:
+                assert noise_spec is not None
+                y_next, t_next, next_dt, error = integrator.step_adaptive(
+                    state.data, t, current_dt, tol, model, noise_spec, be, rng
+                )
+                state = State(data=y_next, t=t_next, meta=state.meta)
+                t = t_next
+                current_dt = next_dt
+            else:
+                assert rng is not None, "RNG not initialized"
+                dW = be.randn(rng, (state.n_traj, model.noise_dim), dtype=float) * (
+                    current_dt**0.5
+                )
+                dy = integrator.step(state.data, t, current_dt, model, dW, be)
+                state = State(data=state.data + dy, t=t + current_dt, meta=state.meta)
+                t += current_dt
+
+            # Save data (Interpolation)
+            while t >= next_save_time - 1e-12 and keep_counter < n_keep:
+                if t > state_prev.t + 1e-12:
+                    frac = (next_save_time - state_prev.t) / (t - state_prev.t)
+                    frac = max(0.0, min(1.0, frac))
+                    y_interp = state_prev.data + (state.data - state_prev.data) * frac
+                else:
+                    y_interp = state.data
+
+                out[:, keep_counter, :] = y_interp
                 keep_counter += 1
+                next_save_time += save_dt
 
             # Progress reporting
             if progress_cb is not None:
                 now = _time.monotonic()
                 if now >= next_report_time:
+                    progress = (t - t0) / (t_end - t0)
+                    progress = max(0.0, min(1.0, progress))
+
                     steps_delta = k - last_report_step
                     if steps_delta > 0:
                         dt_wall = now - (
-                            last_report_time
-                            if last_report_time is not None
-                            else start_time
+                            last_report_time if last_report_time else start_time
                         )
                         s_inst = dt_wall / steps_delta
-                        if s_ema is None:
-                            s_ema = s_inst
-                        else:
-                            s_ema = alpha * s_inst + (1.0 - alpha) * s_ema
+                        s_ema = (
+                            s_inst
+                            if s_ema is None
+                            else alpha * s_inst + (1.0 - alpha) * s_ema
+                        )
+
                     last_report_step = k
                     last_report_time = now
                     next_report_time = now + max(0.1, float(progress_interval_seconds))
 
-                    # ETA estimation with warm-up
-                    eta = float("nan")
                     elapsed = now - start_time
-                    if (
-                        s_ema is not None
-                        and k >= warmup_steps_thr
-                        and elapsed >= warmup_time_thr
-                    ):
-                        remaining = max(0, steps - k)
-                        eta = remaining * float(s_ema)
+                    eta = float("nan")
+                    if progress > 0 and elapsed >= warmup_time_thr:
+                        eta = elapsed / progress * (1 - progress)
 
                     try:
-                        progress_cb(k, steps, eta, ic_index, ic_total)
+                        progress_cb(
+                            int(progress * steps), steps, eta, ic_index, ic_total
+                        )
                     except Exception:
-                        # Never let progress reporting break the simulation
                         pass
 
         return TrajectorySet(data=out, t0=t0, dt=dt * rs, meta={})

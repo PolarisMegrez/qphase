@@ -1,5 +1,6 @@
-"""qphase: Configuration Snapshot
----------------------------------------------------------
+"""Configuration Snapshot
+======================
+
 Manages the creation and storage of configuration snapshots to ensure reproducibility.
 It captures the complete state of a job execution, including the merged configuration,
 system settings, plugin versions, and random seeds, serializing this metadata into
@@ -7,14 +8,10 @@ the run directory for future reference.
 
 Public API
 ----------
-``ConfigSnapshot`` : Pydantic model for serializable configuration snapshots
-``SnapshotManager`` : Manager for creating, saving, loading, and comparing snapshots
-
-Notes
------
-- Snapshots are saved as JSON in run directories for reproducibility
-- Includes job config, system config, plugin versions, and timestamps
-
+ConfigSnapshot
+    Pydantic model for serializable configuration snapshots.
+SnapshotManager
+    Manager for creating, saving, loading, and comparing snapshots.
 """
 
 from __future__ import annotations
@@ -35,6 +32,20 @@ class ConfigSnapshot(BaseModel):
 
     This captures all necessary information to reproduce a job execution,
     including job configuration, system configuration, and metadata.
+
+    Attributes
+    ----------
+    snapshot_version : str
+        Version of the snapshot schema.
+    created_at : str
+        Timestamp of snapshot creation.
+    job_name : str
+        Name of the job.
+    job_config : dict[str, Any]
+        Full job configuration dictionary.
+    job_index : int
+        Index of the job in the job list.
+
     """
 
     # Snapshot metadata

@@ -1,5 +1,6 @@
-"""qphase: System Configuration Models
----------------------------------------------------------
+"""System Configuration Models
+===========================
+
 Defines the Pydantic models for system-level configuration (``system.yaml``). This
 includes settings for file paths (output directories, config locations), global
 behavior flags (auto-save), and parameter scan defaults, serving as the root
@@ -7,14 +8,10 @@ configuration context for the framework.
 
 Public API
 ----------
-``SystemConfig`` : Root configuration model with paths, auto_save, and parameter_scan
-``PathsConfig`` : Nested model for output_dir, global_file, plugin_dirs, config_dirs
-
-Notes
------
-- System config controls framework behavior independent of individual jobs
-- Supports multi-level override: package defaults → user config → environment
-
+SystemConfig
+    Root configuration model with paths, auto_save, and parameter_scan.
+PathsConfig
+    Nested model for output_dir, global_file, plugin_dirs, config_dirs.
 """
 
 import importlib.resources as ilr

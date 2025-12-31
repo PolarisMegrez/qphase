@@ -1879,7 +1879,7 @@ wheels = [
 
 [[package]]
 name = "qphase"
-version = "0.9.5"
+version = "0.10.0"
 source = { editable = "packages/qphase" }
 dependencies = [
     { name = "pydantic" },
@@ -1927,7 +1927,7 @@ provides-extras = ["dev", "numba", "cupy", "torch", "standard"]
 
 [[package]]
 name = "qphase-sde"
-version = "0.9.5"
+version = "0.10.0"
 source = { editable = "packages/qphase_sde" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1947,6 +1947,9 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+symbolic = [
+    { name = "sympy" },
+]
 viz = [
     { name = "matplotlib" },
 ]
@@ -1961,12 +1964,13 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "qphase", editable = "packages/qphase" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
+    { name = "sympy", marker = "extra == 'symbolic'", specifier = ">=1.12" },
 ]
-provides-extras = ["accel", "viz", "config", "dev"]
+provides-extras = ["accel", "viz", "config", "dev", "symbolic"]
 
 [[package]]
 name = "qphase-viz"
-version = "0.9.5"
+version = "0.10.0"
 source = { editable = "packages/qphase_viz" }
 dependencies = [
     { name = "matplotlib" },

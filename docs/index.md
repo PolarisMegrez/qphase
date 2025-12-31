@@ -1,8 +1,8 @@
 ---
-description: "Modular Quantum Phase-Space Simulation Framework"
+description: "A Modular Toolkit for Phase-Space Simulation in Quantum Optics"
 ---
 
-# QPhase - Modular Quantum Phase-Space Simulation Framework
+# QPhase - A Modular Toolkit for Phase-Space Simulation in Quantum Optics
 
 [Get Started](user_guide/quick_start.md){ .md-button .md-button--primary } [View on GitHub](https://github.com/PolarisMegrez/qphase){ .md-button }
 

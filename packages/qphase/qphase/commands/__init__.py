@@ -10,7 +10,7 @@ while providing rich, color-coded terminal output.
 
 Public API
 ----------
-`run` : Job execution commands (`qps run jobs`, `qps run list`)
+`run` : Job execution command (`qps run`)
 `list` : List plugins (`qps list`)
 `show` : Show plugin details (`qps show`)
 `template` : Generate plugin templates (`qps template`)

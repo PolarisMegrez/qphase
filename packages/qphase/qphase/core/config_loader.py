@@ -1,8 +1,30 @@
-"""Configuration loading utilities.
+"""Configuration Loader
+====================
+
+Configuration loading utilities.
 
 This module handles loading and parsing of both Job configurations and System
 configurations from YAML files. It serves as the unified entry point for
 configuration I/O, replacing the legacy `loader.py` and `system_loader.py`.
+
+Public API
+----------
+load_jobs_from_files
+    Load job configurations from a list of files.
+get_system_param
+    Get a system parameter value.
+load_global_config
+    Load the global configuration.
+save_global_config
+    Save the global configuration.
+merge_configs
+    Merge multiple configurations.
+get_config_for_job
+    Get the configuration for a specific job.
+construct_plugins_config
+    Construct plugin configurations.
+list_available_jobs
+    List available jobs in a configuration file.
 """
 
 from __future__ import annotations
@@ -22,7 +44,21 @@ logger = get_logger()
 
 
 def get_system_param(path: str, default: Any = None) -> Any:
-    """Get a specific system parameter by dot-separated path."""
+    """Get a specific system parameter by dot-separated path.
+
+    Parameters
+    ----------
+    path : str
+        Dot-separated path to the parameter.
+    default : Any, optional
+        Default value if parameter is not found, by default None.
+
+    Returns
+    -------
+    Any
+        The parameter value or default.
+
+    """
     config = load_system_config()
     current: Any = config.model_dump()
 

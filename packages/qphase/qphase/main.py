@@ -33,9 +33,7 @@ app.command("init")(init_command)
 app.command("list")(list_command)
 app.command("show")(show_command)
 app.command("template")(template_command)
-
-# Command groups
-app.add_typer(run_cmd.app, name="run", help="Run SDE simulations")
+app.command("run")(run_cmd.run_command)
 
 # Config command group
 app.add_typer(config_cmd.app, name="config", help="Manage system configuration")

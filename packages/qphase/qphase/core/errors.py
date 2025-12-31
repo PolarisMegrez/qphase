@@ -1,5 +1,6 @@
-"""qphase: Exceptions and Logging
----------------------------------------------------------
+"""Exceptions and Logging
+======================
+
 Establishes the unified exception hierarchy and logging infrastructure for the
 control layer. It defines categorized error types (e.g., ``QPhaseConfigError``,
 ``QPhasePluginError``) to facilitate precise error handling and provides a
@@ -8,18 +9,18 @@ centralized logging configuration utility that supports multiple output formats
 
 Public API
 ----------
-``QPhaseError`` : Base exception class for all framework errors
-``QPhaseConfigError``, ``QPhaseIOError``, ``QPhasePluginError`` : Specific error types
-``QPhaseSchedulerError``, ``QPhaseRuntimeError``, ``QPhaseCLIError`` : Execution errors
-``QPhaseWarning`` : Base warning class for all framework warnings
-``get_logger``, ``configure_logging`` : Logging configuration utilities
-``deprecated`` : Decorator for marking deprecated functions
-
-Notes
------
-- All exceptions inherit from QPhaseError for unified error handling
-- Logger "qphase" supports console, file, and JSON output formats
-
+QPhaseError
+    Base exception class for all framework errors.
+QPhaseConfigError, QPhaseIOError, QPhasePluginError
+    Specific error types.
+QPhaseSchedulerError, QPhaseRuntimeError, QPhaseCLIError
+    Execution errors.
+QPhaseWarning
+    Base warning class for all framework warnings.
+get_logger, configure_logging
+    Logging configuration utilities.
+deprecated
+    Decorator for marking deprecated functions.
 """
 
 import logging

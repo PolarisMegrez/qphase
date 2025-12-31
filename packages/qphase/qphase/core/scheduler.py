@@ -7,17 +7,10 @@ directory creation, and provides hooks for progress reporting and snapshot gener
 
 Public API
 ----------
-``Scheduler`` : Main class for job execution and lifecycle management
-``JobResult`` : Dataclass containing job execution results and metadata
-``JobProgressUpdate`` : Dataclass for progress callback information
-``run_jobs`` : Convenience function to execute a JobList
-
-Notes
------
-- Jobs execute serially in definition order with automatic dependency resolution
-- Parameter scanning expands jobs with scanable fields into multiple executions
-- Each job run creates a timestamped directory with configuration snapshot
-
+`Scheduler` : Main class for job execution and lifecycle management.
+`JobResult` : Dataclass containing job execution results and metadata.
+`JobProgressUpdate` : Dataclass for progress callback information.
+`run_jobs` : Convenience function to execute a JobList.
 """
 
 from __future__ import annotations
@@ -1042,7 +1035,8 @@ class Scheduler:
 
         except Exception as e:
             log.warning(f"Failed to write snapshot: {e}")
-            # Don't raise - snapshot failure shouldn't stop job execution
+
+        # Don't raise - snapshot failure shouldn't stop job execution
 
 
 def run_jobs(

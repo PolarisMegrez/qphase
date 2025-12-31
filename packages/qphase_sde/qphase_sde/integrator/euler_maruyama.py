@@ -13,7 +13,7 @@ Behavior
 from collections.abc import Callable
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from qphase.backend.base import BackendBase as Backend
 
 from .base import Integrator
@@ -27,17 +27,8 @@ __all__ = [
 class EulerMaruyamaConfig(BaseModel):
     """Configuration for Euler-Maruyama integrator."""
 
-    dt: float = Field(
-        1e-3,
-        gt=0,
-        description="Time step size",
-        json_schema_extra={"scanable": True},
-    )
-    adaptive: bool = Field(
-        False,
-        description="Use adaptive stepping (not implemented)",
-        json_schema_extra={"scanable": True},
-    )
+    # No specific configuration needed for standard EM
+    pass
 
 
 def _expand_complex_noise_backend(Lc: Any, backend: Backend) -> Any:
@@ -123,7 +114,7 @@ class EulerMaruyama(Integrator):
         self._contract_fn: Callable[[Backend, Any, Any], Any] | None = None
 
     def step(
-        self, y: Any, t: float, dt: float, model: Any, dW: Any, backend: Backend
+        self, y: Any, t: float, dt: float, model: Any, noise: Any, backend: Backend
     ) -> Any:
         """Compute one-step increment ``dy`` using the Euler–Maruyama scheme.
 
@@ -143,8 +134,8 @@ class EulerMaruyama(Integrator):
         model : Any
                 Object providing ``drift(y, t, params)`` and ``diffusion(y, t, params)``
                 evaluated on ``y``; may define ``noise_basis`` in {'real','complex'}.
-        dW : Any
-                Noise increment array with shape ``(n_traj, M)`` (real).
+        noise : Any
+                Noise increment array (dW) with shape ``(n_traj, M)`` (real).
                 Note: In this version, dW is expected to be Gaussian noise
                 scaled by sqrt(dt).
                 The engine is responsible for generating this noise.
@@ -161,6 +152,7 @@ class EulerMaruyama(Integrator):
         >>> # dy = em.step(y, t, dt, model, dW, backend)  # doctest: +SKIP
 
         """
+        dW = noise
         a = model.drift(y, t, model.params)  # (n_traj, n_modes)
         L = model.diffusion(y, t, model.params)  # (n_traj, n_modes, M_b)
         if getattr(model, "noise_basis", "real") == "complex":
@@ -191,3 +183,28 @@ class EulerMaruyama(Integrator):
                 self._contract_fn = _fallback_contract
         # Contract noise channels: (tnm, tm) -> (tn)
         return a * dt + self._contract_fn(backend, L, dW)
+
+    def supports_adaptive_step(self) -> bool:
+        return False
+
+    def reset(self) -> None:
+        """Reset internal caches (no-op for Euler-Maruyama)."""
+        self._contract_fn = None
+
+    def step_adaptive(
+        self,
+        y: Any,
+        t: float,
+        dt: float,
+        tol: float,
+        model: Any,
+        noise: Any,
+        backend: Backend,
+        rng: Any = None,
+    ) -> tuple[Any, float, float, float]:
+        """Adaptive stepping not supported by Euler-Maruyama."""
+        raise NotImplementedError("Euler-Maruyama does not support adaptive stepping")
+
+    def supports_strided_state(self) -> bool:
+        """Strided state not supported by Euler-Maruyama."""
+        return False

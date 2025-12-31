@@ -1,23 +1,39 @@
-"""qphase_sde: Models Base Protocols
-----------------------------------
-
+"""qphase_sde: Model Protocols
+---------------------------------------------------------
 Core contracts for SDE models and noise specifications.
 These protocols define the mathematical interface for stochastic differential equations.
 
 This module is dependency-light and safe to import in any environment.
+
+Public API
+----------
+`SDEModel` : Protocol for SDE models consumed by the engine.
+`DiffusiveSDEModel` : Alias for SDEModel (for backward compatibility).
+`FunctionalSDEModel` : Concrete implementation of SDEModel using functions.
+`PhaseSpaceModel` : Model defined by phase space drift and diffusion coefficients.
+`NoiseSpec` : Specification of real-valued noise channels.
+`DriftFn` : Type for drift function.
+`DiffusionFn` : Type for diffusion function.
+`JacobianFn` : Type for diffusion Jacobian function.
+`fpe_to_sde` : Convert a PhaseSpaceModel to a FunctionalSDEModel.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+import numpy as np
+
 __all__ = [
     "SDEModel",
+    "DiffusiveSDEModel",
     "FunctionalSDEModel",
+    "PhaseSpaceModel",
     "NoiseSpec",
     "DriftFn",
     "DiffusionFn",
     "JacobianFn",
+    "fpe_to_sde",
 ]
 
 
@@ -113,6 +129,10 @@ class SDEModel(Protocol):
         ...
 
 
+# Alias for backward compatibility
+DiffusiveSDEModel = SDEModel
+
+
 @dataclass
 class FunctionalSDEModel:
     """Concrete implementation of SDEModel using functions (Legacy/Functional).
@@ -171,3 +191,76 @@ class NoiseSpec:
     kind: str
     dim: int
     covariance: Any | None = None
+
+
+@dataclass
+class PhaseSpaceModel:
+    """Model defined by phase space drift and diffusion coefficients (FPE).
+
+    Attributes
+    ----------
+    name : str
+        Model name.
+    n_modes : int
+        Number of modes.
+    terms : dict[int, Callable]
+        Dictionary of terms: {1: drift_fn, 2: diffusion_fn}.
+        drift_fn(y, t, params) -> drift vector
+        diffusion_fn(y, t, params) -> diffusion coefficients (diagonal) or matrix
+    params : dict[str, Any]
+        Model parameters.
+
+    """
+
+    name: str
+    n_modes: int
+    terms: dict[int, Callable]
+    params: dict[str, Any]
+
+
+def fpe_to_sde(model: PhaseSpaceModel) -> FunctionalSDEModel:
+    """Convert a PhaseSpaceModel (FPE) to a FunctionalSDEModel (SDE).
+
+    Automatically constructs the diffusion matrix B from the diffusion coefficient D
+    using B = sqrt(D) (assuming D is diagonal/vector of coefficients).
+
+    Parameters
+    ----------
+    model : PhaseSpaceModel
+        The phase space model to convert.
+
+    Returns
+    -------
+    FunctionalSDEModel
+        The equivalent SDE model.
+
+    """
+    drift_fn = model.terms[1]
+    diff_coeff_fn = model.terms[2]
+
+    def diffusion_wrapper(y: Any, t: float, params: dict[str, Any]) -> Any:
+        # Get diffusion coefficients D2
+        d2 = diff_coeff_fn(y, t, params)
+
+        # Handle numpy/cupy agnostic
+        try:
+            import cupy as cp
+
+            xp = cp.get_array_module(y)
+        except ImportError:
+            xp = np
+
+        # Return sqrt(d2) directly.
+        # If d2 is (n_traj, n_modes), this returns (n_traj, n_modes).
+        # The engine/integrator should handle this as diagonal noise.
+        return xp.sqrt(d2)
+
+    return FunctionalSDEModel(
+        name=model.name,
+        n_modes=model.n_modes,
+        noise_basis="complex",  # Default assumption for FPE usually
+        noise_dim=model.n_modes,  # Diagonal noise
+        params=model.params,
+        drift=drift_fn,
+        diffusion=diffusion_wrapper,
+    )

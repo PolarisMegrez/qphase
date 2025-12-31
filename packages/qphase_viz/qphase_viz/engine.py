@@ -1,27 +1,21 @@
 """qphase_viz: Visualization Engine
----------------------------------
-
+---------------------------------------------------------
 Implements the EngineBase protocol for visualization tasks.
+
+Public API
+----------
+``VizEngine``, ``VizResult``
 """
 
 from pathlib import Path
 from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
-from qphase.core.errors import QPhaseConfigError, QPhaseRuntimeError
+from qphase.core.errors import QPhaseRuntimeError
 from qphase.core.protocols import EngineBase, ResultProtocol
 
-from .config import (
-    BasePlotterConfig,
-    PhasePlaneConfig,
-    PowerSpectrumConfig,
-    TimeSeriesConfig,
-    VizEngineConfig,
-)
+from .config import VizEngineConfig
 from .plotters.base import PlotterProtocol
-from .plotters.evolution import TimeSeriesPlotter
-from .plotters.phase import PhasePlanePlotter
-from .plotters.spectrum import PowerSpectrumPlotter
 
 
 def _set_default_rcparams() -> None:
@@ -38,7 +32,14 @@ def _set_default_rcparams() -> None:
 
 
 class VizResult(ResultProtocol):
-    """Result container for visualization engine."""
+    """Result container for visualization engine.
+
+    Parameters
+    ----------
+    generated_files : list[Path]
+        List of paths to generated plot files.
+
+    """
 
     def __init__(self, generated_files: list[Path]):
         self._data = generated_files
@@ -46,13 +47,20 @@ class VizResult(ResultProtocol):
 
     @property
     def data(self) -> list[Path]:
+        """Get the list of generated files."""
         return self._data
 
     @property
     def metadata(self) -> dict[str, Any]:
+        """Get the result metadata."""
         return self._metadata
 
     def save(self, path: str | Path) -> None:
+        """Save the result (No-op).
+
+        Visualization results are already saved files.
+        This method might save a manifest or index in the future.
+        """
         # Visualization results are already saved files.
         # This method might save a manifest or index.
         pass
@@ -101,60 +109,32 @@ class VizEngine(EngineBase):
         if self.config.style_overrides:
             plt.rcParams.update(self.config.style_overrides)
 
-        # Ensure data is ArrayBase-compatible or a dict (for pre-computed analysis)
-        # if not hasattr(data, "data") or not hasattr(data, "to_numpy"):
-        #      # Try to wrap or cast? For now, assume it's compatible.
-        #      pass
-
         output_dir = Path(self.config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
         generated_files = []
-        total_specs = len(self.config.specs)
 
-        for i, spec in enumerate(self.config.specs):
-            kind = spec.get("kind")
-            if not kind:
-                continue
+        # Filter for visualizer plugins
+        visualizers = [
+            p for p in self.plugins.values() if isinstance(p, PlotterProtocol)
+        ]
 
-            # Dispatch to plotter
-            plotter: PlotterProtocol | None = None
-            validated_config: dict[str, Any] = {}
+        total_plugins = len(visualizers)
 
+        for i, plotter in enumerate(visualizers):
             try:
-                if kind == "time_series":
-                    cfg: BasePlotterConfig = TimeSeriesConfig.model_validate(spec)
-                    validated_config = cfg.model_dump()
-                    plotter = TimeSeriesPlotter()
-                elif kind == "phase_plane":
-                    cfg = PhasePlaneConfig.model_validate(spec)
-                    validated_config = cfg.model_dump()
-                    plotter = PhasePlanePlotter()
-                elif kind == "power_spectrum":
-                    cfg = PowerSpectrumConfig.model_validate(spec)
-                    validated_config = cfg.model_dump()
-                    plotter = PowerSpectrumPlotter()
-                else:
-                    # Unknown plotter kind
-                    continue
-            except Exception as e:
-                raise QPhaseConfigError(f"Invalid spec for '{kind}': {e}") from e
-
-            if plotter:
                 # Execute plot
-                try:
-                    out_path = plotter.plot(
-                        data, validated_config, output_dir, self.config.format
-                    )
-                    generated_files.append(out_path)
-                except Exception as e:
-                    raise QPhaseRuntimeError(
-                        f"Plotting failed for '{kind}': {e}"
-                    ) from e
+                # The plotter is already configured via its own config
+                out_paths = plotter.plot(data, output_dir, self.config.format)
+                generated_files.extend(out_paths)
+            except Exception as e:
+                raise QPhaseRuntimeError(
+                    f"Plotting failed for '{plotter.name}': {e}"
+                ) from e
 
             # Report progress
             if progress_cb:
-                percent = (i + 1) / total_specs
-                progress_cb(percent, None, f"Rendered {kind}", "rendering")
+                percent = (i + 1) / total_plugins
+                progress_cb(percent, None, f"Ran {plotter.name}", "rendering")
 
         return VizResult(generated_files)

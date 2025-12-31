@@ -1,14 +1,21 @@
 # qphase-viz
 
-The visualization plugin for **QPhase**.
+**Plotting Utilities for QPhase**
 
-This package provides specialized plotting tools for analyzing quantum phase-space simulations, including phase portraits and power spectral density (PSD) analysis.
+`qphase-viz` provides a set of plotting tools for visualizing data from quantum phase-space simulations. It is designed to work with `qphase` but can also be used independently to generate figures.
 
 ## Features
 
-- **Phase Portraits**: Visualize trajectories in Re-Im or Abs-Abs planes.
-- **PSD Analysis**: Compute and plot Power Spectral Densities.
-- **Integration**: Seamlessly integrates with `qphase` CLI for automated report generation.
+- **Phase Portraits**:
+    - **Re-Im Plane**: Visualize distributions in complex phase space.
+    - **Abs-Abs Plane**: Analyze amplitude correlations.
+    - **Marginal Distributions**: Project dynamics onto axes.
+- **Spectral Analysis**:
+    - **Power Spectral Density (PSD)**: Compute spectra with windowing.
+    - **Log/Linear Scaling**: Flexible axis options.
+- **Time Series**:
+    - **Trajectory Evolution**: Plot stochastic paths and averages.
+    - **Confidence Intervals**: Visualize variance/std-dev.
 
 ## Installation
 
@@ -18,15 +25,34 @@ pip install qphase-viz
 
 ## Usage
 
-Configure visualization in your `qphase` YAML config:
+### As a QPhase Plugin
+Add a visualization job to your `qphase` configuration:
 
 ```yaml
-visualizer:
-  phase_portrait:
-    - kind: Re_Im
-      modes: [0]
+jobs:
+  - name: "plot_phase"
+    type: "viz"
+    dependencies: ["my_simulation"]
+    config:
+      plots:
+        - kind: "phase_plane"
+          mode: 0
+          style: "density"
+        - kind: "spectrum"
+          source: "output.npy"
+```
+
+### Standalone Usage
+```python
+from qphase_viz.engine import VizEngine
+from qphase_viz.config import PhasePlaneConfig
+
+# Configure and run
+config = PhasePlaneConfig(mode=0)
+engine = VizEngine()
+engine.plot(data, config)
 ```
 
 ## License
 
-This project is licensed under the MIT License.
+MIT License

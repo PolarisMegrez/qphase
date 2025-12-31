@@ -11,6 +11,7 @@ its own configuration schema.
 from .base import Integrator
 from .euler_maruyama import EulerMaruyama
 from .milstein import Milstein
+from .srk import GenericSRK
 
 __all__ = [
     # Base protocol
@@ -18,4 +19,5 @@ __all__ = [
     # Implementations
     "EulerMaruyama",
     "Milstein",
+    "GenericSRK",
 ]

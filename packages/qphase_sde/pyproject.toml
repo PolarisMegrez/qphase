@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qphase-sde"
-version = "0.9.5"
+version = "0.10.0"
 description = "Physics engine for QPhase: Stochastic Differential Equations in Phase Space"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -28,7 +28,7 @@ classifiers = [
 ]
 dependencies = [
   "numpy>=1.23",
-  "qphase>=0.9.5"
+  "qphase>=0.10.0"
 ]
 
 [project.optional-dependencies]
@@ -36,13 +36,15 @@ accel = ["numba>=0.57"]
 viz = ["matplotlib>=3.6"]
 config = ["pydantic>=2.4", "joblib>=1.3"]
 dev = ["pytest>=7.0", "ruff>=0.5"]
+symbolic = ["sympy>=1.12"]
 
 [project.entry-points.qphase]
 # Engine
 "engine.sde" = "qphase_sde.engine:Engine"
 # Integrator plugin
-"integrator.euler" = "qphase_sde.integrator.euler_maruyama:EulerMaruyama"
+"integrator.euler_maruyama" = "qphase_sde.integrator.euler_maruyama:EulerMaruyama"
 "integrator.milstein" = "qphase_sde.integrator.milstein:Milstein"
+"integrator.srk" = "qphase_sde.integrator.srk:GenericSRK"
 
 [tool.setuptools.packages.find]
 where = ["."]

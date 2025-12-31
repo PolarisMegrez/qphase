@@ -111,4 +111,4 @@ def init_command(
     console.print(f"    [green]Wrote global config to: {global_path}[/green]")
 
     console.print("\n[bold green]Initialization Complete![/bold green]")
-    console.print("You can now run 'qps run jobs <job_name>' to start simulations.")
+    console.print("You can now run 'qps run <job_name>' to start simulations.")

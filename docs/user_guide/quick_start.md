@@ -84,7 +84,7 @@ plugins:
 Now, tell QPhase to run the job you just defined:
 
 ```bash
-qps run jobs test_run
+qps run test_run
 ```
 
 You should see a progress bar:

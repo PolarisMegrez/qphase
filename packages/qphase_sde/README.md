@@ -1,14 +1,22 @@
 # qphase-sde
 
-The physics engine for **QPhase**, specializing in Stochastic Differential Equations (SDEs) for quantum optics.
+**SDE Solver for QPhase**
 
-This package implements the core numerical methods for simulating phase-space dynamics, including support for various backends (NumPy, PyTorch, etc.) and integrators (Euler-Maruyama, Milstein).
+`qphase-sde` is a numerical library for solving Stochastic Differential Equations (SDEs), primarily focused on quantum optics applications. It implements common integration schemes and supports multiple computation backends.
 
 ## Features
 
-- **Multi-Backend Support**: Run simulations on CPU or GPU using NumPy, PyTorch, or CuPy.
-- **Stochastic Integrators**: Built-in Euler-Maruyama and Milstein solvers.
-- **Quantum Models**: Extensible model interface for defining custom Hamiltonians and dissipators.
+- **Integrators**:
+    - **Euler-Maruyama**: Basic first-order strong approximation.
+    - **Milstein**: Higher-order scheme for multiplicative noise.
+    - **SRK**: Stochastic Runge-Kutta methods.
+- **Backends**:
+    - **NumPy**: Standard implementation.
+    - **Numba**: JIT-compiled for better CPU performance.
+    - **PyTorch/CuPy**: Support for GPU acceleration.
+- **Model Definition**:
+    - Define custom Hamiltonians and Dissipators via `SDEModel`.
+    - Supports additive and multiplicative noise.
 
 ## Installation
 
@@ -18,23 +26,35 @@ pip install qphase-sde
 
 ## Usage
 
-This package is typically used as a plugin for `qphase`, but can also be imported directly:
+### As a QPhase Plugin
+When installed with `qphase`, you can define `sde` jobs in your configuration file:
+
+```yaml
+jobs:
+  - name: "my_simulation"
+    type: "sde"
+    config:
+      t1: 100.0
+      dt: 1e-3
+      trajectories: 1000
+      model: "models/my_model.py"
+```
+
+### Standalone Usage
+You can also use the library directly in your Python scripts:
 
 ```python
-from qphase_sde.core.engine import Engine
-# ...
+from qphase_sde.engine import Engine, EngineConfig
+from qphase_sde.model import SDEModel
+
+# Define model and config
+config = EngineConfig(dt=1e-3, t1=10.0)
+engine = Engine(config)
+
+# Run simulation
+result = engine.run(my_model)
 ```
 
 ## License
 
-This project is licensed under the MIT License.
-
-```python
-from qphase_sde import run, SDEModel, NoiseSpec
-# ... define your model and run simulations ...
-```
-
-See the main project documentation for advanced usage and configuration.
-
-## License
-MIT
+MIT License

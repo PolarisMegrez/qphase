@@ -1,7 +1,17 @@
 """qphase_viz: Visualization Configuration
---------------------------------------
-
+---------------------------------------------------------
 Defines the configuration schemas for the visualization engine and individual plotters.
+
+Public API
+----------
+`BasePlotterConfig` : Base configuration for all plotters.
+`TimeSeriesSpec` : Specification for a single Time Series plot.
+`TimeSeriesConfig` : Configuration for Time Series Plotter (list of specs).
+`PhasePlaneSpec` : Specification for a single Phase Plane plot.
+`PhasePlaneConfig` : Configuration for Phase Plane Plotter (list of specs).
+`PowerSpectrumSpec` : Specification for a single Power Spectrum plot.
+`PowerSpectrumConfig` : Configuration for Power Spectrum Plotter (list of specs).
+`VizEngineConfig` : Configuration for the Visualization Engine.
 """
 
 from typing import Any, Literal
@@ -30,8 +40,8 @@ class BasePlotterConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-class TimeSeriesConfig(BasePlotterConfig):
-    """Configuration for Time Series Plotter.
+class TimeSeriesSpec(BasePlotterConfig):
+    """Specification for a single Time Series Plot.
 
     Plots state variables vs time.
     """
@@ -49,8 +59,19 @@ class TimeSeriesConfig(BasePlotterConfig):
     legend: bool = Field(True, description="Show legend")
 
 
-class PhasePlaneConfig(BasePlotterConfig):
-    """Configuration for Phase Plane Plotter.
+class TimeSeriesConfig(BaseModel):
+    """Configuration for Time Series Plotter.
+
+    Contains a list of plot specifications.
+    """
+
+    plots: list[TimeSeriesSpec] = Field(
+        default_factory=list, description="List of time series plots to generate"
+    )
+
+
+class PhasePlaneSpec(BasePlotterConfig):
+    """Specification for a single Phase Plane Plot.
 
     Plots Im(y) vs Re(y) or y_j vs y_i.
     """
@@ -67,8 +88,19 @@ class PhasePlaneConfig(BasePlotterConfig):
     cmap: str = Field("viridis", description="Colormap")
 
 
-class PowerSpectrumConfig(BasePlotterConfig):
-    """Configuration for Power Spectrum Plotter.
+class PhasePlaneConfig(BaseModel):
+    """Configuration for Phase Plane Plotter.
+
+    Contains a list of plot specifications.
+    """
+
+    plots: list[PhasePlaneSpec] = Field(
+        default_factory=list, description="List of phase plane plots to generate"
+    )
+
+
+class PowerSpectrumSpec(BasePlotterConfig):
+    """Specification for a single Power Spectrum Plot.
 
     Plots Power Spectral Density (PSD).
     """
@@ -84,6 +116,17 @@ class PowerSpectrumConfig(BasePlotterConfig):
     detrend: bool = Field(True, description="Detrend data before FFT")
     nperseg: int | None = Field(
         None, description="Length of each segment for Welch's method"
+    )
+
+
+class PowerSpectrumConfig(BaseModel):
+    """Configuration for Power Spectrum Plotter.
+
+    Contains a list of plot specifications.
+    """
+
+    plots: list[PowerSpectrumSpec] = Field(
+        default_factory=list, description="List of power spectrum plots to generate"
     )
 
 

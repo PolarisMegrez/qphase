@@ -1,5 +1,6 @@
-"""qphase: Plugin Registry
----------------------------------------------------------
+"""Plugin Registry
+===============
+
 Implements the central registry for plugin management, supporting dynamic discovery,
 registration, and factory-style instantiation. It handles both Python entry points
 for installed packages and local ``.qphase_plugins.yaml`` files for development,
@@ -8,15 +9,10 @@ extensible.
 
 Public API
 ----------
-``RegistryCenter`` : Registry class managing plugin namespaces and entries
-``registry`` : Global singleton instance for application-wide plugin access
-
-Notes
------
-- Supports multiple namespaces: backend, integrator, engine, model, etc.
-- Entry points enable installed packages to register plugins automatically
-- Local YAML files allow development-time plugin registration without installation
-
+RegistryCenter
+    Registry class managing plugin namespaces and entries.
+registry
+    Global singleton instance for application-wide plugin access.
 """
 
 import importlib.metadata

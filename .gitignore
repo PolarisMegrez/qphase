@@ -51,7 +51,7 @@ desktop.ini
 
 # User Data
 configs/
-/models/
+models/
 runs/
 *.temp
 ~$*
