@@ -1,13 +1,14 @@
 name: vdp_sde
+save: false
 engine:
   sde:
     # Time Domain
     t0: 0.0
-    t1: 1000.0
-    dt: 0.1
+    t1: 100000.0
+    dt: 1.0
 
     # Ensemble
-    n_traj: 5000
+    n_traj: 1000
     seed: 42
     ic:
       - ["7.0+0.0j", "0.0-7.0j"]
@@ -22,8 +23,8 @@ engine:
 
 model:
   vdp_level3:
-    omega_a: 1.005
-    omega_b: 1.0
+    omega_a: 0.005
+    omega_b: 0.0
     gamma_a: 2.0
     gamma_b: 1.0
     Gamma: 0.01

@@ -363,8 +363,8 @@ class Scheduler:
             If output references a non-existent downstream job
 
         """
-        # Determine the output destination
-        output_dest = job.output if job.output else job.name
+        # Determine the output destination (alias for downstream jobs)
+        output_alias = job.output if job.output else job.name
 
         # Store result for downstream jobs
         # We store by job name so downstream jobs can reference it
@@ -375,12 +375,27 @@ class Scheduler:
         if job.output:
             job_results[job.output] = output_result
 
-        # Save to disk if auto_save_results is enabled
-        if self.system_config.auto_save_results:
+        # Determine if we should save to disk
+        should_save = False
+        save_filename = output_alias
+
+        if job.save is not None:
+            # Explicit control
+            if isinstance(job.save, bool):
+                should_save = job.save
+            elif isinstance(job.save, str):
+                should_save = True
+                save_filename = job.save
+        else:
+            # Fallback to system default
+            should_save = self.system_config.auto_save_results
+
+        # Save to disk if enabled
+        if should_save:
             # Build save path: run_dir / output_filename
             # Note: filename should not include extension -
             # ResultProtocol.save() will add appropriate extension
-            save_path = run_dir / output_dest
+            save_path = run_dir / save_filename
 
             try:
                 output_result.save(save_path)

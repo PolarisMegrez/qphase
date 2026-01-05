@@ -97,6 +97,17 @@ class JobConfig(BaseModel):
         "without extension)",
     )
 
+    # Save control (optional)
+    # Controls whether to save the result to disk.
+    # True: Save using default filename (output or name)
+    # False: Do not save to disk (memory only)
+    # String: Save using this specific filename
+    # None: Follow system default (auto_save_results)
+    save: bool | str | None = Field(
+        default=None,
+        description="Control result saving behavior (True/False/Filename)",
+    )
+
     # Tags for categorization and filtering
     tags: list[str] = Field(
         default_factory=list,

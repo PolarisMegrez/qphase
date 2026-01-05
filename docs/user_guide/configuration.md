@@ -52,7 +52,8 @@ A job configuration file defines the specific parameters for a simulation.
 | `name` | `str` | **Required.** A unique identifier for the job. Used for logging and output filenames. |
 | `engine` | `dict` | **Required.** Configuration for the simulation engine. Must contain exactly one key corresponding to the engine name (e.g., `sde`). |
 | `input` | `str` | **Optional.** Specifies an input source, such as the name of an upstream job. |
-| `output` | `str` | **Optional.** Specifies the output destination. |
+| `output` | `str` | **Optional.** Specifies an alias for the output result, or the default filename if saving is enabled. |
+| `save` | `bool/str` | **Optional.** Controls result saving. `true`=save (default name), `false`=don't save, `"filename"`=save as filename. Default follows system config. |
 
 ### QPhase-SDE Fields
 

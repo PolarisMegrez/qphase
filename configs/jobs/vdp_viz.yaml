@@ -1,5 +1,6 @@
 name: vdp_viz
 input: vdp_sde
+save: true
 engine:
   viz:
     output_dir: runs/vdp_plots
