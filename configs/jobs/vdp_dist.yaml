@@ -1,0 +1,21 @@
+name: vdp_dist
+input: vdp_sde
+save: true
+engine:
+  viz:
+    output_dir: runs/vdp_dist_plots
+    format: png
+
+visualizer:
+  phase_plane:
+    plots:
+      - kind: phase_plane
+        channel_x: 0
+        mode: hist2d
+        cmap: viridis
+        title: "VDP Phase Space (Mode 0)"
+      - kind: phase_plane
+        channel_x: 1
+        mode: hist2d
+        cmap: viridis
+        title: "VDP Phase Space (Mode 1)"

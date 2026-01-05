@@ -1,9 +1,9 @@
-name: vdp_viz
+name: vdp_psd
 input: vdp_sde
 save: true
 engine:
   viz:
-    output_dir: runs/vdp_plots
+    output_dir: runs/vdp_psd_plots
     format: png
 
 visualizer:
@@ -16,6 +16,3 @@ visualizer:
         ylabel: "PSD"
         xlim: [-0.5, 0.5]
         grid: true
-        annotate_peaks: true
-        min_peak_height: 10
-        peak_prominence: 10

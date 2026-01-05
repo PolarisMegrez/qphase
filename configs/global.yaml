@@ -1,28 +1,33 @@
 backend:
   cupy:
-    device:  # Device identifier (e.g., 'cpu', 'cuda:0')
-    float_dtype: float64 # Default floating-point dtype
+    float_dtype: float64  # Default floating-point dtype
   numba:
-    device:  # Device identifier (e.g., 'cpu', 'cuda:0')
-    float_dtype: float64 # Default floating-point dtype
+    float_dtype: float64  # Default floating-point dtype
     enable_cache: true # Enable JIT cache
     fast_math: true # Enable fast math
   numpy:
-    device:  # Device identifier (e.g., 'cpu', 'cuda:0')
-    float_dtype: float64 # Default floating-point dtype
+    float_dtype: float64  # Default floating-point dtype
     optimize_einsum: true # Enable einsum optimization
   torch:
-    device:  # Device identifier (e.g., 'cpu', 'cuda:0')
-    float_dtype: float64 # Default floating-point dtype
+    float_dtype: float64  # Default floating-point dtype
     enable_grad: false # Enable autograd
+analyser:
+  dist:
+    modes: [0] # Default modes
+    bins: 50  # Number of bins for histogram
+    density: true # Normalize histogram to form a PDF
+  psd:
+    modes: [0] # Default modes
+    kind: complex # Default kind
+    convention: symmetric  # PSD convention
+    dt: 1.0 # Sampling interval
+    find_peaks: false # Whether to find peaks
 engine:
   sde:
     t0: 0.0  # Start time
     t1: 10.0 # End time
     dt: 0.001 # Time step size (initial step for adaptive)
     n_traj: 1 # Number of trajectories
-    seed: # Random seed
-    ic: # Initial conditions (list or array)
     adaptive: false # Enable adaptive stepping (if supported by integrator)
     atol: 1e-06 # Absolute tolerance for adaptive stepping
     rtol: 0.001 # Relative tolerance for adaptive stepping
@@ -32,17 +37,6 @@ engine:
   viz:
     output_dir: .  # Directory to save figures
     format: png # Output format (png, pdf, svg)
-    specs: [] # List of plot specifications
-    style_overrides: {} # Global matplotlib style overrides
 integrator:
-  euler_maruyama: {}
-  milstein: {}
   srk:
-    method: heun  # Integration scheme (euler, heun)
-visualizer:
-  phase_plane:
-    plots: []  # List of phase plane plots to generate
-  power_spectrum:
-    plots: []  # List of power spectrum plots to generate
-  time_series:
-    plots: []  # List of time series plots to generate
+    method: heun  # Integration scheme (euler, heun, or custom)

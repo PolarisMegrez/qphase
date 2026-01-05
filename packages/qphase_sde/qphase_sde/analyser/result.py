@@ -1,4 +1,4 @@
-"""qphase_viz: Analysis Result
+"""qphase_sde: Analysis Result
 ---------------------------------------------------------
 Container for analysis results.
 """

@@ -7,10 +7,11 @@ Author : Yu Xue-hao (GitHub: @PolarisMegrez)
 Affiliation : School of Physical Sciences, UCAS
 Contact : yuxuehao23@mails.ucas.ac.cn
 License : MIT
-Version : 1.0.0 (Jan 2026)
+Version : 1.0.1 (Jan 2026)
 """
 
-from .analyser import PsdAnalyzer, PsdAnalyzerConfig
+from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
+
 from .config import (
     PhasePlaneConfig,
     PowerSpectrumConfig,

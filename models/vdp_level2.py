@@ -50,7 +50,7 @@ class VDPLevel2Model:
 
     @property
     def noise_dim(self) -> int:
-        return 4
+        return 2
 
     @property
     def params(self) -> dict[str, Any]:

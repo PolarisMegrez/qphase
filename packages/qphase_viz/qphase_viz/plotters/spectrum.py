@@ -14,8 +14,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from qphase.backend.base import ArrayBase
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
 
-from ..analyser import PsdAnalyzer, PsdAnalyzerConfig
 from ..config import PowerSpectrumConfig, PowerSpectrumSpec
 from .base import PlotterProtocol
 
@@ -49,11 +49,23 @@ class PowerSpectrumPlotter(PlotterProtocol):
         scale = config["scale"]
 
         # Check if data is pre-computed PSD (dict)
-        if isinstance(data, dict) and "psd" in data and "axis" in data:
+        # Handle nesting in analyzer key (e.g. data['psd']['psd'])
+        psd_data = None
+        if isinstance(data, dict):
+            if "psd" in data and "axis" in data:
+                psd_data = data
+            elif (
+                "psd" in data and isinstance(data["psd"], dict) and "psd" in data["psd"]
+            ):
+                psd_data = data["psd"]
+
+        if psd_data:
             # Pre-computed PSD
-            f = data["axis"]
-            Pxx_all = data["psd"]
-            available_modes = data.get("modes", list(range(Pxx_all.shape[1])))
+            f = psd_data["axis"]
+            Pxx_all = psd_data["psd"]
+            available_modes = psd_data.get("modes", list(range(Pxx_all.shape[1])))
+            # Extract peaks if available
+            peaks_info = psd_data.get("peaks", {})
         else:
             # Compute using PsdAnalyzer
             if hasattr(data, "dt"):
@@ -78,6 +90,8 @@ class PowerSpectrumPlotter(PlotterProtocol):
                 find_peaks=spec.annotate_peaks,
                 min_height=spec.min_peak_height,
                 prominence=spec.peak_prominence,
+                max_peaks=spec.max_peaks,
+                noise_threshold=spec.noise_threshold,
             )
             analyzer = PsdAnalyzer(analyzer_config)
 

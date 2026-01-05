@@ -18,7 +18,7 @@ import importlib.metadata
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from importlib import import_module
 from typing import Any
 
@@ -28,9 +28,6 @@ from .errors import (
 )
 from .system_config import load_system_config
 from .utils import load_yaml
-
-# Get UTC timezone
-UTC = timezone.utc
 
 Builder = Callable[..., Any]
 
@@ -134,7 +131,7 @@ class RegistryCenter:
             raise ValueError(f"Duplicate registration: {ns}:{nm}")
 
         full_meta = dict(meta or {})
-        full_meta.setdefault("registered_at", datetime.now(UTC).isoformat())
+        full_meta.setdefault("registered_at", datetime.now().isoformat())
         full_meta.setdefault("builder_type", self._infer_builder_type(builder))
         full_meta.setdefault("delayed_import", False)
 
@@ -181,7 +178,7 @@ class RegistryCenter:
             return
 
         full_meta = dict(meta or {})
-        full_meta.setdefault("registered_at", datetime.now(UTC).isoformat())
+        full_meta.setdefault("registered_at", datetime.now().isoformat())
         full_meta.setdefault("builder_type", "dotted")
         full_meta.setdefault("delayed_import", True)
         full_meta.setdefault("module_path", target)

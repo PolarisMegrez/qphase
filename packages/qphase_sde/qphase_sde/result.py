@@ -30,12 +30,20 @@ class SDEResult:
     """
 
     trajectory: Any = None
+    analysis: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
 
     @property
     def data(self) -> Any:
-        """Alias for trajectory to satisfy ResultProtocol."""
-        return self.trajectory
+        """Alias for trajectory to satisfy ResultProtocol.
+
+        If trajectory was dropped (e.g. after analysis), return analysis results.
+        """
+        if self.trajectory is not None:
+            return self.trajectory
+        if self.analysis:
+            return self.analysis
+        return None
 
     @property
     def metadata(self) -> dict[str, Any]:
@@ -74,21 +82,34 @@ class SDEResult:
         path.parent.mkdir(parents=True, exist_ok=True)
 
         # Convert trajectory to numpy if possible for storage
-        data_to_save = self.trajectory
-        if hasattr(self.trajectory, "data"):
-            data_to_save = convert_to_numpy(self.trajectory.data)
-        else:
-            data_to_save = convert_to_numpy(self.trajectory)
+        data_to_save = None
+        if self.trajectory is not None:
+            if hasattr(self.trajectory, "data"):
+                data_to_save = convert_to_numpy(self.trajectory.data)
+            else:
+                data_to_save = convert_to_numpy(self.trajectory)
 
         # Extract time info if available
-        t0 = getattr(self.trajectory, "t0", 0.0)
-        dt = getattr(self.trajectory, "dt", 1.0)
+        t0 = getattr(self.trajectory, "t0", self.meta.get("t0", 0.0))
+        dt = getattr(self.trajectory, "dt", self.meta.get("dt", 1.0))
 
         try:
             # Wrap meta in object array to allow saving dict in npz
             # np.savez expects arrays, so we wrap the dict
             meta_arr = np.array(self.meta, dtype=object)
-            np.savez_compressed(path, data=data_to_save, t0=t0, dt=dt, meta=meta_arr)
+            analysis_arr = np.array(self.analysis, dtype=object)
+
+            save_kwargs = {
+                "t0": t0,
+                "dt": dt,
+                "meta": meta_arr,
+                "analysis": analysis_arr,
+            }
+
+            if data_to_save is not None:
+                save_kwargs["data"] = data_to_save
+
+            np.savez_compressed(path, **save_kwargs)
         except Exception as e:
             raise QPhaseError(f"Failed to save SDEResult to {path}: {e}") from e
 
@@ -112,31 +133,24 @@ class SDEResult:
             raise QPhaseError(f"File not found: {path}")
         try:
             with np.load(path, allow_pickle=True) as npz:
-                data = npz["data"]
-                t0 = float(npz["t0"])
-                dt = float(npz["dt"])
+                data = npz["data"] if "data" in npz else None
+                t0 = float(npz["t0"]) if "t0" in npz else 0.0
+                dt = float(npz["dt"]) if "dt" in npz else 1.0
                 meta = npz["meta"].item() if "meta" in npz else {}
+                analysis = npz["analysis"].item() if "analysis" in npz else {}
 
-                # Reconstruct a simple trajectory object or just return data
-                # For now, we return a simple object or the array
-                # Ideally, we should use TrajectorySet, but to avoid circular
-                # imports
-                # we might just return the data or a simple wrapper.
+                traj = None
+                if data is not None:
+                    # Construct a minimal object that mimics TrajectorySet
+                    class MinimalTrajectory:
+                        def __init__(self, data, t0, dt):
+                            self.data = data
+                            self.t0 = t0
+                            self.dt = dt
 
-                # Let's use a simple SimpleNamespace or similar if TrajectorySet
-                # is not available
-                # Or just keep it as data + meta
+                    traj = MinimalTrajectory(data, t0, dt)
 
-                # Construct a minimal object that mimics TrajectorySet
-                class MinimalTrajectory:
-                    def __init__(self, data, t0, dt):
-                        self.data = data
-                        self.t0 = t0
-                        self.dt = dt
-
-                traj = MinimalTrajectory(data, t0, dt)
-
-                return cls(trajectory=traj, meta=meta)
+                return cls(trajectory=traj, meta=meta, analysis=analysis)
 
         except Exception as e:
             raise QPhaseError(f"Failed to load SDEResult from {path}: {e}") from e

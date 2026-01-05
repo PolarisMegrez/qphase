@@ -13,9 +13,9 @@ Author : Yu Xue-hao (GitHub: @PolarisMegrez)
 Affiliation : School of Physical Sciences, UCAS
 Contact : yuxuehao23@mails.ucas.ac.cn
 License : MIT
-Version : 1.0.0 (Jan 2026)
+Version : 1.0.1 (Jan 2026)
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 __all__ = ["__version__"]

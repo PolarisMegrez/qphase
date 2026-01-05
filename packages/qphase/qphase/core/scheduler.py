@@ -20,7 +20,7 @@ import json
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -129,7 +129,7 @@ class Scheduler:
     def _initialize_session(self) -> None:
         """Initialize a new execution session."""
         # Generate session ID
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+        ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
         short_uuid = uuid.uuid4().hex[:6]
         self.session_id = f"{ts}_{short_uuid}"
 
@@ -141,7 +141,7 @@ class Scheduler:
         # Initialize manifest
         self.manifest = {
             "session_id": self.session_id,
-            "start_time": datetime.now(timezone.utc).isoformat(),
+            "start_time": datetime.now().isoformat(),
             "status": "running",
             "jobs": {},
         }
@@ -1128,7 +1128,7 @@ class Scheduler:
         """Generate a unique run ID with timestamp and UUID suffix."""
         # In session mode, run_id can be simpler or just a UUID,
         # but we keep the timestamp for consistency.
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+        ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
         return f"{ts}_{uuid.uuid4().hex[:8]}"
 
     def _create_run_dir(self, job: JobConfig, run_id: str) -> Path:

@@ -289,7 +289,42 @@ class Engine(EngineBase):
             progress_cb=sde_progress_cb,
         )
 
-        return SDEResult(trajectory=traj_set, meta={})
+        # Run analyzers if configured
+        analysis_results = {}
+        meta = {}
+
+        analysers = self.plugins.get("analyser")
+        if analysers:
+            # Normalize to dict of name -> instance
+            if not isinstance(analysers, dict):
+                # Single instance
+                analysers = {getattr(analysers, "name", "analyser"): analysers}
+
+            # Get backend used for simulation
+            be = self._default_backend
+            if be is None:
+                try:
+                    be = get_backend()
+                except RuntimeError:
+                    # Should not happen if run_sde succeeded, but for safety
+                    from qphase.backend.numpy_backend import NumpyBackend
+
+                    be = NumpyBackend()
+
+            for name, analyzer in analysers.items():
+                if hasattr(analyzer, "analyze"):
+                    res = analyzer.analyze(traj_set, be)
+                    # If multiple analyzers have same name (unlikely in dict), careful.
+                    # But name comes from config key
+                    analysis_results[name] = res.data_dict
+
+            # Preserve metadata before dropping trajectory
+            meta["t0"] = traj_set.t0
+            meta["dt"] = traj_set.dt
+            # Drop trajectory to save memory
+            traj_set = None
+
+        return SDEResult(trajectory=traj_set, meta=meta, analysis=analysis_results)
 
     def run_sde(
         self,

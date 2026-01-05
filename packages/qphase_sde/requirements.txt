@@ -1,3 +1,3 @@
 numpy>=1.23
-qphase>=1.0.0
+qphase>=1.0.1
 pydantic>=2.4

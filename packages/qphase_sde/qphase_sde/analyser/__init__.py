@@ -1,7 +1,7 @@
-"""qphase_viz: Analysis Subpackage
+"""qphase_sde: Analysis Subpackage
 ---------------------------------------------------------
 Numerical analysis utilities for simulated data, including power spectral
-density (PSD) computation and future time/frequency-domain diagnostics.
+density (PSD) computation and phase space distribution.
 
 Registry integration
 --------------------
@@ -12,11 +12,16 @@ Public API
 ----------
 ``PsdAnalyzer`` : Power spectral density analyzer.
 ``PsdAnalyzerConfig`` : Configuration for PSD analyzer.
+``DistAnalyzer`` : Distribution analyzer.
+``DistAnalyzerConfig`` : Configuration for Distribution analyzer.
 """
 
-from .psd import PsdAnalyzer, PsdAnalyzerConfig  # noqa: F401
+from .dist import DistAnalyzer, DistAnalyzerConfig
+from .psd import PsdAnalyzer, PsdAnalyzerConfig
 
 __all__ = [
     "PsdAnalyzer",
     "PsdAnalyzerConfig",
+    "DistAnalyzer",
+    "DistAnalyzerConfig",
 ]

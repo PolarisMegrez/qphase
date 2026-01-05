@@ -4,7 +4,7 @@ engine:
   sde:
     # Time Domain
     t0: 0.0
-    t1: 100000.0
+    t1: 10000.0
     dt: 1.0
 
     # Ensemble
@@ -21,11 +21,18 @@ engine:
     max_dt: 1.0
     save_stride: 1
 
+analyser:
+  psd:
+    modes: [0, 1]
+    kind: complex
+    find_peaks: true
+    max_peaks: 3
+
 model:
   vdp_level3:
     omega_a: 0.005
     omega_b: 0.0
-    gamma_a: 2.0
+    gamma_a: [1.8, 1.9, 2.0, 2.1, 2.2]
     gamma_b: 1.0
     Gamma: 0.01
     g: 0.5

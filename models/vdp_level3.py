@@ -14,13 +14,35 @@ from qphase_sde.model import FunctionalSDEModel
 class VDPLevel3Config(BaseModel):
     """Configuration for VDP Level 3 Model."""
 
-    omega_a: float = Field(description="Frequency of mode a")
-    omega_b: float = Field(description="Frequency of mode b")
-    gamma_a: float = Field(description="Damping rate of mode a")
-    gamma_b: float = Field(description="Damping rate of mode b")
-    Gamma: float = Field(description="Nonlinear gain coefficient")
-    g: float = Field(description="Coupling strength between modes")
-    D: float = Field(default=1.0, description="Diffusion coefficient")
+    omega_a: float = Field(
+        description="Frequency of mode a",
+        json_schema_extra={"scanable": True},
+    )
+    omega_b: float = Field(
+        description="Frequency of mode b",
+        json_schema_extra={"scanable": True},
+    )
+    gamma_a: float = Field(
+        description="Damping rate of mode a",
+        json_schema_extra={"scanable": True},
+    )
+    gamma_b: float = Field(
+        description="Damping rate of mode b",
+        json_schema_extra={"scanable": True},
+    )
+    Gamma: float = Field(
+        description="Nonlinear gain coefficient",
+        json_schema_extra={"scanable": True},
+    )
+    g: float = Field(
+        description="Coupling strength between modes",
+        json_schema_extra={"scanable": True},
+    )
+    D: float = Field(
+        default=1.0,
+        description="Diffusion coefficient",
+        json_schema_extra={"scanable": True},
+    )
 
 
 class VDPLevel3Model:

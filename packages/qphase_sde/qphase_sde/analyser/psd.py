@@ -1,4 +1,4 @@
-"""qphase_viz: Power Spectral Density
+"""qphase_sde: Power Spectral Density
 ---------------------------------------------------------
 Compute power spectral density (PSD) from multi-trajectory time series for one
 or more modes using FFT-based periodograms.
@@ -26,9 +26,10 @@ Notes
 from typing import Any, ClassVar, Literal, cast
 
 import numpy as _np
-from pydantic import BaseModel, Field, model_validator
+from pydantic import Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
+from qphase.core.protocols import PluginConfigBase
 
 from .base import Analyzer
 from .result import AnalysisResult
@@ -39,7 +40,7 @@ __all__ = [
 ]
 
 
-class PsdAnalyzerConfig(BaseModel):
+class PsdAnalyzerConfig(PluginConfigBase):
     """Configuration for PSD Analyzer."""
 
     kind: Literal["complex", "modular"] = Field(
@@ -49,7 +50,7 @@ class PsdAnalyzerConfig(BaseModel):
     convention: Literal["symmetric", "unitary", "pragmatic"] = Field(
         "symmetric", description="PSD convention"
     )
-    dt: float = Field(1.0, description="Sampling interval")
+    dt: float | None = Field(None, description="Sampling interval (override)")
     window: str | None = Field(
         None, description="Window function name (e.g. 'hanning')"
     )
@@ -60,6 +61,7 @@ class PsdAnalyzerConfig(BaseModel):
     distance: int | None = Field(None, description="Minimum horizontal distance")
     smooth_window: int | None = Field(None, description="Window length for smoothing")
     noise_threshold: float | None = Field(None, description="Threshold vs noise floor")
+    max_peaks: int | None = Field(None, description="Maximum number of peaks to return")
 
     @model_validator(mode="after")
     def validate_modes(self) -> "PsdAnalyzerConfig":
@@ -96,7 +98,14 @@ class PsdAnalyzer(Analyzer):
 
         """
         config = cast(PsdAnalyzerConfig, self.config)
-        dt = config.dt
+
+        # Determine dt: priority to config override, then data attribute, then default
+        dt = 1.0
+        if config.dt is not None:
+            dt = config.dt
+        elif hasattr(data, "dt"):
+            dt = float(data.dt)
+
         modes = config.modes
         kind = config.kind
         convention = config.convention
@@ -138,48 +147,123 @@ class PsdAnalyzer(Analyzer):
                 # Find peaks for this mode
                 p_data = P_mat[:, i]
 
-                # Smoothing (on a copy to avoid affecting returned data)
-                p_smooth = p_data.copy()
+                # Robust Smoothing Strategy:
+                # 1. Work in Log domain (dB) to handle dynamic range and stabilize
+                # 2. Apply Savitzky-Golay filter
+                # 3. Convert back to linear for peak finding (to respect linear)
+
+                p_log = _np.log10(p_data + 1e-20)
+
+                # Determine window length
                 if config.smooth_window:
-                    try:
-                        window_len = config.smooth_window
-                        if window_len % 2 == 0:
-                            window_len += 1
-                        if window_len < len(p_smooth):
-                            p_smooth = savgol_filter(p_smooth, window_len, 3)
-                    except Exception:
-                        pass
+                    w_len = config.smooth_window
+                else:
+                    # Default: ~2% of spectrum, min 5, must be odd
+                    w_len = int(len(p_log) * 0.02)
+                    if w_len < 5:
+                        w_len = 5
+
+                if w_len % 2 == 0:
+                    w_len += 1
+
+                try:
+                    # Polyorder 2 preserves peak shapes better than higher orders
+                    p_log_smooth = savgol_filter(p_log, w_len, 2)
+                    p_smooth = 10**p_log_smooth
+                except Exception:
+                    # Fallback if filter fails (e.g. array too short)
+                    p_smooth = p_data.copy()
 
                 # Prepare kwargs
                 fp_kwargs = {}
 
-                # Auto-calculate height/prominence if requested via noise_threshold
+                # Determine height threshold
+                # Use the stricter (maximum) of noise-based threshold and min_height
                 if config.noise_threshold is not None:
                     # Estimate noise floor using median of smoothed data
                     noise_floor = _np.median(p_smooth)
-                    min_h = noise_floor * config.noise_threshold
-                    fp_kwargs["height"] = min_h
-                    if config.prominence is None:
-                        fp_kwargs["prominence"] = min_h * 0.5  # Heuristic
+                    calc_min_h = noise_floor * config.noise_threshold
 
+                final_min_h = calc_min_h
                 if config.min_height is not None:
-                    fp_kwargs["height"] = config.min_height
+                    if final_min_h is not None:
+                        final_min_h = max(final_min_h, config.min_height)
+                    else:
+                        final_min_h = config.min_height
+
+                if final_min_h is not None:
+                    fp_kwargs["height"] = final_min_h
+
+                # Determine prominence
                 if config.prominence is not None:
                     fp_kwargs["prominence"] = config.prominence
+                elif calc_min_h is not None:
+                    # Heuristic: prominence is half the noise-based height threshold
+                    fp_kwargs["prominence"] = calc_min_h * 0.5
+
                 if config.distance is not None:
                     fp_kwargs["distance"] = config.distance
 
                 # Find peaks on smoothed data
                 peaks, props = find_peaks(p_smooth, **fp_kwargs)
 
-                # Store results (values from original data or smoothed?)
-                # Usually we want values from the original data at those indices,
-                # or the smoothed values. Let's store original values for accuracy
-                # but use indices found on smoothed data.
+                # Store results
+                # We store the smoothed values for peaks to represent "fitted" height
+                # But we might want to refine the frequency index using quadratic fit
+
+                # Simple quadratic refinement for frequency
+                refined_freqs = []
+                refined_vals = []
+
+                for pk in peaks:
+                    # Default to grid values
+                    f_pk = axis0[pk]
+                    v_pk = p_smooth[pk]
+
+                    # Try 3-point Gaussian fit (Parabola on Log)
+                    if 0 < pk < len(p_log_smooth) - 1:
+                        y1 = p_log_smooth[pk - 1]
+                        y2 = p_log_smooth[pk]
+                        y3 = p_log_smooth[pk + 1]
+
+                        denom = 2 * (y1 - 2 * y2 + y3)
+                        if denom != 0:
+                            delta = (y1 - y3) / denom
+                            # Check if delta is within reasonable bounds (+/- 0.5 bin)
+                            if -0.5 <= delta <= 0.5:
+                                # Interpolate frequency
+                                df = axis0[1] - axis0[0]
+                                f_pk = axis0[pk] + delta * df
+                                # Interpolate value (parabola peak)
+                                # y_peak = y2 - 0.25 * (y1 - y3) * delta
+                                # v_pk = 10**y_peak
+
+                    refined_freqs.append(f_pk)
+                    refined_vals.append(v_pk)
+
+                # Convert to arrays
+                r_freqs = _np.array(refined_freqs)
+                r_vals = _np.array(refined_vals)
+
+                # Filter by max_peaks if requested
+                if config.max_peaks is not None and len(peaks) > config.max_peaks:
+                    # Sort by value (descending)
+                    top_indices = _np.argsort(r_vals)[-config.max_peaks :]
+                    # Sort indices back to frequency order (optional but nice)
+                    top_indices = _np.sort(top_indices)
+
+                    peaks = peaks[top_indices]
+                    r_freqs = r_freqs[top_indices]
+                    r_vals = r_vals[top_indices]
+
+                    # Filter properties
+                    for k, v in props.items():
+                        props[k] = v[top_indices]
+
                 peaks_info[m] = {
                     "indices": peaks,
-                    "frequencies": axis0[peaks],
-                    "values": p_data[peaks],
+                    "frequencies": r_freqs,
+                    "values": r_vals,
                     "properties": props,
                 }
 

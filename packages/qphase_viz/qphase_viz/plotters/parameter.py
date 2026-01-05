@@ -11,8 +11,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.protocols import ResultProtocol
+from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
 
-from ..analyser import PsdAnalyzer, PsdAnalyzerConfig
 from ..config import ParameterEvolutionConfig, ParameterEvolutionSpec
 from .base import PlotterProtocol
 
