@@ -42,7 +42,7 @@ torch = ["torch>=2.0"]
 standard = ["numba>=0.57", "torch>=2.0"]
 
 [project.scripts]
-qps = "qphase.main:app"
+qphase = "qphase.main:app"
 
 [project.entry-points.qphase]
 # Backend plugin

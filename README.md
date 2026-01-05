@@ -1,4 +1,4 @@
-# QPhase — A Modular Toolkit for Phase-Space Simulation in Quantum Optics
+# QPhase — A Modular Framework for Phase-Space Representation Based Numerical Simulation
 
 QPhase is a small, research-oriented Python project for running phase-space simulations in quantum optics. The main goal is to reduce repeated “boilerplate” work (configuration, parameter sweeps, and result saving) so you can focus on the model equations.
 
@@ -81,7 +81,7 @@ output: "results/demo_run"
 Run the simulation using the CLI (assuming the config is in `configs/jobs/`):
 
 ```powershell
-qps run quick_start_demo
+qphase run quick_start_demo
 ```
 
 ## Notes

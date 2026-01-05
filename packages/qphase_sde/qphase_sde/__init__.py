@@ -14,7 +14,7 @@ Version : 1.0.0 (Jan 2026)
 # Trigger self-registration for built-in modules.
 # Keep imports lightweight and avoid importing heavy submodules here; rely on
 # per-package __init__ to perform lazy registration as needed.
-from . import integrator as _qps_integrators  # noqa: F401
+from . import integrator as _qphase_integrators  # noqa: F401
 
 # Import Engine class (v0.2 OO interface)
 from .engine import Engine  # noqa: F401

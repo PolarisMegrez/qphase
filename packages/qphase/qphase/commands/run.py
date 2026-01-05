@@ -1,6 +1,6 @@
 """qphase: Job Execution CLI Commands
 ---------------------------------------------------------
-Implements the ``qps run`` command group, serving as the primary execution entry
+Implements the ``qphase run`` command group, serving as the primary execution entry
 point. It includes the ``jobs`` command for running simulations defined in YAML/JSON
 files, handling path resolution and scheduler invocation, and the ``list`` command
 for displaying available engine packages that can be used in job configurations.
@@ -95,10 +95,10 @@ def jobs(
 
     Examples
     --------
-        qps run jobs my_simulation
-        qps run jobs job1 job2
-        qps run jobs --list
-        qps run jobs --verbose my_job
+        qphase run jobs my_simulation
+        qphase run jobs job1 job2
+        qphase run jobs --list
+        qphase run jobs --verbose my_job
 
     """
     # Handle "list" argument as a command to list engines

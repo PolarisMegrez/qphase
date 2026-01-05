@@ -8,9 +8,9 @@ The **Command Line Interface (CLI)** serves as the primary entry point for user 
 
 ## Command Structure
 
-The CLI is organized into a hierarchical command group structure, rooted at the `qps` entry point.
+The CLI is organized into a hierarchical command group structure, rooted at the `qphase` entry point.
 
-*   `qps` (Root)
+*   `qphase` (Root)
     *   `init`: Project bootstrapping.
     *   `run`: Simulation execution.
     *   `list`: Plugin discovery and listing.
@@ -39,11 +39,11 @@ def jobs(
 
 ### Extensibility
 
-While the core commands are hardcoded, the CLI architecture allows for future extensibility. The Registry System includes a `command` namespace, which is reserved for dynamically loading additional CLI sub-commands from plugins. This will allow third-party packages to extend the `qps` tool with custom functionality (e.g., `qps plot`, `qps analyze`).
+While the core commands are hardcoded, the CLI architecture allows for future extensibility. The Registry System includes a `command` namespace, which is reserved for dynamically loading additional CLI sub-commands from plugins. This will allow third-party packages to extend the `qphase` tool with custom functionality (e.g., `qphase plot`, `qphase analyze`).
 
 ## Integration with Scheduler
 
-The CLI acts as a thin client for the `Scheduler`. When `qps run` is invoked:
+The CLI acts as a thin client for the `Scheduler`. When `qphase run` is invoked:
 1.  It parses the command line arguments.
 2.  It loads the `SystemConfig`.
 3.  It instantiates the `Scheduler`.

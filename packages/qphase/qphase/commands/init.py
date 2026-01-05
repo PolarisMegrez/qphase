@@ -1,6 +1,6 @@
 """qphase: Project Initialization CLI Command
 ---------------------------------------------------------
-Implements the ``qps init`` command, which bootstraps new QPhase projects by creating
+Implements the ``qphase init`` command, which bootstraps new QPhase projects by creating
 the standard directory structure (configs, plugins, runs) and generating initial
 configuration files. It automatically discovers available plugins to populate the
 default ``global.yaml`` with sensible defaults.
@@ -111,4 +111,4 @@ def init_command(
     console.print(f"    [green]Wrote global config to: {global_path}[/green]")
 
     console.print("\n[bold green]Initialization Complete![/bold green]")
-    console.print("You can now run 'qps run <job_name>' to start simulations.")
+    console.print("You can now run 'qphase run <job_name>' to start simulations.")

@@ -4,7 +4,7 @@
 
 ## Features
 
-- **CLI Interface (`qps`)**: A simple command-line interface to run simulations and analysis tasks.
+- **CLI Interface (`qphase`)**: A simple command-line interface to run simulations and analysis tasks.
 - **Plugin Support**: Loads external packages (like `qphase-sde` and `qphase-viz`) to extend functionality.
 - **Session Management**: Basic job tracking with support for resuming interrupted runs and dry-run validation.
 - **Configuration**: Uses YAML/JSON files to define simulation parameters and workflows.
@@ -22,17 +22,17 @@ pip install qphase[standard]
 
 1.  **Initialize a project**:
     ```bash
-    qps init
+    qphase init
     ```
 
 2.  **Run a simulation**:
     ```bash
-    qps run my_simulation
+    qphase run my_simulation
     ```
 
 3.  **List available jobs**:
     ```bash
-    qps run --list
+    qphase run --list
     ```
 
 ## Project Structure

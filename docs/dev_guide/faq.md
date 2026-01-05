@@ -8,7 +8,7 @@ This guide addresses common questions and issues encountered when developing plu
 
 ## Plugin Development
 
-### Why is my plugin not showing up in `qps list`?
+### Why is my plugin not showing up in `qphase list`?
 
 If your plugin is not appearing in the registry, check the following:
 

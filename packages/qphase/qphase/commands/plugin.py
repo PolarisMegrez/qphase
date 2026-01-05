@@ -1,6 +1,6 @@
 """qphase: Plugin Management CLI Commands
 ---------------------------------------------------------
-Implements the `qps` plugin-related commands (list, show, template),
+Implements the `qphase` plugin-related commands (list, show, template),
 offering introspection capabilities for the plugin ecosystem. It allows users
 to list registered plugins by namespace, view detailed metadata and configuration
 schemas for specific plugins, and generate commented YAML/JSON configuration
@@ -30,12 +30,14 @@ plugin_app = typer.Typer(help="Manage and discover plugins")
 
 @plugin_app.command(name="list")
 def list_command(
-    categories: str | None = typer.Argument(
-        default=None,
-        help="Plugin categories to list. Use '.' for all or comma-separated list.",
+    categories: str | None = typer.Option(
+        None,
+        "--category",
+        "-c",
+        help="Filter by category (comma-separated). Default is all.",
     ),
 ):
-    """List available plugins by category."""
+    """List available plugins."""
     console = Console()
 
     try:
@@ -44,7 +46,7 @@ def list_command(
         discovery.discover_local_plugins()
 
         # Parse categories
-        if categories is None or categories.strip() == ".":
+        if categories is None:
             category_list = None
         else:
             category_list = [
@@ -258,9 +260,9 @@ def show_command(
 
     Examples
     --------
-        qps show model.vdp_two_mode
-        qps show backend.numpy integrator.euler
-        qps show model.vdp_two_mode backend.cupy
+        qphase show model.vdp_two_mode
+        qphase show backend.numpy integrator.euler
+        qphase show model.vdp_two_mode backend.cupy
 
     Displays detailed information about each plugin including source,
     description, and configuration parameters.
@@ -499,9 +501,9 @@ def template_command(
 
     Examples
     --------
-        qps template model.vdp_two_mode
-        qps template backend.numpy integrator.euler
-        qps template model.vdp_two_mode backend.cupy
+        qphase template model.vdp_two_mode
+        qphase template backend.numpy integrator.euler
+        qphase template model.vdp_two_mode backend.cupy
 
     Generates configuration templates based on plugin schemas.
     Merges values from global.yaml if available.

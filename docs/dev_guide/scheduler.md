@@ -83,7 +83,7 @@ The `JobExpander` inspects the configuration dictionary for lists.
 QPhase uses a **Session-Based I/O** strategy to manage execution contexts.
 
 ### Session Structure
-Every execution command (e.g., `qps run ...`) initiates a new **Session**. A session acts as a container for all jobs executed in that command, providing a shared context for data exchange and logging.
+Every execution command (e.g., `qphase run ...`) initiates a new **Session**. A session acts as a container for all jobs executed in that command, providing a shared context for data exchange and logging.
 
 **Directory Layout:**
 ```text

@@ -1,7 +1,67 @@
 site_name: QPhase Documentation
 site_url: https://polarismegrez.github.io/qphase/
+
+# Repository
+repo_name: polarismegrez/qphase
+repo_url: https://github.com/polarismegrez/qphase
+
+# Copyright
+copyright: Copyright &copy; 2025 - 2026 Yu Xue-Hao
+
+# Configuration
 theme:
   name: material
+  language: en
+  features:
+    - content.code.annotate
+    - content.code.copy
+    - navigation.top
+    - navigation.sections
+    - navigation.indexes
+    - navigation.footer
+    - navigation.tracking
+    - search.highlight
+    - toc.follow
+
+plugins:
+  - search
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: true
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+        - locale: zh
+          name: 中文
+          build: true
+          nav_translations:
+            Home: 首页
+            User Guide: 用户指南
+            Introduction: 简介
+            Getting Started: 入门指南
+            Command Line Interface: 命令行界面
+            Job Configuration: 任务配置
+            Results & Reproducibility: 结果与复现
+            SDE Physics: SDE 物理
+            Modeling: 建模
+            Simulation: 仿真
+            API Reference: API 参考
+            Overview: 概述
+            Core: 核心
+            SDE: SDE
+            Developer Guide: 开发者指南
+            Architecture: 架构
+            Backend: 后端
+            Error Handling: 错误处理
+            Plugin Development: 插件开发
+            Protocols: 协议
+            Registry: 注册表
+            Scheduler: 调度器
+            FAQ: 常见问题
 
 markdown_extensions:
   - attr_list
@@ -15,15 +75,14 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - User Guide:
-    - Introduction: user_guide/index.md
-    - Installation: user_guide/installation.md
-    - Quick Start: user_guide/quick_start.md
-    - CLI: user_guide/cli.md
-    - Configuration: user_guide/configuration.md
-    - SDE Modeling: user_guide/sde_modeling.md
-    - SDE Simulation: user_guide/sde_simulation.md
+  - Getting Started: user_guide/getting_started.md
+  - Job Configuration: user_guide/configuration.md
+  - Results & Reproducibility: user_guide/output.md
+  - SDE Physics:
+    - Modeling: user_guide/sde/modeling.md
+    - Simulation: user_guide/sde/simulation.md
   - API Reference:
+    - Command Line Interface: user_guide/cli.md
     - Overview: api/index.md
     - Core: api/core.md
     - SDE: api/sde.md
@@ -31,7 +90,7 @@ nav:
     - Introduction: dev_guide/index.md
     - Architecture: dev_guide/architecture.md
     - Backend: dev_guide/backend.md
-    - CLI: dev_guide/cli.md
+    - CLI System: dev_guide/cli.md
     - Configuration: dev_guide/configuration.md
     - Error Handling: dev_guide/error_handling.md
     - Plugin Development: dev_guide/plugin_development.md

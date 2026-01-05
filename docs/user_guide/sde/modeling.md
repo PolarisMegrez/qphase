@@ -1,4 +1,3 @@
-```markdown
 ---
 layout: default
 title: SDE Modeling Guide
@@ -74,5 +73,4 @@ fpe_model = PhaseSpaceModel(
 from qphase_sde.model import fpe_to_sde
 
 sde_model = fpe_to_sde(fpe_model)
-```
 ```

@@ -319,7 +319,7 @@ def deprecated(reason: str) -> Callable[[T], T]:
 
     def _decorator(obj: T) -> T:
         logger = get_logger()
-        warned_attr = "__qps_deprecated_warned__"
+        warned_attr = "__qphase_deprecated_warned__"
 
         if callable(obj):
 

@@ -2,7 +2,7 @@
 ======================
 The control layer serves as the central orchestration engine for QPhase simulations,
 decoupling algorithmic implementations from execution management. It provides a
-unified command-line interface (``qps``), a robust plugin system for dynamic
+unified command-line interface (``qphase``), a robust plugin system for dynamic
 resource loading (backends, integrators, models), and a hierarchical configuration
 system based on declarative YAML. This package manages the full lifecycle of
 simulation jobs, from parameter validation and dependency resolution to execution

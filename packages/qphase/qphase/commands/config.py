@@ -1,6 +1,6 @@
 """qphase: Configuration Management CLI Commands
 ---------------------------------------------------------
-Implements the ``qps config`` command group, providing tools to inspect and modify
+Implements the ``qphase config`` command group, providing tools to inspect and modify
 the system (``system.yaml``) and global (``global.yaml``) configurations. It supports
 viewing configurations with syntax highlighting, setting values using dot-notation
 paths with automatic type inference, and resetting configurations to their default
@@ -135,12 +135,12 @@ def set_config(
             if from_config_dirs:
                 console.print(
                     f"[red]global.yaml not found at {global_path}. "
-                    "Run 'qps template <plugin>' to generate one.[/red]"
+                    "Run 'qphase template <plugin>' to generate one.[/red]"
                 )
             else:
                 console.print(
                     "[red]global.yaml not found in current directory. "
-                    "Run 'qps template <plugin>' to generate one.[/red]"
+                    "Run 'qphase template <plugin>' to generate one.[/red]"
                 )
             raise typer.Exit(code=1)
 

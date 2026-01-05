@@ -3,7 +3,7 @@
 The central entry point for the QPhase Command Line Interface (CLI). This module
 initializes the main Typer application and aggregates all sub-commands (init,
 run, config, plugin management) into a unified command structure. It serves as
-the execution root for the ``qps`` console script.
+the execution root for the ``qphase`` console script.
 
 Public API
 ----------
