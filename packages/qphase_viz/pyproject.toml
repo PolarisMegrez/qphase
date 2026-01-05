@@ -33,6 +33,7 @@ dependencies = [
 "visualizer.phase_plane" = "qphase_viz.plotters.phase:PhasePlanePlotter"
 "visualizer.power_spectrum" = "qphase_viz.plotters.spectrum:PowerSpectrumPlotter"
 "visualizer.time_series" = "qphase_viz.plotters.evolution:TimeSeriesPlotter"
+"visualizer.parameter_evolution" = "qphase_viz.plotters.parameter:ParameterEvolutionPlotter"
 
 [tool.setuptools.packages.find]
 where = ["."]

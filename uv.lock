@@ -1929,25 +1929,16 @@ source = { editable = "packages/qphase_sde" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "qphase" },
-]
-
-[package.optional-dependencies]
-accel = [
-    { name = "numba" },
-]
-config = [
     { name = "pydantic" },
+    { name = "qphase" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "numba", marker = "extra == 'accel'", specifier = ">=0.57" },
     { name = "numpy", specifier = ">=1.23" },
-    { name = "pydantic", marker = "extra == 'config'", specifier = ">=2.4" },
+    { name = "pydantic", specifier = ">=2.4" },
     { name = "qphase", editable = "packages/qphase" },
 ]
-provides-extras = ["accel", "config"]
 
 [[package]]
 name = "qphase-viz"

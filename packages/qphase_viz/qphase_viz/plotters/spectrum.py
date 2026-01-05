@@ -75,6 +75,9 @@ class PowerSpectrumPlotter(PlotterProtocol):
                 convention="symmetric",
                 dt=dt,
                 window=spec.window,
+                find_peaks=spec.annotate_peaks,
+                min_height=spec.min_peak_height,
+                prominence=spec.peak_prominence,
             )
             analyzer = PsdAnalyzer(analyzer_config)
 
@@ -85,6 +88,7 @@ class PowerSpectrumPlotter(PlotterProtocol):
             f = res.data["axis"]
             Pxx_all = res.data["psd"]
             available_modes = channels
+            peaks_info = res.data.get("peaks", {})
 
         # Plotting
         for ch in channels:
@@ -101,7 +105,33 @@ class PowerSpectrumPlotter(PlotterProtocol):
                 else:
                     ylabel = "PSD [V**2/Hz]"
 
-                ax.plot(f, val, label=f"Ch{ch}")
+                (line,) = ax.plot(f, val, label=f"Ch{ch}")
+
+                # Annotate peaks
+                if spec.annotate_peaks and ch in peaks_info:
+                    p_freqs = peaks_info[ch]["frequencies"]
+                    p_vals = peaks_info[ch]["values"]
+
+                    # If scale is dB, we need to transform peak values too for plotting
+                    if scale == "dB":
+                        p_vals_plot = 10 * np.log10(p_vals + 1e-20)
+                    else:
+                        p_vals_plot = p_vals
+
+                    ax.plot(p_freqs, p_vals_plot, "x", color=line.get_color())
+
+                    # Add text labels for top 3 peaks
+                    # Sort by value
+                    sorted_idx = np.argsort(p_vals)[::-1]
+                    for i in sorted_idx[:3]:
+                        ax.annotate(
+                            f"{p_freqs[i]:.2f}",
+                            xy=(p_freqs[i], p_vals_plot[i]),
+                            xytext=(0, 5),
+                            textcoords="offset points",
+                            ha="center",
+                            fontsize=8,
+                        )
             else:
                 print(f"Warning: Channel {ch} not found in PSD data.")
 

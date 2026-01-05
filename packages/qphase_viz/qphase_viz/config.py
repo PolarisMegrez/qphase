@@ -117,6 +117,10 @@ class PowerSpectrumSpec(BasePlotterConfig):
     nperseg: int | None = Field(
         None, description="Length of each segment for Welch's method"
     )
+    # Peak annotation
+    annotate_peaks: bool = Field(False, description="Annotate peaks on plot")
+    min_peak_height: float | None = Field(None, description="Min height for peaks")
+    peak_prominence: float | None = Field(None, description="Prominence for peaks")
 
 
 class PowerSpectrumConfig(BaseModel):
@@ -127,6 +131,32 @@ class PowerSpectrumConfig(BaseModel):
 
     plots: list[PowerSpectrumSpec] = Field(
         default_factory=list, description="List of power spectrum plots to generate"
+    )
+
+
+class ParameterEvolutionSpec(BasePlotterConfig):
+    """Specification for Parameter Evolution Plot.
+
+    Plots a metric (e.g. PSD peak frequency) vs a parameter.
+    """
+
+    kind: Literal["parameter_evolution"] = "parameter_evolution"
+    parameter: str = Field(..., description="Name of the parameter to scan")
+    metric: Literal["psd_peak_freq", "psd_peak_val", "mean", "variance"] = Field(
+        "psd_peak_freq", description="Metric to plot"
+    )
+    channel: int = Field(0, description="Channel to analyze")
+
+    # PSD specific (if metric involves PSD)
+    psd_window: str | None = None
+    psd_detrend: bool = True
+
+
+class ParameterEvolutionConfig(BaseModel):
+    """Configuration for Parameter Evolution Plotter."""
+
+    plots: list[ParameterEvolutionSpec] = Field(
+        default_factory=list, description="List of evolution plots"
     )
 
 

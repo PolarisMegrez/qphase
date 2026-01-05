@@ -18,6 +18,7 @@ from pydantic import Field
 
 from qphase.backend.base import BackendBase as Backend
 from qphase.backend.base import BackendConfigBase
+from qphase.backend.xputil import convert_to_numpy
 
 __all__ = [
     "NumpyBackend",
@@ -59,7 +60,9 @@ class NumpyBackend(Backend):
         return None
 
     def asarray(self, x: Any, dtype: Any | None = None) -> Any:
-        return np.asarray(x, dtype=dtype) if dtype is not None else np.asarray(x)
+        # Use convert_to_numpy to handle torch/cupy tensors gracefully
+        x_np = convert_to_numpy(x)
+        return np.asarray(x_np, dtype=dtype) if dtype is not None else x_np
 
     def array(self, x: Any, dtype: Any | None = None) -> Any:
         return self.asarray(x, dtype=dtype)

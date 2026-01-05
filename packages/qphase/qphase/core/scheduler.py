@@ -415,6 +415,45 @@ class Scheduler:
         if job.input in job_results:
             return job_results[job.input]
 
+        # Check for parameter scan aggregation (N-to-1)
+        # If job.input matches the base name of a set of expanded jobs
+        # e.g. input="sim", but we have "sim[p=1]", "sim[p=2]"
+        scan_prefix = f"{job.input}["
+        aggregated_results = {
+            k: v for k, v in job_results.items() if k.startswith(scan_prefix)
+        }
+        if aggregated_results:
+            # We found multiple results matching the input pattern.
+            # We need to return a container that holds all of them.
+            # Since ResultProtocol is an interface, we can return a special
+            # AggregateResult or just the dict if the consumer handles it.
+            # However, the type hint says ResultProtocol.
+            # Let's define a simple AggregateResult wrapper.
+            from .protocols import ResultProtocol
+
+            class AggregateResult(ResultProtocol):
+                def __init__(self, results: dict[str, ResultProtocol]):
+                    self._results = results
+                    self._meta = {"aggregated": True, "count": len(results)}
+
+                @property
+                def data(self) -> Any:
+                    return self._results
+
+                @property
+                def metadata(self) -> dict[str, Any]:
+                    return self._meta
+
+                @property
+                def label(self) -> Any:
+                    return "aggregated"
+
+                def save(self, path: str | Path) -> None:
+                    # Saving aggregated results might be complex
+                    pass
+
+            return AggregateResult(aggregated_results)
+
         # Check if input is in manifest (from a previous run in same session context)
         if self.manifest and job.input in self.manifest["jobs"]:
             job_entry = self.manifest["jobs"][job.input]

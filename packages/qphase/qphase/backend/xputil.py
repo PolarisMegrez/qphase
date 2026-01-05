@@ -176,6 +176,14 @@ def convert_to_numpy(x: Any) -> np.ndarray:
             return cp.asnumpy(x)
     except Exception:
         pass
+
+    # Duck typing for CuPy
+    if hasattr(x, "get") and callable(x.get):
+        try:
+            return x.get()
+        except Exception:
+            pass
+
     try:
         import numpy as np
 

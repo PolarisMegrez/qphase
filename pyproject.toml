@@ -47,7 +47,8 @@ exclude = [
 	"venv",
 	".mypy_cache",
 	".pytest_cache",
-	".tox"
+	".tox",
+	"tests"
 ]
 ignore = [
 	"D100", # 模块缺少 docstring

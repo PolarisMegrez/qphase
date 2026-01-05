@@ -29,12 +29,9 @@ classifiers = [
 ]
 dependencies = [
   "numpy>=1.23",
-  "qphase>=1.0.0"
+  "qphase>=1.0.0",
+  "pydantic>=2.4"
 ]
-
-[project.optional-dependencies]
-accel = ["numba>=0.57"]
-config = ["pydantic>=2.4"]
 
 [project.entry-points.qphase]
 # Engine

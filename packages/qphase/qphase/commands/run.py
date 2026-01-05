@@ -249,6 +249,10 @@ def _make_progress_callback():
         sys.stdout.write(f"\r{msg:<80}")
         sys.stdout.flush()
 
+        if has_progress and percent >= 100.0:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+
     return _on_progress
 
 

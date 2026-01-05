@@ -13,6 +13,7 @@ from typing import Any, ClassVar
 import matplotlib.pyplot as plt
 import numpy as np
 from qphase.backend.base import ArrayBase
+from qphase.backend.xputil import convert_to_numpy
 
 from ..config import TimeSeriesConfig, TimeSeriesSpec
 from .base import PlotterProtocol
@@ -46,7 +47,10 @@ class TimeSeriesPlotter(PlotterProtocol):
         # Assume TrajectorySet-like structure
 
         y = data.to_numpy()  # (N, T, M)
-        t = getattr(data, "times", lambda: np.arange(y.shape[1]))()
+        if hasattr(data, "times"):
+            t = convert_to_numpy(data.times)
+        else:
+            t = np.arange(y.shape[1])
 
         channels = config["channels"]
         transform = config["transform"]

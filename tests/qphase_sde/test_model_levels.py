@@ -2,9 +2,10 @@
 
 import numpy as np
 import pytest
+from qphase_sde.model import fpe_to_sde
+
 from models.vdp_level2 import VDPLevel2Config, VDPLevel2Model
 from models.vdp_level3 import VDPLevel3Config, VDPLevel3Model
-from qphase_sde.model import fpe_to_sde
 
 
 @pytest.fixture

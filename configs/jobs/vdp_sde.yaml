@@ -1,5 +1,4 @@
 name: vdp_sde
-output: vdp_viz
 engine:
   sde:
     # Time Domain
@@ -8,7 +7,7 @@ engine:
     dt: 0.1
 
     # Ensemble
-    n_traj: 1000
+    n_traj: 5000
     seed: 42
     ic:
       - ["7.0+0.0j", "0.0-7.0j"]

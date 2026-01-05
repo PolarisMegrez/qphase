@@ -53,6 +53,13 @@ class PsdAnalyzerConfig(BaseModel):
     window: str | None = Field(
         None, description="Window function name (e.g. 'hanning')"
     )
+    # Peak finding configuration
+    find_peaks: bool = Field(False, description="Whether to find peaks")
+    min_height: float | None = Field(None, description="Minimum peak height")
+    prominence: float | None = Field(None, description="Peak prominence")
+    distance: int | None = Field(None, description="Minimum horizontal distance")
+    smooth_window: int | None = Field(None, description="Window length for smoothing")
+    noise_threshold: float | None = Field(None, description="Threshold vs noise floor")
 
     @model_validator(mode="after")
     def validate_modes(self) -> "PsdAnalyzerConfig":
@@ -122,12 +129,67 @@ class PsdAnalyzer(Analyzer):
             P_list.append(Pm)
         P_mat = _np.vstack(P_list).T  # shape (n_freq, n_modes)
 
+        # Peak finding
+        peaks_info = {}
+        if config.find_peaks:
+            from scipy.signal import find_peaks, savgol_filter
+
+            for i, m in enumerate(modes):
+                # Find peaks for this mode
+                p_data = P_mat[:, i]
+
+                # Smoothing (on a copy to avoid affecting returned data)
+                p_smooth = p_data.copy()
+                if config.smooth_window:
+                    try:
+                        window_len = config.smooth_window
+                        if window_len % 2 == 0:
+                            window_len += 1
+                        if window_len < len(p_smooth):
+                            p_smooth = savgol_filter(p_smooth, window_len, 3)
+                    except Exception:
+                        pass
+
+                # Prepare kwargs
+                fp_kwargs = {}
+
+                # Auto-calculate height/prominence if requested via noise_threshold
+                if config.noise_threshold is not None:
+                    # Estimate noise floor using median of smoothed data
+                    noise_floor = _np.median(p_smooth)
+                    min_h = noise_floor * config.noise_threshold
+                    fp_kwargs["height"] = min_h
+                    if config.prominence is None:
+                        fp_kwargs["prominence"] = min_h * 0.5  # Heuristic
+
+                if config.min_height is not None:
+                    fp_kwargs["height"] = config.min_height
+                if config.prominence is not None:
+                    fp_kwargs["prominence"] = config.prominence
+                if config.distance is not None:
+                    fp_kwargs["distance"] = config.distance
+
+                # Find peaks on smoothed data
+                peaks, props = find_peaks(p_smooth, **fp_kwargs)
+
+                # Store results (values from original data or smoothed?)
+                # Usually we want values from the original data at those indices,
+                # or the smoothed values. Let's store original values for accuracy
+                # but use indices found on smoothed data.
+                peaks_info[m] = {
+                    "indices": peaks,
+                    "frequencies": axis0[peaks],
+                    "values": p_data[peaks],
+                    "properties": props,
+                }
+
         result_dict = {
             "axis": axis0,
             "psd": P_mat,
             "modes": modes,
             "kind": kind,
             "convention": convention,
+            "peaks": peaks_info,
         }
 
         return AnalysisResult(data_dict=result_dict, meta=result_dict)
@@ -216,5 +278,9 @@ class PsdAnalyzer(Analyzer):
         # Convert to numpy for return
         axis = convert_to_numpy(axis_backend)
         P = convert_to_numpy(P_backend)
+
+        # Shift zero frequency to center
+        axis = _np.fft.fftshift(axis)
+        P = _np.fft.fftshift(P, axes=0)
 
         return axis, P
