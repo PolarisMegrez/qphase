@@ -101,6 +101,9 @@ def get_xp(arr: Any):
                 zeros=lambda shape, dtype=None: th.zeros(
                     shape, dtype=dtype, device=x_device(arr)
                 ),
+                full=lambda shape, fill_value, dtype=None: th.full(
+                    shape, fill_value, dtype=dtype, device=x_device(arr)
+                ),
                 empty_like=th.empty_like,
                 empty=lambda shape, dtype=None: th.empty(
                     shape, dtype=dtype, device=x_device(arr)

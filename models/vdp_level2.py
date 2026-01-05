@@ -75,10 +75,10 @@ class VDPLevel2Model:
         # Lc = sqrt(D_alpha).
         # So it seems D2 in vdp_two_mode corresponds to D_alpha.
         # I will use sqrt(D2).
-        
-        d2 = self._diffusion_d2(y, t, p) # (n, 2)
+
+        d2 = self._diffusion_d2(y, t, p)  # (n, 2)
         xp = get_xp(y)
-        
+
         n = y.shape[0]
         Lc = xp.zeros((n, 2, 2), dtype=y.dtype)
         Lc[:, 0, 0] = xp.sqrt(d2[:, 0])

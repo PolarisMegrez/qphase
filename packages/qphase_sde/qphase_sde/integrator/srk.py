@@ -17,6 +17,7 @@ from qphase.backend.base import BackendBase
 
 from qphase_sde.integrator.base import Integrator
 from qphase_sde.model import NoiseSpec, SDEModel
+from qphase_sde.utils import expand_complex_noise_backend
 
 
 class GenericSRKConfig(BaseModel):
@@ -26,16 +27,6 @@ class GenericSRKConfig(BaseModel):
         "heun",
         description="Integration scheme (euler, heun, or custom)",
     )
-
-
-def _expand_complex_noise_backend(Lc: Any, backend: BackendBase) -> Any:
-    """Expand complex-basis diffusion matrix to an equivalent real basis."""
-    a = backend.real(Lc)
-    b = backend.imag(Lc)
-    s = (2.0) ** 0.5
-    Lr_real = backend.concatenate((a / s, -b / s), axis=-1)
-    Lr_imag = backend.concatenate((b / s, a / s), axis=-1)
-    return Lr_real + 1j * Lr_imag
 
 
 class GenericSRK(Integrator):
@@ -76,7 +67,14 @@ class GenericSRK(Integrator):
         dW = noise
 
         if getattr(model, "noise_basis", "real") == "complex":
-            diffusion = _expand_complex_noise_backend(diffusion, backend)
+            diffusion = expand_complex_noise_backend(diffusion, backend)
+            # Ensure dW matches diffusion dtype (e.g. complex) for strict backends
+            if (
+                hasattr(diffusion, "dtype")
+                and hasattr(dW, "dtype")
+                and diffusion.dtype != dW.dtype
+            ):
+                dW = backend.asarray(dW, dtype=diffusion.dtype)
 
         if self.method == "euler":
             # Euler-Maruyama (Strong Order 0.5)
@@ -96,7 +94,14 @@ class GenericSRK(Integrator):
             diffusion_bar = model.diffusion(y_bar, t + dt, model.params)
 
             if getattr(model, "noise_basis", "real") == "complex":
-                diffusion_bar = _expand_complex_noise_backend(diffusion_bar, backend)
+                diffusion_bar = expand_complex_noise_backend(diffusion_bar, backend)
+                # Ensure dW matches diffusion dtype
+                if (
+                    hasattr(diffusion_bar, "dtype")
+                    and hasattr(dW, "dtype")
+                    and diffusion_bar.dtype != dW.dtype
+                ):
+                    dW = backend.asarray(dW, dtype=diffusion_bar.dtype)
 
             diff_term_bar = backend.einsum("...ij,...j->...i", diffusion_bar, dW)
 
@@ -123,15 +128,26 @@ class GenericSRK(Integrator):
         shape = y.shape[:-1] + (noise.dim,)
         sqrt_dt_2 = np.sqrt(dt / 2)
 
+        # Infer noise dtype from state
+        noise_dtype = float
+        if hasattr(y, "real") and hasattr(y.real, "dtype"):
+            noise_dtype = y.real.dtype
+        elif hasattr(y, "dtype"):
+            noise_dtype = y.dtype
+
+        # Ensure scalar is same dtype as noise
+        if hasattr(backend, "asarray"):
+            sqrt_dt_2 = backend.asarray(sqrt_dt_2, dtype=noise_dtype)
+
         # Ensure rng is provided
         if rng is None:
             # Fallback if rng not provided (should not happen in engine)
             # But backend.randn might fail or use global state
-            dW_a = backend.randn(None, shape, dtype=float) * sqrt_dt_2
-            dW_b = backend.randn(None, shape, dtype=float) * sqrt_dt_2
+            dW_a = backend.randn(None, shape, dtype=noise_dtype) * sqrt_dt_2
+            dW_b = backend.randn(None, shape, dtype=noise_dtype) * sqrt_dt_2
         else:
-            dW_a = backend.randn(rng, shape, dtype=float) * sqrt_dt_2
-            dW_b = backend.randn(rng, shape, dtype=float) * sqrt_dt_2
+            dW_a = backend.randn(rng, shape, dtype=noise_dtype) * sqrt_dt_2
+            dW_b = backend.randn(rng, shape, dtype=noise_dtype) * sqrt_dt_2
 
         dW = dW_a + dW_b
 

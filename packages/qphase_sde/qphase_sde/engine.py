@@ -24,7 +24,7 @@ from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 from qphase_sde.integrator.base import Integrator
 from qphase_sde.model import NoiseSpec, SDEModel
 from qphase_sde.result import SDEResult
-from qphase_sde.state import State, TrajectorySet
+from qphase_sde.state import TrajectorySet
 
 __all__ = ["Engine", "EngineConfig"]
 
@@ -418,7 +418,26 @@ class Engine(EngineBase):
                 else:
                     ic = [_parse_complex(x) for x in ic]
 
-            y0 = be.asarray(ic)
+            # Determine target dtype from backend config
+            target_dtype = None
+            if hasattr(be, "config") and hasattr(be.config, "float_dtype"):
+
+                def _is_complex_recursive(obj):
+                    if isinstance(obj, complex):
+                        return True
+                    if isinstance(obj, list):
+                        return any(_is_complex_recursive(x) for x in obj)
+                    return False
+
+                if _is_complex_recursive(ic):
+                    float_dtype = be.config.float_dtype
+                    target_dtype = (
+                        "complex64" if float_dtype == "float32" else "complex128"
+                    )
+                else:
+                    target_dtype = be.config.float_dtype
+
+            y0 = be.asarray(ic, dtype=target_dtype)
 
         # Broadcast IC if necessary to match n_traj
         # Expected shape: (n_traj, n_modes)
@@ -430,14 +449,11 @@ class Engine(EngineBase):
                 # Broadcast
                 y0 = be.repeat(y0, n_traj, axis=0)
 
-        state = State(
-            data=y0,
-            t=t0,
-            meta={
-                "back": getattr(be, "backend_name", lambda: "backend")(),
-                "interpretation": "ito",
-            },
-        )
+        # Initialize state variables (unwrap State object for loop performance)
+        # We keep 'y' (data) and 't' (time) as separate variables to avoid
+        # creating State objects in the inner loop.
+        y = y0
+        t = float(t0)
 
         # Setup RNG if not pre-configured
         if rng is None:
@@ -461,10 +477,9 @@ class Engine(EngineBase):
         rs = max(1, int(return_stride))
         n_keep = (steps // rs) + 1
         out = be.empty((n_traj, n_keep, model.n_modes), dtype=complex)
-        out[:, 0, :] = state.data
+        out[:, 0, :] = y
         keep_counter = 1
 
-        t = t0
         # Progress tracking
         last_report_step = 0
         last_report_time = None
@@ -510,33 +525,48 @@ class Engine(EngineBase):
 
         while t < t_end - 1e-12:
             k += 1
-            state_prev = state
+            y_prev = y
+            t_prev = t
 
             if use_adaptive:
                 assert noise_spec is not None
                 y_next, t_next, next_dt, error = integrator.step_adaptive(
-                    state.data, t, current_dt, tol, model, noise_spec, be, rng
+                    y, t, current_dt, tol, model, noise_spec, be, rng
                 )
-                state = State(data=y_next, t=t_next, meta=state.meta)
-                t = t_next
-                current_dt = next_dt
+                y = y_next
+                t = float(t_next)  # Ensure t is float
+                current_dt = float(next_dt)  # Ensure dt is float
             else:
                 assert rng is not None, "RNG not initialized"
-                dW = be.randn(rng, (state.n_traj, model.noise_dim), dtype=float) * (
-                    current_dt**0.5
-                )
-                dy = integrator.step(state.data, t, current_dt, model, dW, be)
-                state = State(data=state.data + dy, t=t + current_dt, meta=state.meta)
+
+                # Infer noise dtype from state precision
+                noise_dtype = float
+                if hasattr(y, "real") and hasattr(y.real, "dtype"):
+                    noise_dtype = y.real.dtype
+                elif hasattr(y, "dtype"):
+                    noise_dtype = y.dtype
+
+                raw_noise = be.randn(rng, (n_traj, model.noise_dim), dtype=noise_dtype)
+                # Ensure scalar is same dtype as noise to prevent promotion
+                dt_sqrt = current_dt**0.5
+                if hasattr(raw_noise, "dtype"):
+                    # Cast scalar to tensor of same dtype if possible
+                    dt_sqrt = be.asarray(dt_sqrt, dtype=raw_noise.dtype)
+
+                dW = raw_noise * dt_sqrt
+
+                dy = integrator.step(y, t, current_dt, model, dW, be)
+                y = y + dy
                 t += current_dt
 
             # Save data (Interpolation)
             while t >= next_save_time - 1e-12 and keep_counter < n_keep:
-                if t > state_prev.t + 1e-12:
-                    frac = (next_save_time - state_prev.t) / (t - state_prev.t)
+                if t > t_prev + 1e-12:
+                    frac = (next_save_time - t_prev) / (t - t_prev)
                     frac = max(0.0, min(1.0, frac))
-                    y_interp = state_prev.data + (state.data - state_prev.data) * frac
+                    y_interp = y_prev + (y - y_prev) * frac
                 else:
-                    y_interp = state.data
+                    y_interp = y
 
                 out[:, keep_counter, :] = y_interp
                 keep_counter += 1
@@ -567,6 +597,8 @@ class Engine(EngineBase):
 
                     elapsed = now - start_time
                     eta = float("nan")
+                    # Ensure progress is float
+                    progress = float(progress)
                     if progress > 0 and elapsed >= warmup_time_thr:
                         eta = elapsed / progress * (1 - progress)
 

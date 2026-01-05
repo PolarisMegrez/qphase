@@ -91,10 +91,20 @@ class VDPLevel3Model:
         D_beta = D * (gamma_b / 2.0)
 
         n = y.shape[0]
+        # Use y.real.dtype to ensure we match the precision of the state
+        # (e.g. float32 for complex64, float64 for complex128)
+        rdtype = y.real.dtype
+
         if not hasattr(D_alpha, "shape") or D_alpha.shape != (n,):
-            D_alpha = xp.full((n,), float(D_alpha))
+            D_alpha = xp.full((n,), float(D_alpha), dtype=rdtype)
         if not hasattr(D_beta, "shape") or D_beta.shape != (n,):
-            D_beta = xp.full((n,), float(D_beta))
+            D_beta = xp.full((n,), float(D_beta), dtype=rdtype)
+
+        # Ensure D_alpha/D_beta are cast to the correct real dtype
+        # (In case they were promoted to float64 by scalar ops)
+        if hasattr(xp, "asarray"):
+            D_alpha = xp.asarray(D_alpha, dtype=rdtype)
+            D_beta = xp.asarray(D_beta, dtype=rdtype)
 
         D_alpha = xp.clip(D_alpha, 0.0, None)
         D_beta = xp.clip(D_beta, 0.0, None)

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from qphase.backend.xputil import convert_to_numpy
 from qphase.core.errors import QPhaseError
 
 
@@ -75,7 +76,9 @@ class SDEResult:
         # Convert trajectory to numpy if possible for storage
         data_to_save = self.trajectory
         if hasattr(self.trajectory, "data"):
-            data_to_save = self.trajectory.data
+            data_to_save = convert_to_numpy(self.trajectory.data)
+        else:
+            data_to_save = convert_to_numpy(self.trajectory)
 
         # Extract time info if available
         t0 = getattr(self.trajectory, "t0", 0.0)

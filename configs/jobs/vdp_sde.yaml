@@ -8,13 +8,13 @@ engine:
     dt: 0.1
 
     # Ensemble
-    n_traj: 100
+    n_traj: 1000
     seed: 42
     ic:
       - ["7.0+0.0j", "0.0-7.0j"]
 
     # Adaptive
-    adaptive: true
+    adaptive: false
     atol: 1e-3
     rtol: 1e-3
     min_dt: 1e-3
@@ -32,7 +32,9 @@ model:
     D: 1.0
 
 backend:
-  torch: {}
+  cupy:
+    float_dtype: float32
+    device: cuda
 
 integrator:
   srk:
