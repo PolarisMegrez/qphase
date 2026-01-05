@@ -50,8 +50,6 @@ desktop.ini
 *.tmp
 
 # User Data
-configs/
-models/
 *.temp
 ~$*
 

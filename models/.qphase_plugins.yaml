@@ -1,0 +1,14 @@
+# QPhase Plugin Directory Configuration
+plugins:
+  - type: model.vdp_two_mode
+    target: models.vdp_two_mode:VDPTwoModeModel
+    description: Two-mode van der Pol coupled cavities
+  - type: model.kerr_cavity
+    target: models.kerr_cavity:KerrCavityModel
+    description: Kerr nonlinear cavity model
+  - type: model.vdp_level2
+    target: models.vdp_level2:VDPLevel2Model
+    description: Van der Pol Oscillator (Phase Space Model)
+  - type: model.vdp_level3
+    target: models.vdp_level3:VDPLevel3Model
+    description: Van der Pol Oscillator (SDE Model)

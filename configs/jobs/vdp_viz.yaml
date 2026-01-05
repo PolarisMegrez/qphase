@@ -1,0 +1,31 @@
+name: vdp_viz
+input: vdp_sde
+engine:
+  viz:
+    output_dir: runs/vdp_plots
+    format: png
+
+visualizer:
+  time_series:
+    plots:
+      - channels: [0, 1]
+        transform: real
+        title: "VDP Time Series (Real Part)"
+        xlabel: "Time"
+        ylabel: "Amplitude"
+  
+  phase_plane:
+    plots:
+      - channel_x: 0
+        mode: hist2d
+        title: "VDP Phase Plane (Mode 0)"
+  
+  power_spectrum:
+    plots:
+      - channels: [0, 1]
+        scale: log
+        title: "VDP Power Spectral Density"
+        xlabel: "Frequency"
+        ylabel: "PSD"
+        xlim: [-0.5, 0.5]
+        grid: true
