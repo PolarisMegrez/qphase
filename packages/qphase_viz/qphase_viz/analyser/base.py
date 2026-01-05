@@ -1,6 +1,6 @@
-"""qphase_sde: Analyzer Base Class
+"""qphase_viz: Analyzer Base Class
 ---------------------------------------------------------
-Base class for all analyzers in the qphase_sde package.
+Base class for all analyzers in the qphase_viz package.
 
 Public API
 ----------

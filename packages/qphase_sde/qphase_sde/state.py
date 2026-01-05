@@ -113,9 +113,15 @@ class TrajectorySet(ArrayBase):
     def n_modes(self) -> int:
         return int(self.data.shape[2])
 
+    @property
     def times(self) -> Any:
         """Return the time axis."""
         return self.t0 + self.dt * self.xp.arange(self.n_steps)
+
+    @property
+    def index(self) -> Any:
+        """Alias for times to satisfy DataSeriesProtocol."""
+        return self.times
 
     def save(self, path: str | Any) -> None:
         """Save to disk (numpy format) to satisfy ResultProtocol."""

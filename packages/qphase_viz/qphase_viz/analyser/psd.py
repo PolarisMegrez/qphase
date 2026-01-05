@@ -1,4 +1,4 @@
-"""qphase_sde: Power Spectral Density
+"""qphase_viz: Power Spectral Density
 ---------------------------------------------------------
 Compute power spectral density (PSD) from multi-trajectory time series for one
 or more modes using FFT-based periodograms.
@@ -30,9 +30,8 @@ from pydantic import BaseModel, Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 
-from qphase_sde.result import SDEResult
-
 from .base import Analyzer
+from .result import AnalysisResult
 
 __all__ = [
     "PsdAnalyzer",
@@ -51,6 +50,9 @@ class PsdAnalyzerConfig(BaseModel):
         "symmetric", description="PSD convention"
     )
     dt: float = Field(1.0, description="Sampling interval")
+    window: str | None = Field(
+        None, description="Window function name (e.g. 'hanning')"
+    )
 
     @model_validator(mode="after")
     def validate_modes(self) -> "PsdAnalyzerConfig":
@@ -69,7 +71,7 @@ class PsdAnalyzer(Analyzer):
     def __init__(self, config: PsdAnalyzerConfig | None = None, **kwargs):
         super().__init__(config, **kwargs)  # type: ignore[arg-type]
 
-    def analyze(self, data: Any, backend: BackendBase) -> SDEResult:
+    def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         """Compute PSD for multiple modes.
 
         Parameters
@@ -82,7 +84,7 @@ class PsdAnalyzer(Analyzer):
 
         Returns
         -------
-        SDEResult
+        AnalysisResult
             Result containing PSD data.
 
         """
@@ -104,6 +106,7 @@ class PsdAnalyzer(Analyzer):
             dt,
             kind=kind,
             convention=convention,
+            window=config.window,
             backend=backend,
         )
         P_list = [P0]
@@ -113,6 +116,7 @@ class PsdAnalyzer(Analyzer):
                 dt,
                 kind=kind,
                 convention=convention,
+                window=config.window,
                 backend=backend,
             )
             P_list.append(Pm)
@@ -126,7 +130,7 @@ class PsdAnalyzer(Analyzer):
             "convention": convention,
         }
 
-        return SDEResult(trajectory=result_dict, kind="psd", meta=result_dict)
+        return AnalysisResult(data_dict=result_dict, meta=result_dict)
 
     def _compute_single(
         self,
@@ -135,6 +139,7 @@ class PsdAnalyzer(Analyzer):
         *,
         kind: str = "complex",
         convention: str = "symmetric",
+        window: str | None = None,
         backend: Any | None = None,
     ) -> tuple[Any, Any]:
         """Compute two-sided power spectral density (PSD) for a single mode."""
@@ -166,6 +171,18 @@ class PsdAnalyzer(Analyzer):
             raise ValueError("[524] input `x` must be a 1-D or 2-D array")
 
         n_time = int(x_proc.shape[-1])
+
+        # Apply window if requested
+        if window:
+            try:
+                # Use numpy to generate window
+                win_func = getattr(_np, window)
+                w = win_func(n_time)
+                w_backend = backend.asarray(w)
+                x_proc = x_proc * w_backend
+            except AttributeError:
+                # Fallback or warning? For now silent fallback
+                pass
 
         if convention in ("symmetric", "unitary"):
             norm = "ortho"

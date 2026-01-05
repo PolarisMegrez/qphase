@@ -44,6 +44,16 @@ class GenericResult:
         """Get the result metadata."""
         return self._metadata
 
+    @property
+    def label(self) -> Any:
+        """Get the label from metadata."""
+        return self._metadata.get("label")
+
+    @label.setter
+    def label(self, value: Any) -> None:
+        """Set the label in metadata."""
+        self._metadata["label"] = value
+
     def save(self, path: str | Path) -> None:
         """Save the result (Not Implemented).
 

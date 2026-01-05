@@ -38,12 +38,22 @@ class VizResult(ResultProtocol):
     ----------
     generated_files : list[Path]
         List of paths to generated plot files.
+    analysis_results : dict[str, Any] | None
+        Dictionary of analysis results (e.g. PSD data).
 
     """
 
-    def __init__(self, generated_files: list[Path]):
+    def __init__(
+        self,
+        generated_files: list[Path],
+        analysis_results: dict[str, Any] | None = None,
+    ):
         self._data = generated_files
-        self._metadata = {"count": len(generated_files)}
+        self._analysis = analysis_results or {}
+        self._metadata = {
+            "count": len(generated_files),
+            "has_analysis": bool(self._analysis),
+        }
 
     @property
     def data(self) -> list[Path]:
@@ -51,19 +61,42 @@ class VizResult(ResultProtocol):
         return self._data
 
     @property
+    def analysis(self) -> dict[str, Any]:
+        """Get the analysis results."""
+        return self._analysis
+
+    @property
     def metadata(self) -> dict[str, Any]:
         """Get the result metadata."""
         return self._metadata
 
-    def save(self, path: str | Path) -> None:
-        """Save the result (No-op).
+    @property
+    def label(self) -> Any:
+        """Get the label from metadata."""
+        return self._metadata.get("label")
 
-        Visualization results are already saved files.
-        This method might save a manifest or index in the future.
+    def save(self, path: str | Path) -> None:
+        """Save the result.
+
+        Saves analysis results if present.
         """
-        # Visualization results are already saved files.
-        # This method might save a manifest or index.
-        pass
+        if not self._analysis:
+            return
+
+        path = Path(path)
+        # If path is a directory, save analysis there
+        # If it's a file, maybe save a summary or zip?
+        # For now, assume directory or create one
+        if path.suffix:
+            out_dir = path.parent
+        else:
+            out_dir = path
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+        for name, res in self._analysis.items():
+            # res should be AnalysisResult or similar
+            if hasattr(res, "save"):
+                res.save(out_dir / f"{name}_analysis.npz")
 
 
 class VizEngine(EngineBase):

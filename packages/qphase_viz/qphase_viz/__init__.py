@@ -10,6 +10,7 @@ License : MIT
 Version : 1.0.0 (Jan 2026)
 """
 
+from .analyser import PsdAnalyzer, PsdAnalyzerConfig
 from .config import (
     PhasePlaneConfig,
     PowerSpectrumConfig,
@@ -24,4 +25,6 @@ __all__ = [
     "TimeSeriesConfig",
     "PhasePlaneConfig",
     "PowerSpectrumConfig",
+    "PsdAnalyzer",
+    "PsdAnalyzerConfig",
 ]

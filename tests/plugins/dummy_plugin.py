@@ -1,7 +1,7 @@
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
-from qphase.core.protocols import ResultBase
 
 
 class DummyConfig(BaseModel):
@@ -9,7 +9,14 @@ class DummyConfig(BaseModel):
     description: str = "A dummy plugin"
 
 
-class DummyResult(ResultBase):
+class DummyResult(BaseModel):
+    data: Any
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def label(self) -> Any:
+        return self.metadata.get("label")
+
     def save(self, path: str | Path) -> None:
         """Save the dummy result to output directory."""
         import json

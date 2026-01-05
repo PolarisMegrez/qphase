@@ -1,4 +1,4 @@
-"""qphase_sde: Analysis Subpackage
+"""qphase_viz: Analysis Subpackage
 ---------------------------------------------------------
 Numerical analysis utilities for simulated data, including power spectral
 density (PSD) computation and future time/frequency-domain diagnostics.

@@ -23,7 +23,7 @@ from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 
 from qphase_sde.integrator.base import Integrator
 from qphase_sde.model import NoiseSpec, SDEModel
-from qphase_sde.result import AnalysisResult, SDEResult
+from qphase_sde.result import SDEResult
 from qphase_sde.state import State, TrajectorySet
 
 __all__ = ["Engine", "EngineConfig"]
@@ -191,7 +191,7 @@ class Engine(EngineBase):
     config_schema: ClassVar[type[EngineConfig]] = EngineConfig
     manifest: ClassVar[EngineManifest] = EngineManifest(
         required_plugins={"backend", "model"},
-        optional_plugins={"integrator", "analyser"},
+        optional_plugins={"integrator"},
         defaults={"integrator": "euler_maruyama"},
     )
 
@@ -289,22 +289,7 @@ class Engine(EngineBase):
             progress_cb=sde_progress_cb,
         )
 
-        # Check for analysers
-        analysers = self.plugins.get("analyser")
-        if not analysers:
-            return SDEResult(trajectory=traj_set, kind="trajectory")
-
-        # If analysers is a single instance (backward compat), wrap it
-        if not isinstance(analysers, dict):
-            analysers = {"default": analysers}
-
-        results = {}
-        for name, analyser in analysers.items():
-            # analyser.analyze(data, backend)
-            # Note: analyser.analyze returns a ResultProtocol
-            results[name] = analyser.analyze(traj_set, self._default_backend)
-
-        return AnalysisResult(results=results, meta={})
+        return SDEResult(trajectory=traj_set, meta={})
 
     def run_sde(
         self,

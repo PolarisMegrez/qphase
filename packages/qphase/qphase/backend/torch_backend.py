@@ -196,7 +196,8 @@ class TorchBackend(Backend):
         import torch as torch
 
         td = _to_torch_dtype(dtype)
-        t = torch.as_tensor(obj, dtype=cast(Any, td))
+        dev = self.device() or "cpu"
+        t = torch.as_tensor(obj, dtype=cast(Any, td), device=dev)
         return t
 
     def asarray(self, obj: Any, dtype: Any | None = None) -> Any:

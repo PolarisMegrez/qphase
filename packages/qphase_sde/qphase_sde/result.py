@@ -5,12 +5,11 @@ Container for SDE simulation results, supporting serialization and deserializati
 Public API
 ----------
 ``SDEResult`` : Container for SDE simulation results.
-``AnalysisResult`` : Container for analysis results.
 """
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 from qphase.core.errors import QPhaseError
@@ -26,14 +25,11 @@ class SDEResult:
         The trajectory data (e.g., numpy array or TrajectorySet).
     meta : dict[str, Any]
         Metadata about the simulation (config, runtime info, etc.).
-    kind : str
-        Type of result ("trajectory", "psd", etc.).
 
     """
 
     trajectory: Any = None
     meta: dict[str, Any] = field(default_factory=dict)
-    kind: Literal["trajectory", "psd"] = "trajectory"
 
     @property
     def data(self) -> Any:
@@ -44,6 +40,25 @@ class SDEResult:
     def metadata(self) -> dict[str, Any]:
         """Alias for meta to satisfy ResultProtocol."""
         return self.meta
+
+    @property
+    def label(self) -> Any:
+        """Get the label (e.g. parameter value) from metadata."""
+        return self.meta.get("label")
+
+    @label.setter
+    def label(self, value: Any) -> None:
+        """Set the label in metadata."""
+        self.meta["label"] = value
+
+    @property
+    def index(self) -> Any:
+        """Get the index (time/parameter) from the trajectory if available."""
+        if hasattr(self.trajectory, "index"):
+            return self.trajectory.index
+        if hasattr(self.trajectory, "times"):
+            return self.trajectory.times
+        return None
 
     def save(self, path: str | Path) -> None:
         """Save the result to a file.
@@ -70,9 +85,7 @@ class SDEResult:
             # Wrap meta in object array to allow saving dict in npz
             # np.savez expects arrays, so we wrap the dict
             meta_arr = np.array(self.meta, dtype=object)
-            np.savez_compressed(
-                path, data=data_to_save, t0=t0, dt=dt, meta=meta_arr, kind=self.kind
-            )
+            np.savez_compressed(path, data=data_to_save, t0=t0, dt=dt, meta=meta_arr)
         except Exception as e:
             raise QPhaseError(f"Failed to save SDEResult to {path}: {e}") from e
 
@@ -100,7 +113,6 @@ class SDEResult:
                 t0 = float(npz["t0"])
                 dt = float(npz["dt"])
                 meta = npz["meta"].item() if "meta" in npz else {}
-                kind = str(npz["kind"]) if "kind" in npz else "trajectory"
 
                 # Reconstruct a simple trajectory object or just return data
                 # For now, we return a simple object or the array
@@ -121,7 +133,7 @@ class SDEResult:
 
                 traj = MinimalTrajectory(data, t0, dt)
 
-                return cls(trajectory=traj, meta=meta, kind=kind)  # type: ignore[arg-type]
+                return cls(trajectory=traj, meta=meta)
 
         except Exception as e:
             raise QPhaseError(f"Failed to load SDEResult from {path}: {e}") from e
@@ -129,46 +141,3 @@ class SDEResult:
 
 # Alias for backward compatibility if needed
 SimulationResult = SDEResult
-
-
-@dataclass
-class AnalysisResult:
-    """Container for analysis results."""
-
-    results: dict[str, Any]
-    meta: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def data(self) -> Any:
-        return self.results
-
-    @property
-    def metadata(self) -> dict[str, Any]:
-        return self.meta
-
-    def save(self, path: str | Path) -> None:
-        """Save analysis results.
-
-        If results contains ResultProtocol objects, delegates saving to them
-        with suffixed filenames. Otherwise saves as dictionary pickle/json?
-        For now, assumes results are ResultProtocol.
-        """
-        base_path = Path(path)
-        base_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # If path has extension, strip it for directory-like usage or suffixing
-        if base_path.suffix:
-            stem = base_path.stem
-            parent = base_path.parent
-        else:
-            stem = base_path.name
-            parent = base_path.parent
-
-        for name, res in self.results.items():
-            if hasattr(res, "save"):
-                # e.g. path/job_name_psd
-                sub_path = parent / f"{stem}_{name}"
-                res.save(sub_path)
-            else:
-                # Fallback?
-                pass

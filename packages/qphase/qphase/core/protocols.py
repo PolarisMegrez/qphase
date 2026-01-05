@@ -3,7 +3,7 @@
 Defines the structural contracts (Protocols) that underpin the plugin architecture.
 It specifies the interfaces for configuration models (``PluginConfigBase``), plugin
 implementations (``PluginBase``), execution engines (``EngineBase``), and result
-containers (``ResultBase``), enabling type checking and documentation while
+containers (``ResultProtocol``), enabling type checking and documentation while
 supporting duck typing for resource packages.
 
 Public API
@@ -14,8 +14,8 @@ PluginBase
     Protocol for plugin implementation classes.
 EngineBase
     Protocol for engine classes with run() method.
-ResultBase
-    Base class for serializable result containers.
+ResultProtocol
+    Protocol for serializable result containers.
 """
 
 from collections.abc import Callable
@@ -23,10 +23,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 # Self type for factory methods
-_R = TypeVar("_R", bound="ResultBase")
+_R = TypeVar("_R", bound="ResultProtocol")
 
 # Progress callback signature
 # args: percent (0.0-1.0), total_duration_estimate (s), message, stage
@@ -95,79 +95,6 @@ class PluginBase(Protocol):
         ...
 
 
-class ResultBase(BaseModel):
-    """Base class for application results with standardized I/O.
-
-    Results must be able to save themselves to disk and load themselves back.
-
-    Notes
-    -----
-    The save() and load() methods should treat the path as a filename without
-    extension. The implementation is responsible for adding the appropriate
-    file extension based on the chosen format.
-
-    This class can be used as a concrete base class for implementing results.
-    For type checking against the result interface, use
-    isinstance(obj, ResultProtocol).
-
-    """
-
-    data: Any = Field(description="The actual output data from engine execution")
-
-    metadata: dict[str, Any] = Field(
-        default_factory=dict, description="Additional metadata about the result"
-    )
-
-    class Config:
-        """Pydantic configuration."""
-
-        arbitrary_types_allowed = True
-        extra = "allow"
-
-    def save(self, path: str | Path) -> None:
-        """Save the result to disk.
-
-        Parameters
-        ----------
-        path : str | Path
-            Path where result should be saved, without file extension.
-            The implementation should add the appropriate extension based on
-            the
-            chosen file format (e.g., '.json', '.npz', '.h5').
-            For example, if path is '/results/simulation',
-            save to '/results/simulation.json'.
-
-        """
-        raise NotImplementedError("Subclasses must implement save()")
-
-    @classmethod
-    def load(cls: type[_R], path: str | Path) -> _R:
-        """Load the result from disk.
-
-        Parameters
-        ----------
-        path : str | Path
-            Path where result was previously saved, without file extension.
-            The implementation should try common extensions or use the same
-            extension that was used during save().
-
-        Returns
-        -------
-        _R
-            Loaded result instance
-
-        """
-        raise NotImplementedError("Subclasses must implement load()")
-
-    def __repr__(self) -> str:
-        """Return string representation."""
-        return (
-            f"{self.__class__.__name__}("
-            f"data_type={type(self.data).__name__}, "
-            f"metadata_keys={list(self.metadata.keys())})"
-        )
-
-
 # Protocol definition for result objects
 # This allows any object that implements data, metadata, and save() to be used as
 # a result object
@@ -180,6 +107,9 @@ class ResultProtocol(Protocol):
 
     @property
     def metadata(self) -> dict[str, Any]: ...
+
+    @property
+    def label(self) -> Any: ...
 
     def save(self, path: str | Path) -> None: ...
 

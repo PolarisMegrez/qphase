@@ -248,6 +248,7 @@ class Scheduler:
                     class MockResult:
                         data = None
                         metadata: dict[str, Any] = {}
+                        label: Any = None
 
                         def save(self, path):
                             pass
@@ -349,9 +350,9 @@ class Scheduler:
         ----------
         job : JobConfig
             Job configuration
-        output_result : ResultBase
+        output_result : ResultProtocol
             Result object from the job
-        job_results : dict[str, ResultBase]
+        job_results : dict[str, ResultProtocol]
             Storage for job results that will be passed to downstream jobs
         run_dir : Path
             Run directory for this job (where results should be saved)
@@ -378,7 +379,7 @@ class Scheduler:
         if self.system_config.auto_save_results:
             # Build save path: run_dir / output_filename
             # Note: filename should not include extension -
-            # ResultBase.save() will add appropriate extension
+            # ResultProtocol.save() will add appropriate extension
             save_path = run_dir / output_dest
 
             try:
@@ -479,7 +480,7 @@ class Scheduler:
 
         Returns
         -------
-        tuple[JobResult, ResultBase]
+        tuple[JobResult, ResultProtocol]
             Tuple of (job execution metadata, engine output result)
 
         Raises
@@ -679,12 +680,12 @@ class Scheduler:
                 )
                 output_result = engine.run(data=input_data)
 
-            # Ensure output is a ResultBase object
+            # Ensure output is a ResultProtocol object
             if not isinstance(output_result, ResultProtocol):
                 raise QPhaseRuntimeError(
                     f"Engine '{job.get_engine_name()}' did not return a "
-                    f"ResultBase object. "
-                    f"All engines must return a ResultBase instance from "
+                    f"ResultProtocol object. "
+                    f"All engines must return a ResultProtocol instance from "
                     f"their run() method."
                 )
 
