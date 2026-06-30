@@ -36,6 +36,8 @@ These models are intentionally serializable. A GUI or local HTTP API should be a
 
 `SchedulerService.build_plan()` is the shared planning surface for dry-run, GUI preview, and future machine-readable CLI output. It validates jobs, expands parameter scans, reports dependency edges, and returns validation issues without creating a real run session.
 
+Each planned job records its original base job, expanded index, engine name, explicit plugin namespaces, required and optional namespaces from the engine manifest, inherited global defaults for required namespaces, optional namespaces explicitly enabled by the job, scan parameter values, input/output fields, and expected output names. Dependency edges distinguish normal input flow, aggregate input flow, explicit `depends_on`, and output references.
+
 Planning should remain side-effect light. Creating run directories, writing manifests, and instantiating engines belong to execution, not preview.
 
 ## Configuration Ownership

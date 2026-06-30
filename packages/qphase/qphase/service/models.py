@@ -54,13 +54,20 @@ class MergedConfigPreview(ServiceModel):
 class ExecutionPlanJob(ServiceModel):
     name: str
     base_name: str
+    index: int | None = None
     engine: str
     plugins: dict[str, Any] = Field(default_factory=dict)
+    required_plugins: list[str] = Field(default_factory=list)
+    optional_plugins: list[str] = Field(default_factory=list)
+    explicit_plugins: list[str] = Field(default_factory=list)
+    inherited_global_defaults: dict[str, list[str]] = Field(default_factory=dict)
+    optional_plugins_enabled: list[str] = Field(default_factory=list)
     scan_params: dict[str, Any] = Field(default_factory=dict)
     input: str | None = None
     output: str | None = None
     save: bool | str | None = None
     expected_run_subdir: str | None = None
+    expected_output_name: str | None = None
 
 
 class ExecutionPlanEdge(ServiceModel):

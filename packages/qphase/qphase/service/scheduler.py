@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from qphase.core.config import JobConfig, JobList
-from qphase.core.config_loader import list_available_jobs, load_jobs_from_files
+from qphase.core.config_loader import (
+    get_config_for_job,
+    list_available_jobs,
+    load_jobs_from_files,
+)
+from qphase.core.registry import registry
 from qphase.core.scheduler import JobResult, Scheduler
 from qphase.core.system_config import SystemConfig, load_system_config
 
@@ -59,8 +64,13 @@ class SchedulerService:
             expanded_jobs = job_list.jobs
 
         return ExecutionPlan(
-            original_jobs=[self._plan_job(job) for job in job_list.jobs],
-            expanded_jobs=[self._plan_job(job) for job in expanded_jobs],
+            original_jobs=[
+                self._plan_job(job, job, job_list.jobs) for job in job_list.jobs
+            ],
+            expanded_jobs=[
+                self._plan_job(job, self._base_job(job, job_list.jobs), job_list.jobs)
+                for job in expanded_jobs
+            ],
             edges=self._build_edges(expanded_jobs),
             scan_groups=self._scan_groups(job_list.jobs, expanded_jobs),
             validation_issues=validation_issues,
@@ -117,17 +127,37 @@ class SchedulerService:
                     return candidate
         return path
 
-    def _plan_job(self, job: JobConfig) -> ExecutionPlanJob:
+    def _plan_job(
+        self, job: JobConfig, base_job: JobConfig, original_jobs: list[JobConfig]
+    ) -> ExecutionPlanJob:
+        base_name = self._base_name_for(job.name, original_jobs)
+        manifest = self._engine_manifest(job.get_engine_name())
+        explicit_plugins = self._explicit_plugin_namespaces(job)
+        inherited_defaults = self._inherited_global_defaults(
+            job, manifest["required_plugins"], explicit_plugins
+        )
+        optional_enabled = sorted(
+            namespace
+            for namespace in manifest["optional_plugins"]
+            if namespace in explicit_plugins
+        )
         return ExecutionPlanJob(
             name=job.name,
-            base_name=job.name.rsplit("_", 1)[0] if "_" in job.name else job.name,
+            base_name=base_name,
+            index=self._expanded_index(job.name, base_name),
             engine=job.get_engine_name(),
             plugins=job.plugins,
-            scan_params=self._scan_params(job),
+            required_plugins=manifest["required_plugins"],
+            optional_plugins=manifest["optional_plugins"],
+            explicit_plugins=sorted(explicit_plugins),
+            inherited_global_defaults=inherited_defaults,
+            optional_plugins_enabled=optional_enabled,
+            scan_params=self._scan_params(job, base_job),
             input=job.input,
             output=job.output,
             save=job.save,
             expected_run_subdir=job.name,
+            expected_output_name=self._expected_output_name(job),
         )
 
     def _build_edges(self, jobs: list[JobConfig]) -> list[ExecutionPlanEdge]:
@@ -136,7 +166,11 @@ class SchedulerService:
         for job in jobs:
             if job.input:
                 edges.append(
-                    ExecutionPlanEdge(source=job.input, target=job.name, kind="input")
+                    ExecutionPlanEdge(
+                        source=job.input,
+                        target=job.name,
+                        kind="aggregate" if job.aggregate_input else "input",
+                    )
                 )
             for dependency in job.depends_on:
                 edges.append(
@@ -161,20 +195,140 @@ class SchedulerService:
                 groups.setdefault(base_name, []).append(job.name)
         return groups
 
-    def _scan_params(self, job: JobConfig) -> dict[str, Any]:
+    def _scan_params(
+        self, job: JobConfig, base_job: JobConfig | None = None
+    ) -> dict[str, Any]:
         params: dict[str, Any] = {}
-        for engine_name, engine_config in job.engine.items():
+        base_job = base_job or job
+        for engine_name, engine_config in base_job.engine.items():
             for key, value in engine_config.items():
                 if isinstance(value, list):
-                    params[f"engine.{engine_name}.{key}"] = value
-        for namespace, plugin_configs in job.plugins.items():
+                    path = f"engine.{engine_name}.{key}"
+                    params[path] = self._get_config_value(job, path)
+        for namespace, plugin_configs in base_job.plugins.items():
             for plugin_name, plugin_config in plugin_configs.items():
                 for key, value in plugin_config.items():
                     if isinstance(value, list):
-                        params[f"{namespace}.{plugin_name}.{key}"] = value
+                        path = f"{namespace}.{plugin_name}.{key}"
+                        params[path] = self._get_config_value(job, path)
         return params
 
-    def _artifact_kind(self, path: Path) -> str:
+    def _base_job(self, job: JobConfig, original_jobs: list[JobConfig]) -> JobConfig:
+        base_name = self._base_name_for(job.name, original_jobs)
+        for original_job in original_jobs:
+            if original_job.name == base_name:
+                return original_job
+        return job
+
+    def _base_name_for(self, job_name: str, original_jobs: list[JobConfig]) -> str:
+        original_names = sorted(
+            (job.name for job in original_jobs), key=len, reverse=True
+        )
+        for original_name in original_names:
+            prefix = f"{original_name}_"
+            if job_name == original_name:
+                return original_name
+            if job_name.startswith(prefix):
+                suffix = job_name.removeprefix(prefix)
+                if suffix.isdigit() or suffix:
+                    return original_name
+        return job_name
+
+    def _expanded_index(self, job_name: str, base_name: str) -> int | None:
+        prefix = f"{base_name}_"
+        if not job_name.startswith(prefix):
+            return None
+        suffix = job_name.removeprefix(prefix)
+        if suffix.isdigit():
+            return int(suffix)
+        return None
+
+    def _engine_manifest(self, engine_name: str) -> dict[str, list[str]]:
+        try:
+            engine_cls = registry.get_plugin_class("engine", engine_name)
+        except Exception:
+            return {"required_plugins": [], "optional_plugins": []}
+
+        manifest = getattr(engine_cls, "manifest", None)
+        if manifest is None:
+            return {"required_plugins": [], "optional_plugins": []}
+        return {
+            "required_plugins": sorted(manifest.required_plugins),
+            "optional_plugins": sorted(manifest.optional_plugins),
+        }
+
+    def _explicit_plugin_namespaces(self, job: JobConfig) -> set[str]:
+        plugin_keys = {
+            "backend",
+            "integrator",
+            "model",
+            "analyser",
+            "visualizer",
+            "analyzer",
+        }
+        explicit = set(job.plugins.keys())
+        job_extra = job.model_extra or {}
+        explicit.update(key for key in plugin_keys if key in job_extra)
+        return explicit
+
+    def _inherited_global_defaults(
+        self, job: JobConfig, required_plugins: list[str], explicit_plugins: set[str]
+    ) -> dict[str, list[str]]:
+        job_override = {
+            "plugins": job.plugins,
+            "engine": job.engine,
+            "params": job.params,
+        }
+        merged_config = get_config_for_job(
+            job.system or self.system_config,
+            job_name=job.name,
+            job_config_dict=job_override,
+        )
+        merged_plugins = self._merged_plugin_config(merged_config)
+        inherited: dict[str, list[str]] = {}
+        for namespace in required_plugins:
+            if namespace in explicit_plugins:
+                continue
+            namespace_config = merged_plugins.get(namespace)
+            if isinstance(namespace_config, dict) and namespace_config:
+                inherited[namespace] = sorted(namespace_config.keys())
+        return inherited
+
+    def _merged_plugin_config(self, merged_config: dict[str, Any]) -> dict[str, Any]:
+        plugin_keys = [
+            "backend",
+            "integrator",
+            "model",
+            "analyser",
+            "visualizer",
+            "analyzer",
+        ]
+        plugins_cfg = dict(merged_config.get("plugins", {}))
+        for key in plugin_keys:
+            if key in merged_config and key not in plugins_cfg:
+                plugins_cfg[key] = merged_config[key]
+        return plugins_cfg
+
+    def _get_config_value(self, job: JobConfig, path: str) -> Any:
+        parts = path.split(".")
+        if parts[0] == "engine" and len(parts) >= 3:
+            return job.engine.get(parts[1], {}).get(parts[2])
+        if len(parts) >= 3:
+            return job.plugins.get(parts[0], {}).get(parts[1], {}).get(parts[2])
+        return None
+
+    def _expected_output_name(self, job: JobConfig) -> str | None:
+        if isinstance(job.save, str):
+            return job.save
+        if job.output:
+            return job.output
+        if job.save is False:
+            return None
+        return job.name
+
+    def _artifact_kind(
+        self, path: Path
+    ) -> Literal["result", "figure", "table", "manifest", "log", "other"]:
         if path.name == "session_manifest.json":
             return "manifest"
         if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".svg", ".pdf"}:
