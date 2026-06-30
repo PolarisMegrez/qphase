@@ -11,16 +11,16 @@ Public API
 `jobs` : Execute job configurations from YAML/JSON files.
 """
 
+import json
 import sys
 from pathlib import Path
 from typing import cast
 
 import typer
 
-from qphase.core import JobProgressUpdate, Scheduler
+from qphase.core import JobProgressUpdate
 from qphase.core.config_loader import (
     _find_job_config,
-    list_available_jobs,
     load_jobs_from_files,
 )
 from qphase.core.errors import (
@@ -30,6 +30,8 @@ from qphase.core.errors import (
 )
 from qphase.core.registry import discovery, registry
 from qphase.core.system_config import load_system_config
+from qphase.service import SchedulerService
+from qphase.service.models import ExecutionPlan
 
 app = typer.Typer()
 
@@ -72,6 +74,18 @@ def jobs(
     log_file: str | None = typer.Option(None, help="Write logs to file path"),
     log_json: bool = typer.Option(False, help="Log in JSON format"),
     suppress_warnings: bool = typer.Option(False, help="Suppress warnings output"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Build the execution plan without running jobs"
+    ),
+    show_plan: bool = typer.Option(
+        False, "--plan", help="Print the execution plan and exit"
+    ),
+    resume_from: Path | None = typer.Option(
+        None, "--resume-from", help="Resume from a previous session directory"
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output"
+    ),
 ):
     """Run SDE simulation jobs by name from configs/jobs/ directory.
 
@@ -99,6 +113,8 @@ def jobs(
         qphase run jobs job1 job2
         qphase run jobs --list
         qphase run jobs --verbose my_job
+        qphase run jobs my_job --plan
+        qphase run jobs my_job --plan --json
 
     """
     # Handle "list" argument as a command to list engines
@@ -122,10 +138,11 @@ def jobs(
 
         # Load system configuration to get config directories
         system_cfg = load_system_config()
+        scheduler_service = SchedulerService(system_cfg)
 
         # Handle --list option
         if list_jobs:
-            available_jobs = list_available_jobs(system_cfg)
+            available_jobs = scheduler_service.list_jobs()
             if not available_jobs:
                 typer.echo("No jobs found in configs/jobs/ directory.")
             else:
@@ -143,7 +160,7 @@ def jobs(
             if cfg_path is None or not cfg_path.exists():
                 log.error(f"Job '{job_name}' not found in configs/jobs/ directories")
                 log.error(f"Searched in: {system_cfg.paths.config_dirs}")
-                available_jobs = list_available_jobs(system_cfg)
+                available_jobs = scheduler_service.list_jobs()
                 if available_jobs:
                     log.error(f"Available jobs: {', '.join(available_jobs)}")
                 raise typer.Exit(code=1)
@@ -167,19 +184,23 @@ def jobs(
 
         log.info(f"Loaded {len(job_list.jobs)} jobs")
 
-        # Load system configuration
-        system_cfg = load_system_config()
+        if show_plan or dry_run:
+            plan_obj = scheduler_service.build_plan(job_list)
+            if json_output:
+                typer.echo(json.dumps(plan_obj.model_dump(mode="json"), indent=2))
+            else:
+                typer.echo(_format_execution_plan(plan_obj))
+            return
 
-        # Create scheduler
-        scheduler = Scheduler(
-            system_config=system_cfg,
-            on_progress=_make_progress_callback(),
-            on_run_dir=_make_run_dir_callback(),
-        )
+        progress_callback = None if json_output else _make_progress_callback()
 
         # Execute jobs
         log.info("Starting job execution")
-        results = scheduler.run(job_list)
+        results = scheduler_service.run(
+            job_list,
+            progress_callback=progress_callback,
+            resume_from=resume_from,
+        )
 
         # Report results
         success_count = sum(1 for r in results if r.success)
@@ -192,6 +213,29 @@ def jobs(
             log.warning(
                 f"{success_count}/{total_count} jobs succeeded ({failed} failed)"
             )
+
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "success_count": success_count,
+                        "total_count": total_count,
+                        "results": [
+                            {
+                                "job_index": result.job_index,
+                                "job_name": result.job_name,
+                                "run_dir": str(result.run_dir),
+                                "run_id": result.run_id,
+                                "success": result.success,
+                                "error": result.error,
+                            }
+                            for result in results
+                        ],
+                    },
+                    indent=2,
+                )
+            )
+            return
 
         # Print run directories
         typer.echo("\nRun directories:")
@@ -263,6 +307,46 @@ def _make_run_dir_callback():
         pass
 
     return _on_run_dir
+
+
+def _format_execution_plan(plan: ExecutionPlan) -> str:
+    """Format an execution plan for terminal output."""
+    lines = [
+        "Execution plan:",
+        f"  Original jobs: {len(plan.original_jobs)}",
+        f"  Expanded jobs: {len(plan.expanded_jobs)}",
+    ]
+
+    if plan.validation_issues:
+        lines.append("\nValidation issues:")
+        for issue in plan.validation_issues:
+            location = f" ({issue.path})" if issue.path else ""
+            lines.append(f"  - {issue.level}{location}: {issue.message}")
+
+    lines.append("\nJobs:")
+    for job in plan.expanded_jobs:
+        index = f"#{job.index}" if job.index is not None else "single"
+        output = job.expected_output_name or "<not saved>"
+        lines.append(
+            f"  - {job.name} [{index}] engine={job.engine} "
+            f"base={job.base_name} output={output}"
+        )
+        if job.scan_params:
+            scan_parts = ", ".join(
+                f"{key}={value}" for key, value in sorted(job.scan_params.items())
+            )
+            lines.append(f"    scan: {scan_parts}")
+        if job.required_plugins:
+            lines.append(f"    required: {', '.join(job.required_plugins)}")
+        if job.optional_plugins_enabled:
+            lines.append(f"    optional: {', '.join(job.optional_plugins_enabled)}")
+
+    if plan.edges:
+        lines.append("\nEdges:")
+        for edge in plan.edges:
+            lines.append(f"  - {edge.source} -> {edge.target} ({edge.kind})")
+
+    return "\n".join(lines)
 
 
 @app.command(name="list")

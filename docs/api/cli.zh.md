@@ -50,6 +50,10 @@ qphase run [JOB_NAME] [OPTIONS]
 *   **选项**：
     *   `--list`：列出所有可用的任务配置并退出。
     *   `--verbose` / `-v`：启用详细调试日志。
+    *   `--plan`：打印结构化执行计划并退出，不执行任务。
+    *   `--dry-run`：构建执行计划，不创建 run session。
+    *   `--resume-from PATH`：从已有 session 目录恢复执行。
+    *   `--json`：以机器可读 JSON 输出 plan 或运行结果。
 
 **示例**：
 
@@ -62,6 +66,15 @@ qphase run --list
 
 # 使用详细日志运行
 qphase run --verbose vdp_sde
+
+# 预览执行计划
+qphase run vdp_sde --plan
+
+# 以 JSON 输出执行计划，供工具或 GUI 客户端消费
+qphase run vdp_sde --plan --json
+
+# 从已有 session 恢复执行
+qphase run vdp_sde --resume-from runs/2026-03-17T21-03-06_088ab0
 ```
 
 ---

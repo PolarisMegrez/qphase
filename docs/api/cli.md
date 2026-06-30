@@ -50,6 +50,10 @@ qphase run [JOB_NAME] [OPTIONS]
 *   **Options**:
     *   `--list`: List all available job configurations and exit.
     *   `--verbose` / `-v`: Enable verbose debug logging.
+    *   `--plan`: Print the structured execution plan and exit without running jobs.
+    *   `--dry-run`: Build the execution plan without creating a run session.
+    *   `--resume-from PATH`: Resume execution from a previous session directory.
+    *   `--json`: Print machine-readable JSON output for plans or run results.
 
 **Examples**:
 
@@ -62,6 +66,15 @@ qphase run --list
 
 # Run with verbose logging
 qphase run --verbose vdp_sde
+
+# Preview the execution plan
+qphase run vdp_sde --plan
+
+# Preview the plan as JSON for tools or GUI clients
+qphase run vdp_sde --plan --json
+
+# Resume a previous session
+qphase run vdp_sde --resume-from runs/2026-03-17T21-03-06_088ab0
 ```
 
 ---

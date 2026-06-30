@@ -41,12 +41,12 @@ def jobs(
 
 While the core commands are hardcoded, the CLI architecture allows for future extensibility. The Registry System includes a `command` namespace, which is reserved for dynamically loading additional CLI sub-commands from plugins. This will allow third-party packages to extend the `qphase` tool with custom functionality (e.g., `qphase plot`, `qphase analyze`).
 
-## Integration with Scheduler
+## Integration with Services
 
-The CLI acts as a thin client for the `Scheduler`. When `qphase run` is invoked:
+The CLI acts as a thin client for the service layer. When `qphase run` is invoked:
 1.  It parses the command line arguments.
 2.  It loads the `SystemConfig`.
-3.  It instantiates the `Scheduler`.
-4.  It delegates the execution to `scheduler.run()`.
+3.  It creates a `SchedulerService`.
+4.  It delegates plan preview to `SchedulerService.build_plan()` or execution to `SchedulerService.run()`.
 
-This separation ensures that the core execution logic is not coupled to the CLI interface, allowing simulations to be triggered programmatically (e.g., from a Jupyter notebook) if needed.
+This separation ensures that the core execution logic is not coupled to the CLI interface. GUI clients, notebooks, and automation code can use the same service APIs without importing Typer command functions.

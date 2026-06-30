@@ -41,12 +41,12 @@ def jobs(
 
 虽然核心命令是硬编码的，但 CLI 架构允许未来的可扩展性。注册表系统包含一个 `command` 命名空间，用于从插件动态加载额外的 CLI 子命令。这将允许第三方包使用自定义功能扩展 `qphase` 工具（例如 `qphase plot`、`qphase analyze`）。
 
-## 与调度器的集成
+## 与服务层的集成
 
-CLI 充当 `Scheduler` 的轻量客户端。当调用 `qphase run` 时：
+CLI 充当 service layer 的轻量客户端。当调用 `qphase run` 时：
 1.  解析命令行参数。
 2.  加载 `SystemConfig`。
-3.  实例化 `Scheduler`。
-4.  将执行委托给 `scheduler.run()`。
+3.  创建 `SchedulerService`。
+4.  将计划预览委托给 `SchedulerService.build_plan()`，或将执行委托给 `SchedulerService.run()`。
 
-这种分离确保核心执行逻辑不与 CLI 界面耦合，允许在需要时从程序化方式（例如从 Jupyter notebook）触发仿真。
+这种分离确保核心执行逻辑不与 CLI 界面耦合。GUI 客户端、notebook 和自动化代码都可以使用同一组 service API，而不需要导入 Typer command 函数。

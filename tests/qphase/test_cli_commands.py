@@ -1,5 +1,7 @@
 """Tests for CLI commands using Typer's CliRunner."""
 
+import json
+
 from qphase.main import app
 from typer.testing import CliRunner
 
@@ -94,3 +96,26 @@ def test_run_jobs_command(temp_workspace, sample_job_file, dummy_model):
 
     # There should be a subdirectory for the run if it succeeded
     # assert any(output_dir.iterdir())
+
+
+def test_run_jobs_plan_json(temp_workspace, sample_job_file, dummy_model):
+    """Test 'run jobs --plan --json' command."""
+    result = runner.invoke(app, ["run", "test_job", "--plan", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["original_jobs"][0]["name"] == "test_job"
+    assert payload["expanded_jobs"][0]["engine"] == "dummy"
+
+
+def test_run_jobs_dry_run_does_not_create_session(
+    temp_workspace, sample_job_file, dummy_model
+):
+    """Test 'run jobs --dry-run' builds a plan without creating a run session."""
+    output_dir = temp_workspace / "runs"
+
+    result = runner.invoke(app, ["run", "test_job", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Execution plan:" in result.stdout
+    assert not any(output_dir.iterdir())
