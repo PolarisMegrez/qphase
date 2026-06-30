@@ -2143,12 +2143,16 @@ name = "qphase-workspace"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
-    { name = "cupy-cuda12x" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "qphase", extra = ["numba", "torch"] },
     { name = "qphase-sde" },
     { name = "qphase-viz" },
+]
+
+[package.optional-dependencies]
+cuda = [
+    { name = "cupy-cuda12x" },
 ]
 
 [package.dev-dependencies]
@@ -2164,12 +2168,13 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cupy-cuda12x", specifier = ">=12.0" },
+    { name = "cupy-cuda12x", marker = "extra == 'cuda'", specifier = ">=12.0" },
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "qphase", extras = ["numba", "torch"], editable = "packages/qphase" },
     { name = "qphase-sde", editable = "packages/qphase_sde" },
     { name = "qphase-viz", editable = "packages/qphase_viz" },
 ]
+provides-extras = ["cuda"]
 
 [package.metadata.requires-dev]
 dev = [

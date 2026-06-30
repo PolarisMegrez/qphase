@@ -101,7 +101,8 @@ class JobConfig(BaseModel):
     # Defines how to aggregate input results for this job
     aggregate_input: dict[str, Any] | None = Field(
         default=None,
-        description="Configuration for input aggregation (e.g. {'on': 'params.gamma_a'})",
+        description="Configuration for input aggregation (e.g."
+        " {'on': 'params.gamma_a'})",
     )
 
     # Save control (optional)

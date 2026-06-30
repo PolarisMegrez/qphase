@@ -201,7 +201,8 @@ def extract_psd_trace(
     trace = np.asarray(trace, dtype=float).reshape(-1)
     if axis.size != trace.size:
         raise QPhaseError(
-            f"PSD axis length {axis.size} does not match trace length {trace.size} in {loaded.path}"
+            f"PSD axis length {axis.size} does not match trace length"
+            f" {trace.size} in {loaded.path}"
         )
     return axis, trace, psd_payload
 
@@ -232,7 +233,9 @@ def postprocess_run(
         axis, trace, _ = extract_psd_trace(loaded, psd_key=psd_key, mode=mode)
         if reference_axis is None:
             reference_axis = axis
-        elif reference_axis.shape != axis.shape or not np.allclose(reference_axis, axis):
+        elif reference_axis.shape != axis.shape or not np.allclose(
+            reference_axis, axis
+        ):
             raise QPhaseError(f"PSD frequency axis differs in {loaded.path}")
 
         fit_result = fit_lorentzian(axis, trace, fit_window=fit_window)
@@ -245,12 +248,18 @@ def postprocess_run(
         psd_columns[str(scan_value)] = trace
 
         if export_dist:
-            _collect_distribution(loaded, "dist", mode, scan_param, scan_value, dist_rows)
-            _collect_distribution(loaded, "pdist", mode, scan_param, scan_value, pdist_rows)
+            _collect_distribution(
+                loaded, "dist", mode, scan_param, scan_value, dist_rows
+            )
+            _collect_distribution(
+                loaded, "pdist", mode, scan_param, scan_value, pdist_rows
+            )
 
     fit_rows.sort(key=lambda row: _sort_key(row[scan_param]))
     psd_columns = dict(sorted(psd_columns.items(), key=lambda item: _sort_key(item[0])))
-    return PostprocessBundle(fit_rows, psd_columns, reference_axis, dist_rows, pdist_rows)
+    return PostprocessBundle(
+        fit_rows, psd_columns, reference_axis, dist_rows, pdist_rows
+    )
 
 
 def export_postprocess_bundle(
@@ -282,7 +291,9 @@ def export_postprocess_bundle(
         np.savez_compressed(
             dist_path,
             dist_list=np.array(bundle.dist_rows, dtype=object),
-            scan_params=np.array([row[scan_param] for row in bundle.dist_rows], dtype=object),
+            scan_params=np.array(
+                [row[scan_param] for row in bundle.dist_rows], dtype=object
+            ),
         )
         written["dist_merged"] = dist_path
 

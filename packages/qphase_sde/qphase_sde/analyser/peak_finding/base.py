@@ -1,4 +1,3 @@
-
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
@@ -9,6 +8,7 @@ from qphase.core.protocols import PluginConfigBase
 
 class PeakInfo(BaseModel):
     """Container for peak finding results."""
+
     indices: list[int]
     frequencies: list[float]
     values: list[float]
@@ -17,6 +17,7 @@ class PeakInfo(BaseModel):
 
 class BasePeakFinderConfig(PluginConfigBase):
     """Base configuration for peak finders."""
+
     method: str
 
 
@@ -35,17 +36,18 @@ class PeakFinder(ABC):
     @abstractmethod
     def find_peaks(self, freqs: np.ndarray, psd: np.ndarray) -> PeakInfo:
         """Find peaks in power spectral density data.
-        
+
         Parameters
         ----------
         freqs : np.ndarray
             Frequency axis.
         psd : np.ndarray
             Power spectral density values.
-            
+
         Returns
         -------
         PeakInfo
             Detected peaks and their properties.
+
         """
         pass

@@ -19,7 +19,9 @@ from typer.testing import CliRunner
 
 def test_fit_lorentzian_recovers_synthetic_peak():
     axis = np.linspace(-3.0, 3.0, 301)
-    psd = lorentzian_with_baseline(axis, center=0.6, gamma=0.15, amplitude=2.0, base=0.2)
+    psd = lorentzian_with_baseline(
+        axis, center=0.6, gamma=0.15, amplitude=2.0, base=0.2
+    )
 
     result = fit_lorentzian(axis, psd)
 

@@ -11,9 +11,11 @@ dependencies = [
     "qphase[numba,torch]",
     "qphase-sde",
     "qphase-viz",
-    "cupy-cuda12x>=12.0",
     "pandas>=2.3.3",
 ]
+
+[project.optional-dependencies]
+cuda = ["cupy-cuda12x>=12.0"]
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -53,6 +55,7 @@ exclude = [
 	"tests"
 ]
 ignore = [
+	"B008", # typer.Argument/Option in function defaults (intentional pattern)
 	"D100", # 模块缺少 docstring
 	"D101", # 缺少模块 docstring
 	"D102", # 缺少类 docstring

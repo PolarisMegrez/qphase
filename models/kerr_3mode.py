@@ -22,18 +22,42 @@ logger = logging.getLogger(__name__)
 class Kerr3ModeConfig(BaseModel):
     """Configuration schema for the Kerr 3-mode system."""
 
-    omega_a: float = Field(description="Frequency of mode a", json_schema_extra={"scanable": True})
-    omega_b: float = Field(description="Frequency of mode b", json_schema_extra={"scanable": True})
-    omega_c: float = Field(description="Frequency of mode c", json_schema_extra={"scanable": True})
-    
-    chi: float = Field(description="Kerr nonlinearity strength for mode a", json_schema_extra={"scanable": True})
-    
-    kappa_a: float = Field(description="Loss rate for central cavity a", json_schema_extra={"scanable": True})
-    kappa_b: float = Field(description="Gain rate for active cavity b", json_schema_extra={"scanable": True})
-    kappa_c: float = Field(description="Loss rate for lossy cavity c", json_schema_extra={"scanable": True})
-    
-    g_ab: float = Field(description="Coupling strength between a and b", json_schema_extra={"scanable": True})
-    g_ac: float = Field(description="Coupling strength between a and c", json_schema_extra={"scanable": True})
+    omega_a: float = Field(
+        description="Frequency of mode a", json_schema_extra={"scanable": True}
+    )
+    omega_b: float = Field(
+        description="Frequency of mode b", json_schema_extra={"scanable": True}
+    )
+    omega_c: float = Field(
+        description="Frequency of mode c", json_schema_extra={"scanable": True}
+    )
+
+    chi: float = Field(
+        description="Kerr nonlinearity strength for mode a",
+        json_schema_extra={"scanable": True},
+    )
+
+    kappa_a: float = Field(
+        description="Loss rate for central cavity a",
+        json_schema_extra={"scanable": True},
+    )
+    kappa_b: float = Field(
+        description="Gain rate for active cavity b",
+        json_schema_extra={"scanable": True},
+    )
+    kappa_c: float = Field(
+        description="Loss rate for lossy cavity c", json_schema_extra={"scanable": True}
+    )
+
+    g_ab: float = Field(
+        description="Coupling strength between a and b",
+        json_schema_extra={"scanable": True},
+    )
+    g_ac: float = Field(
+        description="Coupling strength between a and c",
+        json_schema_extra={"scanable": True},
+    )
+
 
 class Kerr3ModeModel:
     """Kerr Three-Mode System.
@@ -57,7 +81,9 @@ class Kerr3ModeModel:
     """
 
     name: ClassVar[str] = "kerr_3mode"
-    description: ClassVar[str] = "Three-mode system with Kerr nonlinearity and Gain/Loss"
+    description: ClassVar[str] = (
+        "Three-mode system with Kerr nonlinearity and Gain/Loss"
+    )
     config_schema: ClassVar[type[Kerr3ModeConfig]] = Kerr3ModeConfig
 
     def __init__(self, config: Kerr3ModeConfig | None = None, **kwargs: Any) -> None:
@@ -107,8 +133,13 @@ class Kerr3ModeModel:
             term_kerr = 2.0 * chi * (xp.abs(alpha) ** 2)
         else:
             term_kerr = 0.0
-            
-        dalpha = -(1j * omega_a + kappa_a / 2.0) * alpha - 1j * term_kerr * alpha - 1j * g_ab * beta - 1j * g_ac * gamma
+
+        dalpha = (
+            -(1j * omega_a + kappa_a / 2.0) * alpha
+            - 1j * term_kerr * alpha
+            - 1j * g_ab * beta
+            - 1j * g_ac * gamma
+        )
 
         # Mode b (Gain: +kappa_b / 2)
         # dβ/dt = -(iω_b - κ_b/2)β - ig_ab α
@@ -128,31 +159,29 @@ class Kerr3ModeModel:
         """Compute Diffusion Matrix (Block Diagonal in Real Basis)."""
         xp = get_xp(y)
         alpha = y[:, 0]
-        
+
         chi = p["chi"]
         kappa_a = p["kappa_a"]
         kappa_b = p["kappa_b"]
         kappa_c = p["kappa_c"]
 
         n = y.shape[0]
-        dtype = y.dtype
-        # Result matrix Lc: (n, 6, 6)
-        # We fill 2x2 blocks on the diagonal.
-        Lc = xp.zeros((n, 6, 6), dtype=dtype)
 
         # --- Block A (alpha) ---
         # D_aa = -2i * chi * alpha^2
-        # D_aa* = kappa_a/2 ? No, text says D = diag(kappa_a, kappa_b, kappa_c) implies E[|dW|^2] ~ kappa dt
-        # Standard P-rep diffusion for loss is zero unless text implies thermal or additive noise.
+        # D_aa* = kappa_a/2 ? No, text says D = diag(kappa_a, kappa_b,
+        # kappa_c) implies E[|dW|^2] ~ kappa dt. Standard P-rep diffusion
+        # for loss is zero unless text implies thermal or additive noise.
         # Assuming Text convention: D_aa* = kappa_a
-        
-        M_a = -2j * chi * (alpha ** 2)
+
+        M_a = -2j * chi * (alpha**2)
         # Normal diffusion for cavity a comes from its loss rate kappa_a
         D_a_val = kappa_a
-        
-        # Stability fix: enforce D > |M| if D is used to regularize
-        # If D_a_val is small/zero, this simulation likely unstable for P-rep without Positive-P
-        # User is responsible for parameters, but we can apply scaling if D_a > 0
+
+        # Stability fix: enforce D > |M| if D is used to regularize.
+        # If D_a_val is small/zero, this simulation likely unstable for
+        # P-rep without Positive-P. User is responsible for parameters,
+        # but we can apply scaling if D_a > 0
         if D_a_val > 1e-9:
             abs_M = xp.abs(M_a)
             violation_mask = abs_M > D_a_val
@@ -160,20 +189,18 @@ class Kerr3ModeModel:
                 safe_factor = 0.999
                 eps_div = 1e-16
                 scale = xp.where(
-                    violation_mask, 
-                    (safe_factor * D_a_val) / (abs_M + eps_div),
-                    1.0
+                    violation_mask, (safe_factor * D_a_val) / (abs_M + eps_div), 1.0
                 )
                 M_a = M_a * scale
-        
+
         # Construct 2x2 covariance for Real/Imag
         # Cov_xx = 0.5 * (D + Re(M))
         # Cov_yy = 0.5 * (D - Re(M))
         # Cov_xy = 0.5 * Im(M)
-        
+
         ReM = xp.real(M_a)
         ImM = xp.imag(M_a)
-        
+
         Sig_xx = 0.5 * (D_a_val + ReM)
         Sig_yy = 0.5 * (D_a_val - ReM)
         Sig_xy = 0.5 * ImM
@@ -182,16 +209,16 @@ class Kerr3ModeModel:
         # L11 = sqrt(Sig_xx)
         # L21 = Sig_xy / L11
         # L22 = sqrt(Sig_yy - L21^2)
-        
+
         # Ensure positivity (clip)
         Sig_xx = xp.clip(Sig_xx, 0.0, None)
-        
+
         L11 = xp.sqrt(Sig_xx)
         # Avoid division by zero
         L11_safe = L11 + 1e-16
         L21 = Sig_xy / L11_safe
-        L21 = xp.where(L11 < 1e-9, 0.0, L21) # If Sig_xx ~ 0, L21 should be 0
-        
+        L21 = xp.where(L11 < 1e-9, 0.0, L21)  # If Sig_xx ~ 0, L21 should be 0
+
         term_sq = Sig_yy - L21**2
         term_sq = xp.clip(term_sq, 0.0, None)
         L22 = xp.sqrt(term_sq)
@@ -200,13 +227,13 @@ class Kerr3ModeModel:
         # Active Gain cavity b: D_bb* = kappa_b
         noise_b = xp.sqrt(0.5 * kappa_b)
         if not hasattr(noise_b, "shape") or noise_b.shape != (n,):
-             noise_b = xp.full((n,), float(noise_b))
+            noise_b = xp.full((n,), float(noise_b))
 
         # --- Block C (gamma) ---
         # Lossy cavity c: D_cc* = kappa_c
         noise_c = xp.sqrt(0.5 * kappa_c)
         if not hasattr(noise_c, "shape") or noise_c.shape != (n,):
-             noise_c = xp.full((n,), float(noise_c))
+            noise_c = xp.full((n,), float(noise_c))
 
         # Output shape: (n_traj, n_modes, noise_dim) -> (n, 3, 6)
         diffusion_matrix = xp.zeros((n, 3, 6), dtype=y.dtype)

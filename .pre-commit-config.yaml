@@ -21,3 +21,4 @@ repos:
         language: system
         types: [python]
         require_serial: true
+        args: ["--ignore-missing-imports", "--no-error-summary"]
