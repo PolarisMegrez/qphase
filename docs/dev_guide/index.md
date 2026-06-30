@@ -15,6 +15,7 @@ Welcome to the QPhase Developer Guide! This section is for developers who want t
 - **[Protocols](protocols.md)**: Understanding the plugin system and interfaces
 - **[Registry System](registry.md)**: How plugins are discovered and loaded
 - **[Scheduler](scheduler.md)**: Execution flow and job management
+- **[Service Layer](service_layer.md)**: Python-first facades for CLI, GUI, and future API clients
 
 ## Extending QPhase
 
