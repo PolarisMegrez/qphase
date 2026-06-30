@@ -47,10 +47,10 @@ class DistAnalyzer(Analyzer):
 
     name: ClassVar[str] = "dist"
     description: ClassVar[str] = "Phase Space Distribution analyzer"
-    config_schema: ClassVar[type[DistAnalyzerConfig]] = DistAnalyzerConfig  # type: ignore[assignment]
+    config_schema: ClassVar[type[DistAnalyzerConfig]] = DistAnalyzerConfig
 
     def __init__(self, config: DistAnalyzerConfig | None = None, **kwargs):
-        super().__init__(config, **kwargs)  # type: ignore[arg-type]
+        super().__init__(config, **kwargs)
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         """Compute distribution for multiple modes.
@@ -104,16 +104,16 @@ class DistAnalyzer(Analyzer):
                 x = samples.real
                 y = samples.imag
 
-                curr_range = None
+                hist_range_2d: list[tuple[float, float]] | None = None
                 if range_list and i < len(range_list):
                     # Expecting [[xmin, xmax], [ymin, ymax]] for this mode?
                     # Or just [min, max] for both?
                     # Let's simplify: range_list[i] is [min, max] for both axes
-                    r = range_list[i]
-                    curr_range = [r, r]
+                    r = cast(tuple[float, float], tuple(range_list[i]))
+                    hist_range_2d = [r, r]
 
                 H, xedges, yedges = _np.histogram2d(
-                    x, y, bins=bins, range=curr_range, density=density
+                    x, y, bins=bins, range=hist_range_2d, density=density
                 )
                 results[m] = {
                     "hist": H,
@@ -123,12 +123,12 @@ class DistAnalyzer(Analyzer):
                 }
             else:
                 # 1D Histogram
-                curr_range = None
+                hist_range_1d: tuple[float, float] | None = None
                 if range_list and i < len(range_list):
-                    curr_range = range_list[i]
+                    hist_range_1d = cast(tuple[float, float], tuple(range_list[i]))
 
                 H, edges = _np.histogram(
-                    samples, bins=bins, range=curr_range, density=density
+                    samples, bins=bins, range=hist_range_1d, density=density
                 )
                 results[m] = {"hist": H, "edges": edges, "type": "1d_real"}
 

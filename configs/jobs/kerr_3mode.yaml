@@ -1,0 +1,57 @@
+name: kerr_3mode
+save: true
+
+engine:
+  sde:
+    # Time Domain
+    t0: 0.0
+    t1: 5000.0
+    dt: 0.05
+
+    # Ensemble
+    n_traj: 500
+    seed: 42
+    ic:
+      - ["1.0+0.0j", "1.0+0.0j", "1.0+0.0j"]
+
+    # Adaptive
+    adaptive: false
+    save_stride: 2
+
+analyser:
+  psd:
+    modes: [0]
+    kind: complex
+    find_peaks: true
+  pdist:
+    modes: [0]
+    bins: "auto"
+    density: true
+
+backend:
+  cupy:
+    float_dtype: float32
+    device: cuda
+
+integrator:
+  srk:
+    method: heun
+
+model:
+  kerr_3mode:
+    omega_a: 0.00
+    omega_b: 0.00
+    omega_c: 0.00
+    g_ab: 0.02
+    g_ac: 0.02
+    chi: 0.00005
+    kappa_a: [1.00000000e-05, 1.25892541e-05, 1.58489319e-05, 1.99526231e-05,
+              2.51188643e-05, 3.16227766e-05, 3.98107171e-05, 5.01187234e-05,
+              6.30957344e-05, 7.94328235e-05, 1.00000000e-04, 1.25892541e-04,
+              1.58489319e-04, 1.99526231e-04, 2.51188643e-04, 3.16227766e-04,
+              3.98107171e-04, 5.01187234e-04, 6.30957344e-04, 7.94328235e-04,
+              1.00000000e-03]
+    kappa_b: 0.1
+    kappa_c: 0.1
+
+    

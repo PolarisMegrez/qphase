@@ -17,6 +17,7 @@ Public API
 """
 
 from .dist import DistAnalyzer, DistAnalyzerConfig
+from .polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
 from .psd import PsdAnalyzer, PsdAnalyzerConfig
 
 __all__ = [
@@ -24,4 +25,6 @@ __all__ = [
     "PsdAnalyzerConfig",
     "DistAnalyzer",
     "DistAnalyzerConfig",
+    "PolarDistAnalyzer",
+    "PolarDistAnalyzerConfig",
 ]

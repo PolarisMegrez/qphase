@@ -7,7 +7,7 @@ Behavior
 --------
 - Support two input interpretations: complex-valued directly (``kind='complex'``)
     or magnitude-based (``kind='modular'``).
-- Provide common PSD conventions: unitary/symmetric (angular frequency 蠅) and
+- Provide common PSD conventions: unitary/symmetric (angular frequency 锠? and
     pragmatic (frequency f). Exact scaling, return shapes, and error semantics are
     specified by the function docstrings.
 
@@ -32,6 +32,11 @@ from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
 
 from .base import Analyzer
+from .peak_finding import (
+    RationalPeakFinderConfig,
+    ScipyPeakFinderConfig,
+    create_peak_finder,
+)
 from .result import AnalysisResult
 
 __all__ = [
@@ -55,13 +60,28 @@ class PsdAnalyzerConfig(PluginConfigBase):
         None, description="Window function name (e.g. 'hanning')"
     )
     # Peak finding configuration
-    find_peaks: bool = Field(False, description="Whether to find peaks")
-    min_height: float | None = Field(None, description="Minimum peak height")
-    prominence: float | None = Field(None, description="Peak prominence")
-    distance: int | None = Field(None, description="Minimum horizontal distance")
-    smooth_window: int | None = Field(None, description="Window length for smoothing")
-    noise_threshold: float | None = Field(None, description="Threshold vs noise floor")
-    max_peaks: int | None = Field(None, description="Maximum number of peaks to return")
+    # Supports bool (legacy), string ("scipy", "rational"), or specific config objects
+    find_peaks: bool | str | ScipyPeakFinderConfig | RationalPeakFinderConfig = Field(
+        False, description="Peak finding method or configuration"
+    )
+
+    # Deprecated fields retained for backward compatibility with 'find_peaks=True'
+    min_height: float | None = Field(
+        None, description="[Deprecated] Minimum peak height"
+    )
+    prominence: float | None = Field(None, description="[Deprecated] Peak prominence")
+    distance: int | None = Field(
+        None, description="[Deprecated] Minimum horizontal distance"
+    )
+    smooth_window: int | None = Field(
+        None, description="[Deprecated] Window length for smoothing"
+    )
+    noise_threshold: float | None = Field(
+        None, description="[Deprecated] Threshold vs noise floor"
+    )
+    max_peaks: int | None = Field(
+        None, description="[Deprecated] Maximum number of peaks to return"
+    )
 
     @model_validator(mode="after")
     def validate_modes(self) -> "PsdAnalyzerConfig":
@@ -75,10 +95,10 @@ class PsdAnalyzer(Analyzer):
 
     name: ClassVar[str] = "psd"
     description: ClassVar[str] = "Power Spectral Density analyzer"
-    config_schema: ClassVar[type[PsdAnalyzerConfig]] = PsdAnalyzerConfig  # type: ignore[assignment]
+    config_schema: ClassVar[type[PsdAnalyzerConfig]] = PsdAnalyzerConfig
 
     def __init__(self, config: PsdAnalyzerConfig | None = None, **kwargs):
-        super().__init__(config, **kwargs)  # type: ignore[arg-type]
+        super().__init__(config, **kwargs)
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         """Compute PSD for multiple modes.
@@ -140,132 +160,55 @@ class PsdAnalyzer(Analyzer):
 
         # Peak finding
         peaks_info = {}
-        if config.find_peaks:
-            from scipy.signal import find_peaks, savgol_filter
 
+        # Instantiate peak finder
+        finder = None
+        pf_conf = config.find_peaks
+
+        # Backward compatibility logic.
+        # Build a Scipy config when using legacy bool/string peak-finding flags.
+        legacy_scipy = False
+        if isinstance(pf_conf, bool) and pf_conf:
+            legacy_scipy = True
+        elif isinstance(pf_conf, str) and pf_conf.lower() in ["scipy", "standard"]:
+            legacy_scipy = True
+
+        if legacy_scipy:
+            # Map legacy fields
+            scipy_conf = ScipyPeakFinderConfig(
+                method="scipy",
+                min_height=config.min_height,
+                prominence=config.prominence,
+                distance=config.distance,
+                smooth_window=config.smooth_window,
+                noise_threshold=config.noise_threshold,
+                max_peaks=config.max_peaks,
+            )
+            finder = create_peak_finder(scipy_conf)
+        else:
+            # Just try creating directly
+            finder = create_peak_finder(pf_conf)
+
+        if finder:
             for i, m in enumerate(modes):
-                # Find peaks for this mode
                 p_data = P_mat[:, i]
-
-                # Robust Smoothing Strategy:
-                # 1. Work in Log domain (dB) to handle dynamic range and stabilize
-                # 2. Apply Savitzky-Golay filter
-                # 3. Convert back to linear for peak finding (to respect linear)
-
-                p_log = _np.log10(p_data + 1e-20)
-
-                # Determine window length
-                if config.smooth_window:
-                    w_len = config.smooth_window
-                else:
-                    # Default: ~2% of spectrum, min 5, must be odd
-                    w_len = int(len(p_log) * 0.02)
-                    if w_len < 5:
-                        w_len = 5
-
-                if w_len % 2 == 0:
-                    w_len += 1
-
+                # Delegate to finder
                 try:
-                    # Polyorder 2 preserves peak shapes better than higher orders
-                    p_log_smooth = savgol_filter(p_log, w_len, 2)
-                    p_smooth = 10**p_log_smooth
-                except Exception:
-                    # Fallback if filter fails (e.g. array too short)
-                    p_smooth = p_data.copy()
+                    p_info = finder.find_peaks(axis0, p_data)
+                    peaks_info[m] = p_info.model_dump()
+                except Exception as e:
+                    import logging
 
-                # Prepare kwargs
-                fp_kwargs = {}
-
-                # Determine height threshold
-                # Use the stricter (maximum) of noise-based threshold and min_height
-                if config.noise_threshold is not None:
-                    # Estimate noise floor using median of smoothed data
-                    noise_floor = _np.median(p_smooth)
-                    calc_min_h = noise_floor * config.noise_threshold
-
-                final_min_h = calc_min_h
-                if config.min_height is not None:
-                    if final_min_h is not None:
-                        final_min_h = max(final_min_h, config.min_height)
-                    else:
-                        final_min_h = config.min_height
-
-                if final_min_h is not None:
-                    fp_kwargs["height"] = final_min_h
-
-                # Determine prominence
-                if config.prominence is not None:
-                    fp_kwargs["prominence"] = config.prominence
-                elif calc_min_h is not None:
-                    # Heuristic: prominence is half the noise-based height threshold
-                    fp_kwargs["prominence"] = calc_min_h * 0.5
-
-                if config.distance is not None:
-                    fp_kwargs["distance"] = config.distance
-
-                # Find peaks on smoothed data
-                peaks, props = find_peaks(p_smooth, **fp_kwargs)
-
-                # Store results
-                # We store the smoothed values for peaks to represent "fitted" height
-                # But we might want to refine the frequency index using quadratic fit
-
-                # Simple quadratic refinement for frequency
-                refined_freqs = []
-                refined_vals = []
-
-                for pk in peaks:
-                    # Default to grid values
-                    f_pk = axis0[pk]
-                    v_pk = p_smooth[pk]
-
-                    # Try 3-point Gaussian fit (Parabola on Log)
-                    if 0 < pk < len(p_log_smooth) - 1:
-                        y1 = p_log_smooth[pk - 1]
-                        y2 = p_log_smooth[pk]
-                        y3 = p_log_smooth[pk + 1]
-
-                        denom = 2 * (y1 - 2 * y2 + y3)
-                        if denom != 0:
-                            delta = (y1 - y3) / denom
-                            # Check if delta is within reasonable bounds (+/- 0.5 bin)
-                            if -0.5 <= delta <= 0.5:
-                                # Interpolate frequency
-                                df = axis0[1] - axis0[0]
-                                f_pk = axis0[pk] + delta * df
-                                # Interpolate value (parabola peak)
-                                # y_peak = y2 - 0.25 * (y1 - y3) * delta
-                                # v_pk = 10**y_peak
-
-                    refined_freqs.append(f_pk)
-                    refined_vals.append(v_pk)
-
-                # Convert to arrays
-                r_freqs = _np.array(refined_freqs)
-                r_vals = _np.array(refined_vals)
-
-                # Filter by max_peaks if requested
-                if config.max_peaks is not None and len(peaks) > config.max_peaks:
-                    # Sort by value (descending)
-                    top_indices = _np.argsort(r_vals)[-config.max_peaks :]
-                    # Sort indices back to frequency order (optional but nice)
-                    top_indices = _np.sort(top_indices)
-
-                    peaks = peaks[top_indices]
-                    r_freqs = r_freqs[top_indices]
-                    r_vals = r_vals[top_indices]
-
-                    # Filter properties
-                    for k, v in props.items():
-                        props[k] = v[top_indices]
-
-                peaks_info[m] = {
-                    "indices": peaks,
-                    "frequencies": r_freqs,
-                    "values": r_vals,
-                    "properties": props,
-                }
+                    logging.getLogger(__name__).warning(
+                        f"Peak finding failed for mode {m}: {e}"
+                    )
+                    # Fallback to empty
+                    peaks_info[m] = {
+                        "indices": [],
+                        "frequencies": [],
+                        "values": [],
+                        "properties": {},
+                    }
 
         result_dict = {
             "axis": axis0,
@@ -330,13 +273,14 @@ class PsdAnalyzer(Analyzer):
                 # Fallback or warning? For now silent fallback
                 pass
 
+        norm: Literal["backward", "ortho", "forward"] | None
         if convention in ("symmetric", "unitary"):
             norm = "ortho"
         else:
             norm = None
 
         # FFT
-        X = backend.fft(x_proc, axis=-1, norm=norm)  # type: ignore[arg-type]
+        X = backend.fft(x_proc, axis=-1, norm=norm)
 
         # Power: |X|^2
         absX = backend.abs(X)

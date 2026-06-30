@@ -119,14 +119,6 @@ class PowerSpectrumSpec(BasePlotterConfig):
     )
     # Peak annotation
     annotate_peaks: bool = Field(False, description="Annotate peaks on plot")
-    min_peak_height: float | None = Field(None, description="Min height for peaks")
-    peak_prominence: float | None = Field(None, description="Prominence for peaks")
-    max_peaks: int | None = Field(
-        None, description="Maximum number of peaks to annotate"
-    )
-    noise_threshold: float | None = Field(
-        None, description="Threshold relative to noise floor"
-    )
 
 
 class PowerSpectrumConfig(BaseModel):
@@ -156,6 +148,12 @@ class ParameterEvolutionSpec(BasePlotterConfig):
     # PSD specific (if metric involves PSD)
     psd_window: str | None = None
     psd_detrend: bool = True
+
+    # Curve fitting configuration
+    fit_type: Literal[None, "power", "linear"] = Field(
+        None,
+        description="Type of curve fitting to apply (power: y=ax^b, linear: y=ax+b)",
+    )
 
 
 class ParameterEvolutionConfig(BaseModel):

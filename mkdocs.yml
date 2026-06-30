@@ -82,7 +82,7 @@ nav:
     - Modeling: user_guide/sde/modeling.md
     - Simulation: user_guide/sde/simulation.md
   - API Reference:
-    - Command Line Interface: user_guide/cli.md
+    - Command Line Interface: api/cli.md
     - Overview: api/index.md
     - Core: api/core.md
     - SDE: api/sde.md

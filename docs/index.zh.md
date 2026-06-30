@@ -15,6 +15,6 @@
 
 文档分为以下几个部分：
 
-*   **[用户指南](user_guide/index.zh.md)**: 提供安装、配置以及通过 CLI 执行模拟的说明。
+*   **[用户指南](user_guide/getting_started.zh.md)**: 提供安装、配置以及通过 CLI 执行模拟的说明。
 *   **[开发者指南](dev_guide/index.zh.md)**: 详细介绍内部架构、插件开发标准和注册表系统。
 *   **[API 参考](api/index.zh.md)**: `qphase` 包及其核心模块的技术文档。

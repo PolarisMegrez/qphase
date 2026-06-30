@@ -17,7 +17,7 @@ from collections.abc import Callable
 from typing import Any, ClassVar
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from qphase.backend.base import BackendBase
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 
@@ -39,28 +39,30 @@ class EngineConfig(BaseModel):
     4. Output Control: save_stride
     """
 
+    model_config = ConfigDict(extra="allow")
+
     # --- Time Domain ---
     t0: float = Field(
         0.0,
         description="Start time",
-        json_schema_extra={"scanable": True},
+        json_schema_extra={"scanable": False},
     )
     t1: float = Field(
         10.0,
         description="End time",
-        json_schema_extra={"scanable": True},
+        json_schema_extra={"scanable": False},
     )
     dt: float = Field(
         1e-3,
         description="Time step size (initial step for adaptive)",
-        json_schema_extra={"scanable": True},
+        json_schema_extra={"scanable": False},
     )
 
     # --- Ensemble ---
     n_traj: int = Field(
         1,
         description="Number of trajectories",
-        json_schema_extra={"scanable": True},
+        json_schema_extra={"scanable": False},
     )
     seed: int | None = Field(
         None,
@@ -77,41 +79,45 @@ class EngineConfig(BaseModel):
     adaptive: bool = Field(
         False,
         description="Enable adaptive stepping (if supported by integrator)",
-        json_schema_extra={"scanable": True},
+        json_schema_extra={"scanable": False},
     )
     atol: float = Field(
         1e-6,
         description="Absolute tolerance for adaptive stepping",
-        json_schema_extra={"scanable": True},
+        json_schema_extra={"scanable": False},
     )
     rtol: float = Field(
         1e-3,
         description="Relative tolerance for adaptive stepping",
-        json_schema_extra={"scanable": True},
+        json_schema_extra={"scanable": False},
     )
     min_dt: float = Field(
         1e-9,
         description="Minimum time step for adaptive stepping",
+        json_schema_extra={"scanable": False},
     )
     max_dt: float = Field(
-        1.0,
+        10.0,
         description="Maximum time step for adaptive stepping",
+        json_schema_extra={"scanable": False},
     )
 
     # --- Output Control ---
     save_stride: int = Field(
         1,
-        ge=1,
+        ge=1,  # Must be at least 1
         description="Save every N-th step to the result trajectory",
+        json_schema_extra={"scanable": False},
     )
 
-    class ConfigSchema:
-        """Pydantic model configuration for SDE engine.
-
-        Allows extra fields for forward compatibility.
-        """
-
-        extra = "allow"
+    keep_traj: bool | None = Field(
+        None,
+        description=(
+            "Force keeping trajectory data. None=Auto (drop if analyzed), "
+            "True=Keep, False=Drop"
+        ),
+        json_schema_extra={"scanable": False},
+    )
 
 
 class EngineContext:
@@ -186,12 +192,12 @@ class Engine(EngineBase):
 
     """
 
-    name: ClassVar[str] = "sde"
+    name: ClassVar[str] = "SDE"
     description: ClassVar[str] = "Stochastic Differential Equation Simulation Engine"
     config_schema: ClassVar[type[EngineConfig]] = EngineConfig
     manifest: ClassVar[EngineManifest] = EngineManifest(
-        required_plugins={"backend", "model"},
-        optional_plugins={"integrator"},
+        required_plugins={"backend", "model", "integrator"},
+        optional_plugins={"analyser"},
         defaults={"integrator": "euler_maruyama"},
     )
 
@@ -220,15 +226,45 @@ class Engine(EngineBase):
         backend = kwargs.get("backend")
         integrator = kwargs.get("integrator")
 
-        self._default_backend = self.plugins.get("backend", backend)
-        self._default_integrator = self.plugins.get("integrator", integrator)
+        # Resolve Backend
+        # Scheduler might pass a dict of backends if multiple are available
+        p_backend = self.plugins.get("backend", backend)
+        if isinstance(p_backend, dict):
+            # If multiple available, check defaults or pick first
+            default_name = self.manifest.defaults.get("backend")
+            if default_name and default_name in p_backend:
+                self._default_backend = p_backend[default_name]
+            elif p_backend:  # Ensure not empty
+                # Pick arbitrary first one if no preference
+                self._default_backend = next(iter(p_backend.values()))
+            else:
+                self._default_backend = None
+        else:
+            self._default_backend = p_backend
+
+        # Resolve Integrator
+        # Scheduler might pass a dict of integrators if multiple are available
+        p_integrator = self.plugins.get("integrator", integrator)
+        if isinstance(p_integrator, dict):
+            # If multiple available, check defaults or pick first
+            default_name = self.manifest.defaults.get("integrator")
+            if default_name and default_name in p_integrator:
+                self._default_integrator = p_integrator[default_name]
+            elif p_integrator:  # Ensure not empty
+                # Pick arbitrary first one if no preference
+                self._default_integrator = next(iter(p_integrator.values()))
+            else:
+                self._default_integrator = None
+        else:
+            self._default_integrator = p_integrator
 
     def run(
         self,
         data: Any | None = None,
         *,
-        progress_cb: Callable[[float | None, float | None, str, str | None], None]
-        | None = None,
+        progress_cb: (
+            Callable[[float | None, float | None, str, str | None], None] | None
+        ) = None,
     ) -> ResultProtocol:
         """Execute the engine (Plugin Protocol)."""
         if not self.config:
@@ -279,7 +315,7 @@ class Engine(EngineBase):
 
             sde_progress_cb = _sde_cb
 
-        traj_set = self.run_sde(
+        traj_set: TrajectorySet | None = self.run_sde(
             model=model,
             ic=ic,
             time=time_cfg,
@@ -290,8 +326,8 @@ class Engine(EngineBase):
         )
 
         # Run analyzers if configured
-        analysis_results = {}
-        meta = {}
+        analysis_results: dict[str, Any] = {}
+        meta: dict[str, Any] = {}
 
         analysers = self.plugins.get("analyser")
         if analysers:
@@ -318,11 +354,31 @@ class Engine(EngineBase):
                     # But name comes from config key
                     analysis_results[name] = res.data_dict
 
-            # Preserve metadata before dropping trajectory
-            meta["t0"] = traj_set.t0
-            meta["dt"] = traj_set.dt
-            # Drop trajectory to save memory
-            traj_set = None
+            # Decide whether to keep trajectory based on config
+            should_keep = self.config.keep_traj
+            if should_keep is None:
+                # Default behavior: drop if analyzed to save resources
+                should_keep = not bool(analysis_results)
+
+            if not should_keep and traj_set is not None:
+                # Preserve metadata before dropping trajectory
+                meta["t0"] = traj_set.t0
+                meta["dt"] = traj_set.dt
+                # Record reason for dropping
+                meta["drop_trajectory_reason"] = (
+                    "analyzed" if analysis_results else "user_requested"
+                )
+                # Drop trajectory to save memory
+                traj_set = None
+
+        # Ensure model parameters are in metadata
+        if model:
+            if hasattr(model, "config") and hasattr(model.config, "model_dump"):
+                meta["params"] = model.config.model_dump()
+            elif hasattr(model, "parameters"):
+                meta["params"] = model.parameters
+            elif hasattr(model, "params"):
+                meta["params"] = model.params
 
         return SDEResult(trajectory=traj_set, meta=meta, analysis=analysis_results)
 

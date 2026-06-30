@@ -2,7 +2,7 @@
 
 QPhase is a small, research-oriented Python project for running phase-space simulations in quantum optics. The main goal is to reduce repeated “boilerplate” work (configuration, parameter sweeps, and result saving) so you can focus on the model equations.
 
-**Authors: Yu Xue-Hao (University of Chinese Academy of Sciences, UCAS)**
+Authors: Yu Xue-Hao (University of Chinese Academy of Sciences, UCAS)
 
 - Modular structure separates the CLI/scheduler, the SDE engine, and plotting utilities.
 - Plugin-based design allows different backends and engines to be added over time.
@@ -12,6 +12,7 @@ QPhase is a small, research-oriented Python project for running phase-space simu
 ## Installation
 
 Requirements:
+
 - Python >= 3.10
 - Git
 
@@ -21,7 +22,7 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Install from source (editable for development):
+Install from source in editable mode:
 
 ```powershell
 git clone https://github.com/PolarisMegrez/qphase.git
@@ -32,15 +33,69 @@ pip install -e packages/qphase_sde
 pip install -e packages/qphase_viz
 ```
 
-Or install directly from a local checkout without editable mode:
+## Quick Start
 
-```powershell
-pip install packages/qphase packages/qphase_sde packages/qphase_viz
+Job files live under `configs/jobs/`. A minimal SDE job uses the scheduler-facing
+plugin sections directly:
+
+```yaml
+name: demo_psd
+save: true
+
+engine:
+  sde:
+    t0: 0.0
+    t1: 10.0
+    dt: 0.01
+    n_traj: 16
+    seed: 42
+    ic:
+      - ["1.0+0.0j"]
+
+analyser:
+  psd:
+    modes: [0]
+    kind: complex
+
+backend:
+  numpy: {}
+
+integrator:
+  euler_maruyama: {}
+
+model:
+  kerr_3pa:
+    omega0: 1.0
+    chi: 0.01
+    kappa3: 0.001
+    beta: 1.0
+    epsilon: 0.1
+    kappa1: 1.0
 ```
 
-## Physical Foundations
+Run the job by name:
 
-QPhase currently focuses on SDE-based phase-space methods commonly used in quantum optics. The long-term goal is to expand support around phase-space representations and quantum-optics system workflows, while keeping the “Shell vs Kernel” separation (operational tooling vs. physics model).
+```powershell
+qphase run jobs demo_psd
+```
+
+The scheduler writes a timestamped run directory under `runs/`. SDE jobs save a
+job-named `.npz` file containing `meta`, `analysis`, `t0`, `dt`, and optionally
+raw trajectory `data`.
+
+## Result Postprocessing
+
+PSD analysis output can be postprocessed without the temporary root scripts:
+
+```powershell
+qphase postprocess runs/2026-03-17T21-03-06_088ab0 --scan-param epsilon --mode 0
+```
+
+This writes `fit_results.csv` and `psd_merged.csv` to the run directory by
+default. `fit_results.csv` contains the scan parameter, Lorentzian center,
+linewidth, baseline, peak intensity, $R^2$, and status/error fields. Use
+`--output-dir`, `--fit-window`, `--export-dist`, and `--overwrite` for batch
+exports.
 
 ## Module Overview
 
@@ -50,45 +105,12 @@ The project is organized as a monorepo containing three main packages:
 - `packages/qphase_sde`: The physics engine implementing SDE solvers and models.
 - `packages/qphase_viz`: Visualization tools for analyzing simulation results.
 
-## Quick Start
-
-To run a simulation, create a configuration file (e.g., `simulation.yaml`):
-
-```yaml
-version: "1.0"
-name: "quick_start_demo"
-
-engine:
-  sde:
-    backend: numpy
-    integrator: euler
-
-model:
-  vdp_two_mode:
-    kappa: 1.0
-    chi: 0.5
-    pump: 2.0
-
-params:
-  t_start: 0.0
-  t_end: 10.0
-  dt: 0.01
-  trajectories: 100
-
-output: "results/demo_run"
-```
-
-Run the simulation using the CLI (assuming the config is in `configs/jobs/`):
-
-```powershell
-qphase run quick_start_demo
-```
-
 ## Notes
 
 - Python 3.10 or higher is required.
 - Runs aim to be reproducible by recording configuration snapshots; numerical details can still depend on backend and library versions.
 - Storage guard aborts execution if estimated disk usage exceeds the default 1 GiB limit.
+- `scipy` is required by PSD peak finding and Lorentzian postprocessing.
 
 ## Acknowledgements and License
 

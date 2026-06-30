@@ -433,10 +433,51 @@ class Scheduler:
         # Check for parameter scan aggregation (N-to-1)
         # If job.input matches the base name of a set of expanded jobs
         # e.g. input="sim", but we have "sim[p=1]", "sim[p=2]"
-        scan_prefix = f"{job.input}["
+        # Note: Expansion uses "_" separator for numbering, e.g. "sim_001"
+        scan_prefix = f"{job.input}_"
         aggregated_results = {
-            k: v for k, v in job_results.items() if k.startswith(scan_prefix)
+            k: v
+            for k, v in job_results.items()
+            if k.startswith(scan_prefix) or k.startswith(f"{job.input}[")
         }
+
+        # Apply implicit filtering if present (from aggregate_input expansion)
+        input_filter = job.params.get("_input_filter")
+        if input_filter and aggregated_results:
+            filtered_results = {}
+            for k, result in aggregated_results.items():
+                match = True
+                # Access result metadata for parameters
+                # We assume standard metadata structure from Engine execution
+                if hasattr(result, "metadata"):
+                    res_params = result.metadata.get("params", {})
+                    # Also check top-level if not in params, just in case
+                    if not res_params and hasattr(result, "params"):
+                        res_params = getattr(result, "params", {})
+                else:
+                    res_params = {}
+
+                for filter_k, filter_v in input_filter.items():
+                    # filter_k matches parameter name
+                    val = res_params.get(filter_k)
+
+                    if isinstance(val, float) and isinstance(filter_v, float):
+                        if abs(val - filter_v) > 1e-7:
+                            match = False
+                            break
+                    elif val != filter_v:
+                        match = False
+                        break
+
+                if match:
+                    filtered_results[k] = result
+
+            aggregated_results = filtered_results
+            log.info(
+                f"Filtered input for job '{job.name}': matched "
+                f"{len(aggregated_results)} results using filter {input_filter}"
+            )
+
         if aggregated_results:
             # We found multiple results matching the input pattern.
             # We need to return a container that holds all of them.
@@ -561,39 +602,89 @@ class Scheduler:
             system_cfg, job_name=job.name, job_config_dict=job_override
         )
 
+        try:
+            from .registry import registry
+        except ImportError:
+            # Should be available
+            pass
+
         # Normalize config: move top-level plugin keys to 'plugins' if not present
         # This supports the simplified config format where plugins are at the root
-        plugin_keys = ["backend", "integrator", "model", "analyser", "visualizer"]
+        plugin_keys = [
+            "backend",
+            "integrator",
+            "model",
+            "analyser",
+            "visualizer",
+            "analyzer",
+        ]
         plugins_cfg = merged_config.get("plugins", {}).copy()
         for key in plugin_keys:
             if key in merged_config and key not in plugins_cfg:
                 plugins_cfg[key] = merged_config[key]
 
-        # Filter plugins to instantiate based on JobConfig intent
-        # If a namespace is explicitly defined in the job, we only instantiate
-        # the plugins listed in the job, ignoring others merged from global.
+        # Determine target Engine class to inspect Manifest
+        # This helps us decide which plugins are actually needed
+        engine_config_dict = merged_config.get("engine", {})
+        job_engine_name = job.get_engine_name()
+
+        target_engine_name = None
+        if job_engine_name:
+            target_engine_name = job_engine_name
+        elif engine_config_dict:
+            target_engine_name = list(engine_config_dict.keys())[0]
+
+        # Inspect Engine Manifest to determine plugin requirements
+        required_namespaces = set()
+        optional_namespaces = set()
+
+        if target_engine_name:
+            try:
+                engine_cls = registry.get_plugin_class("engine", target_engine_name)
+                if hasattr(engine_cls, "manifest"):
+                    manifest = engine_cls.manifest
+                    if manifest.required_plugins:
+                        required_namespaces.update(manifest.required_plugins)
+                    if manifest.optional_plugins:
+                        optional_namespaces.update(manifest.optional_plugins)
+            except Exception as e:
+                log.debug(
+                    f"Could not inspect manifest for engine '{target_engine_name}': {e}"
+                )
+
+        # Determine explicit namespaces defined in JobConfig.
+        # This separates user overrides from merged defaults.
         job_extra = job.model_extra or {}
         explicit_namespaces = set(job.plugins.keys())
         for key in plugin_keys:
             if key in job_extra:
                 explicit_namespaces.add(key)
 
+        # Filter and configure plugins based on Job intent and Engine requirements
         final_plugins_cfg = {}
+
         for ns, ns_config in plugins_cfg.items():
+            # 1. Explicitly configured in Job?
+            # If yes, we strictly respect the Job's choice (filtering specific plugins).
             if ns in explicit_namespaces:
-                # Job explicitly configured this namespace.
-                # Identify allowed plugins from job config
                 allowed_plugins = set(job.plugins.get(ns, {}).keys())
                 if ns in job_extra and isinstance(job_extra[ns], dict):
                     allowed_plugins.update(job_extra[ns].keys())
 
-                # Filter merged config
                 final_plugins_cfg[ns] = {
                     k: v for k, v in ns_config.items() if k in allowed_plugins
                 }
-            else:
-                # Inherit defaults from global
+
+            # 2. Required by Engine but not in the job.
+            # Fall back to global defaults for the namespace.
+            elif ns in required_namespaces:
                 final_plugins_cfg[ns] = ns_config
+
+            # 3. Optional or Unknown?
+            # Do NOT inherit Global defaults. This prevents side-effects from plugins
+            # like 'analyser' or 'visualizer' running when not requested.
+            else:
+                pass
 
         # Build plugins (backend, integrator, state, etc.)
         plugins = self._build_plugins(final_plugins_cfg)
@@ -877,6 +968,8 @@ class Scheduler:
         # Map original job name to list of expanded job names
         # e.g. "vdp_sde" -> ["vdp_sde_001", "vdp_sde_002"]
         expansion_map: dict[str, list[str]] = {}
+        # Map expanded job name to JobConfig object for parameter inspection
+        job_registry: dict[str, JobConfig] = {}
 
         for job in job_list.jobs:
             # 1. Check if this job needs to be expanded due to upstream dependency
@@ -887,17 +980,147 @@ class Scheduler:
             # 2. Check if this job has its own parameter scan
             scan_expansion = expander.expand(job, method=method)
 
-            # Logic for combining expansions:
-            # Case A: Upstream expanded, Current NOT scanned -> 1-to-1 mapping
-            # Case B: Upstream NOT expanded, Current scanned -> Standard scan
-            # Case C: Upstream expanded, Current scanned -> Cartesian or zipped?
-            #         For now, assume if upstream is expanded, follow it (Case A).
-            #         If both, it's complicated. Prioritize upstream for consistency
-            #         in pipelines like SDE -> Viz.
-
             final_expansion = []
 
-            if upstream_expansion:
+            # Check for aggregation request
+            aggregation_cfg = job.aggregate_input
+
+            if aggregation_cfg and upstream_expansion:
+                # Aggregation logic
+                target_path = aggregation_cfg.get("on")
+                if not target_path:
+                    log.warning(f"Job {job.name} has aggregate_input but no 'on' field")
+                    continue
+
+                # We need to group upstream jobs by "everything else"
+                # First, identify all varying parameters in upstream jobs
+                upstream_jobs = [job_registry[name] for name in upstream_expansion]
+
+                # Helper to get value by dotted path
+                def get_val(obj, path):
+                    parts = path.split(".")
+                    curr = obj
+                    for p in parts:
+                        if isinstance(curr, dict):
+                            curr = curr.get(p)
+                        elif hasattr(curr, p):
+                            curr = getattr(curr, p)
+                        else:
+                            return None
+                    return curr
+
+                # Find varying parameters with a deep search.
+                # Scan the full upstream job config for varying values.
+
+                varying_keys = set()
+
+                # Helper to flatten dict with dot notation
+                def flatten_dict(d: dict, prefix: str = "") -> dict[str, Any]:
+                    items = {}
+                    for k, v in d.items():
+                        new_key = f"{prefix}.{k}" if prefix else k
+                        if isinstance(v, dict):
+                            items.update(flatten_dict(v, new_key))
+                        else:
+                            items[new_key] = v
+                    return items
+
+                # Helper to flatten relevant job parts
+                def flatten_job(j: JobConfig) -> dict[str, Any]:
+                    flat = {}
+                    # Inspect params, engine, plugins
+                    if j.params:
+                        flat.update(flatten_dict(j.params, "params"))
+                    if j.engine:
+                        flat.update(flatten_dict(j.engine, "engine"))
+                    if j.plugins:
+                        flat.update(flatten_dict(j.plugins, "plugins"))
+                    return flat
+
+                if upstream_jobs:
+                    # Scan keys from the first job
+                    # Note: We assume all jobs share the same schema structure for keys
+                    first_flat = flatten_job(upstream_jobs[0])
+                    candidate_keys = list(first_flat.keys())
+
+                    # Check variance for each key
+                    for key in candidate_keys:
+                        values = set()
+                        for uj in upstream_jobs:
+                            val = get_val(uj, key)
+                            # Handle unhashable types (list, dict) by stringifying
+                            try:
+                                values.add(val)
+                            except TypeError:
+                                values.add(str(val))
+
+                        if len(values) > 1:
+                            varying_keys.add(key)
+
+                # Remove the aggregation target from varying keys
+                if target_path in varying_keys:
+                    varying_keys.remove(target_path)
+
+                # Group jobs by the remaining varying keys
+                groups: dict[tuple[Any, ...], list[Any]] = {}
+
+                for uj in upstream_jobs:
+                    # signature is a tuple of values for varying keys
+                    sig_list = []
+                    for k in sorted(varying_keys):
+                        sig_list.append(get_val(uj, k))
+                    sig = tuple(sig_list)
+
+                    # sig = tuple(get_val(uj, k) for k in sorted(varying_keys))
+                    if sig not in groups:
+                        groups[sig] = []
+                    groups[sig].append(uj)
+
+                log.info(
+                    f"Aggregating {job.name} on {target_path}. Found {len(groups)} "
+                    f"groups from {len(upstream_expansion)} upstream jobs."
+                )
+
+                # Create a job for each group
+                for idx, (sig, _group_jobs) in enumerate(groups.items()):
+                    new_job = copy.deepcopy(job)
+
+                    # Construct input filter logic
+                    # We pass the filter to _resolve_input via metadata in params
+                    # The filter defines the fixed parameters for this group
+                    input_filter = {}
+                    group_name_suffix_parts = []
+
+                    for i, key in enumerate(sorted(varying_keys)):
+                        # key is "params.k"
+                        param_name = key.split(".")[-1]
+                        val = sig[i]
+                        input_filter[param_name] = val
+                        group_name_suffix_parts.append(f"{param_name}={val}")
+
+                    if not group_name_suffix_parts:
+                        group_name_suffix = "all"
+                    else:
+                        group_name_suffix = "_".join(group_name_suffix_parts)
+
+                    # Store filter in params (private key)
+                    new_job.params["_input_filter"] = input_filter
+                    new_job.params["_aggregated_on"] = target_path
+
+                    # Update name.
+                    # Append a suffix when multiple groups are present.
+                    if len(groups) > 1:
+                        # Keep filenames clean and predictable.
+                        if numbering_enabled:
+                            new_job = self._apply_job_numbering(
+                                new_job, job.name, idx + 1, len(groups)
+                            )
+                        else:
+                            new_job.name = f"{job.name}_{group_name_suffix}"
+
+                    final_expansion.append(new_job)
+
+            elif upstream_expansion:
                 # Case A: Follow upstream expansion
                 if len(scan_expansion) > 1:
                     # If both are present, we might need a more complex strategy.
@@ -946,8 +1169,10 @@ class Scheduler:
                 # No expansion
                 final_expansion.append(scan_expansion[0])
 
-            # Register expansion in map
+            # Register expansion in map and registry
             expansion_map[job.name] = [j.name for j in final_expansion]
+            for j in final_expansion:
+                job_registry[j.name] = j
             expanded_jobs.extend(final_expansion)
 
         return expanded_jobs

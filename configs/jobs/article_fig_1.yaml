@@ -1,0 +1,56 @@
+name: kerr_3pa_PSD
+save: true
+
+engine:
+  sde:
+    # Time Domain
+    t0: 0.0
+    t1: 7800.0
+    dt: 0.12
+
+    # Ensemble
+    n_traj: 400
+    seed: 42
+    ic:
+      - ["5.0+0.0j"]
+
+    # Adaptive
+    adaptive: false
+    save_stride: 1
+
+    # Save Raw Trajectories
+    # keep_traj: true
+
+backend:
+  cupy:
+    float_dtype: float32
+    device: cuda
+
+analyser:
+  psd:
+    modes: [0]
+    kind: complex
+    find_peaks: true
+  dist:
+    modes: [0]
+    range:
+      - [-10.0, 10.0]
+    bins: 200
+    density: true
+  pdist:
+    modes: [0]
+    bins: 200
+    density: true
+
+integrator:
+  srk:
+    method: heun
+
+model:
+  kerr_3pa:
+    omega0: 1.0
+    chi: 0.01
+    kappa3: 0.001
+    beta: 1.0
+    epsilon: [0.50]
+    kappa1: 1.0

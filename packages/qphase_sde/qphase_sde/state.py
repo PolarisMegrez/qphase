@@ -33,6 +33,7 @@ class State(ArrayBase):
 
     """
 
+    data: Any
     t: float = 0.0
 
     def __post_init__(self):
@@ -98,6 +99,7 @@ class TrajectorySet(ArrayBase):
 
     """
 
+    data: Any
     t0: float = 0.0
     dt: float = 1.0
 

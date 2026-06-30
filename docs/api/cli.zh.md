@@ -66,6 +66,38 @@ qphase run --verbose vdp_sde
 
 ---
 
+## 结果后处理
+
+### `qphase postprocess`
+
+读取已保存的 SDE `.npz` job 结果，消费 `analysis["psd"]`，对每个 job 拟合一个 Lorentz 线型峰，并导出 CSV 文件。
+
+```bash
+qphase postprocess RUN_DIR --scan-param PARAM [OPTIONS]
+```
+
+*   **参数**：
+    *   `RUN_DIR`：包含 job 子目录的 run 目录，或单个 `.npz` 结果文件。
+*   **必需选项**：
+    *   `--scan-param` / `-s`：`meta.params` 下的参数名，例如 `epsilon` 或 `kappa_a`。
+*   **常用选项**：
+    *   `--mode` / `-m`：要拟合的 PSD mode。默认值：`0`。
+    *   `--psd-key`：包含 PSD 载荷的 analysis key。默认值：`psd`。
+    *   `--output-dir` / `-o`：输出目录。默认使用 run 目录。
+    *   `--fit-window`：围绕最强峰进行拟合的半宽度。
+    *   `--export-dist`：同时写出实验性的 `dist_merged.npz` 和 `pdist_merged.pkl`。
+    *   `--overwrite`：替换已有输出文件。
+
+**示例**：
+
+```bash
+qphase postprocess runs/2026-03-17T21-03-06_088ab0 --scan-param epsilon --mode 0
+```
+
+输出文件为 `fit_results.csv` 和 `psd_merged.csv`。
+
+---
+
 ## 插件管理
 
 ### `qphase list`

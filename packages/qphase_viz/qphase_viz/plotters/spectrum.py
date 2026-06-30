@@ -81,6 +81,7 @@ class PowerSpectrumPlotter(PlotterProtocol):
 
             # Configure analyzer
             # We assume complex signal by default for generality
+            # Note: peak finding parameters rely on PsdAnalyzer defaults now to ensure consistency
             analyzer_config = PsdAnalyzerConfig(
                 kind="complex",
                 modes=channels,
@@ -88,10 +89,6 @@ class PowerSpectrumPlotter(PlotterProtocol):
                 dt=dt,
                 window=spec.window,
                 find_peaks=spec.annotate_peaks,
-                min_height=spec.min_peak_height,
-                prominence=spec.peak_prominence,
-                max_peaks=spec.max_peaks,
-                noise_threshold=spec.noise_threshold,
             )
             analyzer = PsdAnalyzer(analyzer_config)
 

@@ -18,16 +18,29 @@ nav_order: 2
 **配置 (`EngineConfig`)：**
 
 *   `dt` (`float`)：时间步长。
-*   `t_max` (`float`)：仿真时长。
+*   `t0` (`float`)：起始时间。
+*   `t1` (`float`)：结束时间。
 *   `n_traj` (`int`)：轨迹数量。
-*   `integrator` (`dict`)：积分器设置。
-*   `backend` (`str`)：后端名称。
+*   `seed` (`int | None`)：随机种子。
+*   `ic` (`Any | None`)：初始条件。
+*   `save_stride` (`int`)：每 N 步保存一次。
+*   `keep_traj` (`bool | None`)：分析后是否保留原始轨迹。
 
 **方法：**
 
-#### `run(model: SDEModel, ...) -> SDEResult`
+#### `run(...) -> SDEResult`
 
-为给定模型执行仿真。
+执行已配置的 SDE 任务。引擎要求 `backend`、`model` 和 `integrator` 插件，并接受可选的 `analyser` 插件。
+
+### `class qphase_sde.result.SDEResult`
+
+SDE 引擎返回并保存为 `.npz` 的结果容器。
+
+*   `trajectory`：`TrajectorySet`；如果分析后丢弃了原始数据，则为 `None`。
+*   `analysis`：按分析器名称索引的结果载荷，例如 `psd`、`dist` 或 `pdist`。
+*   `meta`：元数据，包括模型 `params`、`t0`、`dt`，以及可能存在的轨迹丢弃原因。
+
+保存的归档包含 `t0`、`dt`、`meta`、`analysis` 和可选的 `data`。存在 `data` 时，其形状为 `(n_traj, n_time, n_modes)`。
 
 ---
 
@@ -134,3 +147,29 @@ nav_order: 2
 **方法：**
 
 *   `analyze(data: Any, backend: BackendBase) -> ResultProtocol`：对仿真数据执行分析。
+
+### PSD 分析器
+
+`qphase_sde.analyser.PsdAnalyzer` 消费 `TrajectorySet` 并写出 PSD 载荷：
+
+*   `axis`：频率轴。
+*   `psd`：形状为 `(n_frequency, n_modes)` 的 PSD 矩阵。
+*   `modes`：被分析的模式索引。
+*   `peaks`：可选的 PSD 分析器内部寻峰结果。
+
+PSD 分析器的寻峰只针对单个 job。跨 job 的 Lorentz 线型拟合由后处理完成。
+
+## 后处理
+
+`qphase_sde.postprocess` 提供 CLI 使用的稳定结果读取与导出工具。
+
+*   `load_run_results(run_dir)`：从 run 目录加载 job `.npz` 文件。
+*   `fit_lorentzian(axis, psd)`：拟合 `base + amplitude * gamma^2 / ((x - center)^2 + gamma^2)`，返回 `center`、`linewidth`、`base`、`peak_intensity`、`R2`、`status` 和 `error`。
+*   `postprocess_run(run_dir, scan_param=..., mode=...)`：读取 `analysis["psd"]`，对每个 job 的指定 mode 拟合，并准备导出数据。
+*   `export_postprocess_bundle(...)`：写出 `fit_results.csv` 和 `psd_merged.csv`。
+
+CLI 入口：
+
+```bash
+qphase postprocess runs/<run-id> --scan-param epsilon --mode 0
+```

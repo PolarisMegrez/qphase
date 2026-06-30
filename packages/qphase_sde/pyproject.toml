@@ -30,7 +30,8 @@ classifiers = [
 dependencies = [
   "numpy>=1.23",
   "qphase>=1.0.1",
-  "pydantic>=2.4"
+  "pydantic>=2.4",
+  "scipy>=1.10"
 ]
 
 [project.entry-points.qphase]
@@ -43,6 +44,10 @@ dependencies = [
 # Analyser plugin
 "analyser.psd" = "qphase_sde.analyser.psd:PsdAnalyzer"
 "analyser.dist" = "qphase_sde.analyser.dist:DistAnalyzer"
+"analyser.pdist" = "qphase_sde.analyser.polar_dist:PolarDistAnalyzer"
+# Peak Finder plugins
+"peak_finder.scipy" = "qphase_sde.analyser.peak_finding.scipy:ScipyPeakFinder"
+"peak_finder.rational" = "qphase_sde.analyser.peak_finding.rational:RationalPeakFinder"
 
 [tool.setuptools.packages.find]
 where = ["."]

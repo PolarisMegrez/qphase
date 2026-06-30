@@ -11,6 +11,8 @@ dependencies = [
     "qphase[numba,torch]",
     "qphase-sde",
     "qphase-viz",
+    "cupy-cuda12x>=12.0",
+    "pandas>=2.3.3",
 ]
 
 [tool.uv.workspace]

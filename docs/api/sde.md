@@ -18,16 +18,29 @@ The main simulation driver. It orchestrates the integration loop, manages data s
 **Configuration (`EngineConfig`):**
 
 *   `dt` (`float`): Time step.
-*   `t_max` (`float`): Simulation duration.
+*   `t0` (`float`): Start time.
+*   `t1` (`float`): End time.
 *   `n_traj` (`int`): Number of trajectories.
-*   `integrator` (`dict`): Integrator settings.
-*   `backend` (`str`): Backend name.
+*   `seed` (`int | None`): Random seed.
+*   `ic` (`Any | None`): Initial condition.
+*   `save_stride` (`int`): Save every N-th step.
+*   `keep_traj` (`bool | None`): Keep or drop raw trajectories after analysis.
 
 **Methods:**
 
-#### `run(model: SDEModel, ...) -> SDEResult`
+#### `run(...) -> SDEResult`
 
-Executes the simulation for the given model.
+Executes the configured SDE job. The engine requires `backend`, `model`, and `integrator` plugins and accepts optional `analyser` plugins.
+
+### `class qphase_sde.result.SDEResult`
+
+Container returned by the SDE engine and saved as `.npz`.
+
+*   `trajectory`: A `TrajectorySet` or `None` if raw data was dropped after analysis.
+*   `analysis`: Analyzer payloads keyed by analyzer name, for example `psd`, `dist`, or `pdist`.
+*   `meta`: Metadata, including model `params`, `t0`, `dt`, and drop reason when applicable.
+
+Saved archives contain `t0`, `dt`, `meta`, `analysis`, and optional `data`. When present, `data` has shape `(n_traj, n_time, n_modes)`.
 
 ---
 
@@ -134,3 +147,29 @@ The interface for analysis plugins.
 **Methods:**
 
 *   `analyze(data: Any, backend: BackendBase) -> ResultProtocol`: Performs analysis on the simulation data.
+
+### PSD Analyzer
+
+`qphase_sde.analyser.PsdAnalyzer` consumes a `TrajectorySet` and writes a PSD payload:
+
+*   `axis`: frequency axis.
+*   `psd`: PSD matrix with shape `(n_frequency, n_modes)`.
+*   `modes`: analyzed mode indices.
+*   `peaks`: optional peak finder output from the PSD analyzer.
+
+PSD analyzer peak detection is local to one job. Cross-job Lorentzian fitting is handled by postprocessing.
+
+## Postprocessing
+
+`qphase_sde.postprocess` provides stable result-reading and export helpers used by the CLI.
+
+*   `load_run_results(run_dir)`: loads job `.npz` files from a run directory.
+*   `fit_lorentzian(axis, psd)`: fits `base + amplitude * gamma^2 / ((x - center)^2 + gamma^2)` and returns `center`, `linewidth`, `base`, `peak_intensity`, `R2`, `status`, and `error`.
+*   `postprocess_run(run_dir, scan_param=..., mode=...)`: reads `analysis["psd"]`, fits one mode per job, and prepares export data.
+*   `export_postprocess_bundle(...)`: writes `fit_results.csv` and `psd_merged.csv`.
+
+CLI entry point:
+
+```bash
+qphase postprocess runs/<run-id> --scan-param epsilon --mode 0
+```
