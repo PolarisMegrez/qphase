@@ -9,12 +9,12 @@ def test_engine_config_single():
     """Test that a job can have a single engine configuration."""
     job = JobConfig(
         name="test_job",
-        engine={"sde": {"t_end": 10.0, "n_steps": 1000}},
+        engine={"sde": {"t1": 10.0, "dt": 0.01, "n_traj": 16}},
         params={},
     )
 
     assert job.get_engine_name() == "sde"
-    assert job.engine["sde"]["t_end"] == 10.0
+    assert job.engine["sde"]["t1"] == 10.0
 
 
 def test_engine_config_viz():
@@ -33,7 +33,7 @@ def test_engine_config_lowercase():
     """Test that engine names are normalized to lowercase."""
     job = JobConfig(
         name="test_job",
-        engine={"SDE": {"t_end": 10.0}},  # Uppercase
+        engine={"SDE": {"t1": 10.0}},  # Uppercase
         params={},
     )
 
@@ -49,7 +49,7 @@ def test_engine_config_multiple_error():
         JobConfig(
             name="test_job",
             engine={
-                "sde": {"t_end": 10.0},
+                "sde": {"t1": 10.0},
                 "viz": {"specs": []},  # Second engine - should error
             },
             params={},

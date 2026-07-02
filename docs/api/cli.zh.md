@@ -11,7 +11,6 @@ description: CLI 参考
 所有命令都支持以下全局标志：
 
 *   `--help`：显示帮助信息并退出。
-*   `--version`：显示已安装的版本号。
 
 ---
 
@@ -85,8 +84,13 @@ qphase postprocess RUN_DIR --scan-param PARAM [OPTIONS]
     *   `--psd-key`：包含 PSD 载荷的 analysis key。默认值：`psd`。
     *   `--output-dir` / `-o`：输出目录。默认使用 run 目录。
     *   `--fit-window`：围绕最强峰进行拟合的半宽度。
+    *   `--freq-min` / `--freq-max`：限制拟合使用的频率范围。
+    *   `--min-r2`：最小可接受 R^2 值。
+    *   `--min-peak-height`：最小可接受峰强度。
+    *   `--max-linewidth`：最大可接受线宽。
     *   `--export-dist`：同时写出实验性的 `dist_merged.npz` 和 `pdist_merged.pkl`。
     *   `--overwrite`：替换已有输出文件。
+    *   `--dry-run`：只列出将要处理的文件，不写入输出。
 
 **示例**：
 
@@ -94,7 +98,7 @@ qphase postprocess RUN_DIR --scan-param PARAM [OPTIONS]
 qphase postprocess runs/2026-03-17T21-03-06_088ab0 --scan-param epsilon --mode 0
 ```
 
-输出文件为 `fit_results.csv` 和 `psd_merged.csv`。
+输出文件为 `fit_results.csv` 和 `psd_merged.csv`。使用 `--export-dist` 时，实验性输出还会包含 `__schema_version__` 元数据。
 
 ---
 
@@ -130,14 +134,14 @@ qphase show [PLUGIN_ID]... [OPTIONS]
 ```
 
 *   **参数**：
-    *   `PLUGIN_ID`：一个或多个 `namespace.name` 格式的插件标识符（例如 `model.vdp_two_mode`）。
+    *   `PLUGIN_ID`：一个或多个 `namespace.name` 格式的插件标识符（例如 `model.vdp_level3`）。
 *   **选项**：
     *   `--verbose` / `-v`：显示额外的元数据（例如文件路径、包版本）。
 
 **示例**：
 
 ```bash
-qphase show model.vdp_two_mode
+qphase show model.vdp_level3
 qphase show backend.numpy --verbose
 ```
 
@@ -152,17 +156,17 @@ qphase template [PLUGIN_ID]... [OPTIONS]
 *   **参数**：
     *   `PLUGIN_ID`：一个或多个 `namespace.name` 格式的插件标识符。
 *   **选项**：
-    *   `--output` / `-o`：输出文件路径。默认为 `-`（标准输出）。
+    *   `--output`：输出文件路径。默认为 `-`（标准输出）。
     *   `--format`：输出格式，`yaml`（默认）或 `json`。
 
 **示例**：
 
 ```bash
 # 将 YAML 模板打印到控制台
-qphase template model.vdp_two_mode
+qphase template model.vdp_level3
 
 # 保存到文件
-qphase template model.vdp_two_mode -o my_config.yaml
+qphase template model.vdp_level3 --output my_config.yaml
 ```
 
 ---

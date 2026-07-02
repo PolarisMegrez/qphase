@@ -907,7 +907,13 @@ class Scheduler:
         log.info("Job validation completed successfully")
 
     def _validate_job_dependencies(self, job: JobConfig) -> None:
-        """Validate that the job provides all plugins required by its engine."""
+        """Validate that the job provides all plugins required by its engine.
+
+        The set of "provided" plugins is computed consistently with
+        :meth:`_run_job`: it includes explicit ``plugins:`` entries, top-level
+        plugin sections (``backend``, ``integrator``, ``model``, ``analyser``,
+        etc.), and plugin namespaces provided by the merged global configuration.
+        """
         engine_name = job.get_engine_name()
         try:
             engine_cls = registry.get_plugin_class("engine", engine_name)
@@ -923,7 +929,7 @@ class Scheduler:
             return
 
         manifest = engine_cls.manifest
-        provided_plugins = set(job.plugins.keys())
+        provided_plugins = self._effective_plugin_namespaces(job)
 
         # Check required plugins
         missing = manifest.required_plugins - provided_plugins
@@ -932,6 +938,54 @@ class Scheduler:
                 f"Job '{job.name}' uses engine '{engine_name}' but is missing "
                 f"required plugins: {missing}"
             )
+
+    def _effective_plugin_namespaces(self, job: JobConfig) -> set[str]:
+        """Return all plugin namespaces available to a job.
+
+        This mirrors the resolution logic used in :meth:`_run_job` so that
+        validation and execution agree on which plugins are available.
+        """
+        plugin_keys = [
+            "backend",
+            "integrator",
+            "model",
+            "analyser",
+            "visualizer",
+            "analyzer",
+        ]
+
+        namespaces: set[str] = set(job.plugins.keys())
+
+        # Top-level plugin sections are stored as model extras by JobConfig
+        job_extra = job.model_extra or {}
+        for key in plugin_keys:
+            if key in job_extra:
+                namespaces.add(key)
+
+        # Merge in global defaults so required plugins supplied by global.yaml
+        # are not reported as missing.
+        system_cfg = job.system if job.system is not None else self.system_config
+        try:
+            job_override = {
+                "plugins": job.plugins,
+                "engine": job.engine,
+                "params": job.params,
+            }
+            merged = get_config_for_job(
+                system_cfg, job_name=job.name, job_config_dict=job_override
+            )
+            merged_plugins = dict(merged.get("plugins", {}))
+            for key in plugin_keys:
+                if key in merged and key not in merged_plugins:
+                    merged_plugins[key] = merged[key]
+            namespaces.update(merged_plugins.keys())
+        except Exception as e:
+            log.debug(
+                f"Could not merge global config for plugin validation of "
+                f"'{job.name}': {e}"
+            )
+
+        return namespaces
 
     def _expand_parameter_scans(self, job_list: JobList) -> list[JobConfig]:
         """Expand jobs with scanable list parameters into multiple jobs.

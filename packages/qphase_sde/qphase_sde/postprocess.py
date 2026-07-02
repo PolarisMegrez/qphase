@@ -14,6 +14,8 @@ from scipy.optimize import curve_fit
 
 from .result import SDEResult
 
+POSTPROCESS_SCHEMA_VERSION = "1.0"
+
 
 @dataclass(frozen=True)
 class LoadedResult:
@@ -111,8 +113,18 @@ def fit_lorentzian(
     psd: np.ndarray,
     *,
     fit_window: float | None = None,
+    freq_min: float | None = None,
+    freq_max: float | None = None,
+    min_r2: float | None = None,
+    min_peak_height: float | None = None,
+    max_linewidth: float | None = None,
 ) -> LorentzFitResult:
-    """Fit one PSD trace with a Lorentzian plus baseline."""
+    """Fit one PSD trace with a Lorentzian plus baseline.
+
+    Optional quality thresholds mark the result as ``low_quality`` (rather than
+    ``failed``) when the fit succeeds numerically but does not meet the
+    requested criteria.
+    """
     try:
         x = np.asarray(axis, dtype=float).reshape(-1)
         y = np.asarray(psd, dtype=float).reshape(-1)
@@ -124,6 +136,19 @@ def fit_lorentzian(
         y = y[finite]
         if x.size < 4:
             raise ValueError("not enough finite samples for Lorentzian fit")
+
+        if freq_min is not None or freq_max is not None:
+            freq_mask = np.ones_like(x, dtype=bool)
+            if freq_min is not None:
+                freq_mask &= x >= freq_min
+            if freq_max is not None:
+                freq_mask &= x <= freq_max
+            x = x[freq_mask]
+            y = y[freq_mask]
+            if x.size < 4:
+                raise ValueError(
+                    "not enough samples in requested frequency range for fit"
+                )
 
         peak_idx = int(np.argmax(y))
         if fit_window is not None and fit_window > 0:
@@ -158,13 +183,32 @@ def fit_lorentzian(
         ss_tot = float(np.sum((y - float(np.mean(y))) ** 2))
         r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
 
+        linewidth = 2.0 * gamma
+        peak_intensity = amplitude + base
+
+        reasons: list[str] = []
+        if min_r2 is not None and r2 < min_r2:
+            reasons.append(f"R2={r2:.4f} < {min_r2}")
+        if min_peak_height is not None and peak_intensity < min_peak_height:
+            reasons.append(f"peak_intensity={peak_intensity:.4e} < {min_peak_height}")
+        if max_linewidth is not None and linewidth > max_linewidth:
+            reasons.append(f"linewidth={linewidth:.4e} > {max_linewidth}")
+
+        if reasons:
+            status = "low_quality"
+            error = "; ".join(reasons)
+        else:
+            status = "ok"
+            error = ""
+
         return LorentzFitResult(
             center=center,
-            linewidth=2.0 * gamma,
+            linewidth=linewidth,
             base=base,
-            peak_intensity=amplitude + base,
+            peak_intensity=peak_intensity,
             R2=r2,
-            status="ok",
+            status=status,
+            error=error,
         )
     except Exception as exc:
         return LorentzFitResult(error=str(exc))
@@ -201,7 +245,8 @@ def extract_psd_trace(
     trace = np.asarray(trace, dtype=float).reshape(-1)
     if axis.size != trace.size:
         raise QPhaseError(
-            f"PSD axis length {axis.size} does not match trace length {trace.size} in {loaded.path}"
+            f"PSD axis length {axis.size} does not match trace length "
+            f"{trace.size} in {loaded.path}"
         )
     return axis, trace, psd_payload
 
@@ -213,6 +258,11 @@ def postprocess_run(
     psd_key: str = "psd",
     mode: int = 0,
     fit_window: float | None = None,
+    freq_min: float | None = None,
+    freq_max: float | None = None,
+    min_r2: float | None = None,
+    min_peak_height: float | None = None,
+    max_linewidth: float | None = None,
     export_dist: bool = False,
     pattern: str = "*.npz",
 ) -> PostprocessBundle:
@@ -232,10 +282,21 @@ def postprocess_run(
         axis, trace, _ = extract_psd_trace(loaded, psd_key=psd_key, mode=mode)
         if reference_axis is None:
             reference_axis = axis
-        elif reference_axis.shape != axis.shape or not np.allclose(reference_axis, axis):
+        elif reference_axis.shape != axis.shape or not np.allclose(
+            reference_axis, axis
+        ):
             raise QPhaseError(f"PSD frequency axis differs in {loaded.path}")
 
-        fit_result = fit_lorentzian(axis, trace, fit_window=fit_window)
+        fit_result = fit_lorentzian(
+            axis,
+            trace,
+            fit_window=fit_window,
+            freq_min=freq_min,
+            freq_max=freq_max,
+            min_r2=min_r2,
+            min_peak_height=min_peak_height,
+            max_linewidth=max_linewidth,
+        )
         row = {
             "job_name": loaded.job_name,
             scan_param: scan_value,
@@ -245,12 +306,18 @@ def postprocess_run(
         psd_columns[str(scan_value)] = trace
 
         if export_dist:
-            _collect_distribution(loaded, "dist", mode, scan_param, scan_value, dist_rows)
-            _collect_distribution(loaded, "pdist", mode, scan_param, scan_value, pdist_rows)
+            _collect_distribution(
+                loaded, "dist", mode, scan_param, scan_value, dist_rows
+            )
+            _collect_distribution(
+                loaded, "pdist", mode, scan_param, scan_value, pdist_rows
+            )
 
     fit_rows.sort(key=lambda row: _sort_key(row[scan_param]))
     psd_columns = dict(sorted(psd_columns.items(), key=lambda item: _sort_key(item[0])))
-    return PostprocessBundle(fit_rows, psd_columns, reference_axis, dist_rows, pdist_rows)
+    return PostprocessBundle(
+        fit_rows, psd_columns, reference_axis, dist_rows, pdist_rows
+    )
 
 
 def export_postprocess_bundle(
@@ -282,15 +349,24 @@ def export_postprocess_bundle(
         np.savez_compressed(
             dist_path,
             dist_list=np.array(bundle.dist_rows, dtype=object),
-            scan_params=np.array([row[scan_param] for row in bundle.dist_rows], dtype=object),
+            scan_params=np.array(
+                [row[scan_param] for row in bundle.dist_rows], dtype=object
+            ),
+            __schema_version__=POSTPROCESS_SCHEMA_VERSION,
+            __created_by__="qphase postprocess",
         )
         written["dist_merged"] = dist_path
 
     if export_dist and bundle.pdist_rows:
         pdist_path = out / "pdist_merged.pkl"
         _ensure_writable(pdist_path, overwrite)
+        pdist_bundle = {
+            "__schema_version__": POSTPROCESS_SCHEMA_VERSION,
+            "__created_by__": "qphase postprocess",
+            "rows": bundle.pdist_rows,
+        }
         with pdist_path.open("wb") as handle:
-            pickle.dump(bundle.pdist_rows, handle)
+            pickle.dump(pdist_bundle, handle)
         written["pdist_merged"] = pdist_path
 
     return written

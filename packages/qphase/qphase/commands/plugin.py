@@ -247,7 +247,7 @@ def show_command(
     # noqa: B008 - typer.Argument is a decorator, not a function call in default value
     plugins: list[str] = typer.Argument(  # noqa: B008
         ...,
-        help="Plugin dotted paths (e.g., 'model.vdp_two_mode', 'backend.numpy'). "
+        help="Plugin dotted paths (e.g., 'model.vdp_level3', 'backend.numpy'). "
         "Accepts multiple arguments.",
     ),
     verbose: bool = typer.Option(
@@ -260,9 +260,9 @@ def show_command(
 
     Examples
     --------
-        qphase show model.vdp_two_mode
-        qphase show backend.numpy integrator.euler
-        qphase show model.vdp_two_mode backend.cupy
+        qphase show model.vdp_level3
+        qphase show backend.numpy integrator.euler_maruyama
+        qphase show model.vdp_level3 backend.numpy
 
     Displays detailed information about each plugin including source,
     description, and configuration parameters.
@@ -489,7 +489,7 @@ def template_command(
     # noqa: B008 - typer.Argument is a decorator, not a function call in default value
     plugins: list[str] = typer.Argument(  # noqa: B008
         ...,
-        help="Plugin dotted paths (e.g., 'model.vdp_two_mode', 'backend.numpy'). "
+        help="Plugin dotted paths (e.g., 'model.vdp_level3', 'backend.numpy'). "
         "Accepts multiple arguments.",
     ),
     output: str = typer.Option("-", help="Output file (default: stdout)"),
@@ -501,9 +501,9 @@ def template_command(
 
     Examples
     --------
-        qphase template model.vdp_two_mode
-        qphase template backend.numpy integrator.euler
-        qphase template model.vdp_two_mode backend.cupy
+        qphase template model.vdp_level3
+        qphase template backend.numpy integrator.euler_maruyama
+        qphase template model.vdp_level3 backend.numpy
 
     Generates configuration templates based on plugin schemas.
     Merges values from global.yaml if available.

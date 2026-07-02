@@ -32,10 +32,11 @@ from qphase.core.registry import discovery, registry
 from qphase.core.system_config import load_system_config
 
 app = typer.Typer()
+log = get_logger()
 
 # Module-level singleton for typer.Argument to avoid function call in default (B008)
 JOB_NAMES_ARG = typer.Argument(
-    ...,
+    default_factory=list,
     help="Name(s) of the job(s) to run (searched in configs/jobs/ directory)",
 )
 
@@ -81,30 +82,46 @@ def jobs(
 
     Job file format (in configs/jobs/):
         name: job_name
-        engine: sde
-        plugins:
-          backend:
-            numpy:
-              float_dtype: float64
-          model:
-            vdp_two_mode:
-              D: 1.0
         engine:
           sde:
-            t_end: 10.0
+            t0: 0.0
+            t1: 10.0
+            dt: 0.01
+            n_traj: 16
+            seed: 42
+            ic:
+              - ["1.0+0.0j"]
+        backend:
+          numpy:
+            float_dtype: float64
+        integrator:
+          euler_maruyama: {}
+        model:
+          kerr_3pa:
+            omega0: 1.0
+            chi: 0.01
+            kappa3: 0.001
+            beta: 1.0
+            epsilon: 0.1
+            kappa1: 1.0
 
     Examples
     --------
-        qphase run jobs my_simulation
-        qphase run jobs job1 job2
-        qphase run jobs --list
-        qphase run jobs --verbose my_job
+        qphase run my_simulation
+        qphase run job1 job2
+        qphase run --list
+        qphase run --verbose my_job
+        qphase run
 
     """
     # Handle "list" argument as a command to list engines
     if "list" in job_names:
         _list_engines()
         return
+
+    if not list_jobs and not job_names:
+        log.error("No job names provided. Use --list to list available jobs.")
+        raise typer.Exit(code=1)
 
     # Configure logging
     configure_logging(
@@ -113,7 +130,6 @@ def jobs(
         as_json=log_json,
         suppress_warnings=suppress_warnings,
     )
-    log = get_logger()
 
     try:
         # Ensure plugins are discovered

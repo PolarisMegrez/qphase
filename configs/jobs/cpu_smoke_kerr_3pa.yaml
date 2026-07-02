@@ -1,0 +1,34 @@
+name: cpu_smoke_kerr_3pa
+save: true
+
+engine:
+  sde:
+    t0: 0.0
+    t1: 1.0
+    dt: 0.01
+    n_traj: 2
+    seed: 42
+    ic:
+      - ["1.0+0.0j"]
+
+analyser:
+  psd:
+    modes: [0]
+    kind: complex
+    find_peaks: true
+
+backend:
+  numpy:
+    float_dtype: float64
+
+integrator:
+  euler_maruyama: {}
+
+model:
+  kerr_3pa:
+    omega0: 1.0
+    chi: 0.01
+    kappa3: 0.001
+    beta: 1.0
+    epsilon: [0.025, 0.05]
+    kappa1: 1.0

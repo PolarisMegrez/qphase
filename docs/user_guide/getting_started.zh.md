@@ -91,20 +91,29 @@ name: test_run
 # 1. 选择引擎 (SDE 求解器)
 engine:
   sde:
-    t_end: 10.0
+    t0: 0.0
+    t1: 10.0
     dt: 0.01
     n_traj: 100
+    seed: 42
+    ic:
+      - ["1.0+0.0j", "0.0+0.0j"]
 
 # 2. 选择物理模型
 # (此处使用内置的示例模型)
-plugins:
-  model:
-    vdp_two_mode:  # 内置的范德波尔振荡器
-      D: 1.0       # 扩散强度
+model:
+  vdp_level3:  # 内置的范德波尔振荡器
+    omega_a: 1.0
+    omega_b: 1.0
+    gamma_a: 0.1
+    gamma_b: 0.1
+    Gamma: 1.0
+    g: 0.5
+    D: 1.0       # 扩散强度
 
-  backend:
-    numpy:         # 在 CPU 上运行
-      float_dtype: float64
+backend:
+  numpy:         # 在 CPU 上运行
+    float_dtype: float64
 ```
 
 ## 4. 运行仿真

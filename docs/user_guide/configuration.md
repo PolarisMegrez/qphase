@@ -16,7 +16,7 @@ The easiest way to create a new configuration is to use the CLI to generate a te
 
 ```bash
 # Generate a template for a specific model
-qphase template model.vdp_two_mode > configs/jobs/my_new_job.yaml
+qphase template model.vdp_level3 > configs/jobs/my_new_job.yaml
 ```
 
 This file can then be edited to suit specific requirements.
@@ -29,8 +29,14 @@ For example:
 
 ```yaml
 model:
-  vdp_two_mode:   # This matches the plugin ID "model.vdp_two_mode"
-    D: 0.5        # These arguments are passed to the plugin's __init__ method
+  vdp_level3:   # This matches the plugin ID "model.vdp_level3"
+    omega_a: 1.0  # These arguments are passed to the plugin's __init__ method
+    omega_b: 1.0
+    gamma_a: 0.1
+    gamma_b: 0.1
+    Gamma: 1.0
+    g: 0.5
+    D: 0.5
 ```
 
 ### Configuration Hierarchy
@@ -61,9 +67,9 @@ When using the SDE engine (`qphase-sde`), the following top-level keys are avail
 
 | Field | Description |
 | :--- | :--- |
-| `model` | Configuration for the physical model plugin (e.g., `vdp_two_mode`, `kerr_cavity`). Defines the drift and diffusion terms. |
+| `model` | Configuration for the physical model plugin (e.g., `vdp_level3`, `kerr_3pa`). Defines the drift and diffusion terms. |
 | `backend` | Configuration for the computational backend plugin (e.g., `numpy`, `torch`). Defines how arrays are handled. |
-| `integrator` | Configuration for the SDE integrator plugin (e.g., `euler`, `milstein`). Defines the numerical stepping scheme. |
+| `integrator` | Configuration for the SDE integrator plugin (e.g., `euler_maruyama`, `milstein`). Defines the numerical stepping scheme. |
 
 ### QPhase-Viz Fields
 
@@ -84,8 +90,12 @@ If lists are provided for multiple parameters, QPhase generates a job for every 
 
 ```yaml
 model:
-  kerr_cavity:
-    chi: [1.0, 2.0]       # 2 values
+  kerr_3pa:
+    omega0: 1.0
+    chi: 0.01
+    kappa3: 0.001
+    beta: 1.0
+    kappa1: 1.0
     epsilon: [0.1, 0.5, 1.0] # 3 values
 # Total jobs = 2 * 3 = 6
 ```

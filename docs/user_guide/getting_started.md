@@ -91,20 +91,29 @@ name: test_run
 # 1. Choose the Engine (SDE Solver)
 engine:
   sde:
-    t_end: 10.0
+    t0: 0.0
+    t1: 10.0
     dt: 0.01
     n_traj: 100
+    seed: 42
+    ic:
+      - ["1.0+0.0j", "0.0+0.0j"]
 
 # 2. Choose the Physics Model
 # (Here we use a built-in example model)
-plugins:
-  model:
-    vdp_two_mode:  # Built-in Van der Pol oscillator
-      D: 1.0       # Diffusion strength
+model:
+  vdp_level3:  # Built-in Van der Pol oscillator
+    omega_a: 1.0
+    omega_b: 1.0
+    gamma_a: 0.1
+    gamma_b: 0.1
+    Gamma: 1.0
+    g: 0.5
+    D: 1.0       # Diffusion strength
 
-  backend:
-    numpy:         # Run on CPU
-      float_dtype: float64
+backend:
+  numpy:         # Run on CPU
+    float_dtype: float64
 ```
 
 ## 4. Run the Simulation

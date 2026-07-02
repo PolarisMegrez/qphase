@@ -18,7 +18,7 @@ To ensure modularity and prevent naming collisions, plugins are segregated into 
 |-----------|-------------|---------|
 | `backend` | Computational backends | `numpy`, `torch` |
 | `engine`  | Simulation engines | `sde`, `viz` |
-| `model`   | Physical models | `kerr_cavity`, `vdp` |
+| `model`   | Physical models | `kerr_3pa`, `vdp_level3` |
 | `integrator`| Numerical integrators | `euler_maruyama`, `srk` |
 | `analyser`| Result analysis tools | `mean_photon`, `wigner` |
 
@@ -64,7 +64,7 @@ The `create()` method serves as the universal factory for all components. It han
 ```python
 # Example: Instantiating a model with dependency injection
 model = registry.create(
-    "model:kerr_cavity",
+    "model:kerr_3pa",
     config={"chi": 1.0},
     backend=numpy_backend_instance
 )

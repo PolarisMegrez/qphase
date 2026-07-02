@@ -8,10 +8,9 @@ The `qphase` command-line interface is the primary tool for interacting with the
 
 ## Global Options
 
-All commands support the following global flags:
+All commands support the following global flag:
 
 *   `--help`: Display the help message and exit.
-*   `--version`: Display the installed version number.
 
 ---
 
@@ -85,8 +84,13 @@ qphase postprocess RUN_DIR --scan-param PARAM [OPTIONS]
     *   `--psd-key`: Analysis key containing the PSD payload. Default: `psd`.
     *   `--output-dir` / `-o`: Output directory. Default: the run directory.
     *   `--fit-window`: Half-width around the strongest peak used for fitting.
+    *   `--freq-min` / `--freq-max`: Restrict the frequency range used for fitting.
+    *   `--min-r2`: Minimum acceptable R^2 value.
+    *   `--min-peak-height`: Minimum acceptable peak intensity.
+    *   `--max-linewidth`: Maximum acceptable linewidth.
     *   `--export-dist`: Also write experimental `dist_merged.npz` and `pdist_merged.pkl` outputs.
     *   `--overwrite`: Replace existing output files.
+    *   `--dry-run`: List the files that would be processed without writing outputs.
 
 **Example**:
 
@@ -94,7 +98,7 @@ qphase postprocess RUN_DIR --scan-param PARAM [OPTIONS]
 qphase postprocess runs/2026-03-17T21-03-06_088ab0 --scan-param epsilon --mode 0
 ```
 
-Outputs are `fit_results.csv` and `psd_merged.csv`.
+Outputs are `fit_results.csv` and `psd_merged.csv`. When `--export-dist` is used, the experimental outputs also include `__schema_version__` metadata.
 
 ---
 
@@ -130,14 +134,14 @@ qphase show [PLUGIN_ID]... [OPTIONS]
 ```
 
 *   **Arguments**:
-    *   `PLUGIN_ID`: One or more plugin identifiers in `namespace.name` format (e.g., `model.vdp_two_mode`).
+    *   `PLUGIN_ID`: One or more plugin identifiers in `namespace.name` format (e.g., `model.vdp_level3`).
 *   **Options**:
     *   `--verbose` / `-v`: Show additional metadata (e.g., file path, package version).
 
 **Example**:
 
 ```bash
-qphase show model.vdp_two_mode
+qphase show model.vdp_level3
 qphase show backend.numpy --verbose
 ```
 
@@ -152,17 +156,17 @@ qphase template [PLUGIN_ID]... [OPTIONS]
 *   **Arguments**:
     *   `PLUGIN_ID`: One or more plugin identifiers in `namespace.name` format.
 *   **Options**:
-    *   `--output` / `-o`: Output file path. Default is `-` (stdout).
+    *   `--output`: Output file path. Default is `-` (stdout).
     *   `--format`: Output format, either `yaml` (default) or `json`.
 
 **Example**:
 
 ```bash
 # Print YAML template to console
-qphase template model.vdp_two_mode
+qphase template model.vdp_level3
 
 # Save to file
-qphase template model.vdp_two_mode -o my_config.yaml
+qphase template model.vdp_level3 --output my_config.yaml
 ```
 
 ---

@@ -142,6 +142,7 @@ def _load_single_job_file(path: Path) -> JobConfig | list[JobConfig]:
         # If plugins were already in data, merge them
         if "plugins" in job_data:
             plugin_data = deep_merge_dicts(job_data["plugins"], plugin_data)
+            job_data.pop("plugins")
 
         return JobConfig(**job_data, plugins=plugin_data)
 

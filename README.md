@@ -76,7 +76,7 @@ model:
 Run the job by name:
 
 ```powershell
-qphase run jobs demo_psd
+qphase run demo_psd
 ```
 
 The scheduler writes a timestamped run directory under `runs/`. SDE jobs save a

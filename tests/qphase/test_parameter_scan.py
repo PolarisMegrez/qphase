@@ -67,7 +67,7 @@ def test_cartesian_expansion(cartesian_job_file, dummy_model):
     # Expand jobs
     expanded = scheduler._expand_parameter_scans(job_list)
 
-    # Expected: 2 (t_end) * 2 (dt) = 4 jobs
+    # Expected: 2 (engine param) * 2 (model param) = 4 jobs
     assert len(expanded) == 4
 
     # Verify names

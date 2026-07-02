@@ -9,7 +9,11 @@ import pytest
 # Add package paths to sys.path
 packages_dir = Path(__file__).parent.parent / "packages"
 sys.path.insert(0, str(packages_dir / "qphase"))
-# Note: We do NOT add qphase_sde to path to ensure core tests are independent
+sys.path.insert(0, str(packages_dir / "qphase_sde"))
+sys.path.insert(0, str(packages_dir / "qphase_viz"))
+# Allow direct imports from the repository root (e.g., models/, scripts/)
+repo_root = Path(__file__).parent.parent
+sys.path.insert(0, str(repo_root))
 
 from qphase.core.config_loader import load_system_config  # noqa: E402
 from qphase.core.registry import registry  # noqa: E402

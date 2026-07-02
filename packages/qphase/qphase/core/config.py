@@ -101,7 +101,9 @@ class JobConfig(BaseModel):
     # Defines how to aggregate input results for this job
     aggregate_input: dict[str, Any] | None = Field(
         default=None,
-        description="Configuration for input aggregation (e.g. {'on': 'params.gamma_a'})",
+        description=(
+            "Configuration for input aggregation (e.g. {'on': 'params.gamma_a'})"
+        ),
     )
 
     # Save control (optional)
@@ -153,7 +155,8 @@ class JobConfig(BaseModel):
         """Validate that the engine configuration is valid.
 
         The engine configuration should be a dictionary with engine name as key
-        and engine config as value, e.g., {"sde": {"t_end": 10.0}}.
+        and engine config as value, e.g.,
+        {"sde": {"t1": 10.0, "dt": 0.01, "n_traj": 16}}.
 
         Parameters
         ----------
