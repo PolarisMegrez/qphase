@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
 from qphase.core.errors import QPhaseRuntimeError
-from qphase.core.protocols import EngineBase, ResultProtocol
+from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 
 from .config import VizEngineConfig
 from .plotters.base import PlotterProtocol
@@ -108,6 +108,7 @@ class VizEngine(EngineBase):
     name: ClassVar[str] = "viz"
     description: ClassVar[str] = "Visualization Engine"
     config_schema: ClassVar[type[VizEngineConfig]] = VizEngineConfig
+    manifest: ClassVar[EngineManifest] = EngineManifest(required_plugins={"visualizer"})
 
     def __init__(
         self,

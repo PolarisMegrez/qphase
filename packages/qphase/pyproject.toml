@@ -32,7 +32,8 @@ dependencies = [
   "rich>=13.0",
   "ruamel.yaml>=0.17",
   "PyYAML>=6.0",
-  "pydantic>=2.0"
+  "pydantic>=2.0",
+  "numpy>=1.23",
 ]
 
 [project.optional-dependencies]
@@ -40,6 +41,7 @@ numba = ["numba>=0.57"]
 cupy = ["cupy-cuda12x>=12.0"]
 torch = ["torch>=2.0"]
 standard = ["numba>=0.57", "torch>=2.0"]
+gui = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
 
 [project.scripts]
 qphase = "qphase.main:app"

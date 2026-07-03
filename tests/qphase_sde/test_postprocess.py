@@ -7,6 +7,10 @@ import pickle
 from pathlib import Path
 
 import numpy as np
+from qphase.core.config import JobConfig, JobList
+from qphase.core.registry import registry
+from qphase.core.scheduler import Scheduler
+from qphase.core.system_config import SystemConfig
 from qphase.main import app
 from qphase_sde.postprocess import (
     POSTPROCESS_SCHEMA_VERSION,
@@ -17,6 +21,10 @@ from qphase_sde.postprocess import (
     postprocess_run,
 )
 from qphase_sde.result import SDEResult
+from qphase_sde.workflows.postprocess.engine import (
+    SDEPostprocessEngine,
+    SDEPostprocessEngineConfig,
+)
 from typer.testing import CliRunner
 
 
@@ -100,6 +108,56 @@ def test_postprocess_run_frequency_range(tmp_path):
     )
     assert len(bundle.fit_rows) == 2
     assert all(row["status"] == "ok" for row in bundle.fit_rows)
+
+
+def test_sde_postprocess_engine_runs_saved_results(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    output_dir = tmp_path / "engine_exports"
+    engine = SDEPostprocessEngine(
+        SDEPostprocessEngineConfig(
+            run_dir=str(run_dir), scan_param="epsilon", output_dir=str(output_dir)
+        )
+    )
+
+    result = engine.run()
+
+    artifacts = result.analysis["postprocess"]["artifacts"]
+    assert result.meta["engine"] == "sde_postprocess"
+    assert Path(artifacts["fit_results"]).exists()
+    assert Path(artifacts["psd_merged"]).exists()
+
+
+def test_sde_postprocess_engine_runs_as_scheduler_job(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    registry.register("engine", "sde_postprocess", SDEPostprocessEngine, overwrite=True)
+    system_config = SystemConfig(
+        paths={
+            "output_dir": str(tmp_path / "runs"),
+            "global_file": str(tmp_path / "global.yaml"),
+            "config_dirs": [str(tmp_path / "configs")],
+            "plugin_dirs": [str(tmp_path / "plugins")],
+        }
+    )
+    job_list = JobList(
+        jobs=[
+            JobConfig(
+                name="postprocess",
+                engine={
+                    "sde_postprocess": {
+                        "run_dir": str(run_dir),
+                        "scan_param": "epsilon",
+                    }
+                },
+            )
+        ]
+    )
+
+    results = Scheduler(system_config=system_config).run(job_list)
+
+    assert len(results) == 1
+    assert results[0].success is True
+    assert (results[0].run_dir / "fit_results.csv").exists()
+    assert (results[0].run_dir / "psd_merged.csv").exists()
 
 
 def test_postprocess_cli_dry_run(tmp_path):

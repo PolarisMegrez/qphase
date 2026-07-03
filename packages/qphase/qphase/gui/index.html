@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QPhase Console</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1d2428;
+      --muted: #66727a;
+      --line: #d8dfd9;
+      --panel: #fbfcf8;
+      --paper: #f4f0e7;
+      --accent: #116b5f;
+      --accent-2: #b45f2a;
+      --warn: #9c3d2f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        linear-gradient(135deg, rgba(17,107,95,.12), transparent 32%),
+        linear-gradient(315deg, rgba(180,95,42,.13), transparent 28%),
+        var(--paper);
+      font-family: Avenir Next, Segoe UI, sans-serif;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px clamp(18px, 4vw, 48px);
+      border-bottom: 1px solid var(--line);
+      background: rgba(251,252,248,.78);
+      backdrop-filter: blur(14px);
+    }
+    h1 { margin: 0; font-size: 24px; font-weight: 750; }
+    main {
+      display: grid;
+      grid-template-columns: minmax(220px, 280px) 1fr;
+      gap: 20px;
+      padding: 22px clamp(18px, 4vw, 48px) 48px;
+    }
+    nav, section {
+      border: 1px solid var(--line);
+      background: rgba(251,252,248,.84);
+      box-shadow: 0 18px 50px rgba(56, 48, 36, .08);
+    }
+    nav { padding: 12px; align-self: start; }
+    button {
+      border: 1px solid var(--line);
+      background: #fffdf7;
+      color: var(--ink);
+      min-height: 38px;
+      padding: 8px 12px;
+      font: inherit;
+      cursor: pointer;
+    }
+    nav button {
+      width: 100%;
+      display: block;
+      text-align: left;
+      margin: 0 0 8px;
+    }
+    button:hover,
+    button.active {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    section { padding: clamp(16px, 3vw, 26px); min-height: 520px; }
+    h2 { margin: 0 0 14px; font-size: 20px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+    input, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #fffdf7;
+      color: var(--ink);
+      padding: 10px 12px;
+      font: inherit;
+    }
+    textarea {
+      min-height: 180px;
+      resize: vertical;
+      font-family: Consolas, monospace;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .item {
+      border: 1px solid var(--line);
+      padding: 12px;
+      background: rgba(255,253,247,.76);
+    }
+    .muted { color: var(--muted); }
+    .ok { color: var(--accent); }
+    .warn { color: var(--warn); }
+    pre {
+      overflow: auto;
+      max-height: 460px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      background: #1f2624;
+      color: #eef5eb;
+      font-size: 13px;
+    }
+    @media (max-width: 760px) {
+      main { grid-template-columns: 1fr; }
+      header { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>QPhase Console</h1>
+      <div class="muted">Local workflow control backed by qphase.service</div>
+    </div>
+    <div id="health" class="muted">Checking API...</div>
+  </header>
+  <main>
+    <nav id="tabs"></nav>
+    <section>
+      <h2 id="title"></h2>
+      <div id="view"></div>
+    </section>
+  </main>
+  <script>
+    const tabs = ["Jobs", "Config", "Plugins", "Plan", "Run", "Results"];
+    let state = { jobs: [], selectedJob: "", sessionId: "", artifacts: [] };
+    const api = async (url, options = {}) => {
+      const response = await fetch(url, options);
+      if (!response.ok) throw new Error(await response.text());
+      return response.json();
+    };
+    const escapeHtml = (text) => String(text)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+    const renderJson = (data) => {
+      return `<pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
+    };
+    const jobPicker = () => `
+      <div class="toolbar">
+        <input id="jobInput" value="${escapeHtml(state.selectedJob)}" placeholder="job name">
+        <button onclick="setJob()">Select</button>
+      </div>`;
+    const show = (name) => {
+      document.querySelectorAll("nav button").forEach((button) => {
+        button.classList.toggle("active", button.textContent === name);
+      });
+      document.getElementById("title").textContent = name;
+      routes[name]();
+    };
+    window.setJob = () => {
+      state.selectedJob = document.getElementById("jobInput").value.trim();
+      show("Jobs");
+    };
+    window.loadJob = async (name) => {
+      state.selectedJob = name;
+      const data = await api(`/jobs/${encodeURIComponent(name)}`);
+      document.getElementById("view").innerHTML = jobPicker() + renderJson(data);
+    };
+    window.buildPlan = async () => {
+      const input = document.getElementById("jobInput");
+      const job = state.selectedJob || input?.value.trim();
+      if (!job) return;
+      state.selectedJob = job;
+      const data = await api("/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobs: [job] })
+      });
+      document.getElementById("view").innerHTML = jobPicker() + renderJson(data);
+    };
+    window.runJob = async () => {
+      const input = document.getElementById("jobInput");
+      const job = state.selectedJob || input?.value.trim();
+      if (!job) return;
+      state.selectedJob = job;
+      const data = await api("/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobs: [job] })
+      });
+      state.sessionId = data.run?.session_id || "";
+      document.getElementById("view").innerHTML = jobPicker() + renderJson(data);
+    };
+    window.loadArtifact = async (path) => {
+      const data = await api(`/artifacts?path=${encodeURIComponent(path)}`);
+      document.getElementById("view").innerHTML = renderJson(data);
+    };
+    window.saveConfig = async () => {
+      const data = JSON.parse(document.getElementById("configText").value);
+      await api("/config/global", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data })
+      });
+      document.getElementById("health").textContent = "Config saved";
+    };
+    const jobCard = (job) => `
+      <div class="item">
+        <strong>${escapeHtml(job)}</strong><br>
+        <button onclick="loadJob('${escapeHtml(job)}')">Open</button>
+        <button onclick="state.selectedJob='${escapeHtml(job)}'; buildPlan()">Plan</button>
+        <button onclick="state.selectedJob='${escapeHtml(job)}'; runJob()">Run</button>
+      </div>`;
+    const pluginCard = (plugin) => `
+      <div class="item">
+        <strong>${escapeHtml(plugin.namespace)}.${escapeHtml(plugin.name)}</strong><br>
+        <span class="muted">schema: ${plugin.schema_available ? "yes" : "no"}</span>
+      </div>`;
+    const artifactCard = (artifact) => `
+      <div class="item">
+        <strong>${escapeHtml(artifact.kind)}</strong><br>
+        <span class="muted">${escapeHtml(artifact.path)}</span><br>
+        <button onclick="loadArtifact('${escapeHtml(artifact.path)}')">Open</button>
+      </div>`;
+    const routes = {
+      Jobs: async () => {
+        const data = await api("/jobs");
+        state.jobs = data.jobs;
+        document.getElementById("view").innerHTML = jobPicker() + `
+          <div class="grid">${data.jobs.map(jobCard).join("")}</div>`;
+      },
+      Config: async () => {
+        const data = await api("/config/global");
+        document.getElementById("view").innerHTML = `
+          <textarea id="configText">${escapeHtml(JSON.stringify(data, null, 2))}</textarea>
+          <div class="toolbar"><button onclick="saveConfig()">Save</button></div>`;
+      },
+      Plugins: async () => {
+        const data = await api("/plugins");
+        document.getElementById("view").innerHTML = `
+          <div class="grid">${data.plugins.map(pluginCard).join("")}</div>`;
+      },
+      Plan: () => {
+        document.getElementById("view").innerHTML = jobPicker()
+          + `<button onclick="buildPlan()">Build plan</button>`;
+      },
+      Run: () => {
+        document.getElementById("view").innerHTML = jobPicker()
+          + `<button onclick="runJob()">Run now</button>`;
+      },
+      Results: async () => {
+        if (!state.sessionId) {
+          document.getElementById("view").innerHTML = `
+            <p class="muted">Run a job first, then results appear here.</p>`;
+          return;
+        }
+        const manifest = await api(`/runs/${state.sessionId}`);
+        const events = await api(`/runs/${state.sessionId}/events`);
+        const artifacts = await api(`/runs/${state.sessionId}/artifacts`);
+        state.artifacts = artifacts.artifacts;
+        document.getElementById("view").innerHTML = `
+          <h3>Session ${escapeHtml(state.sessionId)}</h3>
+          ${renderJson(manifest)}
+          <h3>Events</h3>${renderJson(events)}
+          <h3>Artifacts</h3>
+          <div class="grid">${artifacts.artifacts.map(artifactCard).join("")}</div>`;
+      }
+    };
+    document.getElementById("tabs").innerHTML = tabs
+      .map((tab) => `<button onclick="show('${tab}')">${tab}</button>`)
+      .join("");
+    api("/health")
+      .then(() => {
+        document.getElementById("health").innerHTML = "<span class='ok'>API online</span>";
+      })
+      .catch(() => {
+        document.getElementById("health").innerHTML = "<span class='warn'>API offline</span>";
+      });
+    show("Jobs");
+  </script>
+</body>
+</html>

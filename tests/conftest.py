@@ -56,6 +56,7 @@ def temp_workspace(tmp_path):
                 "paths": {
                     "config_dirs": [str(config_dir)],
                     "output_dir": str(output_dir),
+                    "global_file": str(config_dir / "global.yaml"),
                     "plugin_dirs": [str(workspace / "plugins")],
                 },
                 "parameter_scan": {"enabled": True, "method": "cartesian"},

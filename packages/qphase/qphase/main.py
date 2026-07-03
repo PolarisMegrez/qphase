@@ -16,6 +16,7 @@ import typer
 
 from .commands import config as config_cmd
 from .commands import run as run_cmd
+from .commands.gui import gui_command
 from .commands.init import init_command
 from .commands.plugin import list_command, show_command, template_command
 from .commands.postprocess import postprocess_command
@@ -35,6 +36,7 @@ app.command("list")(list_command)
 app.command("show")(show_command)
 app.command("template")(template_command)
 app.command("run")(run_cmd.run_command)
+app.command("gui")(gui_command)
 app.command("postprocess")(postprocess_command)
 
 # Config command group

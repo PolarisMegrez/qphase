@@ -45,6 +45,7 @@ plugins:
             Getting Started: 入门指南
             Command Line Interface: 命令行界面
             Job Configuration: 任务配置
+            GUI & Local API: GUI 与本地 API
             Results & Reproducibility: 结果与复现
             SDE Physics: SDE 物理
             Modeling: 建模
@@ -56,8 +57,10 @@ plugins:
             Developer Guide: 开发者指南
             Architecture: 架构
             Backend: 后端
+            Service Layer: 服务层
             Error Handling: 错误处理
             Plugin Development: 插件开发
+            Postprocess: 后处理
             Protocols: 协议
             Registry: 注册表
             Scheduler: 调度器
@@ -77,6 +80,7 @@ nav:
   - Home: index.md
   - Getting Started: user_guide/getting_started.md
   - Job Configuration: user_guide/configuration.md
+  - GUI & Local API: user_guide/gui.md
   - Results & Reproducibility: user_guide/output.md
   - SDE Physics:
     - Modeling: user_guide/sde/modeling.md
@@ -91,9 +95,11 @@ nav:
     - Architecture: dev_guide/architecture.md
     - Backend: dev_guide/backend.md
     - CLI System: dev_guide/cli.md
+    - Service Layer: dev_guide/service_layer.md
     - Configuration: dev_guide/configuration.md
     - Error Handling: dev_guide/error_handling.md
     - Plugin Development: dev_guide/plugin_development.md
+    - Postprocess: dev_guide/postprocess.md
     - Protocols: dev_guide/protocols.md
     - Registry: dev_guide/registry.md
     - Scheduler: dev_guide/scheduler.md

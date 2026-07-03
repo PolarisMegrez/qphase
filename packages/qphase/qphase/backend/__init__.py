@@ -16,17 +16,35 @@ Public API
 """
 
 from .base import BackendBase
-from .cupy_backend import CuPyBackend
-from .numba_backend import NumbaBackend
 from .numpy_backend import NumpyBackend
-from .torch_backend import TorchBackend
 
 __all__ = [
     # Base protocols
     "BackendBase",
     # Implementations
     "NumpyBackend",
-    "NumbaBackend",
-    "TorchBackend",
-    "CuPyBackend",
 ]
+
+# Optional backends are exposed lazily so that ``import qphase.backend`` works on
+# a minimal numpy + CLI install. The entry-point registry still discovers all
+# backends declared in pyproject.toml regardless of these imports.
+try:
+    from .numba_backend import NumbaBackend  # noqa: F401
+except ImportError:  # pragma: no cover - numba not installed
+    pass
+else:
+    __all__.append("NumbaBackend")
+
+try:
+    from .torch_backend import TorchBackend  # noqa: F401
+except ImportError:  # pragma: no cover - torch not installed
+    pass
+else:
+    __all__.append("TorchBackend")
+
+try:
+    from .cupy_backend import CuPyBackend  # noqa: F401
+except ImportError:  # pragma: no cover - cupy not installed
+    pass
+else:
+    __all__.append("CuPyBackend")
