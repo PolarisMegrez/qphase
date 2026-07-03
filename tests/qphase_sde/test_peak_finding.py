@@ -134,7 +134,7 @@ def test_peak_info_serialization_no_numpy_or_complex():
             return all(_no_special_types(v) for v in obj.values())
         if isinstance(obj, list):
             return all(_no_special_types(v) for v in obj)
-        return not isinstance(obj, (np.ndarray, np.complexfloating, complex))
+        return not isinstance(obj, np.ndarray | np.complexfloating | complex)
 
     assert _no_special_types(props)
 

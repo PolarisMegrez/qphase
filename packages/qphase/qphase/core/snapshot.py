@@ -16,7 +16,7 @@ SnapshotManager
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -49,9 +49,7 @@ class ConfigSnapshot(BaseModel):
 
     # Snapshot metadata
     snapshot_version: str = "1.0"
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     # Job configuration
     job_name: str

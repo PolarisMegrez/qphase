@@ -7,13 +7,13 @@ name = "qphase-viz"
 version = "1.0.1"
 description = "Visualization plugin for QPhase: Phase Portraits and PSD Analysis"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 urls = { Homepage = "https://github.com/PolarisMegrez/qphase", Repository = "https://github.com/PolarisMegrez/qphase", Issues = "https://github.com/PolarisMegrez/qphase/issues" }
 classifiers = [
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Intended Audience :: Science/Research",

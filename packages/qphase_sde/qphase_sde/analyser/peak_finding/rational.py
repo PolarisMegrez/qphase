@@ -1,6 +1,7 @@
 from typing import Any, ClassVar, Literal, cast
 
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import Field
 from scipy.optimize import curve_fit
 
@@ -119,10 +120,10 @@ class RationalPeakFinder(PeakFinder):
         den_powers = self._get_powers(config.den_order, config.parity, True)
         n_params = len(num_powers) + len(den_powers)
 
-        p0 = np.ones(n_params)
+        p0: NDArray[np.float64] = np.ones(n_params, dtype=np.float64)
         p0[0] = np.mean(psd)
         if config.initial_guess and len(config.initial_guess) == n_params:
-            p0 = np.asarray(config.initial_guess, dtype=float)
+            p0 = np.asarray(config.initial_guess, dtype=np.float64)
 
         try:
             popt, _ = curve_fit(self._rational_func, freqs, psd, p0=p0, maxfev=10000)

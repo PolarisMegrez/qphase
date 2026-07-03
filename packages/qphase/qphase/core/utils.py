@@ -189,7 +189,7 @@ def schema_to_yaml_map(
             if value is None:
                 continue
             # Skip empty collections (dict, list)
-            if isinstance(value, (dict, list)) and not value:
+            if isinstance(value, dict | list) and not value:
                 continue
 
         data[field_name] = value

@@ -10,7 +10,7 @@ This guide covers the installation process for QPhase and walks you through runn
 
 ### Prerequisites
 
-*   **Python**: Version 3.10 or higher.
+*   **Python**: Version 3.11 or higher.
 *   **Operating System**: Windows, macOS, or Linux.
 
 ### Recommended: Virtual Environment

@@ -21,12 +21,9 @@ ResultProtocol
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
-
-# Self type for factory methods
-_R = TypeVar("_R", bound="ResultProtocol")
 
 # Progress callback signature
 # args: percent (0.0-1.0), total_duration_estimate (s), message, stage

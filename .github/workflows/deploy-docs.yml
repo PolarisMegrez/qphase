@@ -23,7 +23,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -32,9 +32,9 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Install dependencies
-        # Documentation builds only need the standard dev environment.
-        # Avoid --all-extras because the cuda extra pulls GPU-only wheels.
-        run: uv sync --dev
+        # Documentation builds only need the CPU dev environment.
+        # Avoid the full dev group because the cuda extra pulls GPU-only wheels.
+        run: uv sync --no-dev --group dev-cpu
 
       - name: Build documentation
         run: uv run mkdocs build

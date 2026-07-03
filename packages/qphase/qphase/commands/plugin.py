@@ -410,11 +410,8 @@ def _format_field_type(annotation: Any) -> str:
     if type_str.startswith("<class '") and type_str.endswith("'>"):
         return type_str[8:-2]  # Extract the class name
 
-    # Handle Union types (typing.Union or | syntax)
-    if "|" in type_str:
-        # Extract union members
-        type_str = type_str.replace("typing.Union[", "").replace("]", "")
-        type_str = type_str.replace(" | ", " or ")
+    # Handle union syntax (X | Y) for readability
+    type_str = type_str.replace(" | ", " or ")
 
     # Remove module prefixes for readability
     if type_str.startswith(("typing.", "pydantic.", "collections.abc.")):

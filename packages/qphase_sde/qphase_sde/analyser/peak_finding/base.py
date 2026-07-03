@@ -25,13 +25,13 @@ def _serialize_peak_value(value: Any) -> Any:
     """Recursively convert numpy arrays and complex numbers to JSON-safe types."""
     if isinstance(value, np.ndarray):
         return _serialize_peak_value(value.tolist())
-    if isinstance(value, (np.complexfloating, complex)):
+    if isinstance(value, np.complexfloating | complex):
         return {"real": float(value.real), "imag": float(value.imag)}
     if isinstance(value, dict):
         return {k: _serialize_peak_value(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_serialize_peak_value(v) for v in value]
-    if isinstance(value, (np.floating, np.integer)):
+    if isinstance(value, np.floating | np.integer):
         return value.item()
     return value
 

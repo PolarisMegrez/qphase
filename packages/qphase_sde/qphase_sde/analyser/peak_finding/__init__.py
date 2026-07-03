@@ -18,7 +18,7 @@ __all__ = [
 
 def create_peak_finder(config: Any) -> PeakFinder | None:
     """Create a peak finder from configuration."""
-    if isinstance(config, (str, type(None))):
+    if isinstance(config, str | type(None)):
         if config is None or (isinstance(config, str) and config.lower() == "none"):
             return None
         if isinstance(config, str) and config.lower() in ["scipy", "standard"]:

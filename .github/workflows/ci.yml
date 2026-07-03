@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -25,8 +25,8 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Install dependencies
-        # The workspace installs CPU-compatible packages by default.
-        # CUDA extras (cupy) are optional and not required for tests.
+        # Install the full development environment, which includes all backends
+        # (numpy/numba/torch/cupy), CLI, GUI, resource packages, and test tools.
         run: uv sync --dev
 
       - name: Lint with Ruff

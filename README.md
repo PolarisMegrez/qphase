@@ -13,7 +13,7 @@ Authors: Yu Xue-Hao (University of Chinese Academy of Sciences, UCAS)
 
 Requirements:
 
-- Python >= 3.10
+- Python >= 3.11
 - Git
 
 Install dependencies:
@@ -107,7 +107,7 @@ The project is organized as a monorepo containing three main packages:
 
 ## Notes
 
-- Python 3.10 or higher is required.
+- Python 3.11 or higher is required.
 - Runs aim to be reproducible by recording configuration snapshots; numerical details can still depend on backend and library versions.
 - Storage guard aborts execution if estimated disk usage exceeds the default 1 GiB limit.
 - `scipy` is required by PSD peak finding and Lorentzian postprocessing.

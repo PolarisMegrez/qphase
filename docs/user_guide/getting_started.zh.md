@@ -10,7 +10,7 @@ description: QPhase 入门指南
 
 ### 前置要求
 
-*   **Python**：版本 3.10 或更高。
+*   **Python**：版本 3.11 或更高。
 *   **操作系统**：Windows、macOS 或 Linux。
 
 ### 推荐：虚拟环境
