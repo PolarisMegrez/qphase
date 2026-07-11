@@ -1,31 +1,27 @@
-"""Tests for SDE result postprocessing."""
+"""Tests for SDE result postprocessing via the lorentz_fitter analyzer."""
 
 from __future__ import annotations
 
-import csv
 import pickle
 from pathlib import Path
 
 import numpy as np
+from qphase.backend.numpy_backend import NumpyBackend
+from qphase.core.aggregation import QPHASE_BUNDLE_SCHEMA_VERSION
 from qphase.core.config import JobConfig, JobList
-from qphase.core.registry import registry
+from qphase.core.registry import discovery
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
-from qphase.main import app
-from qphase_sde.postprocess import (
-    POSTPROCESS_SCHEMA_VERSION,
-    PostprocessBundle,
-    export_postprocess_bundle,
+from qphase_sde.analyser.lorentz_fitter import (
+    LorentzFitter,
+    LorentzFitterConfig,
     fit_lorentzian,
-    lorentzian_with_baseline,
-    postprocess_run,
 )
+from qphase_sde.analyser.lorentz_fitter import (
+    _lorentzian_with_baseline as lorentzian_with_baseline,
+)
+from qphase_sde.analyser.result import AnalysisResult
 from qphase_sde.result import SDEResult
-from qphase_sde.workflows.postprocess.engine import (
-    SDEPostprocessEngine,
-    SDEPostprocessEngineConfig,
-)
-from typer.testing import CliRunner
 
 
 def test_fit_lorentzian_recovers_synthetic_peak():
@@ -76,60 +72,82 @@ def test_fit_lorentzian_quality_thresholds():
     assert "linewidth" in result.error
 
 
-def test_postprocess_run_exports_fit_and_merged_psd(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
+def test_fit_lorentzian_clip_by_std_ignores_tails():
+    """clip_by_std focuses the fit on the central peak and ignores tail bumps."""
+    axis = np.linspace(-10.0, 10.0, 1001)
+    psd = lorentzian_with_baseline(axis, center=0.0, gamma=0.3, amplitude=2.0, base=0.1)
+    # Add two side bumps that are stronger than the central peak tails.
+    side_bump = 2.5 * np.exp(-((axis - 5.0) ** 2) / 0.2)
+    side_bump += 2.5 * np.exp(-((axis + 5.0) ** 2) / 0.2)
+    psd_with_tails = psd + side_bump
 
-    bundle = postprocess_run(run_dir, scan_param="epsilon", mode=0)
-    written = export_postprocess_bundle(
-        bundle,
-        tmp_path / "exports",
-        scan_param="epsilon",
+    no_clip = fit_lorentzian(axis, psd_with_tails)
+    clipped = fit_lorentzian(axis, psd_with_tails, clip_by_std=True, clip_sigma=1.0)
+
+    assert clipped.status == "ok"
+    assert np.isclose(clipped.center, 0.0, atol=0.1)
+    # Without clipping the side bumps pull the fit away from the true center.
+    assert abs(no_clip.center) > abs(clipped.center)
+
+
+def test_fit_lorentzian_clip_by_std_sigma():
+    """A smaller clip_sigma should tighten the fitting window further."""
+    axis = np.linspace(-10.0, 10.0, 1001)
+    psd = lorentzian_with_baseline(
+        axis, center=0.0, gamma=0.5, amplitude=10.0, base=0.1
     )
 
-    assert len(bundle.fit_rows) == 2
-    assert written["fit_results"].exists()
-    assert written["psd_merged"].exists()
+    wide = fit_lorentzian(axis, psd, clip_by_std=True, clip_sigma=5.0)
+    narrow = fit_lorentzian(axis, psd, clip_by_std=True, clip_sigma=1.0)
 
-    with written["fit_results"].open(newline="", encoding="utf-8") as handle:
-        rows = list(csv.DictReader(handle))
-    assert [row["epsilon"] for row in rows] == ["0.1", "0.2"]
-    assert all(row["status"] == "ok" for row in rows)
-
-    with written["psd_merged"].open(newline="", encoding="utf-8") as handle:
-        header = next(csv.reader(handle))
-    assert header == ["frequency", "0.1", "0.2"]
+    assert wide.status == "ok"
+    assert narrow.status == "ok"
+    assert np.isclose(wide.center, 0.0, atol=0.05)
+    assert np.isclose(narrow.center, 0.0, atol=0.05)
 
 
-def test_postprocess_run_frequency_range(tmp_path):
-    """postprocess_run should pass frequency range to the fit."""
+def test_lorentz_fitter_config_clip_by_std(tmp_path):
+    """LorentzFitter passes clip_by_std/clip_sigma down to fit_lorentzian."""
     run_dir = _make_run_dir(tmp_path)
-    bundle = postprocess_run(
-        run_dir, scan_param="epsilon", mode=0, freq_min=0.0, freq_max=2.0
-    )
-    assert len(bundle.fit_rows) == 2
-    assert all(row["status"] == "ok" for row in bundle.fit_rows)
-
-
-def test_sde_postprocess_engine_runs_saved_results(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    output_dir = tmp_path / "engine_exports"
-    engine = SDEPostprocessEngine(
-        SDEPostprocessEngineConfig(
-            run_dir=str(run_dir), scan_param="epsilon", output_dir=str(output_dir)
+    analyzer = LorentzFitter(
+        LorentzFitterConfig(
+            scan_param="epsilon",
+            mode=0,
+            clip_by_std=True,
+            clip_sigma=2.0,
         )
     )
+    result = analyzer.analyze(run_dir, backend=NumpyBackend())
 
-    result = engine.run()
-
-    artifacts = result.analysis["postprocess"]["artifacts"]
-    assert result.meta["engine"] == "sde_postprocess"
-    assert Path(artifacts["fit_results"]).exists()
-    assert Path(artifacts["psd_merged"]).exists()
+    assert isinstance(result, AnalysisResult)
+    assert len(result.data_dict["fit_rows"]) == 2
+    for row in result.data_dict["fit_rows"]:
+        assert row["status"] in {"ok", "low_quality"}
 
 
-def test_sde_postprocess_engine_runs_as_scheduler_job(tmp_path):
+def test_lorentz_fitter_analyze_directory(tmp_path):
+    """LorentzFitter can process a run directory directly."""
     run_dir = _make_run_dir(tmp_path)
-    registry.register("engine", "sde_postprocess", SDEPostprocessEngine, overwrite=True)
+    output_dir = tmp_path / "exports"
+
+    analyzer = LorentzFitter(
+        LorentzFitterConfig(
+            scan_param="epsilon",
+            mode=0,
+            output_dir=str(output_dir),
+        )
+    )
+    result = analyzer.analyze(run_dir, backend=NumpyBackend())
+
+    assert isinstance(result, AnalysisResult)
+    assert len(result.data_dict["fit_rows"]) == 2
+    assert (output_dir / "fit_results.csv").exists()
+    assert (output_dir / "psd_merged.csv").exists()
+
+
+def test_lorentz_fitter_engine_analyze_mode(tmp_path):
+    """The SDE engine can run in analyze mode via the scheduler."""
+    run_dir = _make_run_dir(tmp_path)
     system_config = SystemConfig(
         paths={
             "output_dir": str(tmp_path / "runs"),
@@ -141,16 +159,16 @@ def test_sde_postprocess_engine_runs_as_scheduler_job(tmp_path):
     job_list = JobList(
         jobs=[
             JobConfig(
-                name="postprocess",
-                engine={
-                    "sde_postprocess": {
-                        "run_dir": str(run_dir),
-                        "scan_param": "epsilon",
-                    }
-                },
+                name="fit",
+                input=str(run_dir),
+                engine={"sde": {"mode": "analyze"}},
+                analyser={"lorentz_fitter": {"scan_param": "epsilon", "mode": 0}},
             )
         ]
     )
+
+    discovery.discover_plugins()
+    discovery.discover_local_plugins()
 
     results = Scheduler(system_config=system_config).run(job_list)
 
@@ -160,80 +178,30 @@ def test_sde_postprocess_engine_runs_as_scheduler_job(tmp_path):
     assert (results[0].run_dir / "psd_merged.csv").exists()
 
 
-def test_postprocess_cli_dry_run(tmp_path):
-    """--dry-run lists files without writing anything."""
-    run_dir = _make_run_dir(tmp_path)
-    output_dir = tmp_path / "dry_run_exports"
-
-    result = CliRunner().invoke(
-        app,
-        [
-            "postprocess",
-            str(run_dir),
-            "--scan-param",
-            "epsilon",
-            "--output-dir",
-            str(output_dir),
-            "--dry-run",
-        ],
-    )
-
-    assert result.exit_code == 0, result.stdout
-    assert "Would process 2 result file(s)" in result.stdout
-    assert not output_dir.exists() or not any(output_dir.iterdir())
-
-
-def test_postprocess_cli_smoke(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    output_dir = tmp_path / "cli_exports"
-
-    result = CliRunner().invoke(
-        app,
-        [
-            "postprocess",
-            str(run_dir),
-            "--scan-param",
-            "epsilon",
-            "--output-dir",
-            str(output_dir),
-        ],
-    )
-
-    assert result.exit_code == 0, result.stdout
-    assert "Processed 2 result file(s)." in result.stdout
-    assert (output_dir / "fit_results.csv").exists()
-    assert (output_dir / "psd_merged.csv").exists()
-
-
 def test_export_dist_schema_version(tmp_path):
-    """dist_merged.npz and pdist_merged.pkl must carry a schema version."""
-    axis = np.linspace(-1.0, 1.0, 11)
-    bundle = PostprocessBundle(
-        fit_rows=[{"job_name": "j1", "epsilon": 0.1, "status": "ok"}],
-        psd_columns={"0.1": np.ones_like(axis)},
-        axis=axis,
-        dist_rows=[{"epsilon": 0.1, "job_name": "j1", "histogram": np.ones(5)}],
-        pdist_rows=[{"epsilon": 0.1, "job_name": "j1", "histogram": np.ones(5)}],
-    )
-    written = export_postprocess_bundle(
-        bundle,
-        tmp_path / "exports",
-        scan_param="epsilon",
-        export_dist=True,
-    )
+    """dist_merged.npz and pdist_merged.pkl must carry a core schema version."""
+    from qphase.core.aggregation import write_npz_bundle, write_pkl_bundle
 
-    dist_path = written["dist_merged"]
+    output_dir = tmp_path / "exports"
+    output_dir.mkdir()
+
+    dist_rows = [{"epsilon": 0.1, "job_name": "j1", "histogram": np.ones(5)}]
+    pdist_rows = [{"epsilon": 0.1, "job_name": "j1", "histogram": np.ones(5)}]
+
+    dist_path = write_npz_bundle(
+        output_dir / "dist_merged.npz",
+        dist_list=np.array(dist_rows, dtype=object),
+        scan_params=np.array([row["epsilon"] for row in dist_rows], dtype=object),
+    )
+    pdist_path = write_pkl_bundle(output_dir / "pdist_merged.pkl", pdist_rows)
+
     dist_data = np.load(dist_path, allow_pickle=True)
-    assert dist_data["__schema_version__"] == POSTPROCESS_SCHEMA_VERSION
-    assert dist_data["__created_by__"] == "qphase postprocess"
+    assert dist_data["__schema_version__"] == QPHASE_BUNDLE_SCHEMA_VERSION
 
-    pdist_path = written["pdist_merged"]
     with pdist_path.open("rb") as handle:
         pdist_bundle = pickle.load(handle)
-    assert pdist_bundle["__schema_version__"] == POSTPROCESS_SCHEMA_VERSION
-    assert pdist_bundle["__created_by__"] == "qphase postprocess"
-    assert len(pdist_bundle["rows"]) == len(bundle.pdist_rows)
-    assert pdist_bundle["rows"][0]["job_name"] == bundle.pdist_rows[0]["job_name"]
+    assert pdist_bundle["__schema_version__"] == QPHASE_BUNDLE_SCHEMA_VERSION
+    assert len(pdist_bundle["rows"]) == len(pdist_rows)
 
 
 def _make_run_dir(tmp_path: Path) -> Path:

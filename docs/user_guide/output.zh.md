@@ -80,17 +80,40 @@ qphase run runs/2025-12-31.../vdp_sde/config_snapshot.yaml
 
 ## 后处理导出
 
-使用 `qphase postprocess` 可以把已保存的 PSD 分析结果转换为稳定的 CSV 文件：
+跨 job 后处理现在通过调度工作流实现，使用 `analyser.lorentz_fitter` 插件并配合 `engine.sde.mode: analyze`。该分析器消费已有的 `analysis["psd"]` 数据，不会从轨迹重新计算 PSD。默认写出：
 
-```bash
-qphase postprocess runs/2026-03-17T21-03-06_088ab0 --scan-param epsilon --mode 0
-```
-
-该命令消费已有的 `analysis["psd"]` 数据，不会从轨迹重新计算 PSD。默认写出：
-
-*   `fit_results.csv`：每个 job 一行。列包括 `job_name`、扫描参数、Lorentz 拟合的 `center`、`linewidth`、`base`、`peak_intensity`、`R2`、`status` 和 `error`。`status` 可为 `ok`（满足质量阈值）、`low_quality`（满足阈值失败）或 `failed`（拟合失败）。
+*   `fit_results.csv`：每个扫描值一行。列包括 `job_name`、扫描参数、Lorentz 拟合的 `center`、`linewidth`、`base`、`peak_intensity`、`R2`、`status` 和 `error`。`status` 可为 `ok`（满足质量阈值）、`low_quality`（满足阈值失败）或 `failed`（拟合失败）。
 *   `psd_merged.csv`：以频率为索引、每个扫描值一列的 PSD 表。
-*   `dist_merged.npz`（实验性）：传入 `--export-dist` 时写出。包含键 `dist_list`、`scan_params`、`__schema_version__` 和 `__created_by__`。
-*   `pdist_merged.pkl`（实验性）：传入 `--export-dist` 时写出。是一个 pickled 字典，包含 `rows`、`__schema_version__` 和 `__created_by__`。
+*   `dist_merged.npz`（实验性）：设置 `export_dist: true` 时写出。包含键 `dist_list`、`scan_params`、`__schema_version__` 和 `__created_by__`。
+*   `pdist_merged.pkl`（实验性）：设置 `export_dist: true` 时写出。是一个 pickled 字典，包含 `rows`、`__schema_version__` 和 `__created_by__`。
 
-常用参数包括 `--output-dir`、`--psd-key`、`--fit-window`、`--freq-min`、`--freq-max`、`--min-r2`、`--min-peak-height`、`--max-linewidth`、`--overwrite`、`--export-dist` 和 `--dry-run`。
+常用参数包括 `output_dir`、`psd_key`、`fit_window`、`freq_min`、`freq_max`、`min_r2`、`min_peak_height`、`max_linewidth`、`export_dist`、`clip_by_std` 和 `clip_sigma`。设置 `clip_by_std: true` 会先按 **平方后的 PSD** 加权分布的均值 ± `clip_sigma` 个标准差裁剪频率窗口，有助于忽略远端长尾上的干扰峰，并加快宽频网格上的拟合。
+
+对 Lorentz 线型，平方 PSD 加权标准差等于 `linewidth / 2`。因此默认 `clip_sigma: 10.0` 大约保留峰值两侧各 `5 × FWHM` 的范围，足以覆盖整条谱线，同时仍能排除很远处的干扰。
+
+拟合结果表还包含 `amplitude`（高于基线的峰高）、`peak_intensity`（总峰高）、`R2`、`status`、`error` 和 `warning`。当输入数据的平方 PSD 加权标准差与 Lorentz 期望（`std = linewidth / 2`）相差超过两倍时，`warning` 字段会写入警告，提示数据可能不是单峰 Lorentz。
+
+示例工作流：
+
+```yaml
+- name: sim
+  save: true
+  engine:
+    sde: { t0: 0.0, t1: 1.0, dt: 0.01, n_traj: 8, seed: 42 }
+  model:
+    kerr_3pa:
+      epsilon: [0.025, 0.05, 0.1]
+  analyser:
+    psd: { modes: [0], kind: complex, find_peaks: true }
+
+- name: fit
+  input: sim
+  aggregate_input:
+    on: epsilon
+  engine:
+    sde: { mode: analyze }
+  analyser:
+    lorentz_fitter:
+      scan_param: epsilon
+      mode: 0
+```

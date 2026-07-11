@@ -1,5 +1,8 @@
 # QPhase 下一步更新方案
 
+> **已归档**：本计划中的大部分工作项已在 2026-07 前完成，后续架构整顿见 `C:\Users\HP\.kimi\plans\ms-marvel-multiple-man-beta-ray-bill.md`。
+
+
 基于对 docs、README、根目录 `plan.md`、`packages`、`configs`、`tests` 的梳理，汇总当前进度并给出下一步更新计划。
 
 ---

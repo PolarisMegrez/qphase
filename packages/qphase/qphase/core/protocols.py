@@ -45,12 +45,17 @@ class EngineManifest:
 
     """
 
-    # Required plugin types (e.g., {'backend', 'model'})
+    # Required plugin types (e.g., {'backend', 'model'}).
+    # Use an empty set if the engine does not enforce any required plugins.
     required_plugins: set[str]
     # Optional plugin types (e.g., {'integrator', 'analyzer'})
     optional_plugins: set[str] = field(default_factory=set)
     # Default plugin implementations (e.g., {'integrator': 'euler_maruyama'})
     defaults: dict[str, str] = field(default_factory=dict)
+    # Plugins required when the job provides an upstream input (e.g. analyze mode).
+    # If non-empty, scheduler will validate against these namespaces instead of
+    # ``required_plugins`` when ``job.input`` is set.
+    input_plugins: set[str] = field(default_factory=set)
 
 
 class PluginConfigBase(BaseModel):

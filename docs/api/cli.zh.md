@@ -67,38 +67,41 @@ qphase run --verbose vdp_sde
 
 ## 结果后处理
 
-### `qphase postprocess`
+后处理不再通过独立 CLI 命令提供，而是表达为 scheduler 工作流。使用 `engine.sde` 的 `mode: analyze` 与 `analyser.lorentz_fitter` 插件。
 
-读取已保存的 SDE `.npz` job 结果，消费 `analysis["psd"]`，对每个 job 拟合一个 Lorentz 线型峰，并导出 CSV 文件。
+```yaml
+- name: sim
+  save: true
+  engine:
+    sde: { ... }
+  model:
+    kerr_3pa:
+      epsilon: [0.025, 0.05]
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
 
-```bash
-qphase postprocess RUN_DIR --scan-param PARAM [OPTIONS]
+- name: fit
+  input: sim
+  aggregate_input:
+    on: epsilon
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: epsilon
+      mode: 0
 ```
 
-*   **参数**：
-    *   `RUN_DIR`：包含 job 子目录的 run 目录，或单个 `.npz` 结果文件。
-*   **必需选项**：
-    *   `--scan-param` / `-s`：`meta.params` 下的参数名，例如 `epsilon` 或 `kappa_a`。
-*   **常用选项**：
-    *   `--mode` / `-m`：要拟合的 PSD mode。默认值：`0`。
-    *   `--psd-key`：包含 PSD 载荷的 analysis key。默认值：`psd`。
-    *   `--output-dir` / `-o`：输出目录。默认使用 run 目录。
-    *   `--fit-window`：围绕最强峰进行拟合的半宽度。
-    *   `--freq-min` / `--freq-max`：限制拟合使用的频率范围。
-    *   `--min-r2`：最小可接受 R^2 值。
-    *   `--min-peak-height`：最小可接受峰强度。
-    *   `--max-linewidth`：最大可接受线宽。
-    *   `--export-dist`：同时写出实验性的 `dist_merged.npz` 和 `pdist_merged.pkl`。
-    *   `--overwrite`：替换已有输出文件。
-    *   `--dry-run`：只列出将要处理的文件，不写入输出。
-
-**示例**：
+执行方式：
 
 ```bash
-qphase postprocess runs/2026-03-17T21-03-06_088ab0 --scan-param epsilon --mode 0
+qphase run my_workflow
 ```
 
-输出文件为 `fit_results.csv` 和 `psd_merged.csv`。使用 `--export-dist` 时，实验性输出还会包含 `__schema_version__` 元数据。
+`fit` job 会在其 run 目录中生成 `fit_results.csv` 和 `psd_merged.csv`。NPZ/PKL distribution bundle 会通过 `qphase.core.aggregation` 写入 `__schema_version__` 元数据。
 
 ---
 

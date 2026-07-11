@@ -19,7 +19,6 @@ from .commands import run as run_cmd
 from .commands.gui import gui_command
 from .commands.init import init_command
 from .commands.plugin import list_command, show_command, template_command
-from .commands.postprocess import postprocess_command
 
 app = typer.Typer(help="QPhase CLI")
 
@@ -37,7 +36,6 @@ app.command("show")(show_command)
 app.command("template")(template_command)
 app.command("run")(run_cmd.run_command)
 app.command("gui")(gui_command)
-app.command("postprocess")(postprocess_command)
 
 # Config command group
 app.add_typer(config_cmd.app, name="config", help="Manage system configuration")

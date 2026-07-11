@@ -1767,8 +1767,12 @@ dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "qphase" },
-    { name = "qphase-sde" },
     { name = "scipy" },
+]
+
+[package.optional-dependencies]
+sde = [
+    { name = "qphase-sde" },
 ]
 
 [package.metadata]
@@ -1776,9 +1780,10 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.6" },
     { name = "numpy", specifier = ">=1.23" },
     { name = "qphase", editable = "packages/qphase" },
-    { name = "qphase-sde", editable = "packages/qphase_sde" },
+    { name = "qphase-sde", marker = "extra == 'sde'", editable = "packages/qphase_sde" },
     { name = "scipy", specifier = ">=1.10" },
 ]
+provides-extras = ["sde"]
 
 [[package]]
 name = "qphase-workspace"

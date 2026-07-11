@@ -10,8 +10,6 @@ License : MIT
 Version : 1.0.1 (Jan 2026)
 """
 
-from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
-
 from .config import (
     PhasePlaneConfig,
     PowerSpectrumConfig,
@@ -26,6 +24,4 @@ __all__ = [
     "TimeSeriesConfig",
     "PhasePlaneConfig",
     "PowerSpectrumConfig",
-    "PsdAnalyzer",
-    "PsdAnalyzerConfig",
 ]

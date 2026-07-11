@@ -14,10 +14,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 from qphase.backend.base import ArrayBase
 from qphase.backend.numpy_backend import NumpyBackend
-from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
 
 from ..config import PowerSpectrumConfig, PowerSpectrumSpec
 from .base import PlotterProtocol
+
+
+def _get_psd_analyzer_classes():
+    """Lazy import of PsdAnalyzer to keep qphase_sde optional."""
+    try:
+        from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
+    except ImportError as e:
+        raise ImportError(
+            "Power spectrum plotting from raw trajectories requires "
+            "qphase-viz[sde] (qphase-sde)."
+        ) from e
+    return PsdAnalyzer, PsdAnalyzerConfig
 
 
 class PowerSpectrumPlotter(PlotterProtocol):
@@ -68,6 +79,7 @@ class PowerSpectrumPlotter(PlotterProtocol):
             peaks_info = psd_data.get("peaks", {})
         else:
             # Compute using PsdAnalyzer
+            PsdAnalyzer, PsdAnalyzerConfig = _get_psd_analyzer_classes()
             if hasattr(data, "dt"):
                 dt = data.dt
             elif hasattr(data, "times"):

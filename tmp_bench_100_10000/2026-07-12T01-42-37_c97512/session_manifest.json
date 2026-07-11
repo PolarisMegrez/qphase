@@ -1,0 +1,12 @@
+{
+  "session_id": "2026-07-12T01-42-37_c97512",
+  "start_time": "2026-07-12T01:42:37.133304",
+  "status": "completed",
+  "jobs": {
+    "bench_sim": {
+      "status": "completed",
+      "run_id": "2026-07-12T01-42-37_fcf62bf2",
+      "output_dir": "bench_sim"
+    }
+  }
+}

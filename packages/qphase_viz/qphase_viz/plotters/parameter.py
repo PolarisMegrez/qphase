@@ -11,10 +11,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.protocols import ResultProtocol
-from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
 
 from ..config import ParameterEvolutionConfig, ParameterEvolutionSpec
 from .base import PlotterProtocol
+
+
+def _get_psd_analyzer_classes():
+    """Lazy import of PsdAnalyzer to keep qphase_sde optional."""
+    try:
+        from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
+    except ImportError as e:
+        raise ImportError(
+            "Parameter evolution from raw trajectories requires "
+            "qphase-viz[sde] (qphase-sde)."
+        ) from e
+    return PsdAnalyzer, PsdAnalyzerConfig
 
 
 class ParameterEvolutionPlotter(PlotterProtocol):
@@ -114,6 +125,7 @@ class ParameterEvolutionPlotter(PlotterProtocol):
         traj = data
         if spec.metric.startswith("psd_"):
             # We need PSD
+            PsdAnalyzer, PsdAnalyzerConfig = _get_psd_analyzer_classes()
             # Configure analyzer
             analyzer_config = PsdAnalyzerConfig(
                 kind="complex",

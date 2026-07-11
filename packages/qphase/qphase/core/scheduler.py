@@ -24,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, TypedDict
 
+from .aggregation import AggregateResult
 from .config import JobConfig, JobList
 from .config_loader import get_config_for_job
 from .errors import (
@@ -480,35 +481,10 @@ class Scheduler:
 
         if aggregated_results:
             # We found multiple results matching the input pattern.
-            # We need to return a container that holds all of them.
-            # Since ResultProtocol is an interface, we can return a special
-            # AggregateResult or just the dict if the consumer handles it.
-            # However, the type hint says ResultProtocol.
-            # Let's define a simple AggregateResult wrapper.
-            from .protocols import ResultProtocol
-
-            class AggregateResult(ResultProtocol):
-                def __init__(self, results: dict[str, ResultProtocol]):
-                    self._results = results
-                    self._meta = {"aggregated": True, "count": len(results)}
-
-                @property
-                def data(self) -> Any:
-                    return self._results
-
-                @property
-                def metadata(self) -> dict[str, Any]:
-                    return self._meta
-
-                @property
-                def label(self) -> Any:
-                    return "aggregated"
-
-                def save(self, path: str | Path) -> None:
-                    # Saving aggregated results might be complex
-                    pass
-
-            return AggregateResult(aggregated_results)
+            return AggregateResult(
+                aggregated_results,
+                meta={"aggregated": True, "count": len(aggregated_results)},
+            )
 
         # Check if input is in manifest (from a previous run in same session context)
         if self.manifest and job.input in self.manifest["jobs"]:
@@ -530,9 +506,20 @@ class Scheduler:
                             f"Failed to load result for '{job.input}' from disk: {e}"
                         )
 
-        # Check if input is an external file
+        # Check if input is an external directory or file
         input_path = Path(job.input)
         if input_path.exists():
+            if input_path.is_dir():
+                log.info(
+                    f"Job '{job.name}' input '{job.input}' is a directory; "
+                    "passing path to engine for resource-specific loading."
+                )
+                from .aggregation import DirectoryInputResult
+
+                return DirectoryInputResult(
+                    path=input_path,
+                    meta={"input_kind": "directory", "path": str(input_path)},
+                )
             # External file input is not supported without a loader mechanism
             # which has been removed.
             raise QPhaseConfigError(
@@ -591,12 +578,28 @@ class Scheduler:
 
         system_cfg = job.system if job.system is not None else self.system_config
 
+        # Plugin namespaces that may appear as top-level keys in a job file.
+        plugin_keys = [
+            "backend",
+            "integrator",
+            "model",
+            "analyser",
+            "visualizer",
+            "analyzer",
+        ]
+
         # Merge global config with job config
-        job_override = {
+        job_override: dict[str, Any] = {
             "plugins": job.plugins,
             "engine": job.engine,
             "params": job.params,
         }
+        # Preserve top-level plugin sections (e.g. backend, analyser) that live in
+        # JobConfig.model_extra so the merge/extraction logic sees them.
+        job_extra = job.model_extra or {}
+        for key in plugin_keys:
+            if key in job_extra:
+                job_override[key] = job_extra[key]
 
         merged_config = get_config_for_job(
             system_cfg, job_name=job.name, job_config_dict=job_override
@@ -610,14 +613,6 @@ class Scheduler:
 
         # Normalize config: move top-level plugin keys to 'plugins' if not present
         # This supports the simplified config format where plugins are at the root
-        plugin_keys = [
-            "backend",
-            "integrator",
-            "model",
-            "analyser",
-            "visualizer",
-            "analyzer",
-        ]
         plugins_cfg = merged_config.get("plugins", {}).copy()
         for key in plugin_keys:
             if key in merged_config and key not in plugins_cfg:
@@ -643,7 +638,11 @@ class Scheduler:
                 engine_cls = registry.get_plugin_class("engine", target_engine_name)
                 if hasattr(engine_cls, "manifest"):
                     manifest = engine_cls.manifest
-                    if manifest.required_plugins:
+                    # If the job consumes an upstream input and the engine declares
+                    # input_plugins, use those instead of the normal required set.
+                    if job.input and manifest.input_plugins:
+                        required_namespaces.update(manifest.input_plugins)
+                    elif manifest.required_plugins:
                         required_namespaces.update(manifest.required_plugins)
                     if manifest.optional_plugins:
                         optional_namespaces.update(manifest.optional_plugins)
@@ -808,8 +807,13 @@ class Scheduler:
                 progress_cb = _on_engine_progress
 
             # Execute engine
-            # Pass input result's data to engine
-            input_data = input_result.data if input_result else None
+            # Pass input result's data to engine.
+            # For analyze mode, preserve the full result object (e.g. AggregateResult
+            # or SDEResult) so that cross-job analyzers can access metadata.
+            if engine_config_raw.get("mode") == "analyze":
+                input_data = input_result
+            else:
+                input_data = input_result.data if input_result else None
 
             # Check if engine accepts progress_cb (Duck Typing / Inspection)
             # Since EngineBase protocol defines it as optional kwarg, we try passing it.
@@ -931,12 +935,27 @@ class Scheduler:
         manifest = engine_cls.manifest
         provided_plugins = self._effective_plugin_namespaces(job)
 
+        # When an upstream input is provided and the engine declares input_plugins,
+        # validate against those instead of the normal required plugins. This allows
+        # engines to run in analysis/aggregation mode without their simulation
+        # dependencies.
+        required_namespaces = (
+            manifest.input_plugins
+            if job.input and manifest.input_plugins
+            else manifest.required_plugins
+        )
+
         # Check required plugins
-        missing = manifest.required_plugins - provided_plugins
+        missing = required_namespaces - provided_plugins
         if missing:
+            mode_hint = (
+                " for input/analyze mode"
+                if job.input and manifest.input_plugins
+                else ""
+            )
             raise QPhaseConfigError(
                 f"Job '{job.name}' uses engine '{engine_name}' but is missing "
-                f"required plugins: {missing}"
+                f"required plugins{mode_hint}: {missing}"
             )
 
     def _effective_plugin_namespaces(self, job: JobConfig) -> set[str]:
@@ -1111,9 +1130,20 @@ class Scheduler:
                         if len(values) > 1:
                             varying_keys.add(key)
 
-                # Remove the aggregation target from varying keys
+                # Remove the aggregation target from varying keys.
+                # Also support shorthand targets like "epsilon" or "params.epsilon"
+                # that match nested keys such as "plugins.model.kerr_3pa.epsilon".
                 if target_path in varying_keys:
                     varying_keys.remove(target_path)
+                else:
+                    target_tail = target_path.split(".")[-1]
+                    matching = [
+                        k
+                        for k in varying_keys
+                        if k.endswith(f".{target_tail}") or k == target_tail
+                    ]
+                    if matching:
+                        varying_keys.discard(matching[0])
 
                 # Group jobs by the remaining varying keys
                 groups: dict[tuple[Any, ...], list[Any]] = {}

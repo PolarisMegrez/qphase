@@ -37,7 +37,6 @@ dependencies = [
 [project.entry-points.qphase]
 # Engine
 "engine.sde" = "qphase_sde.engine:Engine"
-"engine.sde_postprocess" = "qphase_sde.workflows.postprocess.engine:SDEPostprocessEngine"
 # Integrator plugin
 "integrator.euler_maruyama" = "qphase_sde.integrator.euler_maruyama:EulerMaruyama"
 "integrator.milstein" = "qphase_sde.integrator.milstein:Milstein"
@@ -46,6 +45,7 @@ dependencies = [
 "analyser.psd" = "qphase_sde.analyser.psd:PsdAnalyzer"
 "analyser.dist" = "qphase_sde.analyser.dist:DistAnalyzer"
 "analyser.pdist" = "qphase_sde.analyser.polar_dist:PolarDistAnalyzer"
+"analyser.lorentz_fitter" = "qphase_sde.analyser.lorentz_fitter:LorentzFitter"
 # Peak Finder plugins
 "peak_finder.scipy" = "qphase_sde.analyser.peak_finding.scipy:ScipyPeakFinder"
 "peak_finder.rational" = "qphase_sde.analyser.peak_finding.rational:RationalPeakFinder"

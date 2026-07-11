@@ -80,17 +80,43 @@ If `engine.sde.keep_traj` is unset, the engine drops raw trajectories after anal
 
 ## Postprocessing Exports
 
-Use `qphase postprocess` to turn saved PSD analysis into stable CSV files:
+Cross-job postprocessing is implemented as a scheduler workflow using the
+`analyser.lorentz_fitter` plugin with `engine.sde.mode: analyze`. The analyzer
+consumes existing `analysis["psd"]` data and does not recompute PSD from
+trajectories. It writes:
 
-```bash
-qphase postprocess runs/2026-03-17T21-03-06_088ab0 --scan-param epsilon --mode 0
-```
-
-The command consumes existing `analysis["psd"]` data; it does not recompute PSD from trajectories. It writes:
-
-*   `fit_results.csv`: one row per job. Columns are `job_name`, the scan parameter, Lorentzian `center`, `linewidth`, `base`, `peak_intensity`, `R2`, `status`, and `error`. `status` is `ok`, `low_quality` (when a quality threshold is violated), or `failed`.
+*   `fit_results.csv`: one row per scan value. Columns are `job_name`, the scan parameter, Lorentzian `center`, `linewidth`, `base`, `peak_intensity`, `R2`, `status`, and `error`. `status` is `ok`, `low_quality` (when a quality threshold is violated), or `failed`.
 *   `psd_merged.csv`: a frequency-indexed table with one PSD column per scan value.
-*   `dist_merged.npz` (experimental): written when `--export-dist` is passed. Keys are `dist_list`, `scan_params`, `__schema_version__`, and `__created_by__`.
-*   `pdist_merged.pkl` (experimental): written when `--export-dist` is passed. It is a pickled dict with `rows`, `__schema_version__`, and `__created_by__`.
+*   `dist_merged.npz` (experimental): written when `export_dist: true` is set. Keys are `dist_list`, `scan_params`, `__schema_version__`, and `__created_by__`.
+*   `pdist_merged.pkl` (experimental): written when `export_dist: true` is set. It is a pickled dict with `rows`, `__schema_version__`, and `__created_by__`.
 
-Common options include `--output-dir`, `--psd-key`, `--fit-window`, `--freq-min`, `--freq-max`, `--min-r2`, `--min-peak-height`, `--max-linewidth`, `--overwrite`, `--export-dist`, and `--dry-run`.
+Common analyzer options include `output_dir`, `psd_key`, `fit_window`, `freq_min`, `freq_max`, `min_r2`, `min_peak_height`, `max_linewidth`, `export_dist`, `clip_by_std`, and `clip_sigma`. Set `clip_by_std: true` to first clip the frequency window to the squared-PSD-weighted mean ± `clip_sigma` standard deviations, which helps ignore distant long-tail bumps and speeds up fitting on wide grids.
+
+For a Lorentzian, the squared-PSD-weighted standard deviation equals `linewidth / 2`. The default `clip_sigma: 10.0` therefore keeps approximately `±5 × FWHM` around the peak, which is wide enough to capture the line shape while still excluding very distant artifacts.
+
+The fit result table also contains `amplitude` (height above baseline), `peak_intensity` (total height), `R2`, `status`, `error`, and `warning`. The `warning` field is populated when the squared-PSD-weighted standard deviation of the input differs from the Lorentzian expectation (`std = linewidth / 2`) by more than a factor of two, suggesting the data may not be single-peaked Lorentzian.
+
+Example workflow:
+
+```yaml
+- name: sim
+  save: true
+  engine:
+    sde: { t0: 0.0, t1: 1.0, dt: 0.01, n_traj: 8, seed: 42 }
+  model:
+    kerr_3pa:
+      epsilon: [0.025, 0.05, 0.1]
+  analyser:
+    psd: { modes: [0], kind: complex, find_peaks: true }
+
+- name: fit
+  input: sim
+  aggregate_input:
+    on: epsilon
+  engine:
+    sde: { mode: analyze }
+  analyser:
+    lorentz_fitter:
+      scan_param: epsilon
+      mode: 0
+```

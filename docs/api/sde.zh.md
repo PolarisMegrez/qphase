@@ -157,19 +157,35 @@ SDE 引擎返回并保存为 `.npz` 的结果容器。
 *   `modes`：被分析的模式索引。
 *   `peaks`：可选的 PSD 分析器内部寻峰结果。
 
-PSD 分析器的寻峰只针对单个 job。跨 job 的 Lorentz 线型拟合由后处理完成。
+PSD 分析器的寻峰只针对单个 job。跨 job 的 Lorentz 线型拟合通过 SDE 引擎的 `mode: analyze` 配合 `analyser.lorentz_fitter` 插件完成。
 
 ## 后处理
 
-`qphase_sde.postprocess` 提供 CLI 使用的稳定结果读取与导出工具。
+跨 job 后处理现在以调度工作流的形式实现：
 
-*   `load_run_results(run_dir)`：从 run 目录加载 job `.npz` 文件。
-*   `fit_lorentzian(axis, psd)`：拟合 `base + amplitude * gamma^2 / ((x - center)^2 + gamma^2)`，返回 `center`、`linewidth`、`base`、`peak_intensity`、`R2`、`status` 和 `error`。
-*   `postprocess_run(run_dir, scan_param=..., mode=...)`：读取 `analysis["psd"]`，对每个 job 的指定 mode 拟合，并准备导出数据。
-*   `export_postprocess_bundle(...)`：写出 `fit_results.csv` 和 `psd_merged.csv`。
+```yaml
+- name: sim
+  save: true
+  engine:
+    sde: { ... }
+  model:
+    kerr_3pa:
+      epsilon: [0.025, 0.05]
+  analyser:
+    psd:
+      modes: [0]
 
-CLI 入口：
-
-```bash
-qphase postprocess runs/<run-id> --scan-param epsilon --mode 0
+- name: fit
+  input: sim
+  aggregate_input:
+    on: epsilon
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: epsilon
+      mode: 0
 ```
+
+`lorentz_fitter` 分析器读取聚合后的 `analysis["psd"]`，对每个扫描值拟合一条 Lorentz 曲线，并将 `fit_results.csv` 和 `psd_merged.csv` 写入该 job 的 run 目录。通用聚合/导出工具位于 `qphase.core.aggregation`。

@@ -14,7 +14,7 @@ Public API
 
 import time as _time
 from collections.abc import Callable
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -119,6 +119,15 @@ class EngineConfig(BaseModel):
         json_schema_extra={"scanable": False},
     )
 
+    mode: Literal["simulate", "analyze"] = Field(
+        "simulate",
+        description=(
+            "Engine execution mode. 'simulate' runs the SDE; "
+            "'analyze' runs analysers on upstream input data."
+        ),
+        json_schema_extra={"scanable": False},
+    )
+
 
 class EngineContext:
     """Engine runtime context for dependency injection."""
@@ -199,6 +208,7 @@ class Engine(EngineBase):
         required_plugins={"backend", "model", "integrator"},
         optional_plugins={"analyser"},
         defaults={"integrator": "euler_maruyama"},
+        input_plugins={"analyser"},
     )
 
     def __init__(
@@ -269,6 +279,54 @@ class Engine(EngineBase):
         """Execute the engine (Plugin Protocol)."""
         if not self.config:
             raise RuntimeError("Engine not configured.")
+
+        if getattr(self.config, "mode", "simulate") == "analyze":
+            return self._run_analyze(data)
+        return self._run_simulate(data, progress_cb=progress_cb)
+
+    def _run_analyze(self, data: Any | None) -> ResultProtocol:
+        """Run analysers on upstream input data without performing a simulation.
+
+        This mode is used for cross-job postprocessing: the scheduler passes an
+        ``AggregateResult``, a directory ``Path``, or a single ``SDEResult`` as
+        ``data``, and the configured analysers produce derived outputs.
+        """
+        assert self.config is not None
+
+        from qphase.backend.numpy_backend import NumpyBackend
+
+        analysis_results: dict[str, Any] = {}
+        meta: dict[str, Any] = {"mode": "analyze"}
+
+        analysers = self.plugins.get("analyser")
+        if not analysers:
+            return SDEResult(trajectory=None, meta=meta, analysis=analysis_results)
+
+        if not isinstance(analysers, dict):
+            analysers = {getattr(analysers, "name", "analyser"): analysers}
+
+        be = NumpyBackend()
+        output_dir = getattr(self.config, "output_dir", None)
+        for name, analyzer in analysers.items():
+            if hasattr(analyzer, "analyze"):
+                # Provide a place for analysers to write aggregated outputs.
+                if output_dir is not None:
+                    analyzer.output_dir = output_dir
+                res = analyzer.analyze(data, be)
+                analysis_results[name] = res.data_dict
+
+        return SDEResult(trajectory=None, meta=meta, analysis=analysis_results)
+
+    def _run_simulate(
+        self,
+        data: Any | None,
+        *,
+        progress_cb: (
+            Callable[[float | None, float | None, str, str | None], None] | None
+        ) = None,
+    ) -> ResultProtocol:
+        """Execute SDE simulation and optional per-job analysis."""
+        assert self.config is not None
 
         model = self.plugins.get("model")
         if not model:

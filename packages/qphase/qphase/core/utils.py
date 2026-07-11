@@ -29,7 +29,7 @@ from .errors import QPhaseConfigError, QPhaseIOError
 _ruamel_yaml: Any = YAML(typ="safe")
 
 
-def load_yaml(path: Path) -> dict[str, Any]:
+def load_yaml(path: Path) -> Any:
     """Load YAML file using available parser with error handling.
 
     Parameters
@@ -39,8 +39,8 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
     Returns
     -------
-    Dict[str, Any]
-        Loaded YAML data as dictionary
+    Any
+        Loaded YAML data (commonly a dict or list)
 
     Raises
     ------
@@ -53,7 +53,7 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
     try:
         with open(path, encoding="utf-8") as f:
-            return dict(_ruamel_yaml.load(f) or {})
+            return _ruamel_yaml.load(f) or {}
     except Exception as e:
         raise QPhaseConfigError(f"Failed to parse YAML file {path}: {e}") from e
 

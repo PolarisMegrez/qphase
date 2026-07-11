@@ -29,7 +29,7 @@ list_available_jobs
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from .config import JobConfig, JobList
 from .errors import QPhaseConfigError, QPhaseIOError, get_logger
@@ -117,7 +117,13 @@ def _load_single_job_file(path: Path) -> JobConfig | list[JobConfig]:
 
     # Case 1: List of jobs
     if isinstance(data, list):
-        return [JobConfig(**cast(dict[str, Any], job_data)) for job_data in data]
+        jobs = []
+        for job_data in data:
+            j_data, p_data = _extract_plugin_fields(job_data)
+            if "plugins" in j_data:
+                p_data = deep_merge_dicts(j_data["plugins"], p_data)
+            jobs.append(JobConfig(**j_data, plugins=p_data))
+        return jobs
 
     # Case 2: Single job
     if isinstance(data, dict):

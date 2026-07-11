@@ -157,19 +157,35 @@ The interface for analysis plugins.
 *   `modes`: analyzed mode indices.
 *   `peaks`: optional peak finder output from the PSD analyzer.
 
-PSD analyzer peak detection is local to one job. Cross-job Lorentzian fitting is handled by postprocessing.
+PSD analyzer peak detection is local to one job. Cross-job Lorentzian fitting is handled by the `analyser.lorentz_fitter` plugin when the SDE engine runs in `mode: analyze`.
 
 ## Postprocessing
 
-`qphase_sde.postprocess` provides stable result-reading and export helpers used by the CLI.
+Cross-job postprocessing is implemented as a scheduler workflow:
 
-*   `load_run_results(run_dir)`: loads job `.npz` files from a run directory.
-*   `fit_lorentzian(axis, psd)`: fits `base + amplitude * gamma^2 / ((x - center)^2 + gamma^2)` and returns `center`, `linewidth`, `base`, `peak_intensity`, `R2`, `status`, and `error`.
-*   `postprocess_run(run_dir, scan_param=..., mode=...)`: reads `analysis["psd"]`, fits one mode per job, and prepares export data.
-*   `export_postprocess_bundle(...)`: writes `fit_results.csv` and `psd_merged.csv`.
+```yaml
+- name: sim
+  save: true
+  engine:
+    sde: { ... }
+  model:
+    kerr_3pa:
+      epsilon: [0.025, 0.05]
+  analyser:
+    psd:
+      modes: [0]
 
-CLI entry point:
-
-```bash
-qphase postprocess runs/<run-id> --scan-param epsilon --mode 0
+- name: fit
+  input: sim
+  aggregate_input:
+    on: epsilon
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: epsilon
+      mode: 0
 ```
+
+The `lorentz_fitter` analyzer reads aggregated `analysis["psd"]` payloads, fits one Lorentzian per scan value, and writes `fit_results.csv` and `psd_merged.csv` to the job's run directory. Generic aggregation/export utilities live in `qphase.core.aggregation`.

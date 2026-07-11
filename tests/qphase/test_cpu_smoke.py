@@ -14,6 +14,20 @@ from typer.testing import CliRunner
 
 
 @pytest.fixture(scope="module")
+def cpu_workflow_path():
+    """Return the path to the CPU smoke workflow configuration."""
+    path = (
+        Path(__file__).parent.parent.parent
+        / "configs"
+        / "jobs"
+        / "cpu_smoke_kerr_3pa_fit.yaml"
+    )
+    if not path.exists():
+        pytest.skip("CPU smoke workflow config not found")
+    return path
+
+
+@pytest.fixture(scope="module")
 def cpu_job_path():
     """Return the path to the CPU smoke job configuration."""
     path = (
@@ -33,12 +47,12 @@ def _discover_plugins():
     discovery.discover_local_plugins()
 
 
-def test_cpu_smoke_run_and_postprocess(cpu_job_path, tmp_path):
-    """Run the CPU smoke job and postprocess its PSD output."""
+def test_cpu_smoke_run_and_postprocess(cpu_workflow_path, tmp_path):
+    """Run the CPU smoke workflow and postprocess its PSD output via analyse mode."""
     _discover_plugins()
 
-    job_list = load_jobs_from_files([cpu_job_path])
-    assert len(job_list.jobs) == 1
+    job_list = load_jobs_from_files([cpu_workflow_path])
+    assert len(job_list.jobs) == 2
 
     # Redirect output to a temp directory so we do not pollute the repo.
     system_config = SystemConfig(
@@ -53,34 +67,13 @@ def test_cpu_smoke_run_and_postprocess(cpu_job_path, tmp_path):
     scheduler = Scheduler(system_config=system_config)
     results = scheduler.run(job_list)
 
-    assert len(results) == 2, "Expected two expanded jobs for epsilon scan"
+    assert len(results) == 3, "Expected two expanded sim jobs + one fit job"
     assert all(r.success for r in results), f"Job failed: {results}"
 
-    # Locate the session directory that contains the per-job subdirectories.
-    session_dir = results[0].run_dir.parent
-    npz_files = list(session_dir.glob("*/*.npz"))
-    assert len(npz_files) == 2, f"Expected 2 result files, found {npz_files}"
-
-    output_dir = tmp_path / "postprocess"
-    output_dir.mkdir()
-
-    runner = CliRunner()
-    result = runner.invoke(
-        app,
-        [
-            "postprocess",
-            str(session_dir),
-            "--scan-param",
-            "epsilon",
-            "--mode",
-            "0",
-            "--output-dir",
-            str(output_dir),
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    assert (output_dir / "fit_results.csv").exists()
-    assert (output_dir / "psd_merged.csv").exists()
+    # Locate the fit job run directory.
+    fit_result = next(r for r in results if r.job_name == "cpu_smoke_kerr_3pa_fit")
+    assert (fit_result.run_dir / "fit_results.csv").exists()
+    assert (fit_result.run_dir / "psd_merged.csv").exists()
 
 
 def test_cpu_smoke_cli_list(cpu_job_path):

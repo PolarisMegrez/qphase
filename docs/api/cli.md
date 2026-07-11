@@ -67,38 +67,41 @@ qphase run --verbose vdp_sde
 
 ## Result Postprocessing
 
-### `qphase postprocess`
+Postprocessing is expressed as a scheduler workflow rather than a standalone CLI command. Use `engine.sde` with `mode: analyze` and the `analyser.lorentz_fitter` plugin.
 
-Reads saved SDE `.npz` job results, consumes `analysis["psd"]`, fits one Lorentzian peak per job, and exports CSV files.
+```yaml
+- name: sim
+  save: true
+  engine:
+    sde: { ... }
+  model:
+    kerr_3pa:
+      epsilon: [0.025, 0.05]
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
 
-```bash
-qphase postprocess RUN_DIR --scan-param PARAM [OPTIONS]
+- name: fit
+  input: sim
+  aggregate_input:
+    on: epsilon
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: epsilon
+      mode: 0
 ```
 
-*   **Arguments**:
-    *   `RUN_DIR`: A run directory containing job subdirectories, or a single `.npz` result file.
-*   **Required options**:
-    *   `--scan-param` / `-s`: Parameter name under `meta.params`, such as `epsilon` or `kappa_a`.
-*   **Common options**:
-    *   `--mode` / `-m`: PSD mode to fit. Default: `0`.
-    *   `--psd-key`: Analysis key containing the PSD payload. Default: `psd`.
-    *   `--output-dir` / `-o`: Output directory. Default: the run directory.
-    *   `--fit-window`: Half-width around the strongest peak used for fitting.
-    *   `--freq-min` / `--freq-max`: Restrict the frequency range used for fitting.
-    *   `--min-r2`: Minimum acceptable R^2 value.
-    *   `--min-peak-height`: Minimum acceptable peak intensity.
-    *   `--max-linewidth`: Maximum acceptable linewidth.
-    *   `--export-dist`: Also write experimental `dist_merged.npz` and `pdist_merged.pkl` outputs.
-    *   `--overwrite`: Replace existing output files.
-    *   `--dry-run`: List the files that would be processed without writing outputs.
-
-**Example**:
+Run it with:
 
 ```bash
-qphase postprocess runs/2026-03-17T21-03-06_088ab0 --scan-param epsilon --mode 0
+qphase run my_workflow
 ```
 
-Outputs are `fit_results.csv` and `psd_merged.csv`. When `--export-dist` is used, the experimental outputs also include `__schema_version__` metadata.
+The `fit` job produces `fit_results.csv` and `psd_merged.csv` in its run directory. The NPZ/PKL distribution bundles include `__schema_version__` metadata via `qphase.core.aggregation`.
 
 ---
 

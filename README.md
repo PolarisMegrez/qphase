@@ -85,17 +85,48 @@ raw trajectory `data`.
 
 ## Result Postprocessing
 
-PSD analysis output can be postprocessed without the temporary root scripts:
+Cross-job PSD analysis is postprocessed through the scheduler workflow. Add a
+second job that consumes the first one and runs the SDE engine in `mode:
+analyze`:
 
-```powershell
-qphase postprocess runs/2026-03-17T21-03-06_088ab0 --scan-param epsilon --mode 0
+```yaml
+# configs/jobs/kerr_3pa_fit.yaml
+- name: kerr_3pa_sim
+  save: true
+  engine:
+    sde: { t0: 0.0, t1: 1.0, dt: 0.01, n_traj: 8, seed: 42 }
+  model:
+    kerr_3pa:
+      omega0: 1.0
+      chi: 0.01
+      kappa3: 0.001
+      beta: 1.0
+      epsilon: [0.025, 0.05, 0.1]
+      kappa1: 1.0
+  analyser:
+    psd: { modes: [0], kind: complex, find_peaks: true }
+
+- name: kerr_3pa_fit
+  input: kerr_3pa_sim
+  aggregate_input:
+    on: epsilon
+  engine:
+    sde: { mode: analyze }
+  analyser:
+    lorentz_fitter:
+      scan_param: epsilon
+      mode: 0
 ```
 
-This writes `fit_results.csv` and `psd_merged.csv` to the run directory by
-default. `fit_results.csv` contains the scan parameter, Lorentzian center,
-linewidth, baseline, peak intensity, $R^2$, and status/error fields. Use
-`--output-dir`, `--fit-window`, `--export-dist`, and `--overwrite` for batch
-exports.
+Run the workflow:
+
+```powershell
+qphase run configs/jobs/kerr_3pa_fit.yaml
+```
+
+The analyzer writes `fit_results.csv` and `psd_merged.csv` to the fit job's run
+directory. `fit_results.csv` contains the scan parameter, Lorentzian center,
+linewidth, baseline, peak intensity, $R^2$, and status/error fields.
 
 ## Module Overview
 

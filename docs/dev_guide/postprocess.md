@@ -4,52 +4,64 @@ description: Postprocess Architecture
 
 # Postprocess Architecture
 
-SDE postprocessing currently belongs to `qphase_sde`, not to core. It depends on SDE result metadata, PSD analyser payloads, distribution payloads, and scan parameters, so core should only provide scheduling and registry mechanics.
+Postprocessing is not a separate core command or a separate resource package. It is expressed as a normal scheduler job that uses the SDE engine's `mode: analyze` together with the `analyser.lorentz_fitter` plugin.
 
-## Current Compatibility Surface
+## Design Principle
 
-The legacy import path remains available:
+- **Core** (`qphase`) provides generic aggregation and export utilities in `qphase.core.aggregation`.
+- **`qphase_sde`** provides the SDE-specific cross-job analyzer `lorentz_fitter`, which fits Lorentzian peaks to aggregated PSD data and writes merged outputs.
+- The **`qphase postprocess` CLI command has been removed**. Use `qphase run <workflow.yaml>` instead.
 
-```python
-from qphase_sde.postprocess import postprocess_run, export_postprocess_bundle
-```
-
-The core CLI command `qphase postprocess` also remains as a compatibility facade. It imports `qphase_sde.postprocess` at runtime and preserves the existing CSV outputs.
-
-## Decomposed Categories
-
-New code should prefer the category modules:
-
-| Category | Module | Responsibility |
-| :--- | :--- | :--- |
-| Aggregator | `qphase_sde.aggregators.scan_psd` | Load saved SDE `.npz` files and extract aligned PSD traces. |
-| Fitter | `qphase_sde.fitters.lorentzian` | Fit Lorentzian peak parameters from one PSD trace. |
-| Exporter | `qphase_sde.exporters.csv_bundle` | Write `fit_results.csv`, `psd_merged.csv`, and optional distribution bundles. |
-
-These modules are intentionally small wrappers around the proven behavior. The old facade can continue to orchestrate them while callers migrate to explicit categories.
-
-## Scheduler Workflow Engine
-
-`qphase_sde` now exposes a package-level workflow engine:
-
-```text
-engine.sde_postprocess = qphase_sde.workflows.postprocess.engine:SDEPostprocessEngine
-```
-
-The engine wraps the existing postprocess use case so postprocessing can be represented as a scheduler job. The first implementation operates on saved run directories or `.npz` files via `run_dir`; future versions can add richer in-memory aggregation from upstream scheduler inputs.
-
-Example job shape:
+## Workflow Example
 
 ```yaml
-name: postprocess
-engine:
-  sde_postprocess:
-    run_dir: runs/example_session
-    scan_param: epsilon
-    mode: 0
-    overwrite: true
+- name: sim
+  save: true
+  engine:
+    sde:
+      t1: 1.0
+      dt: 0.01
+      n_traj: 2
+  model:
+    kerr_3pa:
+      epsilon: [0.025, 0.05]
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+
+- name: fit
+  input: sim
+  aggregate_input:
+    on: epsilon
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: epsilon
+      mode: 0
 ```
+
+The scheduler will:
+
+1. Expand the `sim` job into one job per value of `epsilon`.
+2. Aggregate the expanded results into a single input for the `fit` job.
+3. Run `analyser.lorentz_fitter` in `analyze` mode, producing `fit_results.csv` and `psd_merged.csv` in the `fit` job's run directory.
+
+## Output Files
+
+| File | Produced by | Content |
+| :--- | :--- | :--- |
+| `fit_results.csv` | `lorentz_fitter` | One row per scan value with fitted Lorentzian parameters. |
+| `psd_merged.csv` | `lorentz_fitter` | Frequency axis plus one PSD column per scan value. |
+| `dist_merged.npz` | `lorentz_fitter` (optional) | Aggregated distribution payloads. |
+| `pdist_merged.pkl` | `lorentz_fitter` (optional) | Aggregated polar distribution payloads. |
+
+The NPZ/PKL bundles include `__schema_version__` and `__created_by__` metadata via `qphase.core.aggregation`.
 
 ## Boundaries
 
-Single-result analysis still belongs to analyser plugins. Cross-result merging belongs to aggregators. Curve fitting belongs to fitters. File layout and export formats belong to exporters. The workflow engine composes those pieces for one user-facing postprocess job.
+- Single-result analysis (per-job PSD, peak finding, distributions) belongs to `analyser` plugins.
+- Cross-result aggregation, sorting, and schema-versioned exporting belongs to `qphase.core.aggregation`.
+- SDE-specific curve fitting and payload extraction belongs to `qphase_sde.analyser.lorentz_fitter`.
