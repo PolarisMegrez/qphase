@@ -95,6 +95,7 @@ def test_save_stride_preserves_peak(vdp_auto_workflow_path, tmp_path, save_strid
         f"save_stride={save_stride}: center {center} deviates from {expected_center}"
     )
     assert np.isclose(linewidth, expected_linewidth, atol=3e-3), (
-        f"save_stride={save_stride}: linewidth {linewidth} deviates from {expected_linewidth}"
+        f"save_stride={save_stride}: linewidth {linewidth} deviates from "
+        f"{expected_linewidth}"
     )
     assert r2 > 0.5, f"save_stride={save_stride}: R2 {r2} is unexpectedly low"
