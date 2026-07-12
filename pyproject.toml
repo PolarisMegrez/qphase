@@ -130,7 +130,10 @@ version_toml = [
     "packages/qphase_sde/pyproject.toml:project.version",
     "packages/qphase_viz/pyproject.toml:project.version",
 ]
-branches = ["stable"]
+[tool.semantic_release.branches.stable]
+match = "stable"
+prerelease = false
+
 upload_to_pypi = true
 upload_to_release = true
 build_command = "pip install build && python -m build"
