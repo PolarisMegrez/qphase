@@ -332,7 +332,7 @@ def write_npz_bundle(path: str | Path, **arrays_and_meta: Any) -> Path:
 
     # Convert dict/list metadata to object arrays so np.savez can store them.
     for key, value in list(kwargs.items()):
-        if isinstance(value, (dict, list)):
+        if isinstance(value, dict | list):
             kwargs[key] = np.array(value, dtype=object)
 
     np.savez_compressed(out, **kwargs)

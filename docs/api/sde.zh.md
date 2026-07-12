@@ -9,6 +9,8 @@ nav_order: 2
 
 本节记录了 `qphase_sde` 包，它提供了用于随机微分方程仿真的核心引擎和组件。
 
+更详细、按主题组织的参考请参见专门的 [`qphase_sde` 章节](./qphase_sde/index.zh.md)。
+
 ## 引擎
 
 ### `class qphase_sde.engine.Engine`

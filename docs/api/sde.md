@@ -9,6 +9,8 @@ nav_order: 2
 
 This section documents the `qphase_sde` package, which provides the core engine and components for stochastic differential equation simulations.
 
+For a more detailed, topic-oriented reference, see the dedicated [`qphase_sde` section](./qphase_sde/index.md).
+
 ## Engine
 
 ### `class qphase_sde.engine.Engine`

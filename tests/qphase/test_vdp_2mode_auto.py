@@ -85,12 +85,12 @@ def test_vdp_2mode_auto_peak_fit(vdp_auto_workflow_path, tmp_path):
     expected_center = -0.08574307
     expected_linewidth = 3.54044345e-03
 
-    assert np.isclose(center, expected_center, atol=1e-3), (
-        f"Fitted center {center} deviates too far from {expected_center}"
-    )
-    assert np.isclose(linewidth, expected_linewidth, atol=3e-3), (
-        f"Fitted linewidth {linewidth} deviates too far from {expected_linewidth}"
-    )
+    assert np.isclose(
+        center, expected_center, atol=1e-3
+    ), f"Fitted center {center} deviates too far from {expected_center}"
+    assert np.isclose(
+        linewidth, expected_linewidth, atol=3e-3
+    ), f"Fitted linewidth {linewidth} deviates too far from {expected_linewidth}"
     assert r2 > 0.5, f"R2 {r2} is unexpectedly low"
 
     # The CSV should expose both the total peak height and the height above baseline.

@@ -3,14 +3,14 @@
   engine:
     sde:
       t0: 0.0
-      t1: 48000.0
+      t1: 10000.0
       dt: 0.1
-      n_traj: 20
+      n_traj: 100
       seed: 42
       ic:
         - ["800.0+0.0j", "0.0-800.0j"]
       adaptive: false
-      save_stride: 1
+      save_stride: 10
       keep_traj: false
   backend:
     numpy:

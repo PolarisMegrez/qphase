@@ -54,6 +54,12 @@ plugins:
             Overview: 概述
             Core: 核心
             SDE: SDE
+            qphase_sde: qphase_sde
+            Engine: 引擎
+            Integrators: 积分器
+            Models: 模型
+            Analyzers: 分析器
+            Output Formats: 输出格式
             Developer Guide: 开发者指南
             Architecture: 架构
             Backend: 后端
@@ -89,7 +95,15 @@ nav:
     - Command Line Interface: api/cli.md
     - Overview: api/index.md
     - Core: api/core.md
-    - SDE: api/sde.md
+    - SDE:
+      - Overview: api/sde.md
+      - qphase_sde:
+        - index.md: api/qphase_sde/index.md
+        - Engine: api/qphase_sde/engine.md
+        - Integrators: api/qphase_sde/integrators.md
+        - Models: api/qphase_sde/models.md
+        - Analyzers: api/qphase_sde/analyzers.md
+        - Output Formats: api/qphase_sde/output.md
   - Developer Guide:
     - Introduction: dev_guide/index.md
     - Architecture: dev_guide/architecture.md

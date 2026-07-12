@@ -385,7 +385,7 @@ def _load_input(data: Any, pattern: str) -> list[LoadedResult]:
     if isinstance(data, DirectoryInputResult):
         data = data.path
 
-    if isinstance(data, (str, Path)):
+    if isinstance(data, str | Path):
         paths = iter_directory_results(data, pattern)
         return [
             LoadedResult(

@@ -56,7 +56,7 @@ The format of the result data depends on the Engine used.
 *   **SDE Engine**: Saves a NumPy `.npz` archive. Top-level keys are `t0`, `t1`, `dt`, `meta`, `analysis`, and, when trajectory retention is enabled, raw `data` with shape `(n_traj, n_time, n_modes)`.
 *   **Viz Engine**: Saves images (`.png`, `.pdf`) or processed data files.
 
-The output format can be configured in the job configuration under the engine settings.
+The output format can be configured in the job configuration under the engine settings. For the detailed schema of SDE artifacts, see [Output Formats in the `qphase_sde` reference](../api/qphase_sde/output.md).
 
 ### SDE Analysis Payloads
 

@@ -56,7 +56,7 @@ qphase run runs/2025-12-31.../vdp_sde/config_snapshot.yaml
 *   **SDE 引擎**：保存为 NumPy `.npz` 归档。顶层键包括 `t0`、`t1`、`dt`、`meta`、`analysis`，并在保留轨迹时包含形状为 `(n_traj, n_time, n_modes)` 的原始 `data`。
 *   **Viz 引擎**：保存图像 (`.png`, `.pdf`) 或处理后的数据文件。
 
-输出格式可在任务配置的引擎设置中进行调整。
+输出格式可在任务配置的引擎设置中进行调整。SDE artifacts 的详细模式说明参见 [`qphase_sde` 参考中的输出格式](../api/qphase_sde/output.zh.md)。
 
 ### SDE 分析载荷
 
