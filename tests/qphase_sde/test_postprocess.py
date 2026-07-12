@@ -33,7 +33,7 @@ def test_fit_lorentzian_recovers_synthetic_peak():
     result = fit_lorentzian(axis, psd)
 
     assert result.status == "ok"
-    assert result.center == np.float64(0.6)
+    assert np.isclose(result.center, 0.6)
     assert np.isclose(result.linewidth, 0.3)
     assert result.R2 > 0.999
 
