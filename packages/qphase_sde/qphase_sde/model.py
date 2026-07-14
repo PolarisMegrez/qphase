@@ -8,6 +8,7 @@ This module is dependency-light and safe to import in any environment.
 Public API
 ----------
 `SDEModel` : Protocol for SDE models consumed by the engine.
+`MatrixDriftSDEModel` : Optional protocol for matrix-valued drift operators.
 `DiffusiveSDEModel` : Alias for SDEModel (for backward compatibility).
 `FunctionalSDEModel` : Concrete implementation of SDEModel using functions.
 `PhaseSpaceModel` : Model defined by phase space drift and diffusion coefficients.
@@ -26,6 +27,7 @@ import numpy as np
 
 __all__ = [
     "SDEModel",
+    "MatrixDriftSDEModel",
     "DiffusiveSDEModel",
     "FunctionalSDEModel",
     "PhaseSpaceModel",
@@ -142,6 +144,15 @@ class SDEModel(Protocol):
         Returns ``(drift, diffusion)`` with the same semantics as the separate
         methods.
         """
+        ...
+
+
+@runtime_checkable
+class MatrixDriftSDEModel(SDEModel, Protocol):
+    """Optional model capability for drifts representable as ``A(y,t) @ y``."""
+
+    def drift_matrix(self, y: Any, t: float, params: dict[str, Any]) -> Any:
+        """Return drift matrices with shape ``(..., n_modes, n_modes)``."""
         ...
 
 

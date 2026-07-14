@@ -18,7 +18,7 @@ from . import integrator as _qphase_integrators  # noqa: F401
 
 # Import Engine class (v0.2 OO interface)
 from .engine import Engine  # noqa: F401
-from .model import NoiseSpec, SDEModel  # noqa: F401
+from .model import MatrixDriftSDEModel, NoiseSpec, SDEModel  # noqa: F401
 from .state import State, TrajectorySet  # noqa: F401
 
 # Public version string
@@ -27,6 +27,7 @@ __version__ = "1.0.1"
 __all__ = [
     "Engine",
     "SDEModel",
+    "MatrixDriftSDEModel",
     "NoiseSpec",
     "State",
     "TrajectorySet",

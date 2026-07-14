@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from qphase.backend.cupy_backend import CuPyBackend
 
 
@@ -27,15 +26,30 @@ def model():
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from models.vdp_2mode import VDPLevel3Config, VDPLevel3Model
 
-    return VDPLevel3Model(VDPLevel3Config(
-        omega_a=0.005,
-        omega_b=0.0,
-        gamma_a=2.0,
-        gamma_b=1.0,
-        Gamma=0.01,
-        g=0.5,
-        D=1.0,
-    ))
+    return VDPLevel3Model(
+        VDPLevel3Config(
+            omega_a=0.005,
+            omega_b=0.0,
+            gamma_a=2.0,
+            gamma_b=1.0,
+            Gamma=0.01,
+            g=0.5,
+            D=1.0,
+        )
+    )
+
+
+def test_drift_matrix_matches_drift(model):
+    """The matrix-drift capability reproduces the public drift function."""
+    rng = np.random.default_rng(41)
+    y = (rng.standard_normal((32, 2)) + 1j * rng.standard_normal((32, 2))).astype(
+        np.complex128
+    )
+
+    matrix = model.drift_matrix(y, 0.0, model.params)
+    actual = np.einsum("...ij,...j->...i", matrix, y)
+
+    np.testing.assert_allclose(actual, model.drift(y, 0.0, model.params))
 
 
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
@@ -75,7 +89,9 @@ def test_kernelized_vectorized_params(model):
     )
 
     params = dict(model.params)
-    params["omega_a"] = cp.asarray(np.repeat([0.001, 0.002, 0.003], 10), dtype=cp.float32)
+    params["omega_a"] = cp.asarray(
+        np.repeat([0.001, 0.002, 0.003], 10), dtype=cp.float32
+    )
 
     a, L = model.kernelized_terms(y, 0.0, params, backend)
     assert a.shape == (n, 2)

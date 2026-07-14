@@ -245,6 +245,11 @@ class TorchBackend(Backend):
 
         return torch.linalg.cholesky(a)
 
+    def solve(self, a: Any, b: Any) -> Any:
+        import torch as torch
+
+        return torch.linalg.solve(a, b)
+
     # RNG
     def rng(self, seed: int | None) -> Any:
         return _TorchRNG(seed, device=self.device())
@@ -374,7 +379,9 @@ class TorchBackend(Backend):
 
         return torch.matmul(a, b)
 
-    def tensordot(self, a: Any, b: Any, axes: int | tuple[Any, ...] | None = None) -> Any:
+    def tensordot(
+        self, a: Any, b: Any, axes: int | tuple[Any, ...] | None = None
+    ) -> Any:
         import torch as torch
 
         return torch.tensordot(a, b, dims=axes if axes is not None else 2)
@@ -440,7 +447,9 @@ class TorchBackend(Backend):
 
         x_np = x.detach().cpu().numpy() if hasattr(x, "detach") else np.asarray(x)
         y_np = y.detach().cpu().numpy() if hasattr(y, "detach") else np.asarray(y)
-        H, xedges, yedges = np.histogram2d(x_np, y_np, bins=bins, range=range, density=density)
+        H, xedges, yedges = np.histogram2d(
+            x_np, y_np, bins=bins, range=range, density=density
+        )
         device = x.device if hasattr(x, "device") else "cpu"
         return (
             torch.as_tensor(H, device=device),

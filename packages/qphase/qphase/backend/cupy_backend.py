@@ -228,6 +228,9 @@ class CuPyBackend(Backend):
     def cholesky(self, a: Any) -> Any:
         return cp.linalg.cholesky(a)
 
+    def solve(self, a: Any, b: Any) -> Any:
+        return cp.linalg.solve(a, b)
+
     def rng(self, seed: int | None) -> Any:
         return _CuPyRNG(seed)
 
@@ -314,7 +317,9 @@ class CuPyBackend(Backend):
     def matmul(self, a: Any, b: Any) -> Any:
         return cp.matmul(a, b)
 
-    def tensordot(self, a: Any, b: Any, axes: int | tuple[Any, ...] | None = None) -> Any:
+    def tensordot(
+        self, a: Any, b: Any, axes: int | tuple[Any, ...] | None = None
+    ) -> Any:
         return cp.tensordot(a, b, axes=axes if axes is not None else 2)
 
     def std(self, x: Any, axis: int | tuple[int, ...] | None = None) -> Any:

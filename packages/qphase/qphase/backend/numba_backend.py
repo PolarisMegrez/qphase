@@ -208,6 +208,9 @@ class NumbaBackend(Backend):
     def cholesky(self, a: Any) -> Any:
         return np.linalg.cholesky(a)
 
+    def solve(self, a: Any, b: Any) -> Any:
+        return np.linalg.solve(a, b)
+
     def rng(self, seed: int | None) -> Any:
         return _NumbaRNG(seed)
 
@@ -280,7 +283,9 @@ class NumbaBackend(Backend):
     def matmul(self, a: Any, b: Any) -> Any:
         return np.matmul(a, b)
 
-    def tensordot(self, a: Any, b: Any, axes: int | tuple[Any, ...] | None = None) -> Any:
+    def tensordot(
+        self, a: Any, b: Any, axes: int | tuple[Any, ...] | None = None
+    ) -> Any:
         return np.tensordot(a, b, axes=axes if axes is not None else 2)
 
     def std(self, x: Any, axis: int | tuple[int, ...] | None = None) -> Any:

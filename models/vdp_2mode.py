@@ -115,6 +115,34 @@ class VDPLevel3Model:
         out[:, 1] = dbeta
         return out
 
+    def drift_matrix(self, y: Any, t: float, p: dict[str, Any]) -> Any:
+        """Return the state-dependent matrix ``A`` satisfying ``drift=A@y``."""
+        del t
+        xp = get_xp(y)
+        alpha = y[:, 0]
+
+        def _param(name: str) -> Any:
+            val = p[name]
+            if hasattr(val, "__len__") and not isinstance(val, (str, bytes)):
+                return xp.asarray(val)
+            return val
+
+        omega_a = _param("omega_a")
+        omega_b = _param("omega_b")
+        gamma_a = _param("gamma_a")
+        gamma_b = _param("gamma_b")
+        Gamma = _param("Gamma")
+        g = _param("g")
+
+        matrix = xp.zeros((y.shape[0], 2, 2), dtype=y.dtype)
+        matrix[:, 0, 0] = (
+            gamma_a / 2.0 + Gamma * (1.0 - xp.abs(alpha) ** 2) - 1j * omega_a
+        )
+        matrix[:, 0, 1] = -1j * g
+        matrix[:, 1, 0] = -1j * g
+        matrix[:, 1, 1] = -gamma_b / 2.0 - 1j * omega_b
+        return matrix
+
     def diffusion(self, y: Any, t: float, p: dict[str, Any]) -> Any:
         """Compute Diffusion Matrix."""
         xp = get_xp(y)
