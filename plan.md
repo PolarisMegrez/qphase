@@ -145,11 +145,15 @@ model.supports_fused_step(scheme: str, backend) -> bool
 model.fused_step(scheme, y, t, dt, params, noise, backend) -> dy
 ```
 
-VDP 模型仅对 `scheme == "cayley_maruyama"` 且 backend 为 CuPy 时返回 `True`。具体 CUDA 源码继续位于：
+VDP 模型仅对 `scheme == "cayley_maruyama"` 且 backend 为 CuPy 时返回 `True`。具体 CUDA 源码按算法命名空间组织：
 
 ```text
-models/_cupy_vdp_2mode.py
+models/kernels/base.py
+models/kernels/euler_maruyama/vdp_2mode.py
+models/kernels/cayley_maruyama/vdp_2mode.py
 ```
+
+`models/_cupy_vdp_2mode.py` 仅保留 Euler kernel 的兼容导入。模型通过本地 `ModelKernelRegistry` 按 scheme、backend 和 operation 解析实现。
 
 现有 `kernelized_terms()` 保留，Euler-Maruyama 路径不变。
 
@@ -205,8 +209,8 @@ engine 仅在以下条件全部满足时进入 chunk path：
 3. 将 engine 已按 `sqrt(dt)` 缩放的四个实 Wiener 增量组合为两个复噪声：
 
 ```text
-eta_a = sqrt(D_alpha/2) * (dW_0 + i*dW_1)
-eta_b = sqrt(D_beta /2) * (dW_2 + i*dW_3)
+eta_a = sqrt(D_alpha/2) * (dW_0 + i*dW_2)
+eta_b = sqrt(D_beta /2) * (dW_1 + i*dW_3)
 Var(dW_k) = dt
 ```
 
@@ -348,6 +352,10 @@ packages/qphase_sde/qphase_sde/ops.py                              # optional 2x
 ```text
 models/vdp_2mode.py
 models/_cupy_vdp_2mode.py
+models/kernels/base.py
+models/kernels/cupy_utils.py
+models/kernels/euler_maruyama/vdp_2mode.py
+models/kernels/cayley_maruyama/vdp_2mode.py
 ```
 
 ### 配置、测试和文档

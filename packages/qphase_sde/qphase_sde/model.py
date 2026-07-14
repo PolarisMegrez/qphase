@@ -33,6 +33,7 @@ __all__ = [
     "PhaseSpaceModel",
     "NoiseSpec",
     "DriftFn",
+    "MatrixDriftFn",
     "DiffusionFn",
     "JacobianFn",
     "fpe_to_sde",
@@ -56,6 +57,9 @@ Returns
 Any
     Drift vector with shape (n_traj, n_modes)
 """
+
+MatrixDriftFn = Callable[[Any, float, dict], Any]
+"""Type for a matrix drift function returning ``A(y,t)``."""
 
 
 DiffusionFn = Callable[[Any, float, dict], Any]
@@ -186,6 +190,8 @@ class FunctionalSDEModel:
         Diffusion function L(y, t, params) evaluated on batches.
     diffusion_jacobian : Callable[[Any, float, Dict], Any], optional
         Optional Jacobian of diffusion for higher-order schemes.
+    drift_matrix : Callable[[Any, float, Dict], Any], optional
+        Optional matrix operator satisfying ``drift(y)=A(y)@y``.
 
     """
 
@@ -197,6 +203,7 @@ class FunctionalSDEModel:
     drift: DriftFn
     diffusion: DiffusionFn
     diffusion_jacobian: JacobianFn | None = None
+    drift_matrix: MatrixDriftFn | None = None
 
 
 @dataclass

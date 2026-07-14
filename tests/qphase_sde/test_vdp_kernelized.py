@@ -5,6 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from qphase.backend.cupy_backend import CuPyBackend
+from qphase.backend.numpy_backend import NumpyBackend
+from qphase_sde.integrator.cayley_maruyama import CayleyMaruyama
 
 
 # Runtime CuPy availability check.
@@ -52,6 +54,18 @@ def test_drift_matrix_matches_drift(model):
     np.testing.assert_allclose(actual, model.drift(y, 0.0, model.params))
 
 
+def test_cayley_generic_vdp_step(model):
+    """The VDP model supports the backend-generic Cayley path."""
+    backend = NumpyBackend()
+    y = np.array([[2.0 + 0.5j, -0.3j], [1.0 - 0.2j, 0.4 + 0.1j]])
+    d_w = np.zeros((2, 4))
+
+    dy = CayleyMaruyama(fused="off").step(y, 0.0, 0.1, model, d_w, backend)
+
+    assert dy.shape == y.shape
+    assert np.all(np.isfinite(dy))
+
+
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
 def test_kernelized_terms_match_python(model):
     """CuPy kernelized drift/diffusion matches the Python implementation."""
@@ -96,3 +110,23 @@ def test_kernelized_vectorized_params(model):
     a, L = model.kernelized_terms(y, 0.0, params, backend)
     assert a.shape == (n, 2)
     assert L.shape == (n, 2, 2)
+
+
+@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+def test_cayley_fused_step_matches_generic(model):
+    """The VDP Cayley RawKernel matches the generic batched solve."""
+    import cupy as cp
+
+    backend = CuPyBackend()
+    rng = np.random.default_rng(44)
+    y = cp.asarray(
+        (rng.standard_normal((64, 2)) + 1j * rng.standard_normal((64, 2))).astype(
+            np.complex64
+        )
+    )
+    d_w = cp.asarray(rng.standard_normal((64, 4)).astype(np.float32) * np.sqrt(0.1))
+
+    generic = CayleyMaruyama(fused="off").step(y, 0.0, 0.1, model, d_w, backend)
+    fused = CayleyMaruyama(fused="required").step(y, 0.0, 0.1, model, d_w, backend)
+
+    cp.testing.assert_allclose(fused, generic, rtol=2e-5, atol=2e-6)

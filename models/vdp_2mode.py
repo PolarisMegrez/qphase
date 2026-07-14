@@ -10,6 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from qphase.backend.xputil import get_xp
 from qphase_sde.model import FunctionalSDEModel
 
+from .kernels.base import ModelKernelRegistry
+from .kernels.cayley_maruyama import VDP2ModeCayleyCuPyKernel
+from .kernels.euler_maruyama import VDP2ModeEulerCuPyKernel
+
 
 class VDPLevel3Config(BaseModel):
     """Configuration for VDP Level 3 Model.
@@ -66,6 +70,9 @@ class VDPLevel3Model:
             config = VDPLevel3Config(**kwargs)
         self.config = config
         self._params = config.model_dump()
+        self._kernel_registry = ModelKernelRegistry()
+        self._kernel_registry.register(VDP2ModeEulerCuPyKernel())
+        self._kernel_registry.register(VDP2ModeCayleyCuPyKernel())
 
     @property
     def n_modes(self) -> int:
@@ -189,18 +196,36 @@ class VDPLevel3Model:
 
     def has_kernelized_terms(self, backend: Any) -> bool:
         """Kernel path is available for the CuPy backend."""
-        try:
-            return str(backend.backend_name()).lower() == "cupy"
-        except Exception:
-            return False
+        return self._kernel_registry.supports(
+            "euler_maruyama", backend, operation="terms"
+        )
 
     def kernelized_terms(
         self, y: Any, t: float, p: dict[str, Any], backend: Any
     ) -> tuple[Any, Any]:
         """Fused drift+diffusion kernel for CuPy."""
-        from ._cupy_vdp_2mode import kernelized_terms as _kernel
+        terms = self._kernel_registry.resolve(
+            "euler_maruyama", backend, operation="terms"
+        )
+        return terms(y, p, backend)
 
-        return _kernel(y, p, backend)
+    def supports_fused_step(self, scheme: str, backend: Any) -> bool:
+        """Return whether a model-local fused step exists for the scheme."""
+        return self._kernel_registry.supports(scheme, backend, operation="step")
+
+    def fused_step(
+        self,
+        scheme: str,
+        y: Any,
+        t: float,
+        dt: float,
+        p: dict[str, Any],
+        noise: Any,
+        backend: Any,
+    ) -> Any:
+        """Dispatch a complete integrator step to a model-local kernel."""
+        step = self._kernel_registry.resolve(scheme, backend, operation="step")
+        return step(y, t, dt, p, noise, backend)
 
     def to_diffusive_sde_model(self) -> FunctionalSDEModel:
         """Convert to the standard FunctionalSDEModel dataclass."""
@@ -212,4 +237,5 @@ class VDPLevel3Model:
             params=self.params,
             drift=self.drift,
             diffusion=self.diffusion,
+            drift_matrix=self.drift_matrix,
         )
