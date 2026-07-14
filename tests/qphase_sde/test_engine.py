@@ -3,6 +3,7 @@
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.engine import Engine, EngineConfig
+from qphase_sde.integrator.base import ChunkStepResult
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 
 
@@ -57,3 +58,56 @@ def test_engine_run():
     # Check actual shape from result
     assert result.trajectory.data.shape[0] == 2  # n_traj
     assert result.trajectory.data.shape[1] >= 5  # n_steps
+
+
+class DummyChunkIntegrator:
+    class Config:
+        """Minimal chunk configuration."""
+
+        chunk_steps = 4
+
+    config = Config()
+
+    def supports_chunk_step(self, model, backend):
+        return True
+
+    def step_chunk(
+        self,
+        y,
+        t,
+        dt,
+        model,
+        noise,
+        backend,
+        *,
+        n_steps,
+        save_offsets,
+        record_modes,
+    ):
+        del t, model, noise, backend, record_modes
+        saved = np.stack([y + offset * dt for offset in save_offsets], axis=1)
+        return ChunkStepResult(final_state=y + n_steps * dt, saved_states=saved)
+
+
+def test_engine_chunk_path_preserves_save_boundaries():
+    config = EngineConfig(dt=0.1, t0=0.0, t1=1.0, n_traj=2, seed=7, ic=[[0.0]])
+    engine = Engine(
+        config=config,
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": DummyChunkIntegrator(),
+            "model": DummySDEModel(),
+        },
+    )
+
+    trajectory = engine.run_sde(
+        model=DummySDEModel(),
+        ic=[[0.0]],
+        time={"t0": 0.0, "dt": 0.1, "steps": 10},
+        n_traj=2,
+        seed=7,
+        return_stride=3,
+    )
+
+    assert trajectory.data.shape == (2, 4, 1)
+    np.testing.assert_allclose(trajectory.data[0, :, 0], [0.0, 0.3, 0.6, 0.9])

@@ -459,7 +459,7 @@ class Engine(EngineBase):
                 for name, analyzer in analysers.items():
                     if hasattr(analyzer, "analyze"):
                         res = analyzer.analyze(traj_set, be)
-                        # If multiple analyzers have same name (unlikely in dict), careful.
+                        # Analyzer names come from the plugin configuration keys.
                         # But name comes from config key
                         analysis_results[name] = res.data_dict
 
@@ -737,66 +737,110 @@ class Engine(EngineBase):
         current_dt = dt
         k = 0
 
+        integrator_config = getattr(integrator, "config", None)
+        requested_chunk_steps = int(getattr(integrator_config, "chunk_steps", 1))
+        supports_chunk = getattr(integrator, "supports_chunk_step", None)
+        chunk_step = getattr(integrator, "step_chunk", None)
+        use_chunked = (
+            not use_adaptive
+            and requested_chunk_steps > 1
+            and callable(supports_chunk)
+            and callable(chunk_step)
+            and bool(supports_chunk(model, be))
+        )
+
         # Buffer cache for temporary arrays used inside the integration loop.
         # This reduces per-step allocation overhead, especially on GPU backends.
         buf_cache = SDEBufferCache(be, max_entries_per_key=2)
 
         while t < t_end - 1e-12:
-            k += 1
-            y_prev = y
-            t_prev = t
-
-            if use_adaptive:
-                assert noise_spec is not None
-                y_next, t_next, next_dt, error = integrator.step_adaptive(
-                    y, t, current_dt, tol, model, noise_spec, be, rng
-                )
-                y = y_next
-                t = float(t_next)  # Ensure t is float
-                current_dt = float(next_dt)  # Ensure dt is float
-            else:
+            if use_chunked:
                 assert rng is not None, "RNG not initialized"
+                assert callable(chunk_step)
+                n_chunk = min(requested_chunk_steps, steps - k)
+                noise_dtype = y.real.dtype if hasattr(y, "real") else y.dtype
+                raw_noise = be.randn(
+                    rng,
+                    (n_chunk, n_traj, model.noise_dim),
+                    dtype=noise_dtype,
+                )
+                dt_sqrt = be.asarray(dt**0.5, dtype=raw_noise.dtype)
+                d_w = raw_noise * dt_sqrt
+                save_offsets = tuple(
+                    offset for offset in range(1, n_chunk + 1) if (k + offset) % rs == 0
+                )
+                result = chunk_step(
+                    y,
+                    t,
+                    dt,
+                    model,
+                    d_w,
+                    be,
+                    n_steps=n_chunk,
+                    save_offsets=save_offsets,
+                    record_modes=tuple(range(model.n_modes)),
+                )
+                y = result.final_state
+                n_saved = len(save_offsets)
+                if n_saved:
+                    end = keep_counter + n_saved
+                    out[:, keep_counter:end, :] = result.saved_states
+                    keep_counter = end
+                    next_save_time += n_saved * save_dt
+                k += n_chunk
+                t = t0 + k * dt
+            else:
+                k += 1
+                y_prev = y
+                t_prev = t
 
-                # Infer noise dtype from state precision
-                noise_dtype = float
-                if hasattr(y, "real") and hasattr(y.real, "dtype"):
-                    noise_dtype = y.real.dtype
-                elif hasattr(y, "dtype"):
-                    noise_dtype = y.dtype
+                if use_adaptive:
+                    assert noise_spec is not None
+                    y_next, t_next, next_dt, error = integrator.step_adaptive(
+                        y, t, current_dt, tol, model, noise_spec, be, rng
+                    )
+                    y = y_next
+                    t = float(t_next)
+                    current_dt = float(next_dt)
+                else:
+                    assert rng is not None, "RNG not initialized"
+                    noise_dtype = float
+                    if hasattr(y, "real") and hasattr(y.real, "dtype"):
+                        noise_dtype = y.real.dtype
+                    elif hasattr(y, "dtype"):
+                        noise_dtype = y.dtype
 
-                raw_noise = be.randn(rng, (n_traj, model.noise_dim), dtype=noise_dtype)
-                # Ensure scalar is same dtype as noise to prevent promotion
-                dt_sqrt = current_dt**0.5
-                if hasattr(raw_noise, "dtype"):
-                    # Cast scalar to tensor of same dtype if possible
-                    dt_sqrt = be.asarray(dt_sqrt, dtype=raw_noise.dtype)
+                    raw_noise = be.randn(
+                        rng, (n_traj, model.noise_dim), dtype=noise_dtype
+                    )
+                    dt_sqrt = current_dt**0.5
+                    if hasattr(raw_noise, "dtype"):
+                        dt_sqrt = be.asarray(dt_sqrt, dtype=raw_noise.dtype)
 
-                dW = buf_cache.get((n_traj, model.noise_dim), noise_dtype)
-                try:
-                    dW[...] = raw_noise * dt_sqrt
+                    dW = buf_cache.get((n_traj, model.noise_dim), noise_dtype)
+                    try:
+                        dW[...] = raw_noise * dt_sqrt
+                        dy = integrator.step(y, t, current_dt, model, dW, be)
+                        y = y + dy
+                        t += current_dt
+                    finally:
+                        buf_cache.put(dW)
 
-                    dy = integrator.step(y, t, current_dt, model, dW, be)
-                    y = y + dy
-                    t += current_dt
-                finally:
-                    buf_cache.put(dW)
+                while t >= next_save_time - 1e-12 and keep_counter < n_keep:
+                    y_interp = buf_cache.get((n_traj, model.n_modes), y.dtype)
+                    try:
+                        if t > t_prev + 1e-12:
+                            frac = (next_save_time - t_prev) / (t - t_prev)
+                            frac = max(0.0, min(1.0, frac))
+                            y_interp[...] = y_prev + (y - y_prev) * frac
+                        else:
+                            y_interp[...] = y
 
-            # Save data (Interpolation)
-            while t >= next_save_time - 1e-12 and keep_counter < n_keep:
-                y_interp = buf_cache.get((n_traj, model.n_modes), y.dtype)
-                try:
-                    if t > t_prev + 1e-12:
-                        frac = (next_save_time - t_prev) / (t - t_prev)
-                        frac = max(0.0, min(1.0, frac))
-                        y_interp[...] = y_prev + (y - y_prev) * frac
-                    else:
-                        y_interp[...] = y
-
-                    out[:, keep_counter, :] = y_interp
-                    keep_counter += 1
-                    next_save_time += save_dt
-                finally:
-                    buf_cache.put(y_interp)
+                        out[:, keep_counter, :] = y_interp
+                        keep_counter += 1
+                        next_save_time += save_dt
+                    finally:
+                        buf_cache.put(y_interp)
 
             # Progress reporting
             if progress_cb is not None:

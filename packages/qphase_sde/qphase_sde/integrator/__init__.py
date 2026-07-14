@@ -15,7 +15,7 @@ Public API
 ``GenericSRK`` : Generic Stochastic Runge-Kutta integrator implementation.
 """
 
-from .base import Integrator
+from .base import ChunkIntegrator, ChunkStepResult, Integrator
 from .cayley_maruyama import CayleyMaruyama
 from .euler_maruyama import EulerMaruyama
 from .milstein import Milstein
@@ -23,6 +23,8 @@ from .srk import GenericSRK
 
 __all__ = [
     # Base protocol
+    "ChunkIntegrator",
+    "ChunkStepResult",
     "Integrator",
     # Implementations
     "CayleyMaruyama",

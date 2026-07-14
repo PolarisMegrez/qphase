@@ -227,6 +227,40 @@ class VDPLevel3Model:
         step = self._kernel_registry.resolve(scheme, backend, operation="step")
         return step(y, t, dt, p, noise, backend)
 
+    def supports_fused_chunk(self, scheme: str, backend: Any) -> bool:
+        """Return whether a model-local fused chunk exists for the scheme."""
+        return self._kernel_registry.supports(scheme, backend, operation="step_chunk")
+
+    def fused_step_chunk(
+        self,
+        scheme: str,
+        y: Any,
+        t: float,
+        dt: float,
+        p: dict[str, Any],
+        noise: Any,
+        backend: Any,
+        *,
+        n_steps: int,
+        save_offsets: tuple[int, ...],
+        record_modes: tuple[int, ...],
+    ) -> tuple[Any, Any]:
+        """Dispatch a multi-step advance to a model-local kernel."""
+        step_chunk = self._kernel_registry.resolve(
+            scheme, backend, operation="step_chunk"
+        )
+        return step_chunk(
+            y,
+            t,
+            dt,
+            p,
+            noise,
+            backend,
+            n_steps=n_steps,
+            save_offsets=save_offsets,
+            record_modes=record_modes,
+        )
+
     def to_diffusive_sde_model(self) -> FunctionalSDEModel:
         """Convert to the standard FunctionalSDEModel dataclass."""
         return FunctionalSDEModel(

@@ -130,3 +130,47 @@ def test_cayley_fused_step_matches_generic(model):
     fused = CayleyMaruyama(fused="required").step(y, 0.0, 0.1, model, d_w, backend)
 
     cp.testing.assert_allclose(fused, generic, rtol=2e-5, atol=2e-6)
+
+
+@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+def test_cayley_chunk_matches_repeated_fused_steps(model):
+    """A fused chunk matches repeated single-step kernels for fixed noise."""
+    import cupy as cp
+
+    backend = CuPyBackend()
+    integrator = CayleyMaruyama(fused="required", chunk_steps=8)
+    rng = np.random.default_rng(45)
+    y = cp.asarray(
+        (rng.standard_normal((32, 2)) + 1j * rng.standard_normal((32, 2))).astype(
+            np.complex64
+        )
+    )
+    noise = cp.asarray(
+        rng.standard_normal((8, 32, 4)).astype(np.float32) * np.sqrt(0.1)
+    )
+    save_offsets = (2, 5, 8)
+
+    chunk = integrator.step_chunk(
+        y,
+        0.0,
+        0.1,
+        model,
+        noise,
+        backend,
+        n_steps=8,
+        save_offsets=save_offsets,
+        record_modes=(0, 1),
+    )
+
+    current = y.copy()
+    expected_saved = []
+    for index in range(8):
+        current = current + integrator.step(
+            current, index * 0.1, 0.1, model, noise[index], backend
+        )
+        if index + 1 in save_offsets:
+            expected_saved.append(current.copy())
+    expected = cp.stack(expected_saved, axis=1)
+
+    cp.testing.assert_allclose(chunk.final_state, current, rtol=2e-5, atol=2e-6)
+    cp.testing.assert_allclose(chunk.saved_states, expected, rtol=2e-5, atol=2e-6)

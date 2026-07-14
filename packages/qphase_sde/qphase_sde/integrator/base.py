@@ -11,6 +11,7 @@ Public API
 ``Integrator`` : Protocol for SDE integrators.
 """
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -19,8 +20,39 @@ if TYPE_CHECKING:
     from qphase_sde.model import NoiseSpec, SDEModel
 
 __all__ = [
+    "ChunkIntegrator",
+    "ChunkStepResult",
     "Integrator",
 ]
+
+
+@dataclass(frozen=True)
+class ChunkStepResult:
+    """Result of advancing multiple fixed steps in one operation."""
+
+    final_state: Any
+    saved_states: Any
+
+
+@runtime_checkable
+class ChunkIntegrator(Protocol):
+    """Optional capability for fused multi-step fixed integration."""
+
+    def supports_chunk_step(self, model: Any, backend: Any) -> bool: ...
+
+    def step_chunk(
+        self,
+        y: Any,
+        t: float,
+        dt: float,
+        model: Any,
+        noise: Any,
+        backend: Any,
+        *,
+        n_steps: int,
+        save_offsets: tuple[int, ...],
+        record_modes: tuple[int, ...],
+    ) -> ChunkStepResult: ...
 
 
 @runtime_checkable

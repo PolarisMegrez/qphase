@@ -8,7 +8,7 @@ from qphase.backend.base import BackendBase
 from qphase.core.protocols import PluginConfigBase
 
 from qphase_sde import ops
-from qphase_sde.integrator.base import Integrator
+from qphase_sde.integrator.base import ChunkStepResult, Integrator
 from qphase_sde.model import SDEModel
 
 __all__ = ["CayleyMaruyama", "CayleyMaruyamaConfig"]
@@ -129,6 +129,43 @@ class CayleyMaruyama(Integrator):
 
     def supports_adaptive_step(self) -> bool:
         return False
+
+    def supports_chunk_step(self, model: Any, backend: BackendBase) -> bool:
+        """Return whether the model/backend pair provides a fused chunk path."""
+        if self.config.fused == "off" or self.config.chunk_steps <= 1:
+            return False
+        supports = getattr(model, "supports_fused_chunk", None)
+        return callable(supports) and bool(supports(self.name, backend))
+
+    def step_chunk(
+        self,
+        y: Any,
+        t: float,
+        dt: float,
+        model: Any,
+        noise: Any,
+        backend: BackendBase,
+        *,
+        n_steps: int,
+        save_offsets: tuple[int, ...],
+        record_modes: tuple[int, ...],
+    ) -> ChunkStepResult:
+        """Advance a model-provided fused chunk."""
+        if not self.supports_chunk_step(model, backend):
+            raise RuntimeError("fused Cayley-Maruyama chunk path is unavailable")
+        final_state, saved_states = model.fused_step_chunk(
+            self.name,
+            y,
+            t,
+            dt,
+            model.params,
+            noise,
+            backend,
+            n_steps=n_steps,
+            save_offsets=save_offsets,
+            record_modes=record_modes,
+        )
+        return ChunkStepResult(final_state=final_state, saved_states=saved_states)
 
     def reset(self) -> None:
         pass
