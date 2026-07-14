@@ -8,7 +8,7 @@
 ## 1. 固化配置加载与参数扫描契约
 
 - 为 `configs/jobs/*.yaml` 的顶层插件写法建立回归测试，覆盖 `backend`、`integrator`、`model`、`analyser` 被正确抽取到 `JobConfig.plugins`。
-- 为 `model` 参数扫描补充 smoke test，确认 `kerr_3pa.epsilon`、`kerr_3mode.kappa_a`、`vdp_level3.omega_a` 这类列表参数会按系统配置展开。
+- 为 `model` 参数扫描补充 smoke test，确认 `kerr_3pa.epsilon`、`kerr_3mode.kappa_a`、`vdp_2mode.omega_a` 这类列表参数会按系统配置展开。
 - 检查 `JobExpander`、`Scheduler._validate_job_dependencies`、`Scheduler._run_job` 是否始终使用同一份插件解析结果，避免“加载时识别、验证时漏看、运行时又重建”的分叉。
 - 在文档中明确 job 文件推荐格式：顶层插件段是推荐写法，`plugins:` 是兼容写法。
 
@@ -35,7 +35,7 @@
 
 - 删除或更新所有引用已移除模型 `kerr_cavity`、`vdp_level2`、`vdp_two_mode` 的测试、文档和配置。
 - 保证 `models/.qphase_plugins.yaml`、`models/__init__.py`、`configs/jobs/*.yaml` 中的模型 key 与模型类 `name` 一致。
-- 为当前保留模型 `kerr_3pa`、`kerr_3mode`、`vdp_level3` 增加轻量导入/实例化测试。
+- 为当前保留模型 `kerr_3pa`、`kerr_3mode`、`vdp_2mode` 增加轻量导入/实例化测试。
 
 ## 6. 文档提交前检查清单
 

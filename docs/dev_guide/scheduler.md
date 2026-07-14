@@ -110,3 +110,19 @@ This manifest enables downstream features like **Resume Capability** (restarting
 Within a session, each job runs in its own subdirectory (`session_dir / job_name`).
 *   **Concurrency Safety**: Jobs write to exclusive paths.
 *   **Traceability**: Each directory contains a `config_snapshot.json` that records the *exact* scalar values used for that specific run.
+
+## Batch Negotiation
+
+After parameter expansion but before execution, the scheduler runs a **BatchNegotiator** that groups expanded jobs into `SingleJob` or `BatchJob` instances. A group of jobs can be batched when a registered package-specific `BatchPlanner` reports that they are compatible.
+
+For the SDE engine, `qphase_sde.batch.SDEEngineBatchPlanner` accepts a group of jobs when:
+
+* They use the same engine (`sde`), integrator, backend, and time grid (`t0`, `t1`, `dt`, `save_stride`).
+* They only differ in model parameters.
+* The model parameters support broadcasting to a per-trajectory array.
+
+The planner then builds a single `BatchJob` whose `n_traj` is `n_scan * n_traj_per_point` and whose scanned parameters are repeated `n_traj_per_point` times for each scan value. The engine runs one simulation, and a package-specific `ResultSplitter` divides the output back into the original per-point results. Each original job still gets its own `run_dir`, manifest entry, and downstream visibility.
+
+Downstream jobs that consume a batched simulation via `input`/`aggregate_input` continue to work normally: the scheduler sees the individual per-point results and runs the dependent jobs as usual.
+
+Batch negotiation is transparent to users: declare a parameter scan in the usual way and let the scheduler decide whether to fuse it.

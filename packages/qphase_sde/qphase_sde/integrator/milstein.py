@@ -31,7 +31,6 @@ Notes
 
 """
 
-from collections.abc import Callable
 from typing import Any, ClassVar
 
 from pydantic import BaseModel
@@ -50,20 +49,6 @@ class MilsteinConfig(BaseModel):
 
     # No specific configuration needed for standard Milstein
     pass
-
-
-def _expand_complex_noise_backend(Lc: Any, backend: Backend) -> Any:
-    """Expand complex-basis diffusion into an equivalent real basis.
-
-    Transforms L_c ∈ C^{..., n_modes, M_c} into L_r ∈ C^{..., n_modes, 2·M_c}
-    using only backend operations, preserving contraction with real noise.
-    """
-    a = backend.real(Lc)
-    b = backend.imag(Lc)
-    s = (2.0) ** 0.5
-    Lr_real = backend.concatenate((a / s, -b / s), axis=-1)
-    Lr_imag = backend.concatenate((b / s, a / s), axis=-1)
-    return Lr_real + 1j * Lr_imag
 
 
 class Milstein(Integrator):
@@ -100,30 +85,6 @@ class Milstein(Integrator):
 
     def __init__(self, config: MilsteinConfig | None = None, **kwargs) -> None:
         self.config = config or MilsteinConfig(**kwargs)
-        self._contract_fn: Callable[[Backend, Any, Any], Any] | None = None
-
-    def _contract(self, backend: Backend, L: Any, dW: Any) -> Any:
-        # Initialize fast-path at first use
-        if self._contract_fn is None:
-            try:
-                be_name = str(backend.backend_name()).lower()
-            except Exception:
-                be_name = ""
-            if be_name == "torch":
-                try:
-                    import torch as _th
-
-                    def _contract(_backend: Backend, _L: Any, _dW: Any):
-                        return _th.bmm(_L, _dW.unsqueeze(-1)).squeeze(-1)
-
-                    self._contract_fn = _contract
-                except Exception:
-                    self._contract_fn = None
-            if self._contract_fn is None:
-                self._contract_fn = lambda _backend, _L, _dW: _backend.einsum(
-                    "tnm,tm->tn", _L, _dW
-                )
-        return self._contract_fn(backend, L, dW)
 
     def step(
         self, y: Any, t: float, dt: float, model: Any, noise: Any, backend: Backend
@@ -168,6 +129,8 @@ class Milstein(Integrator):
         >>> # dy = milstein.step(y, t, dt, model, dW, backend)  # doctest: +SKIP
 
         """
+        from qphase_sde import ops
+
         dW = noise
         a = model.drift(y, t, model.params)  # (T, N)
         L = model.diffusion(y, t, model.params)  # (T, N, M_b)
@@ -177,12 +140,12 @@ class Milstein(Integrator):
         # noise basis is complex.
         noise_basis = getattr(model, "noise_basis", "real")
         if str(noise_basis) == "complex":
-            L_eff = _expand_complex_noise_backend(L, backend)
+            L_eff = ops.expand_complex_noise(L, backend)
             # EM increment only (no Milstein correction under complex basis)
-            return a * dt + self._contract(backend, L_eff, dW)
+            return a * dt + ops.contract_noise(L_eff, dW, backend)
 
         # EM part (real basis)
-        dy = a * dt + self._contract(backend, L, dW)
+        dy = a * dt + ops.contract_noise(L, dW, backend)
 
         # Milstein correction requires diffusion Jacobian.
         jac = getattr(model, "diffusion_jacobian", None)
@@ -205,8 +168,8 @@ class Milstein(Integrator):
         return False
 
     def reset(self) -> None:
-        """Reset internal caches (no-op for Milstein)."""
-        self._contract_fn = None
+        """Reset internal state (no-op for Milstein)."""
+        pass
 
     def step_adaptive(
         self,

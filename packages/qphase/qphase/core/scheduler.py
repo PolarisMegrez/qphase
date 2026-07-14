@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from .aggregation import AggregateResult
+from .batch_negotiator import BatchJob, BatchNegotiator, SingleJob
 from .config import JobConfig, JobList
 from .config_loader import get_config_for_job
 from .errors import (
@@ -213,92 +214,35 @@ class Scheduler:
         results: list[JobResult] = []
         job_results: dict[str, ResultProtocol] = {}
 
-        for job_idx, job in enumerate(expanded_jobs):
-            # Check if job is already completed (Resume Mode)
-            if self.manifest and job.name in self.manifest["jobs"]:
-                job_status = self.manifest["jobs"][job.name].get("status")
-                if job_status == "completed":
-                    log.info(f"Skipping completed job: {job.name}")
-                    # Result loading is handled lazily in _resolve_input when needed
-                    # by downstream jobs.
-                    continue
+        # Group expanded jobs into single or batched execution units.
+        # Resource packs advertise BatchPlanners that decide how scan jobs can be
+        # fused; the scheduler only orchestrates and preserves per-job identity.
+        negotiator = BatchNegotiator(registry)
+        job_groups = negotiator.group_jobs(expanded_jobs)
 
-            # Register job in manifest
-            if not dry_run:
-                self._update_job_status(job.name, "pending")
+        # Map original job name to its group index for stable ordering.
+        group_count = len(job_groups)
 
-            try:
-                if dry_run:
-                    # Dry Run Logic
-                    log.info(f"[DRY-RUN] Would execute job: {job.name}")
-                    log.info(f"          Engine: {job.get_engine_name()}")
-                    log.info(f"          Input: {job.input}")
-                    # Mock success result for dry run
-                    results.append(
-                        JobResult(
-                            job_index=job_idx,
-                            job_name=job.name,
-                            run_dir=Path("dry_run"),
-                            run_id="dry_run",
-                            success=True,
-                        )
-                    )
-
-                    # Mock output for downstream dependency check
-                    # We need a dummy object that satisfies ResultProtocol
-                    class MockResult:
-                        data = None
-                        metadata: dict[str, Any] = {}
-                        label: Any = None
-
-                        def save(self, path):
-                            pass
-
-                    job_results[job.name] = MockResult()
-                    if job.output:
-                        job_results[job.output] = MockResult()
-                    continue
-
-                # Normal Execution
-                input_result = self._resolve_input(job, job_results)
-                job_result, output_result = self._run_job(
-                    job, job_idx, len(expanded_jobs), input_result
+        for group_idx, group in enumerate(job_groups):
+            if isinstance(group, SingleJob):
+                self._run_single(
+                    group.job,
+                    group_idx,
+                    group_count,
+                    expanded_jobs,
+                    job_results,
+                    results,
+                    dry_run=dry_run,
                 )
-                results.append(job_result)
-
-                # Handle output based on job config
-                if job_result.success:
-                    self._handle_job_output(
-                        job, output_result, job_results, job_result.run_dir
-                    )
-                    # Update manifest with success
-                    assert self.session_dir is not None
-                    self._update_job_status(
-                        job.name,
-                        "completed",
-                        {
-                            "run_id": job_result.run_id,
-                            "output_dir": str(
-                                job_result.run_dir.relative_to(self.session_dir)
-                            ),
-                        },
-                    )
-                else:
-                    self._update_job_status(job.name, "failed")
-
-            except Exception as e:
-                log.error(f"Job {job.name} failed: {e}")
-                if not dry_run:
-                    self._update_job_status(job.name, "failed", {"error": str(e)})
-                results.append(
-                    JobResult(
-                        job_index=job_idx,
-                        job_name=job.name,
-                        run_dir=Path("."),
-                        run_id="",
-                        success=False,
-                        error=str(e),
-                    )
+            elif isinstance(group, BatchJob):
+                self._run_batch(
+                    group.plan,
+                    group.original_jobs,
+                    group_idx,
+                    group_count,
+                    job_results,
+                    results,
+                    dry_run=dry_run,
                 )
 
         # Finalize session
@@ -533,49 +477,110 @@ class Scheduler:
             f"Expected a previous job name or a valid file path with input_loader."
         )
 
-    def _run_job(
+    def _run_single(
         self,
         job: JobConfig,
         job_idx: int,
         job_total: int,
-        input_result: ResultProtocol | None,
-    ) -> tuple[JobResult, ResultProtocol]:
-        """Execute a single job and return its result.
+        expanded_jobs: list[JobConfig],
+        job_results: dict[str, ResultProtocol],
+        results: list[JobResult],
+        *,
+        dry_run: bool,
+    ) -> None:
+        """Execute one non-batched job and update the shared result state."""
+        # Check if job is already completed (Resume Mode)
+        if self.manifest and job.name in self.manifest["jobs"]:
+            job_status = self.manifest["jobs"][job.name].get("status")
+            if job_status == "completed":
+                log.info(f"Skipping completed job: {job.name}")
+                return
 
-        This method handles the complete job execution lifecycle:
-        1. Create run directory and generate run ID
-        2. Merge global config with job-specific config
-        3. Build plugin instances from configuration
-        4. Instantiate and run the engine
-        5. Report progress and save snapshot
+        # Register job in manifest
+        if not dry_run:
+            self._update_job_status(job.name, "pending")
 
-        Parameters
-        ----------
-        job : JobConfig
-            Job configuration to execute
-        job_idx : int
-            Index of this job in the job list (0-based)
-        job_total : int
-            Total number of jobs being executed
-        input_result : ResultProtocol | None
-            Input data from upstream job, or None
+        try:
+            if dry_run:
+                log.info(f"[DRY-RUN] Would execute job: {job.name}")
+                log.info(f"          Engine: {job.get_engine_name()}")
+                log.info(f"          Input: {job.input}")
+                results.append(
+                    JobResult(
+                        job_index=job_idx,
+                        job_name=job.name,
+                        run_dir=Path("dry_run"),
+                        run_id="dry_run",
+                        success=True,
+                    )
+                )
+
+                class MockResult:
+                    data = None
+                    metadata: dict[str, Any] = {}
+                    label: Any = None
+
+                    def save(self, path):
+                        pass
+
+                job_results[job.name] = MockResult()
+                if job.output:
+                    job_results[job.output] = MockResult()
+                return
+
+            # Normal Execution
+            input_result = self._resolve_input(job, job_results)
+            job_result, output_result = self._run_job(
+                job,
+                job_idx,
+                job_total,
+                input_result,
+                display_total=len(expanded_jobs),
+            )
+            results.append(job_result)
+
+            if job_result.success:
+                self._handle_job_output(
+                    job, output_result, job_results, job_result.run_dir
+                )
+                assert self.session_dir is not None
+                self._update_job_status(
+                    job.name,
+                    "completed",
+                    {
+                        "run_id": job_result.run_id,
+                        "output_dir": str(
+                            job_result.run_dir.relative_to(self.session_dir)
+                        ),
+                    },
+                )
+            else:
+                self._update_job_status(job.name, "failed")
+
+        except Exception as e:
+            log.error(f"Job {job.name} failed: {e}")
+            if not dry_run:
+                self._update_job_status(job.name, "failed", {"error": str(e)})
+            results.append(
+                JobResult(
+                    job_index=job_idx,
+                    job_name=job.name,
+                    run_dir=Path("."),
+                    run_id="",
+                    success=False,
+                    error=str(e),
+                )
+            )
+
+    def _get_merged_config_for_job(self, job: JobConfig) -> dict[str, Any]:
+        """Merge global system config with job-specific overrides.
 
         Returns
         -------
-        tuple[JobResult, ResultProtocol]
-            Tuple of (job execution metadata, engine output result)
-
-        Raises
-        ------
-        QPhasePluginError
-            If engine instantiation fails
-        QPhaseRuntimeError
-            If engine execution fails
-
+        dict[str, Any]
+            Merged configuration dictionary containing plugins, engine,
+            params, and any top-level plugin sections defined in the job.
         """
-        run_id = self._generate_run_id()
-        run_dir = self._create_run_dir(job, run_id)
-
         system_cfg = job.system if job.system is not None else self.system_config
 
         # Plugin namespaces that may appear as top-level keys in a job file.
@@ -601,15 +606,214 @@ class Scheduler:
             if key in job_extra:
                 job_override[key] = job_extra[key]
 
-        merged_config = get_config_for_job(
+        return get_config_for_job(
             system_cfg, job_name=job.name, job_config_dict=job_override
         )
+
+    def _run_batch(
+        self,
+        plan: Any,
+        original_jobs: list[JobConfig],
+        group_idx: int,
+        group_total: int,
+        job_results: dict[str, ResultProtocol],
+        results: list[JobResult],
+        *,
+        dry_run: bool,
+    ) -> None:
+        """Execute a batch of jobs and split the result back per original job."""
+        # Resume check: skip only if all original jobs are completed.
+        if self.manifest:
+            all_completed = all(
+                self.manifest["jobs"].get(j.name, {}).get("status") == "completed"
+                for j in original_jobs
+            )
+            if all_completed:
+                log.info(f"Skipping completed batch: {', '.join(j.name for j in original_jobs)}")
+                return
+
+        batch_name = f"__batch_{group_idx}"
+        if not dry_run:
+            self._update_job_status(batch_name, "pending")
+
+        try:
+            if dry_run:
+                for j in original_jobs:
+                    log.info(f"[DRY-RUN] Would execute job (batched): {j.name}")
+                    results.append(
+                        JobResult(
+                            job_index=group_idx,
+                            job_name=j.name,
+                            run_dir=Path("dry_run"),
+                            run_id="dry_run",
+                            success=True,
+                        )
+                    )
+                    class MockResult:
+                        data = None
+                        metadata: dict[str, Any] = {}
+                        label: Any = None
+                        def save(self, path):
+                            pass
+                    job_results[j.name] = MockResult()
+                return
+
+            # Batch jobs currently only support simulations without upstream input.
+            input_result = None
+            if any(j.input for j in original_jobs):
+                raise QPhaseConfigError(
+                    "Batch execution does not yet support jobs with upstream input"
+                )
+
+            # Build and run the merged job via the resource pack's BatchPlanner.
+            # Use a temporary job name for the combined run directory; the real
+            # per-job directories are created after splitting.
+            batch_job = copy.deepcopy(plan.batch_job)
+            batch_job.name = batch_name
+            run_id = self._generate_run_id()
+            run_dir = self._create_run_dir(batch_job, run_id)
+
+            _, output_result = self._run_job(
+                batch_job,
+                group_idx,
+                group_total,
+                input_result,
+                display_total=len(original_jobs),
+            )
+
+            # Split the combined result back into per-job results.
+            splitter = registry.get_result_splitter(plan.result_splitter)
+            split_results = splitter.split(output_result, original_jobs)
+
+            for j in original_jobs:
+                single_result = split_results.get(j.name)
+                if single_result is None:
+                    raise QPhaseRuntimeError(
+                        f"Batch result splitter did not produce result for '{j.name}'"
+                    )
+
+                # Each original job gets its own run directory and manifest entry.
+                single_run_id = self._generate_run_id()
+                single_run_dir = self._create_run_dir(j, single_run_id)
+
+                # Write per-job snapshot so downstream tools can inspect the
+                # original (non-batched) configuration.
+                single_merged_config = self._get_merged_config_for_job(j)
+                self._write_snapshot(
+                    single_run_dir, j, single_merged_config, group_idx
+                )
+
+                self._handle_job_output(j, single_result, job_results, single_run_dir)
+
+                assert self.session_dir is not None
+                self._update_job_status(
+                    j.name,
+                    "completed",
+                    {
+                        "run_id": single_run_id,
+                        "output_dir": str(single_run_dir.relative_to(self.session_dir)),
+                        "batched": True,
+                        "batch_group": group_idx,
+                    },
+                )
+
+                results.append(
+                    JobResult(
+                        job_index=group_idx,
+                        job_name=j.name,
+                        run_dir=single_run_dir,
+                        run_id=single_run_id,
+                        success=True,
+                    )
+                )
+
+            self._update_job_status(batch_name, "completed")
+
+        except Exception as e:
+            log.error(f"Batch group {group_idx} failed: {e}")
+            if not dry_run:
+                self._update_job_status(batch_name, "failed", {"error": str(e)})
+            for j in original_jobs:
+                if not dry_run:
+                    self._update_job_status(j.name, "failed", {"error": str(e)})
+                results.append(
+                    JobResult(
+                        job_index=group_idx,
+                        job_name=j.name,
+                        run_dir=Path("."),
+                        run_id="",
+                        success=False,
+                        error=str(e),
+                    )
+                )
+
+    def _run_job(
+        self,
+        job: JobConfig,
+        job_idx: int,
+        job_total: int,
+        input_result: ResultProtocol | None,
+        *,
+        display_total: int | None = None,
+    ) -> tuple[JobResult, ResultProtocol]:
+        """Execute a single job and return its result.
+
+        This method handles the complete job execution lifecycle:
+        1. Create run directory and generate run ID
+        2. Merge global config with job-specific config
+        3. Build plugin instances from configuration
+        4. Instantiate and run the engine
+        5. Report progress and save snapshot
+
+        Parameters
+        ----------
+        job : JobConfig
+            Job configuration to execute
+        job_idx : int
+            Index of this job in the execution group (0-based)
+        job_total : int
+            Total number of jobs in the execution group
+        input_result : ResultProtocol | None
+            Input data from upstream job, or None
+        display_total : int | None, optional
+            Number of jobs to display in progress reporting. When a job is
+            batched, this is the number of original (pre-batch) jobs so that
+            ETA and progress percentages reflect the user's mental model.
+
+        Returns
+        -------
+        tuple[JobResult, ResultProtocol]
+            Tuple of (job execution metadata, engine output result)
+
+        Raises
+        ------
+        QPhasePluginError
+            If engine instantiation fails
+        QPhaseRuntimeError
+            If engine execution fails
+
+        """
+        display_total = job_total if display_total is None else display_total
+        run_id = self._generate_run_id()
+        run_dir = self._create_run_dir(job, run_id)
+
+        merged_config = self._get_merged_config_for_job(job)
 
         try:
             from .registry import registry
         except ImportError:
             # Should be available
             pass
+
+        # Plugin namespaces that may appear as top-level keys in a job file.
+        plugin_keys = [
+            "backend",
+            "integrator",
+            "model",
+            "analyser",
+            "visualizer",
+            "analyzer",
+        ]
 
         # Normalize config: move top-level plugin keys to 'plugins' if not present
         # This supports the simplified config format where plugins are at the root
@@ -732,7 +936,7 @@ class Scheduler:
                 JobProgressUpdate(
                     job_name=job.name,
                     job_index=job_idx,
-                    total_jobs=job_total,
+                    total_jobs=display_total,
                     message="Starting job...",
                 )
             )
@@ -776,16 +980,16 @@ class Scheduler:
                         job_eta = total_duration_estimate * (1.0 - percent)
 
                     # Calculate Global ETA (only for expanded jobs)
-                    # Heuristic: if total_jobs > 1, assume homogeneous expansion
+                    # Heuristic: if display_total > 1, assume homogeneous expansion
                     global_eta = None
                     if (
-                        job_total > 1
+                        display_total > 1
                         and job_eta is not None
                         and total_duration_estimate is not None
                     ):
                         # Simple extrapolation: remaining jobs * current job total
-                        # duration
-                        remaining_jobs = job_total - job_idx
+                        # duration. Use display_total so batching is accounted for.
+                        remaining_jobs = display_total - job_idx
                         global_eta = job_eta + (
                             remaining_jobs * total_duration_estimate
                         )
@@ -795,7 +999,7 @@ class Scheduler:
                             JobProgressUpdate(
                                 job_name=job.name,
                                 job_index=job_idx,
-                                total_jobs=job_total,
+                                total_jobs=display_total,
                                 message=message,
                                 percent=percent,
                                 job_eta=job_eta,

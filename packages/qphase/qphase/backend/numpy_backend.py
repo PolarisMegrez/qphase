@@ -162,6 +162,47 @@ class NumpyBackend(Backend):
     ) -> Any:
         return np.arange(start, stop, step, dtype=dtype)
 
+    # Additional math / stats helpers
+    def matmul(self, a: Any, b: Any) -> Any:
+        return np.matmul(a, b)
+
+    def tensordot(self, a: Any, b: Any, axes: int | tuple[Any, ...] | None = None) -> Any:
+        return np.tensordot(a, b, axes=axes if axes is not None else 2)
+
+    def std(self, x: Any, axis: int | tuple[int, ...] | None = None) -> Any:
+        return np.std(x, axis=axis)
+
+    def clip(self, x: Any, a_min: Any | None, a_max: Any | None) -> Any:
+        return np.clip(x, a_min, a_max)
+
+    def where(self, condition: Any, x: Any, y: Any) -> Any:
+        return np.where(condition, x, y)
+
+    def sqrt(self, x: Any) -> Any:
+        return np.sqrt(x)
+
+    def histogram(
+        self,
+        x: Any,
+        bins: int,
+        range: tuple[float, float] | None = None,
+        density: bool = False,
+    ) -> tuple[Any, Any]:
+        return np.histogram(x, bins=bins, range=range, density=density)
+
+    def histogram2d(
+        self,
+        x: Any,
+        y: Any,
+        bins: int,
+        range: Any | None = None,
+        density: bool = False,
+    ) -> tuple[Any, Any, Any]:
+        return np.histogram2d(x, y, bins=bins, range=range, density=density)
+
+    def fftshift(self, x: Any, axes: int | tuple[int, ...] | None = None) -> Any:
+        return np.fft.fftshift(x, axes=axes)
+
     @property
     def pi(self) -> float:
         return np.pi

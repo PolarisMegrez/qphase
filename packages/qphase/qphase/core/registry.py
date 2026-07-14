@@ -190,6 +190,54 @@ class RegistryCenter:
             meta=full_meta,
         )
 
+    def get_batch_planner(self, engine_name: str) -> Any:
+        """Retrieve the BatchPlanner class registered for an engine.
+
+        The planner is looked up in the ``batch_planner`` namespace using the
+        engine name. The registry entry is expected to be stored either as a
+        lazy target string in ``meta['batch_planner']`` on the engine entry, or
+        as a dedicated ``batch_planner`` namespace registration.
+        """
+        engine_name = engine_name.strip().lower()
+        # First, look for a dedicated batch_planner namespace entry.
+        planner_entry = self._tables.get("batch_planner", {}).get(engine_name)
+        if planner_entry is not None:
+            return self._resolve_entry(planner_entry)
+
+        # Otherwise, check the engine entry metadata for a planner target.
+        engine_entry = self._tables.get("engine", {}).get(engine_name)
+        if engine_entry and engine_entry.meta:
+            planner_target = engine_entry.meta.get("batch_planner")
+            if planner_target:
+                return self._import_target(planner_target)
+
+        raise QPhasePluginError(
+            f"No BatchPlanner registered for engine '{engine_name}'"
+        )
+
+    def get_result_splitter(self, name: str) -> Any:
+        """Retrieve an instantiated ResultSplitter by registered name."""
+        name = name.strip().lower()
+        splitter_entry = self._tables.get("result_splitter", {}).get(name)
+        if splitter_entry is not None:
+            cls = self._resolve_entry(splitter_entry)
+            return cls() if callable(cls) else cls
+
+        # Fallback: try dotted import if name contains a dot.
+        if "." in name:
+            obj = self._import_target(name)
+            return obj() if callable(obj) else obj
+
+        raise QPhasePluginError(f"No ResultSplitter registered for '{name}'")
+
+    def _resolve_entry(self, entry: _Entry) -> Any:
+        """Resolve an entry to a class/callable without instantiating it."""
+        if entry.kind == "callable":
+            assert entry.builder is not None
+            return entry.builder
+        assert entry.target is not None
+        return self._import_target(entry.target)
+
     def get_plugin_class(self, namespace: str, name: str) -> Any:
         """Retrieve the plugin class (or callable) without instantiation."""
         table = self._tables.get(namespace, {})
@@ -628,6 +676,14 @@ class DiscoveryService:
                 namespace = namespace.strip().lower()
                 name = name.strip().lower()
 
+                # Collect optional batching metadata for engine entries.
+                extra_meta: dict[str, Any] = {}
+                if namespace == "engine":
+                    for meta_key in ("batch_planner", "result_splitter"):
+                        value = plugin_entry.get(meta_key)
+                        if value:
+                            extra_meta[meta_key] = value
+
                 # Register the plugin
                 self.registry.register_lazy(
                     namespace=namespace,
@@ -635,6 +691,7 @@ class DiscoveryService:
                     target=target,
                     auto_discovered=True,
                     source_file=str(plugins_file),
+                    **extra_meta,
                 )
                 discovered_count += 1
 

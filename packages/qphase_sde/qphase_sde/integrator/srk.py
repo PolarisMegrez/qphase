@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field
 from qphase.backend.base import BackendBase
 
 from qphase_sde.integrator.base import Integrator
+from qphase_sde import ops
 from qphase_sde.model import NoiseSpec, SDEModel
-from qphase_sde.utils import expand_complex_noise_backend
 
 
 class GenericSRKConfig(BaseModel):
@@ -62,12 +62,17 @@ class GenericSRK(Integrator):
         backend: BackendBase,
     ) -> Any:
         """Perform one fixed step."""
-        drift = model.drift(y, t, model.params)
-        diffusion = model.diffusion(y, t, model.params)
         dW = noise
 
+        # Prefer a fused drift+diffusion kernel when the model provides one.
+        if ops.supports_kernelized_terms(model, backend):
+            drift, diffusion = model.kernelized_terms(y, t, model.params, backend)
+        else:
+            drift = model.drift(y, t, model.params)
+            diffusion = model.diffusion(y, t, model.params)
+
         if getattr(model, "noise_basis", "real") == "complex":
-            diffusion = expand_complex_noise_backend(diffusion, backend)
+            diffusion = ops.expand_complex_noise(diffusion, backend)
             # Ensure dW matches diffusion dtype (e.g. complex) for strict backends
             if (
                 hasattr(diffusion, "dtype")
@@ -79,22 +84,27 @@ class GenericSRK(Integrator):
         if self.method == "euler":
             # Euler-Maruyama (Strong Order 0.5)
             # dy = a(y) dt + b(y) dW
-            diff_term = backend.einsum("...ij,...j->...i", diffusion, dW)
+            diff_term = ops.contract_noise(diffusion, dW, backend)
             dy = drift * dt + diff_term
             return dy
 
         elif self.method == "heun":
             # Stochastic Heun (Stratonovich, Strong Order 1.0 approx)
             # Predictor
-            diff_term = backend.einsum("...ij,...j->...i", diffusion, dW)
+            diff_term = ops.contract_noise(diffusion, dW, backend)
             y_bar = y + drift * dt + diff_term
 
             # Corrector
-            drift_bar = model.drift(y_bar, t + dt, model.params)
-            diffusion_bar = model.diffusion(y_bar, t + dt, model.params)
+            if ops.supports_kernelized_terms(model, backend):
+                drift_bar, diffusion_bar = model.kernelized_terms(
+                    y_bar, t + dt, model.params, backend
+                )
+            else:
+                drift_bar = model.drift(y_bar, t + dt, model.params)
+                diffusion_bar = model.diffusion(y_bar, t + dt, model.params)
 
             if getattr(model, "noise_basis", "real") == "complex":
-                diffusion_bar = expand_complex_noise_backend(diffusion_bar, backend)
+                diffusion_bar = ops.expand_complex_noise(diffusion_bar, backend)
                 # Ensure dW matches diffusion dtype
                 if (
                     hasattr(diffusion_bar, "dtype")
@@ -103,7 +113,7 @@ class GenericSRK(Integrator):
                 ):
                     dW = backend.asarray(dW, dtype=diffusion_bar.dtype)
 
-            diff_term_bar = backend.einsum("...ij,...j->...i", diffusion_bar, dW)
+            diff_term_bar = ops.contract_noise(diffusion_bar, dW, backend)
 
             dy = 0.5 * (drift + drift_bar) * dt + 0.5 * (diff_term + diff_term_bar)
             return dy

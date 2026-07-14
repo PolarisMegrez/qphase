@@ -65,6 +65,13 @@ class _CuPyRNG:
         else:
             self._gen = cp.random.default_rng(int(seed))
 
+    @classmethod
+    def from_generator(cls, gen: Any) -> "_CuPyRNG":
+        """Wrap an existing CuPy Generator."""
+        instance = cls.__new__(cls)
+        instance._gen = gen
+        return instance
+
     def generator(self):
         return self._gen
 
@@ -75,9 +82,14 @@ class _CuPyRNG:
             self._gen = cp.random.default_rng(int(value))
 
     def spawn(self, n: int) -> list["_CuPyRNG"]:
-        # Use NumPy SeedSequence to derive stable integer seeds
-        # CuPy's BitGenerator doesn't support spawn() directly yet in all versions,
-        # so we use NumPy's SeedSequence to generate seeds for new CuPy generators.
+        # Prefer CuPy's native Generator.spawn() when available (cupy >= 13).
+        # Otherwise fall back to NumPy SeedSequence for stable integer seeds.
+        if hasattr(self._gen, "spawn"):
+            try:
+                return [_CuPyRNG.from_generator(g) for g in self._gen.spawn(n)]
+            except Exception:
+                pass
+
         import numpy as _np
 
         # Extract current state or seed if possible, but for simplicity and robustness
@@ -148,9 +160,33 @@ class CuPyBackend(Backend):
     config_schema: ClassVar[type[CuPyConfig]] = CuPyConfig
 
     def __init__(self, config: CuPyConfig | None = None, **kwargs: Any) -> None:
-        """Initialize CuPy backend with configuration."""
+        """Initialize CuPy backend with configuration.
+
+        Enables a CuPy memory pool to reduce CUDA allocation overhead and
+        stores a stream handle for explicit synchronization. Device selection
+        is intentionally left to the environment (single-GPU setups); multi-GPU
+        switching is out of scope for this iteration.
+        """
         self.config = config or CuPyConfig()
         _ = kwargs
+
+        # Memory pool: speeds up repeated allocations of similar shapes.
+        self._memory_pool: Any = None
+        if _CUPY_AVAILABLE:
+            try:
+                self._memory_pool = cp.cuda.MemoryPool()
+                cp.cuda.set_allocator(self._memory_pool.malloc)
+            except Exception:
+                self._memory_pool = None
+
+        # Stream handle for synchronization. Operations use CuPy's default
+        # stream semantics; this handle is exposed for explicit sync calls.
+        self._stream: Any = None
+        if _CUPY_AVAILABLE:
+            try:
+                self._stream = cp.cuda.get_current_stream()
+            except Exception:
+                self._stream = None
 
     # Identification
     def backend_name(self) -> str:
@@ -196,7 +232,16 @@ class CuPyBackend(Backend):
         return _CuPyRNG(seed)
 
     def spawn_rngs(self, master_seed: int, n: int) -> list[Any]:
-        # Use NumPy SeedSequence to generate independent seeds
+        # Prefer CuPy's native spawn when available (cupy >= 13). Otherwise
+        # fall back to NumPy SeedSequence to derive independent integer seeds.
+        root = _CuPyRNG(master_seed)
+        gen = root.generator()
+        if hasattr(gen, "spawn"):
+            try:
+                return [_CuPyRNG.from_generator(g) for g in gen.spawn(n)]
+            except Exception:
+                pass
+
         ss = np.random.SeedSequence(master_seed)
         children = ss.spawn(n)
         rngs: list[Any] = []
@@ -265,9 +310,63 @@ class CuPyBackend(Backend):
     ) -> Any:
         return cp.arange(start, stop, step, dtype=dtype)
 
+    # Additional math / stats helpers
+    def matmul(self, a: Any, b: Any) -> Any:
+        return cp.matmul(a, b)
+
+    def tensordot(self, a: Any, b: Any, axes: int | tuple[Any, ...] | None = None) -> Any:
+        return cp.tensordot(a, b, axes=axes if axes is not None else 2)
+
+    def std(self, x: Any, axis: int | tuple[int, ...] | None = None) -> Any:
+        return cp.std(x, axis=axis)
+
+    def clip(self, x: Any, a_min: Any | None, a_max: Any | None) -> Any:
+        return cp.clip(x, a_min, a_max)
+
+    def where(self, condition: Any, x: Any, y: Any) -> Any:
+        return cp.where(condition, x, y)
+
+    def sqrt(self, x: Any) -> Any:
+        return cp.sqrt(x)
+
+    def histogram(
+        self,
+        x: Any,
+        bins: int,
+        range: tuple[float, float] | None = None,
+        density: bool = False,
+    ) -> tuple[Any, Any]:
+        return cp.histogram(x, bins=bins, range=range, density=density)
+
+    def histogram2d(
+        self,
+        x: Any,
+        y: Any,
+        bins: int,
+        range: Any | None = None,
+        density: bool = False,
+    ) -> tuple[Any, Any, Any]:
+        return cp.histogram2d(x, y, bins=bins, range=range, density=density)
+
+    def fftshift(self, x: Any, axes: int | tuple[int, ...] | None = None) -> Any:
+        return cp.fft.fftshift(x, axes=axes)
+
     @property
     def pi(self) -> float:
         return cp.pi
+
+    # Stream / memory management
+    def synchronize(self) -> None:
+        """Synchronize the CuPy stream."""
+        if self._stream is not None:
+            self._stream.synchronize()
+        elif _CUPY_AVAILABLE:
+            cp.cuda.Device().synchronize()
+
+    def free_all_blocks(self) -> None:
+        """Release all free blocks held by the CuPy memory pool."""
+        if self._memory_pool is not None:
+            self._memory_pool.free_all_blocks()
 
     # Capabilities
     def capabilities(self) -> dict:

@@ -14,7 +14,6 @@ Public API
 ``EulerMaruyama`` : Euler-Maruyama integrator implementation.
 """
 
-from collections.abc import Callable
 from typing import Any, ClassVar
 
 from pydantic import BaseModel
@@ -33,20 +32,6 @@ class EulerMaruyamaConfig(BaseModel):
 
     # No specific configuration needed for standard EM
     pass
-
-
-def _expand_complex_noise_backend(Lc: Any, backend: Backend) -> Any:
-    """Expand complex-basis diffusion matrix to an equivalent real basis.
-
-    Transforms L_c ∈ C^{..., n_modes, M_c} into L_r ∈ C^{..., n_modes, 2·M_c}
-    using only backend operations, preserving contraction with real noise.
-    """
-    a = backend.real(Lc)
-    b = backend.imag(Lc)
-    s = (2.0) ** 0.5
-    Lr_real = backend.concatenate((a / s, -b / s), axis=-1)
-    Lr_imag = backend.concatenate((b / s, a / s), axis=-1)
-    return Lr_real + 1j * Lr_imag
 
 
 class EulerMaruyama(Integrator):
@@ -108,14 +93,8 @@ class EulerMaruyama(Integrator):
     config_schema: ClassVar[type[EulerMaruyamaConfig]] = EulerMaruyamaConfig
 
     def __init__(self, config: EulerMaruyamaConfig | None = None, **kwargs) -> None:
-        """Initialize the integrator and internal contraction cache.
-
-        Lazily specializes a fast-path contraction function on first use based on
-        the backend.
-        """
+        """Initialize the integrator."""
         self.config = config or EulerMaruyamaConfig(**kwargs)
-        # Lazily initialized fast-path functions based on backend
-        self._contract_fn: Callable[[Backend, Any, Any], Any] | None = None
 
     def step(
         self, y: Any, t: float, dt: float, model: Any, noise: Any, backend: Backend
@@ -156,44 +135,25 @@ class EulerMaruyama(Integrator):
         >>> # dy = em.step(y, t, dt, model, dW, backend)  # doctest: +SKIP
 
         """
+        from qphase_sde import ops
+
         dW = noise
-        a = model.drift(y, t, model.params)  # (n_traj, n_modes)
-        L = model.diffusion(y, t, model.params)  # (n_traj, n_modes, M_b)
+        if ops.supports_kernelized_terms(model, backend):
+            a, L = model.kernelized_terms(y, t, model.params, backend)
+        else:
+            a = model.drift(y, t, model.params)  # (n_traj, n_modes)
+            L = model.diffusion(y, t, model.params)  # (n_traj, n_modes, M_b)
         if getattr(model, "noise_basis", "real") == "complex":
-            L = _expand_complex_noise_backend(L, backend)
-        # Initialize fast-path at first use
-        if self._contract_fn is None:
-            try:
-                be_name = str(backend.backend_name()).lower()
-            except Exception:
-                be_name = ""
-            if be_name == "torch":
-                try:
-                    import torch as _th
-
-                    def _contract(_backend: Backend, _L: Any, _dW: Any):
-                        # (_T, N, M) bmm (_T, M, 1) -> (_T, N)
-                        return _th.bmm(_L, _dW.unsqueeze(-1)).squeeze(-1)
-
-                    self._contract_fn = _contract
-                except Exception:
-                    self._contract_fn = None
-            # default fallback
-            if self._contract_fn is None:
-
-                def _fallback_contract(_backend: Backend, _L: Any, _dW: Any) -> Any:
-                    return _backend.einsum("tnm,tm->tn", _L, _dW)
-
-                self._contract_fn = _fallback_contract
+            L = ops.expand_complex_noise(L, backend)
         # Contract noise channels: (tnm, tm) -> (tn)
-        return a * dt + self._contract_fn(backend, L, dW)
+        return a * dt + ops.contract_noise(L, dW, backend)
 
     def supports_adaptive_step(self) -> bool:
         return False
 
     def reset(self) -> None:
-        """Reset internal caches (no-op for Euler-Maruyama)."""
-        self._contract_fn = None
+        """Reset internal state (no-op for Euler-Maruyama)."""
+        pass
 
     def step_adaptive(
         self,

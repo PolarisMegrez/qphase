@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from qphase.backend.xputil import get_xp
 from qphase_sde.model import FunctionalSDEModel
 
@@ -20,41 +20,47 @@ logger = logging.getLogger(__name__)
 
 
 class Kerr3ModeConfig(BaseModel):
-    """Configuration schema for the Kerr 3-mode system."""
+    """Configuration schema for the Kerr 3-mode system.
 
-    omega_a: float = Field(
+    Fields accept a scalar or a one-dimensional array to support batched
+    parameter scans.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    omega_a: Any = Field(
         description="Frequency of mode a", json_schema_extra={"scanable": True}
     )
-    omega_b: float = Field(
+    omega_b: Any = Field(
         description="Frequency of mode b", json_schema_extra={"scanable": True}
     )
-    omega_c: float = Field(
+    omega_c: Any = Field(
         description="Frequency of mode c", json_schema_extra={"scanable": True}
     )
 
-    chi: float = Field(
+    chi: Any = Field(
         description="Kerr nonlinearity strength for mode a",
         json_schema_extra={"scanable": True},
     )
 
-    kappa_a: float = Field(
+    kappa_a: Any = Field(
         description="Loss rate for central cavity a",
         json_schema_extra={"scanable": True},
     )
-    kappa_b: float = Field(
+    kappa_b: Any = Field(
         description="Gain rate for active cavity b",
         json_schema_extra={"scanable": True},
     )
-    kappa_c: float = Field(
+    kappa_c: Any = Field(
         description="Loss rate for lossy cavity c",
         json_schema_extra={"scanable": True},
     )
 
-    g_ab: float = Field(
+    g_ab: Any = Field(
         description="Coupling strength between a and b",
         json_schema_extra={"scanable": True},
     )
-    g_ac: float = Field(
+    g_ac: Any = Field(
         description="Coupling strength between a and c",
         json_schema_extra={"scanable": True},
     )
@@ -119,15 +125,21 @@ class Kerr3ModeModel:
         beta = y[:, 1]
         gamma = y[:, 2]
 
-        omega_a = p["omega_a"]
-        omega_b = p["omega_b"]
-        omega_c = p["omega_c"]
-        chi = p["chi"]
-        kappa_a = p["kappa_a"]
-        kappa_b = p["kappa_b"]
-        kappa_c = p["kappa_c"]
-        g_ab = p["g_ab"]
-        g_ac = p["g_ac"]
+        def _param(name: str) -> Any:
+            val = p[name]
+            if hasattr(val, "__len__") and not isinstance(val, (str, bytes)):
+                return xp.asarray(val)
+            return val
+
+        omega_a = _param("omega_a")
+        omega_b = _param("omega_b")
+        omega_c = _param("omega_c")
+        chi = _param("chi")
+        kappa_a = _param("kappa_a")
+        kappa_b = _param("kappa_b")
+        kappa_c = _param("kappa_c")
+        g_ab = _param("g_ab")
+        g_ac = _param("g_ac")
 
         # Mode a
         # Nonlinear term 2*chi*|alpha|^2 * alpha comes from
@@ -163,10 +175,16 @@ class Kerr3ModeModel:
         xp = get_xp(y)
         alpha = y[:, 0]
 
-        chi = p["chi"]
-        kappa_a = p["kappa_a"]
-        kappa_b = p["kappa_b"]
-        kappa_c = p["kappa_c"]
+        def _param(name: str) -> Any:
+            val = p[name]
+            if hasattr(val, "__len__") and not isinstance(val, (str, bytes)):
+                return xp.asarray(val)
+            return val
+
+        chi = _param("chi")
+        kappa_a = _param("kappa_a")
+        kappa_b = _param("kappa_b")
+        kappa_c = _param("kappa_c")
 
         n = y.shape[0]
         # We fill 2x2 blocks on the diagonal of a (n, 6, 6) matrix.
@@ -262,6 +280,21 @@ class Kerr3ModeModel:
         diffusion_matrix[:, 2, 5] = 1j * noise_c
 
         return diffusion_matrix
+
+    def has_kernelized_terms(self, backend: Any) -> bool:
+        """Kernel path is available for the CuPy backend."""
+        try:
+            return str(backend.backend_name()).lower() == "cupy"
+        except Exception:
+            return False
+
+    def kernelized_terms(
+        self, y: Any, t: float, p: dict[str, Any], backend: Any
+    ) -> tuple[Any, Any]:
+        """Fused drift+diffusion kernel for CuPy."""
+        from ._cupy_kerr_3mode import kernelized_terms as _kernel
+
+        return _kernel(y, p, backend)
 
     def to_diffusive_sde_model(self) -> FunctionalSDEModel:
         return FunctionalSDEModel(

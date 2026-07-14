@@ -49,6 +49,10 @@ dependencies = [
 # Peak Finder plugins
 "peak_finder.scipy" = "qphase_sde.analyser.peak_finding.scipy:ScipyPeakFinder"
 "peak_finder.rational" = "qphase_sde.analyser.peak_finding.rational:RationalPeakFinder"
+# Batch planner for parameter-scan fusion
+"batch_planner.sde" = "qphase_sde.batch:SDEEngineBatchPlanner"
+# Result splitter for batched SDE scans
+"result_splitter.sde_scan_splitter" = "qphase_sde.batch:SDEResultSplitter"
 
 [tool.setuptools.packages.find]
 where = ["."]

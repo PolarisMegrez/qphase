@@ -34,8 +34,8 @@
    - 明确取舍：当前代码实现是 `qphase run <job>`，不把 `jobs` 作为子命令；文档与 README 统一到此形态。
 
 2. **清理过时模型引用**
-   - 删除或重写 `tests/data/test_job_sde.yaml`、`test_param_scan_cartesian.yaml`、`test_param_scan_zipped.yaml` 中的 `vdp_two_mode`，改用当前模型 `vdp_level3` 或 `kerr_3pa`，并修正字段（`t_end`→`t1`、`dt`、`n_traj`；`euler`→`euler_maruyama`）。
-   - 更新 `docs/user_guide/configuration.md(.zh)`、`docs/api/cli.md(.zh)`、`docs/dev_guide/registry.md(.zh)` 中的 `vdp_two_mode`/`kerr_cavity` 示例，改为 `kerr_3pa` / `vdp_level3`。
+   - 删除或重写 `tests/data/test_job_sde.yaml`、`test_param_scan_cartesian.yaml`、`test_param_scan_zipped.yaml` 中的 `vdp_two_mode`，改用当前模型 `vdp_2mode` 或 `kerr_3pa`，并修正字段（`t_end`→`t1`、`dt`、`n_traj`；`euler`→`euler_maruyama`）。
+   - 更新 `docs/user_guide/configuration.md(.zh)`、`docs/api/cli.md(.zh)`、`docs/dev_guide/registry.md(.zh)` 中的 `vdp_two_mode`/`kerr_cavity` 示例，改为 `kerr_3pa` / `vdp_2mode`。
    - 清理 `models/__pycache__` 中旧模型编译缓存（可手动删除，或加入清理规则）。
 
 3. **新增 CPU smoke 示例与端到端测试**
@@ -92,7 +92,7 @@
      - 对 `ScipyPeakFinder` 和 `RationalPeakFinder` 分别覆盖无峰、单峰、多峰、拟合失败回退路径。
      - 验证 `PeakInfo.model_dump()` 后的 `properties` 中不含裸 ndarray/complex；若含，则在保存前转换为 list/float。
    - 在 `PsdAnalyzer.analyze()` 保存 peaks 前统一转换 `PeakInfo.properties` 中的 numpy/complex 类型。
-   - 为 `kerr_3pa`、`kerr_3mode`、`vdp_level3` 各增加一个轻量导入/实例化测试（计划项 5 剩余部分），可放在 `tests/qphase_sde/test_models.py`。
+   - 为 `kerr_3pa`、`kerr_3mode`、`vdp_2mode` 各增加一个轻量导入/实例化测试（计划项 5 剩余部分），可放在 `tests/qphase_sde/test_models.py`。
 
 5. **文档字段与 schema 补全**
    - 更新 `docs/user_guide/output.md(.zh)`：

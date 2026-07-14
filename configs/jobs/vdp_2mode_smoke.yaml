@@ -19,7 +19,7 @@
     srk:
       method: heun
   model:
-    vdp_level3:
+    vdp_2mode:
       omega_a: [0.05, 0.1, 0.15]
       omega_b: 0.0
       gamma_a: 2.0

@@ -108,3 +108,44 @@ def test_validate_command_logic(mock_system_config, simple_job_list):
     with patch.object(scheduler, "_validate_jobs") as mock_validate:
         scheduler._validate_jobs(simple_job_list)
         mock_validate.assert_called_once()
+
+
+def test_job_expander_detects_scanable_params_in_model_extra():
+    """Scanable parameters stored as top-level plugin keys (model extras) expand."""
+    from typing import Any
+
+    from pydantic import BaseModel, Field
+
+    from qphase.core.job_expansion import JobExpander
+    from qphase.core.registry import RegistryCenter
+
+    class DummyModelConfig(BaseModel):
+        omega_a: Any = Field(..., json_schema_extra={"scanable": True})
+        omega_b: Any = Field(0.0, json_schema_extra={"scanable": False})
+
+    class DummyModel:
+        config_schema = DummyModelConfig
+
+    registry = RegistryCenter()
+    registry.register("model", "vdp_2mode", DummyModel)
+
+    # Top-level plugin sections are stored as model extras by JobConfig.
+    job = JobConfig(
+        name="vdp_scan",
+        engine={"sde": {}},
+        plugins={},
+        model={
+            "vdp_2mode": {
+                "omega_a": [0.001, 0.01, 0.1],
+                "omega_b": 0.0,
+            }
+        },
+    )
+
+    expander = JobExpander(registry)
+    expanded = expander.expand(job, method="cartesian")
+
+    assert len(expanded) == 3
+    expected = [0.001, 0.01, 0.1]
+    for new_job, value in zip(expanded, expected, strict=True):
+        assert new_job.plugins["model"]["vdp_2mode"]["omega_a"] == value

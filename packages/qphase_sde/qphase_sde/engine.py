@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from qphase.backend.base import BackendBase
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 
+from qphase_sde.buffers import SDEBufferCache
 from qphase_sde.integrator.base import Integrator
 from qphase_sde.model import NoiseSpec, SDEModel
 from qphase_sde.result import SDEResult
@@ -383,6 +384,17 @@ class Engine(EngineBase):
             progress_cb=sde_progress_cb,
         )
 
+        # Determine the backend name used for simulation to decide whether the
+        # trajectory can be retained. GPU backends (especially cupy) should not
+        # keep the full raw trajectory by default, because downstream plotting
+        # expects numpy arrays and retaining it would cause large D2H transfers.
+        backend_name = ""
+        if self._default_backend is not None:
+            try:
+                backend_name = self._default_backend.backend_name()
+            except Exception:
+                backend_name = ""
+
         # Run analyzers if configured
         analysis_results: dict[str, Any] = {}
         meta: dict[str, Any] = {}
@@ -405,15 +417,68 @@ class Engine(EngineBase):
 
                     be = NumpyBackend()
 
-            for name, analyzer in analysers.items():
-                if hasattr(analyzer, "analyze"):
-                    res = analyzer.analyze(traj_set, be)
-                    # If multiple analyzers have same name (unlikely in dict), careful.
-                    # But name comes from config key
-                    analysis_results[name] = res.data_dict
+            # Detect batch mode: the scheduler fuses scan points into one ensemble.
+            n_scan = getattr(self.config, "_batch_scan_count", 1)
+            if not isinstance(n_scan, int) or n_scan < 1:
+                n_scan = 1
+
+            if n_scan > 1 and traj_set is not None:
+                # Split the combined trajectory into per-scan-point slices and run
+                # each analyzer on each slice so that PSD/dist/etc. remain per-point.
+                data = traj_set.data
+                n_total_traj = data.shape[0]
+                if n_total_traj % n_scan != 0:
+                    raise ValueError(
+                        f"Batch trajectory has {n_total_traj} trajectories, "
+                        f"not divisible by scan count {n_scan}"
+                    )
+                n_traj_per_scan = n_total_traj // n_scan
+
+                per_scan_results: list[dict[str, Any]] = []
+                for i in range(n_scan):
+                    start = i * n_traj_per_scan
+                    end = start + n_traj_per_scan
+                    sub_traj = TrajectorySet(
+                        data=data[start:end],
+                        t0=traj_set.t0,
+                        dt=traj_set.dt,
+                        meta=dict(traj_set.meta),
+                    )
+                    scan_res: dict[str, Any] = {}
+                    for name, analyzer in analysers.items():
+                        if hasattr(analyzer, "analyze"):
+                            res = analyzer.analyze(sub_traj, be)
+                            scan_res[name] = res.data_dict
+                    per_scan_results.append(scan_res)
+
+                # Store as lists keyed by analyzer name; the result splitter will
+                # distribute the i-th element to the i-th original job.
+                for name in analysers.keys():
+                    analysis_results[name] = [r.get(name) for r in per_scan_results]
+            else:
+                for name, analyzer in analysers.items():
+                    if hasattr(analyzer, "analyze"):
+                        res = analyzer.analyze(traj_set, be)
+                        # If multiple analyzers have same name (unlikely in dict), careful.
+                        # But name comes from config key
+                        analysis_results[name] = res.data_dict
 
             # Decide whether to keep trajectory based on config
             should_keep = self.config.keep_traj
+
+            # GPU backends force trajectory drop to avoid large device-to-host
+            # transfers and GPU memory bloat. Users who need raw trajectories for
+            # plotting should run a separate job with the numpy backend.
+            if should_keep and backend_name == "cupy":
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "CuPy backend forces keep_traj=False to avoid large "
+                    "device-to-host transfers. Use the numpy backend if you "
+                    "need to keep raw trajectories."
+                )
+                should_keep = False
+
             if should_keep is None:
                 # Default behavior: drop if analyzed to save resources
                 should_keep = not bool(analysis_results)
@@ -672,6 +737,10 @@ class Engine(EngineBase):
         current_dt = dt
         k = 0
 
+        # Buffer cache for temporary arrays used inside the integration loop.
+        # This reduces per-step allocation overhead, especially on GPU backends.
+        buf_cache = SDEBufferCache(be, max_entries_per_key=2)
+
         while t < t_end - 1e-12:
             k += 1
             y_prev = y
@@ -702,24 +771,32 @@ class Engine(EngineBase):
                     # Cast scalar to tensor of same dtype if possible
                     dt_sqrt = be.asarray(dt_sqrt, dtype=raw_noise.dtype)
 
-                dW = raw_noise * dt_sqrt
+                dW = buf_cache.get((n_traj, model.noise_dim), noise_dtype)
+                try:
+                    dW[...] = raw_noise * dt_sqrt
 
-                dy = integrator.step(y, t, current_dt, model, dW, be)
-                y = y + dy
-                t += current_dt
+                    dy = integrator.step(y, t, current_dt, model, dW, be)
+                    y = y + dy
+                    t += current_dt
+                finally:
+                    buf_cache.put(dW)
 
             # Save data (Interpolation)
             while t >= next_save_time - 1e-12 and keep_counter < n_keep:
-                if t > t_prev + 1e-12:
-                    frac = (next_save_time - t_prev) / (t - t_prev)
-                    frac = max(0.0, min(1.0, frac))
-                    y_interp = y_prev + (y - y_prev) * frac
-                else:
-                    y_interp = y
+                y_interp = buf_cache.get((n_traj, model.n_modes), y.dtype)
+                try:
+                    if t > t_prev + 1e-12:
+                        frac = (next_save_time - t_prev) / (t - t_prev)
+                        frac = max(0.0, min(1.0, frac))
+                        y_interp[...] = y_prev + (y - y_prev) * frac
+                    else:
+                        y_interp[...] = y
 
-                out[:, keep_counter, :] = y_interp
-                keep_counter += 1
-                next_save_time += save_dt
+                    out[:, keep_counter, :] = y_interp
+                    keep_counter += 1
+                    next_save_time += save_dt
+                finally:
+                    buf_cache.put(y_interp)
 
             # Progress reporting
             if progress_cb is not None:

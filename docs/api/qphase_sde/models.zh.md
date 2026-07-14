@@ -39,7 +39,7 @@ class SDEModel(Protocol):
 
 ## 内置模型
 
-### `vdp_level3`
+### `vdp_2mode`
 
 一种用于窄峰基准测试的 Van der Pol / Kerr 风格双模模型。
 
@@ -55,7 +55,7 @@ class SDEModel(Protocol):
 
 ```yaml
 model:
-  vdp_level3:
+  vdp_2mode:
     omega_a: 0.00251189
     omega_b: 0.0
     gamma_a: 2.0

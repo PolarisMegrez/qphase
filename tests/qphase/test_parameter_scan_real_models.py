@@ -14,7 +14,7 @@ def register_real_models_and_integrator():
     """Register the current production models and a dummy integrator."""
     from models.kerr_3mode import Kerr3ModeModel
     from models.kerr_3pa import Kerr3PAModel
-    from models.vdp_level3 import VDPLevel3Model
+    from models.vdp_2mode import VDPLevel3Model
     from tests.plugins.dummy_plugin import DummyPlugin
 
     registry.register(
@@ -24,7 +24,7 @@ def register_real_models_and_integrator():
         namespace="model", name="kerr_3mode", builder=Kerr3ModeModel, overwrite=True
     )
     registry.register(
-        namespace="model", name="vdp_level3", builder=VDPLevel3Model, overwrite=True
+        namespace="model", name="vdp_2mode", builder=VDPLevel3Model, overwrite=True
     )
     registry.register(
         namespace="integrator", name="dummy", builder=DummyPlugin, overwrite=True
@@ -68,13 +68,13 @@ def test_kerr_3pa_epsilon_scan():
     assert values == [0.025, 0.05, 0.10]
 
 
-def test_vdp_level3_omega_a_scan():
-    """``vdp_level3.omega_a`` list must expand into individual jobs."""
+def test_vdp_2mode_omega_a_scan():
+    """``vdp_2mode.omega_a`` list must expand into individual jobs."""
     job = JobConfig(
         name="vdp_scan",
         engine={"dummy": {"param": 1.0}},
         plugins=_make_plugins(
-            "vdp_level3",
+            "vdp_2mode",
             {
                 "omega_a": [0.9, 1.0, 1.1],
                 "omega_b": 1.0,
@@ -90,7 +90,7 @@ def test_vdp_level3_omega_a_scan():
     expanded = scheduler._expand_parameter_scans(JobList(jobs=[job]))
 
     assert len(expanded) == 3
-    values = [j.plugins["model"]["vdp_level3"]["omega_a"] for j in expanded]
+    values = [j.plugins["model"]["vdp_2mode"]["omega_a"] for j in expanded]
     assert values == [0.9, 1.0, 1.1]
 
 
@@ -128,7 +128,7 @@ def test_zipped_scan_with_real_model():
         name="vdp_zipped",
         engine={"dummy": {"param": 1.0}},
         plugins=_make_plugins(
-            "vdp_level3",
+            "vdp_2mode",
             {
                 "omega_a": [0.9, 1.0, 1.1],
                 "omega_b": [0.8, 0.9, 1.0],
@@ -145,7 +145,7 @@ def test_zipped_scan_with_real_model():
     expanded = scheduler._expand_parameter_scans(JobList(jobs=[job]))
 
     assert len(expanded) == 3
-    assert expanded[0].plugins["model"]["vdp_level3"]["omega_a"] == 0.9
-    assert expanded[0].plugins["model"]["vdp_level3"]["omega_b"] == 0.8
-    assert expanded[2].plugins["model"]["vdp_level3"]["omega_a"] == 1.1
-    assert expanded[2].plugins["model"]["vdp_level3"]["omega_b"] == 1.0
+    assert expanded[0].plugins["model"]["vdp_2mode"]["omega_a"] == 0.9
+    assert expanded[0].plugins["model"]["vdp_2mode"]["omega_b"] == 0.8
+    assert expanded[2].plugins["model"]["vdp_2mode"]["omega_a"] == 1.1
+    assert expanded[2].plugins["model"]["vdp_2mode"]["omega_b"] == 1.0

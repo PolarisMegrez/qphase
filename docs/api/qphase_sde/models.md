@@ -39,7 +39,7 @@ The engine evaluates `drift` and `diffusion` each step and passes them to the se
 
 ## Built-in Models
 
-### `vdp_level3`
+### `vdp_2mode`
 
 A Van der Pol / Kerr-style two-mode model used for narrow-peak benchmarks.
 
@@ -55,7 +55,7 @@ Typical usage:
 
 ```yaml
 model:
-  vdp_level3:
+  vdp_2mode:
     omega_a: 0.00251189
     omega_b: 0.0
     gamma_a: 2.0

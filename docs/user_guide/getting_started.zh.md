@@ -102,7 +102,7 @@ engine:
 # 2. 选择物理模型
 # (此处使用内置的示例模型)
 model:
-  vdp_level3:  # 内置的范德波尔振荡器
+  vdp_2mode:  # 内置的范德波尔振荡器
     omega_a: 1.0
     omega_b: 1.0
     gamma_a: 0.1

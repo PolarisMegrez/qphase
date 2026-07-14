@@ -137,14 +137,14 @@ qphase show [PLUGIN_ID]... [OPTIONS]
 ```
 
 *   **参数**：
-    *   `PLUGIN_ID`：一个或多个 `namespace.name` 格式的插件标识符（例如 `model.vdp_level3`）。
+    *   `PLUGIN_ID`：一个或多个 `namespace.name` 格式的插件标识符（例如 `model.vdp_2mode`）。
 *   **选项**：
     *   `--verbose` / `-v`：显示额外的元数据（例如文件路径、包版本）。
 
 **示例**：
 
 ```bash
-qphase show model.vdp_level3
+qphase show model.vdp_2mode
 qphase show backend.numpy --verbose
 ```
 
@@ -166,10 +166,10 @@ qphase template [PLUGIN_ID]... [OPTIONS]
 
 ```bash
 # 将 YAML 模板打印到控制台
-qphase template model.vdp_level3
+qphase template model.vdp_2mode
 
 # 保存到文件
-qphase template model.vdp_level3 --output my_config.yaml
+qphase template model.vdp_2mode --output my_config.yaml
 ```
 
 ---

@@ -128,6 +128,22 @@ class SDEModel(Protocol):
         """Compute diffusion matrix."""
         ...
 
+    # Optional fused kernel path
+    def has_kernelized_terms(self, backend: Any) -> bool:
+        """Return True if the model provides a fused kernel for *backend*."""
+        return False
+
+    def kernelized_terms(
+        self, y: Any, t: float, params: dict[str, Any], backend: Any
+    ) -> tuple[Any, Any]:
+        """Compute drift and diffusion together via a fused kernel.
+
+        Must only be called when :meth:`has_kernelized_terms` returns ``True``.
+        Returns ``(drift, diffusion)`` with the same semantics as the separate
+        methods.
+        """
+        ...
+
 
 # Alias for backward compatibility
 DiffusiveSDEModel = SDEModel

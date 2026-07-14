@@ -6,6 +6,6 @@ plugins:
   - type: model.kerr_3mode
     target: models.kerr_3mode:Kerr3ModeModel
     description: Kerr nonlinear cavity model with three modes
-  - type: model.vdp_level3
-    target: models.vdp_level3:VDPLevel3Model
+  - type: model.vdp_2mode
+    target: models.vdp_2mode:VDPLevel3Model
     description: Van der Pol Oscillator (SDE Model)

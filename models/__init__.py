@@ -13,11 +13,11 @@ Models:
 from . import (
     kerr_3mode,
     kerr_3pa,
-    vdp_level3,
+    vdp_2mode,
 )
 
 __all__ = [
     "kerr_3pa",
     "kerr_3mode",
-    "vdp_level3",
+    "vdp_2mode",
 ]

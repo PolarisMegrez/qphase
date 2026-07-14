@@ -150,8 +150,14 @@ class PsdAnalyzer(Analyzer):
         kind = config.kind
         convention = config.convention
 
-        # Extract data array
-        if hasattr(data, "data"):
+        # Extract data array. Some array-like objects (e.g. TrajectorySet) wrap
+        # the actual array in a ``.data`` attribute. NumPy/CuPy arrays also
+        # expose a ``.data`` attribute, but it is a memoryview/MemoryPointer,
+        # not an array. If ``data`` itself is already array-like (has ndim),
+        # use it directly; otherwise unwrap ``data.data``.
+        if hasattr(data, "ndim") and hasattr(data, "shape"):
+            data_arr = data
+        elif hasattr(data, "data") and hasattr(data.data, "ndim") and hasattr(data.data, "shape"):
             data_arr = data.data
         else:
             data_arr = data
@@ -359,7 +365,11 @@ class PsdAnalyzer(Analyzer):
         window: str | None,
         backend: Any,
     ) -> tuple[_np.ndarray, _np.ndarray]:
-        """Classical averaged periodogram over trajectories."""
+        """Classical averaged periodogram over trajectories.
+
+        All heavy array operations stay on the active backend until the very end,
+        minimizing device-to-host transfers for GPU backends.
+        """
         n_time = int(x_proc.shape[-1])
 
         if window:
@@ -388,10 +398,19 @@ class PsdAnalyzer(Analyzer):
             scale_p = dt / energy
             P_backend = P_backend * scale_p
 
+        # Use backend-native fftshift when available; otherwise fall back to numpy.
+        if hasattr(backend, "fftshift"):
+            axis_backend = backend.fftshift(axis_backend)
+            P_backend = backend.fftshift(P_backend, axes=0)
+        else:
+            axis_tmp = convert_to_numpy(axis_backend)
+            P_tmp = convert_to_numpy(P_backend)
+            axis_tmp = _np.fft.fftshift(axis_tmp)
+            P_tmp = _np.fft.fftshift(P_tmp, axes=0)
+            return axis_tmp, P_tmp
+
         axis = convert_to_numpy(axis_backend)
         P = convert_to_numpy(P_backend)
-        axis = _np.fft.fftshift(axis)
-        P = _np.fft.fftshift(P, axes=0)
         return axis, P
 
     def _compute_welch(

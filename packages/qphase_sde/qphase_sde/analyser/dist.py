@@ -25,6 +25,14 @@ __all__ = [
 ]
 
 
+def _is_complex(arr: Any) -> bool:
+    """Return True if ``arr`` has a complex dtype, backend-agnostic."""
+    dtype = getattr(arr, "dtype", None)
+    if dtype is None:
+        return False
+    return str(getattr(dtype, "kind", dtype)) in {"c", "complex"}
+
+
 class DistAnalyzerConfig(PluginConfigBase):
     """Configuration for Distribution Analyzer."""
 
@@ -75,46 +83,64 @@ class DistAnalyzer(Analyzer):
         density = config.density
         range_list = config.range
 
-        # Extract data array
-        if hasattr(data, "data"):
+        # Extract data array. Some array-like objects (e.g. TrajectorySet) wrap
+        # the actual array in a ``.data`` attribute. NumPy/CuPy arrays also
+        # expose a ``.data`` attribute, but it is a memoryview/MemoryPointer,
+        # not an array. If ``data`` itself is already array-like (has ndim),
+        # use it directly; otherwise unwrap ``data.data``.
+        if hasattr(data, "ndim") and hasattr(data, "shape"):
+            data_arr = data
+        elif hasattr(data, "data") and hasattr(data.data, "ndim") and hasattr(data.data, "shape"):
             data_arr = data.data
         else:
             data_arr = data
 
-        # Convert to numpy for histogram (CPU-bound, numpy is good enough)
-        # If data is on GPU, we might want to use backend specific histogram
-        # For now, let's pull to CPU to be safe and consistent
-        data_np = convert_to_numpy(data_arr)
+        # Use backend-native histogram when available to avoid pulling the full
+        # trajectory to CPU on GPU backends. Fall back to numpy for backends that
+        # do not implement histogram/histogram2d.
+        use_backend_hist = hasattr(backend, "histogram") and hasattr(
+            backend, "histogram2d"
+        )
+
+        if not use_backend_hist:
+            data_np = convert_to_numpy(data_arr)
 
         results = {}
 
         for i, m in enumerate(modes):
             # Flatten trajectories and time
-            # data_np shape: (n_traj, n_time, n_modes)
-            samples = data_np[:, :, m].flatten()
+            # data shape: (n_traj, n_time, n_modes)
+            if use_backend_hist:
+                samples = data_arr[:, :, m].reshape(-1)
+            else:
+                samples = data_np[:, :, m].flatten()
 
-            # Handle complex data: separate real and imag or magnitude?
-            # Usually phase space is Re vs Im.
-            # But here we are doing 1D distribution of the complex value?
-            # Or 2D distribution of Re/Im?
-            # Let's assume 2D distribution of Re/Im for complex modes
-
-            if _np.iscomplexobj(samples):
+            is_complex = _is_complex(samples) if use_backend_hist else _np.iscomplexobj(samples)
+            if is_complex:
                 # 2D Histogram
-                x = samples.real
-                y = samples.imag
+                if use_backend_hist:
+                    x = backend.real(samples)
+                    y = backend.imag(samples)
+                else:
+                    x = samples.real
+                    y = samples.imag
 
                 hist_range_2d: list[tuple[float, float]] | None = None
                 if range_list and i < len(range_list):
-                    # Expecting [[xmin, xmax], [ymin, ymax]] for this mode?
-                    # Or just [min, max] for both?
-                    # Let's simplify: range_list[i] is [min, max] for both axes
                     r = cast(tuple[float, float], tuple(range_list[i]))
                     hist_range_2d = [r, r]
 
-                H, xedges, yedges = _np.histogram2d(
-                    x, y, bins=bins, range=hist_range_2d, density=density
-                )
+                if use_backend_hist:
+                    H, xedges, yedges = backend.histogram2d(
+                        x, y, bins=bins, range=hist_range_2d, density=density
+                    )
+                    H = convert_to_numpy(H)
+                    xedges = convert_to_numpy(xedges)
+                    yedges = convert_to_numpy(yedges)
+                else:
+                    H, xedges, yedges = _np.histogram2d(
+                        x, y, bins=bins, range=hist_range_2d, density=density
+                    )
                 results[m] = {
                     "hist": H,
                     "xedges": xedges,
@@ -127,9 +153,16 @@ class DistAnalyzer(Analyzer):
                 if range_list and i < len(range_list):
                     hist_range_1d = cast(tuple[float, float], tuple(range_list[i]))
 
-                H, edges = _np.histogram(
-                    samples, bins=bins, range=hist_range_1d, density=density
-                )
+                if use_backend_hist:
+                    H, edges = backend.histogram(
+                        samples, bins=bins, range=hist_range_1d, density=density
+                    )
+                    H = convert_to_numpy(H)
+                    edges = convert_to_numpy(edges)
+                else:
+                    H, edges = _np.histogram(
+                        samples, bins=bins, range=hist_range_1d, density=density
+                    )
                 results[m] = {"hist": H, "edges": edges, "type": "1d_real"}
 
         result_dict = {

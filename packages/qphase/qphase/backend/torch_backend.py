@@ -368,6 +368,91 @@ class TorchBackend(Backend):
             return torch.arange(0, start, step, dtype=td, device=self.device())
         return torch.arange(start, stop, step, dtype=td, device=self.device())
 
+    # Additional math / stats helpers
+    def matmul(self, a: Any, b: Any) -> Any:
+        import torch as torch
+
+        return torch.matmul(a, b)
+
+    def tensordot(self, a: Any, b: Any, axes: int | tuple[Any, ...] | None = None) -> Any:
+        import torch as torch
+
+        return torch.tensordot(a, b, dims=axes if axes is not None else 2)
+
+    def std(self, x: Any, axis: int | tuple[int, ...] | None = None) -> Any:
+        import torch as torch
+
+        return torch.std(x, dim=axis)
+
+    def clip(self, x: Any, a_min: Any | None, a_max: Any | None) -> Any:
+        import torch as torch
+
+        if a_min is None and a_max is None:
+            return x
+        if a_min is None:
+            return torch.clamp(x, max=a_max)
+        if a_max is None:
+            return torch.clamp(x, min=a_min)
+        return torch.clamp(x, min=a_min, max=a_max)
+
+    def where(self, condition: Any, x: Any, y: Any) -> Any:
+        import torch as torch
+
+        return torch.where(condition, x, y)
+
+    def sqrt(self, x: Any) -> Any:
+        import torch as torch
+
+        return torch.sqrt(x)
+
+    def histogram(
+        self,
+        x: Any,
+        bins: int,
+        range: tuple[float, float] | None = None,
+        density: bool = False,
+    ) -> tuple[Any, Any]:
+        import torch as torch
+
+        if range is None:
+            min_v = torch.min(x).item()
+            max_v = torch.max(x).item()
+            range = (float(min_v), float(max_v))
+        hist = torch.histc(x, bins=bins, min=range[0], max=range[1])
+        bin_edges = torch.linspace(range[0], range[1], bins + 1, device=x.device)
+        if density:
+            total = hist.sum()
+            if total > 0:
+                hist = hist / (total * (range[1] - range[0]) / bins)
+        return hist, bin_edges
+
+    def histogram2d(
+        self,
+        x: Any,
+        y: Any,
+        bins: int,
+        range: Any | None = None,
+        density: bool = False,
+    ) -> tuple[Any, Any, Any]:
+        # Fallback to numpy for 2D histogram; torch has no native histogram2d
+        import numpy as np
+        import torch as torch
+
+        x_np = x.detach().cpu().numpy() if hasattr(x, "detach") else np.asarray(x)
+        y_np = y.detach().cpu().numpy() if hasattr(y, "detach") else np.asarray(y)
+        H, xedges, yedges = np.histogram2d(x_np, y_np, bins=bins, range=range, density=density)
+        device = x.device if hasattr(x, "device") else "cpu"
+        return (
+            torch.as_tensor(H, device=device),
+            torch.as_tensor(xedges, device=device),
+            torch.as_tensor(yedges, device=device),
+        )
+
+    def fftshift(self, x: Any, axes: int | tuple[int, ...] | None = None) -> Any:
+        import torch as torch
+
+        return torch.fft.fftshift(x, dim=axes)
+
     @property
     def pi(self) -> float:
         import numpy as np

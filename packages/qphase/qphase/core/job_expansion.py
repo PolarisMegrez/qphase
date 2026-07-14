@@ -88,9 +88,27 @@ class JobExpander:
                         param_path = f"engine.{engine_name}.{param_name}"
                         scanable_params[param_path] = value
 
-        # Check other plugin types
+        # Check other plugin types (both the structured plugins dict and the
+        # top-level plugin sections stored as model extras by JobConfig).
+        plugin_keys = [
+            "backend",
+            "integrator",
+            "model",
+            "analyser",
+            "visualizer",
+            "analyzer",
+        ]
+
+        plugin_sources = []
         if job.plugins:
-            for plugin_type, plugin_config in job.plugins.items():
+            plugin_sources.append(job.plugins)
+        job_extra = getattr(job, "model_extra", None) or {}
+        for key in plugin_keys:
+            if key in job_extra and isinstance(job_extra[key], dict):
+                plugin_sources.append({key: job_extra[key]})
+
+        for plugin_source in plugin_sources:
+            for plugin_type, plugin_config in plugin_source.items():
                 if isinstance(plugin_config, dict):
                     for plugin_name, config in plugin_config.items():
                         scanable_info = self.registry.get_scanable_params(

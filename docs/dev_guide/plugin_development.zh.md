@@ -173,3 +173,60 @@ analyser.my_analyser: "plugins.my_analysis:MyAnalyser"
 "model.my_model" = "my_package.models:MyModel"
 "analyser.my_analyser" = "my_package.analysis:MyAnalyser"
 ```
+
+## 可选：CuPy 核函数化的漂移与扩散项
+
+对于那些每个时间步都需要多次求值的模型，你可以提供一个可选的**融合漂移+扩散核函数**。当活动后端为 CuPy 时，SDE 积分器会自动使用该核函数；如果核函数不可用或后端不是 CuPy，积分器会回退到标准的 `drift`/`diffusion` 方法。
+
+### 协议
+
+在模型类中添加两个可选方法：
+
+```python
+def has_kernelized_terms(self, backend: BackendBase) -> bool:
+    """当 *backend* 有可用的融合核函数时返回 True。"""
+    return str(backend.backend_name()).lower() == "cupy"
+
+def kernelized_terms(
+    self, y: Any, t: float, params: dict[str, Any], backend: BackendBase
+) -> tuple[Any, Any]:
+    """一次性返回整个集合体的 (drift, diffusion)。"""
+    ...
+```
+
+* `has_kernelized_terms` 应当保持保守：除非核函数已在该后端上测试通过，否则返回 `False`。
+* `kernelized_terms` 接收完整的状态集合体 `y`，形状为 `(n_traj, n_modes)`，以及模型参数。它必须返回与 `drift()` 和 `diffusion()` 形状相同的漂移和扩散张量。
+* 参数可能是标量或逐轨迹数组（用于批量扫描），因此核函数包装代码必须先将它们广播到形状 `(n_traj,)` 再启动 kernel。
+
+### 复用核函数缓存
+
+`qphase_sde.kernels.compile_cached_kernel` 会按名称、数据类型和源码哈希编译并缓存 CuPy `RawKernel`，因此调度器的重复运行不会重复编译。
+
+```python
+from qphase_sde.kernels import compile_cached_kernel
+
+def kernelized_terms(self, y, t, params, backend):
+    import cupy as cp
+    import numpy as np
+
+    n = y.shape[0]
+    rdtype = y.real.dtype
+    if rdtype == np.float32:
+        source = _MY_SOURCE.replace("$T$", "float").replace("$CT$", "float2")
+        ctype = "complex<float>"
+    else:
+        source = _MY_SOURCE.replace("$T$", "double").replace("$CT$", "double2")
+        ctype = "complex<double>"
+
+    kernel = compile_cached_kernel("my_model_terms", ctype, source)
+
+    # 将标量参数广播为逐轨迹数组。
+    p = cp.full((n,), float(params["kappa"]), dtype=cp.float64)
+
+    drift = cp.empty_like(y)
+    diffusion = cp.zeros((n, n_modes, n_noise), dtype=y.dtype)
+    kernel((blocks,), (threads,), (y, p, n, drift, diffusion))
+    return drift, diffusion
+```
+
+建议将核函数源码放在模型文件所在的模块或相邻模块中，使模型文件自包含。完整示例请参阅 `models/vdp_2mode.py` 和 `models/_cupy_vdp_2mode.py`。

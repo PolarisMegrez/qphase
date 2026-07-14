@@ -102,7 +102,7 @@ engine:
 # 2. Choose the Physics Model
 # (Here we use a built-in example model)
 model:
-  vdp_level3:  # Built-in Van der Pol oscillator
+  vdp_2mode:  # Built-in Van der Pol oscillator
     omega_a: 1.0
     omega_b: 1.0
     gamma_a: 0.1

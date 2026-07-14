@@ -18,7 +18,7 @@ To ensure modularity and prevent naming collisions, plugins are segregated into 
 |-----------|-------------|---------|
 | `backend` | Computational backends | `numpy`, `torch` |
 | `engine`  | Simulation engines | `sde`, `viz` |
-| `model`   | Physical models | `kerr_3pa`, `vdp_level3` |
+| `model`   | Physical models | `kerr_3pa`, `vdp_2mode` |
 | `integrator`| Numerical integrators | `euler_maruyama`, `srk` |
 | `analyser`| Result analysis tools | `mean_photon`, `wigner` |
 

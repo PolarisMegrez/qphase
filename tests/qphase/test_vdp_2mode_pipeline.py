@@ -3,7 +3,7 @@
 This test exercises the full scheduler workflow introduced by the refactor:
 
 * CPU-only ``backend.numpy`` + ``integrator.srk`` (Heun).
-* ``model.vdp_level3`` with a parameter scan on ``omega_a``.
+* ``model.vdp_2mode`` with a parameter scan on ``omega_a``.
 * Multiple analyzers on the same simulation job: ``psd``, ``dist``, ``pdist``.
 * Two downstream analyze-mode jobs using ``analyser.lorentz_fitter`` for modes 0
   and 1, including ``export_dist`` outputs.

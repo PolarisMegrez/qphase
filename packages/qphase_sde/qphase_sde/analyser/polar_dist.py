@@ -83,25 +83,37 @@ class PolarDistAnalyzer(Analyzer):
         density = config.density
         range_list = config.range
 
-        # Extract data array
-        if hasattr(data, "data"):
+        # Extract data array. Some array-like objects (e.g. TrajectorySet) wrap
+        # the actual array in a ``.data`` attribute. NumPy/CuPy arrays also
+        # expose a ``.data`` attribute, but it is a memoryview/MemoryPointer,
+        # not an array. If ``data`` itself is already array-like (has ndim),
+        # use it directly; otherwise unwrap ``data.data``.
+        if hasattr(data, "ndim") and hasattr(data, "shape"):
+            data_arr = data
+        elif hasattr(data, "data") and hasattr(data.data, "ndim") and hasattr(data.data, "shape"):
             data_arr = data.data
         else:
             data_arr = data
 
-        # Convert to numpy for histogram and stats
-        data_np = convert_to_numpy(data_arr)
+        # Use backend-native histogram/std when available to avoid pulling the
+        # full trajectory to CPU on GPU backends.
+        use_backend = hasattr(backend, "histogram") and hasattr(backend, "std")
+
+        if not use_backend:
+            data_np = convert_to_numpy(data_arr)
 
         results = {}
 
         for i, m in enumerate(modes):
             # Extract mode data
-            # data_np shape: (n_traj, n_time, n_modes)
+            # data shape: (n_traj, n_time, n_modes)
             # Flatten to 1D array of samples
-            raw_samples = data_np[:, :, m].flatten()
-
-            # Calculate Magnitude (r)
-            samples = np.abs(raw_samples)
+            if use_backend:
+                raw_samples = data_arr[:, :, m].reshape(-1)
+                samples = backend.abs(raw_samples)
+            else:
+                raw_samples = data_np[:, :, m].flatten()
+                samples = np.abs(raw_samples)
 
             # Determine range
             curr_range = None
@@ -110,20 +122,31 @@ class PolarDistAnalyzer(Analyzer):
 
             # Calculate Histogram
             # bins can be int or string (e.g., 'auto')
-            H, edges = np.histogram(
-                samples, bins=bins, range=curr_range, density=density
-            )
+            if use_backend:
+                H, edges = backend.histogram(
+                    samples, bins=bins, range=curr_range, density=density
+                )
+                edges_np = convert_to_numpy(edges)
+                H_np = convert_to_numpy(H)
+            else:
+                H_np, edges_np = np.histogram(
+                    samples, bins=bins, range=curr_range, density=density
+                )
 
             # Calculate Bin Centers for peak finding
-            bin_centers = (edges[:-1] + edges[1:]) / 2
+            bin_centers = (edges_np[:-1] + edges_np[1:]) / 2
 
-            # Calculate Mean of the variable
-            mean_val = np.mean(samples)
-            std_val = np.std(samples)
+            # Calculate Mean / Std of the variable
+            if use_backend:
+                mean_val = float(convert_to_numpy(backend.mean(samples)))
+                std_val = float(convert_to_numpy(backend.std(samples)))
+            else:
+                mean_val = float(np.mean(samples))
+                std_val = float(np.std(samples))
 
             mode_result = {
-                "hist": H,
-                "edges": edges,
+                "hist": H_np,
+                "edges": edges_np,
                 "bin_centers": bin_centers,
                 "mean": mean_val,
                 "std": std_val,

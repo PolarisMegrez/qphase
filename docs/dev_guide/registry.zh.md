@@ -18,7 +18,7 @@ description: 注册表系统
 |-----------|-------------|---------|
 | `backend` | 计算后端 | `numpy`、`torch` |
 | `engine`  | 仿真引擎 | `sde`、`viz` |
-| `model`   | 物理模型 | `kerr_3pa`、`vdp_level3` |
+| `model`   | 物理模型 | `kerr_3pa`、`vdp_2mode` |
 | `integrator`| 数值积分器 | `euler_maruyama`、`srk` |
 | `analyser`| 结果分析工具 | `mean_photon`、`wigner` |
 

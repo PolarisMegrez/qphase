@@ -22,10 +22,14 @@ All numerical solvers consumed by the SDE engine implement the
 The generic stochastic Runge-Kutta solver (`integrator.srk`) supports multiple
 schemes and adaptive stepping.
 
-| Method | Order | Interpretation | Typical use |
-| :-- | :-- | :-- | :-- |
-| `euler` | Strong 0.5, Weak 1.0 | Ito | Additive noise, speed over accuracy. |
-| `heun` | Strong 1.0 (approx), Weak 2.0 | Stratonovich | Multiplicative noise. |
+| Method | Order | Interpretation | Evaluations per step | Typical use |
+| :-- | :-- | :-- | :-- | :-- |
+| `euler` | Strong 0.5, Weak 1.0 | Ito | 1 | Additive noise, speed over accuracy. |
+| `heun` | Strong 1.0 (approx), Weak 2.0 | Stratonovich | 2 | Multiplicative noise. |
+
+The standalone `integrator.euler_maruyama` plugin provides the same `euler`
+scheme with identical numerical behavior; it is often used when you want a
+dedicated integrator namespace rather than the generic SRK dispatcher.
 
 Enable adaptive stepping by providing a tolerance:
 

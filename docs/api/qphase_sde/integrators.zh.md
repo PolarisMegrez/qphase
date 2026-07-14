@@ -48,10 +48,19 @@ class Integrator(Protocol):
 ```yaml
 integrator:
   srk:
-    method: heun   # 或其他支持的方法
+    method: heun   # 或 euler
 ```
 
-支持的 `method` 值包括 `heun` 与 `qphase_sde` 内置的其他 SRK 变体。引擎在每个积分区间调用 `GenericSRK.step(...)`。
+### 方法对比
+
+| 方法 | 强收敛阶 | 随机解释 | 每步求值次数 | 适用场景 |
+| :-- | :-- | :-- | :-- | :-- |
+| `euler` | 0.5 | Itô | 1 | 加性噪声、速度优先。 |
+| `heun` | ~1.0 | Stratonovich | 2 | 乘性噪声、中等精度。 |
+
+独立的 `integrator.euler_maruyama` 插件提供与 SRK `euler` 方法相同的数值行为，适用于希望使用专用积分器命名空间而不是通用 SRK 分派器的场景。
+
+引擎在每个积分区间调用 `GenericSRK.step(...)`。
 
 ## 注册自定义积分器
 

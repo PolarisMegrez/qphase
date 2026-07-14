@@ -16,7 +16,7 @@ The easiest way to create a new configuration is to use the CLI to generate a te
 
 ```bash
 # Generate a template for a specific model
-qphase template model.vdp_level3 > configs/jobs/my_new_job.yaml
+qphase template model.vdp_2mode > configs/jobs/my_new_job.yaml
 ```
 
 This file can then be edited to suit specific requirements.
@@ -29,7 +29,7 @@ For example:
 
 ```yaml
 model:
-  vdp_level3:   # This matches the plugin ID "model.vdp_level3"
+  vdp_2mode:   # This matches the plugin ID "model.vdp_2mode"
     omega_a: 1.0  # These arguments are passed to the plugin's __init__ method
     omega_b: 1.0
     gamma_a: 0.1
@@ -67,7 +67,7 @@ When using the SDE engine (`qphase-sde`), the following top-level keys are avail
 
 | Field | Description |
 | :--- | :--- |
-| `model` | Configuration for the physical model plugin (e.g., `vdp_level3`, `kerr_3pa`). Defines the drift and diffusion terms. |
+| `model` | Configuration for the physical model plugin (e.g., `vdp_2mode`, `kerr_3pa`). Defines the drift and diffusion terms. |
 | `backend` | Configuration for the computational backend plugin (e.g., `numpy`, `torch`). Defines how arrays are handled. |
 | `integrator` | Configuration for the SDE integrator plugin (e.g., `euler_maruyama`, `milstein`). Defines the numerical stepping scheme. |
 

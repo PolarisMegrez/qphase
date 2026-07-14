@@ -137,14 +137,14 @@ qphase show [PLUGIN_ID]... [OPTIONS]
 ```
 
 *   **Arguments**:
-    *   `PLUGIN_ID`: One or more plugin identifiers in `namespace.name` format (e.g., `model.vdp_level3`).
+    *   `PLUGIN_ID`: One or more plugin identifiers in `namespace.name` format (e.g., `model.vdp_2mode`).
 *   **Options**:
     *   `--verbose` / `-v`: Show additional metadata (e.g., file path, package version).
 
 **Example**:
 
 ```bash
-qphase show model.vdp_level3
+qphase show model.vdp_2mode
 qphase show backend.numpy --verbose
 ```
 
@@ -166,10 +166,10 @@ qphase template [PLUGIN_ID]... [OPTIONS]
 
 ```bash
 # Print YAML template to console
-qphase template model.vdp_level3
+qphase template model.vdp_2mode
 
 # Save to file
-qphase template model.vdp_level3 --output my_config.yaml
+qphase template model.vdp_2mode --output my_config.yaml
 ```
 
 ---

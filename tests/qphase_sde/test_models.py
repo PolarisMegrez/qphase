@@ -44,9 +44,9 @@ def test_kerr_3mode_model():
     assert sde.name == "kerr_3mode"
 
 
-def test_vdp_level3_model():
+def test_vdp_2mode_model():
     """The Van der Pol level-3 model can be imported and instantiated."""
-    from models.vdp_level3 import VDPLevel3Model
+    from models.vdp_2mode import VDPLevel3Model
 
     model = VDPLevel3Model(
         omega_a=1.0,
@@ -57,8 +57,8 @@ def test_vdp_level3_model():
         g=0.5,
         D=1.0,
     )
-    assert model.name == "vdp_level3"
+    assert model.name == "vdp_2mode"
     assert model.n_modes == 2
     assert model.noise_dim == 4
     sde = model.to_diffusive_sde_model()
-    assert sde.name == "vdp_level3"
+    assert sde.name == "vdp_2mode"

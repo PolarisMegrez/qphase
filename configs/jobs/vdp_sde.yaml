@@ -22,7 +22,7 @@ engine:
     save_stride: 1
 
 model:
-  vdp_level3:
+  vdp_2mode:
     omega_a: 1.005
     omega_b: 1.0
     gamma_a: 2.0

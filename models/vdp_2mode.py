@@ -1,4 +1,4 @@
-"""Van der Pol Oscillator - Level 3 (SDE Model) Plugin
+"""Van der Pol Oscillator (Itô SDE) Plugin
 -----------------------------------------------------
 Defines the VDP model directly as a DiffusiveSDEModel.
 Implemented as a QPhase Plugin.
@@ -6,41 +6,47 @@ Implemented as a QPhase Plugin.
 
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from qphase.backend.xputil import get_xp
 from qphase_sde.model import FunctionalSDEModel
 
 
 class VDPLevel3Config(BaseModel):
-    """Configuration for VDP Level 3 Model."""
+    """Configuration for VDP Level 3 Model.
 
-    omega_a: float = Field(
-        description="Frequency of mode a",
+    Fields accept a scalar or a one-dimensional array so that parameter scans
+    can be fused into a single batched simulation.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    omega_a: Any = Field(
+        description="Frequency of mode a (scalar or 1-D array)",
         json_schema_extra={"scanable": True},
     )
-    omega_b: float = Field(
-        description="Frequency of mode b",
+    omega_b: Any = Field(
+        description="Frequency of mode b (scalar or 1-D array)",
         json_schema_extra={"scanable": True},
     )
-    gamma_a: float = Field(
-        description="Damping rate of mode a",
+    gamma_a: Any = Field(
+        description="Damping rate of mode a (scalar or 1-D array)",
         json_schema_extra={"scanable": True},
     )
-    gamma_b: float = Field(
-        description="Damping rate of mode b",
+    gamma_b: Any = Field(
+        description="Damping rate of mode b (scalar or 1-D array)",
         json_schema_extra={"scanable": True},
     )
-    Gamma: float = Field(
-        description="Nonlinear gain coefficient",
+    Gamma: Any = Field(
+        description="Nonlinear gain coefficient (scalar or 1-D array)",
         json_schema_extra={"scanable": True},
     )
-    g: float = Field(
-        description="Coupling strength between modes",
+    g: Any = Field(
+        description="Coupling strength between modes (scalar or 1-D array)",
         json_schema_extra={"scanable": True},
     )
-    D: float = Field(
+    D: Any = Field(
         default=1.0,
-        description="Diffusion coefficient",
+        description="Diffusion coefficient (scalar or 1-D array)",
         json_schema_extra={"scanable": True},
     )
 
@@ -51,7 +57,7 @@ class VDPLevel3Model:
     This class implements the Plugin protocol and the SDEModel protocol.
     """
 
-    name: ClassVar[str] = "vdp_level3"
+    name: ClassVar[str] = "vdp_2mode"
     description: ClassVar[str] = "Van der Pol Oscillator (SDE Model)"
     config_schema: ClassVar[type[VDPLevel3Config]] = VDPLevel3Config
 
@@ -83,12 +89,21 @@ class VDPLevel3Model:
         alpha = y[:, 0]
         beta = y[:, 1]
 
-        omega_a = p["omega_a"]
-        omega_b = p["omega_b"]
-        gamma_a = p["gamma_a"]
-        gamma_b = p["gamma_b"]
-        Gamma = p["Gamma"]
-        g = p["g"]
+        # Convert array-like parameters to the active backend. This is required
+        # for batched parameter scans where the scheduler broadcasts scan values
+        # as NumPy arrays and the active backend may be CuPy.
+        def _param(name: str) -> Any:
+            val = p[name]
+            if hasattr(val, "__len__") and not isinstance(val, (str, bytes)):
+                return xp.asarray(val)
+            return val
+
+        omega_a = _param("omega_a")
+        omega_b = _param("omega_b")
+        gamma_a = _param("gamma_a")
+        gamma_b = _param("gamma_b")
+        Gamma = _param("Gamma")
+        g = _param("g")
 
         dalpha = (
             (-1j * omega_a) + (gamma_a / 2.0) + Gamma * (1.0 - xp.abs(alpha) ** 2)
@@ -104,10 +119,17 @@ class VDPLevel3Model:
         """Compute Diffusion Matrix."""
         xp = get_xp(y)
         alpha = y[:, 0]
-        gamma_a = p["gamma_a"]
-        gamma_b = p["gamma_b"]
-        Gamma = p["Gamma"]
-        D = p["D"]
+
+        def _param(name: str) -> Any:
+            val = p[name]
+            if hasattr(val, "__len__") and not isinstance(val, (str, bytes)):
+                return xp.asarray(val)
+            return val
+
+        gamma_a = _param("gamma_a")
+        gamma_b = _param("gamma_b")
+        Gamma = _param("Gamma")
+        D = _param("D")
 
         D_alpha = D * (gamma_a / 2.0 + Gamma * (2.0 * xp.abs(alpha) ** 2 - 1.0))
         D_beta = D * (gamma_b / 2.0)
@@ -136,6 +158,21 @@ class VDPLevel3Model:
         Lc[:, 1, 1] = xp.sqrt(D_beta)
 
         return Lc
+
+    def has_kernelized_terms(self, backend: Any) -> bool:
+        """Kernel path is available for the CuPy backend."""
+        try:
+            return str(backend.backend_name()).lower() == "cupy"
+        except Exception:
+            return False
+
+    def kernelized_terms(
+        self, y: Any, t: float, p: dict[str, Any], backend: Any
+    ) -> tuple[Any, Any]:
+        """Fused drift+diffusion kernel for CuPy."""
+        from ._cupy_vdp_2mode import kernelized_terms as _kernel
+
+        return _kernel(y, p, backend)
 
     def to_diffusive_sde_model(self) -> FunctionalSDEModel:
         """Convert to the standard FunctionalSDEModel dataclass."""

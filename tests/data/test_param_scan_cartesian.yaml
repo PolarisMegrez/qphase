@@ -20,7 +20,7 @@ integrator:
     dt: 0.01
 
 model:
-  vdp_level3:
+  vdp_2mode:
     omega_a: [0.9, 1.1]      # 2 values
     omega_b: 1.0
     gamma_a: [0.05, 0.1]     # 2 values
