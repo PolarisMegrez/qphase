@@ -17,6 +17,7 @@ from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
 
+from ..utils import resolve_mode_columns
 from .base import Analyzer
 from .result import AnalysisResult
 
@@ -79,6 +80,7 @@ class PolarDistAnalyzer(Analyzer):
         """
         config = cast(PolarDistAnalyzerConfig, self.config)
         modes = config.modes
+        mode_columns = resolve_mode_columns(data, modes)
         bins = config.bins
         density = config.density
         range_list = config.range
@@ -90,7 +92,11 @@ class PolarDistAnalyzer(Analyzer):
         # use it directly; otherwise unwrap ``data.data``.
         if hasattr(data, "ndim") and hasattr(data, "shape"):
             data_arr = data
-        elif hasattr(data, "data") and hasattr(data.data, "ndim") and hasattr(data.data, "shape"):
+        elif (
+            hasattr(data, "data")
+            and hasattr(data.data, "ndim")
+            and hasattr(data.data, "shape")
+        ):
             data_arr = data.data
         else:
             data_arr = data
@@ -104,15 +110,15 @@ class PolarDistAnalyzer(Analyzer):
 
         results = {}
 
-        for i, m in enumerate(modes):
+        for i, (m, column) in enumerate(zip(modes, mode_columns, strict=True)):
             # Extract mode data
             # data shape: (n_traj, n_time, n_modes)
             # Flatten to 1D array of samples
             if use_backend:
-                raw_samples = data_arr[:, :, m].reshape(-1)
+                raw_samples = data_arr[:, :, column].reshape(-1)
                 samples = backend.abs(raw_samples)
             else:
-                raw_samples = data_np[:, :, m].flatten()
+                raw_samples = data_np[:, :, column].flatten()
                 samples = np.abs(raw_samples)
 
             # Determine range

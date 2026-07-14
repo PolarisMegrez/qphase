@@ -151,6 +151,8 @@ void __vdp_2mode_cayley_chunk_func__(
     int n,
     const int* __restrict__ save_offsets,
     int n_saves,
+    const int* __restrict__ record_modes,
+    int n_record_modes,
     $CT$* __restrict__ final_state,
     $CT$* __restrict__ saved
 ) {
@@ -225,9 +227,13 @@ void __vdp_2mode_cayley_chunk_func__(
         beta = next_b;
 
         if (save_cursor < n_saves && step + 1 == save_offsets[save_cursor]) {
-            int save_base = (i * n_saves + save_cursor) * 2;
-            saved[save_base + 0] = alpha;
-            saved[save_base + 1] = beta;
+            int save_base = (
+                i * n_saves + save_cursor
+            ) * n_record_modes;
+            for (int mode_cursor = 0; mode_cursor < n_record_modes; ++mode_cursor) {
+                int mode = record_modes[mode_cursor];
+                saved[save_base + mode_cursor] = mode == 0 ? alpha : beta;
+            }
             ++save_cursor;
         }
     }
@@ -240,7 +246,7 @@ void __vdp_2mode_cayley_chunk_func__(
 _BUFFER_CACHE: dict[tuple[int, Any], Any] = {}
 _BUFFER_KEYS: list[tuple[int, Any]] = []
 _MAX_BUFFERS = 2
-_CHUNK_BUFFER_CACHE: dict[tuple[int, int, Any], tuple[Any, Any]] = {}
+_CHUNK_BUFFER_CACHE: dict[tuple[int, int, int, Any], tuple[Any, Any]] = {}
 
 
 def _get_buffer(n: int, dtype: Any) -> Any:
@@ -320,8 +326,10 @@ def fused_step_chunk(
     import cupy as cp
 
     n = int(y.shape[0])
-    if record_modes != (0, 1):
-        raise ValueError("VDP chunk kernel currently requires record_modes=(0, 1)")
+    if not record_modes or len(set(record_modes)) != len(record_modes):
+        raise ValueError("record_modes must be non-empty and unique")
+    if any(mode not in (0, 1) for mode in record_modes):
+        raise ValueError("VDP chunk record_modes must contain only 0 or 1")
     if tuple(noise.shape) != (n_steps, n, 4):
         raise ValueError(
             "VDP Cayley chunk noise must have shape "
@@ -347,12 +355,14 @@ def fused_step_chunk(
     ]
     d_w = cp.asarray(noise, dtype=rdtype)
     offsets = cp.asarray(save_offsets or (0,), dtype=cp.int32)
+    modes_device = cp.asarray(record_modes, dtype=cp.int32)
     n_saves = len(save_offsets)
-    key = (n, n_saves, y.dtype)
+    n_record_modes = len(record_modes)
+    key = (n, n_saves, n_record_modes, y.dtype)
     buffers = _CHUNK_BUFFER_CACHE.get(key)
     if buffers is None:
         final_state = cp.empty_like(y)
-        saved_storage = cp.empty((n, max(1, n_saves), 2), dtype=y.dtype)
+        saved_storage = cp.empty((n, max(1, n_saves), n_record_modes), dtype=y.dtype)
         _CHUNK_BUFFER_CACHE[key] = (final_state, saved_storage)
     else:
         final_state, saved_storage = buffers
@@ -371,6 +381,8 @@ def fused_step_chunk(
             n,
             offsets,
             n_saves,
+            modes_device,
+            n_record_modes,
             final_state,
             saved_storage,
         ),

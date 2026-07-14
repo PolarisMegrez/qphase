@@ -104,6 +104,9 @@ class SDEResult:
                 "dt": dt,
                 "meta": meta_arr,
                 "analysis": analysis_arr,
+                "trajectory_meta": np.array(
+                    getattr(self.trajectory, "meta", {}), dtype=object
+                ),
             }
 
             if data_to_save is not None:
@@ -138,17 +141,21 @@ class SDEResult:
                 dt = float(npz["dt"]) if "dt" in npz else 1.0
                 meta = npz["meta"].item() if "meta" in npz else {}
                 analysis = npz["analysis"].item() if "analysis" in npz else {}
+                trajectory_meta = (
+                    npz["trajectory_meta"].item() if "trajectory_meta" in npz else {}
+                )
 
                 traj = None
                 if data is not None:
                     # Construct a minimal object that mimics TrajectorySet
                     class MinimalTrajectory:
-                        def __init__(self, data, t0, dt):
+                        def __init__(self, data, t0, dt, meta):
                             self.data = data
                             self.t0 = t0
                             self.dt = dt
+                            self.meta = meta
 
-                    traj = MinimalTrajectory(data, t0, dt)
+                    traj = MinimalTrajectory(data, t0, dt, trajectory_meta)
 
                 return cls(trajectory=traj, meta=meta, analysis=analysis)
 

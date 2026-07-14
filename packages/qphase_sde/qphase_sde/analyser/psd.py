@@ -31,6 +31,7 @@ from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
 
+from ..utils import resolve_mode_columns
 from .base import Analyzer
 from .peak_finding import (
     RationalPeakFinderConfig,
@@ -147,6 +148,7 @@ class PsdAnalyzer(Analyzer):
             dt = float(data.dt)
 
         modes = config.modes
+        mode_columns = resolve_mode_columns(data, modes)
         kind = config.kind
         convention = config.convention
 
@@ -157,7 +159,11 @@ class PsdAnalyzer(Analyzer):
         # use it directly; otherwise unwrap ``data.data``.
         if hasattr(data, "ndim") and hasattr(data, "shape"):
             data_arr = data
-        elif hasattr(data, "data") and hasattr(data.data, "ndim") and hasattr(data.data, "shape"):
+        elif (
+            hasattr(data, "data")
+            and hasattr(data.data, "ndim")
+            and hasattr(data.data, "shape")
+        ):
             data_arr = data.data
         else:
             data_arr = data
@@ -171,7 +177,7 @@ class PsdAnalyzer(Analyzer):
 
         # Compute first to get axis
         axis0, P0 = self._compute_single(
-            data_arr[:, :, modes[0]],
+            data_arr[:, :, mode_columns[0]],
             dt,
             kind=kind,
             convention=convention,
@@ -185,9 +191,9 @@ class PsdAnalyzer(Analyzer):
             backend=backend,
         )
         P_list = [P0]
-        for m in modes[1:]:
+        for column in mode_columns[1:]:
             _, Pm = self._compute_single(
-                data_arr[:, :, m],
+                data_arr[:, :, column],
                 dt,
                 kind=kind,
                 convention=convention,

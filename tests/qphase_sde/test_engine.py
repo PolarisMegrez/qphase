@@ -1,7 +1,8 @@
 """Tests for SDE Engine."""
 
 import numpy as np
-from qphase.backend.numpy_backend import NumpyBackend
+import pytest
+from qphase.backend.numpy_backend import NumpyBackend, NumpyConfig
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.base import ChunkStepResult
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
@@ -22,6 +23,20 @@ class DummySDEModel:
     def diffusion(self, y, t, p):
         n = y.shape[0]
         return np.ones((n, 1, 1))
+
+
+class TwoModeModel:
+    name = "two_mode"
+    n_modes = 2
+    noise_basis = "real"
+    noise_dim = 2
+    params = {}
+
+    def drift(self, y, t, p):
+        return np.zeros_like(y)
+
+    def diffusion(self, y, t, p):
+        return np.zeros(y.shape[:-1] + (2, 2), dtype=y.dtype)
 
 
 def test_engine_initialization():
@@ -94,7 +109,7 @@ def test_engine_chunk_path_preserves_save_boundaries():
     engine = Engine(
         config=config,
         plugins={
-            "backend": NumpyBackend(),
+            "backend": NumpyBackend(NumpyConfig(float_dtype="float32")),
             "integrator": DummyChunkIntegrator(),
             "model": DummySDEModel(),
         },
@@ -111,3 +126,60 @@ def test_engine_chunk_path_preserves_save_boundaries():
 
     assert trajectory.data.shape == (2, 4, 1)
     np.testing.assert_allclose(trajectory.data[0, :, 0], [0.0, 0.3, 0.6, 0.9])
+
+
+def test_engine_records_selected_modes_in_state_dtype():
+    ic = np.array([[1.0 + 2.0j, 3.0 + 4.0j]], dtype=np.complex64)
+    config = EngineConfig(
+        dt=0.1,
+        t0=0.0,
+        t1=0.2,
+        n_traj=1,
+        seed=8,
+        ic=ic,
+        record_modes=[1],
+    )
+    engine = Engine(
+        config=config,
+        plugins={
+            "backend": NumpyBackend(NumpyConfig(float_dtype="float32")),
+            "integrator": EulerMaruyama(),
+            "model": TwoModeModel(),
+        },
+    )
+
+    trajectory = engine.run_sde(
+        model=TwoModeModel(),
+        ic=ic,
+        time={"t0": 0.0, "dt": 0.1, "steps": 2},
+        n_traj=1,
+        seed=8,
+    )
+
+    assert trajectory.data.shape == (1, 3, 1)
+    assert trajectory.data.dtype == np.complex64
+    assert trajectory.meta["mode_indices"] == [1]
+    np.testing.assert_allclose(trajectory.data[0, :, 0], 3.0 + 4.0j)
+
+
+@pytest.mark.parametrize("record_modes", [[0, 0], [2], [-1]])
+def test_engine_rejects_invalid_record_modes(record_modes):
+    config = EngineConfig(
+        dt=0.1,
+        t0=0.0,
+        t1=0.1,
+        n_traj=1,
+        ic=[[0.0, 0.0]],
+        record_modes=record_modes,
+    )
+    engine = Engine(config=config, plugins={"backend": NumpyBackend()})
+
+    with pytest.raises(ValueError, match="record_modes"):
+        engine.run_sde(
+            model=TwoModeModel(),
+            ic=[[0.0, 0.0]],
+            time={"t0": 0.0, "dt": 0.1, "steps": 1},
+            n_traj=1,
+            solver=EulerMaruyama(),
+            seed=9,
+        )

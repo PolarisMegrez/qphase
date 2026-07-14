@@ -174,3 +174,18 @@ def test_cayley_chunk_matches_repeated_fused_steps(model):
 
     cp.testing.assert_allclose(chunk.final_state, current, rtol=2e-5, atol=2e-6)
     cp.testing.assert_allclose(chunk.saved_states, expected, rtol=2e-5, atol=2e-6)
+
+    alpha_only = integrator.step_chunk(
+        y,
+        0.0,
+        0.1,
+        model,
+        noise,
+        backend,
+        n_steps=8,
+        save_offsets=save_offsets,
+        record_modes=(0,),
+    )
+    cp.testing.assert_allclose(
+        alpha_only.saved_states, expected[:, :, :1], rtol=2e-5, atol=2e-6
+    )

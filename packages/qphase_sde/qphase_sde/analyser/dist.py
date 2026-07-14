@@ -16,6 +16,7 @@ from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
 
+from ..utils import resolve_mode_columns
 from .base import Analyzer
 from .result import AnalysisResult
 
@@ -79,6 +80,7 @@ class DistAnalyzer(Analyzer):
         """
         config = cast(DistAnalyzerConfig, self.config)
         modes = config.modes
+        mode_columns = resolve_mode_columns(data, modes)
         bins = config.bins
         density = config.density
         range_list = config.range
@@ -90,7 +92,11 @@ class DistAnalyzer(Analyzer):
         # use it directly; otherwise unwrap ``data.data``.
         if hasattr(data, "ndim") and hasattr(data, "shape"):
             data_arr = data
-        elif hasattr(data, "data") and hasattr(data.data, "ndim") and hasattr(data.data, "shape"):
+        elif (
+            hasattr(data, "data")
+            and hasattr(data.data, "ndim")
+            and hasattr(data.data, "shape")
+        ):
             data_arr = data.data
         else:
             data_arr = data
@@ -107,15 +113,17 @@ class DistAnalyzer(Analyzer):
 
         results = {}
 
-        for i, m in enumerate(modes):
+        for i, (m, column) in enumerate(zip(modes, mode_columns, strict=True)):
             # Flatten trajectories and time
             # data shape: (n_traj, n_time, n_modes)
             if use_backend_hist:
-                samples = data_arr[:, :, m].reshape(-1)
+                samples = data_arr[:, :, column].reshape(-1)
             else:
-                samples = data_np[:, :, m].flatten()
+                samples = data_np[:, :, column].flatten()
 
-            is_complex = _is_complex(samples) if use_backend_hist else _np.iscomplexobj(samples)
+            is_complex = (
+                _is_complex(samples) if use_backend_hist else _np.iscomplexobj(samples)
+            )
             if is_complex:
                 # 2D Histogram
                 if use_backend_hist:

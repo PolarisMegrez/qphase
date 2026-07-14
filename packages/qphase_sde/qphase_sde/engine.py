@@ -120,6 +120,13 @@ class EngineConfig(BaseModel):
         json_schema_extra={"scanable": False},
     )
 
+    record_modes: list[int] | None = Field(
+        None,
+        min_length=1,
+        description="Physical mode indices to retain; None records every mode",
+        json_schema_extra={"scanable": False},
+    )
+
     mode: Literal["simulate", "analyze"] = Field(
         "simulate",
         description=(
@@ -487,6 +494,7 @@ class Engine(EngineBase):
                 # Preserve metadata before dropping trajectory
                 meta["t0"] = traj_set.t0
                 meta["dt"] = traj_set.dt
+                meta.update(traj_set.meta)
                 # Record reason for dropping
                 meta["drop_trajectory_reason"] = (
                     "analyzed" if analysis_results else "user_requested"
@@ -639,6 +647,9 @@ class Engine(EngineBase):
                 def _is_complex_recursive(obj):
                     if isinstance(obj, complex):
                         return True
+                    dtype = getattr(obj, "dtype", None)
+                    if getattr(dtype, "kind", None) == "c":
+                        return True
                     if isinstance(obj, list):
                         return any(_is_complex_recursive(x) for x in obj)
                     return False
@@ -689,9 +700,17 @@ class Engine(EngineBase):
 
         # Prepare output
         rs = max(1, int(return_stride))
+        if self.config is not None and self.config.record_modes is not None:
+            record_modes = tuple(int(mode) for mode in self.config.record_modes)
+            if len(set(record_modes)) != len(record_modes):
+                raise ValueError("record_modes must not contain duplicates")
+            if any(mode < 0 or mode >= model.n_modes for mode in record_modes):
+                raise ValueError(f"record_modes must be within 0..{model.n_modes - 1}")
+        else:
+            record_modes = tuple(range(model.n_modes))
         n_keep = (steps // rs) + 1
-        out = be.empty((n_traj, n_keep, model.n_modes), dtype=complex)
-        out[:, 0, :] = y
+        out = be.empty((n_traj, n_keep, len(record_modes)), dtype=y.dtype)
+        out[:, 0, :] = y[:, record_modes]
         keep_counter = 1
 
         # Progress tracking
@@ -778,7 +797,7 @@ class Engine(EngineBase):
                     be,
                     n_steps=n_chunk,
                     save_offsets=save_offsets,
-                    record_modes=tuple(range(model.n_modes)),
+                    record_modes=record_modes,
                 )
                 y = result.final_state
                 n_saved = len(save_offsets)
@@ -836,7 +855,7 @@ class Engine(EngineBase):
                         else:
                             y_interp[...] = y
 
-                        out[:, keep_counter, :] = y_interp
+                        out[:, keep_counter, :] = y_interp[:, record_modes]
                         keep_counter += 1
                         next_save_time += save_dt
                     finally:
@@ -879,4 +898,9 @@ class Engine(EngineBase):
                     except Exception:
                         pass
 
-        return TrajectorySet(data=out, t0=t0, dt=dt * rs, meta={})
+        return TrajectorySet(
+            data=out,
+            t0=t0,
+            dt=dt * rs,
+            meta={"mode_indices": list(record_modes)},
+        )
