@@ -160,6 +160,13 @@ def test_cupy_vs_numpy_psd_periodogram():
     np.testing.assert_allclose(axis_np, axis_cp, rtol=1e-6)
     np.testing.assert_allclose(P_np, P_cp, rtol=1e-4)
 
+    estimate_np = analyzer._estimate_single(signal, 0.1, backend=np_be)
+    estimate_cp = analyzer._estimate_single(
+        cp_be.asarray(signal), 0.1, backend=cp_be
+    )
+    np.testing.assert_allclose(estimate_np.std, estimate_cp.std, rtol=1e-4)
+    np.testing.assert_allclose(estimate_np.sem, estimate_cp.sem, rtol=1e-4)
+
 
 def test_cupy_dist_matches_numpy():
     """CuPy dist analyzer matches numpy reference."""

@@ -35,8 +35,9 @@ psd = archive["analysis"].item().get("psd")
 
 `psd` 分析器存储：
 
-*   `freq` — 角频率向量。
-*   `psd_<mode>` — 每个模式的 PSD 值。
+*   `axis` — 频率或角频率向量。
+*   `psd` — 每个模式的 PSD 均值。
+*   `psd_std` / `psd_sem` — 跨轨迹样本标准差和均值标准误。
 
 当分析器在不同参数值的多个任务中运行时，调度器可将其聚合成一张表，供 `lorentz_fitter` 分析器使用。
 
@@ -45,7 +46,7 @@ psd = archive["analysis"].item().get("psd")
 `lorentz_fitter` 根据 `export` 选项写入最多三种 artifacts：
 
 *   `fit_results.csv` — 每个扫描点一行，列说明参见 [分析器](./analyzers.zh.md)。
-*   `psd_merged.csv` — 拟合使用的合并 `(freq, psd, scan_param)` 表。
+*   `psd_merged.csv` — 合并 PSD 以及加权拟合使用的 `<scan_value>_sem` 列。
 *   `fit_results.npz` / `fit_results.pkl` — 相同数据的替代格式。
 
 ## 分布输出

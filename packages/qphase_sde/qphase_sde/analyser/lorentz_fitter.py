@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import Field
@@ -58,6 +58,13 @@ class LorentzFitterConfig(PluginConfigBase):
     max_linewidth: float | None = Field(
         None, description="Maximum allowed linewidth threshold"
     )
+    uncertainty: Literal["auto", "required", "off"] = Field(
+        "auto",
+        description=(
+            "Use PSD standard errors for weighted fitting when available; "
+            "required rejects legacy payloads and off performs an unweighted fit"
+        ),
+    )
     clip_by_std: bool = Field(
         False,
         description=(
@@ -91,10 +98,17 @@ class LorentzFitResult:
     """Lorentzian fit result for a single PSD trace."""
 
     center: float = float("nan")
+    center_std: float = float("nan")
     linewidth: float = float("nan")
+    linewidth_std: float = float("nan")
     base: float = float("nan")
+    base_std: float = float("nan")
+    amplitude_std: float = float("nan")
     peak_intensity: float = float("nan")
+    peak_intensity_std: float = float("nan")
     R2: float = float("nan")
+    reduced_chi2: float = float("nan")
+    uncertainty_source: str = "none"
     status: str = "failed"
     error: str = ""
     warning: str = ""
@@ -102,11 +116,18 @@ class LorentzFitResult:
     def as_dict(self) -> dict[str, Any]:
         return {
             "center": self.center,
+            "center_std": self.center_std,
             "linewidth": self.linewidth,
+            "linewidth_std": self.linewidth_std,
             "base": self.base,
+            "base_std": self.base_std,
             "amplitude": self.peak_intensity - self.base,
+            "amplitude_std": self.amplitude_std,
             "peak_intensity": self.peak_intensity,
+            "peak_intensity_std": self.peak_intensity_std,
             "R2": self.R2,
+            "reduced_chi2": self.reduced_chi2,
+            "uncertainty_source": self.uncertainty_source,
             "status": self.status,
             "error": self.error,
             "warning": self.warning,
@@ -171,20 +192,34 @@ def _apply_std_clip(
     If the clip would leave fewer than 4 samples, the original arrays are
     returned unchanged.
     """
+    mask = _std_clip_mask(x, y, sigma)
+    return x[mask], y[mask]
+
+
+def _std_clip_mask(x: np.ndarray, y: np.ndarray, sigma: float) -> np.ndarray:
+    """Return the clipping mask so PSD uncertainty can use identical rows."""
     mean, std = _squared_weighted_moments(x, y)
     if std <= 0.0:
-        return x, y
+        return np.ones(x.shape, dtype=bool)
 
     mask = np.abs(x - mean) <= sigma * std
     if int(np.count_nonzero(mask)) < 4:
-        return x, y
-    return x[mask], y[mask]
+        return np.ones(x.shape, dtype=bool)
+    return mask
+
+
+def _standard_deviation(variance: float) -> float:
+    """Convert a covariance diagonal element to a finite standard deviation."""
+    if not np.isfinite(variance) or variance < 0.0:
+        return float("nan")
+    return float(np.sqrt(variance))
 
 
 def fit_lorentzian(
     axis: np.ndarray,
     psd: np.ndarray,
     *,
+    psd_sigma: np.ndarray | None = None,
     fit_window: float | None = None,
     freq_min: float | None = None,
     freq_max: float | None = None,
@@ -195,6 +230,11 @@ def fit_lorentzian(
     clip_sigma: float = 10.0,
 ) -> LorentzFitResult:
     """Fit one PSD trace with a Lorentzian plus baseline.
+
+    ``psd_sigma`` supplies one standard error per PSD bin. When present, the fit
+    uses absolute weighted least squares and parameter uncertainties come from
+    the resulting covariance matrix. Without it, covariance is estimated from
+    the unweighted fit residuals for backward compatibility.
 
     Optional ``clip_by_std`` first tightens the frequency window around the
     squared-PSD-weighted center, which helps ignore distant long-tail bumps and
@@ -215,11 +255,21 @@ def fit_lorentzian(
         if x.size != y.size or x.size < 4:
             raise ValueError("axis and psd must have the same length >= 4")
 
+        sigma_values: np.ndarray | None = None
+        if psd_sigma is not None:
+            sigma_values = np.asarray(psd_sigma, dtype=float).reshape(-1)
+            if sigma_values.size != x.size:
+                raise ValueError("psd_sigma must have the same length as axis")
+
         finite = np.isfinite(x) & np.isfinite(y)
+        if sigma_values is not None:
+            finite &= np.isfinite(sigma_values) & (sigma_values > 0.0)
         x = x[finite]
         y = y[finite]
+        if sigma_values is not None:
+            sigma_values = sigma_values[finite]
         if x.size < 4:
-            raise ValueError("not enough finite samples for Lorentzian fit")
+            raise ValueError("not enough finite samples with positive uncertainty")
 
         if freq_min is not None or freq_max is not None:
             freq_mask = np.ones_like(x, dtype=bool)
@@ -229,6 +279,8 @@ def fit_lorentzian(
                 freq_mask &= x <= freq_max
             x = x[freq_mask]
             y = y[freq_mask]
+            if sigma_values is not None:
+                sigma_values = sigma_values[freq_mask]
             if x.size < 4:
                 raise ValueError(
                     "not enough samples in requested frequency range for fit"
@@ -245,10 +297,16 @@ def fit_lorentzian(
             if int(np.count_nonzero(window_mask)) >= 4:
                 x = x[window_mask]
                 y = y[window_mask]
+                if sigma_values is not None:
+                    sigma_values = sigma_values[window_mask]
                 peak_idx = int(np.argmax(y))
 
         if clip_by_std:
-            x, y = _apply_std_clip(x, y, clip_sigma)
+            clip_mask = _std_clip_mask(x, y, clip_sigma)
+            x = x[clip_mask]
+            y = y[clip_mask]
+            if sigma_values is not None:
+                sigma_values = sigma_values[clip_mask]
             if x.size < 4:
                 raise ValueError("not enough samples after std-based tail clipping")
             peak_idx = int(np.argmax(y))
@@ -259,7 +317,7 @@ def fit_lorentzian(
         amplitude_init = max(float(np.max(y) - np.min(y)), 1e-12)
         base_init = float(np.min(y))
 
-        popt, _ = curve_fit(
+        popt, pcov = curve_fit(
             _lorentzian_with_baseline,
             x,
             y,
@@ -268,6 +326,8 @@ def fit_lorentzian(
                 [float(np.min(x)), 1e-12, 0.0, -np.inf],
                 [float(np.max(x)), max(span, 1e-12), np.inf, np.inf],
             ),
+            sigma=sigma_values,
+            absolute_sigma=sigma_values is not None,
             maxfev=10000,
         )
 
@@ -279,6 +339,22 @@ def fit_lorentzian(
 
         linewidth = 2.0 * gamma
         peak_intensity = amplitude + base
+        center_std = _standard_deviation(float(pcov[0, 0]))
+        linewidth_std = 2.0 * _standard_deviation(float(pcov[1, 1]))
+        amplitude_std = _standard_deviation(float(pcov[2, 2]))
+        base_std = _standard_deviation(float(pcov[3, 3]))
+        peak_intensity_variance = float(
+            pcov[2, 2] + pcov[3, 3] + 2.0 * pcov[2, 3]
+        )
+        peak_intensity_std = _standard_deviation(peak_intensity_variance)
+
+        reduced_chi2 = float("nan")
+        uncertainty_source = "residual_covariance"
+        if sigma_values is not None:
+            dof = x.size - len(popt)
+            if dof > 0:
+                reduced_chi2 = float(np.sum(((y - fitted) / sigma_values) ** 2) / dof)
+            uncertainty_source = "psd_sem"
 
         reasons: list[str] = []
         if min_r2 is not None and r2 < min_r2:
@@ -311,16 +387,24 @@ def fit_lorentzian(
 
         return LorentzFitResult(
             center=center,
+            center_std=center_std,
             linewidth=linewidth,
+            linewidth_std=linewidth_std,
             base=base,
+            base_std=base_std,
+            amplitude_std=amplitude_std,
             peak_intensity=peak_intensity,
+            peak_intensity_std=peak_intensity_std,
             R2=r2,
+            reduced_chi2=reduced_chi2,
+            uncertainty_source=uncertainty_source,
             status=status,
             error=error,
             warning=warning,
         )
     except Exception as exc:
-        return LorentzFitResult(error=str(exc))
+        source = "psd_sem" if psd_sigma is not None else "residual_covariance"
+        return LorentzFitResult(error=str(exc), uncertainty_source=source)
 
 
 def extract_psd_trace(
@@ -337,19 +421,7 @@ def extract_psd_trace(
     axis = np.asarray(psd_payload["axis"], dtype=float).reshape(-1)
     psd_matrix = np.asarray(psd_payload["psd"], dtype=float)
     modes = list(psd_payload.get("modes", []))
-
-    if psd_matrix.ndim == 1:
-        trace = psd_matrix
-    else:
-        if mode in modes:
-            mode_index = modes.index(mode)
-        elif 0 <= mode < psd_matrix.shape[1]:
-            mode_index = mode
-        else:
-            raise QPhaseError(
-                f"Mode {mode} not found in {loaded.path}; available modes: {modes}"
-            )
-        trace = psd_matrix[:, mode_index]
+    trace = _extract_mode_column(psd_matrix, modes, mode, loaded.path, "psd")
 
     trace = np.asarray(trace, dtype=float).reshape(-1)
     if axis.size != trace.size:
@@ -358,6 +430,44 @@ def extract_psd_trace(
             f"{trace.size} in {loaded.path}"
         )
     return axis, trace, psd_payload
+
+
+def _extract_mode_column(
+    matrix: np.ndarray,
+    modes: list[int],
+    mode: int,
+    path: Path,
+    field: str,
+) -> np.ndarray:
+    """Extract a physical mode from a one- or two-dimensional PSD field."""
+    if matrix.ndim == 1:
+        return np.asarray(matrix, dtype=float).reshape(-1)
+    if matrix.ndim != 2:
+        raise QPhaseError(f"PSD field {field!r} in {path} must be 1-D or 2-D")
+
+    if mode in modes:
+        mode_index = modes.index(mode)
+    elif 0 <= mode < matrix.shape[1]:
+        mode_index = mode
+    else:
+        raise QPhaseError(f"Mode {mode} not found in {path}; available modes: {modes}")
+    return np.asarray(matrix[:, mode_index], dtype=float).reshape(-1)
+
+
+def _extract_psd_sigma(
+    payload: dict[str, Any], mode: int, path: Path
+) -> np.ndarray | None:
+    """Extract the standard error field advertised by a PSD payload."""
+    uncertainty = payload.get("uncertainty", {})
+    if not isinstance(uncertainty, dict):
+        uncertainty = {}
+    field = str(uncertainty.get("field", "psd_sem"))
+    if field not in payload:
+        return None
+
+    matrix = np.asarray(payload[field], dtype=float)
+    modes = list(payload.get("modes", []))
+    return _extract_mode_column(matrix, modes, mode, path, field)
 
 
 def _collect_distribution(
@@ -474,6 +584,7 @@ class LorentzFitter(Analyzer):
 
         fit_rows: list[dict[str, Any]] = []
         psd_columns: dict[str, np.ndarray] = {}
+        psd_sem_columns: dict[str, np.ndarray] = {}
         dist_rows: list[dict[str, Any]] = []
         pdist_rows: list[dict[str, Any]] = []
         reference_axis: np.ndarray | None = None
@@ -486,7 +597,7 @@ class LorentzFitter(Analyzer):
                 )
             scan_value = params[config.scan_param]
 
-            axis, trace, _ = extract_psd_trace(
+            axis, trace, payload = extract_psd_trace(
                 loaded, psd_key=config.psd_key, mode=config.mode
             )
             if reference_axis is None:
@@ -496,9 +607,27 @@ class LorentzFitter(Analyzer):
             ):
                 raise QPhaseError(f"PSD frequency axis differs in {loaded.path}")
 
+            psd_sigma: np.ndarray | None = None
+            if config.uncertainty != "off":
+                candidate = _extract_psd_sigma(payload, config.mode, loaded.path)
+                usable = (
+                    candidate is not None
+                    and candidate.size == axis.size
+                    and int(np.count_nonzero(np.isfinite(candidate) & (candidate > 0)))
+                    >= 4
+                )
+                if usable:
+                    psd_sigma = candidate
+                elif config.uncertainty == "required":
+                    raise QPhaseError(
+                        f"{loaded.path} has no usable PSD standard error for "
+                        f"mode {config.mode}"
+                    )
+
             fit_result = fit_lorentzian(
                 axis,
                 trace,
+                psd_sigma=psd_sigma,
                 fit_window=config.fit_window,
                 freq_min=config.freq_min,
                 freq_max=config.freq_max,
@@ -515,6 +644,8 @@ class LorentzFitter(Analyzer):
             }
             fit_rows.append(row)
             psd_columns[str(scan_value)] = trace
+            if psd_sigma is not None:
+                psd_sem_columns[str(scan_value)] = psd_sigma
 
             if config.export_dist:
                 _collect_distribution(
@@ -538,6 +669,14 @@ class LorentzFitter(Analyzer):
         psd_columns = dict(
             sorted(psd_columns.items(), key=lambda item: _sort_key(item[0]))
         )
+        psd_sem_columns = dict(
+            sorted(psd_sem_columns.items(), key=lambda item: _sort_key(item[0]))
+        )
+        merged_psd_columns: dict[str, np.ndarray] = {}
+        for label, values in psd_columns.items():
+            merged_psd_columns[label] = values
+            if label in psd_sem_columns:
+                merged_psd_columns[f"{label}_sem"] = psd_sem_columns[label]
 
         output_dir = self._resolve_output_dir(config)
         written: dict[str, Path] = {}
@@ -550,11 +689,18 @@ class LorentzFitter(Analyzer):
                     "job_name",
                     config.scan_param,
                     "center",
+                    "center_std",
                     "linewidth",
+                    "linewidth_std",
                     "base",
+                    "base_std",
                     "amplitude",
+                    "amplitude_std",
                     "peak_intensity",
+                    "peak_intensity_std",
                     "R2",
+                    "reduced_chi2",
+                    "uncertainty_source",
                     "status",
                     "error",
                     "warning",
@@ -565,7 +711,7 @@ class LorentzFitter(Analyzer):
 
             if "psd_merged.csv" in config.export and reference_axis is not None:
                 written["psd_merged"] = write_columns_csv(
-                    reference_axis, psd_columns, out / "psd_merged.csv"
+                    reference_axis, merged_psd_columns, out / "psd_merged.csv"
                 )
 
             if config.export_dist and dist_rows:
@@ -586,6 +732,7 @@ class LorentzFitter(Analyzer):
             data_dict={
                 "fit_rows": fit_rows,
                 "psd_columns": psd_columns,
+                "psd_sem_columns": psd_sem_columns,
                 "axis": reference_axis,
                 "written": {k: str(v) for k, v in written.items()},
             },

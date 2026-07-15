@@ -53,8 +53,8 @@ The scheduler will:
 
 | File | Produced by | Content |
 | :--- | :--- | :--- |
-| `fit_results.csv` | `lorentz_fitter` | One row per scan value with fitted Lorentzian parameters. |
-| `psd_merged.csv` | `lorentz_fitter` | Frequency axis plus one PSD column per scan value. |
+| `fit_results.csv` | `lorentz_fitter` | One row per scan value with fitted parameters and covariance-derived standard deviations. |
+| `psd_merged.csv` | `lorentz_fitter` | Frequency axis plus PSD and optional PSD SEM columns per scan value. |
 | `dist_merged.npz` | `lorentz_fitter` (optional) | Aggregated distribution payloads. |
 | `pdist_merged.pkl` | `lorentz_fitter` (optional) | Aggregated polar distribution payloads. |
 

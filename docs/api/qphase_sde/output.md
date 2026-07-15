@@ -35,8 +35,9 @@ psd = archive["analysis"].item().get("psd")
 
 The `psd` analyzer stores:
 
-*   `freq` — angular frequency vector.
-*   `psd_<mode>` — PSD values per mode.
+*   `axis` — frequency or angular-frequency vector.
+*   `psd` — mean PSD values per mode.
+*   `psd_std` / `psd_sem` — cross-trajectory sample standard deviation and standard error.
 
 When the analyzer runs in multiple jobs with different parameter values, the scheduler can aggregate them into a single table for the `lorentz_fitter` analyzer.
 
@@ -45,7 +46,7 @@ When the analyzer runs in multiple jobs with different parameter values, the sch
 `lorentz_fitter` writes up to three artifacts depending on `export`:
 
 *   `fit_results.csv` — one row per scan point with columns described in [Analyzers](./analyzers.md).
-*   `psd_merged.csv` — merged `(freq, psd, scan_param)` table used for fitting.
+*   `psd_merged.csv` — merged PSD table plus `<scan_value>_sem` columns used for weighted fitting.
 *   `fit_results.npz` / `fit_results.pkl` — same data in alternative formats.
 
 ## Distribution outputs

@@ -53,8 +53,8 @@ scheduler 会：
 
 | 文件 | 生成者 | 内容 |
 | :--- | :--- | :--- |
-| `fit_results.csv` | `lorentz_fitter` | 每个扫描值一行，包含拟合得到的 Lorentzian 参数。 |
-| `psd_merged.csv` | `lorentz_fitter` | 频率轴加上每个扫描值对应的 PSD 列。 |
+| `fit_results.csv` | `lorentz_fitter` | 每个扫描值一行，包含拟合参数及由协方差得到的标准差。 |
+| `psd_merged.csv` | `lorentz_fitter` | 频率轴加上每个扫描值对应的 PSD 与可选 PSD SEM 列。 |
 | `dist_merged.npz` | `lorentz_fitter`（可选） | 聚合后的 distribution payload。 |
 | `pdist_merged.pkl` | `lorentz_fitter`（可选） | 聚合后的极坐标 distribution payload。 |
 

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import csv
 import pickle
 from pathlib import Path
 
 import numpy as np
+import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.aggregation import QPHASE_BUNDLE_SCHEMA_VERSION
 from qphase.core.config import JobConfig, JobList
+from qphase.core.errors import QPhaseError
 from qphase.core.registry import discovery
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
@@ -36,6 +39,34 @@ def test_fit_lorentzian_recovers_synthetic_peak():
     assert np.isclose(result.center, 0.6)
     assert np.isclose(result.linewidth, 0.3)
     assert result.R2 > 0.999
+
+
+def test_fit_lorentzian_propagates_absolute_psd_uncertainty():
+    """Uniform PSD SEM scales every covariance-derived parameter uncertainty."""
+    rng = np.random.default_rng(17)
+    axis = np.linspace(-1.0, 2.0, 401)
+    expected = lorentzian_with_baseline(
+        axis, center=0.4, gamma=0.12, amplitude=1.7, base=0.08
+    )
+    sigma = np.full(axis.shape, 0.02)
+    psd = expected + rng.normal(0.0, sigma)
+
+    result = fit_lorentzian(axis, psd, psd_sigma=sigma)
+    doubled = fit_lorentzian(axis, psd, psd_sigma=2.0 * sigma)
+
+    assert result.status == "ok"
+    assert result.uncertainty_source == "psd_sem"
+    assert np.isfinite(result.reduced_chi2)
+    for field in (
+        "center_std",
+        "linewidth_std",
+        "base_std",
+        "amplitude_std",
+        "peak_intensity_std",
+    ):
+        value = getattr(result, field)
+        assert np.isfinite(value) and value > 0.0
+        assert np.isclose(getattr(doubled, field), 2.0 * value, rtol=1e-5)
 
 
 def test_fit_lorentzian_frequency_range(tmp_path):
@@ -143,6 +174,64 @@ def test_lorentz_fitter_analyze_directory(tmp_path):
     assert len(result.data_dict["fit_rows"]) == 2
     assert (output_dir / "fit_results.csv").exists()
     assert (output_dir / "psd_merged.csv").exists()
+    assert all(
+        row["uncertainty_source"] == "residual_covariance"
+        for row in result.data_dict["fit_rows"]
+    )
+
+
+def test_lorentz_fitter_transfers_psd_sem_to_csv(tmp_path):
+    """Aggregated PSD SEM weights the fit and remains auditable in CSV output."""
+    run_dir = _make_run_dir(tmp_path, with_uncertainty=True)
+    output_dir = tmp_path / "weighted_exports"
+    analyzer = LorentzFitter(
+        LorentzFitterConfig(
+            scan_param="epsilon",
+            mode=0,
+            uncertainty="required",
+            output_dir=str(output_dir),
+        )
+    )
+
+    result = analyzer.analyze(run_dir, backend=NumpyBackend())
+    assert isinstance(result, AnalysisResult)
+
+    for row in result.data_dict["fit_rows"]:
+        assert row["uncertainty_source"] == "psd_sem"
+        assert float(row["center_std"]) > 0.0
+        assert float(row["linewidth_std"]) > 0.0
+        assert float(row["amplitude_std"]) > 0.0
+        assert float(row["base_std"]) > 0.0
+        assert float(row["peak_intensity_std"]) > 0.0
+
+    with (output_dir / "fit_results.csv").open(newline="", encoding="utf-8") as handle:
+        headers = csv.DictReader(handle).fieldnames
+    assert headers is not None
+    assert {
+        "center_std",
+        "linewidth_std",
+        "amplitude_std",
+        "base_std",
+        "peak_intensity_std",
+        "uncertainty_source",
+    }.issubset(headers)
+
+    with (output_dir / "psd_merged.csv").open(newline="", encoding="utf-8") as handle:
+        headers = next(csv.reader(handle))
+    assert "0.1_sem" in headers
+    assert "0.2_sem" in headers
+
+
+def test_lorentz_fitter_can_require_psd_uncertainty(tmp_path):
+    """Required weighting rejects legacy PSD payloads without a SEM field."""
+    analyzer = LorentzFitter(
+        LorentzFitterConfig(
+            scan_param="epsilon", mode=0, uncertainty="required"
+        )
+    )
+
+    with pytest.raises(QPhaseError, match="no usable PSD standard error"):
+        analyzer.analyze(_make_run_dir(tmp_path), backend=NumpyBackend())
 
 
 def test_lorentz_fitter_engine_analyze_mode(tmp_path):
@@ -204,7 +293,7 @@ def test_export_dist_schema_version(tmp_path):
     assert len(pdist_bundle["rows"]) == len(pdist_rows)
 
 
-def _make_run_dir(tmp_path: Path) -> Path:
+def _make_run_dir(tmp_path: Path, *, with_uncertainty: bool = False) -> Path:
     run_dir = tmp_path / "run"
     axis = np.linspace(-2.0, 2.0, 201)
     for index, epsilon in enumerate([0.1, 0.2], start=1):
@@ -217,17 +306,25 @@ def _make_run_dir(tmp_path: Path) -> Path:
             amplitude=1.0 + epsilon,
             base=0.05,
         )
+        psd_payload = {
+            "axis": axis,
+            "psd": psd[:, None],
+            "modes": [0],
+            "kind": "complex",
+            "convention": "symmetric",
+        }
+        if with_uncertainty:
+            psd_payload["psd_sem"] = np.full((axis.size, 1), 0.01)
+            psd_payload["uncertainty"] = {
+                "kind": "standard_error",
+                "field": "psd_sem",
+                "independent_unit": "trajectory",
+                "n_independent": 100,
+            }
+
         result = SDEResult(
             meta={"params": {"epsilon": epsilon}},
-            analysis={
-                "psd": {
-                    "axis": axis,
-                    "psd": psd[:, None],
-                    "modes": [0],
-                    "kind": "complex",
-                    "convention": "symmetric",
-                }
-            },
+            analysis={"psd": psd_payload},
         )
         result.save(job_dir / f"job_{index:03d}.npz")
     return run_dir

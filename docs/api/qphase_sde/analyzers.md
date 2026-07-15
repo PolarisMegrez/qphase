@@ -40,12 +40,20 @@ f = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
 
 For a narrow peak, choose `save_stride` so the Nyquist frequency is well above the peak.
 
-### Output columns
+### Output payload
 
 The analyzer exports:
 
-*   `freq` — angular frequency.
-*   `psd_<mode>` — PSD values.
+*   `axis` — frequency or angular-frequency axis.
+*   `psd` — mean PSD for each requested mode.
+*   `psd_std` — sample standard deviation across trajectories (`ddof=1`).
+*   `psd_sem` — standard error of the mean, `psd_std / sqrt(n_traj)`.
+*   `uncertainty` — metadata identifying `psd_sem`, the independent unit, and sample count.
+
+For Welch and multitaper estimates, segments or tapers are averaged within each
+trajectory first. The uncertainty is then computed across trajectories, so
+correlated segments are not counted as independent samples. With one trajectory,
+`psd_std` and `psd_sem` contain `NaN` and uncertainty is marked unavailable.
 
 When `find_peaks: true`, metadata also includes detected peak positions and heights.
 
@@ -68,6 +76,7 @@ analyser:
   lorentz_fitter:
     scan_param: omega_a
     mode: 0
+    uncertainty: auto
     fit_window: [0.1, 0.2]
     freq_min: -0.1
     freq_max: 0.1
@@ -83,6 +92,7 @@ analyser:
 | :-- | :-- | :-- |
 | `scan_param` | `str` | Sweep parameter used to merge PSDs. |
 | `mode` | `int` | Mode index to fit. |
+| `uncertainty` | `auto \| required \| off` | `auto` uses `psd_sem` when available and falls back for legacy payloads; `required` rejects missing SEM; `off` ignores it. |
 | `fit_window` | `list[float] \| None` | Manual `[min, max]` frequency window. If `None`, the window is derived from `freq_min`/`freq_max` or peak search. |
 | `freq_min` / `freq_max` | `float \| None` | Optional global frequency bounds. |
 | `clip_by_std` | `bool` | Enable squared-PSD-weighted clipping to ignore distant tails. |
@@ -98,11 +108,18 @@ analyser:
 | :-- | :-- |
 | `scan_param` | Sweep value from `aggregate_input`. |
 | `center` | Lorentzian peak center (rad/s). |
+| `center_std` | Standard deviation of the fitted center. |
 | `linewidth` | Full width at half maximum (FWHM). |
+| `linewidth_std` | Propagated standard deviation of `2 * gamma`. |
 | `base` | Constant baseline. |
+| `base_std` | Standard deviation of the baseline. |
 | `amplitude` | Lorentzian amplitude. |
+| `amplitude_std` | Standard deviation of the amplitude. |
 | `peak_intensity` | `amplitude + base`. |
+| `peak_intensity_std` | Standard deviation including amplitude/base covariance. |
 | `R2` | Coefficient of determination. |
+| `reduced_chi2` | Reduced chi-square when fitting with `psd_sem`; otherwise `NaN`. |
+| `uncertainty_source` | `psd_sem` or the legacy `residual_covariance` fallback. |
 | `status` | `ok` or `failed`. |
 | `error` | Empty unless fitting failed. |
 | `warning` | Diagnostics, e.g. std/FWHM mismatch. |
@@ -112,3 +129,9 @@ analyser:
 PSD data often extends over a very wide frequency range determined by `dt`, while the peak is narrow. The analyzer computes the mean and standard deviation of the frequency axis weighted by `(PSD - min(PSD))^2`, then drops samples outside `mean ± clip_sigma * std`. This removes irrelevant tails while keeping the peak and enough nearby continuum for a stable baseline estimate.
 
 A warning is emitted when the squared-weighted `std` deviates from the Lorentzian expectation `std ≈ linewidth / 2` by more than a factor of 2, which can indicate multiple peaks or insufficient frequency resolution.
+
+With PSD uncertainty, `curve_fit` receives `sigma=psd_sem` and
+`absolute_sigma=True`. Parameter standard deviations come from the fit covariance
+matrix. This treats frequency bins as independent; windowing, leakage, and finite
+trajectory dynamics can correlate neighboring bins, so the reported values are a
+diagonal-covariance approximation rather than a complete spectral covariance model.

@@ -145,6 +145,72 @@ def test_multitaper_k_tapers_default():
     assert abs(abs(axis[peak_idx]) - 1.5) < 0.1
 
 
+def test_periodogram_reports_cross_trajectory_standard_error():
+    """PSD uncertainty uses the sample variance of independent trajectories."""
+    dt = 0.2
+    n_time = 32
+    t = np.arange(n_time) * dt
+    amplitudes = np.array([1.0, 1.5, 2.0, 3.0])[:, None]
+    values = amplitudes * np.exp(1j * 0.7 * t)[None, :]
+    data = TrajectorySet(data=values[:, :, None], t0=0.0, dt=dt)
+
+    result = PsdAnalyzer(
+        kind="complex", modes=[0], convention="pragmatic"
+    ).analyze(data, BACKEND)
+    payload = result.data_dict
+
+    trajectory_psd = np.abs(np.fft.fft(values, axis=-1)) ** 2
+    trajectory_psd *= dt / n_time
+    trajectory_psd = np.fft.fftshift(trajectory_psd, axes=-1)
+    expected_mean = np.mean(trajectory_psd, axis=0)
+    expected_std = np.std(trajectory_psd, axis=0, ddof=1)
+
+    np.testing.assert_allclose(payload["psd"][:, 0], expected_mean)
+    np.testing.assert_allclose(payload["psd_std"][:, 0], expected_std)
+    np.testing.assert_allclose(
+        payload["psd_sem"][:, 0], expected_std / np.sqrt(amplitudes.shape[0])
+    )
+    assert payload["uncertainty"]["independent_unit"] == "trajectory"
+    assert payload["uncertainty"]["n_independent"] == amplitudes.shape[0]
+
+
+@pytest.mark.parametrize("method", ["periodogram", "welch", "multitaper"])
+def test_psd_methods_report_sem_for_each_mode(method):
+    """Every PSD estimator exposes arrays aligned with the mean PSD."""
+    n_traj = 8
+    data = TrajectorySet(
+        data=_make_sine_data(n_traj=n_traj, n_time=256),
+        t0=0.0,
+        dt=0.1,
+    )
+    result = PsdAnalyzer(
+        kind="complex",
+        modes=[0],
+        method=method,
+        nperseg=64 if method == "welch" else None,
+    ).analyze(data, BACKEND)
+    payload = result.data_dict
+
+    assert payload["psd_std"].shape == payload["psd"].shape
+    assert payload["psd_sem"].shape == payload["psd"].shape
+    np.testing.assert_allclose(payload["psd_sem"], payload["psd_std"] / np.sqrt(n_traj))
+    assert np.all(payload["psd_std"] >= 0.0)
+
+
+def test_single_trajectory_marks_psd_uncertainty_unavailable():
+    """One trajectory has no cross-trajectory sample variance."""
+    data = TrajectorySet(
+        data=_make_sine_data(n_traj=1, n_time=128),
+        t0=0.0,
+        dt=0.1,
+    )
+    payload = PsdAnalyzer(kind="complex", modes=[0]).analyze(data, BACKEND).data_dict
+
+    assert np.all(np.isnan(payload["psd_std"]))
+    assert np.all(np.isnan(payload["psd_sem"]))
+    assert payload["uncertainty"]["available"] is False
+
+
 def test_psd_method_invalid():
     """An unsupported method is rejected at configuration time."""
     from pydantic import ValidationError

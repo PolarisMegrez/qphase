@@ -85,12 +85,12 @@ Cross-job postprocessing is implemented as a scheduler workflow using the
 consumes existing `analysis["psd"]` data and does not recompute PSD from
 trajectories. It writes:
 
-*   `fit_results.csv`: one row per scan value. Columns are `job_name`, the scan parameter, Lorentzian `center`, `linewidth`, `base`, `peak_intensity`, `R2`, `status`, and `error`. `status` is `ok`, `low_quality` (when a quality threshold is violated), or `failed`.
-*   `psd_merged.csv`: a frequency-indexed table with one PSD column per scan value.
+*   `fit_results.csv`: one row per scan value. Each Lorentzian parameter is paired with a `_std` column derived from the fit covariance; `uncertainty_source` records whether the fit used `psd_sem` or the legacy residual fallback. `status` is `ok`, `low_quality` (when a quality threshold is violated), or `failed`.
+*   `psd_merged.csv`: a frequency-indexed table with one PSD column per scan value and a `<scan_value>_sem` column when PSD standard errors are available.
 *   `dist_merged.npz` (experimental): written when `export_dist: true` is set. Keys are `dist_list`, `scan_params`, `__schema_version__`, and `__created_by__`.
 *   `pdist_merged.pkl` (experimental): written when `export_dist: true` is set. It is a pickled dict with `rows`, `__schema_version__`, and `__created_by__`.
 
-Common analyzer options include `output_dir`, `psd_key`, `fit_window`, `freq_min`, `freq_max`, `min_r2`, `min_peak_height`, `max_linewidth`, `export_dist`, `clip_by_std`, and `clip_sigma`. Set `clip_by_std: true` to first clip the frequency window to the squared-PSD-weighted mean ± `clip_sigma` standard deviations, which helps ignore distant long-tail bumps and speeds up fitting on wide grids.
+Common analyzer options include `output_dir`, `psd_key`, `fit_window`, `freq_min`, `freq_max`, `min_r2`, `min_peak_height`, `max_linewidth`, `uncertainty`, `export_dist`, `clip_by_std`, and `clip_sigma`. The default `uncertainty: auto` uses PSD standard errors when available while remaining compatible with older result files. Set `clip_by_std: true` to first clip the frequency window to the squared-PSD-weighted mean ± `clip_sigma` standard deviations, which helps ignore distant long-tail bumps and speeds up fitting on wide grids.
 
 For a Lorentzian, the squared-PSD-weighted standard deviation equals `linewidth / 2`. The default `clip_sigma: 10.0` therefore keeps approximately `±5 × FWHM` around the peak, which is wide enough to capture the line shape while still excluding very distant artifacts.
 

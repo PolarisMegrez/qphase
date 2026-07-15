@@ -40,12 +40,19 @@ f = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
 
 对于窄峰，应选择 `save_stride` 使 Nyquist 频率远高于峰值。
 
-### 输出列
+### 输出载荷
 
 分析器导出：
 
-*   `freq` — 角频率。
-*   `psd_<mode>` — PSD 值。
+*   `axis` — 频率或角频率轴。
+*   `psd` — 每个请求模式的 PSD 均值。
+*   `psd_std` — 跨轨迹样本标准差（`ddof=1`）。
+*   `psd_sem` — 均值标准误，即 `psd_std / sqrt(n_traj)`。
+*   `uncertainty` — 标识 `psd_sem`、独立统计单元和样本数的元数据。
+
+对于 Welch 和 multitaper，先在每条轨迹内部平均 segment 或 taper，再跨轨迹
+计算不确定度，因此不会把相关 segment 当成独立样本。只有一条轨迹时，
+`psd_std` 和 `psd_sem` 为 `NaN`，并标记不确定度不可用。
 
 当 `find_peaks: true` 时，元数据还包含检测到的峰位与高度。
 
@@ -68,6 +75,7 @@ analyser:
   lorentz_fitter:
     scan_param: omega_a
     mode: 0
+    uncertainty: auto
     fit_window: [0.1, 0.2]
     freq_min: -0.1
     freq_max: 0.1
@@ -83,6 +91,7 @@ analyser:
 | :-- | :-- | :-- |
 | `scan_param` | `str` | 用于合并 PSD 的扫描参数。 |
 | `mode` | `int` | 要拟合的模式索引。 |
+| `uncertainty` | `auto \| required \| off` | `auto` 优先使用 `psd_sem`，旧载荷自动回退；`required` 拒绝缺少 SEM 的载荷；`off` 忽略 SEM。 |
 | `fit_window` | `list[float] \| None` | 手动 `[min, max]` 频率窗口。为 `None` 时，窗口由 `freq_min`/`freq_max` 或寻峰结果推导。 |
 | `freq_min` / `freq_max` | `float \| None` | 可选的全局频率边界。 |
 | `clip_by_std` | `bool` | 启用基于平方 PSD 加权的裁剪，忽略远端尾部。 |
@@ -98,11 +107,18 @@ analyser:
 | :-- | :-- |
 | `scan_param` | 来自 `aggregate_input` 的扫描值。 |
 | `center` | Lorentz 峰中心（rad/s）。 |
+| `center_std` | 拟合峰中心的标准差。 |
 | `linewidth` | 半高全宽（FWHM）。 |
+| `linewidth_std` | `2 * gamma` 传播后的标准差。 |
 | `base` | 常数基线。 |
+| `base_std` | 基线标准差。 |
 | `amplitude` | Lorentz 振幅。 |
+| `amplitude_std` | 振幅标准差。 |
 | `peak_intensity` | `amplitude + base`。 |
+| `peak_intensity_std` | 包含 amplitude/base 协方差的标准差。 |
 | `R2` | 决定系数。 |
+| `reduced_chi2` | 使用 `psd_sem` 时的约化卡方；否则为 `NaN`。 |
+| `uncertainty_source` | `psd_sem` 或兼容旧结果的 `residual_covariance`。 |
 | `status` | `ok` 或 `failed`。 |
 | `error` | 拟合失败时的错误信息。 |
 | `warning` | 诊断信息，如 std/FWHM 不匹配。 |
@@ -112,3 +128,8 @@ analyser:
 PSD 数据通常覆盖由 `dt` 决定的很宽频率范围，而峰很窄。分析器用 `(PSD - min(PSD))^2` 作为权重计算频率轴的均值与标准差，然后丢弃 `mean ± clip_sigma * std` 之外的样本。这样可以去除无关尾部，同时保留峰及附近足够的连续谱，以估计稳定基线。
 
 当平方加权 `std` 偏离 Lorentz 期望 `std ≈ linewidth / 2` 超过 2 倍时，会发出警告，这可能意味着存在多峰或频率分辨率不足。
+
+存在 PSD 不确定度时，`curve_fit` 使用 `sigma=psd_sem` 和
+`absolute_sigma=True`，参数标准差来自拟合协方差矩阵。该计算把不同频点近似为
+独立样本；窗函数、频谱泄漏和有限轨迹动力学可能使相邻频点相关，因此这些标准差
+属于对角协方差近似，而不是完整的频谱协方差模型。

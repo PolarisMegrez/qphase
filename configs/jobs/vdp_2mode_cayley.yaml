@@ -57,6 +57,7 @@
     lorentz_fitter:
       scan_param: omega_a
       mode: 0
+      uncertainty: auto
       clip_by_std: true
       clip_sigma: 10.0
       export:

@@ -82,12 +82,12 @@ qphase run runs/2025-12-31.../vdp_sde/config_snapshot.yaml
 
 跨 job 后处理现在通过调度工作流实现，使用 `analyser.lorentz_fitter` 插件并配合 `engine.sde.mode: analyze`。该分析器消费已有的 `analysis["psd"]` 数据，不会从轨迹重新计算 PSD。默认写出：
 
-*   `fit_results.csv`：每个扫描值一行。列包括 `job_name`、扫描参数、Lorentz 拟合的 `center`、`linewidth`、`base`、`peak_intensity`、`R2`、`status` 和 `error`。`status` 可为 `ok`（满足质量阈值）、`low_quality`（满足阈值失败）或 `failed`（拟合失败）。
-*   `psd_merged.csv`：以频率为索引、每个扫描值一列的 PSD 表。
+*   `fit_results.csv`：每个扫描值一行。每个 Lorentz 参数都有对应的 `_std` 协方差标准差列；`uncertainty_source` 表明拟合使用了 `psd_sem` 还是兼容旧结果的残差回退。`status` 可为 `ok`（满足质量阈值）、`low_quality`（不满足质量阈值）或 `failed`（拟合失败）。
+*   `psd_merged.csv`：以频率为索引、每个扫描值一列的 PSD 表；PSD 标准误可用时同时包含 `<scan_value>_sem` 列。
 *   `dist_merged.npz`（实验性）：设置 `export_dist: true` 时写出。包含键 `dist_list`、`scan_params`、`__schema_version__` 和 `__created_by__`。
 *   `pdist_merged.pkl`（实验性）：设置 `export_dist: true` 时写出。是一个 pickled 字典，包含 `rows`、`__schema_version__` 和 `__created_by__`。
 
-常用参数包括 `output_dir`、`psd_key`、`fit_window`、`freq_min`、`freq_max`、`min_r2`、`min_peak_height`、`max_linewidth`、`export_dist`、`clip_by_std` 和 `clip_sigma`。设置 `clip_by_std: true` 会先按 **平方后的 PSD** 加权分布的均值 ± `clip_sigma` 个标准差裁剪频率窗口，有助于忽略远端长尾上的干扰峰，并加快宽频网格上的拟合。
+常用参数包括 `output_dir`、`psd_key`、`fit_window`、`freq_min`、`freq_max`、`min_r2`、`min_peak_height`、`max_linewidth`、`uncertainty`、`export_dist`、`clip_by_std` 和 `clip_sigma`。默认的 `uncertainty: auto` 会在 PSD 标准误可用时使用它，同时兼容旧结果文件。设置 `clip_by_std: true` 会先按 **平方后的 PSD** 加权分布的均值 ± `clip_sigma` 个标准差裁剪频率窗口，有助于忽略远端长尾上的干扰峰，并加快宽频网格上的拟合。
 
 对 Lorentz 线型，平方 PSD 加权标准差等于 `linewidth / 2`。因此默认 `clip_sigma: 10.0` 大约保留峰值两侧各 `5 × FWHM` 的范围，足以覆盖整条谱线，同时仍能排除很远处的干扰。
 
