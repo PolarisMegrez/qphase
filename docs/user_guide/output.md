@@ -85,7 +85,7 @@ Cross-job postprocessing is implemented as a scheduler workflow using the
 consumes existing `analysis["psd"]` data and does not recompute PSD from
 trajectories. It writes:
 
-*   `fit_results.csv`: one row per scan value. Each Lorentzian parameter is paired with a `_std` column derived from the fit covariance; `uncertainty_source` records whether the fit used `psd_sem` or the legacy residual fallback. `status` is `ok`, `low_quality` (when a quality threshold is violated), or `failed`.
+*   `fit_results.csv`: one row per scan value. Each Lorentzian parameter is paired with a `_std` column derived from the fit covariance; `uncertainty_source` records whether covariance propagated `psd_sem` or used the legacy residual fallback. PSD uncertainty does not reweight the Lorentz fit. `status` is `ok`, `low_quality` (when a quality threshold is violated), or `failed`.
 *   `psd_merged.csv`: a frequency-indexed table with one PSD column per scan value and a `<scan_value>_sem` column when PSD standard errors are available.
 *   `dist_merged.npz` (experimental): written when `export_dist: true` is set. Keys are `dist_list`, `scan_params`, `__schema_version__`, and `__created_by__`.
 *   `pdist_merged.pkl` (experimental): written when `export_dist: true` is set. It is a pickled dict with `rows`, `__schema_version__`, and `__created_by__`.

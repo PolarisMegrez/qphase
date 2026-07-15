@@ -18,6 +18,7 @@ from qphase.core.system_config import SystemConfig
 from qphase_sde.analyser.lorentz_fitter import (
     LorentzFitter,
     LorentzFitterConfig,
+    _lorentzian_jacobian,
     fit_lorentzian,
 )
 from qphase_sde.analyser.lorentz_fitter import (
@@ -41,8 +42,26 @@ def test_fit_lorentzian_recovers_synthetic_peak():
     assert result.R2 > 0.999
 
 
-def test_fit_lorentzian_propagates_absolute_psd_uncertainty():
-    """Uniform PSD SEM scales every covariance-derived parameter uncertainty."""
+def test_lorentzian_jacobian_matches_finite_difference():
+    """The Jacobian used for uncertainty propagation matches the fit model."""
+    axis = np.linspace(-0.5, 1.5, 101)
+    params = np.array([0.4, 0.12, 1.7, 0.08])
+    analytic = _lorentzian_jacobian(axis, params)
+    numeric = np.empty_like(analytic)
+    step = 1e-6
+    for index in range(params.size):
+        delta = np.zeros(params.shape)
+        delta[index] = step
+        numeric[:, index] = (
+            lorentzian_with_baseline(axis, *(params + delta))
+            - lorentzian_with_baseline(axis, *(params - delta))
+        ) / (2.0 * step)
+
+    np.testing.assert_allclose(analytic, numeric, rtol=2e-5, atol=1e-8)
+
+
+def test_fit_lorentzian_propagates_psd_uncertainty_without_reweighting():
+    """PSD SEM changes parameter uncertainty without changing the fit."""
     rng = np.random.default_rng(17)
     axis = np.linspace(-1.0, 2.0, 401)
     expected = lorentzian_with_baseline(
@@ -51,12 +70,20 @@ def test_fit_lorentzian_propagates_absolute_psd_uncertainty():
     sigma = np.full(axis.shape, 0.02)
     psd = expected + rng.normal(0.0, sigma)
 
-    result = fit_lorentzian(axis, psd, psd_sigma=sigma)
-    doubled = fit_lorentzian(axis, psd, psd_sigma=2.0 * sigma)
+    unweighted = fit_lorentzian(axis, psd, clip_by_std=True, clip_sigma=5.0)
+    result = fit_lorentzian(
+        axis, psd, psd_sigma=sigma, clip_by_std=True, clip_sigma=5.0
+    )
+    doubled = fit_lorentzian(
+        axis, psd, psd_sigma=2.0 * sigma, clip_by_std=True, clip_sigma=5.0
+    )
 
     assert result.status == "ok"
-    assert result.uncertainty_source == "psd_sem"
+    assert result.uncertainty_source == "psd_sem_sandwich"
     assert np.isfinite(result.reduced_chi2)
+    for field in ("center", "linewidth", "base", "peak_intensity", "R2"):
+        assert getattr(result, field) == getattr(unweighted, field)
+        assert getattr(doubled, field) == getattr(unweighted, field)
     for field in (
         "center_std",
         "linewidth_std",
@@ -181,7 +208,7 @@ def test_lorentz_fitter_analyze_directory(tmp_path):
 
 
 def test_lorentz_fitter_transfers_psd_sem_to_csv(tmp_path):
-    """Aggregated PSD SEM weights the fit and remains auditable in CSV output."""
+    """Aggregated PSD SEM propagates to fit uncertainty and remains auditable."""
     run_dir = _make_run_dir(tmp_path, with_uncertainty=True)
     output_dir = tmp_path / "weighted_exports"
     analyzer = LorentzFitter(
@@ -197,7 +224,7 @@ def test_lorentz_fitter_transfers_psd_sem_to_csv(tmp_path):
     assert isinstance(result, AnalysisResult)
 
     for row in result.data_dict["fit_rows"]:
-        assert row["uncertainty_source"] == "psd_sem"
+        assert row["uncertainty_source"] == "psd_sem_sandwich"
         assert float(row["center_std"]) > 0.0
         assert float(row["linewidth_std"]) > 0.0
         assert float(row["amplitude_std"]) > 0.0
@@ -223,7 +250,7 @@ def test_lorentz_fitter_transfers_psd_sem_to_csv(tmp_path):
 
 
 def test_lorentz_fitter_can_require_psd_uncertainty(tmp_path):
-    """Required weighting rejects legacy PSD payloads without a SEM field."""
+    """Required propagation rejects legacy PSD payloads without a SEM field."""
     analyzer = LorentzFitter(
         LorentzFitterConfig(
             scan_param="epsilon", mode=0, uncertainty="required"

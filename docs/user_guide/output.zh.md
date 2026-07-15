@@ -82,7 +82,7 @@ qphase run runs/2025-12-31.../vdp_sde/config_snapshot.yaml
 
 跨 job 后处理现在通过调度工作流实现，使用 `analyser.lorentz_fitter` 插件并配合 `engine.sde.mode: analyze`。该分析器消费已有的 `analysis["psd"]` 数据，不会从轨迹重新计算 PSD。默认写出：
 
-*   `fit_results.csv`：每个扫描值一行。每个 Lorentz 参数都有对应的 `_std` 协方差标准差列；`uncertainty_source` 表明拟合使用了 `psd_sem` 还是兼容旧结果的残差回退。`status` 可为 `ok`（满足质量阈值）、`low_quality`（不满足质量阈值）或 `failed`（拟合失败）。
+*   `fit_results.csv`：每个扫描值一行。每个 Lorentz 参数都有对应的 `_std` 协方差标准差列；`uncertainty_source` 表明协方差传播了 `psd_sem` 还是使用兼容旧结果的残差回退。PSD 不确定度不会改变 Lorentz 拟合权重。`status` 可为 `ok`（满足质量阈值）、`low_quality`（不满足质量阈值）或 `failed`（拟合失败）。
 *   `psd_merged.csv`：以频率为索引、每个扫描值一列的 PSD 表；PSD 标准误可用时同时包含 `<scan_value>_sem` 列。
 *   `dist_merged.npz`（实验性）：设置 `export_dist: true` 时写出。包含键 `dist_list`、`scan_params`、`__schema_version__` 和 `__created_by__`。
 *   `pdist_merged.pkl`（实验性）：设置 `export_dist: true` 时写出。是一个 pickled 字典，包含 `rows`、`__schema_version__` 和 `__created_by__`。

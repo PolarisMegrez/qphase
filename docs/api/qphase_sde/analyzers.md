@@ -92,7 +92,7 @@ analyser:
 | :-- | :-- | :-- |
 | `scan_param` | `str` | Sweep parameter used to merge PSDs. |
 | `mode` | `int` | Mode index to fit. |
-| `uncertainty` | `auto \| required \| off` | `auto` uses `psd_sem` when available and falls back for legacy payloads; `required` rejects missing SEM; `off` ignores it. |
+| `uncertainty` | `auto \| required \| off` | `auto` propagates `psd_sem` to parameter covariance and falls back for legacy payloads; `required` rejects missing SEM; `off` uses residual covariance. It never changes fit weights. |
 | `fit_window` | `list[float] \| None` | Manual `[min, max]` frequency window. If `None`, the window is derived from `freq_min`/`freq_max` or peak search. |
 | `freq_min` / `freq_max` | `float \| None` | Optional global frequency bounds. |
 | `clip_by_std` | `bool` | Enable squared-PSD-weighted clipping to ignore distant tails. |
@@ -119,7 +119,7 @@ analyser:
 | `peak_intensity_std` | Standard deviation including amplitude/base covariance. |
 | `R2` | Coefficient of determination. |
 | `reduced_chi2` | Reduced chi-square when fitting with `psd_sem`; otherwise `NaN`. |
-| `uncertainty_source` | `psd_sem` or the legacy `residual_covariance` fallback. |
+| `uncertainty_source` | `psd_sem_sandwich` or the legacy `residual_covariance` fallback. |
 | `status` | `ok` or `failed`. |
 | `error` | Empty unless fitting failed. |
 | `warning` | Diagnostics, e.g. std/FWHM mismatch. |
@@ -130,8 +130,10 @@ PSD data often extends over a very wide frequency range determined by `dt`, whil
 
 A warning is emitted when the squared-weighted `std` deviates from the Lorentzian expectation `std ≈ linewidth / 2` by more than a factor of 2, which can indicate multiple peaks or insufficient frequency resolution.
 
-With PSD uncertainty, `curve_fit` receives `sigma=psd_sem` and
-`absolute_sigma=True`. Parameter standard deviations come from the fit covariance
-matrix. This treats frequency bins as independent; windowing, leakage, and finite
+PSD uncertainty does not change the unweighted `curve_fit` objective or fitted
+parameters. Instead, the fitter evaluates the Lorentzian Jacobian at the fitted
+parameters and propagates `psd_sem` with a heteroscedastic sandwich covariance.
+This treats frequency bins as independent; windowing, leakage, and finite
 trajectory dynamics can correlate neighboring bins, so the reported values are a
-diagonal-covariance approximation rather than a complete spectral covariance model.
+diagonal input-covariance approximation rather than a complete spectral covariance
+model.

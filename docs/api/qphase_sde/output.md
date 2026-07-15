@@ -46,7 +46,7 @@ When the analyzer runs in multiple jobs with different parameter values, the sch
 `lorentz_fitter` writes up to three artifacts depending on `export`:
 
 *   `fit_results.csv` — one row per scan point with columns described in [Analyzers](./analyzers.md).
-*   `psd_merged.csv` — merged PSD table plus `<scan_value>_sem` columns used for weighted fitting.
+*   `psd_merged.csv` — merged PSD table plus `<scan_value>_sem` columns used for uncertainty propagation.
 *   `fit_results.npz` / `fit_results.pkl` — same data in alternative formats.
 
 ## Distribution outputs

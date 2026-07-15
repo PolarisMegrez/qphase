@@ -46,7 +46,7 @@ psd = archive["analysis"].item().get("psd")
 `lorentz_fitter` 根据 `export` 选项写入最多三种 artifacts：
 
 *   `fit_results.csv` — 每个扫描点一行，列说明参见 [分析器](./analyzers.zh.md)。
-*   `psd_merged.csv` — 合并 PSD 以及加权拟合使用的 `<scan_value>_sem` 列。
+*   `psd_merged.csv` — 合并 PSD 以及不确定度传播使用的 `<scan_value>_sem` 列。
 *   `fit_results.npz` / `fit_results.pkl` — 相同数据的替代格式。
 
 ## 分布输出

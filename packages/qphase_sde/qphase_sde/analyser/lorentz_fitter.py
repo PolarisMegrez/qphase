@@ -61,8 +61,8 @@ class LorentzFitterConfig(PluginConfigBase):
     uncertainty: Literal["auto", "required", "off"] = Field(
         "auto",
         description=(
-            "Use PSD standard errors for weighted fitting when available; "
-            "required rejects legacy payloads and off performs an unweighted fit"
+            "Propagate PSD standard errors to parameter covariance when available; "
+            "required rejects legacy payloads and off uses residual covariance"
         ),
     )
     clip_by_std: bool = Field(
@@ -158,6 +158,32 @@ def _lorentzian_with_baseline(
     return amplitude * (gamma**2 / ((x - center) ** 2 + gamma**2)) + base
 
 
+def _lorentzian_jacobian(x: np.ndarray, params: np.ndarray) -> np.ndarray:
+    """Return the Lorentzian Jacobian in center/gamma/amplitude/base order."""
+    center, gamma, amplitude, _ = params
+    delta = x - center
+    denominator = delta**2 + gamma**2
+    denominator_sq = denominator**2
+    return np.column_stack(
+        (
+            2.0 * amplitude * gamma**2 * delta / denominator_sq,
+            2.0 * amplitude * gamma * delta**2 / denominator_sq,
+            gamma**2 / denominator,
+            np.ones(x.shape, dtype=float),
+        )
+    )
+
+
+def _unweighted_sandwich_covariance(
+    x: np.ndarray, params: np.ndarray, sigma: np.ndarray
+) -> np.ndarray:
+    """Propagate heteroscedastic PSD errors through an unweighted fit."""
+    jacobian = _lorentzian_jacobian(x, params)
+    influence = np.linalg.pinv(jacobian)
+    weighted_influence = influence * sigma[np.newaxis, :]
+    return weighted_influence @ weighted_influence.T
+
+
 def _sort_key(value: Any) -> tuple[int, Any]:
     try:
         return (0, float(value))
@@ -231,10 +257,10 @@ def fit_lorentzian(
 ) -> LorentzFitResult:
     """Fit one PSD trace with a Lorentzian plus baseline.
 
-    ``psd_sigma`` supplies one standard error per PSD bin. When present, the fit
-    uses absolute weighted least squares and parameter uncertainties come from
-    the resulting covariance matrix. Without it, covariance is estimated from
-    the unweighted fit residuals for backward compatibility.
+    ``psd_sigma`` supplies one standard error per PSD bin. Parameter estimates
+    retain the original unweighted objective, while uncertainty is propagated
+    with a heteroscedastic sandwich covariance. Without ``psd_sigma``, covariance
+    is estimated from unweighted residuals for backward compatibility.
 
     Optional ``clip_by_std`` first tightens the frequency window around the
     squared-PSD-weighted center, which helps ignore distant long-tail bumps and
@@ -326,8 +352,6 @@ def fit_lorentzian(
                 [float(np.min(x)), 1e-12, 0.0, -np.inf],
                 [float(np.max(x)), max(span, 1e-12), np.inf, np.inf],
             ),
-            sigma=sigma_values,
-            absolute_sigma=sigma_values is not None,
             maxfev=10000,
         )
 
@@ -339,6 +363,11 @@ def fit_lorentzian(
 
         linewidth = 2.0 * gamma
         peak_intensity = amplitude + base
+        uncertainty_source = "residual_covariance"
+        if sigma_values is not None:
+            pcov = _unweighted_sandwich_covariance(x, popt, sigma_values)
+            uncertainty_source = "psd_sem_sandwich"
+
         center_std = _standard_deviation(float(pcov[0, 0]))
         linewidth_std = 2.0 * _standard_deviation(float(pcov[1, 1]))
         amplitude_std = _standard_deviation(float(pcov[2, 2]))
@@ -349,12 +378,10 @@ def fit_lorentzian(
         peak_intensity_std = _standard_deviation(peak_intensity_variance)
 
         reduced_chi2 = float("nan")
-        uncertainty_source = "residual_covariance"
         if sigma_values is not None:
             dof = x.size - len(popt)
             if dof > 0:
                 reduced_chi2 = float(np.sum(((y - fitted) / sigma_values) ** 2) / dof)
-            uncertainty_source = "psd_sem"
 
         reasons: list[str] = []
         if min_r2 is not None and r2 < min_r2:
@@ -403,7 +430,9 @@ def fit_lorentzian(
             warning=warning,
         )
     except Exception as exc:
-        source = "psd_sem" if psd_sigma is not None else "residual_covariance"
+        source = "residual_covariance"
+        if psd_sigma is not None:
+            source = "psd_sem_sandwich"
         return LorentzFitResult(error=str(exc), uncertainty_source=source)
 
 
@@ -614,7 +643,7 @@ class LorentzFitter(Analyzer):
                     candidate is not None
                     and candidate.size == axis.size
                     and int(np.count_nonzero(np.isfinite(candidate) & (candidate > 0)))
-                    >= 4
+                    == axis.size
                 )
                 if usable:
                     psd_sigma = candidate
@@ -623,7 +652,6 @@ class LorentzFitter(Analyzer):
                         f"{loaded.path} has no usable PSD standard error for "
                         f"mode {config.mode}"
                     )
-
             fit_result = fit_lorentzian(
                 axis,
                 trace,
