@@ -1,6 +1,6 @@
 # qphase_sde Cayley-Maruyama 与 GPU 执行优化计划
 
-> 状态：待审核
+> 状态：实现完成，短时数值与随机 PSD 验收通过；完整生产扫描待运行
 >
 > 范围：`qphase_sde` 资源包、工作区模型插件 `models/vdp_2mode.py` 及其 CuPy 实现
 >
@@ -395,7 +395,7 @@ packages/qphase/qphase/commands/run.py
 4. `2x2` 通用实现与直接 NumPy 线性求解一致。
 5. 左端点扩散的一步样本均值和协方差符合预期。
 6. 缺少 `drift_matrix()` 时给出明确错误。
-7. `n_modes != 2` 时给出明确错误。
+7. 对 1、2、5、10 个模式验证通用路径，并在超过配置上限时给出明确错误。
 
 ### 7.2 模型与 GPU 测试
 
@@ -501,9 +501,9 @@ PSD wall time
 ### 阶段 E：生产验证与文档
 
 - 更新中英文 integrator/engine 文档。
-- 增加 Cayley smoke config。
+- 增加 `vdp_2mode_cayley.yaml` 生产候选配置。
 - 运行缩短的随机任务。
-- 最后运行完整扫描并归档 benchmark 与拟合结果。
+- 归档 benchmark 与短时拟合结果；完整扫描因运行成本保留给最终生产验收。
 
 ## 10. 风险与回退
 

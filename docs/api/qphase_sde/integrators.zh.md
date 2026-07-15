@@ -62,6 +62,38 @@ integrator:
 
 引擎在每个积分区间调用 `GenericSRK.step(...)`。
 
+## `CayleyMaruyama`
+
+`integrator.cayley_maruyama` 是面向矩阵漂移 `A(y,t) @ y` 的固定步长 Itô
+积分器：
+
+```text
+(I - dt*A_n/2) y_(n+1) = (I + dt*A_n/2) y_n + B_n dW_n
+```
+
+`A_n` 与 `B_n` 都由左端点状态计算。对于中性振荡本征模，Cayley 变换严格
+保持放大因子的模长，避免显式 Euler 引入虚假的径向增益。
+
+```yaml
+integrator:
+  cayley_maruyama:
+    fused: auto       # auto、required 或 off
+    chunk_steps: 128  # 1 表示禁用多步融合
+    max_modes: 16     # 可配置至 64
+```
+
+通用路径使用 backend 的批量线性求解，支持任意小规模模式数。模型可以提供
+专用 fused step 或 chunk kernel。GPU 生产任务建议使用 `fused: required`，避免
+加速实现缺失时静默回退到通用路径。
+
+`ChunkIntegrator` 是可选能力。只有固定步长任务且 model/backend 支持相同
+scheme 时，SDE engine 才会启用多步融合；已有积分器仍使用普通 `step()` 路径。
+
+对于很长的 `complex64` 轨迹，即使已消除 Euler 偏差，舍入误差累积仍可能留下
+很小的频率残差。在 VDP 的 `omega_a=0.001` 验证中，该残差约为 `5e-6`；同一
+fused kernel 使用 `complex128` 时与 Cayley 色散关系符合到机器精度。只有当该
+残差比 GPU 吞吐与轨迹内存更重要时，才建议改用 `float64`。
+
 ## 注册自定义积分器
 
 创建一个插件包，并在 `pyproject.toml` 中配置入口点：

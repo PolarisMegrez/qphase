@@ -25,6 +25,7 @@ Top-level keys live under `engine.sde` in a job file:
 | `ic` | `Any \| None` | Initial condition. |
 | `save_stride` | `int` | Store every `N`-th integrated step. See below. |
 | `keep_traj` | `bool \| None` | Whether to keep raw trajectory data after analysis. |
+| `record_modes` | `list[int] \| None` | Physical modes to retain; `None` stores all modes. |
 
 ## `save_stride` and memory control
 
@@ -43,6 +44,23 @@ Rough memory for the stored trajectory:
 ```text
 memory ~ n_traj * (t1 / (dt * save_stride)) * n_modes * dtype_bytes
 ```
+
+`record_modes` reduces the final factor without changing the simulated state.
+The trajectory stores `meta.mode_indices`, and SDE analyzers continue to accept
+physical mode numbers:
+
+```yaml
+engine:
+  sde:
+    record_modes: [0]
+analyser:
+  psd:
+    modes: [0]
+```
+
+Stored trajectory arrays retain the state dtype. A `complex64` CuPy simulation
+therefore produces `complex64` history instead of being promoted to
+`complex128`.
 
 For a narrow low-frequency peak, choose `save_stride` so that
 `f_Nyquist` stays well above the highest frequency of interest. For example,

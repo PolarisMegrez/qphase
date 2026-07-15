@@ -37,6 +37,27 @@ class SDEModel(Protocol):
 
 The engine evaluates `drift` and `diffusion` each step and passes them to the selected integrator.
 
+### Optional matrix drift
+
+Models compatible with Cayley-Maruyama expose
+`drift_matrix(y, t, params) -> A`, with `drift(y) == A @ y`.
+
+Research-project CUDA implementations remain model-owned and can be organized
+as local kernel plugins:
+
+```text
+models/
+  my_model.py
+  kernels/
+    base.py
+    euler_maruyama/my_model.py
+    cayley_maruyama/my_model.py
+```
+
+`ModelKernelRegistry` resolves providers by scheme, backend, and operation
+(`terms`, `step`, or `step_chunk`). This structure is local to the research
+project and does not add model-specific dependencies to `qphase_sde`.
+
 ## Built-in Models
 
 ### `vdp_2mode`

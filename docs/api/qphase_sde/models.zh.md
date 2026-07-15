@@ -37,6 +37,25 @@ class SDEModel(Protocol):
 
 引擎每步计算 `drift` 和 `diffusion`，并将其传给所选积分器。
 
+### 可选矩阵漂移
+
+兼容 Cayley-Maruyama 的模型额外提供
+`drift_matrix(y, t, params) -> A`，并满足 `drift(y) == A @ y`。
+
+研究项目中的 CUDA 实现继续由模型持有，并可按本地 kernel 插件组织：
+
+```text
+models/
+  my_model.py
+  kernels/
+    base.py
+    euler_maruyama/my_model.py
+    cayley_maruyama/my_model.py
+```
+
+`ModelKernelRegistry` 根据 scheme、backend 和 operation（`terms`、`step` 或
+`step_chunk`）解析实现。该结构属于研究项目，不会让 `qphase_sde` 依赖具体模型。
+
 ## 内置模型
 
 ### `vdp_2mode`
