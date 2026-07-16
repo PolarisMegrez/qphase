@@ -21,6 +21,7 @@ analyser:
   psd:
     modes: [0]
     kind: complex
+    expected_freq_max: 0.34
     find_peaks: true
 ```
 
@@ -28,6 +29,7 @@ analyser:
 | :-- | :-- | :-- |
 | `modes` | `list[int]` | Mode indices to analyze. |
 | `kind` | `str` | PSD variant, e.g. `complex`, `real`, `imag`. |
+| `expected_freq_max` | `float \| None` | Optional largest expected physical frequency in output-axis units. Analysis fails when it reaches the Nyquist limit. |
 | `find_peaks` | `bool` | Whether to report peak locations. |
 
 ### Frequency axis
@@ -39,6 +41,10 @@ f = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
 ```
 
 For a narrow peak, choose `save_stride` so the Nyquist frequency is well above the peak.
+For angular-frequency conventions, `omega_Nyquist = pi / (dt * save_stride)`.
+Increasing `t1` improves resolution `2*pi/t1` but does not increase this bandwidth.
+Set `expected_freq_max` to turn an otherwise silent aliasing error into an explicit
+configuration failure.
 
 ### Output payload
 

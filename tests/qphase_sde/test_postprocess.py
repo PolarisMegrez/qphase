@@ -19,6 +19,7 @@ from qphase_sde.analyser.lorentz_fitter import (
     LorentzFitter,
     LorentzFitterConfig,
     _lorentzian_jacobian,
+    _squared_weighted_moments,
     fit_lorentzian,
 )
 from qphase_sde.analyser.lorentz_fitter import (
@@ -58,6 +59,21 @@ def test_lorentzian_jacobian_matches_finite_difference():
         ) / (2.0 * step)
 
     np.testing.assert_allclose(analytic, numeric, rtol=2e-5, atol=1e-8)
+
+
+def test_squared_lorentzian_moments_recover_center_and_hwhm():
+    """Squared Lorentzian moments recover center and half-width."""
+    center = 0.4
+    gamma = 0.12
+    axis = np.linspace(center - 1000 * gamma, center + 1000 * gamma, 200001)
+    psd = lorentzian_with_baseline(
+        axis, center=center, gamma=gamma, amplitude=2.0, base=0.0
+    )
+
+    mean, std = _squared_weighted_moments(axis, psd)
+
+    assert np.isclose(mean, center, atol=1e-10)
+    assert np.isclose(std, gamma, rtol=0.01)
 
 
 def test_fit_lorentzian_propagates_psd_uncertainty_without_reweighting():

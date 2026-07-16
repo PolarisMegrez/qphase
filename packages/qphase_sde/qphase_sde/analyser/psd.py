@@ -69,6 +69,14 @@ class PsdAnalyzerConfig(PluginConfigBase):
         "symmetric", description="PSD convention"
     )
     dt: float | None = Field(None, description="Sampling interval (override)")
+    expected_freq_max: float | None = Field(
+        None,
+        gt=0.0,
+        description=(
+            "Optional maximum physical frequency expected in the output-axis "
+            "units; analysis fails if it reaches the Nyquist limit"
+        ),
+    )
     window: str | None = Field(
         None, description="Window function name (e.g. 'hanning')"
     )
@@ -163,6 +171,18 @@ class PsdAnalyzer(Analyzer):
         mode_columns = resolve_mode_columns(data, modes)
         kind = config.kind
         convention = config.convention
+        if dt <= 0.0:
+            raise ValueError("PSD sampling interval must be positive")
+        nyquist = _np.pi / dt if convention in ("symmetric", "unitary") else 0.5 / dt
+        if (
+            config.expected_freq_max is not None
+            and config.expected_freq_max >= nyquist
+        ):
+            raise ValueError(
+                f"expected_freq_max={config.expected_freq_max:.6g} reaches or "
+                f"exceeds the PSD Nyquist limit {nyquist:.6g} for sample dt={dt:.6g}; "
+                "reduce save_stride or the PSD dt override"
+            )
 
         # Extract data array. Some array-like objects (e.g. TrajectorySet) wrap
         # the actual array in a ``.data`` attribute. NumPy/CuPy arrays also
@@ -288,6 +308,8 @@ class PsdAnalyzer(Analyzer):
             "modes": modes,
             "kind": kind,
             "convention": convention,
+            "sample_dt": dt,
+            "nyquist": nyquist,
             "peaks": peaks_info,
             "uncertainty": {
                 "kind": "standard_error",

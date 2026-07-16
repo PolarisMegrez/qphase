@@ -21,6 +21,7 @@ analyser:
   psd:
     modes: [0]
     kind: complex
+    expected_freq_max: 0.34
     find_peaks: true
 ```
 
@@ -28,6 +29,7 @@ analyser:
 | :-- | :-- | :-- |
 | `modes` | `list[int]` | 要分析的模式索引。 |
 | `kind` | `str` | PSD 变体，如 `complex`、`real`、`imag`。 |
+| `expected_freq_max` | `float \| None` | 输出频率轴单位下预期的最大物理频率；达到 Nyquist 上限时分析直接失败。 |
 | `find_peaks` | `bool` | 是否报告峰值位置。 |
 
 ### 频率轴
@@ -39,6 +41,9 @@ f = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
 ```
 
 对于窄峰，应选择 `save_stride` 使 Nyquist 频率远高于峰值。
+对于角频率约定，`omega_Nyquist = pi / (dt * save_stride)`。增大 `t1` 只能改善
+分辨率 `2*pi/t1`，不会扩大该带宽。设置 `expected_freq_max` 可以把原本静默的
+混叠错误转化为明确的配置失败。
 
 ### 输出载荷
 

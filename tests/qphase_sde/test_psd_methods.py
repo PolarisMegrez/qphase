@@ -211,6 +211,26 @@ def test_single_trajectory_marks_psd_uncertainty_unavailable():
     assert payload["uncertainty"]["available"] is False
 
 
+def test_expected_freq_max_guards_against_aliasing():
+    """The optional physical-band hint rejects an undersampled PSD."""
+    values = _make_sine_data(n_traj=2, n_time=128)
+    undersampled = TrajectorySet(data=values, t0=0.0, dt=50.0)
+    analyzer = PsdAnalyzer(
+        kind="complex",
+        modes=[0],
+        convention="symmetric",
+        expected_freq_max=0.34,
+    )
+
+    with pytest.raises(ValueError, match="Nyquist limit"):
+        analyzer.analyze(undersampled, BACKEND)
+
+    adequately_sampled = TrajectorySet(data=values, t0=0.0, dt=9.0)
+    payload = analyzer.analyze(adequately_sampled, BACKEND).data_dict
+    assert np.isclose(payload["nyquist"], np.pi / 9.0)
+    assert payload["sample_dt"] == 9.0
+
+
 def test_psd_method_invalid():
     """An unsupported method is rejected at configuration time."""
     from pydantic import ValidationError
