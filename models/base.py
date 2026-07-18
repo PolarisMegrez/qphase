@@ -81,6 +81,14 @@ class SDEModelPlugin(ABC):
             diffusion[:, mode, mode] = xp.sqrt(xp.clip(value, 0.0, None))
         return diffusion
 
+    def cam_solution_sort_key(
+        self, state: Any, params: dict[str, Any]
+    ) -> float:
+        """Return the default per-point ordering key for CAM steady states."""
+        del params
+        value = get_xp(state).real(state[..., 0, 0])
+        return float(value.item() if hasattr(value, "item") else value)
+
     @abstractmethod
     def drift(self, y: Any, t: float, params: dict[str, Any]) -> Any:
         """Return the Ito drift vector."""

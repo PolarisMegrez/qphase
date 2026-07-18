@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from functools import lru_cache
 from typing import Any, ClassVar
 
 from pydantic import Field
@@ -32,6 +33,7 @@ class VDP2ModeModel(SDEModelPlugin):
     description: ClassVar[str] = "Two-mode van der Pol oscillator"
     config_schema: ClassVar[type[VDP2ModeConfig]] = VDP2ModeConfig
     mode_count: ClassVar[int] = 2
+    steady_state_capacity: ClassVar[int] = 4
 
     def kernel_plugins(self) -> Iterable[ModelKernelPlugin]:
         return (VDP2ModeEulerCuPyKernel(), VDP2ModeCayleyCuPyKernel())
@@ -92,4 +94,100 @@ class VDP2ModeModel(SDEModelPlugin):
                 + nonlinear_gain * (2.0 * xp.abs(alpha) ** 2 - 1.0),
                 gamma_b / 2.0,
             ),
+        )
+
+    def cam_hamiltonian(self, state: Any, params: dict[str, Any]) -> Any:
+        xp = get_xp(state)
+        state = xp.asarray(state)
+        omega_a = self.parameter(params, "omega_a", xp)
+        omega_b = self.parameter(params, "omega_b", xp)
+        gamma_a = self.parameter(params, "gamma_a", xp)
+        gamma_b = self.parameter(params, "gamma_b", xp)
+        nonlinear_gain = self.parameter(params, "Gamma", xp)
+        coupling = self.parameter(params, "g", xp)
+        r_aa = xp.real(state[..., 0, 0])
+        matrix = xp.zeros(state.shape, dtype=state.dtype)
+        matrix[..., 0, 0] = omega_a + 1j * (
+            gamma_a / 2.0 + nonlinear_gain * (1.0 - r_aa)
+        )
+        matrix[..., 0, 1] = coupling
+        matrix[..., 1, 0] = coupling
+        matrix[..., 1, 1] = omega_b - 1j * gamma_b / 2.0
+        return matrix
+
+    def cam_diffusion(self, state: Any, params: dict[str, Any]) -> Any:
+        xp = get_xp(state)
+        state = xp.asarray(state)
+        gamma_a = self.parameter(params, "gamma_a", xp)
+        gamma_b = self.parameter(params, "gamma_b", xp)
+        nonlinear_gain = self.parameter(params, "Gamma", xp)
+        r_aa = xp.real(state[..., 0, 0])
+        matrix = xp.zeros(state.shape, dtype=state.dtype)
+        matrix[..., 0, 0] = (
+            gamma_a / 2.0 + nonlinear_gain * (2.0 * r_aa - 1.0)
+        )
+        matrix[..., 1, 1] = gamma_b / 2.0
+        return matrix
+
+    def cam_jacobian(self, state: Any, params: dict[str, Any]) -> Any:
+        xp = get_xp(state)
+        state = xp.asarray(state)
+        gamma_a = self.parameter(params, "gamma_a", xp)
+        gamma_b = self.parameter(params, "gamma_b", xp)
+        nonlinear_gain = self.parameter(params, "Gamma", xp)
+        coupling = self.parameter(params, "g", xp)
+        omega_a = self.parameter(params, "omega_a", xp)
+        omega_b = self.parameter(params, "omega_b", xp)
+        r_aa = xp.real(state[..., 0, 0])
+        r_ab_real = xp.real(state[..., 0, 1])
+        r_ab_imag = xp.imag(state[..., 0, 1])
+        common = (
+            (gamma_a - gamma_b) / 2.0
+            - nonlinear_gain * (r_aa - 1.0)
+        )
+        jacobian = xp.zeros(state.shape[:-2] + (4, 4), dtype=state.real.dtype)
+        jacobian[..., 0, 0] = gamma_a - 4.0 * nonlinear_gain * (r_aa - 1.0)
+        jacobian[..., 0, 3] = -2.0 * coupling
+        jacobian[..., 1, 1] = -gamma_b
+        jacobian[..., 1, 3] = 2.0 * coupling
+        jacobian[..., 2, 0] = -nonlinear_gain * r_ab_real
+        jacobian[..., 2, 2] = common
+        jacobian[..., 2, 3] = omega_a - omega_b
+        jacobian[..., 3, 0] = coupling - nonlinear_gain * r_ab_imag
+        jacobian[..., 3, 1] = -coupling
+        jacobian[..., 3, 2] = omega_b - omega_a
+        jacobian[..., 3, 3] = common
+        return jacobian
+
+    @classmethod
+    @lru_cache(maxsize=1)
+    def cam_symbolic_matrices(cls) -> Any:
+        import sympy as sp
+        from qphase_cam.core.coordinates import symbolic_hermitian_matrix
+        from qphase_cam.model import CAMSymbolicSpec
+
+        state, symbols = symbolic_hermitian_matrix(2)
+        omega_a, omega_b, gamma_a, gamma_b, nonlinear_gain, coupling = sp.symbols(
+            "omega_a omega_b gamma_a gamma_b Gamma g", real=True
+        )
+        r_aa = state[0, 0]
+        hamiltonian = sp.Matrix(
+            [
+                [
+                    omega_a
+                    + sp.I * (gamma_a / 2 + nonlinear_gain * (1 - r_aa)),
+                    coupling,
+                ],
+                [coupling, omega_b - sp.I * gamma_b / 2],
+            ]
+        )
+        diffusion = sp.diag(
+            gamma_a / 2 + nonlinear_gain * (2 * r_aa - 1), gamma_b / 2
+        )
+        return CAMSymbolicSpec(
+            hamiltonian,
+            diffusion,
+            state,
+            symbols,
+            (omega_a, omega_b, gamma_a, gamma_b, nonlinear_gain, coupling),
         )

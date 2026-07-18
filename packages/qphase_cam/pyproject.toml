@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qphase-cam"
+version = "0.1.0"
+description = "Workspace-only coherent-amplitude matrix engine for QPhase"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "sympy>=1.12",
+  "qphase>=1.0.1",
+]
+
+[project.entry-points.qphase]
+"engine.cam" = "qphase_cam.engine:Engine"
+"cam_solver.steady_state" = "qphase_cam.solver.steady_state:SteadyStateSolver"
+"cam_solver.multistability" = "qphase_cam.solver.multistability:MultistabilitySolver"
+"cam_solver.deflation" = "qphase_cam.solver.deflation:DeflationSolver"
+"cam_solver.batched_newton" = "qphase_cam.solver.batched_newton:BatchedNewtonSolver"
+"cam_solver.continuation" = "qphase_cam.solver.continuation:ContinuationSolver"
+"cam_postprocessor.rayleigh_frequency" = "qphase_cam.postprocessor.frequency:RayleighFrequency"
+"cam_postprocessor.hamiltonian_spectrum" = "qphase_cam.postprocessor.frequency:HamiltonianSpectrum"
+"cam_postprocessor.jacobian_spectrum" = "qphase_cam.postprocessor.jacobian:JacobianSpectrum"
+"cam_postprocessor.physicality" = "qphase_cam.postprocessor.physicality:Physicality"
+"cam_postprocessor.bifurcation" = "qphase_cam.postprocessor.bifurcation:Bifurcation"
+"batch_planner.cam" = "qphase_cam.batch:CAMBatchPlanner"
+"result_splitter.cam_scan_splitter" = "qphase_cam.batch:CAMResultSplitter"
+
+[tool.setuptools.packages.find]
+where = ["."]
