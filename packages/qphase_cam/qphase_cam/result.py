@@ -63,9 +63,7 @@ class CAMResult:
             self.solution_count,
             *self.postprocess.values(),
         )
-        return sum(
-            int(np.asarray(convert_to_numpy(value)).nbytes) for value in arrays
-        )
+        return sum(int(np.asarray(convert_to_numpy(value)).nbytes) for value in arrays)
 
     def point_view(self, index: tuple[int, ...]) -> CAMResult:
         """Return one scan point without materializing other point results."""
@@ -197,9 +195,9 @@ class CAMResult:
         valid = np.asarray(convert_to_numpy(self.valid_mask)).reshape(-1, capacity)[
             start:stop
         ]
-        residuals = np.asarray(convert_to_numpy(self.residuals)).reshape(
-            -1, capacity
-        )[start:stop]
+        residuals = np.asarray(convert_to_numpy(self.residuals)).reshape(-1, capacity)[
+            start:stop
+        ]
         success = np.asarray(convert_to_numpy(self.success)).reshape(-1, capacity)[
             start:stop
         ]
@@ -222,6 +220,12 @@ class CAMResult:
             name: self._flat_postprocess(value, start, stop)
             for name, value in self.postprocess.items()
         }
+        dataset_postprocess = tuple(
+            name
+            for name, value in self.postprocess.items()
+            if np.asarray(convert_to_numpy(value)).shape[: len(self.grid_shape)]
+            == self.grid_shape
+        )
         return CAMResult(
             states.reshape((count,) + states.shape[1:]),
             residuals,
@@ -231,7 +235,11 @@ class CAMResult:
             params,
             axes=axes,
             postprocess=postprocess,
-            meta={**self.meta, "source_grid_shape": self.grid_shape},
+            meta={
+                **self.meta,
+                "source_grid_shape": self.grid_shape,
+                "dataset_postprocess": dataset_postprocess,
+            },
         )
 
     def _axis_at(self, name: str, index: tuple[int, ...]) -> Any:
@@ -384,3 +392,71 @@ class CAMResult:
                 postprocess=data["postprocess"].item(),
                 meta=data["meta"].item(),
             )
+
+    @classmethod
+    def load_dataset(cls, path: str | Path) -> CAMResult:
+        """Load and reassemble a sharded logical CAM dataset."""
+        root = Path(path)
+        shard_paths = sorted(root.glob("shard_*.npz"))
+        if not shard_paths:
+            raise QPhaseIOError(f"no CAM dataset shards found in {root}")
+
+        shards = [cls.load(shard_path) for shard_path in shard_paths]
+        source_shape = tuple(shards[0].meta.get("source_grid_shape", ()))
+        if not source_shape:
+            raise QPhaseIOError(
+                f"CAM dataset shards in {root} do not record source_grid_shape"
+            )
+
+        def combine(name: str) -> np.ndarray:
+            arrays = [
+                np.asarray(convert_to_numpy(getattr(shard, name))) for shard in shards
+            ]
+            merged = np.concatenate(arrays, axis=0)
+            return merged.reshape(source_shape + merged.shape[1:])
+
+        params = {
+            name: cls._combine_shard_values(
+                [shard.params[name] for shard in shards], source_shape
+            )
+            for name in shards[0].params
+        }
+        axes = {
+            name: cls._combine_shard_values(
+                [shard.axes[name] for shard in shards], source_shape
+            )
+            for name in shards[0].axes
+        }
+        dataset_postprocess = set(shards[0].meta.get("dataset_postprocess", ()))
+        postprocess = {
+            name: (
+                cls._combine_shard_values(
+                    [shard.postprocess[name] for shard in shards], source_shape
+                )
+                if name in dataset_postprocess
+                else shards[0].postprocess[name]
+            )
+            for name in shards[0].postprocess
+        }
+        meta = dict(shards[0].meta)
+        meta.pop("source_grid_shape", None)
+        meta.pop("dataset_postprocess", None)
+        return cls(
+            states=combine("states"),
+            residuals=combine("residuals"),
+            success=combine("success"),
+            valid_mask=combine("valid_mask"),
+            solution_count=combine("solution_count"),
+            params=params,
+            axes=axes,
+            postprocess=postprocess,
+            meta=meta,
+        )
+
+    @staticmethod
+    def _combine_shard_values(
+        values: list[Any], source_shape: tuple[int, ...]
+    ) -> np.ndarray:
+        arrays = [np.asarray(convert_to_numpy(value)) for value in values]
+        merged = np.concatenate(arrays, axis=0)
+        return merged.reshape(source_shape + merged.shape[1:])

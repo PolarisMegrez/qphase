@@ -81,6 +81,7 @@ def test_cam_dataset_point_view_and_sharded_storage(tmp_path):
         solution_count=np.ones(4, dtype=int),
         params={"omega": np.arange(4.0)},
         axes={"omega": np.arange(4.0)},
+        postprocess={"frequency": np.arange(4.0) + 0.5},
     )
 
     point = result.point_view((2,))
@@ -93,6 +94,14 @@ def test_cam_dataset_point_view_and_sharded_storage(tmp_path):
     assert point.params["omega"] == 2.0
     assert report.layout == "sharded"
     assert len([path for path in report.files if path.suffix == ".npz"]) == 4
+
+    loaded = CAMResult.load_dataset(tmp_path / "cam")
+    np.testing.assert_allclose(loaded.states, result.states)
+    np.testing.assert_allclose(loaded.params["omega"], result.params["omega"])
+    np.testing.assert_allclose(loaded.axes["omega"], result.axes["omega"])
+    np.testing.assert_allclose(
+        loaded.postprocess["frequency"], result.postprocess["frequency"]
+    )
 
 
 def test_continuation_rejects_external_scan():
