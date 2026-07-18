@@ -146,10 +146,45 @@ class MyEngine:
         # Handle optional plugin
         self.analyser = plugins.get("analyser")
 
-    def run(self):
+    def run(self, input_data=None, *, context=None):
         # ... simulation loop ...
         pass
 ```
+
+### Scan-Aware Engines
+
+The scheduler passes scan and runtime services through `ExecutionContext`.
+Engines own the numerical strategy; core does not expand the grid into jobs.
+
+```python
+from qphase.core.scan import execute_pointwise
+
+def run(self, input_data=None, *, context=None):
+    grid = None if context is None else context.parameter_grid
+    if grid is None:
+        return self.solve_one()
+
+    # Use a resource-specific tile/batch strategy, or the core helper.
+    rows = execute_pointwise(
+        grid,
+        self.solve_point,
+        context=context,
+        chunk_size=16,
+    )
+    return MyDatasetResult.from_points(grid, rows)
+```
+
+A scan result should implement `DatasetResultProtocol`: named `axes`, logical
+`shape`, `point_view(index)`, and `save_dataset(path, layout,
+shard_target_bytes)`. This lets downstream jobs use `dataset` or lazy `map`
+input without exposing internal tiles as scheduler jobs. Engines may also read
+resource hints, report progress, check cancellation, and save completed chunks
+through the context.
+
+Do not add a generic core planner for a resource-specific algorithm. If the
+engine can fuse trajectories, run batched Newton, or schedule model-specific
+tiles, keep that policy in the resource package and treat `ParameterGrid` as the
+portable input contract.
 
 ---
 

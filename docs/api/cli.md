@@ -72,11 +72,16 @@ Postprocessing is expressed as a scheduler workflow rather than a standalone CLI
 ```yaml
 - name: sim
   save: true
+  scan:
+    axes:
+      omega_a:
+        target: model.kerr_2mode.omega_a
+        values: [0.9, 1.1]
   engine:
     sde: { ... }
   model:
     kerr_2mode:
-      omega_a: [0.9, 1.1]
+      omega_a: 0.9
       omega_b: 1.0
       chi: 0.01
       gamma_a: 0.1
@@ -88,9 +93,9 @@ Postprocessing is expressed as a scheduler workflow rather than a standalone CLI
       kind: complex
 
 - name: fit
-  input: sim
-  aggregate_input:
-    on: params.omega_a
+  input:
+    from: sim
+    mode: dataset
   engine:
     sde:
       mode: analyze

@@ -8,7 +8,8 @@ This section documents the core components of the QPhase framework, including th
 
 ## Scheduler
 
-The `Scheduler` is the central component responsible for orchestrating the execution of simulation jobs. It handles dependency resolution, parameter scanning, and result persistence.
+The `Scheduler` orchestrates logical jobs, dependency resolution, structured
+data flow, execution contexts, and result persistence.
 
 ### `class qphase.core.Scheduler`
 
@@ -25,8 +26,8 @@ The `Scheduler` is the central component responsible for orchestrating the execu
 
 Executes a list of jobs serially. This method handles:
 1.  **Dependency Resolution**: Ensures jobs are executed in the correct order based on their dependencies.
-2.  **Parameter Scanning**: Expands jobs with scanable parameters into multiple tasks.
-3.  **Directory Management**: Creates unique run directories for each job execution.
+2.  **Scan Context**: Compiles one optional `ScanSpec` without expanding parameter points into jobs.
+3.  **Directory Management**: Creates one run directory for each logical job.
 4.  **Snapshotting**: Saves configuration snapshots for reproducibility.
 
 **Returns:**
@@ -46,7 +47,8 @@ Represents the configuration for a single simulation job.
 *   `engine` (`dict[str, Any]`): **Required.** Configuration for the simulation engine. Must contain exactly one key (the engine name) mapping to its configuration dictionary.
 *   `plugins` (`dict[str, dict[str, Any]]`): **Optional.** Configuration for plugins, organized by plugin type (e.g., `backend`, `model`).
 *   `params` (`dict[str, Any]`): **Optional.** A dictionary of job-specific parameters.
-*   `input` (`str | None`): **Optional.** The name of an upstream job or a file path to use as input.
+*   `scan` (`ScanSpec | None`): **Optional.** Explicit named parameter axes.
+*   `input` (`InputSpec | None`): **Optional.** Structured upstream dataset or map input.
 *   `output` (`str | None`): **Optional.** The output destination (filename or downstream job name).
 *   `tags` (`list[str]`): **Optional.** A list of tags for categorization.
 *   `depends_on` (`list[str]`): **Optional.** A list of job names that this job depends on.
@@ -59,7 +61,16 @@ Represents the global system settings.
 
 *   `paths` (`PathsConfig`): Directory paths for configuration, plugins, and output.
 *   `auto_save_results` (`bool`): Whether to automatically save results to disk.
-*   `parameter_scan` (`dict`): Settings for batch execution and parameter scanning strategies.
+*   `scan_runtime` (`ScanRuntimeConfig`): Dataset layout, chunk checkpoint, and workstation resource hints.
+*   `progress_update_interval` (`float`): Minimum core progress refresh interval.
+
+### Scan and Dataset Types
+
+`ScanSpec` and `ScanAxisSpec` validate explicit `values`, `linspace`, and
+`logspace` axes. `ParameterGrid` is the compiled runtime representation passed
+to engines. `DatasetResultProtocol` defines named axes, logical shape, point
+views, and layout-aware persistence. `ExecutionContext` carries these scan and
+runtime services during execution.
 
 ---
 

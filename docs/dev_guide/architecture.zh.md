@@ -27,10 +27,10 @@ QPhase 的架构旨在解决科学计算的特定挑战：可复现性、模块�
 要理解 QPhase 的运作方式，必须区分三个基本概念：**任务**、**引擎**和**插件**。
 
 ### 1. 任务（"意图"）
-**任务**表示单个原子执行请求。它回答的问题是：*"我想运行什么仿真？"*
+**任务**表示一个逻辑执行请求。它回答：*"我想运行哪个科学工作流步骤？"*
 *   **定义**：任务完全由其配置（已解析的 YAML 文档）定义。它包含复现仿真所需的所有参数。
 *   **隔离**：每个任务在其自己的隔离目录（`runs/{timestamp}_{job_name}/`）中运行。这确保一个仿真的副作用（如文件 I/O）不会污染另一个。
-*   **生命周期**：任务由调度器创建（通常通过展开参数扫描），执行，然后在其结果保存后完成。
+*   **生命周期**：任务由 scheduler 加载，可选接收一个 `ParameterGrid`，执行一次，并在逻辑结果保存后完成。
 
 ### 2. 引擎（"工作流"）
 **引擎**是一种特殊类型的插件，定义仿真的*生命周期*。它回答的问题是：*"仿真应该如何进行？"*
@@ -93,13 +93,13 @@ QPhase 利用 Python 的 `typing.Protocol`（PEP 544）进行接口定义，而�
 2.  **发现**：注册表扫描入口点和本地目录以填充组件目录。
 3.  **配置解析**：加载任务配置，根据 Pydantic 模式验证，并与全局默认值合并。
 4.  **验证**：调度器验证任务依赖项是否符合目标引擎的 `EngineManifest`。
-5.  **任务展开**：处理参数扫描，将高级任务定义展开为原子执行单元列表（`JobConfig`）。
+5.  **Context 构造**：将可选 `ScanSpec` 编译为 `ParameterGrid`，并在 `ExecutionContext` 中组装进度、取消、artifact、checkpoint 与资源服务。
 6.  **执行循环**：
     *   **隔离**：配置唯一的运行目录。
     *   **快照**：将已解析的配置序列化到 `config_snapshot.json` 以确保可复现性。
     *   **实例化**：通过注册表实例化 `Engine` 及其依赖项。
     *   **仿真**：执行引擎的 `run()` 方法运行物理循环。
-    *   **持久化**：序列化结果并刷新到磁盘。
+    *   **持久化**：逻辑结果连同 `artifact_manifest.json` 保存；大型 dataset 可在同一 job 目录内使用有限数量 shard。
 
 ## 目录结构
 
@@ -114,17 +114,19 @@ QPhase 利用 Python 的 `typing.Protocol`（PEP 544）进行接口定义，而�
     *   包含标准物理模型（Kerr 腔、VdP）。
 *   `qphase_viz/`：**可视化引擎**。
     *   处理绘图和数据后处理。
+*   `qphase_cam/`：**workspace CAM 引擎**。
+    *   求解相干振幅矩阵稳态并执行谱后处理。
 
 ### 运行时产物 (`runs/`)
 执行仿真时，QPhase 按层次结构组织输出：
 
 ```text
-runs/
-├── 2025-12-29T10-00-00Z_scan_job_0/   # 任务 1 (chi=0.1)
-│   ├── config_snapshot.json           # 此特定点的完整配置
-│   └── results.h5                     # 仿真数据
-├── 2025-12-29T10-00-05Z_scan_job_1/   # 任务 2 (chi=0.2)
-│   ├── config_snapshot.json
-│   └── results.h5
-└── ...
+runs/<session-id>/
+├── session_manifest.json
+└── scan_job/                          # 整个 scan 只有一个逻辑 job
+    ├── config_snapshot.json
+    ├── artifact_manifest.json
+    └── result/                        # 选择 sharded 布局时
+        ├── shard_000000.npz
+        └── shard_000001.npz
 ```

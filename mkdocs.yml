@@ -48,6 +48,8 @@ plugins:
             GUI & Local API: GUI 与本地 API
             Results & Reproducibility: 结果与复现
             SDE Physics: SDE 物理
+            CAM Analysis: CAM 分析
+            CAM: CAM
             Modeling: 建模
             Simulation: 仿真
             API Reference: API 参考

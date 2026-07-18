@@ -17,6 +17,11 @@ description: 后处理架构
 ```yaml
 - name: sim
   save: true
+  scan:
+    axes:
+      omega_a:
+        target: model.kerr_2mode.omega_a
+        values: [0.9, 1.1]
   engine:
     sde:
       t1: 1.0
@@ -24,7 +29,7 @@ description: 后处理架构
       n_traj: 2
   model:
     kerr_2mode:
-      omega_a: [0.9, 1.1]
+      omega_a: 0.9
       omega_b: 1.0
       chi: 0.01
       gamma_a: 0.1
@@ -36,9 +41,9 @@ description: 后处理架构
       kind: complex
 
 - name: fit
-  input: sim
-  aggregate_input:
-    on: params.omega_a
+  input:
+    from: sim
+    mode: dataset
   engine:
     sde:
       mode: analyze
@@ -50,8 +55,8 @@ description: 后处理架构
 
 scheduler 会：
 
-1. 将 `sim` job 按 `omega_a` 的每个取值展开为多个 job。
-2. 把展开后的结果聚合为单个输入，传给 `fit` job。
+1. 编译 `sim` scan，并由 SDE engine 将其作为一个逻辑 dataset 执行。
+2. 将完整 dataset 一次传给 `fit` job。
 3. 在 `analyze` 模式下运行 `analyser.lorentz_fitter`，在 `fit` job 的 run 目录中生成 `fit_results.csv` 和 `psd_merged.csv`。
 
 ## 输出文件
@@ -68,5 +73,5 @@ NPZ/PKL bundle 会通过 `qphase.core.aggregation` 写入 `__schema_version__` �
 ## 边界
 
 - 单个 result 内的分析（单 job PSD、寻峰、distribution）属于 `analyser` 插件。
-- 跨 result 的聚合、排序、带 schema version 的导出属于 `qphase.core.aggregation`。
+- Dataset view、通用聚合和带 schema version 的导出属于 core。
 - SDE 专属的曲线拟合与 payload 提取属于 `qphase_sde.analyser.lorentz_fitter`。

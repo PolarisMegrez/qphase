@@ -108,17 +108,21 @@ integrator:
 
 ## 批量化参数扫描
 
-当任务包含参数扫描（例如 `model.omega_a: [0.001, 0.002, 0.003]`）时，调度器通常会将其展开为多个独立的仿真任务。如果这些任务具有**相同的引擎、积分器、后端和时间网格**，仅在模型参数上不同，`qphase_sde` 可以将它们融合为一次批量仿真。
+SDE 扫描使用 job 顶层的显式 `ScanSpec`。scheduler 将一个 `ParameterGrid`
+传给 SDE engine，薄 adapter 再把它编译为现有的参数重复和 trajectory fusion 表示。
 
 在批量运行中：
 
 * 扫描值会被广播为单个 `(n_scan * n_traj,)` 的集合体。
 * 后端的一次调用会同时推进所有扫描点上的所有轨迹。
-* 结果会自动拆分回原始的逐扫描任务，每个任务仍保留自己的运行目录和清单条目。
+* 合并结果以一个带命名 point view 的逻辑 SDE dataset 暴露。
+* 保存时只有一个 job 目录和一个 artifact manifest，不会逐参数点建立目录。
 
 这在 GPU 上效果尤为明显：每个时间步较小的 CPU 启动开销被大量轨迹均摊，单个 CuPy kernel 启动即可更新整个集合体。
 
-批量执行是**自动的**，不需要额外配置。对模型的唯一要求是其参数既能接受标量，也能接受一维数组，以便规划器将扫描值广播到整个集合体。
+声明 `scan` 后，批量执行仍然自动完成。adapter 不修改 integrator、PSD、RNG、
+fused kernel 或 GPU batching 主逻辑。模型参数仍需接受标量或逐 trajectory 的一维
+数组。
 
 ## Kernelized Terms（CuPy 核函数）
 
@@ -127,6 +131,7 @@ integrator:
 当前支持 CuPy 核函数的模型：
 
 * `model.vdp_2mode`
+* `model.kerr_2mode`
 * `model.kerr_3mode`
 
 核函数化是**自动的**；任务文件中不需要显式开关。如果模型声明支持当前后端，积分器就会使用它；否则会回退到标准 Python 实现。因此，在 `numpy` 和 `cupy` 之间切换 `backend` 始终能产生正确结果。
@@ -134,6 +139,11 @@ integrator:
 ### 示例：CuPy 核函数工作流
 
 ```yaml
+scan:
+  axes:
+    omega_a:
+      target: model.vdp_2mode.omega_a
+      values: [0.001, 0.00251189, 0.01]
 engine:
   sde:
     t0: 0.0
@@ -146,7 +156,7 @@ backend:
     device: cuda
 model:
   vdp_2mode:
-    omega_a: [0.001, 0.00251189, 0.01]
+    omega_a: 0.001
     omega_b: 0.0
     gamma_a: 2.0
     gamma_b: 1.0
@@ -154,4 +164,6 @@ model:
     g: 0.5
 ```
 
-由于 `omega_a` 有三个取值且后端为 CuPy，调度器会对这三个扫描点进行批量化，`vdp_2mode` 的核函数将以融合的 CUDA kernel 同时计算全部 `3 * 20` 条轨迹。
+由于 `omega_a` 包含三个值且后端为 CuPy，SDE adapter 会构造一个 `3 * 20`
+trajectory ensemble，`vdp_2mode` kernel 在融合 CUDA kernel 中计算它；scheduler
+仍然只看到一个逻辑 job。

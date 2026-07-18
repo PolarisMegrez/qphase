@@ -4,133 +4,156 @@ description: Job Configuration
 
 # Job Configuration
 
-QPhase utilizes a hierarchical, YAML-based configuration system designed to ensure reproducibility, flexibility, and ease of use.
+QPhase uses validated YAML configuration for reproducible logical jobs. A job
+selects one engine, configures its plugins, optionally declares a parameter
+scan, and optionally consumes an upstream result.
 
-## Writing Configuration Files
+## Configuration Hierarchy
 
-A QPhase "Job" is defined by a YAML file located in the `configs/jobs/` directory. Each file represents a single simulation task (or a set of tasks if parameter scanning is used).
+Configuration is merged in this order, from lowest to highest priority:
 
-### Using Templates
+1. Core and plugin schema defaults.
+2. Project defaults from `configs/global.yaml`.
+3. The job YAML.
+4. `job.system`, which overrides the same `SystemConfig` fields for that job.
 
-The easiest way to create a new configuration is to use the CLI to generate a template.
+Framework runtime policy belongs to `SystemConfig`; it is not duplicated as
+top-level job fields.
 
-```bash
-# Generate a template for a specific model
-qphase template model.vdp_2mode > configs/jobs/my_new_job.yaml
-```
-
-This file can then be edited to suit specific requirements.
-
-### Instantiating Plugins
-
-QPhase is plugin-based. Defining a section in the config file (like `model` or `backend`) instructs QPhase to instantiate a specific plugin class.
-
-For example:
+## Job Structure
 
 ```yaml
-model:
-  vdp_2mode:   # This matches the plugin ID "model.vdp_2mode"
-    omega_a: 1.0  # These arguments are passed to the plugin's __init__ method
-    omega_b: 1.0
-    gamma_a: 0.1
-    gamma_b: 0.1
-    Gamma: 1.0
-    g: 0.5
+name: vdp_cam
+save: true
+
+engine:
+  cam: {}
+
+plugins:
+  backend:
+    numpy: {float_dtype: float64}
+  model:
+    vdp_2mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      gamma_a: 2.0
+      gamma_b: 0.5
+      Gamma: 0.0001
+      g: 0.5
+  cam_solver:
+    multistability: {n_guesses: 50, guess_bounds: auto}
 ```
 
-### Configuration Hierarchy
-
-To determine the final settings for a simulation job, QPhase merges configurations from multiple sources. The priority order, from highest to lowest, is as follows:
-
-1.  **Job Configuration** (`configs/jobs/*.yaml`): Settings specific to a single simulation run. These settings override all others.
-2.  **Global Configuration** (`configs/global.yaml`): Project-wide defaults (e.g., default backend, logging preferences).
-3.  **System Defaults**: Built-in defaults provided by the QPhase package and its plugins.
-
-## Anatomy of a Job Configuration
-
-A job configuration file defines the specific parameters for a simulation.
-
-### General Fields
-
-| Field | Type | Description |
-| :--- | :--- | :--- |
-| `name` | `str` | **Required.** A unique identifier for the job. Used for logging and output filenames. |
-| `engine` | `dict` | **Required.** Configuration for the simulation engine. Must contain exactly one key corresponding to the engine name (e.g., `sde`). |
-| `input` | `str` | **Optional.** Specifies an input source, such as the name of an upstream job. |
-| `output` | `str` | **Optional.** Specifies an alias for the output result, or the default filename if saving is enabled. |
-| `save` | `bool/str` | **Optional.** Controls result saving. `true`=save (default name), `false`=don't save, `"filename"`=save as filename. Default follows system config. |
-
-### QPhase-SDE Fields
-
-When using the SDE engine (`qphase-sde`), the following top-level keys are available. These correspond to the plugin types used by the SDE solver.
-
 | Field | Description |
-| :--- | :--- |
-| `model` | Configuration for the physical model plugin (e.g., `vdp_2mode`, `kerr_2mode`). Defines the drift and diffusion terms. |
-| `backend` | Configuration for the computational backend plugin (e.g., `numpy`, `torch`). Defines how arrays are handled. |
-| `integrator` | Configuration for the SDE integrator plugin (e.g., `euler_maruyama`, `milstein`). Defines the numerical stepping scheme. |
+| --- | --- |
+| `name` | Unique logical job name. |
+| `engine` | Exactly one engine configuration. |
+| `plugins` | Namespaced plugin configurations required by the engine. |
+| `params` | Optional engine-specific values. |
+| `scan` | Optional explicit `ScanSpec`. |
+| `input` | Optional structured upstream input. |
+| `save` | `true`, `false`, or an output base name. |
+| `system` | Optional override of the normal `SystemConfig` schema. |
 
-### QPhase-Viz Fields
+Some resource packages also accept plugin namespaces at the job top level for
+compatibility with existing files. New resource packages should prefer the
+explicit `plugins` mapping.
 
-When using the Visualization engine (`qphase-viz`), the following keys are relevant:
+## Parameter Scans
 
-| Field | Description |
-| :--- | :--- |
-| `analyser` | Configuration for data analysis plugins (e.g., `psd`, `trajectory`). Processes raw simulation data. |
-| `visualizer` | Configuration for plotting plugins. Defines how the analyzed data is rendered. |
+Scans are explicit. A list inside a plugin configuration is always a literal
+plugin value; it is never interpreted as a scan. The removed list-as-scan
+syntax raises a migration error for known scalar model parameters.
 
-## Parameter Scanning
-
-QPhase includes built-in support for parameter sweeps, allowing you to run multiple simulations with varying parameters from a single config file.
-
-### Cartesian Product (Grid Search)
-
-If lists are provided for multiple parameters, QPhase generates a job for every possible combination (Cartesian product).
+Each axis has a display name, a target plugin path, and exactly one value
+generator:
 
 ```yaml
-model:
-  kerr_2mode:
-    omega_a: [0.9, 1.0, 1.1] # 3 values
-    omega_b: 1.0
-    chi: 0.01
-    gamma_a: 0.1
-    gamma_b: [0.1, 0.2] # 2 values
-    g: 0.1
-# Total jobs = 3 * 2 = 6
+scan:
+  combine: cartesian
+  axes:
+    omega_a:
+      target: model.vdp_2mode.omega_a
+      logspace: {start: -3, stop: -1, num: 31}
+    gamma_b:
+      target: model.vdp_2mode.gamma_b
+      linspace: {start: 0.2, stop: 1.1, num: 101}
 ```
 
-### Zipped Scanning
+Supported generators are:
 
-To scan parameters in lock-step (e.g., varying `chi` and `epsilon` together), you can use the zipped scan method. This is configured in `system.yaml` (see below) or by using specific syntax if supported by the plugin.
+| Generator | Meaning |
+| --- | --- |
+| `values: [...]` | Explicit values. |
+| `linspace: {start, stop, num, endpoint}` | Linear spacing; `endpoint` defaults to `true`. |
+| `logspace: {start, stop, num, endpoint, base}` | Exponents of `base`; `base` defaults to `10`. |
 
-*(Note: Currently, the default behavior is Cartesian scan. Zipped scan requires enabling `parameter_scan.method = "zip"` in `system.yaml`)*
+`combine: cartesian` creates one result dimension per axis in YAML declaration
+order. The example above has shape `(31, 101)`. `combine: zipped` requires equal
+axis lengths and creates one `point` dimension.
+
+A scan does not create scheduler sub-jobs. The engine receives one runtime
+`ParameterGrid` and chooses its own pointwise, tiled, fused, or GPU execution
+strategy. The session manifest and output tree still contain one entry and one
+directory for the logical job.
+
+## Upstream Input
+
+Inputs use a structured form:
+
+```yaml
+input:
+  from: vdp_2mode_cayley_sim
+  mode: dataset
+```
+
+`mode: dataset` passes the complete result to the downstream engine once.
+`mode: map` lazily invokes the downstream engine on selected point or group
+views while retaining one logical downstream job:
+
+```yaml
+input:
+  from: source_scan
+  mode: map
+  select: {omega_a: [0.01, 0.1]}
+  group_by: [gamma_b]
+```
+
+`select` filters named axis values. `group_by` collects views along the named
+axes into `AggregateResult` inputs. Mapping never creates point directories.
+String-valued `input` and the old `aggregate_input` field are rejected with a
+migration error.
 
 ## System Configuration
 
-The `configs/system.yaml` file controls the behavior of the QPhase framework itself, rather than specific simulation parameters.
-
-### Key Settings
-
-*   **`paths`**:
-    *   `output_dir`: The root directory for all simulation outputs (default: `runs/`).
-*   **`logging`**:
-    *   `level`: Global logging level (INFO, DEBUG, WARNING).
-*   **`parameter_scan`**:
-    *   `enabled`: Enable/disable parameter scanning (default: `true`).
-    *   `method`: Scanning method (`cartesian` or `zip`).
-    *   `numbered_outputs`: Whether to append numbers to output directories for scanned jobs (default: `true`).
-
-Example `system.yaml`:
+The packaged defaults live in `qphase.core/system.yaml`. User-wide overrides
+live in `~/.qphase/config.yaml`; `QPHASE_SYSTEM_CONFIG` or an explicit loader
+path can supply another file. The default policy is:
 
 ```yaml
-paths:
-  output_dir: "runs"
+auto_save_results: true
+progress_update_interval: 0.5
 
-logging:
-  level: "INFO"
-
-parameter_scan:
-  enabled: true
-  method: "cartesian"
-  numbered_outputs: true
+scan_runtime:
+  storage_layout: auto
+  auto_shard_threshold_mib: 512
+  shard_target_mib: 128
+  checkpoint:
+    enabled: false
+    interval_chunks: 1
+    keep_on_success: false
+  resources:
+    cpu_worker_limit: null
+    memory_limit_mib: null
+    gpu_device: null
+    gpu_memory_fraction: null
 ```
+
+`storage_layout` may be `auto`, `single`, `sharded`, or `per_point`. In `auto`
+mode, datasets larger than 512 MiB are sharded by default. Resource values are
+hints collected by core and forwarded through `ExecutionContext`; the scheduler
+does not use them for multi-job resource allocation.
+
+Checkpointing covers completed scan chunks only. It does not checkpoint the
+internal time step of an SDE trajectory. Resume validates the configuration,
+plugins, backend, and dtype before accepting compatible checkpoint data.

@@ -80,14 +80,14 @@ engine:
 ## `mode: analyze`
 
 Setting `engine.sde.mode: analyze` runs the configured analyzers on upstream
-input data without performing a new simulation. This is used for cross-job
-post-processing, for example fitting Lorentzians to aggregated PSD data:
+input data without performing a new simulation. This is used for downstream
+post-processing, for example fitting Lorentzians to a logical scan dataset:
 
 ```yaml
 - name: fit
-  input: sim
-  aggregate_input:
-    on: params.epsilon
+  input:
+    from: sim
+    mode: dataset
   engine:
     sde:
       mode: analyze

@@ -71,7 +71,8 @@ f = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
 
 ## `lorentz_fitter`
 
-对聚合后的 PSD 数据拟合 Lorentz 曲线。这是一个用于 `mode: analyze` 的**跨 job** 分析器。
+对逻辑 SDE scan dataset 的 PSD point view 拟合 Lorentz 曲线。这是一个用于
+`mode: analyze` 的下游分析器。
 
 ### 配置
 
@@ -110,7 +111,7 @@ analyser:
 
 | 列 | 含义 |
 | :-- | :-- |
-| `scan_param` | 来自 `aggregate_input` 的扫描值。 |
+| `scan_param` | 从逻辑 SDE dataset 读取的命名 scan axis。 |
 | `center` | Lorentz 峰中心（rad/s）。 |
 | `center_std` | 拟合峰中心的标准差。 |
 | `linewidth` | 半高全宽（FWHM）。 |

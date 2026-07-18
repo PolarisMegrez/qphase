@@ -17,6 +17,11 @@
 - **Model Definition**:
     - Define custom Hamiltonians and Dissipators via `SDEModel`.
     - Supports additive and multiplicative noise.
+- **Logical Parameter Scans**:
+    - Accepts the core `ParameterGrid` and compiles it into the existing
+      per-trajectory parameter repetition and GPU fusion path.
+    - Returns one named-axis SDE dataset with point views and single or sharded
+      persistence.
 
 ## Installation
 
@@ -30,30 +35,31 @@ pip install qphase-sde
 When installed with `qphase`, you can define `sde` jobs in your configuration file:
 
 ```yaml
-jobs:
-  - name: "my_simulation"
-    type: "sde"
-    config:
-      t1: 100.0
-      dt: 1e-3
-      trajectories: 1000
-      model: "models/my_model.py"
+name: my_simulation
+save: true
+scan:
+  axes:
+    omega_a:
+      target: model.vdp_2mode.omega_a
+      values: [0.001, 0.01, 0.1]
+engine:
+  sde: {t0: 0.0, t1: 100.0, dt: 0.01, n_traj: 100, seed: 42}
+backend:
+  numpy: {}
+integrator:
+  euler_maruyama: {}
+model:
+  vdp_2mode:
+    omega_a: 0.001
+    omega_b: 0.0
+    gamma_a: 2.0
+    gamma_b: 1.0
+    Gamma: 0.0001
+    g: 0.5
 ```
 
-### Standalone Usage
-You can also use the library directly in your Python scripts:
-
-```python
-from qphase_sde.engine import Engine, EngineConfig
-from qphase_sde.model import SDEModel
-
-# Define model and config
-config = EngineConfig(dt=1e-3, t1=10.0)
-engine = Engine(config)
-
-# Run simulation
-result = engine.run(my_model)
-```
+The SDE engine is scheduler-facing; instantiate it through QPhase so plugin
+validation, execution context, snapshots, and artifact manifests remain intact.
 
 ## License
 

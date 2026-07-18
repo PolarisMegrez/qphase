@@ -1,13 +1,16 @@
 # QPhase — A Modular Framework for Phase-Space Representation Based Numerical Simulation
 
-QPhase is a small, research-oriented Python project for running phase-space simulations in quantum optics. The main goal is to reduce repeated “boilerplate” work (configuration, parameter sweeps, and result saving) so you can focus on the model equations.
+QPhase is a workstation-oriented scientific workflow runtime for reproducible
+quantum-optics calculations. It provides configuration, plugin discovery,
+logical-job scheduling, structured data flow, scan runtime services, progress,
+and result persistence while resource packages own their numerical algorithms.
 
 Authors: Yu Xue-Hao (University of Chinese Academy of Sciences, UCAS)
 
 - Modular structure separates the CLI/scheduler, the SDE engine, and plotting utilities.
 - Plugin-based design allows different backends and engines to be added over time.
 - Configuration-driven runs save a snapshot of the exact configuration used.
-- Built-in helpers for parameter sweeps and organized run output.
+- Explicit parameter scans remain one logical job and one organized dataset.
 
 ## Installation
 
@@ -31,6 +34,7 @@ pip install -r requirements.txt
 pip install -e packages/qphase
 pip install -e packages/qphase_sde
 pip install -e packages/qphase_viz
+pip install -e packages/qphase_cam
 ```
 
 ## Quick Start
@@ -93,11 +97,16 @@ analyze`:
 # configs/jobs/kerr_2mode_fit.yaml
 - name: kerr_2mode_sim
   save: true
+  scan:
+    axes:
+      omega_a:
+        target: model.kerr_2mode.omega_a
+        values: [0.9, 1.0, 1.1]
   engine:
     sde: { t0: 0.0, t1: 1.0, dt: 0.01, n_traj: 8, seed: 42 }
   model:
     kerr_2mode:
-      omega_a: [0.9, 1.0, 1.1]
+      omega_a: 0.9
       omega_b: 1.0
       chi: 0.01
       gamma_a: 0.1
@@ -107,9 +116,9 @@ analyze`:
     psd: { modes: [0], kind: complex, find_peaks: true }
 
 - name: kerr_2mode_fit
-  input: kerr_2mode_sim
-  aggregate_input:
-    on: params.omega_a
+  input:
+    from: kerr_2mode_sim
+    mode: dataset
   engine:
     sde: { mode: analyze }
   analyser:

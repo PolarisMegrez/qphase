@@ -9,8 +9,14 @@
   `batched_newton`, and `continuation`.
 - `cam_postprocessor`: `rayleigh_frequency`, `hamiltonian_spectrum`,
   `jacobian_spectrum`, `physicality`, and `bifurcation`.
-- `batch_planner.cam` and `result_splitter.cam_scan_splitter` integrate
-  independent parameter points with the scheduler.
 
 All plugin implementations inherit the public base class in their namespace and
 declare a strict Pydantic `config_schema`.
+
+## Scan Runtime
+
+`engine.cam` receives the core `ParameterGrid` directly. Native batch solvers
+retain their resource-specific tile or NumPy/CuPy execution strategies;
+pointwise solvers use the shared CAM helper. `CAMResult` implements the dataset
+protocol with named axes and fixed solution capacity, and persists as a single
+or sharded logical artifact without scheduler point jobs.

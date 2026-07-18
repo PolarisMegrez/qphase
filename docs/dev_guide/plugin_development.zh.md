@@ -146,10 +146,41 @@ class MyEngine:
         # 处理可选插件
         self.analyser = plugins.get("analyser")
 
-    def run(self):
+    def run(self, input_data=None, *, context=None):
         # ... 仿真循环 ...
         pass
 ```
+
+### 支持 Scan 的 Engine
+
+scheduler 通过 `ExecutionContext` 传递 scan 与运行时服务。engine 负责数值执行
+策略；core 不把 grid 展开成 job。
+
+```python
+from qphase.core.scan import execute_pointwise
+
+def run(self, input_data=None, *, context=None):
+    grid = None if context is None else context.parameter_grid
+    if grid is None:
+        return self.solve_one()
+
+    rows = execute_pointwise(
+        grid,
+        self.solve_point,
+        context=context,
+        chunk_size=16,
+    )
+    return MyDatasetResult.from_points(grid, rows)
+```
+
+scan 结果应实现 `DatasetResultProtocol`：命名 `axes`、逻辑 `shape`、
+`point_view(index)` 以及 `save_dataset(path, layout, shard_target_bytes)`。
+这样下游可以使用 `dataset` 或惰性 `map` 输入，而不会把内部 tile 暴露为
+scheduler job。engine 还可读取资源提示、报告进度、检查取消状态，并通过 context
+保存已完成 chunk。
+
+不要为资源包专用算法增加通用 core planner。trajectory fusion、batched Newton 或
+model-specific tile 策略应保留在资源包内，并把 `ParameterGrid` 作为可移植输入契约。
 
 ---
 

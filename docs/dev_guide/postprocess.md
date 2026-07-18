@@ -17,6 +17,11 @@ Postprocessing is not a separate core command or a separate resource package. It
 ```yaml
 - name: sim
   save: true
+  scan:
+    axes:
+      omega_a:
+        target: model.kerr_2mode.omega_a
+        values: [0.9, 1.1]
   engine:
     sde:
       t1: 1.0
@@ -24,7 +29,7 @@ Postprocessing is not a separate core command or a separate resource package. It
       n_traj: 2
   model:
     kerr_2mode:
-      omega_a: [0.9, 1.1]
+      omega_a: 0.9
       omega_b: 1.0
       chi: 0.01
       gamma_a: 0.1
@@ -36,9 +41,9 @@ Postprocessing is not a separate core command or a separate resource package. It
       kind: complex
 
 - name: fit
-  input: sim
-  aggregate_input:
-    on: params.omega_a
+  input:
+    from: sim
+    mode: dataset
   engine:
     sde:
       mode: analyze
@@ -50,8 +55,8 @@ Postprocessing is not a separate core command or a separate resource package. It
 
 The scheduler will:
 
-1. Expand the `sim` job into one job per value of `omega_a`.
-2. Aggregate the expanded results into a single input for the `fit` job.
+1. Compile the `sim` scan and let the SDE engine execute it as one logical dataset.
+2. Pass that complete dataset once to the `fit` job.
 3. Run `analyser.lorentz_fitter` in `analyze` mode, producing `fit_results.csv` and `psd_merged.csv` in the `fit` job's run directory.
 
 ## Output Files
@@ -68,5 +73,5 @@ The NPZ/PKL bundles include `__schema_version__` and `__created_by__` metadata v
 ## Boundaries
 
 - Single-result analysis (per-job PSD, peak finding, distributions) belongs to `analyser` plugins.
-- Cross-result aggregation, sorting, and schema-versioned exporting belongs to `qphase.core.aggregation`.
+- Dataset views, generic aggregation, and schema-versioned exporting belong to core.
 - SDE-specific curve fitting and payload extraction belongs to `qphase_sde.analyser.lorentz_fitter`.

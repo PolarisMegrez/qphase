@@ -8,11 +8,13 @@ nav_order: 5
 
 # Output Formats
 
-The SDE engine produces two kinds of artifacts: per-run archives and merged analysis bundles.
+The SDE engine produces one logical result per job. A non-scan result is an
+`SDEResult`; a scan is an `SDEScanResult` dataset with named axes and lazy point
+views.
 
-## Per-run archive (`.npz`)
+## Single dataset archive (`.npz`)
 
-When `save: true`, each SDE job writes a NumPy archive containing:
+With `storage_layout: single`, each SDE job writes one NumPy archive containing:
 
 | Key | Type | Description |
 | :-- | :-- | :-- |
@@ -39,7 +41,13 @@ The `psd` analyzer stores:
 *   `psd` — mean PSD values per mode.
 *   `psd_std` / `psd_sem` — cross-trajectory sample standard deviation and standard error.
 
-When the analyzer runs in multiple jobs with different parameter values, the scheduler can aggregate them into a single table for the `lorentz_fitter` analyzer.
+For a scan, PSD payloads remain attached to the named points of one logical SDE
+dataset. A downstream `mode: analyze` job consumes that dataset once with the
+`lorentz_fitter` analyzer.
+
+With `storage_layout: sharded`, the same logical dataset is split into bounded
+`shard_*.npz` files under one job directory. `artifact_manifest.json` records
+the shape and loader, and `SDEScanResult.load_dataset` restores the full view.
 
 ## Lorentz fit output
 
@@ -51,7 +59,7 @@ When the analyzer runs in multiple jobs with different parameter values, the sch
 
 ## Distribution outputs
 
-*   `dist_merged.npz` — saved by the `dist` analyzer when aggregated across a scan.
-*   `pdist_merged.pkl` — saved by the `pdist` analyzer when aggregated across a scan.
+*   `dist_merged.npz` — optional merged distribution export for a scan dataset.
+*   `pdist_merged.pkl` — optional merged polar-distribution export for a scan dataset.
 
 For details on the run directory layout, see [User Guide: Output](../../user_guide/output.md).

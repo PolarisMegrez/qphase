@@ -27,10 +27,10 @@ The framework is conceptually divided into two distinct layers:
 To understand how QPhase operates, it is essential to distinguish between three fundamental concepts: the **Job**, the **Engine**, and the **Plugin**.
 
 ### 1. The Job (The "Intent")
-A **Job** represents a single, atomic execution request. It answers the question: *"What simulation do I want to run?"*
+A **Job** represents one logical execution request. It answers the question: *"What scientific workflow step do I want to run?"*
 *   **Definition**: A Job is defined entirely by its configuration (a resolved YAML document). It contains all the parameters needed to reproduce a simulation.
 *   **Isolation**: Each Job runs in its own isolated directory (`runs/{timestamp}_{job_name}/`). This ensures that side effects (like file I/O) from one simulation do not contaminate another.
-*   **Lifecycle**: A Job is created by the Scheduler (often by expanding a parameter scan), executed, and then finalized when its results are saved.
+*   **Lifecycle**: A Job is loaded by the Scheduler, optionally receives one `ParameterGrid`, executes once, and is finalized when its logical result is saved.
 
 ### 2. The Engine (The "Workflow")
 An **Engine** is a special type of plugin that defines the *lifecycle* of a simulation. It answers the question: *"How should the simulation proceed?"*
@@ -93,13 +93,13 @@ The execution of a simulation follows a deterministic lifecycle managed by the `
 2.  **Discovery**: The Registry scans entry points and local directories to populate the component catalog.
 3.  **Configuration Resolution**: Job configurations are loaded, validated against Pydantic schemas, and merged with global defaults.
 4.  **Validation**: The Scheduler validates job dependencies against the target Engine's `EngineManifest`.
-5.  **Job Expansion**: Parameter scans are processed, expanding high-level job definitions into a list of atomic execution units (`JobConfig`).
+5.  **Context Construction**: An optional `ScanSpec` is compiled to `ParameterGrid`, and progress, cancellation, artifact, checkpoint, and resource services are assembled in `ExecutionContext`.
 6.  **Execution Loop**:
     *   **Isolation**: A unique run directory is provisioned.
     *   **Snapshotting**: The resolved configuration is serialized to `config_snapshot.json` for reproducibility.
     *   **Instantiation**: The `Engine` and its dependencies are instantiated via the Registry.
     *   **Simulation**: The Engine's `run()` method executes the physics loop.
-    *   **Persistence**: Results are serialized and flushed to disk.
+    *   **Persistence**: The logical result is stored with an `artifact_manifest.json`; large datasets may use bounded shards in the same job directory.
 
 ## Directory Structure
 
@@ -114,17 +114,19 @@ The project follows a monorepo structure managed by `uv` workspaces.
     *   Contains standard physics models (Kerr Cavity, VdP).
 *   `qphase_viz/`: **Visualization Engine**.
     *   Handles plotting and data post-processing.
+*   `qphase_cam/`: **Workspace CAM Engine**.
+    *   Solves coherent-amplitude matrix steady states and postprocesses spectra.
 
 ### Runtime Artifacts (`runs/`)
 When simulations are executed, QPhase organizes outputs hierarchically:
 
 ```text
-runs/
-├── 2025-12-29T10-00-00Z_scan_job_0/   # Job 1 (chi=0.1)
-│   ├── config_snapshot.json           # Full config for this specific point
-│   └── results.h5                     # Simulation data
-├── 2025-12-29T10-00-05Z_scan_job_1/   # Job 2 (chi=0.2)
-│   ├── config_snapshot.json
-│   └── results.h5
-└── ...
+runs/<session-id>/
+├── session_manifest.json
+└── scan_job/                          # One logical job for the full scan
+    ├── config_snapshot.json
+    ├── artifact_manifest.json
+    └── result/                        # Sharded layout, when selected
+        ├── shard_000000.npz
+        └── shard_000001.npz
 ```

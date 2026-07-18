@@ -1,120 +1,147 @@
 ---
-description: 任务配置指南
+description: 任务配置
 ---
 
 # 任务配置
 
-QPhase 采用分层式的 YAML 配置系统，旨在确保仿真的可重复性、灵活性及易用性。
+QPhase 使用经过校验的 YAML 配置描述可复现的逻辑任务。一个 job 选择一个
+engine，配置其插件，并可选声明参数扫描或读取上游结果。
 
-## 编写配置文件
+## 配置层级
 
-QPhase 中的“任务 (Job)”由位于 `configs/jobs/` 目录下的 YAML 文件定义。每个文件代表一个仿真任务（若启用了参数扫描，则代表一组任务）。
+配置按以下顺序合并，后者优先级更高：
 
-### 使用模板
+1. 核心与插件 schema 默认值。
+2. `configs/global.yaml` 中的项目默认值。
+3. job YAML。
+4. `job.system`，使用相同的 `SystemConfig` schema 覆盖当前 job 的运行策略。
 
-创建新配置最便捷的方式是使用 CLI 生成模板。
+框架运行策略只属于 `SystemConfig`，不会重复设计为 job 顶层快捷字段。
 
-```bash
-# 为特定模型生成模板
-qphase template model.vdp_2mode > configs/jobs/my_new_job.yaml
-```
-
-生成后，可根据具体需求编辑该文件。
-
-### 实例化插件
-
-QPhase 基于插件架构。在配置文件中定义某个部分（如 `model` 或 `backend`）即指示 QPhase 实例化相应的插件类。
-
-例如：
+## Job 结构
 
 ```yaml
-model:
-  vdp_2mode:   # 对应插件 ID "model.vdp_2mode"
-    omega_a: 1.0  # 这些参数将传递给插件的 __init__ 方法
-    omega_b: 1.0
-    gamma_a: 0.1
-    gamma_b: 0.1
-    Gamma: 1.0
-    g: 0.5
+name: vdp_cam
+save: true
+
+engine:
+  cam: {}
+
+plugins:
+  backend:
+    numpy: {float_dtype: float64}
+  model:
+    vdp_2mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      gamma_a: 2.0
+      gamma_b: 0.5
+      Gamma: 0.0001
+      g: 0.5
+  cam_solver:
+    multistability: {n_guesses: 50, guess_bounds: auto}
 ```
 
-### 配置层级
+| 字段 | 含义 |
+| --- | --- |
+| `name` | 唯一逻辑任务名称。 |
+| `engine` | 恰好一个 engine 配置。 |
+| `plugins` | engine 所需的命名空间插件配置。 |
+| `params` | 可选的 engine 专用参数。 |
+| `scan` | 可选的显式 `ScanSpec`。 |
+| `input` | 可选的结构化上游输入。 |
+| `save` | `true`、`false` 或输出基础名称。 |
+| `system` | 可选的 `SystemConfig` 同 schema 覆盖。 |
 
-为了确定仿真任务的最终设置，QPhase 会合并来自多个源的配置。优先级从高到低如下：
-
-1.  **任务配置** (`configs/jobs/*.yaml`)：针对单次仿真运行的特定设置。此处的设置将覆盖所有其他配置。
-2.  **全局配置** (`configs/global.yaml`)：项目级的默认设置（例如默认后端、日志偏好）。
-3.  **系统默认值**：QPhase 包及其插件提供的内置默认值。
-
-## 任务配置详解
-
-任务配置文件定义了仿真的具体参数。
-
-### 通用字段
-
-| 字段 | 类型 | 描述 |
-| :--- | :--- | :--- |
-| `name` | `str` | **必填**。任务的唯一标识符，用于日志记录及输出文件名。 |
-| `engine` | `dict` | **必填**。仿真引擎的配置。必须包含且仅包含一个与引擎名称对应的键（例如 `sde`）。 |
-| `input` | `str` | **可选**。指定输入源，例如上游任务的名称。 |
-| `output` | `str` | **可选**。指定输出目标。 |
-
-### QPhase-SDE 字段
-
-当使用 SDE 引擎 (`qphase-sde`) 时，可使用以下顶级键。这些键对应于 SDE 求解器使用的插件类型。
-
-| 字段 | 描述 |
-| :--- | :--- |
-| `model` | 物理模型插件的配置（例如 `vdp_2mode`, `kerr_2mode`）。定义漂移项和扩散项。 |
-| `backend` | 计算后端插件的配置（例如 `numpy`, `torch`）。定义数组的处理方式。 |
-| `integrator` | SDE 积分器插件的配置（例如 `euler_maruyama`, `milstein`）。定义数值步进方案。 |
-
-### QPhase-Viz 字段
-
-当使用可视化引擎 (`qphase-viz`) 时，相关字段如下：
-
-| 字段 | 描述 |
-| :--- | :--- |
-| `analyser` | 数据分析插件的配置（例如 `psd`, `trajectory`）。用于处理原始仿真数据。 |
-| `visualizer` | 绘图插件的配置。定义分析数据的渲染方式。 |
+部分现有资源包仍兼容 job 顶层插件命名空间。新资源包应优先使用显式
+`plugins` 映射。
 
 ## 参数扫描
 
-QPhase 内置了对参数扫描的支持，允许通过单个配置文件运行具有不同参数的多个仿真。
+扫描必须显式声明。插件配置中的列表始终是插件本身的普通值，不再被解释为扫描。
+已知标量模型参数若使用旧的列表扫描语法，配置加载器会给出迁移错误。
 
-### 笛卡尔积 (网格搜索)
-
-若为多个参数提供了列表，QPhase 将生成所有可能组合的任务（笛卡尔积）。
+每条轴包含显示名称、插件目标路径和一种数值生成方式：
 
 ```yaml
-model:
-  kerr_2mode:
-    omega_a: [0.9, 1.0, 1.1] # 3 个值
-    omega_b: 1.0
-    chi: 0.01
-    gamma_a: 0.1
-    gamma_b: [0.1, 0.2] # 2 个值
-    g: 0.1
-# 总任务数 = 3 * 2 = 6
+scan:
+  combine: cartesian
+  axes:
+    omega_a:
+      target: model.vdp_2mode.omega_a
+      logspace: {start: -3, stop: -1, num: 31}
+    gamma_b:
+      target: model.vdp_2mode.gamma_b
+      linspace: {start: 0.2, stop: 1.1, num: 101}
 ```
 
-### 联动扫描 (Zipped Scanning)
+| 生成方式 | 含义 |
+| --- | --- |
+| `values: [...]` | 显式值列表。 |
+| `linspace: {start, stop, num, endpoint}` | 线性间隔；`endpoint` 默认 `true`。 |
+| `logspace: {start, stop, num, endpoint, base}` | `base` 的指数；`base` 默认 `10`。 |
 
-若需同步扫描参数（例如 `chi` 和 `epsilon` 一一对应变化），可使用联动扫描方法。这需要在 `system.yaml` 中进行配置（见下文），或使用插件支持的特定语法。
+`combine: cartesian` 按 YAML 轴声明顺序产生结果维度，上例 shape 为
+`(31, 101)`。`combine: zipped` 要求所有轴长度相等，并只产生一个 `point`
+维度。
 
-*（注：当前默认行为为笛卡尔扫描。联动扫描需在 `system.yaml` 中启用 `parameter_scan.method = "zip"`）*
+扫描不会产生 scheduler 子任务。engine 收到一个运行时 `ParameterGrid`，自行选择
+逐点、tile、融合或 GPU 执行策略。session manifest 和输出树中仍然只有一个逻辑
+job 条目与一个目录。
 
-## 系统配置
+## 上游输入
 
-`configs/system.yaml` 文件控制 QPhase 框架本身的行为，而非具体的仿真参数。
+完整数据集输入写为：
 
-### 关键设置
+```yaml
+input:
+  from: vdp_2mode_cayley_sim
+  mode: dataset
+```
 
-*   **`paths`**:
-    *   `output_dir`: 所有仿真输出的根目录（默认：`runs/`）。
-*   **`logging`**:
-    *   `level`: 全局日志级别 (INFO, DEBUG, WARNING)。
-*   **`parameter_scan`**:
-    *   `enabled`: 启用/禁用参数扫描（默认：`true`）。
-    *   `method`: 扫描方法 (`cartesian` 或 `zip`)。
-    *   `numbered_outputs`: 是否为扫描任务的输出目录添加编号后缀（默认：`true`）。
+`mode: dataset` 只调用一次下游 engine，并传入完整结果。`mode: map` 在同一个逻辑
+下游 job 内惰性处理选中的 point/group view：
+
+```yaml
+input:
+  from: source_scan
+  mode: map
+  select: {omega_a: [0.01, 0.1]}
+  group_by: [gamma_b]
+```
+
+`select` 按命名轴值筛选；`group_by` 将指定轴上的 view 组合为
+`AggregateResult`。map 不建立参数点目录。字符串形式的 `input` 和旧
+`aggregate_input` 字段会产生明确迁移错误。
+
+## SystemConfig
+
+内置默认值位于 `qphase.core/system.yaml`。用户级覆盖位于
+`~/.qphase/config.yaml`；也可以通过 `QPHASE_SYSTEM_CONFIG` 或显式加载路径提供
+其他文件。默认运行策略为：
+
+```yaml
+auto_save_results: true
+progress_update_interval: 0.5
+
+scan_runtime:
+  storage_layout: auto
+  auto_shard_threshold_mib: 512
+  shard_target_mib: 128
+  checkpoint:
+    enabled: false
+    interval_chunks: 1
+    keep_on_success: false
+  resources:
+    cpu_worker_limit: null
+    memory_limit_mib: null
+    gpu_device: null
+    gpu_memory_fraction: null
+```
+
+`storage_layout` 可取 `auto`、`single`、`sharded` 或 `per_point`。`auto` 默认在
+dataset 超过 512 MiB 时分片。资源字段由 core 采集并通过 `ExecutionContext`
+传给 engine；scheduler 不据此进行多 job 资源调度。
+
+checkpoint 只覆盖已完成的 scan chunk，不覆盖 SDE 单条轨迹内部的时间步。
+resume 会校验配置、插件、backend 与 dtype，只有兼容的 checkpoint 才会被接受。

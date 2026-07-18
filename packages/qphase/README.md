@@ -8,7 +8,7 @@
 - **Plugin Support**: Loads external packages (like `qphase-sde` and `qphase-viz`) to extend functionality.
 - **Session Management**: Basic job tracking with support for resuming interrupted runs and dry-run validation.
 - **Configuration**: Uses YAML/JSON files to define simulation parameters and workflows.
-- **Parameter Scanning**: Supports simple parameter sweeps (Cartesian and Zipped).
+- **Logical Scan Runtime**: Explicit Cartesian or zipped `ScanSpec` axes execute inside one logical job and persist as one dataset.
 
 ## Installation
 
@@ -41,6 +41,7 @@ This repository contains the following packages:
 - **`qphase`**: The main CLI and scheduler.
 - **`qphase-sde`**: The numerical solver for SDEs.
 - **`qphase-viz`**: Plotting utilities for simulation data.
+- **`qphase-cam`**: Workspace-only coherent-amplitude matrix solvers.
 
 ## License
 

@@ -19,19 +19,21 @@ runs/
 └── 2025-12-31T05-23-05_281415/      # 会话目录 (时间戳 + UUID)
     ├── session_manifest.json        # 整个会话的元数据
     ├── vdp_sde/                     # 任务目录 (任务名称)
-    │   ├── config_snapshot.yaml     # 该任务使用的完整配置快照
-    │   ├── vdp_sde.npz              # SDE 结果归档
+    │   ├── config_snapshot.json     # 该任务使用的完整配置快照
+    │   ├── artifact_manifest.json   # 逻辑结果与物理布局
+    │   ├── vdp_sde.npz              # single 布局的 SDE 结果
     │   └── qphase.log               # 执行日志
     └── vdp_viz/                     # 下游任务目录
-        ├── config_snapshot.yaml
+        ├── config_snapshot.json
+        ├── artifact_manifest.json
         └── plot.png
 ```
 
 ## 可复现性
 
-### 配置快照 (`config_snapshot.yaml`)
+### 配置快照 (`config_snapshot.json`)
 
-每个任务目录都包含一个 `config_snapshot.yaml` 文件。这是运行该任务时使用的 **精确** 配置，包含：
+每个任务目录都包含一个 `config_snapshot.json` 文件，记录解析后的逻辑 job 配置，包括：
 *   合并后的全局配置与任务配置。
 *   解析后的插件默认值。
 *   系统环境信息（QPhase 版本、Python 版本、操作系统）。
@@ -39,7 +41,7 @@ runs/
 要复现某个结果，只需直接运行此快照文件：
 
 ```bash
-qphase run runs/2025-12-31.../vdp_sde/config_snapshot.yaml
+qphase run runs/2025-12-31.../vdp_sde/config_snapshot.json
 ```
 
 ### 会话清单 (`session_manifest.json`)
@@ -50,6 +52,22 @@ qphase run runs/2025-12-31.../vdp_sde/config_snapshot.yaml
 *   恢复中断的会话（高级用法）。
 
 ## 数据格式
+
+### 逻辑 Dataset Artifact
+
+参数扫描保存为一个逻辑 dataset，不会为每个参数点建立运行目录。每个已保存结果
+都有 `artifact_manifest.json`，其中记录 result 类型、schema 版本、命名 axes、
+逻辑 shape、存储布局、物理文件和 loader。
+
+布局由 `system.scan_runtime.storage_layout` 选择：
+
+* `single`：一个主要 dataset 文件。
+* `sharded`：同一 job 目录内数量有限的 chunk 文件。
+* `per_point`：仅用于外部兼容，文件仍位于同一个 job 目录。
+* `auto`：小于 `auto_shard_threshold_mib` 时使用 `single`，否则使用 `sharded`。
+
+系统默认自动阈值为 512 MiB，目标 shard 大小为 128 MiB。CAM 与 SDE loader 会
+恢复逻辑 shape，不受物理布局影响。
 
 结果数据的格式取决于所使用的引擎。
 
@@ -98,11 +116,16 @@ qphase run runs/2025-12-31.../vdp_sde/config_snapshot.yaml
 ```yaml
 - name: sim
   save: true
+  scan:
+    axes:
+      omega_a:
+        target: model.kerr_2mode.omega_a
+        values: [0.9, 1.0, 1.1]
   engine:
     sde: { t0: 0.0, t1: 1.0, dt: 0.01, n_traj: 8, seed: 42 }
   model:
     kerr_2mode:
-      omega_a: [0.9, 1.0, 1.1]
+      omega_a: 0.9
       omega_b: 1.0
       chi: 0.01
       gamma_a: 0.1
@@ -112,9 +135,9 @@ qphase run runs/2025-12-31.../vdp_sde/config_snapshot.yaml
     psd: { modes: [0], kind: complex, find_peaks: true }
 
 - name: fit
-  input: sim
-  aggregate_input:
-    on: params.omega_a
+  input:
+    from: sim
+    mode: dataset
   engine:
     sde: { mode: analyze }
   analyser:

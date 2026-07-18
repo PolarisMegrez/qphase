@@ -4,125 +4,116 @@ description: 调度器系统
 
 # 调度器系统
 
-**调度器**是 QPhase 的执行编排层。它负责将高级任务定义转换为具体的计算任务，管理其生命周期，并确保数据完整性。
+scheduler 是 QPhase 的逻辑工作流编排器，负责解析 engine 与插件、校验 DAG、在
+job 间传递结果、建立可复现运行目录、报告进度，并把持久化交给 artifact store。
+它不把参数点展开成 job，也不决定 engine 的数值并行策略。
 
-## 功能职责
+## 逻辑 Job 生命周期
 
-1.  **任务展开**：将抽象任务配置（可能包含参数范围）转换为原子任务的线性序列。
-2.  **依赖解析**：分析执行图以确保任务按拓扑顺序执行（例如确保输入数据在依赖任务启动前存在）。
-3.  **上下文管理**：为每个任务配置隔离的执行环境（目录），以防止数据污染。
-4.  **错误处理**：拦截运行时异常以防止批量失败（即单个失败的任务不应终止整个活动）。
+scheduler 按拓扑顺序对每个 job 执行：
 
-## 依赖验证
+1. 解析 engine，并校验其 `EngineManifest`。
+2. 通过 registry 实例化必需与可选插件。
+3. 将可选 `ScanSpec` 编译为 `ParameterGrid`。
+4. 解析结构化上游输入。
+5. 创建 `ExecutionContext` 并调用 engine。
+6. 根据配置通过 `ArtifactStore` 保存最终逻辑结果。
+7. 在 `session_manifest.json` 中记录一个状态条目。
 
-调度器通过 `EngineManifest` 强制执行引擎声明的显式依赖契约。
+shape 为 `(101, 101)` 的 Cartesian scan 在 scheduler 中仍然只有一个 job、一个
+配置快照、一个 manifest 条目和一个目录。engine 内部可以处理 10,201 个 point、
+tile、chunk、进程或融合 GPU 工作，但这些不是 scheduler 节点。
 
-1.  **清单声明**：每个引擎声明其必需和可选的插件。
-    ```python
-    class MyEngine(EngineBase):
-        manifest = EngineManifest(
-            required_plugins={"backend", "model"},
-            optional_plugins={"analyser"}
-        )
-    ```
-2.  **预检查**：在执行任何任务之前，调度器验证任务配置是否提供了目标引擎声明的所有 `required_plugins`。这可以防止由于缺少依赖项而导致的运行时失败。
+## Engine Manifest
 
-## 插件实例化
-
-对于每个任务，调度器执行以下步骤来实例化环境：
-
-1.  **引擎解析**：首先实例化 `engine` 插件。
-2.  **清单检查**：调度器读取 `engine.manifest`。
-3.  **依赖注入**：调度器遍历 `required_plugins` 和 `optional_plugins`。
-    *   在任务配置中查找相应的配置。
-    *   为每个插件调用 `registry.create()`。
-    *   将这些实例收集到字典中。
-4.  **引擎执行**：最后，使用实例化插件的字典初始化引擎并启动仿真。
-
-## 执行图
-
-虽然当前实现主要支持串行执行，但底层数据结构（`JobList`）设计为有向无环图（DAG）。
-
-### JobResult 封装
-
-每次执行的结果都封装在 `JobResult` 对象中，作为调度器和报告系统之间的契约。
+engine 在执行前声明插件要求：
 
 ```python
-@dataclass
-class JobResult:
-    job_index: int           # 拓扑索引
-    job_name: str            # 唯一标识符
-    run_dir: Path            # 隔离的输出目录
-    run_id: str              # 带时间戳的 UUID
-    success: bool            # 执行状态
-    error: str | None = None # 失败时的异常跟踪
+from qphase.core.protocols import EngineManifest
+
+class MyEngine:
+    manifest = EngineManifest(
+        required_plugins={"backend", "model"},
+        optional_plugins={"analyser"},
+    )
 ```
 
-## 参数扫描逻辑
+scheduler 根据校验后的配置实例化插件并传给 engine；资源包仍负责判断哪些插件
+组合在数值上有意义。
 
-调度器与 `JobExpander` 集成以支持参数扫描。此过程将单个"任务定义"（可能包含值列表）转换为多个原子"任务配置"。
+## ExecutionContext
 
-### 检测机制
-`JobExpander` 检查配置字典中的列表。
-*   **可扫描参数**：默认情况下，在插件配置中找到的**任何列表**（例如 `model.chi: [0.1, 0.2, 0.3]`）都被视为要扫描的参数。
-*   **不可扫描列表**：要将列表作为字面值传递（例如向量 `[1, 0, 0]`），插件必须在其模式中显式将该字段标记为不可扫描，或者用户必须将其包装（依赖于实现，目前如果插件将列表注册为可扫描，则所有列表都是展开的候选）。
+scheduler 提供的 context 包含：
 
-### 展开策略
-1.  **笛卡尔积（默认）**：
-    *   如果多个参数是列表，QPhase 生成每种可能的组合。
-    *   示例：`A=[1, 2]`，`B=[3, 4]` -> `(1,3), (1,4), (2,3), (2,4)`。
-    *   结果：4 个单独的任务。
+- `parameter_grid`：编译后的 `ParameterGrid`，无 scan 时为 `None`。
+- `resources`：工作站资源提示快照。
+- `progress`：供 engine 报告内部进度的接口。
+- `cancellation`：预留给 CLI/service 客户端的取消令牌。
+- `artifacts`：当前逻辑 job 的 `ArtifactStore`。
+- `checkpoints`：chunk 级 `CheckpointStore`。
 
-2.  **压缩展开**：
-    *   同步迭代参数。要求所有列表具有相同的长度。
-    *   示例：`A=[1, 2]`，`B=[3, 4]` -> `(1,3), (2,4)`。
-    *   结果：2 个单独的任务。
+推荐的 engine 签名为：
 
-## 运行时隔离和会话管理
+```python
+def run(self, input_data=None, *, context=None):
+    ...
+```
 
-QPhase 使用**基于会话的 I/O** 策略来管理执行上下文。
+旧 `progress_cb` 参数保留一个兼容周期，但 scheduler 自身始终使用
+`ExecutionContext`。
 
-### 会话结构
-每个执行命令（例如 `qphase run ...`）启动一个新的**会话**。会话充当该命令中执行的所有任务的容器，为数据交换和日志记录提供共享上下文。
+## 扫描职责
 
-**目录布局：**
+core 提供 `ParameterGrid` 和可复用的 `execute_pointwise()`。engine 决定调用该
+helper，还是把 grid 编译为专用策略。算法层 batching 不能只根据 backend 名称
+正确决定，因此不会由 core 提供通用规划器。
+
+典型分工如下：
+
+- CAM `multistability` 管理多进程 tile。
+- CAM `batched_newton` 管理 NumPy/CuPy 批量 Newton 数组。
+- SDE 把 grid 转换为现有的逐 trajectory 参数重复与 trajectory fusion 表示。
+- 简单 engine 可以直接调用 `execute_pointwise()`，复用 chunk checkpoint。
+
+此路径中不再存在由 core 调度的参数点展开、batch negotiation、资源包 batch
+planner 或 scheduler result splitter。
+
+## 结构化数据流
+
+上游输入写为：
+
+```yaml
+input:
+  from: simulation
+  mode: dataset
+```
+
+`dataset` 将完整结果传入一次。`map` 根据 `select` 与 `group_by` 惰性迭代
+point/group view，逐 view 调用下游 engine，最终包装为一个
+`MappedDatasetResult`。map 迭代不会获得单独运行目录或 manifest 条目。
+
+## Session 与持久化
+
 ```text
-runs/
-  2025-12-31T10-00-00_a1b2c3/      <-- 会话根（时间戳 + 短 UUID）
-    ├── session_manifest.json      <-- 会话元数据和状态
-    ├── job_01_sde/                <-- 任务目录
-    │     ├── config_snapshot.json
-    │     └── result.h5
-    └── job_02_viz/                <-- 任务目录
-          ├── config_snapshot.json
-          └── plot.png
+runs/<session-id>/
+  session_manifest.json
+  scan_job/
+    config_snapshot.json
+    artifact_manifest.json
+    result.npz                 # single layout
+    # 或 result/shard_*.npz    # sharded layout
+    .checkpoints/              # 失败时保留，或由配置要求保留
 ```
 
-### 会话清单
-`session_manifest.json` 文件作为会话的"大脑"，记录：
-- **会话 ID**：唯一标识符。
-- **状态**：全局状态（运行中、已完成、失败）。
-- **任务注册表**：所有任务、其状态、输出路径和依赖项的映射。
+`artifact_manifest.json` 记录 result 类型、schema、axes、shape、物理布局、文件与
+loader。`per_point` 只作为外部兼容布局，所有文件仍位于同一个逻辑 job 目录。
 
-此清单启用下游功能，如**恢复功能**（重新启动失败的任务）和 **DAG 可视化**。
+checkpoint 兼容性绑定配置 hash、插件版本、backend 与 dtype。最终 dataset 成功
+保存后，除非启用 `keep_on_success`，否则清理 checkpoint。当前 checkpoint 只覆盖
+已完成 scan chunk，不覆盖 SDE 积分器的中间时间状态。
 
-### 任务隔离
-在会话内，每个任务在其自己的子目录（`session_dir / job_name`）中运行。
-*   **并发安全**：任务写入独占路径。
-*   **可追溯性**：每个目录包含一个 `config_snapshot.json`，记录该特定运行使用的*确切*标量值。
+## Plan 与进度
 
-## 批量协商
-
-在参数展开之后、实际执行之前，调度器会运行一个 **BatchNegotiator**，将展开后的任务分组为 `SingleJob` 或 `BatchJob`。当某个包特定的 `BatchPlanner` 判断一组任务兼容时，这组任务就可以被批量化执行。
-
-对于 SDE 引擎，`qphase_sde.batch.SDEEngineBatchPlanner` 在以下条件满足时接受一组任务：
-
-* 它们使用相同的引擎（`sde`）、积分器、后端和时间网格（`t0`、`t1`、`dt`、`save_stride`）。
-* 它们仅在模型参数上不同。
-* 模型参数支持广播为逐轨迹数组。
-
-规划器随后构建一个 `BatchJob`，其 `n_traj` 为 `n_scan * 每个扫描点的 n_traj`，扫描参数按每个扫描值重复 `n_traj_per_point` 次。引擎只运行一次仿真，然后由包特定的 `ResultSplitter` 将输出拆分回原始的逐点结果。每个原始任务仍然拥有自己的 `run_dir`、清单条目和对下游的可见性。
-
-通过 `input`/`aggregate_input` 消费批量仿真的下游任务仍然正常工作：调度器看到的是独立的逐点结果，并按常规方式运行依赖任务。
-
-批量协商对用户是透明的：只需以常规方式声明参数扫描，调度器会自动决定是否融合执行。
+正常 CLI 只显示逻辑 job、scan shape、状态和结果目录。轴与 chunk 细节只在
+`--plan` 或 verbose 输出中展示。service DTO 已提供 scan summary 与内部进度事件，
+供未来客户端使用，本轮不要求 GUI 改动。

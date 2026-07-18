@@ -73,7 +73,8 @@ Computes pairwise or higher-dimensional distributions for selected observables.
 
 ## `lorentz_fitter`
 
-Fits a Lorentzian to aggregated PSD data. This is a **cross-job** analyzer intended for `mode: analyze`.
+Fits Lorentzians to PSD point views from a logical SDE scan dataset. It is a
+downstream analyzer intended for `mode: analyze`.
 
 ### Configuration
 
@@ -112,7 +113,7 @@ analyser:
 
 | Column | Meaning |
 | :-- | :-- |
-| `scan_param` | Sweep value from `aggregate_input`. |
+| `scan_param` | Named scan axis read from the logical SDE dataset. |
 | `center` | Lorentzian peak center (rad/s). |
 | `center_std` | Standard deviation of the fitted center. |
 | `linewidth` | Full width at half maximum (FWHM). |

@@ -22,7 +22,7 @@ CLI 与 GUI 是平级客户端。CLI 负责命令行参数解析和终端输出�
 
 `ConfigService` 负责加载 system/global/job 配置、规范化 raw job 字典、预览合并后的配置，并通过 registry 校验 job 中的 plugin 配置块。
 
-`RegistryService` 负责发现插件、返回 catalog、暴露插件 JSON schema、校验插件配置、报告可扫描参数，并读取 engine manifest。
+`RegistryService` 负责发现插件、返回 catalog、暴露插件 JSON schema、校验插件配置，并读取 engine manifest。
 
 `SchedulerService` 负责列出和加载 job、构建结构化执行计划、通过 core scheduler 执行 job、提供 dry-run plan、读取 session manifest，并汇总 artifacts。
 
@@ -34,9 +34,14 @@ CLI 与 GUI 是平级客户端。CLI 负责命令行参数解析和终端输出�
 
 ## 执行计划
 
-`SchedulerService.build_plan()` 是 dry-run、GUI preview 和未来机器可读 CLI 输出共享的计划接口。它校验 job、展开参数扫描、报告依赖边，并返回 validation issues，同时不创建真实 run session。
+`SchedulerService.build_plan()` 是 dry-run 与机器可读客户端共享的计划接口。它校验
+逻辑 job、编译 scan summary、报告依赖边并返回 validation issue，同时不创建真实
+run session。
 
-每个 planned job 会记录原始 base job、展开 index、engine name、显式 plugin namespace、engine manifest 声明的 required/optional namespace、required namespace 从 global 继承的默认值、job 显式启用的 optional namespace、扫描参数值、input/output 字段，以及预期输出名。依赖边会区分普通 input flow、aggregate input flow、显式 `depends_on` 和 output reference。
+每个 planned job 记录逻辑名称、engine、plugin namespace、manifest 要求、
+input/output 字段、预期输出，以及可选的 scan shape、size、axis 与 target summary。
+依赖边区分结构化 input flow、显式 `depends_on` 和 output reference；plan 不枚举
+参数点。
 
 plan 应尽量保持无副作用。创建 run 目录、写 manifest、实例化 engine 属于执行阶段，而不是预览阶段。
 

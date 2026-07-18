@@ -40,6 +40,9 @@ class JobConfig(BaseModel):
     engine: dict[str, Any]
     plugins: dict[str, dict[str, Any]]
     params: dict[str, Any]
+    scan: ScanSpec | None
+    input: InputSpec | None
+    system: SystemConfig | None
     # ...
 ```
 
@@ -56,13 +59,25 @@ class KerrCavityConfig(BaseModel):
 
 如果用户为 `chi` 提供字符串或负值，Pydantic 验证器将在加载阶段引发描述性错误，防止仿真循环深处的运行时失败。
 
-## 参数扫描支持
+## 参数扫描 Schema
 
-配置系统包含参数扫描的元数据支持。Pydantic 模型中的字段可以通过 `json_schema_extra` 标记为 `scanable`。
+参数扫描只使用 core 的 `ScanSpec` 表示。它包含按声明顺序排列的命名
+`ScanAxisSpec`；每条 axis 包含插件目标路径，以及 `values`、`linspace`、
+`logspace` 三者之一。schema 编译后得到不可变的运行时 `ParameterGrid`。
 
-```python
-class SDEConfig(BaseModel):
-    dt: float = Field(..., json_schema_extra={"scanable": True})
-```
+插件 schema 继续描述标量或结构化插件值。core 不再使用 `scanable` 元数据或检查
+任意列表来建立 scan；旧 metadata 只能作为识别旧语法并报告迁移错误的标记。
+这样可以消除“物理向量”和“参数点集合”之间的歧义。
 
-`JobExpander` 使用此元数据来确定当 YAML 配置中提供值列表时，哪些字段有资格进行展开。
+加载器会对已删除的工作流语法给出可执行的迁移错误，包括：
+
+- 已知标量模型字段使用列表扫描；
+- 字符串形式的 `input`；
+- `aggregate_input`；
+- 本应属于 `SystemConfig` 的 job 顶层运行策略字段。
+
+## 系统运行 Schema
+
+core 的存储、checkpoint、资源提示、进度和 CLI 行为都属于 `SystemConfig`。
+内置与用户级默认值由 system config loader 合并；job 可通过现有 `system` 字段覆盖
+同一 schema。解析后的值通过 `ExecutionContext` 传给资源包。

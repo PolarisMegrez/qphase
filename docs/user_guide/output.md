@@ -19,19 +19,22 @@ runs/
 └── 2025-12-31T05-23-05_281415/      # Session Directory (Timestamp + UUID)
     ├── session_manifest.json        # Metadata for the entire session
     ├── vdp_sde/                     # Job Directory (Job Name)
-    │   ├── config_snapshot.yaml     # Full configuration used for this job
-    │   ├── vdp_sde.npz              # SDE result archive
+    │   ├── config_snapshot.json     # Full configuration used for this job
+    │   ├── artifact_manifest.json   # Logical result and physical layout
+    │   ├── vdp_sde.npz              # SDE result archive, single layout
     │   └── qphase.log               # Execution log
     └── vdp_viz/                     # Downstream Job Directory
-        ├── config_snapshot.yaml
+        ├── config_snapshot.json
+        ├── artifact_manifest.json
         └── plot.png
 ```
 
 ## Reproducibility
 
-### Configuration Snapshots (`config_snapshot.yaml`)
+### Configuration Snapshots (`config_snapshot.json`)
 
-Every job directory contains a `config_snapshot.yaml`. This file is the **exact** configuration used to run the job, including:
+Every job directory contains a `config_snapshot.json`. This file records the
+resolved logical-job configuration, including:
 *   Merged values from Global and Job configs.
 *   Resolved default values for plugins.
 *   System environment information (QPhase version, Python version, OS).
@@ -39,7 +42,7 @@ Every job directory contains a `config_snapshot.yaml`. This file is the **exact*
 To reproduce a result, you can simply run this snapshot file:
 
 ```bash
-qphase run runs/2025-12-31.../vdp_sde/config_snapshot.yaml
+qphase run runs/2025-12-31.../vdp_sde/config_snapshot.json
 ```
 
 ### Session Manifest (`session_manifest.json`)
@@ -50,6 +53,24 @@ The session manifest tracks the status and relationships of all jobs in a sessio
 *   Resuming interrupted sessions (advanced usage).
 
 ## Data Formats
+
+### Logical Dataset Artifacts
+
+A scan is stored as one logical dataset. It does not create one run directory
+per parameter point. Every saved result has an `artifact_manifest.json` with
+the result type, schema version, named axes, logical shape, storage layout,
+physical files, and loader.
+
+The layout is selected by `system.scan_runtime.storage_layout`:
+
+* `single`: one primary dataset file.
+* `sharded`: a bounded collection of chunk files under the same job directory.
+* `per_point`: compatibility export only; files still remain under one job directory.
+* `auto`: use `single` below `auto_shard_threshold_mib` and `sharded` above it.
+
+The packaged automatic threshold is 512 MiB and the target shard size is 128
+MiB. CAM and SDE dataset loaders restore the logical shape independently of the
+physical layout.
 
 The format of the result data depends on the Engine used.
 
@@ -101,11 +122,16 @@ Example workflow:
 ```yaml
 - name: sim
   save: true
+  scan:
+    axes:
+      omega_a:
+        target: model.kerr_2mode.omega_a
+        values: [0.9, 1.0, 1.1]
   engine:
     sde: { t0: 0.0, t1: 1.0, dt: 0.01, n_traj: 8, seed: 42 }
   model:
     kerr_2mode:
-      omega_a: [0.9, 1.0, 1.1]
+      omega_a: 0.9
       omega_b: 1.0
       chi: 0.01
       gamma_a: 0.1
@@ -115,9 +141,9 @@ Example workflow:
     psd: { modes: [0], kind: complex, find_peaks: true }
 
 - name: fit
-  input: sim
-  aggregate_input:
-    on: params.omega_a
+  input:
+    from: sim
+    mode: dataset
   engine:
     sde: { mode: analyze }
   analyser:

@@ -8,11 +8,12 @@ nav_order: 5
 
 # 输出格式
 
-SDE 引擎产生两类 artifacts：单次运行的归档文件与合并后的分析 bundle。
+SDE engine 每个 job 产生一个逻辑结果。非扫描结果是 `SDEResult`；扫描结果是带
+命名 axes 和惰性 point view 的 `SDEScanResult` dataset。
 
-## 单次运行归档（`.npz`）
+## Single dataset 归档（`.npz`）
 
-当 `save: true` 时，每个 SDE 任务写入一个 NumPy 归档，包含：
+使用 `storage_layout: single` 时，每个 SDE job 写入一个 NumPy 归档，包含：
 
 | 键 | 类型 | 说明 |
 | :-- | :-- | :-- |
@@ -39,7 +40,12 @@ psd = archive["analysis"].item().get("psd")
 *   `psd` — 每个模式的 PSD 均值。
 *   `psd_std` / `psd_sem` — 跨轨迹样本标准差和均值标准误。
 
-当分析器在不同参数值的多个任务中运行时，调度器可将其聚合成一张表，供 `lorentz_fitter` 分析器使用。
+对于 scan，PSD payload 仍附属于一个逻辑 SDE dataset 的命名 point。下游
+`mode: analyze` job 将该 dataset 一次传给 `lorentz_fitter`。
+
+使用 `storage_layout: sharded` 时，同一个逻辑 dataset 被拆成一个 job 目录内有限
+数量的 `shard_*.npz`。`artifact_manifest.json` 记录 shape 和 loader，
+`SDEScanResult.load_dataset` 恢复完整 view。
 
 ## Lorentz 拟合输出
 
@@ -51,7 +57,7 @@ psd = archive["analysis"].item().get("psd")
 
 ## 分布输出
 
-*   `dist_merged.npz` — 跨扫描聚合时由 `dist` 分析器保存。
-*   `pdist_merged.pkl` — 跨扫描聚合时由 `pdist` 分析器保存。
+*   `dist_merged.npz` — scan dataset 的可选 distribution 合并导出。
+*   `pdist_merged.pkl` — scan dataset 的可选 polar-distribution 合并导出。
 
 运行目录布局详情参见 [用户指南：输出](../../user_guide/output.zh.md)。

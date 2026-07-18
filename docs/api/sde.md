@@ -168,11 +168,16 @@ Cross-job postprocessing is implemented as a scheduler workflow:
 ```yaml
 - name: sim
   save: true
+  scan:
+    axes:
+      omega_a:
+        target: model.kerr_2mode.omega_a
+        values: [0.9, 1.1]
   engine:
     sde: { ... }
   model:
     kerr_2mode:
-      omega_a: [0.9, 1.1]
+      omega_a: 0.9
       omega_b: 1.0
       chi: 0.01
       gamma_a: 0.1
@@ -183,9 +188,9 @@ Cross-job postprocessing is implemented as a scheduler workflow:
       modes: [0]
 
 - name: fit
-  input: sim
-  aggregate_input:
-    on: params.omega_a
+  input:
+    from: sim
+    mode: dataset
   engine:
     sde:
       mode: analyze
@@ -195,4 +200,7 @@ Cross-job postprocessing is implemented as a scheduler workflow:
       mode: 0
 ```
 
-The `lorentz_fitter` analyzer reads aggregated `analysis["psd"]` payloads, fits one Lorentzian per scan value, and writes `fit_results.csv` and `psd_merged.csv` to the job's run directory. Generic aggregation/export utilities live in `qphase.core.aggregation`.
+The `lorentz_fitter` analyzer reads the logical SDE scan dataset, fits one
+Lorentzian per scan value, and writes `fit_results.csv` and `psd_merged.csv` to
+the job's run directory. Dataset views and generic export utilities live in
+core.

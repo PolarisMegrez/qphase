@@ -70,13 +70,15 @@ engine:
 
 ## `mode: analyze`
 
-设置 `engine.sde.mode: analyze` 后，引擎不会对上游输入执行新的仿真，而是直接运行配置的分析器。这常用于跨 job 后处理，例如对聚合后的 PSD 做 Lorentz 拟合：
+设置 `engine.sde.mode: analyze` 后，引擎不会对上游输入执行新的仿真，而是直接
+运行配置的分析器。这常用于下游后处理，例如对逻辑 scan dataset 的 PSD 做
+Lorentz 拟合：
 
 ```yaml
 - name: fit
-  input: sim
-  aggregate_input:
-    on: params.epsilon
+  input:
+    from: sim
+    mode: dataset
   engine:
     sde:
       mode: analyze

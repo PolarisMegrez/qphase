@@ -40,6 +40,9 @@ class JobConfig(BaseModel):
     engine: dict[str, Any]
     plugins: dict[str, dict[str, Any]]
     params: dict[str, Any]
+    scan: ScanSpec | None
+    input: InputSpec | None
+    system: SystemConfig | None
     # ...
 ```
 
@@ -56,13 +59,29 @@ class KerrCavityConfig(BaseModel):
 
 If a user provides a string for `chi` or a negative value, the Pydantic validator will raise a descriptive error during the loading phase, preventing runtime failures deep in the simulation loop.
 
-## Parameter Scanning Support
+## Parameter Scan Schema
 
-The configuration system includes metadata support for parameter scanning. Fields in Pydantic models can be marked as `scanable` via `json_schema_extra`.
+Parameter scanning is represented only by the core `ScanSpec`. It contains
+ordered named `ScanAxisSpec` values, each with a plugin target path and exactly
+one of `values`, `linspace`, or `logspace`. Compiling the schema produces an
+immutable runtime `ParameterGrid`.
 
-```python
-class SDEConfig(BaseModel):
-    dt: float = Field(..., json_schema_extra={"scanable": True})
-```
+Plugin schemas continue to describe scalar and structured plugin values. Core
+does not use `scanable` metadata or inspect arbitrary lists to build scans;
+legacy metadata may remain only to identify old syntax for migration errors.
+This avoids ambiguity between a physical vector and a collection of points.
 
-The `JobExpander` uses this metadata to determine which fields are eligible for expansion when a list of values is provided in the YAML configuration.
+The loader deliberately rejects removed workflow forms with actionable errors:
+
+- scalar model fields configured with list-as-scan syntax;
+- string-valued `input`;
+- `aggregate_input`;
+- job-level runtime policy fields that belong to `SystemConfig`.
+
+## System Runtime Schema
+
+Core storage, checkpoint, resource-hint, progress, and CLI behavior belongs to
+`SystemConfig`. Packaged and user-level defaults are merged by the system
+configuration loader; a job may override the same schema through its existing
+`system` field. Resource packages receive resolved values through
+`ExecutionContext`.

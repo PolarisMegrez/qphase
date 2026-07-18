@@ -111,17 +111,23 @@ See the [Plugin Development](../../dev_guide/plugin_development.md) guide for de
 
 ## Batched Parameter Scans
 
-When a job contains a parameter scan (for example `model.omega_a: [0.001, 0.002, 0.003]`), the scheduler normally expands it into multiple independent simulation jobs. If those jobs share the **same engine, integrator, backend, and time grid** and only differ in model parameters, `qphase_sde` can fuse them into a single batched simulation.
+SDE scans use an explicit job-level `ScanSpec`. The scheduler passes one
+`ParameterGrid` to the SDE engine; a thin adapter compiles it into the existing
+parameter repetition and trajectory-fusion representation.
 
 In a batched run:
 
 * The scan values are broadcast into a single `(n_scan * n_traj,)` ensemble.
 * One backend call advances every trajectory for every scan point at once.
-* Results are automatically split back into the original per-scan jobs, each with its own run directory and manifest entry.
+* The merged result is exposed as one logical SDE dataset with named point views.
+* Saving creates one job directory and one artifact manifest, not one directory per point.
 
 This is especially effective on GPUs: a small CPU launch overhead per time step is amortized over many trajectories, and a single CuPy kernel launch can update the whole ensemble.
 
-Batched execution is **automatic** and requires no extra configuration. The only requirement on the model is that its parameters accept either a scalar or a one-dimensional array so the planner can broadcast the scan values across the ensemble.
+Batched execution remains automatic after declaring `scan`. The adapter does
+not alter the integrator, PSD, random-number generation, fused kernels, or GPU
+batching logic. Model parameters must still accept a scalar or one-dimensional
+per-trajectory array.
 
 ## Kernelized Terms (CuPy)
 
@@ -130,6 +136,7 @@ Some built-in models provide an optional **fused drift+diffusion kernel** for th
 Current models with CuPy kernels:
 
 * `model.vdp_2mode`
+* `model.kerr_2mode`
 * `model.kerr_3mode`
 
 Kernelization is **automatic**; there is no explicit switch in the job file. If the model advertises support for the active backend, the integrator uses it. Otherwise it falls back to the standard Python implementation, so switching `backend` between `numpy` and `cupy` always produces valid results.
@@ -137,6 +144,11 @@ Kernelization is **automatic**; there is no explicit switch in the job file. If 
 ### Example: CuPy Kernel Workflow
 
 ```yaml
+scan:
+  axes:
+    omega_a:
+      target: model.vdp_2mode.omega_a
+      values: [0.001, 0.00251189, 0.01]
 engine:
   sde:
     t0: 0.0
@@ -149,7 +161,7 @@ backend:
     device: cuda
 model:
   vdp_2mode:
-    omega_a: [0.001, 0.00251189, 0.01]
+    omega_a: 0.001
     omega_b: 0.0
     gamma_a: 2.0
     gamma_b: 1.0
@@ -157,4 +169,6 @@ model:
     g: 0.5
 ```
 
-Because `omega_a` has three values and the backend is CuPy, the scheduler will batch the three scan points and the `vdp_2mode` kernel will evaluate all `3 * 20` trajectories in fused CUDA kernels.
+Because `omega_a` has three values and the backend is CuPy, the SDE adapter
+builds one `3 * 20` trajectory ensemble and the `vdp_2mode` kernel evaluates it
+with fused CUDA kernels. The scheduler still sees one logical job.

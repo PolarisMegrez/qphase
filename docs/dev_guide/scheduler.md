@@ -4,125 +4,127 @@ description: Scheduler System
 
 # Scheduler System
 
-The **Scheduler** is the execution orchestration layer of QPhase. It is responsible for translating high-level job definitions into concrete computational tasks, managing their lifecycle, and ensuring data integrity.
+The scheduler is QPhase's logical workflow orchestrator. It resolves engines and
+plugins, validates the DAG, transfers results between jobs, creates reproducible
+run directories, reports progress, and delegates persistence to the artifact
+store. It does not expand parameter points into jobs and it does not choose an
+engine's numerical parallelization strategy.
 
-## Functional Responsibilities
+## Logical Job Lifecycle
 
-1.  **Job Expansion**: Transforming abstract job configurations (which may contain parameter ranges) into a linear sequence of atomic tasks.
-2.  **Dependency Resolution**: Analyzing the execution graph to ensure jobs are executed in topological order (e.g., ensuring input data exists before a dependent job starts).
-3.  **Context Management**: Provisioning isolated execution environments (directories) for each job to prevent data contamination.
-4.  **Error Handling**: Intercepting runtime exceptions to prevent batch failures (i.e., a single failed job should not terminate the entire campaign).
+For each job in topological order, the scheduler:
 
-## Dependency Validation
+1. Resolves the configured engine and validates its `EngineManifest`.
+2. Instantiates required and optional plugins through the registry.
+3. Compiles an optional `ScanSpec` into a `ParameterGrid`.
+4. Resolves the structured upstream input.
+5. Creates an `ExecutionContext` and invokes the engine.
+6. Saves the final logical result through `ArtifactStore` when requested.
+7. Records one status entry in `session_manifest.json`.
 
-The Scheduler enforces explicit dependency contracts declared by Engines via the `EngineManifest`.
+A Cartesian scan with shape `(101, 101)` is still one scheduler job. It has one
+configuration snapshot, one manifest entry, and one job directory. The engine
+may internally use 10,201 points, tiles, chunks, processes, or fused GPU work,
+but those are execution details rather than scheduler nodes.
 
-1.  **Manifest Declaration**: Each Engine declares its required and optional plugins.
-    ```python
-    class MyEngine(EngineBase):
-        manifest = EngineManifest(
-            required_plugins={"backend", "model"},
-            optional_plugins={"analyser"}
-        )
-    ```
-2.  **Pre-flight Check**: Before any job is executed, the Scheduler validates that the job configuration provides all `required_plugins` declared by the target Engine. This prevents runtime failures due to missing dependencies.
+## Engine Manifest
 
-## Plugin Instantiation
-
-For each job, the Scheduler performs the following steps to instantiate the environment:
-
-1.  **Engine Resolution**: The `engine` plugin is instantiated first.
-2.  **Manifest Inspection**: The Scheduler reads `engine.manifest`.
-3.  **Dependency Injection**: The Scheduler iterates through `required_plugins` and `optional_plugins`.
-    *   It looks up the corresponding configuration in the Job Config.
-    *   It calls `registry.create()` for each plugin.
-    *   It collects these instances into a dictionary.
-4.  **Engine Execution**: Finally, the Engine is initialized with the dictionary of instantiated plugins and the simulation is launched.
-
-## The Execution Graph
-
-While the current implementation primarily supports serial execution, the underlying data structure (`JobList`) is designed as a directed acyclic graph (DAG).
-
-### JobResult Encapsulation
-
-The outcome of every execution is encapsulated in a `JobResult` object, which serves as the contract between the Scheduler and the reporting system.
+Engines declare plugin requirements before execution:
 
 ```python
-@dataclass
-class JobResult:
-    job_index: int           # Topological index
-    job_name: str            # Unique identifier
-    run_dir: Path            # Isolated output directory
-    run_id: str              # Timestamped UUID
-    success: bool            # Execution status
-    error: str | None = None # Exception trace if failed
+from qphase.core.protocols import EngineManifest
+
+class MyEngine:
+    manifest = EngineManifest(
+        required_plugins={"backend", "model"},
+        optional_plugins={"analyser"},
+    )
 ```
 
-## Parameter Scanning Logic
+The scheduler instantiates these plugin classes from validated config and
+passes the resulting objects to the engine. Resource packages remain
+responsible for deciding which combinations are numerically meaningful.
 
-The Scheduler integrates with the `JobExpander` to support parameter sweeps. This process transforms a single "Job Definition" (which may contain lists of values) into multiple atomic "Job Configurations".
+## ExecutionContext
 
-### Detection Mechanism
-The `JobExpander` inspects the configuration dictionary for lists.
-*   **Scanable Parameters**: By default, **any list** found in a plugin configuration (e.g., `model.chi: [0.1, 0.2, 0.3]`) is treated as a parameter to be scanned.
-*   **Non-Scanable Lists**: To pass a list as a literal value (e.g., a vector `[1, 0, 0]`), the plugin must explicitly mark that field as non-scanable in its schema, or the user must wrap it (implementation dependent, currently all lists are candidates for expansion if the plugin registers them as scanable).
+The scheduler supplies a context containing:
 
-### Expansion Strategies
-1.  **Cartesian Product (Default)**:
-    *   If multiple parameters are lists, QPhase generates every possible combination.
-    *   Example: `A=[1, 2]`, `B=[3, 4]` -> `(1,3), (1,4), (2,3), (2,4)`.
-    *   Result: 4 separate Jobs.
+- `parameter_grid`: the compiled `ParameterGrid`, or `None`.
+- `resources`: a snapshot of workstation resource hints.
+- `progress`: an engine-facing progress reporter.
+- `cancellation`: a cancellation token reserved for CLI/service clients.
+- `artifacts`: the logical job's `ArtifactStore`.
+- `checkpoints`: a chunk-level `CheckpointStore`.
 
-2.  **Zipped Expansion**:
-    *   Iterates over parameters in lockstep. Requires all lists to have the same length.
-    *   Example: `A=[1, 2]`, `B=[3, 4]` -> `(1,3), (2,4)`.
-    *   Result: 2 separate Jobs.
+The preferred engine signature is:
 
-## Runtime Isolation & Session Management
+```python
+def run(self, input_data=None, *, context=None):
+    ...
+```
 
-QPhase uses a **Session-Based I/O** strategy to manage execution contexts.
+The legacy `progress_cb` argument remains available during one compatibility
+period, but the scheduler itself uses `ExecutionContext`.
 
-### Session Structure
-Every execution command (e.g., `qphase run ...`) initiates a new **Session**. A session acts as a container for all jobs executed in that command, providing a shared context for data exchange and logging.
+## Scan Ownership
 
-**Directory Layout:**
+Core provides `ParameterGrid` and a reusable `execute_pointwise()` helper. The
+engine decides whether to use that helper or compile the grid into a specialized
+strategy. This division is intentional: algorithm-level batching cannot be
+selected correctly from backend names alone.
+
+Examples:
+
+- CAM `multistability` owns process tiles.
+- CAM `batched_newton` owns NumPy/CuPy batched Newton arrays.
+- SDE converts the grid to its existing per-trajectory parameter repetition and
+  trajectory fusion representation.
+- A simple engine may call `execute_pointwise()` and receive chunk checkpointing
+  without implementing a custom planner.
+
+There is no core `JobExpander`, batch negotiator, engine-specific batch planner,
+or scheduler result splitter in this path.
+
+## Structured Data Flow
+
+An input declaration identifies an upstream logical result:
+
+```yaml
+input:
+  from: simulation
+  mode: dataset
+```
+
+`dataset` passes the complete result once. `map` lazily iterates point or group
+views according to `select` and `group_by`, invokes the downstream engine for
+each view, and wraps the outputs in one `MappedDatasetResult`. Map iterations do
+not receive run directories or manifest entries.
+
+## Session and Persistence
+
 ```text
-runs/
-  2025-12-31T10-00-00_a1b2c3/      <-- Session Root (Timestamp + Short UUID)
-    ├── session_manifest.json      <-- Session Metadata & State
-    ├── job_01_sde/                <-- Job Directory
-    │     ├── config_snapshot.json
-    │     └── result.h5
-    └── job_02_viz/                <-- Job Directory
-          ├── config_snapshot.json
-          └── plot.png
+runs/<session-id>/
+  session_manifest.json
+  scan_job/
+    config_snapshot.json
+    artifact_manifest.json
+    result.npz                 # single layout
+    # or result/shard_*.npz    # sharded layout
+    .checkpoints/              # retained only when configured or on failure
 ```
 
-### Session Manifest
-The `session_manifest.json` file serves as the "brain" of the session, recording:
-- **Session ID**: Unique identifier.
-- **Status**: Global status (running, completed, failed).
-- **Job Registry**: A map of all jobs, their status, output paths, and dependencies.
+`artifact_manifest.json` describes the result type, schema, axes, shape,
+physical layout, files, and loader. `per_point` is an external compatibility
+layout only; all files remain under the same logical job directory.
 
-This manifest enables downstream features like **Resume Capability** (restarting failed jobs) and **DAG Visualization**.
+Checkpoint compatibility is tied to the configuration hash, plugin versions,
+backend, and dtype. Successful jobs remove checkpoints after the final dataset
+is safely stored unless `keep_on_success` is enabled. Current checkpoints cover
+completed scan chunks, not an SDE integrator's intermediate time state.
 
-### Job Isolation
-Within a session, each job runs in its own subdirectory (`session_dir / job_name`).
-*   **Concurrency Safety**: Jobs write to exclusive paths.
-*   **Traceability**: Each directory contains a `config_snapshot.json` that records the *exact* scalar values used for that specific run.
+## Planning and Progress
 
-## Batch Negotiation
-
-After parameter expansion but before execution, the scheduler runs a **BatchNegotiator** that groups expanded jobs into `SingleJob` or `BatchJob` instances. A group of jobs can be batched when a registered package-specific `BatchPlanner` reports that they are compatible.
-
-For the SDE engine, `qphase_sde.batch.SDEEngineBatchPlanner` accepts a group of jobs when:
-
-* They use the same engine (`sde`), integrator, backend, and time grid (`t0`, `t1`, `dt`, `save_stride`).
-* They only differ in model parameters.
-* The model parameters support broadcasting to a per-trajectory array.
-
-The planner then builds a single `BatchJob` whose `n_traj` is `n_scan * n_traj_per_point` and whose scanned parameters are repeated `n_traj_per_point` times for each scan value. The engine runs one simulation, and a package-specific `ResultSplitter` divides the output back into the original per-point results. Each original job still gets its own `run_dir`, manifest entry, and downstream visibility.
-
-Downstream jobs that consume a batched simulation via `input`/`aggregate_input` continue to work normally: the scheduler sees the individual per-point results and runs the dependent jobs as usual.
-
-Batch negotiation is transparent to users: declare a parameter scan in the usual way and let the scheduler decide whether to fuse it.
+Normal CLI output stays at logical-job granularity: job name, scan shape,
+status, and result directory. Axis and chunk details belong to `--plan` or
+verbose output. Service DTOs expose scan summaries and internal progress events
+for future clients without requiring GUI changes.

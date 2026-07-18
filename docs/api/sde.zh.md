@@ -168,11 +168,16 @@ PSD 分析器的寻峰只针对单个 job。跨 job 的 Lorentz 线型拟合通�
 ```yaml
 - name: sim
   save: true
+  scan:
+    axes:
+      omega_a:
+        target: model.kerr_2mode.omega_a
+        values: [0.9, 1.1]
   engine:
     sde: { ... }
   model:
     kerr_2mode:
-      omega_a: [0.9, 1.1]
+      omega_a: 0.9
       omega_b: 1.0
       chi: 0.01
       gamma_a: 0.1
@@ -183,9 +188,9 @@ PSD 分析器的寻峰只针对单个 job。跨 job 的 Lorentz 线型拟合通�
       modes: [0]
 
 - name: fit
-  input: sim
-  aggregate_input:
-    on: params.omega_a
+  input:
+    from: sim
+    mode: dataset
   engine:
     sde:
       mode: analyze
@@ -195,4 +200,6 @@ PSD 分析器的寻峰只针对单个 job。跨 job 的 Lorentz 线型拟合通�
       mode: 0
 ```
 
-`lorentz_fitter` 分析器读取聚合后的 `analysis["psd"]`，对每个扫描值拟合一条 Lorentz 曲线，并将 `fit_results.csv` 和 `psd_merged.csv` 写入该 job 的 run 目录。通用聚合/导出工具位于 `qphase.core.aggregation`。
+`lorentz_fitter` 分析器读取逻辑 SDE scan dataset，对每个扫描值拟合一条
+Lorentz 曲线，并将 `fit_results.csv` 和 `psd_merged.csv` 写入该 job 的 run
+目录。Dataset view 与通用导出工具位于 core。
