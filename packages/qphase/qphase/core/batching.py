@@ -55,6 +55,7 @@ class BatchPlanner(Protocol):
             Resolved input from an upstream job, if any.
         **run_kwargs
             Extra arguments the scheduler may pass (e.g. ``progress_cb``).
+
         """
         ...
 

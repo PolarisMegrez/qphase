@@ -12,6 +12,8 @@ from qphase_sde.result import SDEResult
 from qphase_sde.state import TrajectorySet
 from qphase_sde.utils import resolve_mode_columns
 
+pytestmark = pytest.mark.integration
+
 BACKEND = NumpyBackend()
 
 

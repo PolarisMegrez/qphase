@@ -49,6 +49,7 @@ class BatchNegotiator:
     ----------
     registry : RegistryCenter
         Registry used to discover ``BatchPlanner`` instances.
+
     """
 
     def __init__(self, registry: RegistryCenter) -> None:
@@ -66,7 +67,7 @@ class BatchNegotiator:
                 return names[0].lower()
         # Fallback: try attribute access
         if hasattr(engine_cfg, "name"):
-            return str(getattr(engine_cfg, "name")).lower()
+            return str(engine_cfg.name).lower()
         return ""
 
     def _get_planner(self, engine_name: str) -> Any | None:
@@ -101,6 +102,7 @@ class BatchNegotiator:
         -------
         list[JobGroup]
             Ordered list of ``SingleJob`` or ``BatchJob`` groups.
+
         """
         if not expanded_jobs:
             return []
@@ -152,7 +154,9 @@ class BatchNegotiator:
 
         return groups
 
-    def _trim_batch(self, planner: Any, candidate_jobs: list[JobConfig]) -> list[JobConfig]:
+    def _trim_batch(
+        self, planner: Any, candidate_jobs: list[JobConfig]
+    ) -> list[JobConfig]:
         """Return the largest prefix of *candidate_jobs* accepted by *planner*.
 
         The planner is asked repeatedly with shrinking prefixes until it accepts

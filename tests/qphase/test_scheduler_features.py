@@ -5,6 +5,8 @@ from qphase.core.config import JobConfig, JobList
 from qphase.core.scheduler import JobResult, Scheduler
 from qphase.core.system_config import SystemConfig
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def mock_system_config(tmp_path):

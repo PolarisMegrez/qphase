@@ -1,7 +1,10 @@
 """Tests for CLI commands using Typer's CliRunner."""
 
+import pytest
 from qphase.main import app
 from typer.testing import CliRunner
+
+pytestmark = pytest.mark.integration
 
 runner = CliRunner()
 

@@ -580,6 +580,7 @@ class Scheduler:
         dict[str, Any]
             Merged configuration dictionary containing plugins, engine,
             params, and any top-level plugin sections defined in the job.
+
         """
         system_cfg = job.system if job.system is not None else self.system_config
 
@@ -629,7 +630,8 @@ class Scheduler:
                 for j in original_jobs
             )
             if all_completed:
-                log.info(f"Skipping completed batch: {', '.join(j.name for j in original_jobs)}")
+                names = ", ".join(j.name for j in original_jobs)
+                log.info(f"Skipping completed batch: {names}")
                 return
 
         batch_name = f"__batch_{group_idx}"
@@ -671,7 +673,7 @@ class Scheduler:
             batch_job = copy.deepcopy(plan.batch_job)
             batch_job.name = batch_name
             run_id = self._generate_run_id()
-            run_dir = self._create_run_dir(batch_job, run_id)
+            self._create_run_dir(batch_job, run_id)
 
             _, output_result = self._run_job(
                 batch_job,

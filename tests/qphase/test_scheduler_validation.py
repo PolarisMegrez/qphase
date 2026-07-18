@@ -5,6 +5,8 @@ from qphase.core.config_loader import load_jobs_from_files
 from qphase.core.errors import QPhaseConfigError
 from qphase.core.scheduler import Scheduler
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def valid_job_file(temp_workspace):

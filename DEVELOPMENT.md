@@ -62,16 +62,32 @@ uv run pytest
 
 ## Running Tests
 
-### Local Testing (Standard Environment)
+Tests are layered with pytest markers (registered in `pyproject.toml`):
+
+- `unit` — fast, isolated tests (auto-assigned to any test without a layer marker)
+- `integration` — cross-component / cross-plugin tests
+- `e2e` — full CLI / workflow end-to-end tests
+- `gpu` — requires CUDA/cupy (auto-skipped when unavailable)
+- `slow` — long-running tests (typically >5s)
+
+### Fast Loop (Local Development)
 
 ```powershell
 uv sync --dev
-uv run pytest
+uv run pytest -m unit
+```
+
+Runs in ~10 seconds. Use this while iterating.
+
+### Standard Gate (What CI Runs on PRs)
+
+```powershell
+uv run pytest -m "not slow"
 ```
 
 Tests requiring CUDA will be skipped automatically if cupy is not installed.
 
-### Full Testing (With GPU Support)
+### Full Testing (Before Release / With GPU Support)
 
 On GPU-equipped machine (Python 3.13+):
 
@@ -80,7 +96,7 @@ uv sync --all-extras --dev
 uv run pytest
 ```
 
-All tests will run, including CUDA-accelerated tests.
+All tests will run, including CUDA-accelerated and slow end-to-end tests.
 
 ## Notes
 

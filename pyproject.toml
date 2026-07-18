@@ -86,6 +86,23 @@ check_untyped_defs = true
 disallow_untyped_defs = false
 warn_unused_ignores = true
 
+[[tool.mypy.overrides]]
+# Test doubles intentionally implement protocols only partially, and tests
+# reach concrete result attributes behind protocol-typed interfaces. Keep
+# static typing strict for shipped packages; pragmatic for tests and scripts
+# (mirrors the ruff "tests" exclusion).
+module = ["tests.*", "scripts.*"]
+disable_error_code = [
+    "abstract",
+    "arg-type",
+    "assignment",
+    "attr-defined",
+    "index",
+    "method-assign",
+    "union-attr",
+    "var-annotated",
+]
+
 [dependency-groups]
 # Full development environment: all backends (including CUDA), CLI, GUI, docs and test tools.
 # This is what CI uses (`uv sync --dev`).
@@ -121,7 +138,14 @@ dev-cpu = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v"
+addopts = "-v --strict-markers"
+markers = [
+    "unit: fast, isolated unit tests",
+    "integration: cross-component / cross-plugin integration tests",
+    "e2e: full CLI / workflow end-to-end tests",
+    "gpu: requires CUDA/cupy (auto-skipped when unavailable)",
+    "slow: long-running tests (typically >5s); deselect for a fast gate",
+]
 
 [tool.semantic_release]
 version_toml = [

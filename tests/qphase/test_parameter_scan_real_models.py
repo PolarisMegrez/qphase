@@ -9,6 +9,9 @@ from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture(autouse=True)
 def register_real_models_and_integrator():
     """Register the current production models and a dummy integrator."""

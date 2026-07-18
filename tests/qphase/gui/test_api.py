@@ -1,5 +1,8 @@
+import pytest
 from fastapi.testclient import TestClient
 from qphase.gui import create_app
+
+pytestmark = pytest.mark.integration
 
 
 def test_gui_console_resource_is_packaged():

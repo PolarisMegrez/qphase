@@ -26,7 +26,9 @@ from qphase_sde.analyser.lorentz_fitter import (
     _lorentzian_with_baseline as lorentzian_with_baseline,
 )
 from qphase_sde.analyser.result import AnalysisResult
-from qphase_sde.result import SDEResult
+from qphase_sde.result import SDEResult
+
+pytestmark = pytest.mark.integration
 
 
 def test_fit_lorentzian_recovers_synthetic_peak():

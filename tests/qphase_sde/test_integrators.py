@@ -100,3 +100,24 @@ def test_srk_step(backend):
 
     dy = integrator.step(y, t, dt, model, dW, backend)
     assert dy.shape == y.shape
+
+
+@pytest.mark.xfail(
+    reason="custom SRK coefficient tables not implemented (TODO in srk.py)",
+    strict=True,
+)
+def test_srk_custom_method_placeholder(backend):
+    """Custom Butcher tableaus should be loadable via ``method="custom"``.
+
+    Currently ``GenericSRK.step`` raises ``ValueError`` for any method other
+    than ``euler``/``heun``. Remove this xfail once coefficient loading lands.
+    """
+    config = GenericSRKConfig(method="custom")
+    integrator = GenericSRK(config)
+
+    model = DummyModel()
+    y = np.array([[1.0]])
+    dW = np.array([[0.1]])
+
+    dy = integrator.step(y, 0.0, 0.01, model, dW, backend)
+    assert dy.shape == y.shape

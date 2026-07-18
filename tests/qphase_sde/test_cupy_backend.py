@@ -15,6 +15,8 @@ import pytest
 
 from qphase.backend.numpy_backend import NumpyBackend
 
+pytestmark = [pytest.mark.gpu, pytest.mark.integration]
+
 cupy = pytest.importorskip("cupy")
 
 try:

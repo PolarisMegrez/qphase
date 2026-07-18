@@ -129,6 +129,13 @@ class PolarDistAnalyzer(Analyzer):
             # Calculate Histogram
             # bins can be int or string (e.g., 'auto')
             if use_backend:
+                # BackendBase.histogram only accepts an integer bin count;
+                # resolve string estimators via NumPy on this mode's samples.
+                if isinstance(bins, str):
+                    est_edges = np.histogram_bin_edges(
+                        convert_to_numpy(samples), bins=bins, range=curr_range
+                    )
+                    bins = len(est_edges) - 1
                 H, edges = backend.histogram(
                     samples, bins=bins, range=curr_range, density=density
                 )

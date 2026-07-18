@@ -8,6 +8,8 @@ from qphase.backend.cupy_backend import CuPyBackend
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.integrator.cayley_maruyama import CayleyMaruyama
 
+pytestmark = pytest.mark.gpu
+
 
 # Runtime CuPy availability check.
 def _cupy_available() -> bool:
@@ -22,10 +24,6 @@ def _cupy_available() -> bool:
 
 @pytest.fixture
 def model():
-    import sys
-    from pathlib import Path
-
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from models.vdp_2mode import VDPLevel3Config, VDPLevel3Model
 
     return VDPLevel3Model(

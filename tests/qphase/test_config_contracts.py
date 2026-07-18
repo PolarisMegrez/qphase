@@ -12,6 +12,9 @@ from qphase.core.registry import registry
 from qphase.core.scheduler import Scheduler
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture(autouse=True)
 def register_dummy_integrator():
     """Register a dummy integrator for all tests in this module."""

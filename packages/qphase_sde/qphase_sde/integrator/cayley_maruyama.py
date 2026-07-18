@@ -130,6 +130,20 @@ class CayleyMaruyama(Integrator):
     def supports_adaptive_step(self) -> bool:
         return False
 
+    def step_adaptive(
+        self,
+        y: Any,
+        t: float,
+        dt: float,
+        tol: float,
+        model: Any,
+        noise: Any,
+        backend: BackendBase,
+        rng: Any = None,
+    ) -> tuple[Any, float, float, float]:
+        """Adaptive stepping not supported by Cayley-Maruyama."""
+        raise NotImplementedError("Cayley-Maruyama does not support adaptive stepping")
+
     def supports_chunk_step(self, model: Any, backend: BackendBase) -> bool:
         """Return whether the model/backend pair provides a fused chunk path."""
         if self.config.fused == "off" or self.config.chunk_steps <= 1:

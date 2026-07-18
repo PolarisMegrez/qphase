@@ -40,6 +40,7 @@ def compile_cached_kernel(
     -------
     cupy.RawKernel
         Compiled kernel ready to launch.
+
     """
     import cupy as cp
 

@@ -1,22 +1,26 @@
-"""Pytest configuration and fixtures."""
+"""Pytest configuration and shared fixtures.
+
+Packages under ``packages/`` are installed editable via the uv workspace, and the
+repository root is placed on ``sys.path`` automatically by pytest (``tests/`` is a
+package), so no manual ``sys.path`` manipulation is needed here.
+"""
 
 import os
-import sys
 from pathlib import Path
 
 import pytest
+from qphase.core.config_loader import load_system_config
+from qphase.core.registry import registry
 
-# Add package paths to sys.path
-packages_dir = Path(__file__).parent.parent / "packages"
-sys.path.insert(0, str(packages_dir / "qphase"))
-sys.path.insert(0, str(packages_dir / "qphase_sde"))
-sys.path.insert(0, str(packages_dir / "qphase_viz"))
-# Allow direct imports from the repository root (e.g., models/, scripts/)
-repo_root = Path(__file__).parent.parent
-sys.path.insert(0, str(repo_root))
+# Layer markers used for test selection (registered in pyproject.toml).
+_LAYER_MARKERS = ("unit", "integration", "e2e", "gpu", "slow")
 
-from qphase.core.config_loader import load_system_config  # noqa: E402
-from qphase.core.registry import registry  # noqa: E402
+
+def pytest_collection_modifyitems(items):
+    """Assign the ``unit`` marker to tests without an explicit layer marker."""
+    for item in items:
+        if not any(marker in item.keywords for marker in _LAYER_MARKERS):
+            item.add_marker(pytest.mark.unit)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -84,34 +88,6 @@ def mock_registry():
     # Cleanup could involve clearing registered plugins if we added dynamic ones
 
 
-@pytest.fixture(autouse=True)
-def register_dummy_plugins():
-    """Register dummy plugins for testing."""
-    from qphase.core.registry import registry
-
-    from tests.plugins.dummy_plugin import DummyPlugin
-
-    # Register dummy engine
-    registry.register(
-        namespace="engine", name="dummy", builder=DummyPlugin, overwrite=True
-    )
-
-    # Register dummy backend
-    registry.register(
-        namespace="backend", name="dummy", builder=DummyPlugin, overwrite=True
-    )
-
-    # Register dummy model
-    registry.register(
-        namespace="model", name="dummy", builder=DummyPlugin, overwrite=True
-    )
-
-    # Register dummy viz engine
-    registry.register(
-        namespace="engine", name="viz", builder=DummyPlugin, overwrite=True
-    )
-
-
 @pytest.fixture
 def sample_job_file(temp_workspace):
     """Create a sample job file in the temp workspace."""
@@ -136,7 +112,7 @@ def sample_job_file(temp_workspace):
 
 @pytest.fixture
 def dummy_model():
-    """Return the dummy model class (already registered)."""
+    """Return the dummy model class (registered by the tests/qphase conftest)."""
     from tests.plugins.dummy_plugin import DummyPlugin
 
     return DummyPlugin

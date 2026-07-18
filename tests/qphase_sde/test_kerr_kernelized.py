@@ -5,6 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.gpu
+
 
 def _cupy_available() -> bool:
     try:
@@ -18,10 +20,6 @@ def _cupy_available() -> bool:
 
 @pytest.fixture
 def model():
-    import sys
-    from pathlib import Path
-
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from models.kerr_3mode import Kerr3ModeConfig, Kerr3ModeModel
 
     return Kerr3ModeModel(Kerr3ModeConfig(

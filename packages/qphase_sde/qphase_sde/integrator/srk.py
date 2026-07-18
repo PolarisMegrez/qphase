@@ -3,6 +3,12 @@
 Implements a generic SRK solver that can be configured to behave as
 Euler-Maruyama, Heun, or higher-order schemes. Supports adaptive stepping.
 
+.. note::
+    UNFINISHED: only the built-in ``euler`` and ``heun`` update rules are
+    implemented. Loading custom Butcher tableaus via ``method="custom"`` is
+    not supported yet (see the TODO in ``GenericSRK.__init__``) and raises
+    ``ValueError`` at step time. Do not use custom methods in production jobs.
+
 Public API
 ----------
 ``GenericSRK`` : Generic Stochastic Runge-Kutta integrator implementation.
@@ -15,8 +21,8 @@ import numpy as np
 from pydantic import BaseModel, Field
 from qphase.backend.base import BackendBase
 
-from qphase_sde.integrator.base import Integrator
 from qphase_sde import ops
+from qphase_sde.integrator.base import Integrator
 from qphase_sde.model import NoiseSpec, SDEModel
 
 

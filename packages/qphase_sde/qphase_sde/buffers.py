@@ -29,6 +29,7 @@ class SDEBufferCache:
         Backend used to allocate new buffers when the cache misses.
     max_entries_per_key : int
         Maximum number of buffers kept for each ``(shape, dtype)`` key.
+
     """
 
     def __init__(

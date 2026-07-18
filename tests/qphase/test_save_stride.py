@@ -18,6 +18,8 @@ from qphase.core.registry import discovery
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
 
+pytestmark = [pytest.mark.e2e, pytest.mark.slow]
+
 
 @pytest.fixture(scope="module")
 def vdp_auto_workflow_path():

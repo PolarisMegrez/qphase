@@ -12,6 +12,8 @@ from qphase.core.registry import discovery, registry
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
 
+pytestmark = pytest.mark.e2e
+
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 MODELS_DIR = REPO_ROOT / "models"

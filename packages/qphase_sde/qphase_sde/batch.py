@@ -8,7 +8,6 @@ back into per-scan-point results.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -368,9 +367,11 @@ class SDEResultSplitter(ResultSplitter):
         plugins = job.plugins or {}
         model_cfg = plugins.get("model")
         if model_cfg is None:
-            model_cfg = (job.model_extra or {}).get("model") if job.model_extra else None
+            model_cfg = (
+                (job.model_extra or {}).get("model") if job.model_extra else None
+            )
         if isinstance(model_cfg, dict):
-            for name, cfg in model_cfg.items():
+            for cfg in model_cfg.values():
                 if isinstance(cfg, dict):
                     return dict(cfg)
         return {}

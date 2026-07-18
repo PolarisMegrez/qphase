@@ -12,6 +12,8 @@ from qphase.core.system_config import SystemConfig
 from qphase.main import app
 from typer.testing import CliRunner
 
+pytestmark = pytest.mark.e2e
+
 
 @pytest.fixture(scope="module")
 def cpu_workflow_path():

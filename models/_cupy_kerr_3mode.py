@@ -10,9 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-
 from qphase.backend.base import BackendBase
-
 from qphase_sde.kernels import compile_cached_kernel
 
 _KERR_SOURCE = r"""

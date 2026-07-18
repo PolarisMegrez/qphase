@@ -29,6 +29,8 @@ from qphase.core.utils import save_yaml
 from qphase.main import app
 from typer.testing import CliRunner
 
+pytestmark = pytest.mark.e2e
+
 
 @pytest.fixture(scope="module")
 def vdp_workflow_path():

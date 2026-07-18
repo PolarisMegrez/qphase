@@ -7,6 +7,8 @@ from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.base import ChunkStepResult
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 
+pytestmark = pytest.mark.integration
+
 
 class DummySDEModel:
     """Dummy SDE model for engine tests."""

@@ -34,7 +34,9 @@ def expand_complex_noise(Lc: Any, backend: BackendBase) -> Any:
     """
     a = backend.real(Lc)
     b = backend.imag(Lc)
-    s = backend.sqrt(backend.asarray(2.0, dtype=a.dtype if hasattr(a, "dtype") else None))
+    s = backend.sqrt(
+        backend.asarray(2.0, dtype=a.dtype if hasattr(a, "dtype") else None)
+    )
     Lr_real = backend.concatenate((a / s, -b / s), axis=-1)
     Lr_imag = backend.concatenate((b / s, a / s), axis=-1)
     return Lr_real + 1j * Lr_imag

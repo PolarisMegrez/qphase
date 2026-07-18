@@ -7,6 +7,8 @@ from qphase.core.batch_negotiator import BatchJob, BatchNegotiator, SingleJob
 from qphase.core.config import JobConfig
 from qphase.core.registry import RegistryCenter, discovery, registry
 
+pytestmark = pytest.mark.integration
+
 
 def _make_scan_jobs(param_values: list[float]) -> list[JobConfig]:
     """Build a list of SDE scan jobs that differ only in omega_a."""
@@ -77,8 +79,10 @@ def test_downstream_dependency_prevents_batching():
 
 def test_sde_batch_planner_can_batch_registered():
     """With the SDE batch planner registered, scan jobs are grouped."""
-    # Discover entry points so the SDE batch planner is registered.
+    # Discover entry points so the SDE batch planner is registered, and local
+    # workspace plugins so the vdp_2mode model class can be inspected.
     discovery.discover_plugins()
+    discovery.discover_local_plugins()
     negotiator = BatchNegotiator(registry)
     jobs = _make_scan_jobs([0.001, 0.002, 0.003])
     groups = negotiator.group_jobs(jobs)
