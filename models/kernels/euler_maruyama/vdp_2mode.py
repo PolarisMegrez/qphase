@@ -13,6 +13,7 @@ import numpy as np
 from qphase.backend.base import BackendBase
 from qphase_sde.kernels import compile_cached_kernel
 
+from models.kernels.base import ModelKernelPlugin
 from models.kernels.cupy_utils import broadcast_param
 
 # CUDA source for the VDP Level 3 model.
@@ -28,7 +29,6 @@ void __vdp_2mode_terms_func__(
     const double* __restrict__ gamma_b,
     const double* __restrict__ Gamma,
     const double* __restrict__ g,
-    const double* __restrict__ D,
     int n,
     $CT$* __restrict__ drift,
     $CT$* __restrict__ diffusion
@@ -45,7 +45,6 @@ void __vdp_2mode_terms_func__(
     double gb = gamma_b[i];
     double G  = Gamma[i];
     double gc = g[i];
-    double d  = D[i];
 
     double ar = alpha.x;
     double ai = alpha.y;
@@ -67,8 +66,8 @@ void __vdp_2mode_terms_func__(
     drift[i * 2 + 1].x = dbr;
     drift[i * 2 + 1].y = dbi;
 
-    double D_alpha = d * (ga / 2.0 + G * (2.0 * n_alpha2 - 1.0));
-    double D_beta  = d * (gb / 2.0);
+    double D_alpha = ga / 2.0 + G * (2.0 * n_alpha2 - 1.0);
+    double D_beta  = gb / 2.0;
     if (D_alpha < 0.0) D_alpha = 0.0;
     if (D_beta  < 0.0) D_beta  = 0.0;
 
@@ -157,7 +156,6 @@ def kernelized_terms(
     gamma_b = broadcast_param(params["gamma_b"], n)
     Gamma = broadcast_param(params["Gamma"], n)
     g = broadcast_param(params["g"], n)
-    D = broadcast_param(params["D"], n)
 
     drift, diffusion = _get_buffers(n, y.dtype)
 
@@ -174,7 +172,6 @@ def kernelized_terms(
             gamma_b,
             Gamma,
             g,
-            D,
             n,
             drift,
             diffusion,
@@ -183,11 +180,12 @@ def kernelized_terms(
     return drift, diffusion
 
 
-class VDP2ModeEulerCuPyKernel:
+class VDP2ModeEulerCuPyKernel(ModelKernelPlugin):
     """CuPy drift/diffusion provider used by Euler-Maruyama."""
 
     scheme = "euler_maruyama"
     backend_name = "cupy"
+    operations = frozenset({"terms"})
 
     def terms(
         self, y: Any, params: dict[str, Any], backend: BackendBase

@@ -1,11 +1,11 @@
-# QPhase Plugin Directory Configuration
+# QPhase local model plugins
 plugins:
-  - type: model.kerr_3pa
-    target: models.kerr_3pa:Kerr3PAModel
-    description: Kerr nonlinear cavity model with 3PA
+  - type: model.vdp_2mode
+    target: models.vdp_2mode:VDP2ModeModel
+    description: Two-mode van der Pol oscillator
+  - type: model.kerr_2mode
+    target: models.kerr_2mode:Kerr2ModeModel
+    description: Two-mode Kerr oscillator
   - type: model.kerr_3mode
     target: models.kerr_3mode:Kerr3ModeModel
-    description: Kerr nonlinear cavity model with three modes
-  - type: model.vdp_2mode
-    target: models.vdp_2mode:VDPLevel3Model
-    description: Van der Pol Oscillator (SDE Model)
+    description: Three-mode Kerr oscillator

@@ -229,4 +229,4 @@ def kernelized_terms(self, y, t, params, backend):
     return drift, diffusion
 ```
 
-建议将核函数源码放在模型文件所在的模块或相邻模块中，使模型文件自包含。完整示例请参阅 `models/vdp_2mode.py` 和 `models/_cupy_vdp_2mode.py`。
+建议将核函数实现放入对应积分方案的命名空间。完整示例请参阅 `models/kernels/euler_maruyama/vdp_2mode.py`。

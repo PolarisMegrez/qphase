@@ -32,7 +32,6 @@
       gamma_b: 1.0
       Gamma: 0.00001
       g: 0.5
-      D: 1.0
   analyser:
     psd:
       modes: [0]

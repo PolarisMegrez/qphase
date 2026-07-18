@@ -83,12 +83,11 @@ model:
     gamma_b: 1.0
     Gamma: 0.00001
     g: 0.5
-    D: 1.0
 ```
 
-### `kerr_3pa` and `kerr_3mode`
+### `kerr_2mode` and `kerr_3mode`
 
-Kerr-nonlinear three-photon absorption and three-mode models. See [Models source](https://github.com/your-org/qphase/tree/main/models) or the package reference for parameter lists.
+Two- and three-mode Kerr models. See [Models source](https://github.com/your-org/qphase/tree/main/models) or the package reference for parameter lists.
 
 ## Adding a New Model
 

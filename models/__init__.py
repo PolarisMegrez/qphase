@@ -1,23 +1,17 @@
-"""QPhase Model Plugins
----------------------
+"""Local SDE model plugins used by this research workspace."""
 
-This directory contains local SDE model plugin definitions for the QPhase
-workspace.
-
-Models:
-    - Kerr3PA: single-mode Kerr nonlinear cavity with 3-photon absorption
-    - Kerr3Mode: three-mode Kerr nonlinear cavity model
-    - VDPLevel3: Van der Pol oscillator SDE model
-"""
-
-from . import (
-    kerr_3mode,
-    kerr_3pa,
-    vdp_2mode,
-)
+from .base import ModelConfig, SDEModelPlugin
+from .kerr_2mode import Kerr2ModeConfig, Kerr2ModeModel
+from .kerr_3mode import Kerr3ModeConfig, Kerr3ModeModel
+from .vdp_2mode import VDP2ModeConfig, VDP2ModeModel
 
 __all__ = [
-    "kerr_3pa",
-    "kerr_3mode",
-    "vdp_2mode",
+    "Kerr2ModeConfig",
+    "Kerr2ModeModel",
+    "Kerr3ModeConfig",
+    "Kerr3ModeModel",
+    "ModelConfig",
+    "SDEModelPlugin",
+    "VDP2ModeConfig",
+    "VDP2ModeModel",
 ]

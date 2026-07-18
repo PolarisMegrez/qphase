@@ -23,8 +23,13 @@ Postprocessing is not a separate core command or a separate resource package. It
       dt: 0.01
       n_traj: 2
   model:
-    kerr_3pa:
-      epsilon: [0.025, 0.05]
+    kerr_2mode:
+      omega_a: [0.9, 1.1]
+      omega_b: 1.0
+      chi: 0.01
+      gamma_a: 0.1
+      gamma_b: 0.1
+      g: 0.1
   analyser:
     psd:
       modes: [0]
@@ -33,19 +38,19 @@ Postprocessing is not a separate core command or a separate resource package. It
 - name: fit
   input: sim
   aggregate_input:
-    on: epsilon
+    on: params.omega_a
   engine:
     sde:
       mode: analyze
   analyser:
     lorentz_fitter:
-      scan_param: epsilon
+      scan_param: omega_a
       mode: 0
 ```
 
 The scheduler will:
 
-1. Expand the `sim` job into one job per value of `epsilon`.
+1. Expand the `sim` job into one job per value of `omega_a`.
 2. Aggregate the expanded results into a single input for the `fit` job.
 3. Run `analyser.lorentz_fitter` in `analyze` mode, producing `fit_results.csv` and `psd_merged.csv` in the `fit` job's run directory.
 

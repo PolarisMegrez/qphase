@@ -36,7 +36,6 @@ model:
     gamma_b: 0.1
     Gamma: 1.0
     g: 0.5
-    D: 0.5
 ```
 
 ### Configuration Hierarchy
@@ -67,7 +66,7 @@ When using the SDE engine (`qphase-sde`), the following top-level keys are avail
 
 | Field | Description |
 | :--- | :--- |
-| `model` | Configuration for the physical model plugin (e.g., `vdp_2mode`, `kerr_3pa`). Defines the drift and diffusion terms. |
+| `model` | Configuration for the physical model plugin (e.g., `vdp_2mode`, `kerr_2mode`). Defines the drift and diffusion terms. |
 | `backend` | Configuration for the computational backend plugin (e.g., `numpy`, `torch`). Defines how arrays are handled. |
 | `integrator` | Configuration for the SDE integrator plugin (e.g., `euler_maruyama`, `milstein`). Defines the numerical stepping scheme. |
 
@@ -90,14 +89,14 @@ If lists are provided for multiple parameters, QPhase generates a job for every 
 
 ```yaml
 model:
-  kerr_3pa:
-    omega0: 1.0
+  kerr_2mode:
+    omega_a: [0.9, 1.0, 1.1] # 3 values
+    omega_b: 1.0
     chi: 0.01
-    kappa3: 0.001
-    beta: 1.0
-    kappa1: 1.0
-    epsilon: [0.1, 0.5, 1.0] # 3 values
-# Total jobs = 2 * 3 = 6
+    gamma_a: 0.1
+    gamma_b: [0.1, 0.2] # 2 values
+    g: 0.1
+# Total jobs = 3 * 2 = 6
 ```
 
 ### Zipped Scanning

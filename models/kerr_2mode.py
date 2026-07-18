@@ -1,4 +1,4 @@
-"""Three-mode Kerr Ito SDE model plugin."""
+"""Two-mode Kerr Ito SDE model plugin."""
 
 from __future__ import annotations
 
@@ -10,65 +10,60 @@ from qphase.backend.xputil import get_xp
 
 from .base import ModelConfig, SDEModelPlugin
 from .kernels.base import ModelKernelPlugin
-from .kernels.euler_maruyama import Kerr3ModeEulerCuPyKernel
+from .kernels.euler_maruyama import Kerr2ModeEulerCuPyKernel
 
 
-class Kerr3ModeConfig(ModelConfig):
-    """Configuration for the three-mode Kerr model."""
+class Kerr2ModeConfig(ModelConfig):
+    """Configuration for the two-mode Kerr model."""
 
     omega_a: Any = Field(json_schema_extra={"scanable": True})
     omega_b: Any = Field(json_schema_extra={"scanable": True})
-    omega_c: Any = Field(json_schema_extra={"scanable": True})
     chi: Any = Field(json_schema_extra={"scanable": True})
     gamma_a: Any = Field(json_schema_extra={"scanable": True})
     gamma_b: Any = Field(json_schema_extra={"scanable": True})
-    gamma_c: Any = Field(json_schema_extra={"scanable": True})
-    g_ab: Any = Field(json_schema_extra={"scanable": True})
-    g_ac: Any = Field(json_schema_extra={"scanable": True})
+    g: Any = Field(json_schema_extra={"scanable": True})
 
 
-class Kerr3ModeModel(SDEModelPlugin):
-    """Three coupled modes with Kerr nonlinearity in mode a."""
+class Kerr2ModeModel(SDEModelPlugin):
+    """Two coupled modes with Kerr nonlinearity in mode a."""
 
-    name: ClassVar[str] = "kerr_3mode"
-    description: ClassVar[str] = "Three-mode Kerr oscillator"
-    config_schema: ClassVar[type[Kerr3ModeConfig]] = Kerr3ModeConfig
-    mode_count: ClassVar[int] = 3
+    name: ClassVar[str] = "kerr_2mode"
+    description: ClassVar[str] = "Two-mode Kerr oscillator"
+    config_schema: ClassVar[type[Kerr2ModeConfig]] = Kerr2ModeConfig
+    mode_count: ClassVar[int] = 2
 
     def kernel_plugins(self) -> Iterable[ModelKernelPlugin]:
-        return (Kerr3ModeEulerCuPyKernel(),)
+        return (Kerr2ModeEulerCuPyKernel(),)
 
     def drift(self, y: Any, t: float, params: dict[str, Any]) -> Any:
         del t
         xp = get_xp(y)
+        alpha, beta = y[:, 0], y[:, 1]
         matrix = self.drift_matrix(y, 0.0, params)
-        return xp.einsum("...ij,...j->...i", matrix, y)
+        out = xp.empty_like(y)
+        out[:, 0] = matrix[:, 0, 0] * alpha + matrix[:, 0, 1] * beta
+        out[:, 1] = matrix[:, 1, 0] * alpha + matrix[:, 1, 1] * beta
+        return out
 
     def drift_matrix(self, y: Any, t: float, params: dict[str, Any]) -> Any:
         del t
         xp = get_xp(y)
         omega_a = self.parameter(params, "omega_a", xp)
         omega_b = self.parameter(params, "omega_b", xp)
-        omega_c = self.parameter(params, "omega_c", xp)
         chi = self.parameter(params, "chi", xp)
         gamma_a = self.parameter(params, "gamma_a", xp)
         gamma_b = self.parameter(params, "gamma_b", xp)
-        gamma_c = self.parameter(params, "gamma_c", xp)
-        coupling_ab = self.parameter(params, "g_ab", xp)
-        coupling_ac = self.parameter(params, "g_ac", xp)
+        coupling = self.parameter(params, "g", xp)
 
-        matrix = xp.zeros((y.shape[0], 3, 3), dtype=y.dtype)
+        matrix = xp.zeros((y.shape[0], 2, 2), dtype=y.dtype)
         matrix[:, 0, 0] = (
-            -gamma_a / 2.0
+            gamma_a / 2.0
             - 1j * omega_a
             - 2j * chi * (xp.abs(y[:, 0]) ** 2 - 1.0)
         )
-        matrix[:, 0, 1] = -1j * coupling_ab
-        matrix[:, 0, 2] = -1j * coupling_ac
-        matrix[:, 1, 0] = -1j * coupling_ab
+        matrix[:, 0, 1] = -1j * coupling
+        matrix[:, 1, 0] = -1j * coupling
         matrix[:, 1, 1] = -gamma_b / 2.0 - 1j * omega_b
-        matrix[:, 2, 0] = -1j * coupling_ac
-        matrix[:, 2, 2] = gamma_c / 2.0 - 1j * omega_c
         return matrix
 
     def diffusion(self, y: Any, t: float, params: dict[str, Any]) -> Any:
@@ -76,7 +71,4 @@ class Kerr3ModeModel(SDEModelPlugin):
         xp = get_xp(y)
         gamma_a = self.parameter(params, "gamma_a", xp)
         gamma_b = self.parameter(params, "gamma_b", xp)
-        gamma_c = self.parameter(params, "gamma_c", xp)
-        return self.diagonal_complex_diffusion(
-            y, (gamma_a / 2.0, gamma_b / 2.0, gamma_c / 2.0)
-        )
+        return self.diagonal_complex_diffusion(y, (gamma_a / 2.0, gamma_b / 2.0))

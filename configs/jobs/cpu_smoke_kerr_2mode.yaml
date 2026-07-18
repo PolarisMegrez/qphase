@@ -1,4 +1,4 @@
-name: cpu_smoke_kerr_3pa
+name: cpu_smoke_kerr_2mode
 save: true
 
 engine:
@@ -9,7 +9,7 @@ engine:
     n_traj: 2
     seed: 42
     ic:
-      - ["1.0+0.0j"]
+      - ["1.0+0.0j", "0.0+0.0j"]
 
 analyser:
   psd:
@@ -25,10 +25,10 @@ integrator:
   euler_maruyama: {}
 
 model:
-  kerr_3pa:
-    omega0: 1.0
+  kerr_2mode:
+    omega_a: [0.9, 1.1]
+    omega_b: 1.0
     chi: 0.01
-    kappa3: 0.001
-    beta: 1.0
-    epsilon: [0.025, 0.05]
-    kappa1: 1.0
+    gamma_a: 0.1
+    gamma_b: 0.1
+    g: 0.1

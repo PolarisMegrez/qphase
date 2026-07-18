@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from models.kernels.base import ModelKernelRegistry
+from models.kernels.base import ModelKernelPlugin, ModelKernelRegistry
 
 
 class Backend:
@@ -12,9 +12,10 @@ class Backend:
         return "dummy"
 
 
-class Provider:
+class Provider(ModelKernelPlugin):
     scheme = "scheme"
     backend_name = "dummy"
+    operations = frozenset({"terms", "step"})
 
     def terms(self, y, params, backend):
         return y, params
@@ -23,7 +24,7 @@ class Provider:
         return noise
 
 
-def test_registry_resolves_supported_operations():
+def test_registry_resolves_declared_operations():
     registry = ModelKernelRegistry()
     provider = Provider()
     registry.register(provider)
@@ -41,7 +42,12 @@ def test_registry_rejects_duplicate_provider():
         registry.register(Provider())
 
 
-def test_registry_reports_missing_kernel():
+def test_registry_rejects_non_plugin_provider():
     registry = ModelKernelRegistry()
-    with pytest.raises(LookupError, match="no model kernel"):
-        registry.resolve("missing", Backend(), "step")
+    with pytest.raises(TypeError, match="inherit"):
+        registry.register(object())
+
+
+def test_kernel_schema_rejects_unknown_options():
+    with pytest.raises(ValueError, match="extra"):
+        Provider(unknown=True)

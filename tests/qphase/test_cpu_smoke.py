@@ -22,7 +22,7 @@ def cpu_workflow_path():
         Path(__file__).parent.parent.parent
         / "configs"
         / "jobs"
-        / "cpu_smoke_kerr_3pa_fit.yaml"
+        / "cpu_smoke_kerr_2mode_fit.yaml"
     )
     if not path.exists():
         pytest.skip("CPU smoke workflow config not found")
@@ -36,7 +36,7 @@ def cpu_job_path():
         Path(__file__).parent.parent.parent
         / "configs"
         / "jobs"
-        / "cpu_smoke_kerr_3pa.yaml"
+        / "cpu_smoke_kerr_2mode.yaml"
     )
     if not path.exists():
         pytest.skip("CPU smoke job config not found")
@@ -73,7 +73,7 @@ def test_cpu_smoke_run_and_postprocess(cpu_workflow_path, tmp_path):
     assert all(r.success for r in results), f"Job failed: {results}"
 
     # Locate the fit job run directory.
-    fit_result = next(r for r in results if r.job_name == "cpu_smoke_kerr_3pa_fit")
+    fit_result = next(r for r in results if r.job_name == "cpu_smoke_kerr_2mode_fit")
     assert (fit_result.run_dir / "fit_results.csv").exists()
     assert (fit_result.run_dir / "psd_merged.csv").exists()
 
@@ -85,4 +85,4 @@ def test_cpu_smoke_cli_list(cpu_job_path):
     runner = CliRunner()
     result = runner.invoke(app, ["run", "--list"])
     assert result.exit_code == 0, result.output
-    assert "cpu_smoke_kerr_3pa" in result.output
+    assert "cpu_smoke_kerr_2mode" in result.output

@@ -24,17 +24,16 @@ def _cupy_available() -> bool:
 
 @pytest.fixture
 def model():
-    from models.vdp_2mode import VDPLevel3Config, VDPLevel3Model
+    from models.vdp_2mode import VDP2ModeConfig, VDP2ModeModel
 
-    return VDPLevel3Model(
-        VDPLevel3Config(
+    return VDP2ModeModel(
+        VDP2ModeConfig(
             omega_a=0.005,
             omega_b=0.0,
             gamma_a=2.0,
             gamma_b=1.0,
             Gamma=0.01,
             g=0.5,
-            D=1.0,
         )
     )
 

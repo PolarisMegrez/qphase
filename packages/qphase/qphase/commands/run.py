@@ -113,13 +113,13 @@ def jobs(
         integrator:
           euler_maruyama: {}
         model:
-          kerr_3pa:
-            omega0: 1.0
+          kerr_2mode:
+            omega_a: 1.0
+            omega_b: 1.0
             chi: 0.01
-            kappa3: 0.001
-            beta: 1.0
-            epsilon: 0.1
-            kappa1: 1.0
+            gamma_a: 0.1
+            gamma_b: 0.1
+            g: 0.1
 
     Examples
     --------

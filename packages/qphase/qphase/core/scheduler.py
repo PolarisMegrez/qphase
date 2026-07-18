@@ -1338,7 +1338,7 @@ class Scheduler:
 
                 # Remove the aggregation target from varying keys.
                 # Also support shorthand targets like "epsilon" or "params.epsilon"
-                # that match nested keys such as "plugins.model.kerr_3pa.epsilon".
+                # that match nested keys such as "plugins.model.kerr_2mode.chi".
                 if target_path in varying_keys:
                     varying_keys.remove(target_path)
                 else:

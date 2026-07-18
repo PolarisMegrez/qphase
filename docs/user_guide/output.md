@@ -104,19 +104,24 @@ Example workflow:
   engine:
     sde: { t0: 0.0, t1: 1.0, dt: 0.01, n_traj: 8, seed: 42 }
   model:
-    kerr_3pa:
-      epsilon: [0.025, 0.05, 0.1]
+    kerr_2mode:
+      omega_a: [0.9, 1.0, 1.1]
+      omega_b: 1.0
+      chi: 0.01
+      gamma_a: 0.1
+      gamma_b: 0.1
+      g: 0.1
   analyser:
     psd: { modes: [0], kind: complex, find_peaks: true }
 
 - name: fit
   input: sim
   aggregate_input:
-    on: epsilon
+    on: params.omega_a
   engine:
     sde: { mode: analyze }
   analyser:
     lorentz_fitter:
-      scan_param: epsilon
+      scan_param: omega_a
       mode: 0
 ```

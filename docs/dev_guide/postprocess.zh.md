@@ -23,8 +23,13 @@ description: 后处理架构
       dt: 0.01
       n_traj: 2
   model:
-    kerr_3pa:
-      epsilon: [0.025, 0.05]
+    kerr_2mode:
+      omega_a: [0.9, 1.1]
+      omega_b: 1.0
+      chi: 0.01
+      gamma_a: 0.1
+      gamma_b: 0.1
+      g: 0.1
   analyser:
     psd:
       modes: [0]
@@ -33,19 +38,19 @@ description: 后处理架构
 - name: fit
   input: sim
   aggregate_input:
-    on: epsilon
+    on: params.omega_a
   engine:
     sde:
       mode: analyze
   analyser:
     lorentz_fitter:
-      scan_param: epsilon
+      scan_param: omega_a
       mode: 0
 ```
 
 scheduler 会：
 
-1. 将 `sim` job 按 `epsilon` 的每个取值展开为多个 job。
+1. 将 `sim` job 按 `omega_a` 的每个取值展开为多个 job。
 2. 把展开后的结果聚合为单个输入，传给 `fit` job。
 3. 在 `analyze` 模式下运行 `analyser.lorentz_fitter`，在 `fit` job 的 run 目录中生成 `fit_results.csv` 和 `psd_merged.csv`。
 

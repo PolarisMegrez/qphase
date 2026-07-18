@@ -1,4 +1,4 @@
-- name: cpu_smoke_kerr_3pa
+- name: cpu_smoke_kerr_2mode
   save: true
   engine:
     sde:
@@ -8,7 +8,7 @@
       n_traj: 2
       seed: 42
       ic:
-        - ["1.0+0.0j"]
+        - ["1.0+0.0j", "0.0+0.0j"]
   analyser:
     psd:
       modes: [0]
@@ -20,22 +20,22 @@
   integrator:
     euler_maruyama: {}
   model:
-    kerr_3pa:
-      omega0: 1.0
+    kerr_2mode:
+      omega_a: [0.9, 1.1]
+      omega_b: 1.0
       chi: 0.01
-      kappa3: 0.001
-      beta: 1.0
-      epsilon: [0.025, 0.05]
-      kappa1: 1.0
+      gamma_a: 0.1
+      gamma_b: 0.1
+      g: 0.1
 
-- name: cpu_smoke_kerr_3pa_fit
-  input: cpu_smoke_kerr_3pa
+- name: cpu_smoke_kerr_2mode_fit
+  input: cpu_smoke_kerr_2mode
   aggregate_input:
-    on: params.epsilon
+    on: params.omega_a
   engine:
     sde:
       mode: analyze
   analyser:
     lorentz_fitter:
-      scan_param: epsilon
+      scan_param: omega_a
       mode: 0

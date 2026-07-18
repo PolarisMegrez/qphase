@@ -50,7 +50,7 @@ engine:
     n_traj: 16
     seed: 42
     ic:
-      - ["1.0+0.0j"]
+      - ["1.0+0.0j", "0.0+0.0j"]
 
 analyser:
   psd:
@@ -64,13 +64,13 @@ integrator:
   euler_maruyama: {}
 
 model:
-  kerr_3pa:
-    omega0: 1.0
+  kerr_2mode:
+    omega_a: 1.0
+    omega_b: 1.0
     chi: 0.01
-    kappa3: 0.001
-    beta: 1.0
-    epsilon: 0.1
-    kappa1: 1.0
+    gamma_a: 0.1
+    gamma_b: 0.1
+    g: 0.1
 ```
 
 Run the job by name:
@@ -90,38 +90,38 @@ second job that consumes the first one and runs the SDE engine in `mode:
 analyze`:
 
 ```yaml
-# configs/jobs/kerr_3pa_fit.yaml
-- name: kerr_3pa_sim
+# configs/jobs/kerr_2mode_fit.yaml
+- name: kerr_2mode_sim
   save: true
   engine:
     sde: { t0: 0.0, t1: 1.0, dt: 0.01, n_traj: 8, seed: 42 }
   model:
-    kerr_3pa:
-      omega0: 1.0
+    kerr_2mode:
+      omega_a: [0.9, 1.0, 1.1]
+      omega_b: 1.0
       chi: 0.01
-      kappa3: 0.001
-      beta: 1.0
-      epsilon: [0.025, 0.05, 0.1]
-      kappa1: 1.0
+      gamma_a: 0.1
+      gamma_b: 0.1
+      g: 0.1
   analyser:
     psd: { modes: [0], kind: complex, find_peaks: true }
 
-- name: kerr_3pa_fit
-  input: kerr_3pa_sim
+- name: kerr_2mode_fit
+  input: kerr_2mode_sim
   aggregate_input:
-    on: epsilon
+    on: params.omega_a
   engine:
     sde: { mode: analyze }
   analyser:
     lorentz_fitter:
-      scan_param: epsilon
+      scan_param: omega_a
       mode: 0
 ```
 
 Run the workflow:
 
 ```powershell
-qphase run configs/jobs/kerr_3pa_fit.yaml
+qphase run configs/jobs/kerr_2mode_fit.yaml
 ```
 
 The analyzer writes `fit_results.csv` and `psd_merged.csv` to the fit job's run

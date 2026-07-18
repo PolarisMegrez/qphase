@@ -51,7 +51,6 @@ def _make_scan_job_list(
                         "gamma_b": 1.0,
                         "Gamma": 0.01,
                         "g": 0.5,
-                        "D": 1.0,
                     }
                 },
                 save=True,

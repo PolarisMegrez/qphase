@@ -18,7 +18,7 @@ description: 注册表系统
 |-----------|-------------|---------|
 | `backend` | 计算后端 | `numpy`、`torch` |
 | `engine`  | 仿真引擎 | `sde`、`viz` |
-| `model`   | 物理模型 | `kerr_3pa`、`vdp_2mode` |
+| `model`   | 物理模型 | `kerr_2mode`、`vdp_2mode` |
 | `integrator`| 数值积分器 | `euler_maruyama`、`srk` |
 | `analyser`| 结果分析工具 | `mean_photon`、`wigner` |
 
@@ -64,8 +64,15 @@ model.custom_hamiltonian: "plugins.physics:Hamiltonian"
 ```python
 # 示例：带依赖注入的模型实例化
 model = registry.create(
-    "model:kerr_3pa",
-    config={"chi": 1.0},
+    "model:kerr_2mode",
+    config={
+        "omega_a": 1.0,
+        "omega_b": 1.0,
+        "chi": 0.01,
+        "gamma_a": 0.1,
+        "gamma_b": 0.1,
+        "g": 0.1,
+    },
     backend=numpy_backend_instance
 )
 ```

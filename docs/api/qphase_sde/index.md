@@ -12,7 +12,7 @@ package for QPhase. It provides:
 
 *   `engine.sde` — the SDE simulation engine.
 *   Integrator plugins (`euler_maruyama`, `milstein`, `srk`).
-*   SDE model implementations (e.g. `kerr_3pa`, `kerr_3mode`, `vdp_2mode`).
+*   SDE model implementations (`vdp_2mode`, `kerr_2mode`, `kerr_3mode`).
 *   Analyzer plugins (`psd`, `dist`, `pdist`, `lorentz_fitter`).
 
 This section documents `qphase_sde`-specific behavior. For the core framework

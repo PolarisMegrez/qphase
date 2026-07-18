@@ -109,7 +109,6 @@ model:
     gamma_b: 0.1
     Gamma: 1.0
     g: 0.5
-    D: 1.0       # Diffusion strength
 
 backend:
   numpy:         # Run on CPU

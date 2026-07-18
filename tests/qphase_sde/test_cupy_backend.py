@@ -228,17 +228,16 @@ def test_cupy_vdp_end_to_end_smoke():
     from qphase_sde.analyser.psd import PsdAnalyzer, PsdAnalyzerConfig
     from qphase_sde.model import FunctionalSDEModel
 
-    from models.vdp_2mode import VDPLevel3Model
+    from models.vdp_2mode import VDP2ModeModel
 
     cp_be = CuPyBackend()
-    model = VDPLevel3Model(
+    model = VDP2ModeModel(
         omega_a=0.00251189,
         omega_b=0.0,
         gamma_a=2.0,
         gamma_b=1.0,
         Gamma=0.00001,
         g=0.5,
-        D=1.0,
     ).to_diffusive_sde_model()
 
     engine = Engine(
@@ -316,7 +315,6 @@ model:
     gamma_b: 1.0
     Gamma: 0.00001
     g: 0.5
-    D: 1.0
 analyser:
   psd:
     modes: [0]

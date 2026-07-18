@@ -152,7 +152,6 @@ model:
     gamma_b: 1.0
     Gamma: 0.00001
     g: 0.5
-    D: 1.0
 ```
 
 由于 `omega_a` 有三个取值且后端为 CuPy，调度器会对这三个扫描点进行批量化，`vdp_2mode` 的核函数将以融合的 CUDA kernel 同时计算全部 `3 * 20` 条轨迹。

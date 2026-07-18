@@ -229,4 +229,4 @@ def kernelized_terms(self, y, t, params, backend):
     return drift, diffusion
 ```
 
-Keep the kernel source in the same module or in a sibling module next to the model, so the model file is self-contained. See `models/vdp_2mode.py` and `models/_cupy_vdp_2mode.py` for a complete example.
+Keep kernel implementations under the integration-scheme namespace. See `models/kernels/euler_maruyama/vdp_2mode.py` for a complete example.

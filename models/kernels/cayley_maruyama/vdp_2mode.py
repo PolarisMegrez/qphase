@@ -8,6 +8,7 @@ import numpy as np
 from qphase.backend.base import BackendBase
 from qphase_sde.kernels import compile_cached_kernel
 
+from models.kernels.base import ModelKernelPlugin
 from models.kernels.cupy_utils import broadcast_param
 
 _CAYLEY_SOURCE = r"""
@@ -45,7 +46,6 @@ void __vdp_2mode_cayley_step_func__(
     const double* __restrict__ gamma_b,
     const double* __restrict__ Gamma,
     const double* __restrict__ g,
-    const double* __restrict__ D,
     $T$ dt,
     int n,
     $CT$* __restrict__ dy
@@ -62,7 +62,6 @@ void __vdp_2mode_cayley_step_func__(
     $T$ gb = ($T$)gamma_b[i];
     $T$ G  = ($T$)Gamma[i];
     $T$ gc = ($T$)g[i];
-    $T$ d  = ($T$)D[i];
     $T$ half_dt = ($T$)0.5 * dt;
 
     $T$ n_alpha2 = alpha.x * alpha.x + alpha.y * alpha.y;
@@ -77,8 +76,8 @@ void __vdp_2mode_cayley_step_func__(
         -gb / ($T$)2.0 * beta.y - wb * beta.x - gc * alpha.x
     );
 
-    $T$ D_alpha = d * (ga / ($T$)2.0 + G * (($T$)2.0 * n_alpha2 - ($T$)1.0));
-    $T$ D_beta = d * gb / ($T$)2.0;
+    $T$ D_alpha = ga / ($T$)2.0 + G * (($T$)2.0 * n_alpha2 - ($T$)1.0);
+    $T$ D_beta = gb / ($T$)2.0;
     if (D_alpha < ($T$)0.0) D_alpha = ($T$)0.0;
     if (D_beta < ($T$)0.0) D_beta = ($T$)0.0;
 
@@ -145,7 +144,6 @@ void __vdp_2mode_cayley_chunk_func__(
     const double* __restrict__ gamma_b,
     const double* __restrict__ Gamma,
     const double* __restrict__ g,
-    const double* __restrict__ D,
     $T$ dt,
     int n_steps,
     int n,
@@ -167,7 +165,6 @@ void __vdp_2mode_cayley_chunk_func__(
     $T$ gb = ($T$)gamma_b[i];
     $T$ G  = ($T$)Gamma[i];
     $T$ gc = ($T$)g[i];
-    $T$ d  = ($T$)D[i];
     $T$ half_dt = ($T$)0.5 * dt;
     int save_cursor = 0;
 
@@ -184,10 +181,10 @@ void __vdp_2mode_cayley_chunk_func__(
             -gb / ($T$)2.0 * beta.y - wb * beta.x - gc * alpha.x
         );
 
-        $T$ D_alpha = d * (
+        $T$ D_alpha = (
             ga / ($T$)2.0 + G * (($T$)2.0 * n_alpha2 - ($T$)1.0)
         );
-        $T$ D_beta = d * gb / ($T$)2.0;
+        $T$ D_beta = gb / ($T$)2.0;
         if (D_alpha < ($T$)0.0) D_alpha = ($T$)0.0;
         if (D_beta < ($T$)0.0) D_beta = ($T$)0.0;
 
@@ -296,7 +293,7 @@ def fused_step(
     kernel = compile_cached_kernel("vdp_2mode_cayley_step", ctype, source)
     params_device = [
         broadcast_param(params[name], n)
-        for name in ("omega_a", "omega_b", "gamma_a", "gamma_b", "Gamma", "g", "D")
+        for name in ("omega_a", "omega_b", "gamma_a", "gamma_b", "Gamma", "g")
     ]
     d_w = cp.asarray(noise, dtype=rdtype)
     dy = _get_buffer(n, y.dtype)
@@ -351,7 +348,7 @@ def fused_step_chunk(
 
     params_device = [
         broadcast_param(params[name], n)
-        for name in ("omega_a", "omega_b", "gamma_a", "gamma_b", "Gamma", "g", "D")
+        for name in ("omega_a", "omega_b", "gamma_a", "gamma_b", "Gamma", "g")
     ]
     d_w = cp.asarray(noise, dtype=rdtype)
     offsets = cp.asarray(save_offsets or (0,), dtype=cp.int32)
@@ -390,11 +387,12 @@ def fused_step_chunk(
     return final_state, saved_storage[:, :n_saves, :]
 
 
-class VDP2ModeCayleyCuPyKernel:
+class VDP2ModeCayleyCuPyKernel(ModelKernelPlugin):
     """CuPy fused-step provider for Cayley-Maruyama."""
 
     scheme = "cayley_maruyama"
     backend_name = "cupy"
+    operations = frozenset({"step", "step_chunk"})
 
     def step(
         self,

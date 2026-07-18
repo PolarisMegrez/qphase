@@ -155,7 +155,6 @@ model:
     gamma_b: 1.0
     Gamma: 0.00001
     g: 0.5
-    D: 1.0
 ```
 
 Because `omega_a` has three values and the backend is CuPy, the scheduler will batch the three scan points and the `vdp_2mode` kernel will evaluate all `3 * 20` trajectories in fused CUDA kernels.

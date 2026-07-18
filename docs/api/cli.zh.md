@@ -75,8 +75,13 @@ qphase run --verbose vdp_sde
   engine:
     sde: { ... }
   model:
-    kerr_3pa:
-      epsilon: [0.025, 0.05]
+    kerr_2mode:
+      omega_a: [0.9, 1.1]
+      omega_b: 1.0
+      chi: 0.01
+      gamma_a: 0.1
+      gamma_b: 0.1
+      g: 0.1
   analyser:
     psd:
       modes: [0]
@@ -85,13 +90,13 @@ qphase run --verbose vdp_sde
 - name: fit
   input: sim
   aggregate_input:
-    on: epsilon
+    on: params.omega_a
   engine:
     sde:
       mode: analyze
   analyser:
     lorentz_fitter:
-      scan_param: epsilon
+      scan_param: omega_a
       mode: 0
 ```
 
