@@ -1,4 +1,3 @@
-
 """qphase: Job Scheduler
 ---------------------------------------------------------
 Orchestrates the execution of simulation jobs, managing the complete lifecycle from
@@ -43,6 +42,7 @@ from .execution import (
     ProgressReporter,
     ResourceSnapshot,
     execution_fingerprint,
+    plugin_fingerprint,
 )
 from .protocols import ResultProtocol
 from .registry import registry
@@ -157,7 +157,7 @@ class Scheduler:
             "jobs": {},
         }
         self._save_manifest()
-        log.info(f"Initialized session {self.session_id} at {self.session_dir}")
+        log.debug(f"Initialized session {self.session_id} at {self.session_dir}")
 
     def _save_manifest(self) -> None:
         """Save session manifest to disk."""
@@ -447,7 +447,6 @@ class Scheduler:
                         job_index=job_idx,
                         job_name=job.name,
                         run_dir=Path("dry_run"),
-
                         run_id="dry_run",
                         success=True,
                     )
@@ -760,7 +759,6 @@ class Scheduler:
                 def _on_engine_progress(
                     percent: float | None,
                     total_duration_estimate: float | None,
-
                     message: str,
                     stage: str | None,
                 ) -> None:
@@ -826,7 +824,7 @@ class Scheduler:
             backend_config = getattr(backend, "config", None)
             dtype = getattr(backend_config, "float_dtype", None)
             plugin_ids = {
-                name: f"{type(instance).__module__}:{type(instance).__qualname__}"
+                name: plugin_fingerprint(instance)
                 for name, instance in plugins.items()
                 if "." not in name
             }
@@ -841,9 +839,7 @@ class Scheduler:
                 resources=ResourceSnapshot.from_system_config(effective_system),
                 progress=ProgressReporter(progress_cb),
                 cancellation=CancellationToken(),
-                artifacts=ArtifactStore(
-                    run_dir, effective_system.scan_runtime
-                ),
+                artifacts=ArtifactStore(run_dir, effective_system.scan_runtime),
                 checkpoints=CheckpointStore(
                     run_dir,
                     effective_system.scan_runtime.checkpoint,
@@ -877,9 +873,9 @@ class Scheduler:
                 preserves_shape = not job.input.select and not job.input.group_by
                 output_result = MappedDatasetResult(
                     mapped,
-                    dict(input_result.axes) if preserves_shape else {
-                        "view": list(range(len(mapped)))
-                    },
+                    dict(input_result.axes)
+                    if preserves_shape
+                    else {"view": list(range(len(mapped)))},
                     input_result.shape if preserves_shape else (len(mapped),),
                     meta={"source": job.input.from_, "mode": "map"},
                 )
@@ -976,7 +972,7 @@ class Scheduler:
             If validation fails
 
         """
-        log.info("Validating job configurations...")
+        log.debug("Validating job configurations...")
 
         # Stage 1: Check each job has exactly one engine
         self._validate_single_engine_per_job(job_list)
@@ -988,7 +984,7 @@ class Scheduler:
         # Stage 3: Validate data flow
         self._validate_data_flow(job_list)
 
-        log.info("Job validation completed successfully")
+        log.debug("Job validation completed successfully")
 
     def _validate_job_dependencies(self, job: JobConfig) -> None:
         """Validate that the job provides all plugins required by its engine.
@@ -1127,9 +1123,7 @@ class Scheduler:
             if not upstream_jobs:
                 # Not a job name or engine name - could be a file path
                 # This is valid (external input)
-                log.debug(
-                    f"Job '{job.name}' input '{source}' appears to be external"
-                )
+                log.debug(f"Job '{job.name}' input '{source}' appears to be external")
                 continue
 
             # It's an engine name - check for ambiguity

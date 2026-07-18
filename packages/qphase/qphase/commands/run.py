@@ -183,7 +183,7 @@ def jobs(
                     log.error(f"Available jobs: {', '.join(available_jobs)}")
                 raise typer.Exit(code=1)
 
-            log.info(f"Found job configuration: {cfg_path}")
+            log.debug(f"Found job configuration: {cfg_path}")
             cfg_paths.append(cfg_path)
 
         # Add config directories to Python path for model imports
@@ -197,10 +197,10 @@ def jobs(
                         added_paths.add(pstr)
 
         # Load JobList from YAML files
-        log.info(f"Loading {len(cfg_paths)} configuration file(s)")
+        log.debug(f"Loading {len(cfg_paths)} configuration file(s)")
         job_list = load_jobs_from_files(cfg_paths)
 
-        log.info(f"Loaded {len(job_list.jobs)} jobs")
+        log.debug(f"Loaded {len(job_list.jobs)} jobs")
 
         if show_plan or dry_run:
             plan_obj = scheduler_service.build_plan(job_list)
@@ -213,7 +213,7 @@ def jobs(
         progress_callback = None if json_output else _make_progress_callback()
 
         # Execute jobs
-        log.info("Starting job execution")
+        log.debug("Starting job execution")
         results = scheduler_service.run(
             job_list,
             progress_callback=progress_callback,
@@ -225,7 +225,7 @@ def jobs(
         total_count = len(results)
 
         if success_count == total_count:
-            log.info(f"All {total_count} jobs completed successfully")
+            log.debug(f"All {total_count} jobs completed successfully")
         else:
             failed = total_count - success_count
             log.warning(
@@ -334,9 +334,7 @@ def _format_execution_plan(plan: ExecutionPlan) -> str:
     lines.append("\nJobs:")
     for job in plan.jobs:
         output = job.expected_output_name or "<not saved>"
-        lines.append(
-            f"  - {job.name} engine={job.engine} output={output}"
-        )
+        lines.append(f"  - {job.name} engine={job.engine} output={output}")
         if job.scan_summary:
             lines.append(
                 f"    scan: shape={tuple(job.scan_summary['shape'])}, "

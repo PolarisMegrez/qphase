@@ -96,7 +96,7 @@ def load_jobs_from_files(file_paths: list[Path]) -> JobList:
             raise QPhaseIOError(f"Job file not found: {path}")
 
         try:
-            logger.info(f"Loading job file: {path}")
+            logger.debug(f"Loading job file: {path}")
             loaded = _load_single_job_file(path)
             if isinstance(loaded, list):
                 jobs.extend(loaded)

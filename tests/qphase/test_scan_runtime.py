@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from qphase.core.config import JobConfig, JobList
 from qphase.core.dataset import DatasetSaveReport
 from qphase.core.errors import QPhaseConfigError
+from qphase.core.execution import CheckpointStore, plugin_fingerprint
 from qphase.core.protocols import EngineManifest
 from qphase.core.registry import registry
 from qphase.core.scan import ScanSpec
@@ -142,6 +143,70 @@ def test_job_rejects_removed_string_input_syntax():
         JobConfig(name="sink", engine={"dummy": {}}, input="source")
 
 
+@pytest.mark.parametrize(
+    "field", ["storage", "storage_layout", "resources", "checkpoint", "scan_runtime"]
+)
+def test_job_rejects_scan_runtime_shortcuts(field: str):
+    with pytest.raises(QPhaseConfigError, match="job.system.scan_runtime"):
+        JobConfig(name="shortcut", engine={"dummy": {}}, **{field: {}})
+
+
+def test_job_rejects_removed_parameter_scan_field():
+    with pytest.raises(QPhaseConfigError, match="job.scan"):
+        JobConfig(name="legacy", engine={"dummy": {}}, parameter_scan={})
+
+
+def test_checkpoint_store_honors_interval_and_flushes_retained_tail(tmp_path: Path):
+    config = type(
+        "CheckpointConfig",
+        (),
+        {"enabled": True, "interval_chunks": 2, "keep_on_success": True},
+    )()
+    store = CheckpointStore(tmp_path, config, {"config_sha256": "test"})
+
+    store.save_chunk("chunk-0", {"value": 0})
+    assert not (store.root / "chunk-0.pkl").exists()
+
+    store.save_chunk("chunk-1", {"value": 1})
+    assert (store.root / "chunk-0.pkl").exists()
+    assert (store.root / "chunk-1.pkl").exists()
+
+    store.save_chunk("chunk-2", {"value": 2})
+    store.complete()
+    assert (store.root / "chunk-2.pkl").exists()
+
+
+def test_job_system_deep_merges_scan_runtime_overrides():
+    global_system = SystemConfig.model_validate(
+        {
+            "scan_runtime": {
+                "auto_shard_threshold_mib": 900,
+                "shard_target_mib": 222,
+                "checkpoint": {"interval_chunks": 3},
+            }
+        }
+    )
+    job = JobConfig(
+        name="override",
+        engine={"dummy": {}},
+        system={"scan_runtime": {"checkpoint": {"enabled": True}}},
+    )
+
+    merged = job.merge_with_system_config(global_system)
+
+    assert merged.scan_runtime.auto_shard_threshold_mib == 900
+    assert merged.scan_runtime.shard_target_mib == 222
+    assert merged.scan_runtime.checkpoint.enabled is True
+    assert merged.scan_runtime.checkpoint.interval_chunks == 3
+
+
+def test_plugin_fingerprint_records_code_identity():
+    fingerprint = plugin_fingerprint(DatasetSourceEngine())
+
+    assert fingerprint["class"].endswith(":DatasetSourceEngine")
+    assert fingerprint["source_sha256"] is not None
+
+
 def test_execution_plan_keeps_scan_as_one_logical_job(tmp_path: Path):
     config = _system_config(tmp_path)
     job = _scan_job()
@@ -172,9 +237,7 @@ def test_scheduler_creates_one_manifest_entry_and_job_directory(tmp_path: Path):
 
 
 def test_map_input_runs_views_inside_one_logical_job(tmp_path: Path):
-    registry.register(
-        "engine", "dataset_source", DatasetSourceEngine, overwrite=True
-    )
+    registry.register("engine", "dataset_source", DatasetSourceEngine, overwrite=True)
     registry.register("engine", "counting_map", CountingMapEngine, overwrite=True)
     CountingMapEngine.calls = 0
     scheduler = Scheduler(system_config=_system_config(tmp_path))

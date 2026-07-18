@@ -69,9 +69,6 @@ class RegistryService:
             "defaults": dict(manifest.defaults),
         }
 
-    def get_scanable_params(self, namespace: str, name: str) -> dict[str, bool]:
-        return self.registry.get_scanable_params(namespace, name)
-
     def _summary(
         self, namespace: str, name: str, metadata: dict[str, Any]
     ) -> PluginSummary:

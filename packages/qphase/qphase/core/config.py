@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .errors import QPhaseConfigError
 from .scan import ScanSpec
 from .system_config import SystemConfig
+from .utils import deep_merge_dicts
 
 
 class InputSpec(BaseModel):
@@ -155,6 +156,23 @@ class JobConfig(BaseModel):
             raise QPhaseConfigError(
                 "string input syntax was removed; use input: {from: <source>, "
                 "mode: dataset|map}"
+            )
+        if "parameter_scan" in data:
+            raise QPhaseConfigError(
+                "job parameter_scan was removed; define explicit job.scan axes"
+            )
+        runtime_shortcuts = {
+            "storage",
+            "storage_layout",
+            "resources",
+            "checkpoint",
+            "scan_runtime",
+        } & set(data)
+        if runtime_shortcuts:
+            fields = ", ".join(sorted(runtime_shortcuts))
+            raise QPhaseConfigError(
+                f"job runtime field(s) {fields} are not supported; configure "
+                "job.system.scan_runtime using the SystemConfig schema"
             )
         return data
 
@@ -385,8 +403,10 @@ class JobConfig(BaseModel):
             return global_system
 
         # Merge: job system overrides global system
-        merged_dict = global_system.model_dump()
-        merged_dict.update(self.system.model_dump(exclude_unset=True))
+        merged_dict = deep_merge_dicts(
+            global_system.model_dump(),
+            self.system.model_dump(exclude_unset=True),
+        )
 
         return SystemConfig(**merged_dict)
 

@@ -11,7 +11,6 @@ from qphase.core.errors import QPhaseConfigError
 from qphase.core.registry import registry
 from qphase.core.scheduler import Scheduler
 
-
 pytestmark = pytest.mark.integration
 
 

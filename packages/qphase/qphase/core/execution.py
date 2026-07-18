@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
+import inspect
 import json
 import pickle
 import threading
@@ -93,6 +95,7 @@ class CheckpointStore:
         self.interval_chunks = int(config.interval_chunks)
         self.keep_on_success = bool(config.keep_on_success)
         self.fingerprint = fingerprint
+        self._pending: dict[str, Any] = {}
         if self.enabled:
             self._prepare()
 
@@ -118,6 +121,8 @@ class CheckpointStore:
     def load_chunk(self, key: str) -> Any | None:
         if not self.enabled:
             return None
+        if key in self._pending:
+            return self._pending[key]
         path = self.root / f"{key}.pkl"
         if not path.exists():
             return None
@@ -127,14 +132,28 @@ class CheckpointStore:
     def save_chunk(self, key: str, payload: Any) -> None:
         if not self.enabled:
             return
-        path = self.root / f"{key}.pkl"
-        temporary = path.with_suffix(".tmp")
-        with temporary.open("wb") as handle:
-            pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        temporary.replace(path)
+        self._pending[key] = payload
+        if len(self._pending) >= self.interval_chunks:
+            self.flush()
+
+    def flush(self) -> None:
+        """Atomically persist all completed chunks waiting for the next interval."""
+        for key, payload in self._pending.items():
+            path = self.root / f"{key}.pkl"
+            temporary = path.with_suffix(".tmp")
+            with temporary.open("wb") as handle:
+                pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            temporary.replace(path)
+        self._pending.clear()
 
     def complete(self) -> None:
-        if not self.enabled or self.keep_on_success or not self.root.exists():
+        if not self.enabled:
+            return
+        if self.keep_on_success:
+            self.flush()
+            return
+        self._pending.clear()
+        if not self.root.exists():
             return
         for path in self.root.iterdir():
             if path.is_file():
@@ -159,7 +178,7 @@ class ExecutionContext:
 def execution_fingerprint(
     job_config: dict[str, Any],
     *,
-    plugins: dict[str, str],
+    plugins: dict[str, Any],
     backend: str | None,
     dtype: str | None,
 ) -> dict[str, Any]:
@@ -170,4 +189,31 @@ def execution_fingerprint(
         "plugins": plugins,
         "backend": backend,
         "dtype": dtype,
+    }
+
+
+def plugin_fingerprint(instance: Any) -> dict[str, str | None]:
+    """Describe an installed or workspace plugin for checkpoint validation."""
+    plugin_type = type(instance)
+    module_name = plugin_type.__module__
+    distribution_version = None
+    top_level = module_name.partition(".")[0]
+    for distribution in importlib.metadata.packages_distributions().get(top_level, []):
+        try:
+            distribution_version = importlib.metadata.version(distribution)
+            break
+        except importlib.metadata.PackageNotFoundError:
+            continue
+
+    source_sha256 = None
+    try:
+        source_path = inspect.getsourcefile(plugin_type)
+        if source_path is not None:
+            source_sha256 = hashlib.sha256(Path(source_path).read_bytes()).hexdigest()
+    except (OSError, TypeError):
+        pass
+    return {
+        "class": f"{module_name}:{plugin_type.__qualname__}",
+        "distribution_version": distribution_version,
+        "source_sha256": source_sha256,
     }

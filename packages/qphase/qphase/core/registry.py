@@ -389,61 +389,6 @@ class RegistryCenter:
 
         return None
 
-    def get_scanable_params(self, namespace: str, name: str) -> dict[str, bool]:
-        """Get scanable parameters from plugin schema.
-
-        Parameters
-        ----------
-        namespace : str
-            Plugin namespace (e.g., 'model', 'backend', 'integrator')
-        name : str
-            Plugin name
-
-        Returns
-        -------
-        dict[str, bool]
-            Dictionary mapping parameter names to scanable status.
-            Example: {'omega_a': True, 'omega_b': False, 'D': True}
-
-        """
-        schema = self.get_plugin_schema(namespace, name)
-        if not schema:
-            return {}
-
-        scanable_params = {}
-
-        try:
-            # For Pydantic models, inspect the field metadata
-            if hasattr(schema, "model_fields"):
-                for field_name, field_info in schema.model_fields.items():
-                    # Check if field has 'scanable' in metadata
-                    is_scanable = False
-                    if hasattr(field_info, "json_schema_extra"):
-                        # Check json_schema_extra for scanable flag
-                        extra = field_info.json_schema_extra
-                        if callable(extra):
-                            # If it's a function, call it to get the extra info
-                            extra = extra()
-                        if isinstance(extra, dict) and extra.get("scanable", False):
-                            is_scanable = True
-
-                    # Also check Field metadata for scanable
-                    if hasattr(field_info, "field_info"):
-                        field_info_obj = field_info.field_info
-                        if hasattr(field_info_obj, "metadata"):
-                            for meta in field_info_obj.metadata:
-                                if hasattr(meta, "scanable") and meta.scanable:
-                                    is_scanable = True
-
-                    scanable_params[field_name] = is_scanable
-        except Exception as e:
-            print(f"DEBUG: get_scanable_params failed for {namespace}:{name}: {e}")
-            # If we can't inspect the schema, return empty dict
-            # The scheduler will fall back to heuristic detection
-            pass
-
-        return scanable_params
-
     def validate_plugin_config(
         self, plugin_type: str, config_data: dict[str, Any]
     ) -> Any:
@@ -464,15 +409,6 @@ class RegistryCenter:
         for k, v in config_data.items():
             if k not in ["name", "params"]:
                 params[k] = v
-
-        # Handle scanable parameters: use first value for validation if list provided
-        scanable_params = self.get_scanable_params(plugin_type, name)
-        for param_name, is_scanable in scanable_params.items():
-            if is_scanable and param_name in params:
-                value = params[param_name]
-                if isinstance(value, list) and len(value) > 0:
-                    # Use first value for validation
-                    params[param_name] = value[0]
 
         try:
             if hasattr(schema, "model_validate"):

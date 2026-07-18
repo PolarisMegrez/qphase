@@ -1,3 +1,5 @@
+import pytest
+from qphase.core.errors import QPhaseConfigError
 from qphase.service import RegistryService
 
 
@@ -15,12 +17,12 @@ def test_registry_service_catalog_includes_registered_dummy_plugins():
     )
 
 
-def test_registry_service_returns_json_schema_and_scanable_params():
+def test_registry_service_returns_json_schema_and_rejects_list_scan_syntax():
     service = RegistryService()
 
     schema = service.get_schema("engine", "dummy")
-    scanable = service.get_scanable_params("engine", "dummy")
 
     assert schema is not None
     assert "param" in schema["properties"]
-    assert scanable == {"param": True, "description": False}
+    with pytest.raises(QPhaseConfigError):
+        service.validate_config("engine", "dummy", {"param": [1.0, 2.0]})
