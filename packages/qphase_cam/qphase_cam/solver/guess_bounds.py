@@ -36,6 +36,7 @@ class GuessBounds:
     diag_lower: np.ndarray
     diag_upper: np.ndarray
     offdiag_scale: np.ndarray
+    diag_candidates: np.ndarray | None = None
 
     @classmethod
     def from_config(cls, config: GuessBoundsConfig, n_modes: int) -> GuessBounds:
@@ -54,7 +55,7 @@ class GuessBounds:
             raise ValueError(
                 "offdiag_scale must be positive and scalar or an n_modes square matrix"
             )
-        return cls(lower, upper, scale)
+        return cls(lower, upper, scale, None)
 
     def sample(
         self,
@@ -135,6 +136,7 @@ def infer_guess_bounds(
     else:
         lower = np.full(n_modes, -fallback_scale)
         upper = np.full(n_modes, fallback_scale)
+        values = np.zeros((1, n_modes))
     widths = np.maximum(upper - lower, 1e-8)
     offdiag = 0.5 * np.sqrt(widths[:, None] * widths[None, :])
-    return GuessBounds(lower, upper, offdiag)
+    return GuessBounds(lower, upper, offdiag, values)

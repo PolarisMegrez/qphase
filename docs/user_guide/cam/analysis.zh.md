@@ -62,6 +62,14 @@ BLAS 线程，并根据可用物理内存及 `SystemConfig.scan_runtime.resource
 进程数。若 spawned pool 因内存压力终止，会自动用更少 worker 重试，而不是立即使
 逻辑 job 失败。result metadata 会记录请求/实际 worker 数、tile 数和重试次数。
 
+multistability scan 使用 continuation-assisted 搜索，而不是把各参数点当作互不相关
+的 root。启用 `guess_bounds: auto` 时，它会合并扫描角点与中心的 bounds，执行
+full-model 全局 seed 搜索，并把这些状态传给每个参数点。每个空间 tile 从中心附近
+开始，并传播已收敛的相邻状态；空点使用 `retry_guesses` 加密搜索；首轮后，解数突变
+点使用 `refine_guesses` 和周围状态重新求解。`n_guesses` 只统计每个点新生成的随机
+guess，显式、全局和邻点 guess 会额外加入。默认 `use_jacobian: false` 与原版稳健
+scan 路径一致；只有在当前模型和参数区间验证确实改善收敛后才建议启用。
+
 ## 后端支持
 
 CAM engine 目前仅通过 `batched_newton` 支持 CuPy。VDP2、Kerr2 的解析

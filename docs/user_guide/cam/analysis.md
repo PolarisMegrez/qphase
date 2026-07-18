@@ -75,6 +75,18 @@ terminated by memory pressure, it retries with fewer workers instead of losing
 the logical job immediately. Result metadata records requested/effective worker
 counts, tile count, and retries.
 
+The multistability scan follows a continuation-assisted search rather than
+treating points as unrelated roots. With `guess_bounds: auto`, it merges bounds
+from representative corners and the grid center, performs a full-model global
+seed search, and adds those states to every point. Each spatial tile then starts
+near its center and propagates already converged cardinal-neighbor states. Empty
+points receive `retry_guesses`; after the first pass, solution-count jumps are
+revisited with `refine_guesses` plus surrounding states. `n_guesses` counts the
+fresh random guesses at each point; explicit, global, and neighbor guesses are
+additional. The default `use_jacobian: false` matches the original robust scan
+path; enable it only after verifying that it improves convergence for the model
+and parameter range.
+
 ## Backend Support
 
 The CAM engine supports a CuPy backend only through `batched_newton`. The VDP2

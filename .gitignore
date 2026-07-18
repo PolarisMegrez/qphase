@@ -25,6 +25,7 @@ pip-wheel-metadata/
 .claude/
 .mypy_cache/
 .pytest_cache/
+.test-tmp/
 .ruff_cache/
 .pyre/
 .pytype/

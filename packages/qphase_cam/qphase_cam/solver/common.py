@@ -56,10 +56,14 @@ def solve_single_state(
     method: Literal["auto", "root", "cholesky"] = "auto",
     root_method: str = "hybr",
     tolerance: float = 1e-10,
+    residual_tolerance: float | None = None,
     max_iterations: int = 1000,
     use_jacobian: bool = True,
 ) -> CAMSolution:
     """Solve one CAM fixed point on NumPy/SciPy."""
+    acceptance_tolerance = (
+        tolerance if residual_tolerance is None else residual_tolerance
+    )
     state_guess = initial_state(guess, int(model.n_modes))
     attempts: list[CAMSolution] = []
     if method in {"auto", "root"}:
@@ -70,6 +74,7 @@ def solve_single_state(
                 state_guess,
                 root_method,
                 tolerance,
+                acceptance_tolerance,
                 max_iterations,
                 use_jacobian,
             )
@@ -77,7 +82,14 @@ def solve_single_state(
         if attempts[-1].success or method == "root":
             return attempts[-1]
     attempts.append(
-        _solve_cholesky(model, params, state_guess, tolerance, max_iterations)
+        _solve_cholesky(
+            model,
+            params,
+            state_guess,
+            tolerance,
+            acceptance_tolerance,
+            max_iterations,
+        )
     )
     successful = [attempt for attempt in attempts if attempt.success]
     return min(successful or attempts, key=lambda attempt: attempt.residual)
@@ -89,6 +101,7 @@ def _solve_root(
     guess: np.ndarray,
     root_method: str,
     tolerance: float,
+    residual_tolerance: float,
     max_iterations: int,
     use_jacobian: bool,
 ) -> CAMSolution:
@@ -128,7 +141,7 @@ def _solve_root(
     )
     state = np.asarray(vector_to_matrix(solution.x, int(model.n_modes)))
     residual_norm = float(np.linalg.norm(residual(solution.x), ord=np.inf))
-    success = bool(solution.success and residual_norm <= tolerance)
+    success = bool(solution.success and residual_norm <= residual_tolerance)
     return CAMSolution(
         state=state,
         residual=residual_norm,
@@ -144,6 +157,7 @@ def _solve_cholesky(
     params: dict[str, Any],
     guess: np.ndarray,
     tolerance: float,
+    residual_tolerance: float,
     max_iterations: int,
 ) -> CAMSolution:
     try:
@@ -170,7 +184,7 @@ def _solve_cholesky(
         norm = float(np.linalg.norm(residual(candidate.x), ord=np.inf))
         if best is None or norm < best[1]:
             best = (candidate, norm, root_method)
-        if candidate.success and norm <= tolerance:
+        if candidate.success and norm <= residual_tolerance:
             break
     assert best is not None
     candidate, residual_norm, root_method = best
@@ -179,7 +193,7 @@ def _solve_cholesky(
     return CAMSolution(
         state=state,
         residual=residual_norm,
-        success=bool(candidate.success and residual_norm <= tolerance),
+        success=bool(candidate.success and residual_norm <= residual_tolerance),
         method=f"cholesky-{root_method}",
         message=str(candidate.message),
         iterations=getattr(candidate, "nit", None),

@@ -13,6 +13,7 @@ from qphase_cam.errors import JacobianUnavailableError
 from qphase_cam.postprocessor.frequency import RayleighFrequency
 from qphase_cam.solver import multistability as multistability_module
 from qphase_cam.solver.batched_newton import BatchedNewtonSolver
+from qphase_cam.solver.common import solve_single_state
 from qphase_cam.solver.continuation import ContinuationSolver
 from qphase_cam.solver.guess_bounds import GuessBoundsConfig
 from qphase_cam.solver.multistability import (
@@ -34,6 +35,29 @@ VDP_PARAMS = {
     "g": 0.5,
 }
 VDP_GUESS = [[20000.0, 20000.0j], [-20000.0j, 20000.0]]
+
+
+class ThreeRootModel:
+    name = "three_root"
+    n_modes = 1
+    steady_state_capacity = 3
+
+    def __init__(self, parameter):
+        self.params = {"parameter": parameter}
+
+    def cam_hamiltonian(self, state, params):
+        del params
+        return np.zeros_like(state, dtype=complex)
+
+    def cam_diffusion(self, state, params):
+        value = float(np.real(np.asarray(state)[0, 0]))
+        center = float(params["parameter"])
+        residual = (value - center + 2.0) * (value - center) * (value - center - 2.0)
+        return np.asarray([[residual]], dtype=complex)
+
+    def cam_solution_sort_key(self, state, params):
+        del params
+        return float(np.real(state[0, 0]))
 
 
 def _vdp_root() -> np.ndarray:
@@ -133,6 +157,22 @@ def test_multistability_partitions_large_grid_into_bounded_tile_count():
     assert max(map(len, tiles)) - min(map(len, tiles)) <= 1
 
 
+def test_multistability_uses_spatial_tiles_for_two_dimensional_grid():
+    indexed = [(index, {"value": index}) for index in range(101 * 101)]
+
+    tiles = _partition_points(
+        indexed,
+        n_tiles=288,
+        tile_size=None,
+        worker_count=24,
+        grid_shape=(101, 101),
+    )
+
+    flattened = [index for tile in tiles for index, _ in tile]
+    assert len(tiles) == 289
+    assert sorted(flattened) == list(range(101 * 101))
+
+
 def test_multistability_limits_spawn_workers_by_available_memory(monkeypatch):
     monkeypatch.setattr(multistability_module, "_available_memory_mib", lambda: 1024)
     context = SimpleNamespace(
@@ -146,6 +186,50 @@ def test_solver_package_preserves_lazy_public_exports():
     import qphase_cam.solver as solver_package
 
     assert solver_package.MultistabilitySolver is MultistabilitySolver
+
+
+def test_global_seed_discovery_recovers_all_roots_across_scan():
+    model = ThreeRootModel(np.asarray([-0.5, 0.5]))
+
+    output = MultistabilitySolver(
+        n_guesses=1,
+        guess_bounds="auto",
+        bounds_inference_starts=32,
+        seed_search_guesses=40,
+        retry_guesses=1,
+        refine_suspicious=False,
+        tile_workers=1,
+        tolerance=1e-10,
+        residual_tolerance=1e-8,
+    ).solve(model, NumpyBackend())
+
+    assert [len(row) for row in output.solutions] == [3, 3]
+    assert output.metadata["global_seed_count"] >= 3
+
+
+def test_root_acceptance_uses_residual_tolerance(monkeypatch, no_jacobian_model):
+    from qphase_cam.solver import common
+
+    guess = np.eye(2) * (1.0 + 1e-8)
+
+    class RootResult:
+        x = np.asarray([1.0 + 1e-8, 1.0 + 1e-8, 0.0, 0.0])
+        success = True
+        message = "converged"
+
+    monkeypatch.setattr(common, "root", lambda *args, **kwargs: RootResult())
+    solution = solve_single_state(
+        no_jacobian_model,
+        {},
+        guess,
+        method="root",
+        tolerance=1e-12,
+        residual_tolerance=1e-7,
+        use_jacobian=False,
+    )
+
+    assert solution.success
+    assert 1e-12 < solution.residual < 1e-7
 
 
 def test_continuation_has_fixed_slots_without_branch_id():
@@ -174,6 +258,9 @@ def test_multistability_tile_processes_preserve_point_order():
         initial_guesses=[root],
         tile_workers=2,
         n_tiles=2,
+        discover_seeds=False,
+        retry_guesses=1,
+        refine_suspicious=False,
         tolerance=1e-8,
         residual_tolerance=1e-7,
     ).solve(VDP2ModeModel(**params), NumpyBackend())
