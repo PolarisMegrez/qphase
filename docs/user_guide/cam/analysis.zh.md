@@ -55,6 +55,13 @@ axis 支持 `values`、`linspace` 与 `logspace`，并可选择 Cartesian 或 zi
 `method: root` 在不受约束的 Hermitian 空间内求解，可能得到非物理数学根。
 `method: cholesky` 保证结果半正定，但会遗漏非 PSD 根，并且吸引域可能不同。
 
+对于大型 scan，`tile_workers` 表示请求的进程数，`n_tiles` 控制有界的 scan task
+数量。`n_tiles` 应大于 worker 数，以维持负载均衡；VDP 101 x 101 job 使用 24 个
+请求 worker 和 288 个 tile，与迁移前 scanner 一致。在 Windows 上，solver 会限制
+BLAS 线程，并根据可用物理内存及 `SystemConfig.scan_runtime.resources` 下调实际
+进程数。若 spawned pool 因内存压力终止，会自动用更少 worker 重试，而不是立即使
+逻辑 job 失败。result metadata 会记录请求/实际 worker 数、tile 数和重试次数。
+
 ## 后端支持
 
 CAM engine 目前仅通过 `batched_newton` 支持 CuPy。VDP2、Kerr2 的解析

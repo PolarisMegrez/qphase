@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from typing import Any, ClassVar
 
@@ -91,12 +92,12 @@ class Engine(EngineBase):
         context: Any | None,
     ) -> Any:
         if grid is None:
-            return solver.solve(model, backend)
+            return self._invoke_solver(solver, model, backend, context)
         flattened = self._model_scan_params(model, grid)
         base_params = dict(model.params)
         if getattr(solver, "supports_batch", False):
             self._replace_model_params(model, {**base_params, **flattened})
-            output = solver.solve(model, backend)
+            output = self._invoke_solver(solver, model, backend, context)
             output.axes = dict(grid.axes)
             output.metadata.update(
                 {"scan_shape": grid.shape, "scan_combine": grid.combine}
@@ -108,7 +109,7 @@ class Engine(EngineBase):
             for target, value in point.targets.items():
                 params[target.rsplit(".", 1)[-1]] = value
             self._replace_model_params(model, params)
-            return list(solver.solve(model, backend).solutions)
+            return list(self._invoke_solver(solver, model, backend, context).solutions)
 
         rows = execute_pointwise(grid, solve_point, context=context)
         self._replace_model_params(model, {**base_params, **flattened})
@@ -119,6 +120,15 @@ class Engine(EngineBase):
             axes=dict(grid.axes),
             metadata={"scan_shape": grid.shape, "scan_combine": grid.combine},
         )
+
+    @staticmethod
+    def _invoke_solver(
+        solver: Any, model: Any, backend: Any, context: Any | None
+    ) -> Any:
+        parameters = inspect.signature(solver.solve).parameters
+        if "context" in parameters:
+            return solver.solve(model, backend, context=context)
+        return solver.solve(model, backend)
 
     @staticmethod
     def _model_scan_params(model: Any, grid: ParameterGrid) -> dict[str, Any]:
