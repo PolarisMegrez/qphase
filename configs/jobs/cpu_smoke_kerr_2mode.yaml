@@ -26,9 +26,9 @@ integrator:
 
 model:
   kerr_2mode:
-    omega_a: [0.9, 1.1]
-    omega_b: 1.0
+    omega_a: 0.0
+    omega_b: [-0.001, -0.01, -0.1]
     chi: 0.01
-    gamma_a: 0.1
-    gamma_b: 0.1
-    g: 0.1
+    gamma_a: 0.5
+    gamma_b: 1.8728
+    g: 0.5

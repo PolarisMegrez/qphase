@@ -51,6 +51,7 @@ desktop.ini
 
 # User Data
 scripts/
+reports/
 *.temp
 ~$*
 

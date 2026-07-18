@@ -24,8 +24,12 @@ def model(request):
         from models.kerr_2mode import Kerr2ModeModel
 
         return Kerr2ModeModel(
-            omega_a=0.5, omega_b=0.3, chi=0.01, gamma_a=1.0,
-            gamma_b=0.5, g=0.1,
+            omega_a=0.0,
+            omega_b=-0.01,
+            chi=0.01,
+            gamma_a=0.5,
+            gamma_b=1.8728,
+            g=0.5,
         )
     from models.kerr_3mode import Kerr3ModeModel
 

@@ -69,7 +69,7 @@ def test_cpu_smoke_run_and_postprocess(cpu_workflow_path, tmp_path):
     scheduler = Scheduler(system_config=system_config)
     results = scheduler.run(job_list)
 
-    assert len(results) == 3, "Expected two expanded sim jobs + one fit job"
+    assert len(results) == 4, "Expected three expanded sim jobs + one fit job"
     assert all(r.success for r in results), f"Job failed: {results}"
 
     # Locate the fit job run directory.

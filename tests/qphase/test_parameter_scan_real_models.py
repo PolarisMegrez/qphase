@@ -50,10 +50,10 @@ def _plugins(model_name: str, model_config: dict) -> dict:
         ),
         (
             "kerr_2mode",
-            dict(omega_a=1.0, omega_b=1.0, chi=[0.01, 0.02], gamma_a=0.1,
-                 gamma_b=0.1, g=0.5),
-            "chi",
-            [0.01, 0.02],
+            dict(omega_a=0.0, omega_b=[-0.001, -0.01, -0.1], chi=0.01,
+                 gamma_a=0.5, gamma_b=1.8728, g=0.5),
+            "omega_b",
+            [-0.001, -0.01, -0.1],
         ),
         (
             "kerr_3mode",
@@ -86,7 +86,9 @@ def test_zipped_scan_with_real_model():
         engine={"dummy": {"param": 1.0}},
         plugins=_plugins("vdp_2mode", config),
     )
-    scheduler = Scheduler(system_config=SystemConfig(parameter_scan={"method": "zipped"}))
+    scheduler = Scheduler(
+        system_config=SystemConfig(parameter_scan={"method": "zipped"})
+    )
     expanded = scheduler._expand_parameter_scans(JobList(jobs=[job]))
     assert len(expanded) == 3
     assert expanded[0].plugins["model"]["vdp_2mode"]["omega_b"] == 0.8

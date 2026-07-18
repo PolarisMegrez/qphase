@@ -1,4 +1,4 @@
-name: kerr_2mode
+name: kerr_2mode_cayley
 save: true
 
 engine:
@@ -9,9 +9,11 @@ engine:
     n_traj: 500
     seed: 42
     ic:
-      - ["1.0+0.0j", "1.0+0.0j"]
+      - ["1.0+0.0j", "0.0+0.0j"]
     adaptive: false
     save_stride: 2
+    record_modes: [0]
+    keep_traj: false
 
 backend:
   cupy:
@@ -19,7 +21,9 @@ backend:
     device: cuda
 
 integrator:
-  euler_maruyama: {}
+  cayley_maruyama:
+    fused: "off"
+    max_modes: 16
 
 model:
   kerr_2mode:
