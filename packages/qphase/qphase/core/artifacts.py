@@ -38,6 +38,22 @@ class ArtifactStore:
                 )
             )
             report = DatasetSaveReport("single", files)
+        additional = tuple(
+            sorted(
+                path
+                for path in self.run_dir.rglob("*")
+                if path.is_file()
+                and path.name not in {"artifact_manifest.json", "config_snapshot.json"}
+                and path not in report.files
+            )
+        )
+        if additional:
+            report = DatasetSaveReport(
+                report.layout,
+                report.files + additional,
+                loader=report.loader,
+                schema_version=report.schema_version,
+            )
         manifest_path = self.run_dir / "artifact_manifest.json"
         payload = {
             "schema_version": "1.0",

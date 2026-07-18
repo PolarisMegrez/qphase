@@ -109,15 +109,14 @@ def test_vdp_2mode_smoke_workflow_scheduler(vdp_workflow_path, tmp_path):
     scheduler = Scheduler(system_config=_make_system_config(tmp_path))
     results = scheduler.run(job_list)
 
-    assert len(results) == 5, "Expected 3 expanded sim jobs + 2 fit jobs"
+    assert len(results) == 3, "Expected one logical sim job + 2 fit jobs"
     assert all(r.success for r in results), f"Job failed: {results}"
 
-    sim_results = [r for r in results if r.job_name.startswith("vdp_2mode_sim_")]
-    assert len(sim_results) == 3
-    for sim in sim_results:
-        npz_files = list(sim.run_dir.glob("*.npz"))
-        assert len(npz_files) == 1, "Expected exactly one saved result per sim job"
-        assert (sim.run_dir / "config_snapshot.json").exists()
+    sim = next(r for r in results if r.job_name == "vdp_2mode_sim")
+    npz_files = list(sim.run_dir.glob("*.npz"))
+    assert len(npz_files) == 1, "Expected one logical scan dataset"
+    assert (sim.run_dir / "config_snapshot.json").exists()
+    assert (sim.run_dir / "artifact_manifest.json").exists()
 
     for mode in (0, 1):
         fit = next(r for r in results if r.job_name == f"vdp_2mode_fit_mode{mode}")
@@ -145,8 +144,9 @@ def test_vdp_2mode_smoke_cli_plan(vdp_workflow_path, tmp_path):
     assert result.exit_code == 0, result.output
 
     plan = _extract_json(result.output)
-    assert len(plan["original_jobs"]) == 3
-    assert len(plan["expanded_jobs"]) == 5
+    assert len(plan["jobs"]) == 3
+    sim_plan = next(job for job in plan["jobs"] if job["name"] == "vdp_2mode_sim")
+    assert sim_plan["scan_summary"]["shape"] == [3]
 
     edges = plan["edges"]
     targets = {e["target"] for e in edges}
@@ -165,8 +165,8 @@ def test_vdp_2mode_smoke_cli_run(vdp_workflow_path, tmp_path):
     assert result.exit_code == 0, result.output
 
     report = _extract_json(result.output)
-    assert report["success_count"] == 5
-    assert report["total_count"] == 5
+    assert report["success_count"] == 3
+    assert report["total_count"] == 3
 
     for entry in report["results"]:
         assert entry["success"], entry

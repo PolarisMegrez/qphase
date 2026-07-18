@@ -55,8 +55,8 @@ def test_gui_api_builds_plan(temp_workspace, sample_job_file):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["original_jobs"][0]["name"] == "test_job"
-    assert payload["expanded_jobs"][0]["engine"] == "dummy"
+    assert payload["jobs"][0]["name"] == "test_job"
+    assert payload["jobs"][0]["engine"] == "dummy"
 
 
 def test_gui_api_starts_run(temp_workspace, sample_job_file):

@@ -14,7 +14,7 @@ def mock_system_config(tmp_path):
     # Mock the paths attribute which is a nested object
     config.paths = MagicMock()
     config.paths.output_dir = str(tmp_path / "runs")
-    config.parameter_scan = {"enabled": True, "method": "cartesian"}
+    config.scan_runtime = MagicMock()
     config.auto_save_results = True
     config.progress_update_interval = 0.1
     return config
@@ -23,20 +23,18 @@ def mock_system_config(tmp_path):
 @pytest.fixture
 def simple_job_list():
     job1 = JobConfig(name="job1", engine={"test_engine": {}})
-    job2 = JobConfig(name="job2", engine={"test_engine": {}}, input="job1")
+    job2 = JobConfig(
+        name="job2",
+        engine={"test_engine": {}},
+        input={"from": "job1", "mode": "dataset"},
+    )
     return JobList(jobs=[job1, job2])
 
 
 def test_dry_run(mock_system_config, simple_job_list):
     scheduler = Scheduler(system_config=mock_system_config)
 
-    # Mock validation and expansion to avoid needing real plugins
-    with (
-        patch.object(scheduler, "_validate_jobs"),
-        patch.object(
-            scheduler, "_expand_parameter_scans", return_value=simple_job_list.jobs
-        ),
-    ):
+    with patch.object(scheduler, "_validate_jobs"):
         results = scheduler.run(simple_job_list, dry_run=True)
 
         assert len(results) == 2
@@ -74,9 +72,6 @@ def test_resume_capability(mock_system_config, simple_job_list, tmp_path):
 
     with (
         patch.object(scheduler, "_validate_jobs"),
-        patch.object(
-            scheduler, "_expand_parameter_scans", return_value=simple_job_list.jobs
-        ),
         patch.object(scheduler, "_run_job") as mock_run_job,
         patch.object(scheduler, "_resolve_input", return_value=MagicMock()),
         patch.object(scheduler, "_handle_job_output"),
@@ -85,6 +80,7 @@ def test_resume_capability(mock_system_config, simple_job_list, tmp_path):
         # Note: run_dir must be relative to session_dir for relative_to check to pass
         mock_run_job.return_value = (
             JobResult(1, "job2", session_dir / "job2", "run2", True),
+            MagicMock(),
             MagicMock(),
         )
 
@@ -110,44 +106,3 @@ def test_validate_command_logic(mock_system_config, simple_job_list):
     with patch.object(scheduler, "_validate_jobs") as mock_validate:
         scheduler._validate_jobs(simple_job_list)
         mock_validate.assert_called_once()
-
-
-def test_job_expander_detects_scanable_params_in_model_extra():
-    """Scanable parameters stored as top-level plugin keys (model extras) expand."""
-    from typing import Any
-
-    from pydantic import BaseModel, Field
-
-    from qphase.core.job_expansion import JobExpander
-    from qphase.core.registry import RegistryCenter
-
-    class DummyModelConfig(BaseModel):
-        omega_a: Any = Field(..., json_schema_extra={"scanable": True})
-        omega_b: Any = Field(0.0, json_schema_extra={"scanable": False})
-
-    class DummyModel:
-        config_schema = DummyModelConfig
-
-    registry = RegistryCenter()
-    registry.register("model", "vdp_2mode", DummyModel)
-
-    # Top-level plugin sections are stored as model extras by JobConfig.
-    job = JobConfig(
-        name="vdp_scan",
-        engine={"sde": {}},
-        plugins={},
-        model={
-            "vdp_2mode": {
-                "omega_a": [0.001, 0.01, 0.1],
-                "omega_b": 0.0,
-            }
-        },
-    )
-
-    expander = JobExpander(registry)
-    expanded = expander.expand(job, method="cartesian")
-
-    assert len(expanded) == 3
-    expected = [0.001, 0.01, 0.1]
-    for new_job, value in zip(expanded, expected, strict=True):
-        assert new_job.plugins["model"]["vdp_2mode"]["omega_a"] == value

@@ -8,7 +8,7 @@ configuration context for the framework.
 Public API
 ----------
 SystemConfig
-    Root configuration model with paths, auto_save, and parameter_scan.
+    Root configuration model with paths, auto-save, and scan runtime services.
 PathsConfig
     Nested model for output_dir, global_file, plugin_dirs, config_dirs.
 """
@@ -151,11 +151,8 @@ class SystemConfig(BaseModel):
         Whether scheduler should automatically save job results to disk.
         If False, results are only passed to downstream jobs (if any).
         Default: True
-    parameter_scan : dict
-        Parameter scan configuration for batch execution.
-        - enabled: Enable parameter scan expansion (default: True)
-        - method: Expansion method - 'cartesian' or 'zipped' (default: 'cartesian')
-        - numbered_outputs: Auto-number expanded job outputs (default: True)
+    scan_runtime : ScanRuntimeConfig
+        Storage, checkpoint, and workstation resource hints for logical scans.
 
     """
 
@@ -266,6 +263,13 @@ def load_system_config(
                 raise QPhaseConfigError(
                     f"Failed to load explicit config {path}: {e}"
                 ) from e
+
+    if "parameter_scan" in config_dict:
+        config_dict.pop("parameter_scan", None)
+        logger.warning(
+            "Ignoring removed system setting 'parameter_scan'; define explicit "
+            "job.scan axes instead."
+        )
 
     try:
         _SYSTEM_CONFIG_CACHE = SystemConfig(**config_dict)

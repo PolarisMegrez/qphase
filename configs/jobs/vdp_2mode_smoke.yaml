@@ -1,5 +1,10 @@
 - name: vdp_2mode_sim
   save: true
+  scan:
+    axes:
+      omega_a:
+        target: model.vdp_2mode.omega_a
+        values: [0.05, 0.1, 0.15]
   engine:
     sde:
       t0: 0.0
@@ -20,7 +25,7 @@
       method: heun
   model:
     vdp_2mode:
-      omega_a: [0.05, 0.1, 0.15]
+      omega_a: 0.05
       omega_b: 0.0
       gamma_a: 2.0
       gamma_b: 1.0
@@ -41,9 +46,9 @@
       density: true
 
 - name: vdp_2mode_fit_mode0
-  input: vdp_2mode_sim
-  aggregate_input:
-    on: params.omega_a
+  input:
+    from: vdp_2mode_sim
+    mode: dataset
   save: true
   engine:
     sde:
@@ -58,9 +63,9 @@
         - psd_merged.csv
 
 - name: vdp_2mode_fit_mode1
-  input: vdp_2mode_sim
-  aggregate_input:
-    on: params.omega_a
+  input:
+    from: vdp_2mode_sim
+    mode: dataset
   save: true
   engine:
     sde:

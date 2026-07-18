@@ -69,11 +69,13 @@ def test_cpu_smoke_run_and_postprocess(cpu_workflow_path, tmp_path):
     scheduler = Scheduler(system_config=system_config)
     results = scheduler.run(job_list)
 
-    assert len(results) == 4, "Expected three expanded sim jobs + one fit job"
+    assert len(results) == 2, "Expected one logical scan job + one fit job"
     assert all(r.success for r in results), f"Job failed: {results}"
 
     # Locate the fit job run directory.
     fit_result = next(r for r in results if r.job_name == "cpu_smoke_kerr_2mode_fit")
+    sim_result = next(r for r in results if r.job_name == "cpu_smoke_kerr_2mode")
+    assert (sim_result.run_dir / "artifact_manifest.json").exists()
     assert (fit_result.run_dir / "fit_results.csv").exists()
     assert (fit_result.run_dir / "psd_merged.csv").exists()
 

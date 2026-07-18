@@ -1,12 +1,68 @@
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import pytest
+from pydantic import BaseModel
 from qphase.core.config import JobConfig, JobList
+from qphase.core.dataset import DatasetSaveReport
 from qphase.core.errors import QPhaseConfigError
+from qphase.core.protocols import EngineManifest
+from qphase.core.registry import registry
 from qphase.core.scan import ScanSpec
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import PathsConfig, SystemConfig
 from qphase.service.scheduler import SchedulerService
+
+from tests.plugins.dummy_plugin import DummyResult
+
+
+class EmptyConfig(BaseModel):
+    pass
+
+
+class TinyDataset:
+    axes = {"x": np.array([1.0, 2.0, 3.0])}
+    shape = (3,)
+    metadata: dict[str, Any] = {}
+    label = None
+    data = None
+
+    def point_view(self, index):
+        return DummyResult(data=float(self.axes["x"][index[0]]))
+
+    def save(self, path):
+        raise NotImplementedError
+
+    def save_dataset(self, path, *, layout, shard_target_bytes):
+        del path, shard_target_bytes
+        return DatasetSaveReport(layout, ())
+
+
+class DatasetSourceEngine:
+    config_schema = EmptyConfig
+    manifest = EngineManifest(required_plugins=set())
+
+    def __init__(self, config=None, plugins=None):
+        del config, plugins
+
+    def run(self, data=None, context=None, progress_cb=None):
+        del data, context, progress_cb
+        return TinyDataset()
+
+
+class CountingMapEngine:
+    config_schema = EmptyConfig
+    manifest = EngineManifest(required_plugins=set(), input_plugins=set())
+    calls = 0
+
+    def __init__(self, config=None, plugins=None):
+        del config, plugins
+
+    def run(self, data=None, context=None, progress_cb=None):
+        del context, progress_cb
+        type(self).calls += 1
+        return DummyResult(data=data.data)
 
 
 def test_scan_spec_preserves_axis_order_and_cartesian_shape():
@@ -113,6 +169,39 @@ def test_scheduler_creates_one_manifest_entry_and_job_directory(tmp_path: Path):
         "scan"
     ]
     assert (scheduler.session_dir / "scan" / "artifact_manifest.json").exists()
+
+
+def test_map_input_runs_views_inside_one_logical_job(tmp_path: Path):
+    registry.register(
+        "engine", "dataset_source", DatasetSourceEngine, overwrite=True
+    )
+    registry.register("engine", "counting_map", CountingMapEngine, overwrite=True)
+    CountingMapEngine.calls = 0
+    scheduler = Scheduler(system_config=_system_config(tmp_path))
+    jobs = JobList(
+        jobs=[
+            JobConfig(
+                name="source",
+                engine={"dataset_source": {}},
+                save=False,
+            ),
+            JobConfig(
+                name="mapped",
+                engine={"counting_map": {}},
+                input={"from": "source", "mode": "map"},
+                save=False,
+            ),
+        ]
+    )
+
+    results = scheduler.run(jobs)
+
+    assert all(result.success for result in results)
+    assert CountingMapEngine.calls == 3
+    assert scheduler.session_dir is not None
+    assert sorted(
+        path.name for path in scheduler.session_dir.iterdir() if path.is_dir()
+    ) == ["mapped", "source"]
 
 
 def _scan_job() -> JobConfig:

@@ -1,6 +1,12 @@
 name: cpu_smoke_kerr_2mode
 save: true
 
+scan:
+  axes:
+    omega_b:
+      target: model.kerr_2mode.omega_b
+      values: [-0.001, -0.01, -0.1]
+
 engine:
   sde:
     t0: 0.0
@@ -27,7 +33,7 @@ integrator:
 model:
   kerr_2mode:
     omega_a: 0.0
-    omega_b: [-0.001, -0.01, -0.1]
+    omega_b: -0.001
     chi: 0.01
     gamma_a: 0.5
     gamma_b: 1.8728

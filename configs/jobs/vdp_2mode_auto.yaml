@@ -33,9 +33,9 @@
       find_peaks: true
 
 - name: vdp_2mode_auto_fit
-  input: vdp_2mode_auto_sim
-  aggregate_input:
-    on: params.omega_a
+  input:
+    from: vdp_2mode_auto_sim
+    mode: dataset
   save: true
   engine:
     sde:

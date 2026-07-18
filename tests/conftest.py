@@ -63,7 +63,11 @@ def temp_workspace(tmp_path):
                     "global_file": str(config_dir / "global.yaml"),
                     "plugin_dirs": [str(workspace / "plugins")],
                 },
-                "parameter_scan": {"enabled": True, "method": "cartesian"},
+                "scan_runtime": {
+                    "storage_layout": "auto",
+                    "auto_shard_threshold_mib": 512,
+                    "shard_target_mib": 128,
+                },
             },
             f,
         )

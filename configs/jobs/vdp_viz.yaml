@@ -1,5 +1,7 @@
 name: vdp_viz
-input: vdp_sde
+input:
+  from: vdp_sde
+  mode: dataset
 engine:
   viz:
     output_dir: runs/vdp_plots

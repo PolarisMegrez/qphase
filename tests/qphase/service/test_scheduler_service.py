@@ -17,8 +17,8 @@ class OptionalAnalyserEngine:
     manifest = EngineManifest(required_plugins=set(), optional_plugins={"analyser"})
 
 
-def test_scheduler_service_builds_plan_without_creating_session(tmp_path):
-    system_config = SystemConfig(
+def _system_config(tmp_path):
+    return SystemConfig(
         paths={
             "output_dir": str(tmp_path / "runs"),
             "global_file": str(tmp_path / "global.yaml"),
@@ -26,20 +26,27 @@ def test_scheduler_service_builds_plan_without_creating_session(tmp_path):
             "plugin_dirs": [str(tmp_path / "plugins")],
         }
     )
+
+
+def test_scheduler_service_builds_logical_plan_without_creating_session(tmp_path):
     job_list = JobList(
         jobs=[
             JobConfig(name="source", engine={"dummy": {"param": 1.0}}),
-            JobConfig(name="sink", engine={"dummy": {}}, input="source"),
+            JobConfig(
+                name="sink",
+                engine={"dummy": {}},
+                input={"from": "source", "mode": "dataset"},
+            ),
         ]
     )
 
-    plan = SchedulerService(system_config).build_plan(job_list)
+    plan = SchedulerService(_system_config(tmp_path)).build_plan(job_list)
 
-    assert [job.name for job in plan.original_jobs] == ["source", "sink"]
-    assert [job.name for job in plan.expanded_jobs] == ["source", "sink"]
+    assert [job.name for job in plan.jobs] == ["source", "sink"]
     assert [(edge.source, edge.target, edge.kind) for edge in plan.edges] == [
         ("source", "sink", "input")
     ]
+    assert plan.edges[0].input_mode == "dataset"
     assert not (tmp_path / "runs").exists()
 
 
@@ -62,130 +69,72 @@ def test_scheduler_service_run_wraps_core_scheduler(tmp_path):
     scheduler.run.assert_called_once_with(job_list, resume_from=None)
 
 
-def test_scheduler_service_plan_includes_cartesian_scan_metadata(tmp_path):
-    system_config = SystemConfig(
-        paths={
-            "output_dir": str(tmp_path / "runs"),
-            "global_file": str(tmp_path / "global.yaml"),
-            "config_dirs": [str(tmp_path / "configs")],
-            "plugin_dirs": [str(tmp_path / "plugins")],
-        }
-    )
-    job_list = JobList(
-        jobs=[
-            JobConfig(
-                name="scan",
-                engine={"dummy": {"param": [1.0, 2.0]}},
-                plugins={"model": {"dummy": {"param": [10.0, 20.0]}}},
-            )
-        ]
-    )
-
-    plan = SchedulerService(system_config).build_plan(job_list)
-
-    assert [job.name for job in plan.expanded_jobs] == [
-        "scan_001",
-        "scan_002",
-        "scan_003",
-        "scan_004",
-    ]
-    assert plan.scan_groups == {
-        "scan": ["scan_001", "scan_002", "scan_003", "scan_004"]
-    }
-    assert plan.expanded_jobs[0].base_name == "scan"
-    assert plan.expanded_jobs[0].index == 1
-    assert plan.expanded_jobs[0].scan_params == {
-        "engine.dummy.param": 1.0,
-        "model.dummy.param": 10.0,
-    }
-
-
-def test_scheduler_service_plan_includes_zipped_scan_metadata(tmp_path):
-    system_config = SystemConfig(
-        paths={
-            "output_dir": str(tmp_path / "runs"),
-            "global_file": str(tmp_path / "global.yaml"),
-            "config_dirs": [str(tmp_path / "configs")],
-            "plugin_dirs": [str(tmp_path / "plugins")],
+def test_scheduler_service_reports_cartesian_and_zipped_scan_shapes(tmp_path):
+    cartesian = JobConfig(
+        name="cartesian",
+        engine={"dummy": {"param": 1.0}},
+        scan={
+            "combine": "cartesian",
+            "axes": {
+                "x": {"target": "engine.dummy.param", "values": [1, 2]},
+                "y": {"target": "model.dummy.param", "values": [10, 20, 30]},
+            },
         },
-        parameter_scan={"enabled": True, "method": "zipped"},
     )
-    job_list = JobList(
+    zipped = JobConfig(
+        name="zipped",
+        engine={"dummy": {"param": 1.0}},
+        scan={
+            "combine": "zipped",
+            "axes": {
+                "x": {"target": "engine.dummy.param", "values": [1, 2]},
+                "y": {"target": "model.dummy.param", "values": [10, 20]},
+            },
+        },
+    )
+
+    plan = SchedulerService(_system_config(tmp_path)).build_plan(
+        JobList(jobs=[cartesian, zipped])
+    )
+
+    assert plan.jobs[0].scan_summary["shape"] == [2, 3]
+    assert plan.jobs[0].scan_summary["size"] == 6
+    assert plan.jobs[1].scan_summary["shape"] == [2]
+
+
+def test_scheduler_service_marks_map_input_edge(tmp_path):
+    jobs = JobList(
         jobs=[
+            JobConfig(name="scan", engine={"dummy": {}}),
             JobConfig(
-                name="zip_scan",
-                engine={"dummy": {"param": [1.0, 2.0]}},
-                plugins={"model": {"dummy": {"param": [10.0, 20.0]}}},
-            )
-        ]
-    )
-
-    plan = SchedulerService(system_config).build_plan(job_list)
-
-    assert [job.scan_params for job in plan.expanded_jobs] == [
-        {"engine.dummy.param": 1.0, "model.dummy.param": 10.0},
-        {"engine.dummy.param": 2.0, "model.dummy.param": 20.0},
-    ]
-
-
-def test_scheduler_service_plan_marks_aggregate_input_edge(tmp_path):
-    system_config = SystemConfig(
-        paths={
-            "output_dir": str(tmp_path / "runs"),
-            "global_file": str(tmp_path / "global.yaml"),
-            "config_dirs": [str(tmp_path / "configs")],
-            "plugin_dirs": [str(tmp_path / "plugins")],
-        }
-    )
-    job_list = JobList(
-        jobs=[
-            JobConfig(name="scan", engine={"dummy": {"param": [1.0, 2.0]}}),
-            JobConfig(
-                name="aggregate",
+                name="mapped",
                 engine={"dummy": {}},
-                input="scan",
-                aggregate_input={"on": "engine.dummy.param"},
+                input={"from": "scan", "mode": "map", "group_by": ["omega"]},
             ),
         ]
     )
 
-    plan = SchedulerService(system_config).build_plan(job_list)
+    plan = SchedulerService(_system_config(tmp_path)).build_plan(jobs)
 
-    assert any(
-        edge.source == "scan"
-        and edge.target == "aggregate"
-        and edge.kind == "aggregate"
-        for edge in plan.edges
-    )
+    assert plan.edges[0].input_mode == "map"
 
 
-def test_scheduler_service_plan_does_not_enable_optional_global_default(tmp_path):
+def test_scheduler_service_does_not_enable_optional_global_default(tmp_path):
     registry.register(
-        "engine",
-        "optional_analyser",
-        OptionalAnalyserEngine,
-        overwrite=True,
+        "engine", "optional_analyser", OptionalAnalyserEngine, overwrite=True
     )
-    registry.register(
-        "analyser",
-        "dummy",
-        OptionalAnalyserEngine,
-        overwrite=True,
-    )
+    registry.register("analyser", "dummy", OptionalAnalyserEngine, overwrite=True)
     global_file = tmp_path / "global.yaml"
     global_file.write_text("analyser:\n  dummy:\n    param: 3.0\n", encoding="utf-8")
-    system_config = SystemConfig(
-        paths={
-            "output_dir": str(tmp_path / "runs"),
-            "global_file": str(global_file),
-            "config_dirs": [str(tmp_path / "configs")],
-            "plugin_dirs": [str(tmp_path / "plugins")],
-        }
+    system_config = _system_config(tmp_path)
+    system_config.paths.global_file = str(global_file)
+
+    plan = SchedulerService(system_config).build_plan(
+        JobList(
+            jobs=[JobConfig(name="job", engine={"optional_analyser": {}})]
+        )
     )
-    job_list = JobList(jobs=[JobConfig(name="job", engine={"optional_analyser": {}})])
 
-    plan = SchedulerService(system_config).build_plan(job_list)
-
-    assert plan.expanded_jobs[0].optional_plugins == ["analyser"]
-    assert plan.expanded_jobs[0].optional_plugins_enabled == []
-    assert plan.expanded_jobs[0].inherited_global_defaults == {}
+    assert plan.jobs[0].optional_plugins == ["analyser"]
+    assert plan.jobs[0].optional_plugins_enabled == []
+    assert plan.jobs[0].inherited_global_defaults == {}

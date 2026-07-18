@@ -1,8 +1,9 @@
+
 """qphase: Job Scheduler
 ---------------------------------------------------------
 Orchestrates the execution of simulation jobs, managing the complete lifecycle from
 dependency resolution to result persistence. The Scheduler handles serial execution
-of ``JobList`` items, expands parameter scans into multiple tasks, manages run
+of ``JobList`` items, passes logical scans to resource engines, manages run
 directory creation, and provides hooks for progress reporting and snapshot generation.
 
 Public API
@@ -15,7 +16,6 @@ Public API
 
 from __future__ import annotations
 
-import copy
 import inspect
 import json
 import uuid
@@ -44,7 +44,6 @@ from .execution import (
     ResourceSnapshot,
     execution_fingerprint,
 )
-from .job_expansion import JobExpander
 from .protocols import ResultProtocol
 from .registry import registry
 from .system_config import SystemConfig, load_system_config
@@ -448,6 +447,7 @@ class Scheduler:
                         job_index=job_idx,
                         job_name=job.name,
                         run_dir=Path("dry_run"),
+
                         run_id="dry_run",
                         success=True,
                     )
@@ -553,144 +553,6 @@ class Scheduler:
         return get_config_for_job(
             system_cfg, job_name=job.name, job_config_dict=job_override
         )
-
-    def _run_batch(
-        self,
-        plan: Any,
-        original_jobs: list[JobConfig],
-        group_idx: int,
-        group_total: int,
-        job_results: dict[str, ResultProtocol],
-        results: list[JobResult],
-        *,
-        dry_run: bool,
-    ) -> None:
-        """Execute a batch of jobs and split the result back per original job."""
-        # Resume check: skip only if all original jobs are completed.
-        if self.manifest:
-            all_completed = all(
-                self.manifest["jobs"].get(j.name, {}).get("status") == "completed"
-                for j in original_jobs
-            )
-            if all_completed:
-                names = ", ".join(j.name for j in original_jobs)
-                log.info(f"Skipping completed batch: {names}")
-                return
-
-        batch_name = f"__batch_{group_idx}"
-        if not dry_run:
-            self._update_job_status(batch_name, "pending")
-
-        try:
-            if dry_run:
-                for j in original_jobs:
-                    log.info(f"[DRY-RUN] Would execute job (batched): {j.name}")
-                    results.append(
-                        JobResult(
-                            job_index=group_idx,
-                            job_name=j.name,
-                            run_dir=Path("dry_run"),
-                            run_id="dry_run",
-                            success=True,
-                        )
-                    )
-                    class MockResult:
-                        data = None
-                        metadata: dict[str, Any] = {}
-                        label: Any = None
-                        def save(self, path):
-                            pass
-                    job_results[j.name] = MockResult()
-                return
-
-            # Batch jobs currently only support simulations without upstream input.
-            input_result = None
-            if any(j.input for j in original_jobs):
-                raise QPhaseConfigError(
-                    "Batch execution does not yet support jobs with upstream input"
-                )
-
-            # Build and run the merged job via the resource pack's BatchPlanner.
-            # Use a temporary job name for the combined run directory; the real
-            # per-job directories are created after splitting.
-            batch_job = copy.deepcopy(plan.batch_job)
-            batch_job.name = batch_name
-            run_id = self._generate_run_id()
-            self._create_run_dir(batch_job, run_id)
-
-            _, output_result, _ = self._run_job(
-                batch_job,
-                group_idx,
-                group_total,
-                input_result,
-                display_total=len(original_jobs),
-            )
-
-            # Split the combined result back into per-job results.
-            splitter = registry.get_result_splitter(plan.result_splitter)
-            split_results = splitter.split(output_result, original_jobs)
-
-            for j in original_jobs:
-                single_result = split_results.get(j.name)
-                if single_result is None:
-                    raise QPhaseRuntimeError(
-                        f"Batch result splitter did not produce result for '{j.name}'"
-                    )
-
-                # Each original job gets its own run directory and manifest entry.
-                single_run_id = self._generate_run_id()
-                single_run_dir = self._create_run_dir(j, single_run_id)
-
-                # Write per-job snapshot so downstream tools can inspect the
-                # original (non-batched) configuration.
-                single_merged_config = self._get_merged_config_for_job(j)
-                self._write_snapshot(
-                    single_run_dir, j, single_merged_config, group_idx
-                )
-
-                self._handle_job_output(j, single_result, job_results, single_run_dir)
-
-                assert self.session_dir is not None
-                self._update_job_status(
-                    j.name,
-                    "completed",
-                    {
-                        "run_id": single_run_id,
-                        "output_dir": str(single_run_dir.relative_to(self.session_dir)),
-                        "batched": True,
-                        "batch_group": group_idx,
-                    },
-                )
-
-                results.append(
-                    JobResult(
-                        job_index=group_idx,
-                        job_name=j.name,
-                        run_dir=single_run_dir,
-                        run_id=single_run_id,
-                        success=True,
-                    )
-                )
-
-            self._update_job_status(batch_name, "completed")
-
-        except Exception as e:
-            log.error(f"Batch group {group_idx} failed: {e}")
-            if not dry_run:
-                self._update_job_status(batch_name, "failed", {"error": str(e)})
-            for j in original_jobs:
-                if not dry_run:
-                    self._update_job_status(j.name, "failed", {"error": str(e)})
-                results.append(
-                    JobResult(
-                        job_index=group_idx,
-                        job_name=j.name,
-                        run_dir=Path("."),
-                        run_id="",
-                        success=False,
-                        error=str(e),
-                    )
-                )
 
     def _run_job(
         self,
@@ -898,6 +760,7 @@ class Scheduler:
                 def _on_engine_progress(
                     percent: float | None,
                     total_duration_estimate: float | None,
+
                     message: str,
                     stage: str | None,
                 ) -> None:
@@ -1222,310 +1085,6 @@ class Scheduler:
             )
 
         return namespaces
-
-    def _expand_parameter_scans(self, job_list: JobList) -> list[JobConfig]:
-        """Expand jobs with scanable list parameters into multiple jobs.
-
-        This method scans job configurations for parameters marked as 'scanable'
-        and expands them into multiple jobs based on the configured expansion method.
-        It also handles dependency expansion: if a job depends on an upstream job
-        that was expanded, the downstream job is also expanded to match.
-
-        Parameters
-        ----------
-        job_list : JobList
-            List of jobs to expand
-
-        Returns
-        -------
-        list[JobConfig]
-            Expanded list of jobs with scanable parameters expanded into individual jobs
-
-        """
-        # Check if parameter scan is enabled
-        if not getattr(self.system_config, "parameter_scan", {}).get(
-            "enabled", True
-        ):
-            log.debug("Parameter scan is disabled, returning original jobs")
-            return job_list.jobs
-
-        expanded_jobs = []
-        numbering_enabled = getattr(self.system_config, "parameter_scan", {}).get(
-            "numbered_outputs", True
-        )
-        method = getattr(self.system_config, "parameter_scan", {}).get(
-            "method", "cartesian"
-        )
-
-        expander = JobExpander(self._registry)
-
-        # Map original job name to list of expanded job names
-        # e.g. "vdp_sde" -> ["vdp_sde_001", "vdp_sde_002"]
-        expansion_map: dict[str, list[str]] = {}
-        # Map expanded job name to JobConfig object for parameter inspection
-        job_registry: dict[str, JobConfig] = {}
-
-        for job in job_list.jobs:
-            # 1. Check if this job needs to be expanded due to upstream dependency
-            upstream_expansion = []
-            if job.input and job.input.from_ in expansion_map:
-                upstream_expansion = expansion_map[job.input.from_]
-
-            # 2. Check if this job has its own parameter scan
-            scan_expansion = expander.expand(job, method=method)
-
-            final_expansion = []
-
-            # Check for aggregation request
-            aggregation_cfg = getattr(job, "aggregate_input", None)
-
-            if aggregation_cfg and upstream_expansion:
-                # Aggregation logic
-                target_path = aggregation_cfg.get("on")
-                if not target_path:
-                    log.warning(f"Job {job.name} has aggregate_input but no 'on' field")
-                    continue
-
-                # We need to group upstream jobs by "everything else"
-                # First, identify all varying parameters in upstream jobs
-                upstream_jobs = [job_registry[name] for name in upstream_expansion]
-
-                # Helper to get value by dotted path
-                def get_val(obj, path):
-                    parts = path.split(".")
-                    curr = obj
-                    for p in parts:
-                        if isinstance(curr, dict):
-                            curr = curr.get(p)
-                        elif hasattr(curr, p):
-                            curr = getattr(curr, p)
-                        else:
-                            return None
-                    return curr
-
-                # Find varying parameters with a deep search.
-                # Scan the full upstream job config for varying values.
-
-                varying_keys = set()
-
-                # Helper to flatten dict with dot notation
-                def flatten_dict(d: dict, prefix: str = "") -> dict[str, Any]:
-                    items = {}
-                    for k, v in d.items():
-                        new_key = f"{prefix}.{k}" if prefix else k
-                        if isinstance(v, dict):
-                            items.update(flatten_dict(v, new_key))
-                        else:
-                            items[new_key] = v
-                    return items
-
-                # Helper to flatten relevant job parts
-                def flatten_job(j: JobConfig) -> dict[str, Any]:
-                    flat = {}
-                    # Inspect params, engine, plugins
-                    if j.params:
-                        flat.update(flatten_dict(j.params, "params"))
-                    if j.engine:
-                        flat.update(flatten_dict(j.engine, "engine"))
-                    if j.plugins:
-                        flat.update(flatten_dict(j.plugins, "plugins"))
-                    return flat
-
-                if upstream_jobs:
-                    # Scan keys from the first job
-                    # Note: We assume all jobs share the same schema structure for keys
-                    first_flat = flatten_job(upstream_jobs[0])
-                    candidate_keys = list(first_flat.keys())
-
-                    # Check variance for each key
-                    for key in candidate_keys:
-                        values = set()
-                        for uj in upstream_jobs:
-                            val = get_val(uj, key)
-                            # Handle unhashable types (list, dict) by stringifying
-                            try:
-                                values.add(val)
-                            except TypeError:
-                                values.add(str(val))
-
-                        if len(values) > 1:
-                            varying_keys.add(key)
-
-                # Remove the aggregation target from varying keys.
-                # Also support shorthand targets like "epsilon" or "params.epsilon"
-                # that match nested keys such as "plugins.model.kerr_2mode.chi".
-                if target_path in varying_keys:
-                    varying_keys.remove(target_path)
-                else:
-                    target_tail = target_path.split(".")[-1]
-                    matching = [
-                        k
-                        for k in varying_keys
-                        if k.endswith(f".{target_tail}") or k == target_tail
-                    ]
-                    if matching:
-                        varying_keys.discard(matching[0])
-
-                # Group jobs by the remaining varying keys
-                groups: dict[tuple[Any, ...], list[Any]] = {}
-
-                for uj in upstream_jobs:
-                    # signature is a tuple of values for varying keys
-                    sig_list = []
-                    for k in sorted(varying_keys):
-                        sig_list.append(get_val(uj, k))
-                    sig = tuple(sig_list)
-
-                    # sig = tuple(get_val(uj, k) for k in sorted(varying_keys))
-                    if sig not in groups:
-                        groups[sig] = []
-                    groups[sig].append(uj)
-
-                log.info(
-                    f"Aggregating {job.name} on {target_path}. Found {len(groups)} "
-                    f"groups from {len(upstream_expansion)} upstream jobs."
-                )
-
-                # Create a job for each group
-                for idx, (sig, _group_jobs) in enumerate(groups.items()):
-                    new_job = copy.deepcopy(job)
-
-                    # Construct input filter logic
-                    # We pass the filter to _resolve_input via metadata in params
-                    # The filter defines the fixed parameters for this group
-                    input_filter = {}
-                    group_name_suffix_parts = []
-
-                    for i, key in enumerate(sorted(varying_keys)):
-                        # key is "params.k"
-                        param_name = key.split(".")[-1]
-                        val = sig[i]
-                        input_filter[param_name] = val
-                        group_name_suffix_parts.append(f"{param_name}={val}")
-
-                    if not group_name_suffix_parts:
-                        group_name_suffix = "all"
-                    else:
-                        group_name_suffix = "_".join(group_name_suffix_parts)
-
-                    # Store filter in params (private key)
-                    new_job.params["_input_filter"] = input_filter
-                    new_job.params["_aggregated_on"] = target_path
-
-                    # Update name.
-                    # Append a suffix when multiple groups are present.
-                    if len(groups) > 1:
-                        # Keep filenames clean and predictable.
-                        if numbering_enabled:
-                            new_job = self._apply_job_numbering(
-                                new_job, job.name, idx + 1, len(groups)
-                            )
-                        else:
-                            new_job.name = f"{job.name}_{group_name_suffix}"
-
-                    final_expansion.append(new_job)
-
-            elif upstream_expansion:
-                # Case A: Follow upstream expansion
-                if len(scan_expansion) > 1:
-                    # If both are present, we might need a more complex strategy.
-                    # For now, warn and prioritize upstream to maintain flow.
-                    log.warning(
-                        f"Job '{job.name}' has both upstream expansion "
-                        f"(from '{job.input}') and internal parameter scan. "
-                        "Prioritizing upstream expansion structure."
-                    )
-
-                # Create N copies of the job, each pointing to one upstream output
-                for idx, upstream_job_name in enumerate(upstream_expansion):
-                    new_job = copy.deepcopy(job)
-                    # Update input to point to specific upstream job
-                    from .config import InputSpec
-
-                    new_job.input = InputSpec(from_=upstream_job_name)
-
-                    # Apply numbering to match upstream index
-                    # We use the same index (1-based)
-                    # Only apply numbering if upstream was actually expanded (count > 1)
-                    if numbering_enabled and len(upstream_expansion) > 1:
-                        # Determine padding based on total count
-                        total_count = len(upstream_expansion)
-                        new_job = self._apply_job_numbering(
-                            new_job, job.name, idx + 1, total_count
-                        )
-
-                    final_expansion.append(new_job)
-
-            elif len(scan_expansion) > 1:
-                # Case B: Standard scan expansion
-                log.debug(
-                    f"Job '{job.name}' expanded to {len(scan_expansion)} jobs "
-                    f"using {method} expansion"
-                )
-
-                if numbering_enabled:
-                    total_count = len(scan_expansion)
-                    for idx, new_job in enumerate(scan_expansion, start=1):
-                        new_job = self._apply_job_numbering(
-                            new_job, job.name, idx, total_count
-                        )
-                        final_expansion.append(new_job)
-                else:
-                    final_expansion.extend(scan_expansion)
-            else:
-                # No expansion
-                final_expansion.append(scan_expansion[0])
-
-            # Register expansion in map and registry
-            expansion_map[job.name] = [j.name for j in final_expansion]
-            for j in final_expansion:
-                job_registry[j.name] = j
-            expanded_jobs.extend(final_expansion)
-
-        return expanded_jobs
-
-    def _apply_job_numbering(
-        self, job: JobConfig, base_name: str, index: int, total: int
-    ) -> JobConfig:
-        """Apply numbering to a job name and output.
-
-        Parameters
-        ----------
-        job : JobConfig
-            Job configuration to modify
-        base_name : str
-            Base name to which numbering will be appended
-        index : int
-            Index number (1-based)
-        total : int
-            Total number of jobs in this expansion group (used for padding)
-
-        Returns
-        -------
-        JobConfig
-            Modified job configuration with numbered name
-
-        """
-        # Create a copy to avoid modifying the original
-        job = copy.deepcopy(job)
-
-        # Determine padding width
-        # e.g. total=10 -> width=2, total=100 -> width=3
-        width = len(str(total))
-        # Ensure minimum width of 3 for consistency with previous behavior if desired,
-        # or just use dynamic width. User asked for >100 support.
-        width = max(3, width)
-
-        suffix = f"{index:0{width}d}"
-
-        # Update job name
-        job.name = f"{base_name}_{suffix}"
-
-        # Update output name if specified
-        if job.output:
-            job.output = f"{job.output}_{suffix}"
-
-        return job
 
     def _validate_single_engine_per_job(self, job_list: JobList) -> None:
         """Verify each job has exactly one engine."""
