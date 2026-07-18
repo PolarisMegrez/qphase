@@ -1,0 +1,34 @@
+name: kerr_2mode_cam
+save: true
+
+engine:
+  cam: {}
+
+plugins:
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    kerr_2mode:
+      omega_a: 0.0
+      omega_b: [-0.001, -0.01, -0.1]
+      chi: 0.01
+      gamma_a: 0.5
+      gamma_b: 1.8728
+      g: 0.5
+  cam_solver:
+    multistability:
+      n_guesses: 64
+      guess_scale: 100.0
+      guess_bounds: auto
+      seed: 42
+      method: root
+      tolerance: 1.0e-9
+      residual_tolerance: 1.0e-6
+      distance_tolerance: 1.0e-4
+  cam_postprocessor:
+    rayleigh_frequency: {}
+    hamiltonian_spectrum: {}
+    jacobian_spectrum: {}
+    physicality:
+      residual_tolerance: 1.0e-6

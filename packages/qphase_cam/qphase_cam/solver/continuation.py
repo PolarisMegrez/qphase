@@ -137,7 +137,9 @@ class ContinuationSolver(CAMSolver):
         tangent = np.linalg.svd(operator)[2][-1]
         tangent /= np.linalg.norm(tangent)
         preferred = (
-            np.concatenate((np.zeros_like(x), [float(preference)]))
+            np.concatenate(
+                (np.zeros_like(x), np.asarray([preference], dtype=float))
+            )
             if np.isscalar(preference)
             else np.asarray(preference)
         )
@@ -173,7 +175,10 @@ class ContinuationSolver(CAMSolver):
             operator[:-1, :-1] = jacobian
             operator[:-1, -1] = parameter_derivative
             operator[-1] = tangent
-            right = np.concatenate((-residual, [-np.dot(tangent, current - predicted)]))
+            arclength_residual = -float(np.dot(tangent, current - predicted))
+            right = np.concatenate(
+                (-residual, np.asarray([arclength_residual], dtype=float))
+            )
             correction, *_ = np.linalg.lstsq(operator, right, rcond=None)
             current += correction
         return current, False, self.config.corrector_iterations

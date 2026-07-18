@@ -1,0 +1,32 @@
+name: vdp_2mode_cam
+save: true
+
+engine:
+  cam: {}
+
+plugins:
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    vdp_2mode:
+      omega_a: [-0.001, 0.0, 0.001]
+      omega_b: 0.0
+      gamma_a: 2.0
+      gamma_b: 0.5
+      Gamma: 0.0001
+      g: 0.5
+  cam_solver:
+    batched_newton:
+      initial_guesses:
+        - - ["7503.443592415266+0j", "0+3750.555313355958j"]
+          - ["0-3750.555313355958j", "7501.610626711914+0j"]
+      max_iterations: 30
+      tolerance: 1.0e-8
+      line_search: true
+  cam_postprocessor:
+    rayleigh_frequency: {}
+    hamiltonian_spectrum: {}
+    jacobian_spectrum: {}
+    physicality:
+      residual_tolerance: 1.0e-7

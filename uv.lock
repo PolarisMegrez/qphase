@@ -9,6 +9,7 @@ resolution-markers = [
 [manifest]
 members = [
     "qphase",
+    "qphase-cam",
     "qphase-sde",
     "qphase-viz",
     "qphase-workspace",
@@ -1741,6 +1742,25 @@ requires-dist = [
 provides-extras = ["numba", "cupy", "torch", "standard", "gui"]
 
 [[package]]
+name = "qphase-cam"
+version = "0.1.0"
+source = { editable = "packages/qphase_cam" }
+dependencies = [
+    { name = "numpy" },
+    { name = "qphase" },
+    { name = "scipy" },
+    { name = "sympy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.24" },
+    { name = "qphase", editable = "packages/qphase" },
+    { name = "scipy", specifier = ">=1.10" },
+    { name = "sympy", specifier = ">=1.12" },
+]
+
+[[package]]
 name = "qphase-sde"
 version = "1.0.1"
 source = { editable = "packages/qphase_sde" }
@@ -1796,8 +1816,12 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "qphase", extra = ["cupy", "gui", "numba", "torch"] },
+    { name = "qphase-cam" },
     { name = "qphase-sde" },
     { name = "qphase-viz" },
+]
+cam = [
+    { name = "qphase-cam" },
 ]
 cupy = [
     { name = "cupy-cuda12x" },
@@ -1821,6 +1845,7 @@ dev = [
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "qphase", extra = ["cupy", "gui", "numba", "torch"] },
+    { name = "qphase-cam" },
     { name = "qphase-sde" },
     { name = "qphase-viz" },
     { name = "ruff" },
@@ -1834,6 +1859,7 @@ dev-cpu = [
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "qphase", extra = ["gui", "numba", "torch"] },
+    { name = "qphase-cam" },
     { name = "qphase-sde" },
     { name = "qphase-viz" },
     { name = "ruff" },
@@ -1846,12 +1872,14 @@ requires-dist = [
     { name = "qphase", editable = "packages/qphase" },
     { name = "qphase", extras = ["gui"], marker = "extra == 'gui'", editable = "packages/qphase" },
     { name = "qphase", extras = ["numba", "torch", "cupy", "gui"], marker = "extra == 'all'", editable = "packages/qphase" },
+    { name = "qphase-cam", marker = "extra == 'all'", editable = "packages/qphase_cam" },
+    { name = "qphase-cam", marker = "extra == 'cam'", editable = "packages/qphase_cam" },
     { name = "qphase-sde", marker = "extra == 'all'", editable = "packages/qphase_sde" },
     { name = "qphase-sde", marker = "extra == 'sde'", editable = "packages/qphase_sde" },
     { name = "qphase-viz", marker = "extra == 'all'", editable = "packages/qphase_viz" },
     { name = "qphase-viz", marker = "extra == 'viz'", editable = "packages/qphase_viz" },
 ]
-provides-extras = ["cupy", "sde", "viz", "all", "gui"]
+provides-extras = ["cupy", "sde", "viz", "all", "cam", "gui"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1862,6 +1890,7 @@ dev = [
     { name = "pre-commit", specifier = ">=4.5.1" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "qphase", extras = ["numba", "torch", "cupy", "gui"], editable = "packages/qphase" },
+    { name = "qphase-cam", editable = "packages/qphase_cam" },
     { name = "qphase-sde", editable = "packages/qphase_sde" },
     { name = "qphase-viz", editable = "packages/qphase_viz" },
     { name = "ruff", specifier = ">=0.14.10" },
@@ -1875,6 +1904,7 @@ dev-cpu = [
     { name = "pre-commit", specifier = ">=4.5.1" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "qphase", extras = ["numba", "torch", "gui"], editable = "packages/qphase" },
+    { name = "qphase-cam", editable = "packages/qphase_cam" },
     { name = "qphase-sde", editable = "packages/qphase_sde" },
     { name = "qphase-viz", editable = "packages/qphase_viz" },
     { name = "ruff", specifier = ">=0.14.10" },

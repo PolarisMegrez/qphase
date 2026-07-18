@@ -1,0 +1,36 @@
+name: kerr_3mode_cam
+save: true
+
+engine:
+  cam: {}
+
+plugins:
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    kerr_3mode:
+      omega_a: 0.0
+      omega_b: -0.01
+      omega_c: 0.01
+      chi: 0.01
+      gamma_a: 0.5
+      gamma_b: 1.0
+      gamma_c: 0.5
+      g_ab: 0.5
+      g_ac: 0.3
+  cam_solver:
+    steady_state:
+      method: root
+      initial_guess:
+        - ["1+0j", "0+0j", "0+0j"]
+        - ["0+0j", "1+0j", "0+0j"]
+        - ["0+0j", "0+0j", "1+0j"]
+      tolerance: 1.0e-8
+      use_jacobian: true
+  cam_postprocessor:
+    rayleigh_frequency: {}
+    hamiltonian_spectrum: {}
+    jacobian_spectrum: {}
+    physicality:
+      residual_tolerance: 1.0e-7

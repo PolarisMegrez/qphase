@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal
 
 import numpy as np
@@ -97,13 +98,13 @@ def _solve_root(
         state = vector_to_matrix(vector, int(model.n_modes))
         return np.asarray(residual_vector(model, state, params), dtype=float)
 
-    jacobian = None
+    jacobian_callback: Callable[[np.ndarray], np.ndarray] | None = None
     if use_jacobian:
         resolver = JacobianResolver()
         try:
             resolver.resolve(model, guess, params, _NumpyBackendName())
 
-            def jacobian(vector: np.ndarray) -> np.ndarray:
+            def evaluate_jacobian(vector: np.ndarray) -> np.ndarray:
                 return np.asarray(
                     resolver.resolve(
                         model,
@@ -112,13 +113,15 @@ def _solve_root(
                         _NumpyBackendName(),
                     )
                 )
+
+            jacobian_callback = evaluate_jacobian
         except JacobianUnavailableError:
-            jacobian = None
+            jacobian_callback = None
     options = {"maxfev": max_iterations} if root_method == "hybr" else {}
     solution = root(
         residual,
         vector_guess,
-        jac=jacobian,
+        jac=jacobian_callback,
         method=root_method,
         tol=tolerance,
         options=options,

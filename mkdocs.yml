@@ -91,6 +91,7 @@ nav:
   - SDE Physics:
     - Modeling: user_guide/sde/modeling.md
     - Simulation: user_guide/sde/simulation.md
+  - CAM Analysis: user_guide/cam/analysis.md
   - API Reference:
     - Command Line Interface: api/cli.md
     - Overview: api/index.md
@@ -104,6 +105,7 @@ nav:
         - Models: api/qphase_sde/models.md
         - Analyzers: api/qphase_sde/analyzers.md
         - Output Formats: api/qphase_sde/output.md
+    - CAM: api/qphase_cam/index.md
   - Developer Guide:
     - Introduction: dev_guide/index.md
     - Architecture: dev_guide/architecture.md

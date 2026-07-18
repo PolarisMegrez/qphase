@@ -9,6 +9,7 @@ import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_cam.engine import Engine
 from qphase_cam.errors import SolutionCapacityError
+from qphase_cam.postprocessor.bifurcation import Bifurcation
 from qphase_cam.postprocessor.frequency import (
     HamiltonianSpectrum,
     RayleighFrequency,
@@ -27,7 +28,7 @@ def test_no_jacobian_model_solves_without_jacobian(no_jacobian_model):
         plugins={
             "backend": NumpyBackend(),
             "model": no_jacobian_model,
-            "cam_solver": SteadyStateSolver(method="root", use_jacobian=False),
+            "cam_solver": SteadyStateSolver(method="root"),
         }
     ).run()
     assert result.success[0]
@@ -81,11 +82,27 @@ def test_rayleigh_zero_trace_has_no_division_warning(no_jacobian_model):
         params={},
     )
     with warnings.catch_warnings(record=True) as caught:
-        output = RayleighFrequency().process(
-            result, no_jacobian_model, NumpyBackend()
-        )
+        output = RayleighFrequency().process(result, no_jacobian_model, NumpyBackend())
     assert np.isnan(output["rayleigh_frequency"][0])
     assert not caught
+
+
+def test_finite_difference_jacobian_records_source_and_step(no_jacobian_model):
+    result = Engine(
+        plugins={
+            "backend": NumpyBackend(),
+            "model": no_jacobian_model,
+            "cam_solver": SteadyStateSolver(method="root"),
+            "cam_postprocessor": JacobianSpectrum(
+                allow_finite_difference=True,
+                finite_difference_epsilon=2e-6,
+            ),
+        }
+    ).run()
+    assert result.postprocess["jacobian_source"][0] == "finite_difference"
+    metadata = result.meta["postprocessor_metadata"]["jacobian_spectrum"]
+    assert metadata["jacobian_sources"] == ["finite_difference"]
+    assert metadata["finite_difference_epsilon"] == 2e-6
 
 
 def test_capacity_overflow_is_an_error(no_jacobian_model):
@@ -109,3 +126,39 @@ def test_capacity_overflow_is_an_error(no_jacobian_model):
     )
     with pytest.raises(SolutionCapacityError):
         engine.run()
+
+
+def test_bifurcation_refines_after_cholesky_without_solver_jacobian():
+    class CrossingModel:
+        name = "crossing"
+        n_modes = 1
+        steady_state_capacity = 1
+        params = {"control": 0.0}
+
+        def cam_hamiltonian(self, state, params):
+            del params
+            return np.full(np.asarray(state).shape, -0.5j)
+
+        def cam_diffusion(self, state, params):
+            del params
+            return np.ones(np.asarray(state).shape)
+
+        def cam_jacobian(self, state, params):
+            return np.full(
+                np.asarray(state).shape[:-2] + (1, 1), params["control"] - 0.5
+            )
+
+    result = CAMResult(
+        states=np.ones((2, 1, 1, 1), dtype=complex),
+        residuals=np.zeros((2, 1)),
+        success=np.ones((2, 1), dtype=bool),
+        valid_mask=np.ones((2, 1), dtype=bool),
+        solution_count=np.ones(2, dtype=int),
+        params={"control": 0.0},
+        axes={"control": np.array([0.0, 1.0])},
+        meta={"continuation": True},
+    )
+    output = Bifurcation(tolerance=1e-9).process(
+        result, CrossingModel(), NumpyBackend()
+    )
+    np.testing.assert_allclose(output["bifurcation_values"], [0.5], atol=1e-8)

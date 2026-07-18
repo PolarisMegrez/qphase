@@ -130,11 +130,14 @@ linewidth, baseline, peak intensity, $R^2$, and status/error fields.
 
 ## Module Overview
 
-The project is organized as a monorepo containing three main packages:
+The project is organized as a monorepo containing three published packages and
+one workspace-only resource package:
 
 - `packages/qphase`: The core framework, CLI, and plugin system.
 - `packages/qphase_sde`: The physics engine implementing SDE solvers and models.
 - `packages/qphase_viz`: Visualization tools for analyzing simulation results.
+- `packages/qphase_cam`: Coherent-amplitude matrix solvers and postprocessors
+  used only from this workspace.
 
 ## Notes
 
