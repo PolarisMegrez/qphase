@@ -149,6 +149,7 @@ class EngineBase(PluginBase, Protocol):
         self,
         data: Any | None = None,
         *,
+        context: Any | None = None,
         progress_cb: ProgressCallback | None = None,
     ) -> ResultProtocol:
         """Execute the main computational task and return the result.
@@ -158,6 +159,8 @@ class EngineBase(PluginBase, Protocol):
         data : Any | None
             Input data from upstream jobs or external sources.
             Can be a Python object (in-memory transfer) or a Path (file transfer).
+        context : ExecutionContext | None, optional
+            Scheduler-owned runtime services and an optional parameter grid.
         progress_cb : ProgressCallback | None, optional
             Callback for progress reporting.
             Signature: (percent, total_duration_estimate, message, stage) -> None

@@ -15,10 +15,22 @@ JobList
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .errors import QPhaseConfigError
+from .scan import ScanSpec
 from .system_config import SystemConfig
+
+
+class InputSpec(BaseModel):
+    """Structured upstream data selection for one logical job."""
+
+    from_: str = Field(alias="from", min_length=1)
+    mode: str = Field(default="dataset", pattern="^(dataset|map)$")
+    select: dict[str, Any] | None = None
+    group_by: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
 class JobConfig(BaseModel):
@@ -82,9 +94,9 @@ class JobConfig(BaseModel):
 
     # Input data source (optional)
     # Can be a job name (for dependency) or a file path
-    input: str | None = Field(
+    input: InputSpec | None = Field(
         default=None,
-        description="Input data source (upstream job name or file path)",
+        description="Structured upstream job or external dataset input",
     )
 
     # Output destination (optional)
@@ -97,13 +109,9 @@ class JobConfig(BaseModel):
         "without extension)",
     )
 
-    # Aggregation configuration (optional)
-    # Defines how to aggregate input results for this job
-    aggregate_input: dict[str, Any] | None = Field(
+    scan: ScanSpec | None = Field(
         default=None,
-        description=(
-            "Configuration for input aggregation (e.g. {'on': 'params.gamma_a'})"
-        ),
+        description="Explicit parameter scan owned by this logical job",
     )
 
     # Save control (optional)
@@ -133,6 +141,22 @@ class JobConfig(BaseModel):
         extra="allow",
         str_strip_whitespace=True,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_workflow_syntax(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "aggregate_input" in data:
+            raise QPhaseConfigError(
+                "aggregate_input was removed; use input: {from, mode, group_by}"
+            )
+        if isinstance(data.get("input"), str):
+            raise QPhaseConfigError(
+                "string input syntax was removed; use input: {from: <source>, "
+                "mode: dataset|map}"
+            )
+        return data
 
     def __init__(self, **data):
         """Initialize JobConfig and validate plugins.
@@ -253,6 +277,9 @@ class JobConfig(BaseModel):
                 flat_config = dict(plugin_config)
                 flat_config["name"] = plugin_name
 
+                if plugin_type == "model":
+                    self._reject_implicit_model_scan(plugin_name, plugin_config)
+
                 try:
                     type_validated[plugin_name] = registry.validate_plugin_config(
                         plugin_type, flat_config
@@ -266,6 +293,33 @@ class JobConfig(BaseModel):
             validated[plugin_type] = type_validated
 
         self._validated_plugins = validated
+
+    @staticmethod
+    def _reject_implicit_model_scan(
+        plugin_name: str, plugin_config: dict[str, Any]
+    ) -> None:
+        """Reject model-field lists that previously implied a scan."""
+        from qphase.core.registry import registry
+
+        try:
+            schema = registry.get_plugin_schema("model", plugin_name)
+        except Exception:
+            return
+        if schema is None:
+            return
+        for name, value in plugin_config.items():
+            field = schema.model_fields.get(name)
+            extra = field.json_schema_extra if field is not None else None
+            if (
+                isinstance(value, list)
+                and isinstance(extra, dict)
+                and extra.get("scanable")
+            ):
+                raise QPhaseConfigError(
+                    f"model parameter {plugin_name}.{name} uses the removed "
+                    "list-as-scan syntax; define a job scan axis targeting "
+                    f"model.{plugin_name}.{name}"
+                )
 
     def get_plugin_config(self, plugin_type: str) -> Any | None:
         """Get validated plugin configuration for a specific plugin type.

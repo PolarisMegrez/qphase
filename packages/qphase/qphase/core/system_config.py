@@ -16,14 +16,20 @@ PathsConfig
 import importlib.resources as ilr
 import os
 from pathlib import Path
-from typing import Any
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .errors import QPhaseConfigError, get_logger
 from .utils import deep_merge_dicts, load_yaml, save_yaml
 
-__all__ = ["SystemConfig", "PathsConfig"]
+__all__ = [
+    "CheckpointConfig",
+    "PathsConfig",
+    "ResourceHintsConfig",
+    "ScanRuntimeConfig",
+    "SystemConfig",
+]
 
 logger = get_logger()
 
@@ -97,6 +103,39 @@ class PathsConfig(BaseModel):
         return [Path(p).resolve() for p in self.config_dirs]
 
 
+class CheckpointConfig(BaseModel):
+    """Chunk-level checkpoint behavior for logical scans."""
+
+    enabled: bool = False
+    interval_chunks: int = Field(default=1, ge=1)
+    keep_on_success: bool = False
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ResourceHintsConfig(BaseModel):
+    """Workstation resource hints forwarded to resource engines."""
+
+    cpu_worker_limit: int | None = Field(default=None, ge=1)
+    memory_limit_mib: int | None = Field(default=None, ge=1)
+    gpu_device: int | str | None = None
+    gpu_memory_fraction: float | None = Field(default=None, gt=0.0, le=1.0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScanRuntimeConfig(BaseModel):
+    """Core storage and runtime services for engine-owned scans."""
+
+    storage_layout: Literal["auto", "single", "sharded", "per_point"] = "auto"
+    auto_shard_threshold_mib: int = Field(default=512, ge=1)
+    shard_target_mib: int = Field(default=128, ge=1)
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
+    resources: ResourceHintsConfig = Field(default_factory=ResourceHintsConfig)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class SystemConfig(BaseModel):
     """System-wide configuration parameters.
 
@@ -126,14 +165,7 @@ class SystemConfig(BaseModel):
         description="Automatically save job results to disk. Set to False to "
         "disable automatic saving.",
     )
-    parameter_scan: dict[str, Any] = Field(
-        default_factory=lambda: {
-            "enabled": True,
-            "method": "cartesian",
-            "numbered_outputs": True,
-        },
-        description="Parameter scan configuration for batch execution",
-    )
+    scan_runtime: ScanRuntimeConfig = Field(default_factory=ScanRuntimeConfig)
     progress_update_interval: float = Field(
         default=0.5,
         description=(
@@ -141,11 +173,7 @@ class SystemConfig(BaseModel):
         ),
     )
 
-    class Config:
-        """Pydantic config."""
-
-        frozen = False
-        extra = "forbid"
+    model_config = ConfigDict(frozen=False, extra="forbid")
 
 
 # Cache for system config

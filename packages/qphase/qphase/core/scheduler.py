@@ -16,23 +16,33 @@ Public API
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TypedDict
 
-from .aggregation import AggregateResult
-from .batch_negotiator import BatchJob, BatchNegotiator, SingleJob
+from .artifacts import ArtifactStore
 from .config import JobConfig, JobList
 from .config_loader import get_config_for_job
+from .dataset import DatasetResultProtocol, MappedDatasetResult, iter_dataset_views
 from .errors import (
     QPhaseConfigError,
     QPhasePluginError,
     QPhaseRuntimeError,
     get_logger,
+)
+from .execution import (
+    CancellationToken,
+    CheckpointStore,
+    ExecutionContext,
+    ProgressReporter,
+    ResourceSnapshot,
+    execution_fingerprint,
 )
 from .job_expansion import JobExpander
 from .protocols import ResultProtocol
@@ -208,42 +218,19 @@ class Scheduler:
         # Step 1: Validate jobs before execution
         self._validate_jobs(job_list)
 
-        # Step 2: Expand parameter scan jobs
-        expanded_jobs = self._expand_parameter_scans(job_list)
-
         results: list[JobResult] = []
         job_results: dict[str, ResultProtocol] = {}
-
-        # Group expanded jobs into single or batched execution units.
-        # Resource packs advertise BatchPlanners that decide how scan jobs can be
-        # fused; the scheduler only orchestrates and preserves per-job identity.
-        negotiator = BatchNegotiator(registry)
-        job_groups = negotiator.group_jobs(expanded_jobs)
-
-        # Map original job name to its group index for stable ordering.
-        group_count = len(job_groups)
-
-        for group_idx, group in enumerate(job_groups):
-            if isinstance(group, SingleJob):
-                self._run_single(
-                    group.job,
-                    group_idx,
-                    group_count,
-                    expanded_jobs,
-                    job_results,
-                    results,
-                    dry_run=dry_run,
-                )
-            elif isinstance(group, BatchJob):
-                self._run_batch(
-                    group.plan,
-                    group.original_jobs,
-                    group_idx,
-                    group_count,
-                    job_results,
-                    results,
-                    dry_run=dry_run,
-                )
+        logical_jobs = job_list.jobs
+        for job_idx, job in enumerate(logical_jobs):
+            self._run_single(
+                job,
+                job_idx,
+                len(logical_jobs),
+                logical_jobs,
+                job_results,
+                results,
+                dry_run=dry_run,
+            )
 
         # Finalize session
         if self.manifest and not dry_run:
@@ -280,6 +267,7 @@ class Scheduler:
         output_result: ResultProtocol,
         job_results: dict[str, ResultProtocol],
         run_dir: Path,
+        context: ExecutionContext | None = None,
     ) -> None:
         """Handle job output based on job configuration.
 
@@ -301,6 +289,8 @@ class Scheduler:
             Storage for job results that will be passed to downstream jobs
         run_dir : Path
             Run directory for this job (where results should be saved)
+        context : ExecutionContext | None
+            Runtime artifact and checkpoint services for this logical job.
 
         Raises
         ------
@@ -343,7 +333,10 @@ class Scheduler:
             save_path = run_dir / save_filename
 
             try:
-                output_result.save(save_path)
+                if context is not None:
+                    context.artifacts.save_result(output_result, save_filename)
+                else:
+                    output_result.save(save_path)
                 log.debug(f"Job '{job.name}' result saved to {save_path}")
             except Exception as e:
                 raise QPhaseRuntimeError(
@@ -368,71 +361,16 @@ class Scheduler:
             Input result object or None if no input
 
         """
-        if not job.input:
+        if job.input is None:
             return None
+        source = job.input.from_
 
-        # Check if input is from a previous job in current session
-        if job.input in job_results:
-            return job_results[job.input]
-
-        # Check for parameter scan aggregation (N-to-1)
-        # If job.input matches the base name of a set of expanded jobs
-        # e.g. input="sim", but we have "sim[p=1]", "sim[p=2]"
-        # Note: Expansion uses "_" separator for numbering, e.g. "sim_001"
-        scan_prefix = f"{job.input}_"
-        aggregated_results = {
-            k: v
-            for k, v in job_results.items()
-            if k.startswith(scan_prefix) or k.startswith(f"{job.input}[")
-        }
-
-        # Apply implicit filtering if present (from aggregate_input expansion)
-        input_filter = job.params.get("_input_filter")
-        if input_filter and aggregated_results:
-            filtered_results = {}
-            for k, result in aggregated_results.items():
-                match = True
-                # Access result metadata for parameters
-                # We assume standard metadata structure from Engine execution
-                if hasattr(result, "metadata"):
-                    res_params = result.metadata.get("params", {})
-                    # Also check top-level if not in params, just in case
-                    if not res_params and hasattr(result, "params"):
-                        res_params = getattr(result, "params", {})
-                else:
-                    res_params = {}
-
-                for filter_k, filter_v in input_filter.items():
-                    # filter_k matches parameter name
-                    val = res_params.get(filter_k)
-
-                    if isinstance(val, float) and isinstance(filter_v, float):
-                        if abs(val - filter_v) > 1e-7:
-                            match = False
-                            break
-                    elif val != filter_v:
-                        match = False
-                        break
-
-                if match:
-                    filtered_results[k] = result
-
-            aggregated_results = filtered_results
-            log.info(
-                f"Filtered input for job '{job.name}': matched "
-                f"{len(aggregated_results)} results using filter {input_filter}"
-            )
-
-        if aggregated_results:
-            # We found multiple results matching the input pattern.
-            return AggregateResult(
-                aggregated_results,
-                meta={"aggregated": True, "count": len(aggregated_results)},
-            )
+        if source in job_results:
+            return job_results[source]
 
         # Check if input is in manifest (from a previous run in same session context)
-        if self.manifest and job.input in self.manifest["jobs"]:
-            job_entry = self.manifest["jobs"][job.input]
+        if self.manifest and source in self.manifest["jobs"]:
+            job_entry = self.manifest["jobs"][source]
             if job_entry.get("status") == "completed" and self.session_dir:
                 output_rel_path = job_entry.get("output_dir")
                 if output_rel_path:
@@ -440,22 +378,22 @@ class Scheduler:
                     try:
                         from .result_loader import load_result
 
-                        log.info(f"Loading result for '{job.input}' from disk...")
-                        result = load_result(job.input, job_dir)
+                        log.info(f"Loading result for '{source}' from disk...")
+                        result = load_result(source, job_dir)
                         # Cache it
-                        job_results[job.input] = result
+                        job_results[source] = result
                         return result
                     except Exception as e:
                         log.warning(
-                            f"Failed to load result for '{job.input}' from disk: {e}"
+                            f"Failed to load result for '{source}' from disk: {e}"
                         )
 
         # Check if input is an external directory or file
-        input_path = Path(job.input)
+        input_path = Path(source)
         if input_path.exists():
             if input_path.is_dir():
                 log.info(
-                    f"Job '{job.name}' input '{job.input}' is a directory; "
+                    f"Job '{job.name}' input '{source}' is a directory; "
                     "passing path to engine for resource-specific loading."
                 )
                 from .aggregation import DirectoryInputResult
@@ -467,13 +405,13 @@ class Scheduler:
             # External file input is not supported without a loader mechanism
             # which has been removed.
             raise QPhaseConfigError(
-                f"Job '{job.name}' specifies file input '{job.input}', "
+                f"Job '{job.name}' specifies file input '{source}', "
                 "but file loading is not currently supported."
             )
 
         # Input not found
         raise QPhaseConfigError(
-            f"Job '{job.name}' input '{job.input}' not found. "
+            f"Job '{job.name}' input '{source}' not found. "
             f"Expected a previous job name or a valid file path with input_loader."
         )
 
@@ -482,13 +420,13 @@ class Scheduler:
         job: JobConfig,
         job_idx: int,
         job_total: int,
-        expanded_jobs: list[JobConfig],
+        logical_jobs: list[JobConfig],
         job_results: dict[str, ResultProtocol],
         results: list[JobResult],
         *,
         dry_run: bool,
     ) -> None:
-        """Execute one non-batched job and update the shared result state."""
+        """Execute one logical job and update the shared result state."""
         # Check if job is already completed (Resume Mode)
         if self.manifest and job.name in self.manifest["jobs"]:
             job_status = self.manifest["jobs"][job.name].get("status")
@@ -530,19 +468,24 @@ class Scheduler:
 
             # Normal Execution
             input_result = self._resolve_input(job, job_results)
-            job_result, output_result = self._run_job(
+            job_result, output_result, context = self._run_job(
                 job,
                 job_idx,
                 job_total,
                 input_result,
-                display_total=len(expanded_jobs),
+                display_total=len(logical_jobs),
             )
             results.append(job_result)
 
             if job_result.success:
                 self._handle_job_output(
-                    job, output_result, job_results, job_result.run_dir
+                    job,
+                    output_result,
+                    job_results,
+                    job_result.run_dir,
+                    context,
                 )
+                context.checkpoints.complete()
                 assert self.session_dir is not None
                 self._update_job_status(
                     job.name,
@@ -582,7 +525,7 @@ class Scheduler:
             params, and any top-level plugin sections defined in the job.
 
         """
-        system_cfg = job.system if job.system is not None else self.system_config
+        system_cfg = job.merge_with_system_config(self.system_config)
 
         # Plugin namespaces that may appear as top-level keys in a job file.
         plugin_keys = [
@@ -675,7 +618,7 @@ class Scheduler:
             run_id = self._generate_run_id()
             self._create_run_dir(batch_job, run_id)
 
-            _, output_result = self._run_job(
+            _, output_result, _ = self._run_job(
                 batch_job,
                 group_idx,
                 group_total,
@@ -757,7 +700,7 @@ class Scheduler:
         input_result: ResultProtocol | None,
         *,
         display_total: int | None = None,
-    ) -> tuple[JobResult, ResultProtocol]:
+    ) -> tuple[JobResult, ResultProtocol, ExecutionContext]:
         """Execute a single job and return its result.
 
         This method handles the complete job execution lifecycle:
@@ -1012,28 +955,75 @@ class Scheduler:
 
                 progress_cb = _on_engine_progress
 
-            # Execute engine
-            # Pass input result's data to engine.
-            # For analyze mode, preserve the full result object (e.g. AggregateResult
-            # or SDEResult) so that cross-job analyzers can access metadata.
-            if engine_config_raw.get("mode") == "analyze":
-                input_data = input_result
-            else:
-                input_data = input_result.data if input_result else None
+            effective_system = job.merge_with_system_config(self.system_config)
+            backend = plugins.get("backend")
+            backend_name = None
+            if backend is not None and hasattr(backend, "backend_name"):
+                backend_name = str(backend.backend_name())
+            backend_config = getattr(backend, "config", None)
+            dtype = getattr(backend_config, "float_dtype", None)
+            plugin_ids = {
+                name: f"{type(instance).__module__}:{type(instance).__qualname__}"
+                for name, instance in plugins.items()
+                if "." not in name
+            }
+            fingerprint = execution_fingerprint(
+                job.model_dump(by_alias=True),
+                plugins=plugin_ids,
+                backend=backend_name,
+                dtype=None if dtype is None else str(dtype),
+            )
+            context = ExecutionContext(
+                parameter_grid=job.scan.compile() if job.scan is not None else None,
+                resources=ResourceSnapshot.from_system_config(effective_system),
+                progress=ProgressReporter(progress_cb),
+                cancellation=CancellationToken(),
+                artifacts=ArtifactStore(
+                    run_dir, effective_system.scan_runtime
+                ),
+                checkpoints=CheckpointStore(
+                    run_dir,
+                    effective_system.scan_runtime.checkpoint,
+                    fingerprint,
+                ),
+                run_dir=run_dir,
+                metadata={
+                    "job_name": job.name,
+                    "scan_summary": (
+                        job.scan.compile().summary() if job.scan is not None else None
+                    ),
+                },
+            )
 
-            # Check if engine accepts progress_cb (Duck Typing / Inspection)
-            # Since EngineBase protocol defines it as optional kwarg, we try passing it.
-            # However, some legacy engines might not accept **kwargs or progress_cb.
-            # Ideally, all engines should accept **kwargs.
-            try:
-                output_result = engine.run(data=input_data, progress_cb=progress_cb)
-            except TypeError:
-                # Fallback for engines that don't accept progress_cb
-                log.warning(
-                    f"Engine '{job.get_engine_name()}' does not accept progress_cb. "
-                    "Progress reporting disabled."
+            output_result: ResultProtocol
+            if job.input is not None and job.input.mode == "map":
+                if not isinstance(input_result, DatasetResultProtocol):
+                    raise QPhaseConfigError(
+                        f"job {job.name!r} uses input.mode=map but its source is not "
+                        "a dataset result"
+                    )
+                mapped: OrderedDict[str, ResultProtocol] = OrderedDict()
+                for label, view in iter_dataset_views(
+                    input_result,
+                    select=job.input.select,
+                    group_by=tuple(job.input.group_by),
+                ):
+                    mapped[label] = self._invoke_engine(
+                        engine, view, context, progress_cb
+                    )
+                preserves_shape = not job.input.select and not job.input.group_by
+                output_result = MappedDatasetResult(
+                    mapped,
+                    dict(input_result.axes) if preserves_shape else {
+                        "view": list(range(len(mapped)))
+                    },
+                    input_result.shape if preserves_shape else (len(mapped),),
+                    meta={"source": job.input.from_, "mode": "map"},
                 )
-                output_result = engine.run(data=input_data)
+            else:
+                output_result = self._invoke_engine(
+                    engine, input_result, context, progress_cb
+                )
 
             # Ensure output is a ResultProtocol object
             if not isinstance(output_result, ResultProtocol):
@@ -1068,6 +1058,7 @@ class Scheduler:
                     success=True,
                 ),
                 output_result,
+                context,
             )
 
         except Exception as e:
@@ -1088,6 +1079,26 @@ class Scheduler:
                 f"Job '{job.name}' execution failed in engine "
                 f"'{job.get_engine_name()}': {e}"
             ) from e
+
+    @staticmethod
+    def _invoke_engine(
+        engine: Any,
+        data: Any,
+        context: ExecutionContext,
+        progress_cb: Any | None,
+    ) -> ResultProtocol:
+        """Invoke an engine without masking TypeError raised inside the engine."""
+        signature = inspect.signature(engine.run)
+        accepts_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        kwargs: dict[str, Any] = {"data": data}
+        if accepts_kwargs or "context" in signature.parameters:
+            kwargs["context"] = context
+        if accepts_kwargs or "progress_cb" in signature.parameters:
+            kwargs["progress_cb"] = progress_cb
+        return engine.run(**kwargs)
 
     def _validate_jobs(self, job_list: JobList) -> None:
         """Validate job configurations and data flow.
@@ -1232,15 +1243,19 @@ class Scheduler:
 
         """
         # Check if parameter scan is enabled
-        if not self.system_config.parameter_scan.get("enabled", True):
+        if not getattr(self.system_config, "parameter_scan", {}).get(
+            "enabled", True
+        ):
             log.debug("Parameter scan is disabled, returning original jobs")
             return job_list.jobs
 
         expanded_jobs = []
-        numbering_enabled = self.system_config.parameter_scan.get(
+        numbering_enabled = getattr(self.system_config, "parameter_scan", {}).get(
             "numbered_outputs", True
         )
-        method = self.system_config.parameter_scan.get("method", "cartesian")
+        method = getattr(self.system_config, "parameter_scan", {}).get(
+            "method", "cartesian"
+        )
 
         expander = JobExpander(self._registry)
 
@@ -1253,8 +1268,8 @@ class Scheduler:
         for job in job_list.jobs:
             # 1. Check if this job needs to be expanded due to upstream dependency
             upstream_expansion = []
-            if job.input and job.input in expansion_map:
-                upstream_expansion = expansion_map[job.input]
+            if job.input and job.input.from_ in expansion_map:
+                upstream_expansion = expansion_map[job.input.from_]
 
             # 2. Check if this job has its own parameter scan
             scan_expansion = expander.expand(job, method=method)
@@ -1262,7 +1277,7 @@ class Scheduler:
             final_expansion = []
 
             # Check for aggregation request
-            aggregation_cfg = job.aggregate_input
+            aggregation_cfg = getattr(job, "aggregate_input", None)
 
             if aggregation_cfg and upstream_expansion:
                 # Aggregation logic
@@ -1425,7 +1440,9 @@ class Scheduler:
                 for idx, upstream_job_name in enumerate(upstream_expansion):
                     new_job = copy.deepcopy(job)
                     # Update input to point to specific upstream job
-                    new_job.input = upstream_job_name
+                    from .config import InputSpec
+
+                    new_job.input = InputSpec(from_=upstream_job_name)
 
                     # Apply numbering to match upstream index
                     # We use the same index (1-based)
@@ -1539,19 +1556,20 @@ class Scheduler:
         for job in job_list.jobs:
             if not job.input:
                 continue
+            source = job.input.from_
 
             # Check if input matches a job name
-            if job.input in jobs_by_name:
+            if source in jobs_by_name:
                 # Valid job reference
                 continue
 
             # Check if input matches an engine name
-            upstream_jobs = jobs_by_engine.get(job.input, [])
+            upstream_jobs = jobs_by_engine.get(source, [])
             if not upstream_jobs:
                 # Not a job name or engine name - could be a file path
                 # This is valid (external input)
                 log.debug(
-                    f"Job '{job.name}' input '{job.input}' appears to be external"
+                    f"Job '{job.name}' input '{source}' appears to be external"
                 )
                 continue
 
@@ -1559,7 +1577,7 @@ class Scheduler:
             if len(upstream_jobs) > 1:
                 job_names = ", ".join([j.name for j in upstream_jobs])
                 raise QPhaseConfigError(
-                    f"Job '{job.name}' input '{job.input}' is ambiguous. "
+                    f"Job '{job.name}' input '{source}' is ambiguous. "
                     f"Multiple jobs use this engine: {job_names}. "
                     "Specify the exact job name instead."
                 )
@@ -1708,7 +1726,7 @@ class Scheduler:
                 engine_config=config.get("engine", {}),
                 run_id=run_id,
                 run_dir=run_dir,
-                input_job=job.input,
+                input_job=job.input.from_ if job.input is not None else None,
                 output_job=job.output,
                 metadata={
                     "scheduler_version": "2.0",

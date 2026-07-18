@@ -56,26 +56,9 @@ class SchedulerService:
                 ConfigValidationIssue(path="jobs", message=str(exc), source="scheduler")
             )
 
-        try:
-            expanded_jobs = scheduler._expand_parameter_scans(job_list)
-        except Exception as exc:
-            validation_issues.append(
-                ConfigValidationIssue(
-                    path="jobs.scan", message=str(exc), source="scheduler"
-                )
-            )
-            expanded_jobs = job_list.jobs
-
         return ExecutionPlan(
-            original_jobs=[
-                self._plan_job(job, job, job_list.jobs) for job in job_list.jobs
-            ],
-            expanded_jobs=[
-                self._plan_job(job, self._base_job(job, job_list.jobs), job_list.jobs)
-                for job in expanded_jobs
-            ],
-            edges=self._build_edges(expanded_jobs),
-            scan_groups=self._scan_groups(job_list.jobs, expanded_jobs),
+            jobs=[self._plan_job(job) for job in job_list.jobs],
+            edges=self._build_edges(job_list.jobs),
             validation_issues=validation_issues,
         )
 
@@ -162,10 +145,7 @@ class SchedulerService:
                     return candidate
         return path
 
-    def _plan_job(
-        self, job: JobConfig, base_job: JobConfig, original_jobs: list[JobConfig]
-    ) -> ExecutionPlanJob:
-        base_name = self._base_name_for(job.name, original_jobs)
+    def _plan_job(self, job: JobConfig) -> ExecutionPlanJob:
         manifest = self._engine_manifest(job.get_engine_name())
         explicit_plugins = self._explicit_plugin_namespaces(job)
         inherited_defaults = self._inherited_global_defaults(
@@ -178,8 +158,6 @@ class SchedulerService:
         )
         return ExecutionPlanJob(
             name=job.name,
-            base_name=base_name,
-            index=self._expanded_index(job.name, base_name),
             engine=job.get_engine_name(),
             plugins=job.plugins,
             required_plugins=manifest["required_plugins"],
@@ -187,8 +165,8 @@ class SchedulerService:
             explicit_plugins=sorted(explicit_plugins),
             inherited_global_defaults=inherited_defaults,
             optional_plugins_enabled=optional_enabled,
-            scan_params=self._scan_params(job, base_job),
-            input=job.input,
+            scan_summary=job.scan.compile().summary() if job.scan else None,
+            input=job.input.from_ if job.input else None,
             output=job.output,
             save=job.save,
             expected_run_subdir=job.name,
@@ -202,9 +180,10 @@ class SchedulerService:
             if job.input:
                 edges.append(
                     ExecutionPlanEdge(
-                        source=job.input,
+                        source=job.input.from_,
                         target=job.name,
-                        kind="aggregate" if job.aggregate_input else "input",
+                        kind="input",
+                        input_mode=job.input.mode,
                     )
                 )
             for dependency in job.depends_on:
@@ -218,65 +197,6 @@ class SchedulerService:
                     ExecutionPlanEdge(source=job.name, target=job.output, kind="output")
                 )
         return edges
-
-    def _scan_groups(
-        self, original_jobs: list[JobConfig], expanded_jobs: list[JobConfig]
-    ) -> dict[str, list[str]]:
-        groups: dict[str, list[str]] = {}
-        original_names = {job.name for job in original_jobs}
-        for job in expanded_jobs:
-            base_name = job.name.rsplit("_", 1)[0]
-            if base_name in original_names and base_name != job.name:
-                groups.setdefault(base_name, []).append(job.name)
-        return groups
-
-    def _scan_params(
-        self, job: JobConfig, base_job: JobConfig | None = None
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {}
-        base_job = base_job or job
-        for engine_name, engine_config in base_job.engine.items():
-            for key, value in engine_config.items():
-                if isinstance(value, list):
-                    path = f"engine.{engine_name}.{key}"
-                    params[path] = self._get_config_value(job, path)
-        for namespace, plugin_configs in base_job.plugins.items():
-            for plugin_name, plugin_config in plugin_configs.items():
-                for key, value in plugin_config.items():
-                    if isinstance(value, list):
-                        path = f"{namespace}.{plugin_name}.{key}"
-                        params[path] = self._get_config_value(job, path)
-        return params
-
-    def _base_job(self, job: JobConfig, original_jobs: list[JobConfig]) -> JobConfig:
-        base_name = self._base_name_for(job.name, original_jobs)
-        for original_job in original_jobs:
-            if original_job.name == base_name:
-                return original_job
-        return job
-
-    def _base_name_for(self, job_name: str, original_jobs: list[JobConfig]) -> str:
-        original_names = sorted(
-            (job.name for job in original_jobs), key=len, reverse=True
-        )
-        for original_name in original_names:
-            prefix = f"{original_name}_"
-            if job_name == original_name:
-                return original_name
-            if job_name.startswith(prefix):
-                suffix = job_name.removeprefix(prefix)
-                if suffix.isdigit() or suffix:
-                    return original_name
-        return job_name
-
-    def _expanded_index(self, job_name: str, base_name: str) -> int | None:
-        prefix = f"{base_name}_"
-        if not job_name.startswith(prefix):
-            return None
-        suffix = job_name.removeprefix(prefix)
-        if suffix.isdigit():
-            return int(suffix)
-        return None
 
     def _engine_manifest(self, engine_name: str) -> dict[str, list[str]]:
         try:
@@ -343,14 +263,6 @@ class SchedulerService:
             if key in merged_config and key not in plugins_cfg:
                 plugins_cfg[key] = merged_config[key]
         return plugins_cfg
-
-    def _get_config_value(self, job: JobConfig, path: str) -> Any:
-        parts = path.split(".")
-        if parts[0] == "engine" and len(parts) >= 3:
-            return job.engine.get(parts[1], {}).get(parts[2])
-        if len(parts) >= 3:
-            return job.plugins.get(parts[0], {}).get(parts[1], {}).get(parts[2])
-        return None
 
     def _expected_output_name(self, job: JobConfig) -> str | None:
         if isinstance(job.save, str):

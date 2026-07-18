@@ -53,8 +53,6 @@ class MergedConfigPreview(ServiceModel):
 
 class ExecutionPlanJob(ServiceModel):
     name: str
-    base_name: str
-    index: int | None = None
     engine: str
     plugins: dict[str, Any] = Field(default_factory=dict)
     required_plugins: list[str] = Field(default_factory=list)
@@ -62,7 +60,7 @@ class ExecutionPlanJob(ServiceModel):
     explicit_plugins: list[str] = Field(default_factory=list)
     inherited_global_defaults: dict[str, list[str]] = Field(default_factory=dict)
     optional_plugins_enabled: list[str] = Field(default_factory=list)
-    scan_params: dict[str, Any] = Field(default_factory=dict)
+    scan_summary: dict[str, Any] | None = None
     input: str | None = None
     output: str | None = None
     save: bool | str | None = None
@@ -73,7 +71,8 @@ class ExecutionPlanJob(ServiceModel):
 class ExecutionPlanEdge(ServiceModel):
     source: str
     target: str
-    kind: Literal["input", "output", "aggregate", "depends_on"]
+    kind: Literal["input", "output", "depends_on"]
+    input_mode: Literal["dataset", "map"] | None = None
 
 
 class ArtifactSummary(ServiceModel):
@@ -86,12 +85,20 @@ class ArtifactSummary(ServiceModel):
 
 class ExecutionPlan(ServiceModel):
     session_preview_id: str | None = None
-    original_jobs: list[ExecutionPlanJob] = Field(default_factory=list)
-    expanded_jobs: list[ExecutionPlanJob] = Field(default_factory=list)
+    jobs: list[ExecutionPlanJob] = Field(default_factory=list)
     edges: list[ExecutionPlanEdge] = Field(default_factory=list)
-    scan_groups: dict[str, list[str]] = Field(default_factory=dict)
     artifacts: list[ArtifactSummary] = Field(default_factory=list)
     validation_issues: list[ConfigValidationIssue] = Field(default_factory=list)
+
+
+class ScanProgressEvent(ServiceModel):
+    """Service DTO reserved for CLI and future GUI progress consumers."""
+
+    job_name: str
+    completed: int
+    total: int
+    stage: str | None = None
+    message: str = ""
 
 
 class RunHandle(ServiceModel):

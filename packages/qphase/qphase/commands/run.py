@@ -322,8 +322,7 @@ def _format_execution_plan(plan: ExecutionPlan) -> str:
     """Format an execution plan for terminal output."""
     lines = [
         "Execution plan:",
-        f"  Original jobs: {len(plan.original_jobs)}",
-        f"  Expanded jobs: {len(plan.expanded_jobs)}",
+        f"  Logical jobs: {len(plan.jobs)}",
     ]
 
     if plan.validation_issues:
@@ -333,18 +332,16 @@ def _format_execution_plan(plan: ExecutionPlan) -> str:
             lines.append(f"  - {issue.level}{location}: {issue.message}")
 
     lines.append("\nJobs:")
-    for job in plan.expanded_jobs:
-        index = f"#{job.index}" if job.index is not None else "single"
+    for job in plan.jobs:
         output = job.expected_output_name or "<not saved>"
         lines.append(
-            f"  - {job.name} [{index}] engine={job.engine} "
-            f"base={job.base_name} output={output}"
+            f"  - {job.name} engine={job.engine} output={output}"
         )
-        if job.scan_params:
-            scan_parts = ", ".join(
-                f"{key}={value}" for key, value in sorted(job.scan_params.items())
+        if job.scan_summary:
+            lines.append(
+                f"    scan: shape={tuple(job.scan_summary['shape'])}, "
+                f"points={job.scan_summary['size']}"
             )
-            lines.append(f"    scan: {scan_parts}")
         if job.required_plugins:
             lines.append(f"    required: {', '.join(job.required_plugins)}")
         if job.optional_plugins_enabled:

@@ -1,48 +1,26 @@
-# QPhase 2.0 System Configuration
-# --------------------------------
-# This file contains system-wide configuration parameters that affect
-# the behavior and semantics of the entire QPhase system.
-#
-# These parameters are NOT intended to be casually modified by end users.
-# They control global defaults and system behavior.
+# QPhase system configuration
 
-# Path configuration
 paths:
-  # Default output directory for simulation runs
-  # Relative paths are resolved against the current working directory
   output_dir: "./runs"
-
-  # Path to the global plugin configuration file
-  # This file contains plugin registrations and global plugin settings
   global_file: "./configs/global.yaml"
-
-  # Paths to scan for plugin configuration files
-  # Each directory will be searched for .qphase_plugins.yaml files
   plugin_dirs:
-    - "./models"  # Project root models folder for user plugins
-
-  # Directories to search for configuration files and job templates
+    - "./models"
   config_dirs:
     - "./configs"
 
-# Automatic result saving
-# When enabled (default), the scheduler will automatically save job results
-# to disk after each job completes. Set to false to disable automatic saving
-# (results will only be passed to downstream jobs in memory).
 auto_save_results: true
+progress_update_interval: 0.5
 
-# Parameter scan configuration
-# Controls how lists in configurations are expanded into multiple jobs
-parameter_scan:
-  # Enable parameter scan expansion (default: true)
-  # When enabled, fields marked as "scanable" with list values will be expanded
-  enabled: true
-
-  # Expansion method: 'cartesian' (all combinations) or 'zipped' (aligned lists)
-  # cartesian: [a1, a2] × [b1, b2, b3] = 6 jobs
-  # zipped: [a1, a2] + [b1, b2] = 2 jobs (must have same length)
-  method: "cartesian"
-
-  # Automatically number outputs from expanded jobs
-  # job_name -> job_name_001, job_name_002, etc.
-  numbered_outputs: true
+scan_runtime:
+  storage_layout: auto
+  auto_shard_threshold_mib: 512
+  shard_target_mib: 128
+  checkpoint:
+    enabled: false
+    interval_chunks: 1
+    keep_on_success: false
+  resources:
+    cpu_worker_limit: null
+    memory_limit_mib: null
+    gpu_device: null
+    gpu_memory_fraction: null

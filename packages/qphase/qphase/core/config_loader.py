@@ -177,6 +177,8 @@ def _extract_plugin_fields(
         "params",
         "tags",
         "depends_on",
+        "scan",
+        "save",
         "plugins",  # Explicit plugins field
     }
 

@@ -22,7 +22,7 @@ Public API
     Logging utilities.
 """
 
-from .config import JobConfig, JobList
+from .config import InputSpec, JobConfig, JobList
 from .config_loader import (
     get_config_for_job,
     get_system_param,
@@ -32,6 +32,7 @@ from .config_loader import (
     merge_configs,
     save_global_config,
 )
+from .dataset import DatasetResultProtocol, DatasetSaveReport
 from .errors import (
     QPhaseCLIError,
     QPhaseConfigError,
@@ -43,7 +44,9 @@ from .errors import (
     configure_logging,
     get_logger,
 )
+from .execution import ExecutionContext
 from .registry import RegistryCenter, registry
+from .scan import ParameterGrid, ScanAxisSpec, ScanSpec
 from .scheduler import JobProgressUpdate, JobResult, Scheduler
 from .system_config import SystemConfig, load_system_config, save_user_config
 
@@ -68,6 +71,13 @@ __all__ = [
     # Config
     "JobConfig",
     "JobList",
+    "InputSpec",
+    "ScanSpec",
+    "ScanAxisSpec",
+    "ParameterGrid",
+    "ExecutionContext",
+    "DatasetResultProtocol",
+    "DatasetSaveReport",
     # System config
     "SystemConfig",
     "load_system_config",
