@@ -26,7 +26,7 @@ from qphase_sde.analyser.lorentz_fitter import (
     _lorentzian_with_baseline as lorentzian_with_baseline,
 )
 from qphase_sde.analyser.result import AnalysisResult
-from qphase_sde.result import SDEResult
+from qphase_sde.result import SDEResult
 
 pytestmark = pytest.mark.integration
 
@@ -294,7 +294,7 @@ def test_lorentz_fitter_engine_analyze_mode(tmp_path):
         jobs=[
             JobConfig(
                 name="fit",
-                input=str(run_dir),
+                    input={"from": str(run_dir), "mode": "dataset"},
                 engine={"sde": {"mode": "analyze"}},
                 analyser={"lorentz_fitter": {"scan_param": "epsilon", "mode": 0}},
             )

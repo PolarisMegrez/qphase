@@ -27,6 +27,7 @@ from qphase.core.aggregation import (
     write_pkl_bundle,
     write_table_csv,
 )
+from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase, ResultProtocol
 from scipy.optimize import curve_fit
@@ -521,6 +522,23 @@ def _collect_distribution(
 
 def _load_input(data: Any, pattern: str) -> list[LoadedResult]:
     """Normalize analyzer input into a list of ``LoadedResult``."""
+    if isinstance(data, DatasetResultProtocol):
+        dataset_loaded = []
+        for flat_index, index in enumerate(np.ndindex(data.shape)):
+            result = data.point_view(index)
+            if isinstance(result, SDEResult):
+                dataset_loaded.append(
+                    LoadedResult(
+                        path=Path("."),
+                        job_name=result.meta.get(
+                            "job_name", f"point_{flat_index:06d}"
+                        ),
+                        result=result,
+                    )
+                )
+        if dataset_loaded:
+            return dataset_loaded
+
     if isinstance(data, DirectoryInputResult):
         data = data.path
 

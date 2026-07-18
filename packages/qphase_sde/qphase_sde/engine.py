@@ -280,6 +280,7 @@ class Engine(EngineBase):
         self,
         data: Any | None = None,
         *,
+        context: Any | None = None,
         progress_cb: (
             Callable[[float | None, float | None, str, str | None], None] | None
         ) = None,
@@ -290,6 +291,26 @@ class Engine(EngineBase):
 
         if getattr(self.config, "mode", "simulate") == "analyze":
             return self._run_analyze(data)
+        grid = context.parameter_grid if context is not None else None
+        if grid is not None:
+            from qphase_sde.scan import SDEParameterGridAdapter, SDEScanResult
+
+            with SDEParameterGridAdapter(self, grid) as adapter:
+                combined = self._run_simulate(data, progress_cb=progress_cb)
+            if not isinstance(combined, SDEResult):
+                raise TypeError("SDE simulation did not return an SDEResult")
+            combined.meta.update(
+                {
+                    "scan_shape": grid.shape,
+                    "scan_combine": grid.combine,
+                }
+            )
+            return SDEScanResult(
+                combined,
+                grid,
+                adapter.base_params,
+                adapter.base_n_traj,
+            )
         return self._run_simulate(data, progress_cb=progress_cb)
 
     def _run_analyze(self, data: Any | None) -> ResultProtocol:
