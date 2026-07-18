@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 from qphase.backend.xputil import convert_to_numpy
+from qphase.core.dataset import DatasetSaveReport
 from qphase.core.errors import QPhaseIOError
 
 
@@ -47,6 +48,44 @@ class CAMResult:
         """Shape of the parameter grid, excluding the solution axis."""
         return tuple(np.asarray(convert_to_numpy(self.valid_mask)).shape[:-1])
 
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Dataset scan shape, excluding solution and matrix dimensions."""
+        return self.grid_shape
+
+    @property
+    def nbytes(self) -> int:
+        arrays = (
+            self.states,
+            self.residuals,
+            self.success,
+            self.valid_mask,
+            self.solution_count,
+            *self.postprocess.values(),
+        )
+        return sum(
+            int(np.asarray(convert_to_numpy(value)).nbytes) for value in arrays
+        )
+
+    def point_view(self, index: tuple[int, ...]) -> CAMResult:
+        """Return one scan point without materializing other point results."""
+        if len(index) != len(self.grid_shape):
+            raise IndexError(f"expected {len(self.grid_shape)} indices, got {index}")
+        return CAMResult(
+            states=np.asarray(convert_to_numpy(self.states))[index],
+            residuals=np.asarray(convert_to_numpy(self.residuals))[index],
+            success=np.asarray(convert_to_numpy(self.success))[index],
+            valid_mask=np.asarray(convert_to_numpy(self.valid_mask))[index],
+            solution_count=np.asarray(convert_to_numpy(self.solution_count))[index],
+            params=self.params_at(index),
+            axes={},
+            postprocess={
+                name: self._point_postprocess(value, index)
+                for name, value in self.postprocess.items()
+            },
+            meta={**self.meta, "grid_index": index},
+        )
+
     def params_at(self, index: tuple[int, ...]) -> dict[str, Any]:
         """Resolve model parameters for one grid point or solution index."""
         grid_index = tuple(index)
@@ -60,9 +99,9 @@ class CAMResult:
             name: self._value_at(value, grid_index)
             for name, value in self.params.items()
         }
-        for name, values in self.axes.items():
+        for name in self.axes:
             if name in resolved:
-                resolved[name] = self._value_at(values, grid_index)
+                resolved[name] = self._axis_at(name, grid_index)
         return resolved
 
     def _value_at(self, value: Any, grid_index: tuple[int, ...]) -> Any:
@@ -97,6 +136,127 @@ class CAMResult:
             self._save_csv(path.with_suffix(".csv"))
         except Exception as exc:
             raise QPhaseIOError(f"failed to save CAM result to {path}: {exc}") from exc
+
+    def save_dataset(
+        self,
+        path: str | Path,
+        *,
+        layout: str,
+        shard_target_bytes: int,
+    ) -> DatasetSaveReport:
+        """Save one logical CAM dataset using the selected physical layout."""
+        base = Path(path)
+        if layout == "single" or not self.grid_shape:
+            self.save(base)
+            single_files = tuple(
+                item
+                for item in (base.with_suffix(".npz"), base.with_suffix(".csv"))
+                if item.exists()
+            )
+            return DatasetSaveReport(
+                "single", single_files, loader="qphase_cam.result:CAMResult.load"
+            )
+
+        root = base
+        root.mkdir(parents=True, exist_ok=True)
+        point_count = int(np.prod(self.grid_shape))
+        if layout == "per_point":
+            chunks = [(index, index + 1) for index in range(point_count)]
+        else:
+            bytes_per_point = max(self.nbytes // max(point_count, 1), 1)
+            points_per_shard = max(shard_target_bytes // bytes_per_point, 1)
+            chunks = [
+                (start, min(start + points_per_shard, point_count))
+                for start in range(0, point_count, points_per_shard)
+            ]
+        files: list[Path] = []
+        for shard_index, (start, stop) in enumerate(chunks):
+            shard = self._flat_slice(start, stop)
+            shard_path = root / f"shard_{shard_index:06d}"
+            shard.save(shard_path)
+            files.extend(
+                item
+                for item in (
+                    shard_path.with_suffix(".npz"),
+                    shard_path.with_suffix(".csv"),
+                )
+                if item.exists()
+            )
+        return DatasetSaveReport(
+            layout,
+            tuple(files),
+            loader="qphase_cam.result:CAMResult.load_dataset",
+        )
+
+    def _flat_slice(self, start: int, stop: int) -> CAMResult:
+        count = stop - start
+        states = np.asarray(convert_to_numpy(self.states)).reshape(
+            (-1,) + np.asarray(self.states).shape[-3:]
+        )[start:stop]
+        capacity = np.asarray(self.valid_mask).shape[-1]
+        valid = np.asarray(convert_to_numpy(self.valid_mask)).reshape(-1, capacity)[
+            start:stop
+        ]
+        residuals = np.asarray(convert_to_numpy(self.residuals)).reshape(
+            -1, capacity
+        )[start:stop]
+        success = np.asarray(convert_to_numpy(self.success)).reshape(-1, capacity)[
+            start:stop
+        ]
+        counts = np.asarray(convert_to_numpy(self.solution_count)).reshape(-1)[
+            start:stop
+        ]
+        indices = [
+            tuple(int(value) for value in np.unravel_index(i, self.grid_shape))
+            for i in range(start, stop)
+        ]
+        params = {
+            name: np.asarray([self.params_at(index)[name] for index in indices])
+            for name in self.params
+        }
+        axes = {
+            name: np.asarray([self._axis_at(name, index) for index in indices])
+            for name in self.axes
+        }
+        postprocess = {
+            name: self._flat_postprocess(value, start, stop)
+            for name, value in self.postprocess.items()
+        }
+        return CAMResult(
+            states.reshape((count,) + states.shape[1:]),
+            residuals,
+            success,
+            valid,
+            counts,
+            params,
+            axes=axes,
+            postprocess=postprocess,
+            meta={**self.meta, "source_grid_shape": self.grid_shape},
+        )
+
+    def _axis_at(self, name: str, index: tuple[int, ...]) -> Any:
+        values = np.asarray(convert_to_numpy(self.axes[name]))
+        position = list(self.axes).index(name)
+        if values.shape == self.grid_shape:
+            return values[index]
+        if values.ndim == 1 and len(self.grid_shape) == 1:
+            return values[index[0]]
+        if values.ndim == 1 and values.size == self.grid_shape[position]:
+            return values[index[position]]
+        return values.reshape(self.grid_shape)[index]
+
+    def _point_postprocess(self, value: Any, index: tuple[int, ...]) -> Any:
+        array = np.asarray(convert_to_numpy(value))
+        if array.shape[: len(self.grid_shape)] == self.grid_shape:
+            return array[index]
+        return value
+
+    def _flat_postprocess(self, value: Any, start: int, stop: int) -> Any:
+        array = np.asarray(convert_to_numpy(value))
+        if array.shape[: len(self.grid_shape)] != self.grid_shape:
+            return value
+        trailing = array.shape[len(self.grid_shape) :]
+        return array.reshape((-1,) + trailing)[start:stop]
 
     def _save_csv(self, path: Path) -> None:
         states = np.asarray(convert_to_numpy(self.states))

@@ -26,8 +26,6 @@ dependencies = [
 "cam_postprocessor.jacobian_spectrum" = "qphase_cam.postprocessor.jacobian:JacobianSpectrum"
 "cam_postprocessor.physicality" = "qphase_cam.postprocessor.physicality:Physicality"
 "cam_postprocessor.bifurcation" = "qphase_cam.postprocessor.bifurcation:Bifurcation"
-"batch_planner.cam" = "qphase_cam.batch:CAMBatchPlanner"
-"result_splitter.cam_scan_splitter" = "qphase_cam.batch:CAMResultSplitter"
 
 [tool.setuptools.packages.find]
 where = ["."]
