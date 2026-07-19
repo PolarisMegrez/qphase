@@ -46,6 +46,10 @@ axis 支持 `values`、`linspace` 与 `logspace`，并可选择 Cartesian 或 zi
 | `batched_newton` | 提供多个初值时可以 | NumPy 或 CuPy | 必需 | 使用准备好的种子集合进行大规模参数扫描；默认只有单位阵初值，通常最多找到一个根。 |
 | `continuation` | 追踪一个 sheet | NumPy | 必需 | 从已知根开始进行伪弧长延拓并经过折叠；不负责自动寻找全部稳态。 |
 
+模型还可以按照 CAM 规范坐标顺序实现 `cam_residual_vector` 和
+`cam_jacobian_vector`。这些可选回调用于避免 root 求解热点中的矩阵重建；未提供时，
+求解器自动回退到标准 H/D 与 Jacobian capability。
+
 对于未知的多稳态系统，优先使用 `multistability`。`guess_bounds: auto` 会从
 对角平衡方程估计尺度，并生成普通与重尾 Hermitian 初值；这只是自动初值生成，
 不能证明所有根都已找到。获得代表性稳态后，可以将其作为 `batched_newton` 的
@@ -67,8 +71,9 @@ multistability scan 使用 continuation-assisted 搜索，而不是把各参数�
 full-model 全局 seed 搜索，并把这些状态传给每个参数点。每个空间 tile 从中心附近
 开始，并传播已收敛的相邻状态；空点使用 `retry_guesses` 加密搜索；首轮后，解数突变
 点使用 `refine_guesses` 和周围状态重新求解。`n_guesses` 只统计每个点新生成的随机
-guess，显式、全局和邻点 guess 会额外加入。默认 `use_jacobian: false` 与原版稳健
-scan 路径一致；只有在当前模型和参数区间验证确实改善收敛后才建议启用。
+guess，显式、全局和邻点 guess 会额外加入。默认使用解析或符号 Jacobian，并在同一
+参数点的全部 root 尝试之间复用其回调。达到模型声明的解容量后，求解器会在连续得到
+`capacity_patience` 个成功的重复解后停止（默认 10）；失败的 guess 不增加该计数。
 
 ## 后端支持
 

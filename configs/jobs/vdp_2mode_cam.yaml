@@ -35,7 +35,8 @@ plugins:
       tolerance: 1.0e-10
       residual_tolerance: 1.0e-7
       distance_tolerance: 3.0
-      use_jacobian: false
+      use_jacobian: true
+      capacity_patience: 10
       n_workers: 1
       tile_workers: 24
       n_tiles: 288

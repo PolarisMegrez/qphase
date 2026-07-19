@@ -51,6 +51,10 @@ coordinate and adaptive steps define a different topology.
 `batched_newton`, `deflation`, and `continuation` require a model Jacobian.
 Ordinary root and Cholesky solves can run without one. Finite-difference
 Jacobians are disabled unless explicitly enabled by a supporting plugin schema.
+Models may additionally implement `cam_residual_vector` and
+`cam_jacobian_vector` in the canonical CAM coordinate order. These optional
+callbacks avoid matrix reconstruction in root-solver hot paths; the solver
+falls back to the standard H/D and Jacobian capabilities when they are absent.
 
 For an unknown multistable system, start with `multistability`. Set
 `guess_bounds: auto` to infer diagonal-balance scales and sample bounded plus
@@ -83,9 +87,11 @@ near its center and propagates already converged cardinal-neighbor states. Empty
 points receive `retry_guesses`; after the first pass, solution-count jumps are
 revisited with `refine_guesses` plus surrounding states. `n_guesses` counts the
 fresh random guesses at each point; explicit, global, and neighbor guesses are
-additional. The default `use_jacobian: false` matches the original robust scan
-path; enable it only after verifying that it improves convergence for the model
-and parameter range.
+additional. Analytic or symbolic Jacobians are used by default and their
+callbacks are reused across all root attempts at a parameter point. Once the
+model's declared solution capacity has been reached, the solver stops after
+`capacity_patience` successful duplicate convergences (default 10); failed
+guesses do not advance that counter.
 
 ## Backend Support
 

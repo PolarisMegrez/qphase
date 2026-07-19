@@ -11,7 +11,7 @@ from qphase_cam.core.jacobian import (
     SymbolicJacobian,
     central_difference_jacobian,
 )
-from qphase_cam.core.liouvillian import residual_vector
+from qphase_cam.core.liouvillian import model_liouvillian, residual_vector
 from qphase_cam.errors import JacobianUnavailableError
 
 from models.kerr_2mode import Kerr2ModeModel
@@ -89,6 +89,30 @@ def test_three_mode_symbolic_matches_finite_difference():
         1e-6,
     )
     np.testing.assert_allclose(symbolic, numerical, atol=2e-8)
+
+
+def test_vdp_vector_fast_path_matches_matrix_equations():
+    model = VDP2ModeModel(
+        omega_a=0.2,
+        omega_b=-0.1,
+        gamma_a=2.0,
+        gamma_b=1.0,
+        Gamma=0.01,
+        g=0.5,
+    )
+    states = np.stack([_state(2), _state(2) * 3.0])
+    vectors = matrix_to_vector(states)
+
+    np.testing.assert_allclose(
+        model.cam_residual_vector(vectors, model.params),
+        matrix_to_vector(model_liouvillian(model, states, model.params)),
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        model.cam_jacobian_vector(vectors, model.params),
+        model.cam_jacobian(states, model.params),
+        atol=1e-12,
+    )
 
 
 def test_missing_jacobian_requires_explicit_fallback(no_jacobian_model):

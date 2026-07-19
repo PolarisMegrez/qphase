@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
@@ -13,6 +14,14 @@ from qphase_cam.core.jacobian import JacobianResolver
 from qphase_cam.core.liouvillian import residual_vector
 from qphase_cam.errors import JacobianUnavailableError
 from qphase_cam.state import CAMSolution
+
+
+@dataclass(frozen=True)
+class RootSystem:
+    """Residual and optional Jacobian callbacks shared by root attempts."""
+
+    residual: Callable[[np.ndarray], np.ndarray]
+    jacobian: Callable[[np.ndarray], np.ndarray] | None
 
 
 def initial_state(value: Any, n_modes: int) -> np.ndarray:
@@ -59,6 +68,7 @@ def solve_single_state(
     residual_tolerance: float | None = None,
     max_iterations: int = 1000,
     use_jacobian: bool = True,
+    root_system: RootSystem | None = None,
 ) -> CAMSolution:
     """Solve one CAM fixed point on NumPy/SciPy."""
     acceptance_tolerance = (
@@ -77,6 +87,7 @@ def solve_single_state(
                 acceptance_tolerance,
                 max_iterations,
                 use_jacobian,
+                root_system,
             )
         )
         if attempts[-1].success or method == "root":
@@ -104,43 +115,26 @@ def _solve_root(
     residual_tolerance: float,
     max_iterations: int,
     use_jacobian: bool,
+    root_system: RootSystem | None,
 ) -> CAMSolution:
     vector_guess = np.asarray(matrix_to_vector(guess), dtype=float)
-
-    def residual(vector: np.ndarray) -> np.ndarray:
-        state = vector_to_matrix(vector, int(model.n_modes))
-        return np.asarray(residual_vector(model, state, params), dtype=float)
-
-    jacobian_callback: Callable[[np.ndarray], np.ndarray] | None = None
-    if use_jacobian:
-        resolver = JacobianResolver()
-        try:
-            resolver.resolve(model, guess, params, _NumpyBackendName())
-
-            def evaluate_jacobian(vector: np.ndarray) -> np.ndarray:
-                return np.asarray(
-                    resolver.resolve(
-                        model,
-                        vector_to_matrix(vector, int(model.n_modes)),
-                        params,
-                        _NumpyBackendName(),
-                    )
-                )
-
-            jacobian_callback = evaluate_jacobian
-        except JacobianUnavailableError:
-            jacobian_callback = None
+    system = root_system or prepare_root_system(
+        model,
+        params,
+        use_jacobian=use_jacobian,
+        reference_state=guess,
+    )
     options = {"maxfev": max_iterations} if root_method == "hybr" else {}
     solution = root(
-        residual,
+        system.residual,
         vector_guess,
-        jac=jacobian_callback,
+        jac=system.jacobian,
         method=root_method,
         tol=tolerance,
         options=options,
     )
     state = np.asarray(vector_to_matrix(solution.x, int(model.n_modes)))
-    residual_norm = float(np.linalg.norm(residual(solution.x), ord=np.inf))
+    residual_norm = float(np.linalg.norm(system.residual(solution.x), ord=np.inf))
     success = bool(solution.success and residual_norm <= residual_tolerance)
     return CAMSolution(
         state=state,
@@ -203,6 +197,61 @@ def _solve_cholesky(
 class _NumpyBackendName:
     def backend_name(self) -> str:
         return "numpy"
+
+
+_NUMPY_BACKEND_NAME = _NumpyBackendName()
+
+
+def prepare_root_system(
+    model: Any,
+    params: dict[str, Any],
+    *,
+    use_jacobian: bool = True,
+    reference_state: Any | None = None,
+) -> RootSystem:
+    """Build callbacks once for repeated root attempts at one parameter point."""
+    n_modes = int(model.n_modes)
+    direct_residual = getattr(model, "cam_residual_vector", None)
+    if callable(direct_residual):
+
+        def residual(vector: np.ndarray) -> np.ndarray:
+            return np.asarray(direct_residual(vector, params), dtype=float)
+
+    else:
+
+        def residual(vector: np.ndarray) -> np.ndarray:
+            state = vector_to_matrix(vector, n_modes)
+            return np.asarray(residual_vector(model, state, params), dtype=float)
+
+    jacobian: Callable[[np.ndarray], np.ndarray] | None = None
+    if use_jacobian:
+        direct_jacobian = getattr(model, "cam_jacobian_vector", None)
+        if callable(direct_jacobian):
+
+            def evaluate_jacobian(vector: np.ndarray) -> np.ndarray:
+                return np.asarray(direct_jacobian(vector, params))
+
+            jacobian = evaluate_jacobian
+        else:
+            resolver = JacobianResolver()
+            probe = initial_state(reference_state, n_modes)
+            try:
+                resolver.resolve(model, probe, params, _NUMPY_BACKEND_NAME)
+
+                def evaluate_jacobian(vector: np.ndarray) -> np.ndarray:
+                    return np.asarray(
+                        resolver.resolve(
+                            model,
+                            vector_to_matrix(vector, n_modes),
+                            params,
+                            _NUMPY_BACKEND_NAME,
+                        )
+                    )
+
+                jacobian = evaluate_jacobian
+            except JacobianUnavailableError:
+                pass
+    return RootSystem(residual=residual, jacobian=jacobian)
 
 
 def deduplicate_solutions(

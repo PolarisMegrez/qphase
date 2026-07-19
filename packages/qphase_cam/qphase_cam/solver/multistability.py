@@ -14,12 +14,14 @@ from typing import Any, ClassVar, Literal
 import numpy as np
 from pydantic import Field, model_validator
 
+from qphase_cam.core.coordinates import matrix_to_vector
 from qphase_cam.errors import SolutionCapacityError
 from qphase_cam.state import CAMSolverOutput
 
 from .base import CAMSolver, CAMSolverConfig
 from .common import (
     deduplicate_solutions,
+    prepare_root_system,
     random_hermitian_guesses,
     solve_single_state,
 )
@@ -34,7 +36,8 @@ class MultistabilitySolverConfig(CAMSolverConfig):
     tolerance: float = Field(1e-10, gt=0.0)
     residual_tolerance: float = Field(1e-7, gt=0.0)
     distance_tolerance: float = Field(1e-5, gt=0.0)
-    use_jacobian: bool = False
+    use_jacobian: bool = True
+    capacity_patience: int = Field(10, ge=0)
     n_workers: int = Field(1, ge=1)
     initial_guesses: Any | None = None
     guess_bounds: GuessBoundsConfig | Literal["auto"] | None = None
@@ -360,10 +363,10 @@ class MultistabilitySolver(CAMSolver):
         attempts = 0
         changed = 0
         for completed, index in enumerate(suspicious, start=1):
-            extra = list(global_seeds)
-            extra.extend(solution.state for solution in rows[index])
+            extra = [solution.state for solution in rows[index]]
             for neighbor in _neighbor_indices(index, grid_shape):
                 extra.extend(solution.state for solution in rows.get(neighbor, []))
+            extra.extend(global_seeds)
             recovered, count = _solve_point(
                 model,
                 points[index],
@@ -546,9 +549,10 @@ def _solve_tile_with(
     solved: dict[int, list[Any]] = {}
     output: list[tuple[int, list[Any], int]] = []
     for index, params in tile:
-        extra = list(global_seeds)
+        extra: list[np.ndarray] = []
         for neighbor in _neighbor_indices(index, grid_shape):
             extra.extend(solution.state for solution in solved.get(neighbor, []))
+        extra.extend(global_seeds)
         row, attempted = _solve_point(
             model,
             params,
@@ -969,6 +973,14 @@ def _solve_point(
         point_index,
         extra_guesses=extra_guesses,
     )
+    root_system = None
+    if config.method in {"auto", "root"}:
+        root_system = prepare_root_system(
+            model,
+            params,
+            use_jacobian=config.use_jacobian,
+            reference_state=guesses[0] if guesses else None,
+        )
 
     def solve_guess(guess: Any) -> Any:
         return solve_single_state(
@@ -979,27 +991,68 @@ def _solve_point(
             tolerance=config.tolerance,
             residual_tolerance=config.residual_tolerance,
             use_jacobian=config.use_jacobian,
+            root_system=root_system,
+        )
+
+    capacity = int(model.steady_state_capacity)
+    accepted: list[Any] = []
+    accepted_vectors: list[np.ndarray] = []
+    duplicate_streak = 0
+    attempted_count = 0
+
+    def process(solution: Any) -> None:
+        nonlocal duplicate_streak
+        if not (
+            solution.success and solution.residual <= config.residual_tolerance
+        ):
+            return
+        vector = np.asarray(matrix_to_vector(solution.state))
+        matching = next(
+            (
+                index
+                for index, known in enumerate(accepted_vectors)
+                if np.linalg.norm(vector - known) < config.distance_tolerance
+            ),
+            None,
+        )
+        if matching is not None:
+            if solution.residual < accepted[matching].residual:
+                accepted[matching] = solution
+                accepted_vectors[matching] = vector
+            duplicate_streak += 1
+            return
+        if len(accepted) >= capacity:
+            raise SolutionCapacityError(
+                f"model {model.name!r} declares capacity {capacity} but more "
+                "distinct states were found"
+            )
+        accepted.append(solution)
+        accepted_vectors.append(vector)
+        duplicate_streak = 0
+
+    def should_stop() -> bool:
+        return len(accepted) >= capacity and (
+            duplicate_streak >= config.capacity_patience
         )
 
     if config.n_workers == 1:
-        attempted = [solve_guess(guess) for guess in guesses]
+        for guess in guesses:
+            process(solve_guess(guess))
+            attempted_count += 1
+            if should_stop():
+                break
     else:
         with ThreadPoolExecutor(max_workers=config.n_workers) as pool:
-            attempted = list(pool.map(solve_guess, guesses))
-    accepted = [
-        solution
-        for solution in attempted
-        if solution.success and solution.residual <= config.residual_tolerance
-    ]
-    accepted = deduplicate_solutions(accepted, config.distance_tolerance)
+            chunk_size = max(1, config.n_workers * 2)
+            for start in range(0, len(guesses), chunk_size):
+                chunk = guesses[start : start + chunk_size]
+                for solution in pool.map(solve_guess, chunk):
+                    process(solution)
+                    attempted_count += 1
+                if should_stop():
+                    break
     accepted.sort(key=lambda item: model.cam_solution_sort_key(item.state, params))
-    capacity = int(model.steady_state_capacity)
-    if len(accepted) > capacity:
-        raise SolutionCapacityError(
-            f"model {model.name!r} declares capacity {capacity} but "
-            f"{len(accepted)} distinct states were found"
-        )
-    return accepted, len(attempted)
+    return accepted, attempted_count
 
 
 def _make_guesses(

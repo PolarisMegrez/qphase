@@ -21,8 +21,10 @@ from qphase_cam.solver.multistability import (
     MultistabilitySolverConfig,
     _effective_worker_count,
     _partition_points,
+    _solve_point,
 )
 from qphase_cam.solver.steady_state import SteadyStateSolver
+from qphase_cam.state import CAMSolution
 
 from models.vdp_2mode import VDP2ModeModel
 
@@ -140,6 +142,52 @@ def test_guess_bounds_schema_rejects_non_positive_scale():
 def test_multistability_tile_config_rejects_ambiguous_partition():
     with pytest.raises(ValidationError, match="only one"):
         MultistabilitySolverConfig(n_tiles=4, tile_size=2)
+
+
+def test_multistability_uses_jacobian_by_default():
+    assert MultistabilitySolverConfig().use_jacobian is True
+
+
+def test_multistability_reuses_root_system_and_stops_at_capacity(monkeypatch):
+    guesses = [np.asarray([[float(index)]]) for index in range(20)]
+    roots = [0.0, 2.0, 4.0, 4.0, 4.0]
+    root_system = object()
+    prepared = 0
+    attempted = 0
+
+    def prepare(*args, **kwargs):
+        nonlocal prepared
+        prepared += 1
+        return root_system
+
+    def solve(*args, **kwargs):
+        nonlocal attempted
+        assert kwargs["root_system"] is root_system
+        value = roots[min(attempted, len(roots) - 1)]
+        attempted += 1
+        return CAMSolution(
+            state=np.asarray([[value]], dtype=complex),
+            residual=0.0,
+            success=True,
+            method="test",
+        )
+
+    monkeypatch.setattr(multistability_module, "_make_guesses", lambda *a, **k: guesses)
+    monkeypatch.setattr(multistability_module, "prepare_root_system", prepare)
+    monkeypatch.setattr(multistability_module, "solve_single_state", solve)
+    config = MultistabilitySolverConfig(
+        capacity_patience=2,
+        distance_tolerance=0.1,
+        method="root",
+    )
+
+    solutions, attempt_count = _solve_point(
+        ThreeRootModel(0.0), {}, config, point_index=0
+    )
+
+    assert len(solutions) == 3
+    assert attempt_count == attempted == 5
+    assert prepared == 1
 
 
 def test_multistability_partitions_large_grid_into_bounded_tile_count():
