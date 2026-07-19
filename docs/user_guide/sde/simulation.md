@@ -137,6 +137,7 @@ Current models with CuPy kernels:
 
 * `model.vdp_2mode`
 * `model.kerr_2mode`
+* `model.crosskerr_2mode`
 * `model.kerr_3mode`
 
 Kernelization is **automatic**; there is no explicit switch in the job file. If the model advertises support for the active backend, the integrator uses it. Otherwise it falls back to the standard Python implementation, so switching `backend` between `numpy` and `cupy` always produces valid results.

@@ -132,6 +132,7 @@ fused kernel 或 GPU batching 主逻辑。模型参数仍需接受标量或逐 t
 
 * `model.vdp_2mode`
 * `model.kerr_2mode`
+* `model.crosskerr_2mode`
 * `model.kerr_3mode`
 
 核函数化是**自动的**；任务文件中不需要显式开关。如果模型声明支持当前后端，积分器就会使用它；否则会回退到标准 Python 实现。因此，在 `numpy` 和 `cupy` 之间切换 `backend` 始终能产生正确结果。

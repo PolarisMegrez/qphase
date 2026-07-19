@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from models.crosskerr_2mode import CrossKerr2ModeModel
 from models.kerr_2mode import Kerr2ModeModel
 from models.kerr_3mode import Kerr3ModeModel
 from models.vdp_2mode import VDP2ModeModel
@@ -26,6 +27,14 @@ from models.vdp_2mode import VDP2ModeModel
             chi=0.01,
             gamma_a=0.5,
             gamma_b=1.8728,
+            g=0.5,
+        ),
+        CrossKerr2ModeModel(
+            omega_a=0.5,
+            omega_b=0.01,
+            chi=0.01,
+            gamma_a=0.5,
+            gamma_b=0.517926,
             g=0.5,
         ),
         Kerr3ModeModel(
@@ -78,3 +87,4 @@ def test_declared_solution_capacities():
     assert VDP2ModeModel.steady_state_capacity == 4
     assert Kerr2ModeModel.steady_state_capacity == 2
     assert Kerr3ModeModel.steady_state_capacity == 8
+    assert CrossKerr2ModeModel.steady_state_capacity == 4

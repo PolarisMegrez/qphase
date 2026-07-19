@@ -1,4 +1,4 @@
-"""GPU consistency tests for Kerr model kernels."""
+"""GPU consistency tests for Kerr and cross-Kerr model kernels."""
 
 from __future__ import annotations
 
@@ -22,6 +22,17 @@ def _cupy_available() -> bool:
 
 
 def _make_model(model_name):
+    if model_name == "crosskerr_2mode":
+        from models.crosskerr_2mode import CrossKerr2ModeModel
+
+        return CrossKerr2ModeModel(
+            omega_a=0.5,
+            omega_b=0.01,
+            chi=0.01,
+            gamma_a=0.5,
+            gamma_b=0.517926,
+            g=0.5,
+        )
     if model_name == "kerr_2mode":
         from models.kerr_2mode import Kerr2ModeModel
 
@@ -41,7 +52,7 @@ def _make_model(model_name):
     )
 
 
-@pytest.fixture(params=["kerr_2mode", "kerr_3mode"])
+@pytest.fixture(params=["crosskerr_2mode", "kerr_2mode", "kerr_3mode"])
 def model(request):
     return _make_model(request.param)
 
@@ -181,7 +192,9 @@ def _cayley_chunk_worker(model_name, queue):
 
 
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
-@pytest.mark.parametrize("model_name", ["kerr_2mode", "kerr_3mode"])
+@pytest.mark.parametrize(
+    "model_name", ["crosskerr_2mode", "kerr_2mode", "kerr_3mode"]
+)
 @pytest.mark.parametrize("dtype_name", ["complex64", "complex128"])
 def test_cayley_fused_step(model_name, dtype_name):
     context = multiprocessing.get_context("spawn")
@@ -201,7 +214,9 @@ def test_cayley_fused_step(model_name, dtype_name):
 
 
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
-@pytest.mark.parametrize("model_name", ["kerr_2mode", "kerr_3mode"])
+@pytest.mark.parametrize(
+    "model_name", ["crosskerr_2mode", "kerr_2mode", "kerr_3mode"]
+)
 def test_cayley_fused_chunk(model_name):
     context = multiprocessing.get_context("spawn")
     queue = context.Queue()

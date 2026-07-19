@@ -9,6 +9,7 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.integrator.cayley_maruyama import CayleyMaruyama
 
 from models.base import SDEModelPlugin
+from models.crosskerr_2mode import CrossKerr2ModeModel
 from models.kerr_2mode import Kerr2ModeModel
 from models.kerr_3mode import Kerr3ModeModel
 from models.vdp_2mode import VDP2ModeModel
@@ -31,6 +32,18 @@ from models.vdp_2mode import VDP2ModeModel
                 gamma_b=1.8728, g=0.5,
             ),
             "kerr_2mode",
+            2,
+        ),
+        (
+            CrossKerr2ModeModel(
+                omega_a=0.5,
+                omega_b=0.01,
+                chi=0.01,
+                gamma_a=0.5,
+                gamma_b=0.517926,
+                g=0.5,
+            ),
+            "crosskerr_2mode",
             2,
         ),
         (
@@ -105,6 +118,39 @@ def test_kerr_2mode_cayley_step():
     noise = np.zeros((2, model.noise_dim))
     increment = CayleyMaruyama(fused="off").step(
         y, 0.0, 0.05, model, noise, NumpyBackend()
+    )
+    assert increment.shape == y.shape
+    assert np.all(np.isfinite(increment))
+
+
+def test_crosskerr_2mode_equations_and_cayley_step():
+    model = CrossKerr2ModeModel(
+        omega_a=0.5,
+        omega_b=0.01,
+        chi=0.01,
+        gamma_a=0.5,
+        gamma_b=0.517926,
+        g=0.5,
+    )
+    y = np.array([[1.0 + 2.0j, 3.0 - 1.0j]])
+    matrix = model.drift_matrix(y, 0.0, model.params)
+    assert matrix[0, 0, 0] == pytest.approx(0.25 - 0.595j)
+    assert matrix[0, 1, 1] == pytest.approx(-0.258963 - 0.055j)
+    np.testing.assert_allclose(
+        model.drift(y, 0.0, model.params), (matrix[0] @ y[0])[None, :]
+    )
+    diffusion = model.diffusion(y, 0.0, model.params)
+    np.testing.assert_allclose(
+        np.diagonal(diffusion, axis1=1, axis2=2) ** 2,
+        [[0.25, 0.258963]],
+    )
+    increment = CayleyMaruyama(fused="off").step(
+        y,
+        0.0,
+        0.05,
+        model,
+        np.zeros((1, model.noise_dim)),
+        NumpyBackend(),
     )
     assert increment.shape == y.shape
     assert np.all(np.isfinite(increment))

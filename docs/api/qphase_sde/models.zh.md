@@ -83,9 +83,9 @@ model:
     g: 0.5
 ```
 
-### `kerr_2mode` 与 `kerr_3mode`
+### `kerr_2mode`、`crosskerr_2mode` 与 `kerr_3mode`
 
-二模与三模 Kerr 模型。参数列表参见 [模型源码](https://github.com/your-org/qphase/tree/main/models) 或包参考。
+自 Kerr、交叉 Kerr 与三模 Kerr 模型。参数列表参见 [模型源码](https://github.com/your-org/qphase/tree/main/models) 或包参考。
 
 ## 添加新模型
 

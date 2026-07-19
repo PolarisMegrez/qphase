@@ -85,7 +85,7 @@ integrator:
 通用路径使用 backend 的批量线性求解，支持任意小规模模式数。模型可以提供
 专用 fused step 或 chunk kernel。GPU 生产任务建议使用 `fused: required`，避免
 加速实现缺失时静默回退到通用路径。
-workspace 中的 VDP2、Kerr2 与 Kerr3 模型均提供 CuPy fused `step` 和
+workspace 中的 VDP2、Kerr2、cross-Kerr2 与 Kerr3 模型均提供 CuPy fused `step` 和
 `step_chunk` kernel，并支持 `complex64` 与 `complex128` 状态。
 
 `ChunkIntegrator` 是可选能力。只有固定步长任务且 model/backend 支持相同

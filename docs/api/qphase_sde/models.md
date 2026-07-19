@@ -85,9 +85,9 @@ model:
     g: 0.5
 ```
 
-### `kerr_2mode` and `kerr_3mode`
+### `kerr_2mode`, `crosskerr_2mode`, and `kerr_3mode`
 
-Two- and three-mode Kerr models. See [Models source](https://github.com/your-org/qphase/tree/main/models) or the package reference for parameter lists.
+Self-Kerr, cross-Kerr, and three-mode Kerr models. See [Models source](https://github.com/your-org/qphase/tree/main/models) or the package reference for parameter lists.
 
 ## Adding a New Model
 

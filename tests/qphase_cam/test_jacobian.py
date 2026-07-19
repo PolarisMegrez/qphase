@@ -14,6 +14,7 @@ from qphase_cam.core.jacobian import (
 from qphase_cam.core.liouvillian import model_liouvillian, residual_vector
 from qphase_cam.errors import JacobianUnavailableError
 
+from models.crosskerr_2mode import CrossKerr2ModeModel
 from models.kerr_2mode import Kerr2ModeModel
 from models.kerr_3mode import Kerr3ModeModel
 from models.vdp_2mode import VDP2ModeModel
@@ -44,6 +45,14 @@ def _state(n_modes: int):
             chi=0.01,
             gamma_a=0.5,
             gamma_b=1.8728,
+            g=0.5,
+        ),
+        CrossKerr2ModeModel(
+            omega_a=0.5,
+            omega_b=0.01,
+            chi=0.01,
+            gamma_a=0.5,
+            gamma_b=0.517926,
             g=0.5,
         ),
     ],
@@ -112,6 +121,14 @@ def test_three_mode_symbolic_matches_finite_difference():
             chi=0.01,
             gamma_a=0.5,
             gamma_b=1.8728,
+            g=0.5,
+        ),
+        CrossKerr2ModeModel(
+            omega_a=0.5,
+            omega_b=0.01,
+            chi=0.01,
+            gamma_a=0.5,
+            gamma_b=0.517926,
             g=0.5,
         ),
         Kerr3ModeModel(
