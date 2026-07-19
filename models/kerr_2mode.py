@@ -104,21 +104,44 @@ class Kerr2ModeModel(SDEModelPlugin):
         matrix[..., 1, 1] = gamma_b / 2.0
         return matrix
 
-    def cam_jacobian(self, state: Any, params: dict[str, Any]) -> Any:
-        xp = get_xp(state)
-        state = xp.asarray(state)
+    def cam_residual_vector(self, vector: Any, params: dict[str, Any]) -> Any:
+        """Evaluate the CAM residual directly in canonical real coordinates."""
+        xp = get_xp(vector)
+        vector = xp.asarray(vector)
+        r_aa, r_bb, r_ab_real, r_ab_imag = (vector[..., index] for index in range(4))
         omega_a = self.parameter(params, "omega_a", xp)
         omega_b = self.parameter(params, "omega_b", xp)
         chi = self.parameter(params, "chi", xp)
         gamma_a = self.parameter(params, "gamma_a", xp)
         gamma_b = self.parameter(params, "gamma_b", xp)
         coupling = self.parameter(params, "g", xp)
-        r_aa = xp.real(state[..., 0, 0])
-        r_ab_real = xp.real(state[..., 0, 1])
-        r_ab_imag = xp.imag(state[..., 0, 1])
         common = (gamma_a - gamma_b) / 2.0
         detuning = omega_a - omega_b + 2.0 * chi * (r_aa - 1.0)
-        jacobian = xp.zeros(state.shape[:-2] + (4, 4), dtype=state.real.dtype)
+        residual = xp.empty_like(vector)
+        residual[..., 0] = gamma_a * r_aa - 2.0 * coupling * r_ab_imag + gamma_a / 2.0
+        residual[..., 1] = -gamma_b * r_bb + 2.0 * coupling * r_ab_imag + gamma_b / 2.0
+        residual[..., 2] = common * r_ab_real + detuning * r_ab_imag
+        residual[..., 3] = (
+            common * r_ab_imag - detuning * r_ab_real + coupling * (r_aa - r_bb)
+        )
+        return residual
+
+    def cam_jacobian_vector(self, vector: Any, params: dict[str, Any]) -> Any:
+        """Evaluate the analytic CAM Jacobian without rebuilding a matrix."""
+        xp = get_xp(vector)
+        vector = xp.asarray(vector)
+        omega_a = self.parameter(params, "omega_a", xp)
+        omega_b = self.parameter(params, "omega_b", xp)
+        chi = self.parameter(params, "chi", xp)
+        gamma_a = self.parameter(params, "gamma_a", xp)
+        gamma_b = self.parameter(params, "gamma_b", xp)
+        coupling = self.parameter(params, "g", xp)
+        r_aa = vector[..., 0]
+        r_ab_real = vector[..., 2]
+        r_ab_imag = vector[..., 3]
+        common = (gamma_a - gamma_b) / 2.0
+        detuning = omega_a - omega_b + 2.0 * chi * (r_aa - 1.0)
+        jacobian = xp.zeros(vector.shape[:-1] + (4, 4), dtype=vector.dtype)
         jacobian[..., 0, 0] = gamma_a
         jacobian[..., 0, 3] = -2.0 * coupling
         jacobian[..., 1, 1] = -gamma_b
@@ -131,6 +154,20 @@ class Kerr2ModeModel(SDEModelPlugin):
         jacobian[..., 3, 2] = -detuning
         jacobian[..., 3, 3] = common
         return jacobian
+
+    def cam_jacobian(self, state: Any, params: dict[str, Any]) -> Any:
+        xp = get_xp(state)
+        state = xp.asarray(state)
+        vector = xp.stack(
+            (
+                xp.real(state[..., 0, 0]),
+                xp.real(state[..., 1, 1]),
+                xp.real(state[..., 0, 1]),
+                xp.imag(state[..., 0, 1]),
+            ),
+            axis=-1,
+        )
+        return self.cam_jacobian_vector(vector, params)
 
     @classmethod
     @lru_cache(maxsize=1)

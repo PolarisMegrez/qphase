@@ -120,6 +120,166 @@ class Kerr3ModeModel(SDEModelPlugin):
         matrix[..., 2, 2] = gamma_c / 2.0
         return matrix
 
+    def cam_residual_vector(self, vector: Any, params: dict[str, Any]) -> Any:
+        """Evaluate the CAM residual directly in canonical real coordinates."""
+        xp = get_xp(vector)
+        vector = xp.asarray(vector)
+        (
+            r_aa,
+            r_bb,
+            r_cc,
+            r_ab_real,
+            r_ac_real,
+            r_bc_real,
+            r_ab_imag,
+            r_ac_imag,
+            r_bc_imag,
+        ) = (vector[..., index] for index in range(9))
+        omega_a = self.parameter(params, "omega_a", xp)
+        omega_b = self.parameter(params, "omega_b", xp)
+        omega_c = self.parameter(params, "omega_c", xp)
+        chi = self.parameter(params, "chi", xp)
+        gamma_a = self.parameter(params, "gamma_a", xp)
+        gamma_b = self.parameter(params, "gamma_b", xp)
+        gamma_c = self.parameter(params, "gamma_c", xp)
+        coupling_ab = self.parameter(params, "g_ab", xp)
+        coupling_ac = self.parameter(params, "g_ac", xp)
+        nonlinear_frequency = omega_a + 2.0 * chi * (r_aa - 1.0)
+        detuning_ab = nonlinear_frequency - omega_b
+        detuning_ac = nonlinear_frequency - omega_c
+        detuning_bc = omega_b - omega_c
+        decay_ab = -(gamma_a + gamma_b) / 2.0
+        decay_ac = (gamma_c - gamma_a) / 2.0
+        decay_bc = (gamma_c - gamma_b) / 2.0
+
+        residual = xp.empty_like(vector)
+        residual[..., 0] = (
+            -gamma_a * r_aa
+            - 2.0 * coupling_ab * r_ab_imag
+            - 2.0 * coupling_ac * r_ac_imag
+            + gamma_a / 2.0
+        )
+        residual[..., 1] = (
+            -gamma_b * r_bb + 2.0 * coupling_ab * r_ab_imag + gamma_b / 2.0
+        )
+        residual[..., 2] = (
+            gamma_c * r_cc + 2.0 * coupling_ac * r_ac_imag + gamma_c / 2.0
+        )
+        residual[..., 3] = (
+            decay_ab * r_ab_real + detuning_ab * r_ab_imag - coupling_ac * r_bc_imag
+        )
+        residual[..., 4] = (
+            decay_ac * r_ac_real + detuning_ac * r_ac_imag + coupling_ab * r_bc_imag
+        )
+        residual[..., 5] = (
+            decay_bc * r_bc_real
+            + detuning_bc * r_bc_imag
+            + coupling_ab * r_ac_imag
+            + coupling_ac * r_ab_imag
+        )
+        residual[..., 6] = (
+            decay_ab * r_ab_imag
+            - detuning_ab * r_ab_real
+            + coupling_ab * (r_aa - r_bb)
+            - coupling_ac * r_bc_real
+        )
+        residual[..., 7] = (
+            decay_ac * r_ac_imag
+            - detuning_ac * r_ac_real
+            + coupling_ac * (r_aa - r_cc)
+            - coupling_ab * r_bc_real
+        )
+        residual[..., 8] = (
+            decay_bc * r_bc_imag
+            - detuning_bc * r_bc_real
+            - coupling_ab * r_ac_real
+            + coupling_ac * r_ab_real
+        )
+        return residual
+
+    def cam_jacobian_vector(self, vector: Any, params: dict[str, Any]) -> Any:
+        """Evaluate the analytic CAM Jacobian without rebuilding a matrix."""
+        xp = get_xp(vector)
+        vector = xp.asarray(vector)
+        omega_a = self.parameter(params, "omega_a", xp)
+        omega_b = self.parameter(params, "omega_b", xp)
+        omega_c = self.parameter(params, "omega_c", xp)
+        chi = self.parameter(params, "chi", xp)
+        gamma_a = self.parameter(params, "gamma_a", xp)
+        gamma_b = self.parameter(params, "gamma_b", xp)
+        gamma_c = self.parameter(params, "gamma_c", xp)
+        coupling_ab = self.parameter(params, "g_ab", xp)
+        coupling_ac = self.parameter(params, "g_ac", xp)
+        r_aa = vector[..., 0]
+        r_ab_real = vector[..., 3]
+        r_ac_real = vector[..., 4]
+        r_ab_imag = vector[..., 6]
+        r_ac_imag = vector[..., 7]
+        nonlinear_frequency = omega_a + 2.0 * chi * (r_aa - 1.0)
+        detuning_ab = nonlinear_frequency - omega_b
+        detuning_ac = nonlinear_frequency - omega_c
+        detuning_bc = omega_b - omega_c
+        decay_ab = -(gamma_a + gamma_b) / 2.0
+        decay_ac = (gamma_c - gamma_a) / 2.0
+        decay_bc = (gamma_c - gamma_b) / 2.0
+
+        jacobian = xp.zeros(vector.shape[:-1] + (9, 9), dtype=vector.dtype)
+        jacobian[..., 0, 0] = -gamma_a
+        jacobian[..., 0, 6] = -2.0 * coupling_ab
+        jacobian[..., 0, 7] = -2.0 * coupling_ac
+        jacobian[..., 1, 1] = -gamma_b
+        jacobian[..., 1, 6] = 2.0 * coupling_ab
+        jacobian[..., 2, 2] = gamma_c
+        jacobian[..., 2, 7] = 2.0 * coupling_ac
+
+        jacobian[..., 3, 0] = 2.0 * chi * r_ab_imag
+        jacobian[..., 3, 3] = decay_ab
+        jacobian[..., 3, 6] = detuning_ab
+        jacobian[..., 3, 8] = -coupling_ac
+        jacobian[..., 4, 0] = 2.0 * chi * r_ac_imag
+        jacobian[..., 4, 4] = decay_ac
+        jacobian[..., 4, 7] = detuning_ac
+        jacobian[..., 4, 8] = coupling_ab
+        jacobian[..., 5, 5] = decay_bc
+        jacobian[..., 5, 6] = coupling_ac
+        jacobian[..., 5, 7] = coupling_ab
+        jacobian[..., 5, 8] = detuning_bc
+
+        jacobian[..., 6, 0] = coupling_ab - 2.0 * chi * r_ab_real
+        jacobian[..., 6, 1] = -coupling_ab
+        jacobian[..., 6, 3] = -detuning_ab
+        jacobian[..., 6, 5] = -coupling_ac
+        jacobian[..., 6, 6] = decay_ab
+        jacobian[..., 7, 0] = coupling_ac - 2.0 * chi * r_ac_real
+        jacobian[..., 7, 2] = -coupling_ac
+        jacobian[..., 7, 4] = -detuning_ac
+        jacobian[..., 7, 5] = -coupling_ab
+        jacobian[..., 7, 7] = decay_ac
+        jacobian[..., 8, 3] = coupling_ac
+        jacobian[..., 8, 4] = -coupling_ab
+        jacobian[..., 8, 5] = -detuning_bc
+        jacobian[..., 8, 8] = decay_bc
+        return jacobian
+
+    def cam_jacobian(self, state: Any, params: dict[str, Any]) -> Any:
+        xp = get_xp(state)
+        state = xp.asarray(state)
+        vector = xp.stack(
+            (
+                xp.real(state[..., 0, 0]),
+                xp.real(state[..., 1, 1]),
+                xp.real(state[..., 2, 2]),
+                xp.real(state[..., 0, 1]),
+                xp.real(state[..., 0, 2]),
+                xp.real(state[..., 1, 2]),
+                xp.imag(state[..., 0, 1]),
+                xp.imag(state[..., 0, 2]),
+                xp.imag(state[..., 1, 2]),
+            ),
+            axis=-1,
+        )
+        return self.cam_jacobian_vector(vector, params)
+
     @classmethod
     @lru_cache(maxsize=1)
     def cam_symbolic_matrices(cls) -> Any:

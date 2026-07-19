@@ -79,28 +79,57 @@ def test_three_mode_symbolic_matches_finite_difference():
         g_ac=0.3,
     )
     state = _state(3)
-    symbolic = JacobianResolver().resolve(
-        model, state, model.params, NumpyBackend()
-    )
+    symbolic = SymbolicJacobian(
+        model.cam_symbolic_matrices(), model.n_modes, "numpy"
+    )(state, model.params)
+    resolver = JacobianResolver()
+    analytic = resolver.resolve(model, state, model.params, NumpyBackend())
     vector = matrix_to_vector(state)
     numerical = central_difference_jacobian(
         lambda value: residual_vector(model, vector_to_matrix(value, 3), model.params),
         vector,
         1e-6,
     )
+    assert resolver.last_source == "analytic"
+    np.testing.assert_allclose(analytic, symbolic, atol=1e-11)
     np.testing.assert_allclose(symbolic, numerical, atol=2e-8)
 
 
-def test_vdp_vector_fast_path_matches_matrix_equations():
-    model = VDP2ModeModel(
-        omega_a=0.2,
-        omega_b=-0.1,
-        gamma_a=2.0,
-        gamma_b=1.0,
-        Gamma=0.01,
-        g=0.5,
-    )
-    states = np.stack([_state(2), _state(2) * 3.0])
+@pytest.mark.parametrize(
+    "model",
+    [
+        VDP2ModeModel(
+            omega_a=0.2,
+            omega_b=-0.1,
+            gamma_a=2.0,
+            gamma_b=1.0,
+            Gamma=0.01,
+            g=0.5,
+        ),
+        Kerr2ModeModel(
+            omega_a=0.0,
+            omega_b=-0.01,
+            chi=0.01,
+            gamma_a=0.5,
+            gamma_b=1.8728,
+            g=0.5,
+        ),
+        Kerr3ModeModel(
+            omega_a=0.0,
+            omega_b=-0.1,
+            omega_c=0.2,
+            chi=0.01,
+            gamma_a=0.5,
+            gamma_b=1.0,
+            gamma_c=0.4,
+            g_ab=0.5,
+            g_ac=0.3,
+        ),
+    ],
+)
+def test_vector_fast_path_matches_matrix_equations(model):
+    state = _state(model.n_modes)
+    states = np.stack([state, state * 3.0])
     vectors = matrix_to_vector(states)
 
     np.testing.assert_allclose(
