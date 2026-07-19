@@ -68,6 +68,8 @@ The generic path uses backend batched linear solves and supports small systems
 with arbitrary mode counts. A model may provide a specialized fused step or
 chunk kernel. `fused: required` is recommended for production GPU jobs so a
 missing accelerator cannot silently fall back to the generic path.
+The workspace VDP2, Kerr2, and Kerr3 models provide CuPy fused `step` and
+`step_chunk` kernels for both `complex64` and `complex128` states.
 
 `ChunkIntegrator` is an optional capability. The SDE engine uses it only for
 fixed-step jobs when the selected model/backend combination supports the same

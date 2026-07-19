@@ -11,6 +11,7 @@ from qphase.backend.xputil import get_xp
 
 from .base import ModelConfig, SDEModelPlugin
 from .kernels.base import ModelKernelPlugin
+from .kernels.cayley_maruyama import Kerr3ModeCayleyCuPyKernel
 from .kernels.euler_maruyama import Kerr3ModeEulerCuPyKernel
 
 
@@ -38,7 +39,7 @@ class Kerr3ModeModel(SDEModelPlugin):
     steady_state_capacity: ClassVar[int] = 8
 
     def kernel_plugins(self) -> Iterable[ModelKernelPlugin]:
-        return (Kerr3ModeEulerCuPyKernel(),)
+        return (Kerr3ModeEulerCuPyKernel(), Kerr3ModeCayleyCuPyKernel())
 
     def drift(self, y: Any, t: float, params: dict[str, Any]) -> Any:
         del t
