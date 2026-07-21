@@ -8,8 +8,8 @@ The workspace-only `qphase_cam` package solves the steady-state matrix equation
 
 Use `engine.cam` with one backend, one CAM-capable model, one `cam_solver`, and
 zero or more `cam_postprocessor` plugins. Complete examples are available in
-`configs/jobs/vdp_2mode_cam.yaml`, `kerr_2mode_cam.yaml`, and
-`kerr_3mode_cam.yaml`.
+`configs/jobs/vdp_2mode_cam.yaml`, `kerr_2mode_cam.yaml`,
+`crosskerr_2mode_cam.yaml`, and `kerr_3mode_cam.yaml`.
 
 ## Parameter Scans
 
@@ -95,8 +95,8 @@ guesses do not advance that counter.
 
 ## Backend Support
 
-The CAM engine supports a CuPy backend only through `batched_newton`. The VDP2
-and Kerr2 analytic Jacobians and the Kerr3 symbolic Jacobian are backend-aware.
+The CAM engine supports a CuPy backend only through `batched_newton`. The VDP2,
+Kerr2, cross-Kerr2, and Kerr3 analytic Jacobians are backend-aware.
 The other solvers explicitly reject CuPy because they depend on SciPy root
 finding or CPU pseudo-arclength logic.
 

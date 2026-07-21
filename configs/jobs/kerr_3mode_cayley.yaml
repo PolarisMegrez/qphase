@@ -1,0 +1,70 @@
+- name: kerr_3mode_cayley_sim
+  save: true
+
+  scan:
+    axes:
+      gamma_a:
+        target: model.kerr_3mode.gamma_a
+        logspace: {start: -5, stop: -3, num: 21, base: 10}
+
+  engine:
+    sde:
+      t0: 0.0
+      t1: 5000.0
+      dt: 0.05
+      n_traj: 500
+      seed: 42
+      ic:
+        - ["1.0+0.0j", "1.0+0.0j", "1.0+0.0j"]
+      adaptive: false
+      save_stride: 2
+      record_modes: [0]
+      keep_traj: false
+
+  backend:
+    cupy:
+      float_dtype: float32
+      device: cuda
+
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 128
+      max_modes: 16
+
+  model:
+    kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 0.0
+      chi: 0.00005
+      gamma_a: 0.00001
+      gamma_b: 0.1
+      gamma_c: 0.1
+      g_ab: 0.02
+      g_ac: 0.02
+
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      find_peaks: true
+
+- name: kerr_3mode_cayley_fit
+  input:
+    from: kerr_3mode_cayley_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: gamma_a
+      mode: 0
+      uncertainty: auto
+      clip_by_std: true
+      clip_sigma: 10.0
+      export:
+        - fit_results.csv
+        - psd_merged.csv

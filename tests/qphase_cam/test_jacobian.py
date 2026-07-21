@@ -94,12 +94,81 @@ def test_three_mode_symbolic_matches_finite_difference():
     resolver = JacobianResolver()
     analytic = resolver.resolve(model, state, model.params, NumpyBackend())
     vector = matrix_to_vector(state)
+    (
+        r_aa,
+        _,
+        _,
+        r_ab_real,
+        r_ac_real,
+        _,
+        r_ab_imag,
+        r_ac_imag,
+        _,
+    ) = vector
+    params = model.params
+    detuning_ab = (
+        params["omega_a"] - params["omega_b"] + 2.0 * params["chi"] * (r_aa - 1.0)
+    )
+    detuning_ac = (
+        params["omega_a"] - params["omega_c"] + 2.0 * params["chi"] * (r_aa - 1.0)
+    )
+    detuning_bc = params["omega_b"] - params["omega_c"]
+    decay_ab = -(params["gamma_a"] + params["gamma_b"]) / 2.0
+    decay_ac = (-params["gamma_a"] + params["gamma_c"]) / 2.0
+    decay_bc = (-params["gamma_b"] + params["gamma_c"]) / 2.0
+    expected = np.zeros((9, 9))
+    expected[0, (0, 6, 7)] = (
+        -params["gamma_a"],
+        -2.0 * params["g_ab"],
+        -2.0 * params["g_ac"],
+    )
+    expected[1, (1, 6)] = (-params["gamma_b"], 2.0 * params["g_ab"])
+    expected[2, (2, 7)] = (params["gamma_c"], 2.0 * params["g_ac"])
+    expected[3, (0, 3, 6, 8)] = (
+        2.0 * params["chi"] * r_ab_imag,
+        decay_ab,
+        detuning_ab,
+        -params["g_ac"],
+    )
+    expected[4, (0, 4, 7, 8)] = (
+        2.0 * params["chi"] * r_ac_imag,
+        decay_ac,
+        detuning_ac,
+        params["g_ab"],
+    )
+    expected[5, (5, 6, 7, 8)] = (
+        decay_bc,
+        params["g_ac"],
+        params["g_ab"],
+        detuning_bc,
+    )
+    expected[6, (0, 1, 3, 5, 6)] = (
+        params["g_ab"] - 2.0 * params["chi"] * r_ab_real,
+        -params["g_ab"],
+        -detuning_ab,
+        -params["g_ac"],
+        decay_ab,
+    )
+    expected[7, (0, 2, 4, 5, 7)] = (
+        params["g_ac"] - 2.0 * params["chi"] * r_ac_real,
+        -params["g_ac"],
+        -detuning_ac,
+        -params["g_ab"],
+        decay_ac,
+    )
+    expected[8, (3, 4, 5, 8)] = (
+        params["g_ac"],
+        -params["g_ab"],
+        -detuning_bc,
+        decay_bc,
+    )
     numerical = central_difference_jacobian(
         lambda value: residual_vector(model, vector_to_matrix(value, 3), model.params),
         vector,
         1e-6,
     )
     assert resolver.last_source == "analytic"
+    np.testing.assert_allclose(analytic, expected, atol=1e-12)
     np.testing.assert_allclose(analytic, symbolic, atol=1e-11)
     np.testing.assert_allclose(symbolic, numerical, atol=2e-8)
 
