@@ -12,8 +12,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .errors import QPhaseConfigError, QPhaseRuntimeError
+from .errors import ErrorCode, QPhaseConfigError, QPhaseRuntimeError
+from .progress import ProgressEvent, ProgressReporter
 from .scan import ParameterGrid
+
+__all__ = [
+    "CancellationToken",
+    "CheckpointStore",
+    "ExecutionContext",
+    "ProgressEvent",
+    "ProgressReporter",
+    "ResourceSnapshot",
+    "execution_fingerprint",
+    "plugin_fingerprint",
+]
 
 
 class CancellationToken:
@@ -31,39 +43,11 @@ class CancellationToken:
 
     def raise_if_cancelled(self) -> None:
         if self.cancelled:
-            raise QPhaseRuntimeError("execution cancelled")
-
-
-class ProgressReporter:
-    """Stable progress API for resource engines."""
-
-    def __init__(self, callback: Any | None = None) -> None:
-        self._callback = callback
-
-    def report(
-        self,
-        percent: float | None,
-        *,
-        total_duration_estimate: float | None = None,
-        message: str = "",
-        stage: str | None = None,
-    ) -> None:
-        if self._callback is not None:
-            self._callback(percent, total_duration_estimate, message, stage)
-
-    def __call__(
-        self,
-        percent: float | None,
-        total_duration_estimate: float | None,
-        message: str,
-        stage: str | None,
-    ) -> None:
-        self.report(
-            percent,
-            total_duration_estimate=total_duration_estimate,
-            message=message,
-            stage=stage,
-        )
+            raise QPhaseRuntimeError(
+                "execution cancelled",
+                code=ErrorCode.CANCELLATION,
+                hint="The job was cancelled by the user or the scheduler.",
+            )
 
 
 @dataclass(frozen=True)
@@ -107,7 +91,10 @@ class CheckpointStore:
             if existing.get("fingerprint") != self.fingerprint:
                 raise QPhaseConfigError(
                     "checkpoint is incompatible with the current config, plugins, "
-                    "backend, or dtype"
+                    "backend, or dtype",
+                    code=ErrorCode.CHECKPOINT,
+                    hint="Delete the .checkpoints directory or restore the "
+                    "matching configuration before resuming.",
                 )
             return
         manifest_path.write_text(

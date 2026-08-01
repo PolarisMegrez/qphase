@@ -128,3 +128,13 @@ Normal CLI output stays at logical-job granularity: job name, scan shape,
 status, and result directory. Axis and chunk details belong to `--plan` or
 verbose output. Service DTOs expose scan summaries and internal progress events
 for future clients without requiring GUI changes.
+
+Engines report `completed`, `total`, and a natural unit for each stage. Core
+estimates rate and remaining time only within the current `(stage, unit)` scope
+after a short warm-up. Stage changes reset the estimator. Unknown totals show
+elapsed time only, and heterogeneous jobs are never used to extrapolate a
+workflow-wide ETA. Workflow progress is the completed logical-job count.
+
+For `input.mode=map`, scheduler progress counts completed views. Child-engine
+progress is exposed as verbose status inside the map stage, so a large mapped
+dataset does not produce one terminal progress stream per point.

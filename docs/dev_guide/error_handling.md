@@ -32,13 +32,16 @@ class QPhaseIOError(QPhaseError):
 1.  **Validation Phase**: Errors during configuration loading (e.g., missing fields, invalid types) are caught early and raised as `QPhaseConfigError`. The CLI displays the specific validation message from Pydantic.
 2.  **Dependency Check**: If a job is missing required plugins (as defined in `EngineManifest`), a `QPhaseConfigError` is raised before execution begins.
 3.  **Execution Phase**: Exceptions occurring within a job (e.g., numerical instability, runtime assertions) are caught by the `Scheduler`.
-    *   The exception is logged.
-    *   The job is marked as `failed` in the `JobResult`.
-    *   The scheduler proceeds to the next independent job (unless `fail_fast` is enabled).
+    *   The exception and its cause chain are captured once at the job boundary.
+    *   The job is marked as `failed` with a stable error ID/code.
+    *   Independent jobs continue; jobs depending on the failure are marked `skipped_dependency`.
 
 ## Logging
 
-QPhase uses the standard Python `logging` module.
-*   **Console**: By default, only `INFO` level and above are shown.
-*   **File**: If configured, all logs (including `DEBUG`) are written to a log file.
-*   **Format**: Logs include timestamps and module names to aid in debugging.
+QPhase uses the standard Python `logging` module, but normal CLI lifecycle
+messages are rendered from progress snapshots rather than INFO logs.
+
+*   **Console**: Shows concise progress plus warning/error briefs; no traceback by default.
+*   **Session file**: `runs/<session-id>/qphase.log` is created automatically and records DEBUG details and tracebacks.
+*   **Error report**: A failed job writes `error_report.json` with the error ID, context, cause chain, traceback, and log path.
+*   **Context**: File records include session, job, engine, and stage fields.

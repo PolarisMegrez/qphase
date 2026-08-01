@@ -17,7 +17,7 @@ data flow, execution contexts, and result persistence.
 
 *   `system_config` (`SystemConfig`, optional): The system configuration object. If not provided, it is loaded from `system.yaml`.
 *   `default_output_dir` (`str`, optional): Overrides the default output directory specified in the system configuration.
-*   `on_progress` (`Callable[[JobProgressUpdate], None]`, optional): A callback function invoked with progress updates during job execution.
+*   `on_progress` (`Callable[[ProgressSnapshot], None]`, optional): Receives structured job lifecycle and stage work-count snapshots.
 *   `on_run_dir` (`Callable[[Path], None]`, optional): A callback function invoked with the path to the run directory after each job completes.
 
 **Methods:**
@@ -62,7 +62,18 @@ Represents the global system settings.
 *   `paths` (`PathsConfig`): Directory paths for configuration, plugins, and output.
 *   `auto_save_results` (`bool`): Whether to automatically save results to disk.
 *   `scan_runtime` (`ScanRuntimeConfig`): Dataset layout, chunk checkpoint, and workstation resource hints.
-*   `progress_update_interval` (`float`): Minimum core progress refresh interval.
+*   `reporting` (`ReportingConfig`): Progress refresh/ETA policy and console/session logging behavior.
+
+### Progress and Error Types
+
+Engines emit `ProgressEvent` values through `ExecutionContext.progress` using
+natural work units. `ProgressTracker` derives current-stage rate and remaining
+time; `ProgressSnapshot` is the client-facing DTO. QPhase does not extrapolate
+an overall ETA from heterogeneous jobs.
+
+Failed jobs return structured fields in `JobResult`: `status`, `error_id`,
+`error_code`, `error_summary`, and `error_report_path`. The referenced JSON
+report contains the cause chain and traceback.
 
 ### Scan and Dataset Types
 

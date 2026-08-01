@@ -3,13 +3,13 @@
 Orchestrates the execution of simulation jobs, managing the complete lifecycle from
 dependency resolution to result persistence. The Scheduler handles serial execution
 of ``JobList`` items, passes logical scans to resource engines, manages run
-directory creation, and provides hooks for progress reporting and snapshot generation.
+directory creation, aggregates structured progress events into snapshots, and
+builds structured error reports for failed jobs.
 
 Public API
 ----------
 `Scheduler` : Main class for job execution and lifecycle management.
 `JobResult` : Dataclass containing job execution results and metadata.
-`JobProgressUpdate` : Dataclass for progress callback information.
 `run_jobs` : Convenience function to execute a JobList.
 """
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
@@ -29,10 +30,14 @@ from .artifacts import ArtifactStore
 from .config import JobConfig, JobList
 from .config_loader import get_config_for_job
 from .dataset import DatasetResultProtocol, MappedDatasetResult, iter_dataset_views
+from .error_report import build_error_report, save_error_report
 from .errors import (
+    ErrorCode,
     QPhaseConfigError,
+    QPhaseIOError,
     QPhasePluginError,
     QPhaseRuntimeError,
+    attach_session_log,
     get_logger,
 )
 from .execution import (
@@ -44,25 +49,13 @@ from .execution import (
     execution_fingerprint,
     plugin_fingerprint,
 )
+from .logging_context import bind_log_context, set_log_context
+from .progress import ProgressEvent, ProgressSnapshot, ProgressTracker
 from .protocols import ResultProtocol
 from .registry import registry
 from .system_config import SystemConfig, load_system_config
 
 log = get_logger()
-
-
-@dataclass
-class JobProgressUpdate:
-    """Progress update for a single job."""
-
-    job_name: str
-    job_index: int
-    total_jobs: int
-    message: str
-    percent: float | None = None
-    job_eta: float | None = None
-    global_eta: float | None = None
-    stage: str | None = None
 
 
 @dataclass
@@ -74,7 +67,25 @@ class JobResult:
     run_dir: Path
     run_id: str
     success: bool
-    error: str | None = None
+    status: str = "completed"  # "completed" | "failed" | "skipped_dependency"
+    error_summary: str | None = None
+    error_id: str | None = None
+    error_code: str | None = None
+    error_report_path: str | None = None
+
+    @property
+    def error(self) -> str | None:
+        """Backward-compatible alias for ``error_summary``."""
+        return self.error_summary
+
+
+@dataclass
+class _JobOutcome:
+    """Internal result of one engine invocation before artifact persistence."""
+
+    result: JobResult
+    output: ResultProtocol | None
+    context: ExecutionContext | None
 
 
 class SessionManifest(TypedDict):
@@ -90,7 +101,8 @@ class Scheduler:
     """Scheduler for executing simulation jobs.
 
     Manages serial job execution with dependency resolution, parameter scanning,
-    configuration merging, and progress reporting.
+    configuration merging, structured progress aggregation, and structured
+    error reporting.
 
     Parameters
     ----------
@@ -98,8 +110,8 @@ class Scheduler:
         System configuration. If None, loads from system.yaml.
     default_output_dir : str | None, optional
         Override default output directory from system config.
-    on_progress : Callable[[JobProgressUpdate], None] | None, optional
-        Callback for progress updates during job execution.
+    on_progress : Callable[[ProgressSnapshot], None] | None, optional
+        Callback for progress snapshots during job execution.
     on_run_dir : Callable[[Path], None] | None, optional
         Callback invoked with run directory after each job completes.
 
@@ -115,7 +127,7 @@ class Scheduler:
         self,
         system_config: SystemConfig | None = None,
         default_output_dir: str | None = None,
-        on_progress: Callable[[JobProgressUpdate], None] | None = None,
+        on_progress: Callable[[ProgressSnapshot], None] | None = None,
         on_run_dir: Callable[[Path], None] | None = None,
     ):
         if system_config is None:
@@ -136,6 +148,9 @@ class Scheduler:
         self.session_id = None
         self.session_dir = None
         self.manifest = None
+        self._session_log_path: Path | None = None
+        self._session_log_handler: Any | None = None
+        self._run_statuses: dict[str, str] = {}
 
     def _initialize_session(self) -> None:
         """Initialize a new execution session."""
@@ -149,6 +164,10 @@ class Scheduler:
         self.session_dir = output_root / self.session_id
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
+        # Attach the per-session log file (full DEBUG content). A failure here
+        # surfaces one explicit warning and never blocks the run.
+        self._attach_session_log()
+
         # Initialize manifest
         self.manifest = {
             "session_id": self.session_id,
@@ -158,6 +177,33 @@ class Scheduler:
         }
         self._save_manifest()
         log.debug(f"Initialized session {self.session_id} at {self.session_dir}")
+
+    def _attach_session_log(self) -> None:
+        """Attach the session log file handler per reporting config."""
+        if self.session_dir is None:
+            return
+        try:
+            logging_cfg = self.system_config.reporting.logging
+        except AttributeError:
+            return
+        if not getattr(logging_cfg, "session_file", False):
+            return
+        self._session_log_path, self._session_log_handler = attach_session_log(
+            self.session_dir,
+            filename=str(getattr(logging_cfg, "filename", "qphase.log")),
+            level=str(getattr(logging_cfg, "file_level", "DEBUG")),
+            as_json=str(getattr(logging_cfg, "format", "text")) == "json",
+        )
+
+    def _detach_session_log(self) -> None:
+        """Remove the session log handler so sessions do not accumulate."""
+        if self._session_log_handler is not None:
+            try:
+                log.removeHandler(self._session_log_handler)
+                self._session_log_handler.close()
+            except Exception:
+                pass
+            self._session_log_handler = None
 
     def _save_manifest(self) -> None:
         """Save session manifest to disk."""
@@ -211,34 +257,53 @@ class Scheduler:
         else:
             self._initialize_session()
 
-        if dry_run:
-            log.info("Starting DRY RUN execution plan...")
-
-        # Step 1: Validate jobs before execution
-        self._validate_jobs(job_list)
+        # Seed per-run job statuses from the manifest so that jobs depending
+        # on a previously failed upstream are marked skipped_dependency.
+        self._run_statuses = {}
+        if self.manifest:
+            for name, entry in self.manifest["jobs"].items():
+                status = entry.get("status")
+                if status in ("failed", "skipped_dependency"):
+                    self._run_statuses[name] = status
 
         results: list[JobResult] = []
         job_results: dict[str, ResultProtocol] = {}
         logical_jobs = job_list.jobs
-        for job_idx, job in enumerate(logical_jobs):
-            self._run_single(
-                job,
-                job_idx,
-                len(logical_jobs),
-                logical_jobs,
-                job_results,
-                results,
-                dry_run=dry_run,
-            )
+        try:
+            if dry_run:
+                log.info("Starting DRY RUN execution plan...")
 
-        # Finalize session
-        if self.manifest and not dry_run:
-            self.manifest["status"] = (
-                "completed" if all(r.success for r in results) else "failed"
-            )
-            self._save_manifest()
+            # Step 1: Validate jobs before execution
+            self._validate_jobs(job_list)
 
-        return results
+            for job_idx, job in enumerate(logical_jobs):
+                self._run_single(
+                    job,
+                    job_idx,
+                    len(logical_jobs),
+                    logical_jobs,
+                    job_results,
+                    results,
+                    dry_run=dry_run,
+                )
+
+            if self.manifest and not dry_run:
+                failed = any(result.status == "failed" for result in results)
+                skipped = any(
+                    result.status == "skipped_dependency" for result in results
+                )
+                self.manifest["status"] = (
+                    "failed" if failed else "partial" if skipped else "completed"
+                )
+                self._save_manifest()
+            return results
+        except Exception:
+            if self.manifest and not dry_run:
+                self.manifest["status"] = "failed"
+                self._save_manifest()
+            raise
+        finally:
+            self._detach_session_log()
 
     def _resume_session(self, session_path: Path) -> None:
         """Resume an existing session."""
@@ -258,6 +323,7 @@ class Scheduler:
         assert self.manifest is not None
         self.session_id = self.manifest["session_id"]
         self.session_dir = session_path
+        self._attach_session_log()
         log.info(f"Resuming session {self.session_id} from {self.session_dir}")
 
     def _handle_job_output(
@@ -338,8 +404,11 @@ class Scheduler:
                     output_result.save(save_path)
                 log.debug(f"Job '{job.name}' result saved to {save_path}")
             except Exception as e:
-                raise QPhaseRuntimeError(
-                    f"Failed to save job '{job.name}' output to '{save_path}': {e}"
+                raise QPhaseIOError(
+                    f"Failed to save job '{job.name}' output to '{save_path}': {e}",
+                    code=ErrorCode.ARTIFACT_IO,
+                    hint="Check disk space and write permissions for the run "
+                    "directory.",
                 ) from e
 
     def _resolve_input(
@@ -405,13 +474,16 @@ class Scheduler:
             # which has been removed.
             raise QPhaseConfigError(
                 f"Job '{job.name}' specifies file input '{source}', "
-                "but file loading is not currently supported."
+                "but file loading is not currently supported.",
+                code=ErrorCode.INPUT,
             )
 
         # Input not found
         raise QPhaseConfigError(
             f"Job '{job.name}' input '{source}' not found. "
-            f"Expected a previous job name or a valid file path with input_loader."
+            f"Expected a previous job name or a valid file path with input_loader.",
+            code=ErrorCode.INPUT,
+            hint="Run the upstream job first, or fix the 'input.from' reference.",
         )
 
     def _run_single(
@@ -431,88 +503,259 @@ class Scheduler:
             job_status = self.manifest["jobs"][job.name].get("status")
             if job_status == "completed":
                 log.info(f"Skipping completed job: {job.name}")
-                return
-
-        # Register job in manifest
-        if not dry_run:
-            self._update_job_status(job.name, "pending")
-
-        try:
-            if dry_run:
-                log.info(f"[DRY-RUN] Would execute job: {job.name}")
-                log.info(f"          Engine: {job.get_engine_name()}")
-                log.info(f"          Input: {job.input}")
-                results.append(
-                    JobResult(
-                        job_index=job_idx,
+                self._emit_snapshot(
+                    ProgressSnapshot(
+                        kind="job_skipped",
                         job_name=job.name,
-                        run_dir=Path("dry_run"),
-                        run_id="dry_run",
-                        success=True,
+                        job_index=job_idx,
+                        total_jobs=job_total,
+                        engine=job.get_engine_name(),
+                        message="already completed (resume)",
                     )
                 )
-
-                class MockResult:
-                    data = None
-                    metadata: dict[str, Any] = {}
-                    label: Any = None
-
-                    def save(self, path):
-                        pass
-
-                job_results[job.name] = MockResult()
-                if job.output:
-                    job_results[job.output] = MockResult()
                 return
 
-            # Normal Execution
-            input_result = self._resolve_input(job, job_results)
-            job_result, output_result, context = self._run_job(
-                job,
-                job_idx,
-                job_total,
-                input_result,
-                display_total=len(logical_jobs),
-            )
-            results.append(job_result)
-
-            if job_result.success:
-                self._handle_job_output(
-                    job,
-                    output_result,
-                    job_results,
-                    job_result.run_dir,
-                    context,
-                )
-                context.checkpoints.complete()
-                assert self.session_dir is not None
-                self._update_job_status(
-                    job.name,
-                    "completed",
-                    {
-                        "run_id": job_result.run_id,
-                        "output_dir": str(
-                            job_result.run_dir.relative_to(self.session_dir)
-                        ),
-                    },
-                )
-            else:
-                self._update_job_status(job.name, "failed")
-
-        except Exception as e:
-            log.error(f"Job {job.name} failed: {e}")
-            if not dry_run:
-                self._update_job_status(job.name, "failed", {"error": str(e)})
+        if dry_run:
+            log.info(f"[DRY-RUN] Would execute job: {job.name}")
+            log.info(f"          Engine: {job.get_engine_name()}")
+            log.info(f"          Input: {job.input}")
             results.append(
                 JobResult(
                     job_index=job_idx,
                     job_name=job.name,
-                    run_dir=Path("."),
-                    run_id="",
-                    success=False,
-                    error=str(e),
+                    run_dir=Path("dry_run"),
+                    run_id="dry_run",
+                    success=True,
                 )
             )
+
+            class MockResult:
+                data = None
+                metadata: dict[str, Any] = {}
+                label: Any = None
+
+                def save(self, path):
+                    pass
+
+            job_results[job.name] = MockResult()
+            if job.output:
+                job_results[job.output] = MockResult()
+            return
+
+        if not dry_run:
+            self._update_job_status(job.name, "pending")
+
+        engine_name = job.get_engine_name()
+        self._emit_snapshot(
+            ProgressSnapshot(
+                kind="job_started",
+                job_name=job.name,
+                job_index=job_idx,
+                total_jobs=job_total,
+                engine=engine_name,
+                message="Starting job...",
+                scan_summary=self._scan_summary(job),
+            )
+        )
+
+        # Skip jobs whose upstream failed or was skipped earlier in this run.
+        # Independent downstream jobs keep running (existing scheduler policy).
+        source = job.input.from_ if job.input else None
+        upstream_status = self._run_statuses.get(source) if source else None
+        if upstream_status in ("failed", "skipped_dependency"):
+            note = (
+                f"skipped: upstream job '{source}' "
+                f"{upstream_status.replace('_', ' ')}"
+            )
+            log.info(f"Skipping job '{job.name}': {note}")
+            result = JobResult(
+                job_index=job_idx,
+                job_name=job.name,
+                run_dir=(self.session_dir / job.name)
+                if self.session_dir
+                else Path("."),
+                run_id="",
+                success=False,
+                status="skipped_dependency",
+                error_summary=note,
+            )
+            results.append(result)
+            self._run_statuses[job.name] = "skipped_dependency"
+            self._update_job_status(job.name, "skipped_dependency", {"note": note})
+            self._emit_snapshot(
+                ProgressSnapshot(
+                    kind="job_skipped",
+                    job_name=job.name,
+                    job_index=job_idx,
+                    total_jobs=job_total,
+                    engine=engine_name,
+                    message=note,
+                )
+            )
+            return
+
+        # Resolve input (input/config boundary; the engine never starts).
+        try:
+            input_result = self._resolve_input(job, job_results)
+        except Exception as e:
+            result = self._fail_job(job, job_idx, job_total, e, run_dir=None)
+            results.append(result)
+            self._run_statuses[job.name] = "failed"
+            self._record_failure(result)
+            return
+
+        # Normal execution (engine/plugin boundary inside _run_job).
+        raw_outcome = self._run_job(
+            job,
+            job_idx,
+            job_total,
+            input_result,
+            display_total=len(logical_jobs),
+        )
+        # Keep one compatibility cycle for tests/extensions that patched the
+        # former private three-tuple return contract.
+        outcome = (
+            _JobOutcome(*raw_outcome)
+            if isinstance(raw_outcome, tuple)
+            else raw_outcome
+        )
+        results.append(outcome.result)
+        self._run_statuses[job.name] = outcome.result.status
+
+        if not outcome.result.success:
+            self._record_failure(outcome.result)
+            return
+
+        assert outcome.output is not None and outcome.context is not None
+        try:
+            self._handle_job_output(
+                job,
+                outcome.output,
+                job_results,
+                outcome.result.run_dir,
+                outcome.context,
+            )
+            outcome.context.checkpoints.complete()
+        except Exception as e:
+            failed = self._fail_job(
+                job,
+                job_idx,
+                job_total,
+                e,
+                run_dir=outcome.result.run_dir,
+                run_id=outcome.result.run_id,
+            )
+            results[-1] = failed
+            self._run_statuses[job.name] = "failed"
+            self._record_failure(failed)
+            return
+
+        assert self.session_dir is not None
+        self._update_job_status(
+            job.name,
+            "completed",
+            {
+                "run_id": outcome.result.run_id,
+                "output_dir": str(
+                    outcome.result.run_dir.relative_to(self.session_dir)
+                ),
+            },
+        )
+
+    def _record_failure(self, result: JobResult) -> None:
+        """Write the failed manifest entry referencing the error report."""
+        self._update_job_status(
+            result.job_name,
+            "failed",
+            {
+                "error_id": result.error_id,
+                "error_code": result.error_code,
+                "error": result.error_summary,
+                "error_report": result.error_report_path,
+            },
+        )
+
+    def _emit_snapshot(self, snapshot: ProgressSnapshot) -> None:
+        """Deliver a progress snapshot to the registered consumer."""
+        if self.on_progress is not None:
+            self.on_progress(snapshot)
+
+    @staticmethod
+    def _scan_summary(job: JobConfig) -> dict[str, Any] | None:
+        """Small scan descriptor for start events and error reports."""
+        if job.scan is None:
+            return None
+        try:
+            return job.scan.compile().summary()
+        except Exception:
+            return None
+
+    def _fail_job(
+        self,
+        job: JobConfig,
+        job_idx: int,
+        job_total: int,
+        exc: BaseException,
+        *,
+        run_dir: Path | None,
+        run_id: str = "",
+        stage: str | None = None,
+        plugin: str | None = None,
+    ) -> JobResult:
+        """Build the structured error report for a failed job, exactly once.
+
+        This is the single place that logs the exception traceback and writes
+        ``error_report.json``; callers must not re-log the same failure.
+        """
+        report = build_error_report(
+            exc,
+            session_id=self.session_id,
+            job_name=job.name,
+            engine=job.get_engine_name(),
+            stage=stage,
+            plugin=plugin,
+            run_dir=run_dir,
+            scan_context=self._scan_summary(job),
+            log_file=self._session_log_path,
+        )
+        if run_dir is not None:
+            target_dir = run_dir
+        elif self.session_dir is not None:
+            target_dir = self.session_dir / job.name
+        else:
+            target_dir = Path(".")
+        report_path = save_error_report(report, target_dir)
+        log.exception(f"Job '{job.name}' failed [{report.code}]: {report.summary}")
+        summary = report.summary_dto(
+            report_path=str(report_path) if report_path is not None else None
+        )
+        self._emit_snapshot(
+            ProgressSnapshot(
+                kind="job_failed",
+                job_name=job.name,
+                job_index=job_idx,
+                total_jobs=job_total,
+                engine=job.get_engine_name(),
+                stage=stage,
+                run_dir=str(target_dir),
+                error=summary,
+                message=report.summary,
+            )
+        )
+        return JobResult(
+            job_index=job_idx,
+            job_name=job.name,
+            run_dir=target_dir,
+            run_id=run_id,
+            success=False,
+            status="failed",
+            error_summary=report.summary,
+            error_id=report.error_id,
+            error_code=report.code,
+            error_report_path=(
+                str(report_path) if report_path is not None else None
+            ),
+        )
 
     def _get_merged_config_for_job(self, job: JobConfig) -> dict[str, Any]:
         """Merge global system config with job-specific overrides.
@@ -561,15 +804,18 @@ class Scheduler:
         input_result: ResultProtocol | None,
         *,
         display_total: int | None = None,
-    ) -> tuple[JobResult, ResultProtocol, ExecutionContext]:
-        """Execute a single job and return its result.
+    ) -> _JobOutcome:
+        """Execute a single job and return its outcome.
 
         This method handles the complete job execution lifecycle:
         1. Create run directory and generate run ID
         2. Merge global config with job-specific config
         3. Build plugin instances from configuration
         4. Instantiate and run the engine
-        5. Report progress and save snapshot
+        5. Aggregate progress events and save snapshot
+
+        Plugin and engine failures are converted into a failed ``_JobOutcome``
+        with a structured error report; this method does not re-raise them.
 
         Parameters
         ----------
@@ -582,34 +828,65 @@ class Scheduler:
         input_result : ResultProtocol | None
             Input data from upstream job, or None
         display_total : int | None, optional
-            Number of jobs to display in progress reporting. When a job is
-            batched, this is the number of original (pre-batch) jobs so that
-            ETA and progress percentages reflect the user's mental model.
+            Number of jobs to display in progress reporting, so progress
+            reflects the user's mental model.
 
         Returns
         -------
-        tuple[JobResult, ResultProtocol]
-            Tuple of (job execution metadata, engine output result)
-
-        Raises
-        ------
-        QPhasePluginError
-            If engine instantiation fails
-        QPhaseRuntimeError
-            If engine execution fails
+        _JobOutcome
+            Job execution metadata, engine output (on success), and the
+            execution context (on success).
 
         """
         display_total = job_total if display_total is None else display_total
         run_id = self._generate_run_id()
         run_dir = self._create_run_dir(job, run_id)
+        engine_name = job.get_engine_name()
+        tracker = self._make_tracker()
+        clock_start = time.monotonic()
 
+        with bind_log_context(
+            session_id=self.session_id, job=job.name, engine=engine_name
+        ):
+            try:
+                return self._run_job_inner(
+                    job,
+                    job_idx,
+                    display_total,
+                    input_result,
+                    run_id=run_id,
+                    run_dir=run_dir,
+                    engine_name=engine_name,
+                    tracker=tracker,
+                    clock_start=clock_start,
+                )
+            except Exception as e:
+                result = self._fail_job(
+                    job,
+                    job_idx,
+                    display_total,
+                    e,
+                    run_dir=run_dir,
+                    run_id=run_id,
+                    stage=tracker.current_stage,
+                )
+                return _JobOutcome(result=result, output=None, context=None)
+
+    def _run_job_inner(
+        self,
+        job: JobConfig,
+        job_idx: int,
+        display_total: int,
+        input_result: ResultProtocol | None,
+        *,
+        run_id: str,
+        run_dir: Path,
+        engine_name: str,
+        tracker: ProgressTracker,
+        clock_start: float,
+    ) -> _JobOutcome:
+        """Job body executed under the error boundary of :meth:`_run_job`."""
         merged_config = self._get_merged_config_for_job(job)
-
-        try:
-            from .registry import registry
-        except ImportError:
-            # Should be available
-            pass
 
         # Plugin namespaces that may appear as top-level keys in a job file.
         plugin_keys = [
@@ -631,11 +908,10 @@ class Scheduler:
         # Determine target Engine class to inspect Manifest
         # This helps us decide which plugins are actually needed
         engine_config_dict = merged_config.get("engine", {})
-        job_engine_name = job.get_engine_name()
 
         target_engine_name = None
-        if job_engine_name:
-            target_engine_name = job_engine_name
+        if engine_name:
+            target_engine_name = engine_name
         elif engine_config_dict:
             target_engine_name = list(engine_config_dict.keys())[0]
 
@@ -730,214 +1006,223 @@ class Scheduler:
             )
         except Exception as e:
             raise QPhasePluginError(
-                f"Failed to instantiate engine '{job.get_engine_name()}': {e}"
+                f"Failed to instantiate engine '{engine_name}': {e}",
+                code=ErrorCode.PLUGIN_CREATION,
+                hint="Check the engine configuration against its schema.",
+                context={"engine": engine_name},
             ) from e
 
         # Also write snapshot
         self._write_snapshot(run_dir, job, merged_config, job_idx)
 
-        # Report job start
-        if self.on_progress is not None:
-            self.on_progress(
-                JobProgressUpdate(
+        # Structured progress plumbing: engines emit work events through the
+        # reporter; the tracker aggregates them into snapshots. Legacy engines
+        # keep working through the percent-signature adapter.
+        on_progress = self.on_progress
+
+        def _sink(event: ProgressEvent) -> None:
+            observed = tracker.observe(event)
+            if observed.stage:
+                set_log_context(stage=observed.stage)
+            if on_progress is None:
+                return
+            fraction, rate, remaining = tracker.estimates(observed)
+            on_progress(
+                ProgressSnapshot(
+                    kind=(
+                        "job_status" if observed.kind == "status" else "job_progress"
+                    ),
                     job_name=job.name,
                     job_index=job_idx,
                     total_jobs=display_total,
-                    message="Starting job...",
+                    engine=engine_name,
+                    stage=observed.stage,
+                    completed=observed.completed,
+                    total=observed.total,
+                    unit=observed.unit,
+                    fraction=fraction,
+                    elapsed=tracker.elapsed(observed),
+                    rate=rate,
+                    remaining=remaining,
+                    message=observed.message,
+                    monotonic_time=observed.monotonic_time,
                 )
             )
 
-        try:
-            # Prepare progress callback
-            progress_cb = None
-            if self.on_progress is not None:
-                import time
+        reporter = ProgressReporter(_sink)
+        legacy_cb = reporter.legacy_callback()
 
-                last_update_time = 0.0
-                min_interval = self.system_config.progress_update_interval
+        effective_system = job.merge_with_system_config(self.system_config)
+        backend = plugins.get("backend")
+        backend_name = None
+        if backend is not None and hasattr(backend, "backend_name"):
+            backend_name = str(backend.backend_name())
+        backend_config = getattr(backend, "config", None)
+        dtype = getattr(backend_config, "float_dtype", None)
+        plugin_ids = {
+            name: plugin_fingerprint(instance)
+            for name, instance in plugins.items()
+            if "." not in name
+        }
+        fingerprint = execution_fingerprint(
+            job.model_dump(by_alias=True),
+            plugins=plugin_ids,
+            backend=backend_name,
+            dtype=None if dtype is None else str(dtype),
+        )
+        context = ExecutionContext(
+            parameter_grid=job.scan.compile() if job.scan is not None else None,
+            resources=ResourceSnapshot.from_system_config(effective_system),
+            progress=reporter,
+            cancellation=CancellationToken(),
+            artifacts=ArtifactStore(run_dir, effective_system.scan_runtime),
+            checkpoints=CheckpointStore(
+                run_dir,
+                effective_system.scan_runtime.checkpoint,
+                fingerprint,
+            ),
+            run_dir=run_dir,
+            metadata={
+                "job_name": job.name,
+                "scan_summary": self._scan_summary(job),
+            },
+        )
 
-                def _on_engine_progress(
-                    percent: float | None,
-                    total_duration_estimate: float | None,
-                    message: str,
-                    stage: str | None,
-                ) -> None:
-                    nonlocal last_update_time
-                    now = time.monotonic()
-
-                    # Rate limiting: only update if interval passed or job finished
-                    # (percent=1.0)
-                    if (
-                        now - last_update_time < min_interval
-                        and percent is not None
-                        and percent < 1.0
-                    ):
-                        return
-
-                    last_update_time = now
-
-                    # Calculate Job ETA
-                    job_eta = None
-                    if (
-                        percent is not None
-                        and total_duration_estimate is not None
-                        and percent > 0
-                    ):
-                        job_eta = total_duration_estimate * (1.0 - percent)
-
-                    # Calculate Global ETA (only for expanded jobs)
-                    # Heuristic: if display_total > 1, assume homogeneous expansion
-                    global_eta = None
-                    if (
-                        display_total > 1
-                        and job_eta is not None
-                        and total_duration_estimate is not None
-                    ):
-                        # Simple extrapolation: remaining jobs * current job total
-                        # duration. Use display_total so batching is accounted for.
-                        remaining_jobs = display_total - job_idx
-                        global_eta = job_eta + (
-                            remaining_jobs * total_duration_estimate
-                        )
-
-                    if self.on_progress is not None:
-                        self.on_progress(
-                            JobProgressUpdate(
-                                job_name=job.name,
-                                job_index=job_idx,
-                                total_jobs=display_total,
-                                message=message,
-                                percent=percent,
-                                job_eta=job_eta,
-                                global_eta=global_eta,
-                                stage=stage,
-                            )
-                        )
-
-                progress_cb = _on_engine_progress
-
-            effective_system = job.merge_with_system_config(self.system_config)
-            backend = plugins.get("backend")
-            backend_name = None
-            if backend is not None and hasattr(backend, "backend_name"):
-                backend_name = str(backend.backend_name())
-            backend_config = getattr(backend, "config", None)
-            dtype = getattr(backend_config, "float_dtype", None)
-            plugin_ids = {
-                name: plugin_fingerprint(instance)
-                for name, instance in plugins.items()
-                if "." not in name
-            }
-            fingerprint = execution_fingerprint(
-                job.model_dump(by_alias=True),
-                plugins=plugin_ids,
-                backend=backend_name,
-                dtype=None if dtype is None else str(dtype),
-            )
-            context = ExecutionContext(
-                parameter_grid=job.scan.compile() if job.scan is not None else None,
-                resources=ResourceSnapshot.from_system_config(effective_system),
-                progress=ProgressReporter(progress_cb),
-                cancellation=CancellationToken(),
-                artifacts=ArtifactStore(run_dir, effective_system.scan_runtime),
-                checkpoints=CheckpointStore(
-                    run_dir,
-                    effective_system.scan_runtime.checkpoint,
-                    fingerprint,
-                ),
-                run_dir=run_dir,
-                metadata={
-                    "job_name": job.name,
-                    "scan_summary": (
-                        job.scan.compile().summary() if job.scan is not None else None
-                    ),
-                },
-            )
-
-            output_result: ResultProtocol
-            if job.input is not None and job.input.mode == "map":
-                if not isinstance(input_result, DatasetResultProtocol):
-                    raise QPhaseConfigError(
-                        f"job {job.name!r} uses input.mode=map but its source is not "
-                        "a dataset result"
-                    )
-                mapped: OrderedDict[str, ResultProtocol] = OrderedDict()
-                for label, view in iter_dataset_views(
+        output_result: ResultProtocol
+        if job.input is not None and job.input.mode == "map":
+            if not isinstance(input_result, DatasetResultProtocol):
+                raise QPhaseConfigError(
+                    f"job {job.name!r} uses input.mode=map but its source is not "
+                    "a dataset result",
+                    code=ErrorCode.INPUT,
+                )
+            mapped: OrderedDict[str, ResultProtocol] = OrderedDict()
+            views = list(
+                iter_dataset_views(
                     input_result,
                     select=job.input.select,
                     group_by=tuple(job.input.group_by),
-                ):
+                )
+            )
+            total_views = len(views)
+            for view_index, (label, view) in enumerate(views, start=1):
+                reporter.update(
+                    completed=view_index - 1,
+                    total=total_views,
+                    unit="view",
+                    stage="map",
+                    message=f"map view {view_index}/{total_views}: {label}",
+                )
+
+                def _map_child_sink(
+                    event: ProgressEvent,
+                    current_view_index: int = view_index,
+                ) -> None:
+                    detail = event.message or event.stage or "running"
+                    reporter.status(
+                        f"map view {current_view_index}/{total_views}: {detail}",
+                        stage="map",
+                        metadata={
+                            "view_index": current_view_index - 1,
+                            "view_total": total_views,
+                            "child_stage": event.stage,
+                            "child_completed": event.completed,
+                            "child_total": event.total,
+                            "child_unit": event.unit,
+                        },
+                    )
+
+                child_reporter = ProgressReporter(_map_child_sink)
+                context.progress = child_reporter
+                try:
                     mapped[label] = self._invoke_engine(
-                        engine, view, context, progress_cb
+                        engine,
+                        view,
+                        context,
+                        child_reporter.legacy_callback(),
                     )
-                preserves_shape = not job.input.select and not job.input.group_by
-                output_result = MappedDatasetResult(
-                    mapped,
-                    dict(input_result.axes)
-                    if preserves_shape
-                    else {"view": list(range(len(mapped)))},
-                    input_result.shape if preserves_shape else (len(mapped),),
-                    meta={"source": job.input.from_, "mode": "map"},
-                )
-            else:
-                output_result = self._invoke_engine(
-                    engine, input_result, context, progress_cb
-                )
-
-            # Ensure output is a ResultProtocol object
-            if not isinstance(output_result, ResultProtocol):
-                raise QPhaseRuntimeError(
-                    f"Engine '{job.get_engine_name()}' did not return a "
-                    f"ResultProtocol object. "
-                    f"All engines must return a ResultProtocol instance from "
-                    f"their run() method."
-                )
-
-            # Report job completion
-            if self.on_progress is not None:
-                self.on_progress(
-                    JobProgressUpdate(
-                        job_name=job.name,
-                        job_index=job_idx,
-                        total_jobs=job_total,
-                        message="Completed successfully",
-                        percent=1.0,
-                    )
-                )
-
-            if self.on_run_dir is not None:
-                self.on_run_dir(run_dir)
-
-            return (
-                JobResult(
-                    job_index=job_idx,
-                    job_name=job.name,
-                    run_dir=run_dir,
-                    run_id=run_id,
-                    success=True,
-                ),
-                output_result,
-                context,
+                finally:
+                    context.progress = reporter
+            reporter.update(
+                completed=total_views,
+                total=total_views,
+                unit="view",
+                stage="map",
+                message="map views complete",
+            )
+            preserves_shape = not job.input.select and not job.input.group_by
+            output_result = MappedDatasetResult(
+                mapped,
+                dict(input_result.axes)
+                if preserves_shape
+                else {"view": list(range(len(mapped)))},
+                input_result.shape if preserves_shape else (len(mapped),),
+                meta={"source": job.input.from_, "mode": "map"},
+            )
+        else:
+            output_result = self._invoke_engine(
+                engine, input_result, context, legacy_cb
             )
 
-        except Exception as e:
-            # Report job failure
-            if self.on_progress is not None:
-                self.on_progress(
-                    JobProgressUpdate(
-                        job_name=job.name,
-                        job_index=job_idx,
-                        total_jobs=job_total,
-                        message=f"Failed: {e}",
-                        percent=0.0,
-                    )
-                )
-
-            log.error(f"Job execution failed: {e}")
+        # Ensure output is a ResultProtocol object
+        if not isinstance(output_result, ResultProtocol):
             raise QPhaseRuntimeError(
-                f"Job '{job.name}' execution failed in engine "
-                f"'{job.get_engine_name()}': {e}"
-            ) from e
+                f"Engine '{engine_name}' did not return a "
+                f"ResultProtocol object. "
+                f"All engines must return a ResultProtocol instance from "
+                f"their run() method."
+            )
+
+        # Report job completion
+        duration = time.monotonic() - clock_start
+        self._emit_snapshot(
+            ProgressSnapshot(
+                kind="job_completed",
+                job_name=job.name,
+                job_index=job_idx,
+                total_jobs=display_total,
+                engine=engine_name,
+                message="Completed successfully",
+                duration=duration,
+                run_dir=str(run_dir),
+            )
+        )
+
+        if self.on_run_dir is not None:
+            self.on_run_dir(run_dir)
+
+        return _JobOutcome(
+            result=JobResult(
+                job_index=job_idx,
+                job_name=job.name,
+                run_dir=run_dir,
+                run_id=run_id,
+                success=True,
+                status="completed",
+            ),
+            output=output_result,
+            context=context,
+        )
+
+    def _make_tracker(self) -> ProgressTracker:
+        """Create a progress tracker parameterized by reporting config."""
+        try:
+            cfg = self.system_config.reporting.progress
+        except AttributeError:
+            cfg = None
+        return ProgressTracker(
+            eta_warmup_seconds=self._cfg_number(cfg, "eta_warmup_seconds", 2.0),
+            eta_min_samples=int(self._cfg_number(cfg, "eta_min_samples", 3)),
+            eta_smoothing=self._cfg_number(cfg, "eta_smoothing", 0.25),
+        )
+
+    @staticmethod
+    def _cfg_number(cfg: Any, name: str, default: float) -> float:
+        """Read a numeric config value defensively (tolerates test doubles)."""
+        try:
+            return float(getattr(cfg, name))
+        except (TypeError, ValueError, AttributeError):
+            return default
 
     @staticmethod
     def _invoke_engine(
@@ -1301,7 +1586,7 @@ def run_jobs(
     job_list: JobList,
     *,
     default_output_dir: str | None = None,
-    on_progress: Callable[[JobProgressUpdate], None] | None = None,
+    on_progress: Callable[[ProgressSnapshot], None] | None = None,
     on_run_dir: Callable[[Path], None] | None = None,
 ) -> list[JobResult]:
     """Execute a list of jobs.
@@ -1314,7 +1599,7 @@ def run_jobs(
         List of jobs to execute
     default_output_dir : str | None, optional
         Override default output directory
-    on_progress : Callable[[JobProgressUpdate], None] | None, optional
+    on_progress : Callable[[ProgressSnapshot], None] | None, optional
         Progress callback function
     on_run_dir : Callable[[Path], None] | None, optional
         Callback invoked with run directory after each job completes

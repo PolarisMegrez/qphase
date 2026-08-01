@@ -117,3 +117,11 @@ checkpoint 兼容性绑定配置 hash、插件版本、backend 与 dtype。最�
 正常 CLI 只显示逻辑 job、scan shape、状态和结果目录。轴与 chunk 细节只在
 `--plan` 或 verbose 输出中展示。service DTO 已提供 scan summary 与内部进度事件，
 供未来客户端使用，本轮不要求 GUI 改动。
+
+engine 按 stage 报告 `completed`、`total` 和自然工作单位。core 经过短暂
+warm-up 后，仅在当前 `(stage, unit)` 范围内估算速率和剩余时间；stage 切换会
+重置估算器。总量未知时只显示 elapsed，不会根据异构 job 外推 workflow ETA；
+workflow 层只显示已完成逻辑 job 数。
+
+对于 `input.mode=map`，scheduler 只按已完成 view 计数。子 engine 的进度作为
+map stage 的 verbose status 暴露，避免大型 dataset 为每个 point 产生独立终端流。

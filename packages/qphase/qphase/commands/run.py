@@ -12,13 +12,12 @@ Public API
 """
 
 import json
+import logging
 import sys
 from pathlib import Path
-from typing import cast
 
 import typer
 
-from qphase.core import JobProgressUpdate
 from qphase.core.config_loader import (
     _find_job_config,
     load_jobs_from_files,
@@ -32,6 +31,8 @@ from qphase.core.registry import discovery, registry
 from qphase.core.system_config import load_system_config
 from qphase.service import SchedulerService
 from qphase.service.models import ExecutionPlan
+
+from .progress import CliProgressRenderer, ProgressLogHandler
 
 app = typer.Typer()
 log = get_logger()
@@ -74,10 +75,10 @@ def jobs(
         False, "--list", help="List available jobs and exit"
     ),
     verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable verbose logging"
+        False, "--verbose", "-v", help="Show detailed progress information"
     ),
     log_file: str | None = typer.Option(None, help="Write logs to file path"),
-    log_json: bool = typer.Option(False, help="Log in JSON format"),
+    log_json: bool = typer.Option(False, help="Write file logs in JSON format"),
     suppress_warnings: bool = typer.Option(False, help="Suppress warnings output"),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Build the execution plan without running jobs"
@@ -137,25 +138,38 @@ def jobs(
         _list_engines()
         return
 
-    # Configure logging
-    configure_logging(
-        verbose=verbose,
-        log_file=log_file,
-        as_json=log_json,
-        suppress_warnings=suppress_warnings,
-    )
-
-    if not list_jobs and not job_names:
-        log.error("No job names provided. Use --list to list available jobs.")
-        raise typer.Exit(code=1)
-
     try:
+        system_cfg = load_system_config()
+        progress_cfg = system_cfg.reporting.progress
+        logging_cfg = system_cfg.reporting.logging
+        renderer = None
+        console_handler: logging.Handler
+        if json_output:
+            console_handler = logging.NullHandler()
+        else:
+            renderer = CliProgressRenderer(
+                verbose=verbose,
+                refresh_interval=progress_cfg.refresh_interval,
+                milestone_percent=progress_cfg.non_tty_milestone_percent,
+            )
+            console_handler = ProgressLogHandler(renderer)
+        configure_logging(
+            verbose=verbose,
+            log_file=log_file,
+            as_json=log_json or logging_cfg.format == "json",
+            suppress_warnings=suppress_warnings or not logging_cfg.capture_warnings,
+            console_level=logging_cfg.console_level,
+            file_level=logging_cfg.file_level,
+            console_handler=console_handler,
+        )
+
+        if not list_jobs and not job_names:
+            raise QPhaseError("No job names provided. Use --list to list jobs.")
+
         # Ensure plugins are discovered
         discovery.discover_plugins()
         discovery.discover_local_plugins()
 
-        # Load system configuration to get config directories
-        system_cfg = load_system_config()
         scheduler_service = SchedulerService(system_cfg)
 
         # Handle --list option
@@ -210,7 +224,7 @@ def jobs(
                 typer.echo(_format_execution_plan(plan_obj))
             return
 
-        progress_callback = None if json_output else _make_progress_callback()
+        progress_callback = None if renderer is None else renderer.handle
 
         # Execute jobs
         log.debug("Starting job execution")
@@ -222,22 +236,24 @@ def jobs(
 
         # Report results
         success_count = sum(1 for r in results if r.success)
+        skipped_count = sum(1 for r in results if r.status == "skipped_dependency")
+        failed_count = sum(1 for r in results if r.status == "failed")
         total_count = len(results)
-
-        if success_count == total_count:
-            log.debug(f"All {total_count} jobs completed successfully")
-        else:
-            failed = total_count - success_count
-            log.warning(
-                f"{success_count}/{total_count} jobs succeeded ({failed} failed)"
-            )
 
         if json_output:
             typer.echo(
                 json.dumps(
                     {
                         "success_count": success_count,
+                        "failed_count": failed_count,
+                        "skipped_count": skipped_count,
                         "total_count": total_count,
+                        "session_dir": (
+                            str(scheduler_service.last_run_handle.session_dir)
+                            if scheduler_service.last_run_handle
+                            and scheduler_service.last_run_handle.session_dir
+                            else None
+                        ),
                         "results": [
                             {
                                 "job_index": result.job_index,
@@ -245,7 +261,11 @@ def jobs(
                                 "run_dir": str(result.run_dir),
                                 "run_id": result.run_id,
                                 "success": result.success,
-                                "error": result.error,
+                                "status": result.status,
+                                "error_summary": result.error_summary,
+                                "error_id": result.error_id,
+                                "error_code": result.error_code,
+                                "error_report_path": result.error_report_path,
                             }
                             for result in results
                         ],
@@ -253,69 +273,35 @@ def jobs(
                     indent=2,
                 )
             )
+            if failed_count or skipped_count:
+                raise typer.Exit(code=1)
             return
 
-        # Print run directories
-        typer.echo("\nRun directories:")
-        for result in results:
-            if result.success:
-                typer.echo(f"  [{result.job_name}] {result.run_dir}")
-            else:
-                typer.echo(f"  [{result.job_name}] FAILED: {result.error}")
+        typer.echo(
+            f"\nSummary: {success_count} completed, {failed_count} failed, "
+            f"{skipped_count} skipped"
+        )
+        if scheduler_service.last_run_handle is not None:
+            typer.echo(f"Session: {scheduler_service.last_run_handle.session_dir}")
+        if failed_count or skipped_count:
+            raise typer.Exit(code=1)
 
+    except typer.Exit:
+        raise
     except QPhaseError as e:
-        log.error(str(e))
+        if json_output:
+            typer.echo(json.dumps({"status": "failed", "error": str(e)}))
+        else:
+            log.error(str(e))
         raise typer.Exit(code=1) from e
     except Exception as e:
-        log.error(f"Unexpected error: {e}")
-        raise typer.Exit(code=1) from e
-
-
-def _make_progress_callback():
-    """Create a progress callback for the scheduler."""
-
-    def _on_progress(update: JobProgressUpdate):
-        # Format total duration estimate (total estimated time including elapsed)
-        total_est = update.global_eta
-        est_ok = total_est is not None and total_est == total_est and total_est >= 0.0
-        mm = int(cast(float, total_est) // 60) if est_ok else 0
-        ss = int(cast(float, total_est) % 60) if est_ok else 0
-        est_str = f"~{mm:02d}:{ss:02d}" if est_ok else "--:--"
-
-        # Job counter (1-based)
-        job_str = f"[{update.job_index + 1}/{update.total_jobs}]"
-
-        # Build progress message
-        has_progress = update.percent is not None
-        if has_progress:
-            # Ensure percent is float
-            p_val = float(update.percent) if update.percent is not None else 0.0
-            percent = p_val * 100.0
-
-            # Visual bar
-            bar_len = 20
-            filled = int(p_val * bar_len)
-            # Clamp filled to bar_len
-            filled = max(0, min(filled, bar_len))
-            bar = "=" * filled + "-" * (bar_len - filled)
-
-            msg = (
-                f"{job_str} [{update.job_name}] {percent:5.1f}% [{bar}] ETA: {est_str}"
+        if json_output:
+            typer.echo(
+                json.dumps({"status": "failed", "error": f"Unexpected error: {e}"})
             )
         else:
-            msg = f"{job_str} [{update.job_name}] {update.message}"
-
-        # Clear line and print
-        # Use ANSI escape code to clear line if supported, or just padding
-        # \033[K clears from cursor to end of line
-        sys.stdout.write(f"\r{msg:<80}")
-        sys.stdout.flush()
-
-        if has_progress and percent >= 100.0:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-
-    return _on_progress
+            log.error(f"Unexpected error: {e}")
+        raise typer.Exit(code=1) from e
 
 
 def _format_execution_plan(plan: ExecutionPlan) -> str:

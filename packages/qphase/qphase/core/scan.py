@@ -225,8 +225,10 @@ def execute_pointwise(
                 context.checkpoints.save_chunk(key, cached)
         output[start:stop] = cached
         if context is not None:
-            context.progress.report(
-                (chunk_index + 1) / total_chunks,
+            context.progress.update(
+                completed=chunk_index + 1,
+                total=total_chunks,
+                unit="chunk",
                 message=f"scan chunk {chunk_index + 1}/{total_chunks}",
                 stage="scan",
             )

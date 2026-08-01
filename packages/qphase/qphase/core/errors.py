@@ -26,6 +26,7 @@ import logging
 import os
 import warnings
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, TypeVar, cast
 
 __all__ = [
@@ -37,10 +38,26 @@ __all__ = [
     "QPhaseSchedulerError",
     "QPhaseRuntimeError",
     "QPhaseCLIError",
+    "ErrorCode",
     "get_logger",
     "configure_logging",
+    "attach_session_log",
     "deprecated",
 ]
+
+
+class ErrorCode:
+    """Stable machine-readable error codes, partitioned by failure boundary."""
+
+    CONFIG = "config"
+    PLUGIN_DISCOVERY = "plugin_discovery"
+    PLUGIN_CREATION = "plugin_creation"
+    INPUT = "input"
+    ENGINE_RUNTIME = "engine_runtime"
+    ARTIFACT_IO = "artifact_io"
+    CHECKPOINT = "checkpoint"
+    CANCELLATION = "cancellation"
+    UNKNOWN = "unknown"
 
 
 # Base exception hierarchy
@@ -49,6 +66,19 @@ class QPhaseError(Exception):
 
     This is the root exception class for all framework-specific errors.
     All other framework exceptions should inherit from this class.
+
+    Parameters
+    ----------
+    message : str
+        User-readable, single-line error summary.
+    code : str | None
+        Stable machine-readable error code (see ``ErrorCode``). When omitted,
+        the reporting layer derives one from the exception type.
+    hint : str | None
+        Optional actionable suggestion shown in CLI error briefs.
+    context : dict | None
+        Small structured context (engine, stage, plugin, scan point...) merged
+        into the final error report. Never store large arrays here.
 
     Examples
     --------
@@ -60,7 +90,18 @@ class QPhaseError(Exception):
 
     """
 
-    pass
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        code: str | None = None,
+        hint: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.hint = hint
+        self.context: dict[str, Any] = dict(context) if context else {}
 
 
 class QPhaseWarning(Warning):
@@ -194,6 +235,57 @@ class QPhaseCLIError(QPhaseError):
 _logger: logging.Logger | None = None
 
 
+class _BriefFormatter(logging.Formatter):
+    """Console formatter that never emits tracebacks.
+
+    Full exception details belong to the log file and the structured error
+    report; the console only shows the single-line message.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        exc_info, exc_text = record.exc_info, record.exc_text
+        record.exc_info, record.exc_text = None, None
+        try:
+            return super().format(record)
+        finally:
+            record.exc_info, record.exc_text = exc_info, exc_text
+
+
+class _JsonLogFormatter(logging.Formatter):
+    """Compact JSON-lines formatter for file logs."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        import json
+
+        payload = {
+            "time": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "session": getattr(record, "session_id", None),
+            "job": getattr(record, "job", None),
+            "engine": getattr(record, "engine", None),
+            "stage": getattr(record, "stage", None),
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, default=str)
+
+
+_FILE_TEXT_FORMAT = (
+    "%(asctime)s %(levelname)s %(name)s "
+    "[session=%(session_id)s job=%(job)s engine=%(engine)s stage=%(stage)s] "
+    "%(message)s"
+)
+_CONSOLE_TEXT_FORMAT = "[%(levelname)s] %(message)s"
+
+
+def _file_formatter(as_json: bool) -> logging.Formatter:
+    if as_json:
+        return _JsonLogFormatter()
+    return logging.Formatter(_FILE_TEXT_FORMAT)
+
+
 def get_logger() -> logging.Logger:
     """Get the shared qphase logger instance.
 
@@ -227,56 +319,80 @@ def configure_logging(
     log_file: str | None = None,
     as_json: bool = False,
     suppress_warnings: bool = False,
+    *,
+    console_level: int | str = logging.WARNING,
+    file_level: int | str = logging.DEBUG,
+    console_handler: logging.Handler | None = None,
 ) -> None:
     """Configure the shared logger outputs and warning capture.
+
+    The logger itself runs at DEBUG so attached file handlers capture
+    everything. The console handler only carries warnings and errors as
+    brief one-line messages; normal lifecycle output belongs to the CLI
+    renderer, and full DEBUG content belongs to the session log file.
 
     Parameters
     ----------
     verbose : bool, default False
-        When True, set logger level to DEBUG; otherwise INFO.
+        Kept for CLI compatibility. When True the console handler level is
+        lowered to INFO.
     log_file : str or None, default None
-        Optional file path to append logs. Invalid paths are ignored silently.
+        Optional explicit file path for an additional file log. Failures to
+        create it produce one explicit warning instead of being ignored.
     as_json : bool, default False
-        Emit logs in a compact JSON line format when True; otherwise plain text.
+        Emit file logs in a compact JSON line format. Only affects file
+        handlers; the console stays human-readable.
     suppress_warnings : bool, default False
         Route Python warnings into logging and raise their level to ERROR when
         True; otherwise capture warnings at WARNING level.
+    console_level : int or str, default logging.WARNING
+        Level for the console handler.
+    file_level : int or str, default logging.DEBUG
+        Level for file handlers.
+    console_handler : logging.Handler or None, default None
+        Optional pre-built handler (e.g. one routing through the CLI progress
+        renderer) replacing the default stderr console handler.
 
     Examples
     --------
     >>> configure_logging(verbose=True, as_json=False)  # doctest: +SKIP
     >>> logger = get_logger()
-    >>> logger.level in (logging.INFO, logging.DEBUG)
+    >>> logger.level == logging.DEBUG
     True
 
     """
+    from .logging_context import LogContextFilter
+
     logger = get_logger()
     # Clear existing handlers
     for h in list(logger.handlers):
         logger.removeHandler(h)
-    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
-    # Console handler
-    ch = logging.StreamHandler()
-    if as_json:
-        fmt = logging.Formatter(
-            '{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","msg":"%(message)s"}'
-        )
-    else:
-        fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    ch.setFormatter(fmt)
+    # Console handler: brief, warnings and errors only, never a traceback.
+    if verbose and console_level == logging.WARNING:
+        console_level = logging.INFO
+    ch = console_handler if console_handler is not None else logging.StreamHandler()
+    ch.setLevel(console_level)
+    if console_handler is None:
+        ch.setFormatter(_BriefFormatter(_CONSOLE_TEXT_FORMAT))
+        ch.addFilter(LogContextFilter())
     logger.addHandler(ch)
 
-    # File handler
+    # Explicit file handler (in addition to the per-session log file).
     if log_file:
         try:
             path = os.fspath(log_file)
             fh = logging.FileHandler(path, encoding="utf-8")
-            fh.setFormatter(fmt)
+            fh.setLevel(file_level)
+            fh.setFormatter(_file_formatter(as_json))
+            fh.addFilter(LogContextFilter())
             logger.addHandler(fh)
-        except Exception:
-            # Ignore invalid file handler targets
-            pass
+        except Exception as exc:
+            logger.warning(
+                f"Could not create log file '{log_file}': {exc}. "
+                "File logging for this path is disabled."
+            )
 
     if suppress_warnings:
         logging.captureWarnings(True)
@@ -284,6 +400,42 @@ def configure_logging(
     else:
         logging.captureWarnings(True)
         logging.getLogger("py.warnings").setLevel(logging.WARNING)
+
+
+def attach_session_log(
+    session_dir: str | Path,
+    *,
+    filename: str = "qphase.log",
+    level: int | str = logging.DEBUG,
+    as_json: bool = False,
+) -> tuple[Path | None, logging.Handler | None]:
+    """Attach the per-session DEBUG log file under ``session_dir``.
+
+    Returns
+    -------
+    tuple[Path | None, logging.Handler | None]
+        The log path and its handler (so callers can detach it later). Both
+        are None when the file cannot be created; in that case one explicit
+        warning is emitted instead of failing silently.
+
+    """
+    from .logging_context import LogContextFilter
+
+    logger = get_logger()
+    path = Path(session_dir) / filename
+    try:
+        handler: logging.Handler = logging.FileHandler(path, encoding="utf-8")
+        handler.setLevel(level)
+        handler.setFormatter(_file_formatter(as_json))
+        handler.addFilter(LogContextFilter())
+        logger.addHandler(handler)
+        return path, handler
+    except Exception as exc:
+        logger.warning(
+            f"Could not create session log file '{path}': {exc}. "
+            "Session file logging is disabled."
+        )
+        return None, None
 
 
 T = TypeVar("T")

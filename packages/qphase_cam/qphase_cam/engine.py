@@ -51,9 +51,11 @@ class Engine(EngineBase):
         model = self._required("model")
         backend = self._required("backend")
         solver = self._required("cam_solver")
-        reporter = context.progress if context is not None else progress_cb
-        if reporter:
-            reporter(0.0, None, "Solving CAM fixed points", "solve")
+        reporter = context.progress if context is not None else None
+        if reporter is not None:
+            reporter.status("Solving CAM fixed points", stage="solve")
+        elif progress_cb is not None:
+            progress_cb(None, None, "Solving CAM fixed points", "solve")
         grid = context.parameter_grid if context is not None else None
         if grid is not None and solver.name == "continuation":
             raise ValueError(
@@ -79,8 +81,10 @@ class Engine(EngineBase):
                 result.meta.setdefault("postprocessor_metadata", {})[name] = dict(
                     processor.result_metadata
                 )
-        if reporter:
-            reporter(1.0, 0.0, "CAM analysis complete", "complete")
+        if reporter is not None:
+            reporter.status("CAM analysis complete", stage="complete")
+        elif progress_cb is not None:
+            progress_cb(1.0, None, "CAM analysis complete", "complete")
         return result
 
     def _solve_grid(

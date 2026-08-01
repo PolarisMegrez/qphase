@@ -76,11 +76,12 @@ class SchedulerService:
             job_list,
             resume_from=Path(resume_from) if resume_from is not None else None,
         )
-        success = all(result.success for result in results)
+        failed = any(result.status == "failed" for result in results)
+        skipped = any(result.status == "skipped_dependency" for result in results)
         self.last_run_handle = RunHandle(
             session_id=scheduler.session_id,
             session_dir=scheduler.session_dir,
-            status="completed" if success else "failed",
+            status="failed" if failed else "partial" if skipped else "completed",
         )
         return results
 

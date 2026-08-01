@@ -132,7 +132,21 @@ path can supply another file. The default policy is:
 
 ```yaml
 auto_save_results: true
-progress_update_interval: 0.5
+
+reporting:
+  progress:
+    refresh_interval: 0.5
+    non_tty_milestone_percent: 10.0
+    eta_warmup_seconds: 2.0
+    eta_min_samples: 3
+    eta_smoothing: 0.25
+  logging:
+    session_file: true
+    filename: qphase.log
+    file_level: DEBUG
+    console_level: WARNING
+    format: text
+    capture_warnings: true
 
 scan_runtime:
   storage_layout: auto

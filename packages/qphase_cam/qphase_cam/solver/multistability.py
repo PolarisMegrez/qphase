@@ -430,10 +430,12 @@ class MultistabilitySolver(CAMSolver):
                 if workers == requested_workers
                 else f"{workers}/{requested_workers} memory-limited"
             )
-            progress.report(
-                completed / max(total, 1),
+            progress.update(
+                completed=completed,
+                total=total,
+                unit="tile",
                 message=f"CAM tiles {completed}/{total}, workers={worker_text}",
-                stage="solve",
+                stage="solve_tiles",
             )
         cancellation = getattr(context, "cancellation", None)
         if cancellation is not None:
@@ -445,13 +447,12 @@ class MultistabilitySolver(CAMSolver):
             return
         progress = getattr(context, "progress", None)
         if progress is not None:
-            progress.report(
-                None,
+            progress.status(
                 message=(
                     f"CAM worker pool failed ({type(exc).__name__}); "
                     f"retrying with {workers} workers"
                 ),
-                stage="solve",
+                stage="solve_tiles",
             )
 
     @staticmethod
@@ -465,10 +466,13 @@ class MultistabilitySolver(CAMSolver):
             return
         progress = getattr(context, "progress", None)
         if progress is not None:
-            progress.report(
-                completed / max(total, 1),
+            stage = label.replace("-", "_").replace(" ", "_")
+            progress.update(
+                completed=completed,
+                total=total,
+                unit="point",
                 message=f"CAM {label} {completed}/{total}",
-                stage="solve",
+                stage=stage,
             )
         cancellation = getattr(context, "cancellation", None)
         if cancellation is not None:

@@ -68,12 +68,25 @@ class EngineBase(PluginBase, Protocol):
         self,
         data: Any | None = None,
         *,
-        progress_cb: Callable[[float | None, float | None, str, str | None], None]
-        | None = None,
+        context: ExecutionContext | None = None,
     ) -> ResultProtocol:
         """Execute the simulation and return a result object."""
         ...
 ```
+
+Engines report actual work rather than estimating durations:
+
+```python
+context.progress.update(
+    completed=completed_tiles,
+    total=total_tiles,
+    unit="tile",
+    stage="solve_tiles",
+)
+```
+
+The legacy percent-based `progress_cb` remains available for one compatibility
+cycle. New engines must use `ExecutionContext.progress`.
 
 ### 3. `BackendBase`
 The contract for computational backends (see [Backend System](backend.md)).

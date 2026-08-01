@@ -289,6 +289,12 @@ class Engine(EngineBase):
         if not self.config:
             raise RuntimeError("Engine not configured.")
 
+        reporter = context.progress if context is not None else None
+        if reporter is None and progress_cb is not None:
+            from qphase.core.progress import ProgressReporter
+
+            reporter = ProgressReporter.wrap_legacy(progress_cb)
+
         if getattr(self.config, "mode", "simulate") == "analyze":
             return self._run_analyze(data)
         grid = context.parameter_grid if context is not None else None
@@ -296,7 +302,7 @@ class Engine(EngineBase):
             from qphase_sde.scan import SDEParameterGridAdapter, SDEScanResult
 
             with SDEParameterGridAdapter(self, grid) as adapter:
-                combined = self._run_simulate(data, progress_cb=progress_cb)
+                combined = self._run_simulate(data, reporter=reporter, context=context)
             if not isinstance(combined, SDEResult):
                 raise TypeError("SDE simulation did not return an SDEResult")
             combined.meta.update(
@@ -311,7 +317,7 @@ class Engine(EngineBase):
                 adapter.base_params,
                 adapter.base_n_traj,
             )
-        return self._run_simulate(data, progress_cb=progress_cb)
+        return self._run_simulate(data, reporter=reporter, context=context)
 
     def _run_analyze(self, data: Any | None) -> ResultProtocol:
         """Run analysers on upstream input data without performing a simulation.
@@ -350,9 +356,8 @@ class Engine(EngineBase):
         self,
         data: Any | None,
         *,
-        progress_cb: (
-            Callable[[float | None, float | None, str, str | None], None] | None
-        ) = None,
+        reporter: Any | None = None,
+        context: Any | None = None,
     ) -> ResultProtocol:
         """Execute SDE simulation and optional per-job analysis."""
         assert self.config is not None
@@ -376,29 +381,31 @@ class Engine(EngineBase):
             else:
                 raise RuntimeError("No IC provided.")
 
-        # Adapter for progress callback
-        # SDE engine uses: (k, steps, eta, ic_index, ic_total)
-        # Protocol expects: (percent, total_duration_estimate, message, stage)
+        # Adapt the integration loop's counters to structured, monotonic work.
         sde_progress_cb = None
-        if progress_cb is not None:
+        if reporter is not None:
 
             def _sde_cb(
                 k: int, steps: int, eta: float, ic_index: int, ic_total: int
             ) -> None:
-                percent = k / steps if steps > 0 else 0.0
-
-                # Calculate total duration estimate from ETA
-                # ETA = Remaining = Total * (1 - p)
-                # Total = ETA / (1 - p)
-                total_est = None
-                if eta is not None and not np.isnan(eta) and percent < 1.0:
-                    try:
-                        total_est = eta / (1.0 - percent)
-                    except ZeroDivisionError:
-                        pass
-
+                del eta
                 msg = f"Traj {ic_index + 1}/{ic_total} | Step {k}/{steps}"
-                progress_cb(percent, total_est, msg, "sampling")
+                metadata: dict[str, Any] = {
+                    "ic_index": ic_index,
+                    "ic_total": ic_total,
+                }
+                if context is not None:
+                    scan_summary = context.metadata.get("scan_summary")
+                    if scan_summary is not None:
+                        metadata["scan_summary"] = scan_summary
+                reporter.update(
+                    completed=ic_index * steps + k,
+                    total=ic_total * steps,
+                    unit="step",
+                    stage="sampling",
+                    message=msg,
+                    metadata=metadata,
+                )
 
             sde_progress_cb = _sde_cb
 

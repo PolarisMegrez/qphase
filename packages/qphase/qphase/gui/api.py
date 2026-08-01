@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from qphase.core.errors import QPhaseError
-from qphase.core.scheduler import JobProgressUpdate
+from qphase.core.progress import ProgressSnapshot
 from qphase.service import ConfigService, RegistryService, SchedulerService
 
 
@@ -115,7 +115,11 @@ def create_app(
                     "run_dir": str(result.run_dir),
                     "run_id": result.run_id,
                     "success": result.success,
-                    "error": result.error,
+                    "status": result.status,
+                    "error_summary": result.error_summary,
+                    "error_id": result.error_id,
+                    "error_code": result.error_code,
+                    "error_report_path": result.error_report_path,
                 }
                 for result in results
             ],
@@ -181,19 +185,8 @@ def _http_error(exc: Exception, status_code: int = 400) -> HTTPException:
 
 
 def _record_progress(events: list[dict[str, Any]]):
-    def _on_progress(update: JobProgressUpdate) -> None:
-        events.append(
-            {
-                "job_name": update.job_name,
-                "job_index": update.job_index,
-                "total_jobs": update.total_jobs,
-                "message": update.message,
-                "percent": update.percent,
-                "job_eta": update.job_eta,
-                "global_eta": update.global_eta,
-                "stage": update.stage,
-            }
-        )
+    def _on_progress(update: ProgressSnapshot) -> None:
+        events.append(update.to_dict())
 
     return _on_progress
 

@@ -25,9 +25,12 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
-# Progress callback signature
-# args: percent (0.0-1.0), total_duration_estimate (s), message, stage
-ProgressCallback = Callable[[float | None, float | None, str, str | None], None]
+# Deprecated callback retained for one compatibility cycle. New engines report
+# natural work counts through ``ExecutionContext.progress``.
+LegacyProgressCallback = Callable[
+    [float | None, float | None, str, str | None], None
+]
+ProgressCallback = LegacyProgressCallback
 
 
 @dataclass
@@ -161,13 +164,10 @@ class EngineBase(PluginBase, Protocol):
             Can be a Python object (in-memory transfer) or a Path (file transfer).
         context : ExecutionContext | None, optional
             Scheduler-owned runtime services and an optional parameter grid.
+            Engines report work through ``context.progress``.
         progress_cb : ProgressCallback | None, optional
-            Callback for progress reporting.
-            Signature: (percent, total_duration_estimate, message, stage) -> None
-            - percent: float | None (0.0-1.0)
-            - total_duration_estimate: float | None (seconds)
-            - message: str (status message)
-            - stage: str | None (e.g., "warmup", "sampling")
+            Deprecated percent-based compatibility callback. New engines must
+            consume ``context`` instead of estimating durations themselves.
 
         Returns
         -------

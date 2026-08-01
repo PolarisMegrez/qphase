@@ -11,7 +11,7 @@ exception hierarchy and logging infrastructure used throughout the framework.
 Public API
 ----------
 ``JobConfig``, ``JobList`` : Job configuration and batch job definitions.
-``Scheduler``, ``JobResult``, ``JobProgressUpdate`` : Task scheduling and execution.
+``Scheduler``, ``JobResult``, ``ProgressSnapshot`` : Task scheduling and execution.
 ``RegistryCenter``, ``registry`` : Plugin discovery, registration, and instantiation.
 ``SystemConfig`` : System-level configuration model.
 ``load_system_config``, ``save_user_config``, ``get_system_param`` : System config I/O.
@@ -33,7 +33,9 @@ from .config_loader import (
     save_global_config,
 )
 from .dataset import DatasetResultProtocol, DatasetSaveReport
+from .error_report import ErrorReport, ErrorSummary
 from .errors import (
+    ErrorCode,
     QPhaseCLIError,
     QPhaseConfigError,
     QPhaseError,
@@ -45,9 +47,15 @@ from .errors import (
     get_logger,
 )
 from .execution import ExecutionContext
+from .progress import (
+    ProgressEvent,
+    ProgressReporter,
+    ProgressSnapshot,
+    ProgressTracker,
+)
 from .registry import RegistryCenter, registry
 from .scan import ParameterGrid, ScanAxisSpec, ScanSpec
-from .scheduler import JobProgressUpdate, JobResult, Scheduler
+from .scheduler import JobResult, Scheduler
 from .system_config import SystemConfig, load_system_config, save_user_config
 
 __all__ = [
@@ -59,15 +67,23 @@ __all__ = [
     "QPhaseSchedulerError",
     "QPhaseRuntimeError",
     "QPhaseCLIError",
+    "ErrorCode",
     "get_logger",
     "configure_logging",
+    # Error reporting
+    "ErrorReport",
+    "ErrorSummary",
+    # Progress
+    "ProgressEvent",
+    "ProgressReporter",
+    "ProgressSnapshot",
+    "ProgressTracker",
     # Registry
     "registry",
     "RegistryCenter",
     # Scheduler
     "Scheduler",
     "JobResult",
-    "JobProgressUpdate",
     # Config
     "JobConfig",
     "JobList",

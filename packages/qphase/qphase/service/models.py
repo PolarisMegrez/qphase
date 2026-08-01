@@ -91,16 +91,6 @@ class ExecutionPlan(ServiceModel):
     validation_issues: list[ConfigValidationIssue] = Field(default_factory=list)
 
 
-class ScanProgressEvent(ServiceModel):
-    """Service DTO reserved for CLI and future GUI progress consumers."""
-
-    job_name: str
-    completed: int
-    total: int
-    stage: str | None = None
-    message: str = ""
-
-
 class RunHandle(ServiceModel):
     session_id: str | None = None
     session_dir: Path | None = None

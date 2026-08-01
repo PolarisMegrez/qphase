@@ -16,16 +16,19 @@ PathsConfig
 import importlib.resources as ilr
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .errors import QPhaseConfigError, get_logger
 from .utils import deep_merge_dicts, load_yaml, save_yaml
 
 __all__ = [
     "CheckpointConfig",
+    "LoggingReportConfig",
     "PathsConfig",
+    "ProgressReportConfig",
+    "ReportingConfig",
     "ResourceHintsConfig",
     "ScanRuntimeConfig",
     "SystemConfig",
@@ -136,6 +139,65 @@ class ScanRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ProgressReportConfig(BaseModel):
+    """Progress rendering and ETA estimation behavior."""
+
+    refresh_interval: float = Field(
+        default=0.5,
+        ge=0.05,
+        description="Minimum seconds between CLI progress line refreshes.",
+    )
+    non_tty_milestone_percent: float = Field(
+        default=10.0,
+        gt=0.0,
+        le=100.0,
+        description="Percent step between milestone lines on non-TTY output.",
+    )
+    eta_warmup_seconds: float = Field(
+        default=2.0,
+        ge=0.0,
+        description="Minimum stage age before rate/ETA estimates are shown.",
+    )
+    eta_min_samples: int = Field(
+        default=3,
+        ge=1,
+        description="Minimum number of rate samples before ETA is shown.",
+    )
+    eta_smoothing: float = Field(
+        default=0.25,
+        gt=0.0,
+        le=1.0,
+        description="EMA weight of the newest rate sample.",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class LoggingReportConfig(BaseModel):
+    """Session log file and console logging behavior."""
+
+    session_file: bool = Field(
+        default=True,
+        description="Automatically write a full log file into each session dir.",
+    )
+    filename: str = Field(default="qphase.log", min_length=1)
+    file_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG"
+    console_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "WARNING"
+    format: Literal["text", "json"] = "text"
+    capture_warnings: bool = True
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReportingConfig(BaseModel):
+    """Progress, terminal output, and diagnostic logging configuration."""
+
+    progress: ProgressReportConfig = Field(default_factory=ProgressReportConfig)
+    logging: LoggingReportConfig = Field(default_factory=LoggingReportConfig)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class SystemConfig(BaseModel):
     """System-wide configuration parameters.
 
@@ -153,6 +215,8 @@ class SystemConfig(BaseModel):
         Default: True
     scan_runtime : ScanRuntimeConfig
         Storage, checkpoint, and workstation resource hints for logical scans.
+    reporting : ReportingConfig
+        Progress rendering, ETA estimation, and diagnostic logging behavior.
 
     """
 
@@ -163,14 +227,32 @@ class SystemConfig(BaseModel):
         "disable automatic saving.",
     )
     scan_runtime: ScanRuntimeConfig = Field(default_factory=ScanRuntimeConfig)
-    progress_update_interval: float = Field(
-        default=0.5,
-        description=(
-            "Minimum interval (in seconds) between progress updates from scheduler."
-        ),
-    )
+    reporting: ReportingConfig = Field(default_factory=ReportingConfig)
 
     model_config = ConfigDict(frozen=False, extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_keys(cls, data: Any) -> Any:
+        """Map the removed ``progress_update_interval`` key onto reporting."""
+        if isinstance(data, dict) and "progress_update_interval" in data:
+            value = data.pop("progress_update_interval")
+            logger.warning(
+                "[992] DEPRECATED: system setting 'progress_update_interval' has "
+                "moved to 'reporting.progress.refresh_interval'; applying the "
+                "old value."
+            )
+            reporting = dict(data.get("reporting") or {})
+            progress = dict(reporting.get("progress") or {})
+            progress.setdefault("refresh_interval", value)
+            reporting["progress"] = progress
+            data["reporting"] = reporting
+        return data
+
+    @property
+    def progress_update_interval(self) -> float:
+        """Deprecated alias for ``reporting.progress.refresh_interval``."""
+        return self.reporting.progress.refresh_interval
 
 
 # Cache for system config

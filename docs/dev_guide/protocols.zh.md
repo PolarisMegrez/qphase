@@ -68,12 +68,25 @@ class EngineBase(PluginBase, Protocol):
         self,
         data: Any | None = None,
         *,
-        progress_cb: Callable[[float | None, float | None, str, str | None], None]
-        | None = None,
+        context: ExecutionContext | None = None,
     ) -> ResultProtocol:
         """执行仿真并返回结果对象。"""
         ...
 ```
+
+engine 应报告真实工作量，而不是自行估算耗时：
+
+```python
+context.progress.update(
+    completed=completed_tiles,
+    total=total_tiles,
+    unit="tile",
+    stage="solve_tiles",
+)
+```
+
+基于百分比的旧 `progress_cb` 仅保留一个兼容周期；新 engine 必须使用
+`ExecutionContext.progress`。
 
 ### 3. `BackendBase`
 计算后端的契约（参见[后端系统](backend.md)）。

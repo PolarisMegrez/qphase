@@ -16,7 +16,7 @@ description: 核心 API 参考
 
 *   `system_config` (`SystemConfig`, 可选)：系统配置对象。如果未提供，则从 `system.yaml` 加载。
 *   `default_output_dir` (`str`, 可选)：覆盖系统配置中指定的默认输出目录。
-*   `on_progress` (`Callable[[JobProgressUpdate], None]`, 可选)：在任务执行期间调用的回调函数，用于接收进度更新。
+*   `on_progress` (`Callable[[ProgressSnapshot], None]`, 可选)：接收结构化 job 生命周期和 stage 工作量快照。
 *   `on_run_dir` (`Callable[[Path], None]`, 可选)：每个任务完成后调用的回调函数，用于接收运行目录的路径。
 
 **方法：**
@@ -61,7 +61,17 @@ description: 核心 API 参考
 *   `paths` (`PathsConfig`)：配置、插件和输出的目录路径。
 *   `auto_save_results` (`bool`)：是否自动将结果保存到磁盘。
 *   `scan_runtime` (`ScanRuntimeConfig`)：dataset 布局、chunk checkpoint 与工作站资源提示。
-*   `progress_update_interval` (`float`)：core 进度刷新的最小间隔。
+*   `reporting` (`ReportingConfig`)：进度刷新、ETA 估算以及终端/session 日志策略。
+
+### 进度与错误类型
+
+engine 通过 `ExecutionContext.progress` 使用自然工作单位发送
+`ProgressEvent`。`ProgressTracker` 只估算当前 stage 的速率和剩余时间，
+`ProgressSnapshot` 是面向客户端的 DTO。QPhase 不使用异构 job 外推全局 ETA。
+
+失败的 `JobResult` 提供 `status`、`error_id`、`error_code`、
+`error_summary` 和 `error_report_path`；对应 JSON 报告保存完整 cause chain 与
+traceback。
 
 ### Scan 与 Dataset 类型
 

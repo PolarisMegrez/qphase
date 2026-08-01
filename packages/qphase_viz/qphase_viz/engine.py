@@ -123,6 +123,7 @@ class VizEngine(EngineBase):
         self,
         data: Any | None = None,
         *,
+        context: Any | None = None,
         progress_cb: Any | None = None,
     ) -> VizResult:
         """Execute visualization tasks.
@@ -131,6 +132,8 @@ class VizEngine(EngineBase):
         ----------
         data : Any
             Input data, expected to be an ArrayBase (e.g., TrajectorySet).
+        context : Any | None
+            Structured execution services supplied by the scheduler.
         progress_cb : Any | None
             Optional callback for progress updates.
 
@@ -147,6 +150,7 @@ class VizEngine(EngineBase):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         generated_files = []
+        reporter = context.progress if context is not None else None
 
         # Filter for visualizer plugins
         visualizers = [
@@ -167,7 +171,15 @@ class VizEngine(EngineBase):
                 ) from e
 
             # Report progress
-            if progress_cb:
+            if reporter is not None:
+                reporter.update(
+                    completed=i + 1,
+                    total=total_plugins,
+                    unit="plot",
+                    stage="rendering",
+                    message=f"Ran {plotter.name}",
+                )
+            elif progress_cb:
                 percent = (i + 1) / total_plugins
                 progress_cb(percent, None, f"Ran {plotter.name}", "rendering")
 
