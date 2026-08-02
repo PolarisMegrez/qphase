@@ -8,6 +8,7 @@ from qphase.core.errors import QPhaseConfigError
 from qphase.core.plugin_graph import PluginGraphResolver, merge_plugin_config
 from qphase.core.protocols import PluginManifest, SubpluginSlot
 from qphase.core.registry import RegistryCenter
+from qphase.service import RegistryService
 
 
 class EmptyConfig(BaseModel):
@@ -126,3 +127,26 @@ def test_resolver_rejects_recursive_plugin_cycles():
 
     with pytest.raises(QPhaseConfigError, match="cycle detected"):
         PluginGraphResolver(registry).resolve("loop", "recursive", {})
+
+
+def test_registry_service_projects_flat_children_as_parent_tree():
+    service = RegistryService(make_registry())
+
+    tree = service.get_plugin_tree("parent")
+    assert len(tree) == 1
+    assert tree[0].path == "parent.main"
+    assert tree[0].slots[0].name == "worker"
+    assert [item.name for item in tree[0].slots[0].options] == ["good", "bad"]
+
+    namespace, name, path = service.resolve_path("parent.main/worker.good")
+    assert (namespace, name, path) == (
+        "worker",
+        "good",
+        "parent.main/worker.good",
+    )
+    schema = service.get_composite_schema("parent.main")
+    assert "good" in schema["subplugins"]["worker"]["options"]
+    template = service.build_template(
+        "parent.main", selections={"worker": "good"}
+    )
+    assert template["worker"]["good"]["value"] == 1

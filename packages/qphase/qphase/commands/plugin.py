@@ -23,9 +23,14 @@ from rich.table import Table
 
 from qphase.core.config_loader import load_global_config
 from qphase.core.registry import discovery, registry
-from qphase.core.utils import schema_to_yaml_map
+from qphase.service import RegistryService
 
 plugin_app = typer.Typer(help="Manage and discover plugins")
+SUBPLUGIN_SELECT_OPT = typer.Option(
+    None,
+    "--select",
+    help="Select a child implementation, for example estimator=welch.",
+)
 
 
 @plugin_app.command(name="list")
@@ -36,6 +41,10 @@ def list_command(
         "-c",
         help="Filter by category (comma-separated). Default is all.",
     ),
+    tree: bool = typer.Option(False, "--tree", help="Show declared subplugins."),
+    parent: str | None = typer.Option(
+        None, "--parent", help="Show one parent plugin and its subplugins."
+    ),
 ):
     """List available plugins."""
     console = Console()
@@ -44,6 +53,9 @@ def list_command(
         # Ensure plugins are discovered
         discovery.discover_plugins()
         discovery.discover_local_plugins()
+
+        if parent is not None:
+            tree = True
 
         # Parse categories
         if categories is None:
@@ -115,6 +127,15 @@ def list_command(
             f"{sum(len(all_plugins.get(c, [])) for c in categories_to_show)} "
             f"plugins across {len(categories_to_show)} categories[/green]"
         )
+        if tree:
+            service = RegistryService()
+            nodes = service.get_plugin_tree()
+            if parent is not None:
+                _, _, canonical = service.resolve_path(parent)
+                nodes = [node for node in nodes if node.path == canonical]
+                if not nodes:
+                    raise ValueError(f"{canonical!r} is not a top-level plugin")
+            _display_subplugin_tree(nodes, console)
 
     except Exception as e:
         console.print(f"[red]Error listing plugins: {e}[/red]")
@@ -159,6 +180,24 @@ def _get_source_display(metadata: dict) -> str:
 
     # Fallback
     return "unknown"
+
+
+def _display_subplugin_tree(nodes: list[Any], console: Console) -> None:
+    """Render child-plugin slots without turning them into top-level plugins."""
+    visible = [node for node in nodes if node.slots]
+    if not visible:
+        return
+    console.print("\n[blue]Subplugins[/blue]")
+    for node in visible:
+        console.print(f"  [cyan]{node.path}[/cyan]")
+        for slot in node.slots:
+            default = f" default={slot.default}" if slot.default else ""
+            console.print(
+                f"    [green]{slot.name}[/green] "
+                f"({slot.cardinality}, {slot.namespace}{default})"
+            )
+            for option in slot.options:
+                console.print(f"      - {option.path}")
 
 
 def _get_plugin_description(category: str, plugin_name: str) -> str | None:
@@ -277,17 +316,8 @@ def show_command(
 
         # Process each plugin
         for i, plugin_spec in enumerate(plugins):
-            # Parse dotted notation
-            if "." not in plugin_spec:
-                console.print(
-                    f"[red]Error: Invalid plugin specification '{plugin_spec}'. "
-                    "Use 'namespace.name' format.[/red]"
-                )
-                raise typer.Exit(code=1)
-
-            parts = plugin_spec.split(".", 1)
-            category = parts[0]
-            name = parts[1]
+            service = RegistryService()
+            category, name, canonical = service.resolve_path(plugin_spec)
 
             # Get plugin info
             category = category.lower()
@@ -306,7 +336,7 @@ def show_command(
                     f"[yellow]{plugin_spec}[/yellow]"
                 )
             else:
-                console.print(f"\n[bold cyan]{plugin_spec}[/bold cyan]")
+                console.print(f"\n[bold cyan]{canonical}[/bold cyan]")
             console.print("[cyan]" + "=" * 60 + "[/cyan]")
 
             # Display source information
@@ -323,6 +353,17 @@ def show_command(
 
             # Display configuration parameters
             _display_config_parameters(category, name)
+
+            manifest = registry.get_plugin_manifest(category, name)
+            if manifest.subplugins:
+                console.print("\n[bold yellow]Subplugin Slots[/bold yellow]")
+                for slot_name in manifest.subplugins:
+                    slot = service.get_subplugin_options(canonical, slot_name)
+                    names = ", ".join(option.name for option in slot.options)
+                    console.print(
+                        f"  {slot.name}: {names or '(none)'} "
+                        f"[dim](default={slot.default})[/dim]"
+                    )
 
             # Display metadata if verbose
             if verbose:
@@ -491,6 +532,7 @@ def template_command(
     ),
     output: str = typer.Option("-", help="Output file (default: stdout)"),
     format: str = typer.Option("yaml", help="Output format (yaml or json)"),
+    select: list[str] | None = SUBPLUGIN_SELECT_OPT,
 ):
     """Generate configuration templates for plugins using dotted path notation.
 
@@ -519,17 +561,12 @@ def template_command(
 
         # Process each plugin
         for plugin_spec in plugins:
-            # Parse dotted notation
-            if "." not in plugin_spec:
-                errors.append(
-                    f"Invalid plugin specification '{plugin_spec}'. "
-                    "Use 'namespace.name' format."
-                )
+            service = RegistryService()
+            try:
+                namespace, name, canonical = service.resolve_path(plugin_spec)
+            except ValueError as exc:
+                errors.append(str(exc))
                 continue
-
-            parts = plugin_spec.split(".", 1)
-            namespace = parts[0]
-            name = parts[1]
 
             # Fetch schema
             schema = registry.get_plugin_schema(namespace, name)
@@ -555,9 +592,16 @@ def template_command(
                 if not isinstance(existing_values, dict):
                     existing_values = {}
 
-                # Generate template without 'name' field
-                template_data = schema_to_yaml_map(
-                    schema, existing_values, name, mode="template"
+                selections = {}
+                for item in select or []:
+                    if "=" not in item:
+                        raise ValueError("--select must use slot=child")
+                    slot_name, child_name = item.split("=", 1)
+                    selections[slot_name] = child_name
+                template_data = service.build_template(
+                    canonical,
+                    selections=selections,
+                    existing_values=existing_values,
                 )
 
                 # Organize by namespace

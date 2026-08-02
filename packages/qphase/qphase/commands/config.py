@@ -28,11 +28,42 @@ from qphase.core.config_loader import (
     load_global_config,
     save_global_config,
 )
-from qphase.core.registry import registry
+from qphase.core.registry import discovery, registry
 from qphase.core.system_config import load_system_config, save_user_config
+from qphase.service import RegistryService
 
 app = typer.Typer(help="Manage configuration")
 console = Console()
+
+
+@app.command("options")
+def subplugin_options(path: str = typer.Argument(...)) -> None:
+    """List child implementations accepted by a plugin slot."""
+    discovery.discover_plugins()
+    discovery.discover_local_plugins()
+    if "/" in path:
+        parent, slot = path.rsplit("/", 1)
+    else:
+        parts = path.rsplit(".", 1)
+        if len(parts) != 2:
+            raise typer.BadParameter("use parent.plugin/slot")
+        parent, slot = parts
+    summary = RegistryService().get_subplugin_options(parent, slot)
+    console.print(f"[bold cyan]{parent}/{slot}[/bold cyan]")
+    for option in summary.options:
+        marker = " [default]" if option.name == summary.default else ""
+        console.print(f"  {option.name}{marker}: {option.plugin.description}")
+
+
+@app.command("schema")
+def plugin_schema(path: str = typer.Argument(...)) -> None:
+    """Display the composite configuration schema for a plugin path."""
+    import json
+
+    discovery.discover_plugins()
+    discovery.discover_local_plugins()
+    payload = RegistryService().get_composite_schema(path)
+    console.print(Syntax(json.dumps(payload, indent=2), "json", theme="monokai"))
 
 
 def _get_global_config_path() -> tuple[Path, bool]:

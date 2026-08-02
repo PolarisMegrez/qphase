@@ -26,6 +26,7 @@ from .errors import (
     QPhaseConfigError,
     QPhasePluginError,
 )
+from .protocols import PluginManifest
 from .system_config import load_system_config
 from .utils import load_yaml
 
@@ -220,6 +221,12 @@ class RegistryCenter:
             raise QPhasePluginError(
                 f"Failed to import plugin '{name}' from '{entry.target}': {e}"
             ) from e
+
+    def get_plugin_manifest(self, namespace: str, name: str) -> PluginManifest:
+        """Return a plugin manifest, using an empty manifest for legacy plugins."""
+        plugin_class = self.get_plugin_class(namespace, name)
+        manifest = getattr(plugin_class, "manifest", None)
+        return manifest if isinstance(manifest, PluginManifest) else PluginManifest()
 
     # --------------------------- factory ---------------------------
     def create(self, full_name: FullName, /, **kwargs: Any) -> Any:

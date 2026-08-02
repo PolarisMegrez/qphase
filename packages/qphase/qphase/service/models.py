@@ -30,6 +30,27 @@ class PluginCatalog(ServiceModel):
     plugins: list[PluginSummary] = Field(default_factory=list)
 
 
+class SubpluginOptionSummary(ServiceModel):
+    name: str
+    path: str
+    plugin: PluginSummary
+
+
+class SubpluginSlotSummary(ServiceModel):
+    name: str
+    namespace: str
+    cardinality: Literal["one", "optional", "many"]
+    default: str | None = None
+    description: str = ""
+    options: list[SubpluginOptionSummary] = Field(default_factory=list)
+
+
+class PluginTreeNode(ServiceModel):
+    path: str
+    plugin: PluginSummary
+    slots: list[SubpluginSlotSummary] = Field(default_factory=list)
+
+
 class ConfigSource(ServiceModel):
     kind: Literal["system", "global", "job", "merged", "snapshot"]
     path: Path | None = None
