@@ -11,10 +11,9 @@ from typing import Any
 
 import numpy as np
 from qphase.backend.base import BackendBase
-from qphase_sde.kernels import compile_cached_kernel
 
 from models.kernels.base import ModelKernelPlugin
-from models.kernels.cupy_utils import broadcast_param
+from models.kernels.cupy_utils import broadcast_param, compile_cached_kernel
 
 # CUDA source for the VDP Level 3 model.
 # $T$ is replaced with ``float`` or ``double``; $CT$ with the matching complex

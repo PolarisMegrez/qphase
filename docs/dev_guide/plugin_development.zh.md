@@ -271,10 +271,12 @@ def kernelized_terms(
 
 ### 复用核函数缓存
 
-`qphase_sde.kernels.compile_cached_kernel` 会按名称、数据类型和源码哈希编译并缓存 CuPy `RawKernel`，因此调度器的重复运行不会重复编译。
+模型专用 CUDA 的编译与缓存应与 model kernel 放在一起，而不属于 `qphase_sde`。
+workspace model 提供 `models.kernels.cupy_utils.compile_cached_kernel`，按名称、
+数据类型、编译选项和源码哈希在当前进程中缓存。
 
 ```python
-from qphase_sde.kernels import compile_cached_kernel
+from models.kernels.cupy_utils import compile_cached_kernel
 
 def kernelized_terms(self, y, t, params, backend):
     import cupy as cp

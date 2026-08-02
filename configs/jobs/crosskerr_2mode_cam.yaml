@@ -6,10 +6,10 @@ scan:
   axes:
     omega_b:
       target: model.crosskerr_2mode.omega_b
-      linspace: {start: -0.2, stop: 0.6, num: 201}
+      linspace: {start: -0.05, stop: 0.05, num: 501}
     gamma_b:
       target: model.crosskerr_2mode.gamma_b
-      linspace: {start: 0.2, stop: 2.2, num: 201}
+      linspace: {start: 0.45, stop: 0.55, num: 501}
 
 engine:
   cam: {}
@@ -20,11 +20,11 @@ plugins:
       float_dtype: float64
   model:
     crosskerr_2mode:
-      omega_a: 0.5
-      omega_b: -0.2
+      omega_a: 0.0
+      omega_b: -0.05
       chi: 0.01
       gamma_a: 0.5
-      gamma_b: 0.2
+      gamma_b: 0.4
       g: 0.5
   cam_solver:
     multistability:

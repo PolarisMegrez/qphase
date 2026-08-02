@@ -134,6 +134,11 @@ within `psd_tolerance` are treated as numerical error. The output also records
 `residual_within_tolerance` separately. It does not currently test trace
 normalization or positive semidefiniteness of `D(R)`.
 
+For nonlinear models, the CAM equation is a moment closure: nonlinear moments
+such as `E[|alpha|^2 alpha alpha^dagger]` are represented using `R`. A locally
+stable, physical CAM root therefore does not by itself establish global
+confinement or the existence of a normalizable stationary SDE distribution.
+
 ## Results
 
 Every result uses the model's fixed solution capacity. `valid_mask` and
@@ -142,9 +147,13 @@ are sorted by `real(R[0,0])` unless the model overrides the key. A slot is not a
 global branch identifier and no continuity between neighboring scan points is
 implied.
 
-The preferred scalar frequency is `rayleigh_frequency`. The complete complex
-Hamiltonian spectrum is stored as `hamiltonian_eigenvalues`, with its real part
-in `mode_frequencies`. The package does not emit an ambiguous `omega` field.
+`rayleigh_frequency` is the scalar matrix-weighted average
+`Re Tr(HR) / Tr(R)`. It is not generally a PSD peak: when `R` contains more
+than one mode, distinct modal frequencies can cancel in this average. The
+complete complex Hamiltonian spectrum is stored as `hamiltonian_eigenvalues`,
+with its real part in `mode_frequencies`. Neither field proves that the
+underlying stochastic dynamics has a globally stationary distribution. The
+package does not emit an ambiguous `omega` field.
 
 The logical array shape is `scan_shape + (capacity, n_modes, n_modes)`. NPZ
 files contain the complete fixed-capacity result, while the companion CSV

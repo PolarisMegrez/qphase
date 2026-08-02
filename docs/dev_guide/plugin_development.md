@@ -277,10 +277,13 @@ def kernelized_terms(
 
 ### Reusing the Kernel Cache
 
-`qphase_sde.kernels.compile_cached_kernel` compiles a CuPy `RawKernel` once and caches it by name, dtype, and source hash, so repeated scheduler runs do not recompile.
+Model-specific CUDA compilation and caching belongs beside the model kernels,
+not in `qphase_sde`. The workspace models provide
+`models.kernels.cupy_utils.compile_cached_kernel`, which caches by name, dtype,
+compiler options, and source hash for the current process.
 
 ```python
-from qphase_sde.kernels import compile_cached_kernel
+from models.kernels.cupy_utils import compile_cached_kernel
 
 def kernelized_terms(self, y, t, params, backend):
     import cupy as cp

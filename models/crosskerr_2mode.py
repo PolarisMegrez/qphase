@@ -33,7 +33,7 @@ class CrossKerr2ModeModel(SDEModelPlugin):
     description: ClassVar[str] = "Two-mode cross-Kerr oscillator"
     config_schema: ClassVar[type[CrossKerr2ModeConfig]] = CrossKerr2ModeConfig
     mode_count: ClassVar[int] = 2
-    steady_state_capacity: ClassVar[int] = 4
+    steady_state_capacity: ClassVar[int] = 3
 
     def kernel_plugins(self) -> Iterable[ModelKernelPlugin]:
         return (

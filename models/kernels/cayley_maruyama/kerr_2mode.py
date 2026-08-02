@@ -6,10 +6,13 @@ from typing import Any
 
 import numpy as np
 from qphase.backend.base import BackendBase
-from qphase_sde.kernels import compile_cached_kernel
 
 from models.kernels.base import ModelKernelPlugin
-from models.kernels.cupy_utils import broadcast_param, get_lru_buffer
+from models.kernels.cupy_utils import (
+    broadcast_param,
+    compile_cached_kernel,
+    get_lru_buffer,
+)
 
 _DEVICE_SOURCE = r"""
 static __device__ __forceinline__ $CT$ c_make_$S$($T$ x, $T$ y) {

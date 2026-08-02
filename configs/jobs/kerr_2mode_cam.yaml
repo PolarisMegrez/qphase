@@ -2,10 +2,14 @@ name: kerr_2mode_cam
 save: true
 
 scan:
+  combine: cartesian
   axes:
     omega_b:
       target: model.kerr_2mode.omega_b
-      values: [-0.001, -0.01, -0.1]
+      logspace: {start: -5, stop: -1, num: 121}
+    gamma_b:
+      target: model.kerr_2mode.gamma_b
+      values: [1.042848239, 2.220148004]
 
 engine:
   cam: {}
@@ -17,24 +21,34 @@ plugins:
   model:
     kerr_2mode:
       omega_a: 0.0
-      omega_b: -0.001
-      chi: 0.01
-      gamma_a: 0.5
-      gamma_b: 1.8728
-      g: 0.5
+      omega_b: 0.00000001
+      gamma_a: 1.0
+      gamma_b: 1.042848239
+      chi: 0.0001
+      g: 0.75
   cam_solver:
     multistability:
-      n_guesses: 64
-      guess_scale: 100.0
+      n_guesses: 50
       guess_bounds: auto
       seed: 42
       method: root
-      tolerance: 1.0e-9
-      residual_tolerance: 1.0e-6
-      distance_tolerance: 1.0e-4
+      tolerance: 1.0e-10
+      residual_tolerance: 1.0e-7
+      distance_tolerance: 3.0
+      use_jacobian: true
+      capacity_patience: 10
+      n_workers: 1
+      tile_workers: 24
+      n_tiles: 288
+      discover_seeds: true
+      bounds_inference_starts: 128
+      seed_search_guesses: 200
+      retry_guesses: 200
+      refine_suspicious: true
+      refine_guesses: 50
   cam_postprocessor:
     rayleigh_frequency: {}
     hamiltonian_spectrum: {}
     jacobian_spectrum: {}
     physicality:
-      residual_tolerance: 1.0e-6
+      residual_tolerance: 1.0e-7

@@ -6,10 +6,10 @@ scan:
   axes:
     omega_b:
       target: model.kerr_3mode.omega_b
-      linspace: {start: -0.4, stop: 0.4, num: 201}
-    gamma_b:
-      target: model.kerr_3mode.gamma_b
-      linspace: {start: 0.2, stop: 2.2, num: 201}
+      linspace: {start: -4.0, stop: 4.0, num: 201}
+    gamma_c:
+      target: model.kerr_3mode.gamma_c
+      linspace: {start: 0.0, stop: 2.0, num: 201}
 
 engine:
   cam: {}
@@ -21,14 +21,14 @@ plugins:
   model:
     kerr_3mode:
       omega_a: 0.0
-      omega_b: -0.4
-      omega_c: 0.01
-      chi: 0.01
-      gamma_a: 0.5
-      gamma_b: 0.2
+      omega_b: 0.0
+      omega_c: 2.0
+      chi: 0.001
+      gamma_a: 1.0
+      gamma_b: 0.5
       gamma_c: 0.5
-      g_ab: 0.5
-      g_ac: 0.3
+      g_ab: 1.2
+      g_ac: 1.0
   cam_solver:
     multistability:
       n_guesses: 50

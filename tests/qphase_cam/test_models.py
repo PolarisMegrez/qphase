@@ -85,6 +85,6 @@ def test_cam_diffusion_matches_sde_factor(model):
 
 def test_declared_solution_capacities():
     assert VDP2ModeModel.steady_state_capacity == 4
-    assert Kerr2ModeModel.steady_state_capacity == 2
+    assert Kerr2ModeModel.steady_state_capacity == 3
     assert Kerr3ModeModel.steady_state_capacity == 8
-    assert CrossKerr2ModeModel.steady_state_capacity == 4
+    assert CrossKerr2ModeModel.steady_state_capacity == 3

@@ -33,7 +33,7 @@ class Kerr2ModeModel(SDEModelPlugin):
     description: ClassVar[str] = "Two-mode Kerr oscillator"
     config_schema: ClassVar[type[Kerr2ModeConfig]] = Kerr2ModeConfig
     mode_count: ClassVar[int] = 2
-    steady_state_capacity: ClassVar[int] = 2
+    steady_state_capacity: ClassVar[int] = 3
 
     def kernel_plugins(self) -> Iterable[ModelKernelPlugin]:
         return (Kerr2ModeEulerCuPyKernel(), Kerr2ModeCayleyCuPyKernel())

@@ -3,21 +3,28 @@
 
   scan:
     axes:
-      omega_b:
-        target: model.crosskerr_2mode.omega_b
-        logspace: {start: -3, stop: -1, num: 31, base: 10}
+      gamma_b:
+        target: model.crosskerr_2mode.gamma_b
+        values: [0.501165914, 0.501359356, 0.501584893, 0.50184785,
+                 0.502154435, 0.502511886, 0.502928645, 0.503414549,
+                 0.503981072, 0.504641589, 0.505411695, 0.506309573,
+                 0.507356423, 0.508576959, 0.51,
+                 0.51165914, 0.51359356, 0.51584893, 0.5184785,
+                 0.52154435, 0.52511886, 0.52928645, 0.53414549,
+                 0.53981072, 0.54641589, 0.55411695, 0.56309573,
+                 0.57356423, 0.58576959, 0.6]
 
   engine:
     sde:
       t0: 0.0
-      t1: 100000.0
+      t1: 50000.0
       dt: 0.5
-      n_traj: 200
+      n_traj: 100
       seed: 42
       ic:
-        - ["7.0+0.0j", "0.0+7.0j"]
+        - ["700.0+0.0j", "0.0+700.0j"]
       adaptive: false
-      save_stride: 20
+      save_stride: 1
       record_modes: [0]
       keep_traj: false
 
@@ -35,10 +42,10 @@
   model:
     crosskerr_2mode:
       omega_a: 0.5
-      omega_b: 0.001
+      omega_b: 0.5
       chi: 0.01
       gamma_a: 0.5
-      gamma_b: 0.517926
+      gamma_b: 0.5
       g: 0.5
 
   analyser:
@@ -57,7 +64,7 @@
       mode: analyze
   analyser:
     lorentz_fitter:
-      scan_param: omega_b
+      scan_param: gamma_b
       mode: 0
       uncertainty: auto
       clip_by_std: true
