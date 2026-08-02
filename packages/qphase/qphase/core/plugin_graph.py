@@ -87,6 +87,9 @@ class PluginGraphResolver:
             )
 
         plugin_class = self.registry.get_plugin_class(namespace, name)
+        normalizer = getattr(plugin_class, "normalize_plugin_config", None)
+        if callable(normalizer):
+            raw_config = dict(normalizer(dict(raw_config)))
         manifest = _plugin_manifest(plugin_class)
         slot_names = set(manifest.subplugins)
         parent_raw = {

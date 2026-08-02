@@ -23,14 +23,17 @@ Notes
 
 """
 
-from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, cast
 
 import numpy as _np
 from pydantic import Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
-from qphase.core.protocols import PluginConfigBase
+from qphase.core.protocols import (
+    PluginConfigBase,
+    PluginManifest,
+    SubpluginSlot,
+)
 
 from ..utils import resolve_mode_columns
 from .base import Analyzer
@@ -40,22 +43,18 @@ from .peak_finding import (
     create_peak_finder,
 )
 from .result import AnalysisResult
+from .spectral_estimator import (
+    PsdEstimate as _PsdEstimate,
+)
+from .spectral_estimator import (
+    SpectralEstimator,
+    create_builtin_estimator,
+)
 
 __all__ = [
     "PsdAnalyzer",
     "PsdAnalyzerConfig",
 ]
-
-
-@dataclass(frozen=True)
-class _PsdEstimate:
-    """PSD mean and cross-trajectory uncertainty for one mode."""
-
-    axis: _np.ndarray
-    mean: _np.ndarray
-    std: _np.ndarray
-    sem: _np.ndarray
-    n_independent: int
 
 
 class PsdAnalyzerConfig(PluginConfigBase):
@@ -131,15 +130,86 @@ class PsdAnalyzerConfig(PluginConfigBase):
         return self
 
 
+def _legacy_estimator_values(config: PsdAnalyzerConfig) -> dict[str, Any]:
+    fields = {
+        "periodogram": ("window",),
+        "welch": ("window", "nperseg", "noverlap", "nfft"),
+        "multitaper": ("nw", "k_tapers"),
+    }[config.method]
+    return {
+        name: value
+        for name in fields
+        if (value := getattr(config, name)) is not None
+    }
+
+
 class PsdAnalyzer(Analyzer):
     """Analyzer for Power Spectral Density."""
 
     name: ClassVar[str] = "psd"
     description: ClassVar[str] = "Power Spectral Density analyzer"
     config_schema: ClassVar[type[PsdAnalyzerConfig]] = PsdAnalyzerConfig
+    manifest: ClassVar[PluginManifest] = PluginManifest(
+        subplugins={
+            "estimator": SubpluginSlot(
+                namespace="spectral_estimator",
+                default="periodogram",
+                protocol=(
+                    "qphase_sde.analyser.spectral_estimator.base:SpectralEstimator"
+                ),
+                description="Algorithm used to estimate the PSD",
+            )
+        }
+    )
 
-    def __init__(self, config: PsdAnalyzerConfig | None = None, **kwargs):
+    def __init__(
+        self,
+        config: PsdAnalyzerConfig | None = None,
+        *,
+        subplugins: dict[str, Any] | None = None,
+        **kwargs,
+    ):
         super().__init__(config, **kwargs)
+        if subplugins is not None:
+            self.estimator: SpectralEstimator = subplugins["estimator"]
+        else:
+            legacy = cast(PsdAnalyzerConfig, self.config)
+            self.estimator = create_builtin_estimator(
+                legacy.method, _legacy_estimator_values(legacy)
+            )
+
+    @classmethod
+    def normalize_plugin_config(cls, values: dict[str, Any]) -> dict[str, Any]:
+        """Translate the one-cycle flat estimator syntax before graph resolution."""
+        result = dict(values)
+        legacy_fields = {
+            "method",
+            "window",
+            "nperseg",
+            "noverlap",
+            "nfft",
+            "nw",
+            "k_tapers",
+        }
+        if "estimator" in result:
+            conflicts = legacy_fields & set(result)
+            if conflicts:
+                names = ", ".join(sorted(conflicts))
+                raise ValueError(
+                    f"estimator cannot be combined with legacy PSD fields: {names}"
+                )
+            return result
+        method = result.pop("method", "periodogram")
+        selected_fields = {
+            "periodogram": {"window"},
+            "welch": {"window", "nperseg", "noverlap", "nfft"},
+            "multitaper": {"nw", "k_tapers"},
+        }[method]
+        child_config = {
+            key: result.pop(key) for key in selected_fields if key in result
+        }
+        result["estimator"] = {method: child_config}
+        return result
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         """Compute PSD for multiple modes.
@@ -200,26 +270,12 @@ class PsdAnalyzer(Analyzer):
         else:
             data_arr = data
 
-        method = config.method
-        nperseg = config.nperseg
-        noverlap = config.noverlap
-        nfft = config.nfft
-        nw = config.nw
-        k_tapers = config.k_tapers
-
         # Compute first to get the common axis and uncertainty metadata.
         estimate0 = self._estimate_single(
             data_arr[:, :, mode_columns[0]],
             dt,
             kind=kind,
             convention=convention,
-            window=config.window,
-            method=method,
-            nperseg=nperseg,
-            noverlap=noverlap,
-            nfft=nfft,
-            nw=nw,
-            k_tapers=k_tapers,
             backend=backend,
         )
         axis0 = estimate0.axis
@@ -232,13 +288,6 @@ class PsdAnalyzer(Analyzer):
                 dt,
                 kind=kind,
                 convention=convention,
-                window=config.window,
-                method=method,
-                nperseg=nperseg,
-                noverlap=noverlap,
-                nfft=nfft,
-                nw=nw,
-                k_tapers=k_tapers,
                 backend=backend,
             )
             P_list.append(estimate.mean)
@@ -308,6 +357,7 @@ class PsdAnalyzer(Analyzer):
             "modes": modes,
             "kind": kind,
             "convention": convention,
+            "estimator": self.estimator.name,
             "sample_dt": dt,
             "nyquist": nyquist,
             "peaks": peaks_info,
@@ -332,7 +382,7 @@ class PsdAnalyzer(Analyzer):
         kind: str = "complex",
         convention: str = "symmetric",
         window: str | None = None,
-        method: str = "periodogram",
+        method: str | None = None,
         nperseg: int | None = None,
         noverlap: int | None = None,
         nfft: int | None = None,
@@ -365,7 +415,7 @@ class PsdAnalyzer(Analyzer):
         kind: str = "complex",
         convention: str = "symmetric",
         window: str | None = None,
-        method: str = "periodogram",
+        method: str | None = None,
         nperseg: int | None = None,
         noverlap: int | None = None,
         nfft: int | None = None,
@@ -401,19 +451,24 @@ class PsdAnalyzer(Analyzer):
         elif ndim is None or ndim < 1:
             raise ValueError("[524] input `x` must be a 1-D or 2-D array")
 
-        if method == "periodogram":
-            return self._compute_periodogram(x_proc, dt, convention, window, backend)
-
-        # Welch and multitaper are implemented on NumPy arrays.
-        x_np = convert_to_numpy(x_proc)
-        if method == "welch":
-            return self._compute_welch(
-                x_np, dt, convention, window, nperseg, noverlap, nfft
+        estimator = self.estimator
+        if method is not None:
+            estimator = create_builtin_estimator(
+                method,
+                {
+                    key: value
+                    for key, value in {
+                        "window": window,
+                        "nperseg": nperseg,
+                        "noverlap": noverlap,
+                        "nfft": nfft,
+                        "nw": nw,
+                        "k_tapers": k_tapers,
+                    }.items()
+                    if value is not None
+                },
             )
-        if method == "multitaper":
-            return self._compute_multitaper(x_np, dt, convention, nw, k_tapers)
-
-        raise ValueError(f"Unsupported PSD method: {method}")
+        return estimator.estimate(x_proc, dt, convention, backend)
 
     @staticmethod
     def _trajectory_statistics(

@@ -16,6 +16,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase.core.registry import discovery, registry
+from qphase.service import RegistryService
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.state import TrajectorySet
 
@@ -241,3 +243,44 @@ def test_psd_method_invalid():
             modes=[0],
             method="not_a_method",
         )
+
+
+def test_psd_estimator_subplugins_are_discoverable_and_constructed():
+    discovery.discover_plugins()
+    service = RegistryService()
+
+    options = service.get_subplugin_options("analyser.psd", "estimator")
+    assert options.default == "periodogram"
+    assert {option.name for option in options.options} >= {
+        "periodogram",
+        "welch",
+        "multitaper",
+    }
+
+    analyzer = registry.create_plugin_instance(
+        "analyser",
+        {
+            "name": "psd",
+            "kind": "complex",
+            "modes": [0],
+            "estimator": {"welch": {"nperseg": 64}},
+        },
+    )
+    assert analyzer.estimator.name == "welch"
+    assert analyzer.estimator.config.nperseg == 64
+
+
+def test_psd_legacy_method_is_normalized_by_plugin_resolver():
+    discovery.discover_plugins()
+    analyzer = registry.create_plugin_instance(
+        "analyser",
+        {
+            "name": "psd",
+            "kind": "complex",
+            "modes": [0],
+            "method": "multitaper",
+            "nw": 3.5,
+        },
+    )
+    assert analyzer.estimator.name == "multitaper"
+    assert analyzer.estimator.config.nw == 3.5
