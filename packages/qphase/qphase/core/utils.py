@@ -149,6 +149,13 @@ def schema_to_yaml_map(
     data = CommentedMap()
 
     for field_name, field in model_cls.model_fields.items():
+        extra = field.json_schema_extra
+        if (
+            mode == "template"
+            and isinstance(extra, dict)
+            and extra.get("template_hidden") is True
+        ):
+            continue
         comment = field.description
 
         # Determine value

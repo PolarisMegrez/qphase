@@ -297,6 +297,13 @@ def test_psd_estimator_subplugins_are_discoverable_and_constructed():
     assert analyzer.estimator.name == "welch"
     assert analyzer.estimator.config.nperseg == 64
 
+    template = service.build_template(
+        "analyser.psd", selections={"estimator": "welch"}
+    )
+    assert template["estimator"]["welch"]["nperseg"] is None
+    assert "method" not in template
+    assert "nperseg" not in template
+
 
 def test_psd_legacy_method_is_normalized_by_plugin_resolver():
     discovery.discover_plugins()

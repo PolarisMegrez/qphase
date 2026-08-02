@@ -77,26 +77,44 @@ class PsdAnalyzerConfig(PluginConfigBase):
         ),
     )
     window: str | None = Field(
-        None, description="Window function name (e.g. 'hanning')"
+        None,
+        description="Window function name (e.g. 'hanning')",
+        json_schema_extra={"template_hidden": True},
     )
     method: Literal["periodogram", "welch", "multitaper"] = Field(
         "periodogram",
         description="PSD estimation method: periodogram, Welch, or multitaper",
+        json_schema_extra={"template_hidden": True},
     )
     nperseg: int | None = Field(
-        None, ge=1, description="Welch segment length (default: n_time // 4)"
+        None,
+        ge=1,
+        description="Welch segment length (default: n_time // 4)",
+        json_schema_extra={"template_hidden": True},
     )
     noverlap: int | None = Field(
-        None, ge=0, description="Welch overlap (default: nperseg // 2)"
+        None,
+        ge=0,
+        description="Welch overlap (default: nperseg // 2)",
+        json_schema_extra={"template_hidden": True},
     )
     nfft: int | None = Field(
-        None, ge=1, description="FFT length for Welch (default: nperseg)"
+        None,
+        ge=1,
+        description="FFT length for Welch (default: nperseg)",
+        json_schema_extra={"template_hidden": True},
     )
     nw: float = Field(
-        2.5, gt=0.0, description="Multitaper time-half-bandwidth product NW"
+        2.5,
+        gt=0.0,
+        description="Multitaper time-half-bandwidth product NW",
+        json_schema_extra={"template_hidden": True},
     )
     k_tapers: int | None = Field(
-        None, ge=1, description="Number of DPSS tapers (default: int(2*nw)-1)"
+        None,
+        ge=1,
+        description="Number of DPSS tapers (default: int(2*nw)-1)",
+        json_schema_extra={"template_hidden": True},
     )
 
     # Peak finding configuration
@@ -107,20 +125,34 @@ class PsdAnalyzerConfig(PluginConfigBase):
 
     # Deprecated fields retained for backward compatibility with 'find_peaks=True'
     min_height: float | None = Field(
-        None, description="[Deprecated] Minimum peak height"
+        None,
+        description="[Deprecated] Minimum peak height",
+        json_schema_extra={"template_hidden": True},
     )
-    prominence: float | None = Field(None, description="[Deprecated] Peak prominence")
+    prominence: float | None = Field(
+        None,
+        description="[Deprecated] Peak prominence",
+        json_schema_extra={"template_hidden": True},
+    )
     distance: int | None = Field(
-        None, description="[Deprecated] Minimum horizontal distance"
+        None,
+        description="[Deprecated] Minimum horizontal distance",
+        json_schema_extra={"template_hidden": True},
     )
     smooth_window: int | None = Field(
-        None, description="[Deprecated] Window length for smoothing"
+        None,
+        description="[Deprecated] Window length for smoothing",
+        json_schema_extra={"template_hidden": True},
     )
     noise_threshold: float | None = Field(
-        None, description="[Deprecated] Threshold vs noise floor"
+        None,
+        description="[Deprecated] Threshold vs noise floor",
+        json_schema_extra={"template_hidden": True},
     )
     max_peaks: int | None = Field(
-        None, description="[Deprecated] Maximum number of peaks to return"
+        None,
+        description="[Deprecated] Maximum number of peaks to return",
+        json_schema_extra={"template_hidden": True},
     )
 
     @model_validator(mode="after")
