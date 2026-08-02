@@ -127,6 +127,8 @@ qphase list [OPTIONS]
 
 *   **选项**：
     *   `--category` / `-c`：按类别过滤插件（逗号分隔）。
+    *   `--tree`：展开插件声明的子插件 slot 与 child implementation。
+    *   `--parent`：只显示一个父插件及其 child tree。
 
 **示例**：
 
@@ -136,6 +138,9 @@ qphase list
 
 qphase list -c backend
 # 仅列出 backend 插件
+
+qphase list --parent analyser.psd
+# 列出 estimator.periodogram、estimator.welch、estimator.multitaper
 ```
 
 ### `qphase show`
@@ -156,6 +161,7 @@ qphase show [PLUGIN_ID]... [OPTIONS]
 ```bash
 qphase show model.vdp_2mode
 qphase show backend.numpy --verbose
+qphase show analyser.psd/estimator.welch
 ```
 
 ### `qphase template`
@@ -171,6 +177,7 @@ qphase template [PLUGIN_ID]... [OPTIONS]
 *   **选项**：
     *   `--output`：输出文件路径。默认为 `-`（标准输出）。
     *   `--format`：输出格式，`yaml`（默认）或 `json`。
+    *   `--select SLOT=CHILD`：在模板中选择非默认 child。
 
 **示例**：
 
@@ -180,11 +187,16 @@ qphase template model.vdp_2mode
 
 # 保存到文件
 qphase template model.vdp_2mode --output my_config.yaml
+qphase template analyser.psd --select estimator=welch
 ```
 
 ---
 
 ## 配置管理
+
+`qphase config options analyser.psd/estimator` 列出可选 child；
+`qphase config schema analyser.psd/estimator.welch` 输出 child 的组合 schema。
+这两个命令只查询 registry，不修改配置文件。
 
 ### `qphase config show`
 
@@ -195,11 +207,12 @@ qphase config show [OPTIONS]
 ```
 
 *   **选项**：
-    *   `--system` / `-s`：显示系统配置 (`system.yaml`) 而不是全局项目配置 (`global.yaml`)。
+    *   `--system` / `-s`：显示解析后的 `SystemConfig`，而不是项目插件默认值 (`global.yaml`)。
 
 ### `qphase config set`
 
-设置 `global.yaml`（或 `system.yaml`）中的配置值。
+设置 `global.yaml` 中的插件默认值；使用 `--system` 时写入
+`~/.qphase/config.yaml` 的稀疏用户 SystemConfig 覆盖。
 
 ```bash
 qphase config set [KEY] [VALUE] [OPTIONS]

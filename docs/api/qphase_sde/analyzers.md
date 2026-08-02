@@ -23,6 +23,9 @@ analyser:
     kind: complex
     expected_freq_max: 0.34
     find_peaks: true
+    estimator:
+      periodogram:
+        window: null
 ```
 
 | Key | Type | Description |
@@ -31,6 +34,20 @@ analyser:
 | `kind` | `str` | PSD variant, e.g. `complex`, `real`, `imag`. |
 | `expected_freq_max` | `float \| None` | Optional largest expected physical frequency in output-axis units. Analysis fails when it reaches the Nyquist limit. |
 | `find_peaks` | `bool` | Whether to report peak locations. |
+| `estimator` | child selection | Exactly one of `periodogram`, `welch`, or `multitaper`. |
+
+Estimator comparison:
+
+| Estimator | Child fields | Resolution and cost |
+| :-- | :-- | :-- |
+| `periodogram` | `window` | Uses the full saved duration; highest frequency resolution and largest per-trajectory FFT. |
+| `welch` | `window`, `nperseg`, `noverlap`, `nfft` | Lower variance and bounded segment FFT memory; physical resolution is set by `nperseg * sample_dt`. `nfft > nperseg` only interpolates bins. |
+| `multitaper` | `nw`, `k_tapers` | Full-duration resolution with taper averaging; additional FFT work per taper. |
+
+All three support online aggregation across trajectory batches. The selected
+estimator is a child plugin of `analyser.psd`, so it is discoverable with
+`qphase list --parent analyser.psd` and queryable with
+`qphase config schema analyser.psd/estimator.welch`.
 
 ### Frequency axis
 

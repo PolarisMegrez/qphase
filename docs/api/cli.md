@@ -127,6 +127,8 @@ qphase list [OPTIONS]
 
 *   **Options**:
     *   `--category` / `-c`: Filter plugins by category (comma-separated).
+    *   `--tree`: Expand declared subplugin slots and child implementations.
+    *   `--parent`: Show one parent plugin and its child tree.
 
 **Example**:
 
@@ -136,6 +138,9 @@ qphase list
 
 qphase list -c backend
 # Lists only backend plugins
+
+qphase list --parent analyser.psd
+# Lists estimator.periodogram, estimator.welch, and estimator.multitaper
 ```
 
 ### `qphase show`
@@ -156,6 +161,7 @@ qphase show [PLUGIN_ID]... [OPTIONS]
 ```bash
 qphase show model.vdp_2mode
 qphase show backend.numpy --verbose
+qphase show analyser.psd/estimator.welch
 ```
 
 ### `qphase template`
@@ -171,6 +177,7 @@ qphase template [PLUGIN_ID]... [OPTIONS]
 *   **Options**:
     *   `--output`: Output file path. Default is `-` (stdout).
     *   `--format`: Output format, either `yaml` (default) or `json`.
+    *   `--select SLOT=CHILD`: Select a non-default child in the generated template.
 
 **Example**:
 
@@ -180,11 +187,16 @@ qphase template model.vdp_2mode
 
 # Save to file
 qphase template model.vdp_2mode --output my_config.yaml
+qphase template analyser.psd --select estimator=welch
 ```
 
 ---
 
 ## Configuration Management
+
+`qphase config options analyser.psd/estimator` lists accepted child
+implementations. `qphase config schema analyser.psd/estimator.welch` prints the
+composite child schema. These are read-only registry queries.
 
 ### `qphase config show`
 
@@ -195,11 +207,12 @@ qphase config show [OPTIONS]
 ```
 
 *   **Options**:
-    *   `--system` / `-s`: Show the system configuration (`system.yaml`) instead of the global project configuration (`global.yaml`).
+    *   `--system` / `-s`: Show the resolved `SystemConfig` instead of project plugin defaults (`global.yaml`).
 
 ### `qphase config set`
 
-Sets a configuration value in `global.yaml` (or `system.yaml`).
+Sets a plugin default in `global.yaml`, or a sparse user SystemConfig override
+in `~/.qphase/config.yaml` with `--system`.
 
 ```bash
 qphase config set [KEY] [VALUE] [OPTIONS]

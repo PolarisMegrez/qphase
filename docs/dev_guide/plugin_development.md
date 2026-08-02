@@ -186,6 +186,48 @@ engine can fuse trajectories, run batched Newton, or schedule model-specific
 tiles, keep that policy in the resource package and treat `ParameterGrid` as the
 portable input contract.
 
+### Subplugin Slots
+
+A plugin may expose a recursively validated child selection without turning the
+child into a scheduler job. Keep child implementations in a flat reusable
+registry namespace and declare their relationship in the parent manifest:
+
+```python
+from qphase.core.protocols import PluginManifest, SubpluginSlot
+
+class SpectrumAnalyser:
+    manifest = PluginManifest(
+        subplugins={
+            "estimator": SubpluginSlot(
+                namespace="spectral_estimator",
+                cardinality="one",
+                default="periodogram",
+                protocol="my_package.base:SpectralEstimator",
+            )
+        }
+    )
+
+    def __init__(self, config, *, subplugins=None):
+        self.config = config
+        self.estimator = subplugins["estimator"]
+```
+
+The YAML slot contains exactly one selected implementation:
+
+```yaml
+analyser:
+  spectrum:
+    estimator:
+      welch:
+        nperseg: 4096
+```
+
+Each child remains a normal plugin with `name`, `description`, and
+`config_schema`. Core performs cardinality, schema, protocol, cycle, and depth
+validation before constructing the parent. Parents must not call the registry
+again. Child plugins do not own job directories, artifacts, progress streams,
+or scheduler DAG nodes.
+
 ---
 
 ## 3. Registration

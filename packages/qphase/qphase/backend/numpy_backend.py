@@ -110,6 +110,17 @@ class NumpyBackend(Backend):
     def randn(self, rng: Any, shape: tuple[int, ...], dtype: Any) -> Any:
         return self.normal(rng, shape, dtype)
 
+    def randn_into(self, rng: Any, out: Any) -> Any:
+        """Fill a reusable buffer while preserving legacy float32 streams."""
+        if (
+            np.dtype(out.dtype) == np.dtype(np.float64)
+            and out.flags.c_contiguous
+        ):
+            rng.standard_normal(size=out.shape, dtype=np.float64, out=out)
+        else:
+            out[...] = rng.normal(size=out.shape).astype(out.dtype, copy=False)
+        return out
+
     # -------------------------------------------------------------------------
     # Math & FFT
     # -------------------------------------------------------------------------

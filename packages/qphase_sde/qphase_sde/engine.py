@@ -1270,28 +1270,30 @@ class Engine(EngineBase):
                 assert callable(chunk_step)
                 n_chunk = min(requested_chunk_steps, steps - k)
                 noise_dtype = y.real.dtype if hasattr(y, "real") else y.dtype
-                raw_noise = self._draw_standard_normal(
-                    be,
-                    rng,
-                    (n_chunk, n_traj, model.noise_dim),
-                    dtype=noise_dtype,
-                )
-                dt_sqrt = be.asarray(dt**0.5, dtype=raw_noise.dtype)
-                raw_noise *= dt_sqrt
-                save_offsets = tuple(
-                    offset for offset in range(1, n_chunk + 1) if (k + offset) % rs == 0
-                )
-                result = chunk_step(
-                    y,
-                    t,
-                    dt,
-                    model,
-                    raw_noise,
-                    be,
-                    n_steps=n_chunk,
-                    save_offsets=save_offsets,
-                    record_modes=record_modes,
-                )
+                noise_shape = (n_chunk, n_traj, model.noise_dim)
+                raw_noise = buf_cache.get(noise_shape, noise_dtype)
+                try:
+                    self._draw_standard_normal_into(be, rng, raw_noise)
+                    dt_sqrt = be.asarray(dt**0.5, dtype=raw_noise.dtype)
+                    raw_noise *= dt_sqrt
+                    save_offsets = tuple(
+                        offset
+                        for offset in range(1, n_chunk + 1)
+                        if (k + offset) % rs == 0
+                    )
+                    result = chunk_step(
+                        y,
+                        t,
+                        dt,
+                        model,
+                        raw_noise,
+                        be,
+                        n_steps=n_chunk,
+                        save_offsets=save_offsets,
+                        record_modes=record_modes,
+                    )
+                finally:
+                    buf_cache.put(raw_noise)
                 y = result.final_state
                 next_k = k + n_chunk
                 next_t = t0 + next_k * dt
@@ -1331,18 +1333,20 @@ class Engine(EngineBase):
                     elif hasattr(y, "dtype"):
                         noise_dtype = y.dtype
 
-                    raw_noise = self._draw_standard_normal(
-                        be,
-                        rng,
-                        (n_traj, model.noise_dim),
-                        dtype=noise_dtype,
-                    )
-                    dt_sqrt = current_dt**0.5
-                    if hasattr(raw_noise, "dtype"):
-                        dt_sqrt = be.asarray(dt_sqrt, dtype=raw_noise.dtype)
+                    noise_shape = (n_traj, model.noise_dim)
+                    raw_noise = buf_cache.get(noise_shape, noise_dtype)
+                    try:
+                        self._draw_standard_normal_into(be, rng, raw_noise)
+                        dt_sqrt = current_dt**0.5
+                        if hasattr(raw_noise, "dtype"):
+                            dt_sqrt = be.asarray(dt_sqrt, dtype=raw_noise.dtype)
 
-                    raw_noise *= dt_sqrt
-                    dy = integrator.step(y, t, current_dt, model, raw_noise, be)
+                        raw_noise *= dt_sqrt
+                        dy = integrator.step(
+                            y, t, current_dt, model, raw_noise, be
+                        )
+                    finally:
+                        buf_cache.put(raw_noise)
                     y = y + dy
                     t += current_dt
 
@@ -1431,24 +1435,31 @@ class Engine(EngineBase):
             )
 
     @staticmethod
-    def _draw_standard_normal(
-        backend: BackendBase,
-        rng: Any,
-        shape: tuple[int, ...],
-        *,
-        dtype: Any,
+    def _draw_standard_normal_into(
+        backend: BackendBase, rng: Any, out: Any
     ) -> Any:
-        """Draw point-stable noise for a grouped scan tile."""
+        """Fill a cached noise array, including stable grouped RNG slices."""
         if not isinstance(rng, _GroupedRNG):
-            return backend.randn(rng, shape, dtype=dtype)
-        trajectory_axis = 1 if len(shape) == 3 else 0
+            fill = getattr(backend, "randn_into", None)
+            if callable(fill):
+                return fill(rng, out)
+            out[...] = backend.randn(rng, out.shape, dtype=out.dtype)
+            return out
+
+        trajectory_axis = 1 if out.ndim == 3 else 0
         expected = len(rng.handles) * rng.group_size
-        if int(shape[trajectory_axis]) != expected:
+        if int(out.shape[trajectory_axis]) != expected:
             raise ValueError("grouped RNG shape does not match the fused scan tile")
-        subshape = list(shape)
-        subshape[trajectory_axis] = rng.group_size
-        parts = tuple(
-            backend.randn(handle, tuple(subshape), dtype=dtype)
-            for handle in rng.handles
-        )
-        return backend.concatenate(parts, axis=trajectory_axis)
+        fill = getattr(backend, "randn_into", None)
+        for index, handle in enumerate(rng.handles):
+            selection = [slice(None)] * out.ndim
+            start = index * rng.group_size
+            selection[trajectory_axis] = slice(start, start + rng.group_size)
+            target = out[tuple(selection)]
+            if callable(fill):
+                fill(handle, target)
+            else:
+                target[...] = backend.randn(
+                    handle, target.shape, dtype=target.dtype
+                )
+        return out

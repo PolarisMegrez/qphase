@@ -270,6 +270,19 @@ class CuPyBackend(Backend):
     def randn(self, rng: Any, shape: tuple[int, ...], dtype: Any) -> Any:
         return self.normal(rng, shape, dtype)
 
+    def randn_into(self, rng: Any, out: Any) -> Any:
+        """Fill a reusable device buffer without a float64 temporary when safe."""
+        rr = cast(_CuPyRNG, rng)
+        if out.dtype == cp.dtype(cp.float64) and out.flags.c_contiguous:
+            rr._gen.standard_normal(
+                size=out.shape, dtype=cp.float64, out=out
+            )
+        else:
+            out[...] = rr._gen.standard_normal(size=out.shape).astype(
+                out.dtype, copy=False
+            )
+        return out
+
     def real(self, x: Any) -> Any:
         return cp.real(x)
 

@@ -182,6 +182,46 @@ scheduler job。engine 还可读取资源提示、报告进度、检查取消状
 不要为资源包专用算法增加通用 core planner。trajectory fusion、batched Newton 或
 model-specific tile 策略应保留在资源包内，并把 `ParameterGrid` 作为可移植输入契约。
 
+### 子插件 slot
+
+插件可以声明递归校验的 child selection，而不会把 child 变成 scheduler job。
+child implementation 应注册在扁平、可复用的 namespace 中，父子关系由父 manifest
+声明：
+
+```python
+from qphase.core.protocols import PluginManifest, SubpluginSlot
+
+class SpectrumAnalyser:
+    manifest = PluginManifest(
+        subplugins={
+            "estimator": SubpluginSlot(
+                namespace="spectral_estimator",
+                cardinality="one",
+                default="periodogram",
+                protocol="my_package.base:SpectralEstimator",
+            )
+        }
+    )
+
+    def __init__(self, config, *, subplugins=None):
+        self.config = config
+        self.estimator = subplugins["estimator"]
+```
+
+YAML slot 中必须只选择一个 implementation：
+
+```yaml
+analyser:
+  spectrum:
+    estimator:
+      welch:
+        nperseg: 4096
+```
+
+每个 child 仍是具有 `name`、`description`、`config_schema` 的标准插件。core 在
+构造父插件前完成 cardinality、schema、protocol、循环和深度校验；父插件不得再次
+访问 registry。child 不拥有 job 目录、artifact、独立进度流或 scheduler DAG node。
+
 ---
 
 ## 3. 注册

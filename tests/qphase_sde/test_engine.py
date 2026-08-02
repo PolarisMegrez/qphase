@@ -3,7 +3,12 @@
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend, NumpyConfig
-from qphase_sde.engine import Engine, EngineConfig, TrajectoryDivergenceError
+from qphase_sde.engine import (
+    Engine,
+    EngineConfig,
+    TrajectoryDivergenceError,
+    _GroupedRNG,
+)
 from qphase_sde.integrator.base import ChunkStepResult
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 
@@ -75,6 +80,70 @@ def test_engine_run():
     # Check actual shape from result
     assert result.trajectory.data.shape[0] == 2  # n_traj
     assert result.trajectory.data.shape[1] >= 5  # n_steps
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_numpy_randn_into_preserves_legacy_seeded_stream(dtype):
+    backend = NumpyBackend()
+    expected = backend.randn(
+        backend.rng(17), (7, 3), dtype=np.dtype(dtype)
+    )
+    actual = np.empty((7, 3), dtype=dtype)
+
+    returned = backend.randn_into(backend.rng(17), actual)
+
+    assert returned is actual
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_engine_reuses_step_noise_buffer():
+    class RecordingBackend(NumpyBackend):
+        def __init__(self):
+            super().__init__()
+            self.noise_buffers = []
+
+        def randn_into(self, rng, out):
+            self.noise_buffers.append(id(out))
+            return super().randn_into(rng, out)
+
+    backend = RecordingBackend()
+    engine = Engine(
+        config=EngineConfig(
+            dt=0.01,
+            t0=0.0,
+            t1=0.05,
+            n_traj=2,
+            seed=11,
+            ic=[[0.0]],
+        ),
+        plugins={
+            "backend": backend,
+            "integrator": EulerMaruyama(),
+            "model": DummySDEModel(),
+        },
+    )
+
+    engine.run()
+
+    assert len(backend.noise_buffers) == 5
+    assert len(set(backend.noise_buffers)) == 1
+
+
+def test_grouped_rng_fills_noncontiguous_chunk_slices():
+    backend = NumpyBackend()
+    actual = np.empty((3, 8, 2), dtype=np.float64)
+    grouped = _GroupedRNG((backend.rng(31), backend.rng(37)), group_size=4)
+
+    Engine._draw_standard_normal_into(backend, grouped, actual)
+
+    expected = np.concatenate(
+        (
+            backend.randn(backend.rng(31), (3, 4, 2), dtype=np.float64),
+            backend.randn(backend.rng(37), (3, 4, 2), dtype=np.float64),
+        ),
+        axis=1,
+    )
+    np.testing.assert_array_equal(actual, expected)
 
 
 class DummyChunkIntegrator:

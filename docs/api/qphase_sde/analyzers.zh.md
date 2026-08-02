@@ -23,6 +23,9 @@ analyser:
     kind: complex
     expected_freq_max: 0.34
     find_peaks: true
+    estimator:
+      periodogram:
+        window: null
 ```
 
 | 键 | 类型 | 说明 |
@@ -31,6 +34,19 @@ analyser:
 | `kind` | `str` | PSD 变体，如 `complex`、`real`、`imag`。 |
 | `expected_freq_max` | `float \| None` | 输出频率轴单位下预期的最大物理频率；达到 Nyquist 上限时分析直接失败。 |
 | `find_peaks` | `bool` | 是否报告峰值位置。 |
+| `estimator` | 子插件选择 | 必须且只能选择 `periodogram`、`welch`、`multitaper` 之一。 |
+
+Estimator 对比：
+
+| Estimator | 子配置字段 | 分辨率与开销 |
+| :-- | :-- | :-- |
+| `periodogram` | `window` | 使用完整保存时长；频率分辨率最高，单 trajectory FFT 最大。 |
+| `welch` | `window`、`nperseg`、`noverlap`、`nfft` | 方差较低，segment FFT 内存有界；物理分辨率由 `nperseg * sample_dt` 决定，`nfft > nperseg` 只插值频点。 |
+| `multitaper` | `nw`、`k_tapers` | 保持完整时长分辨率并平均 taper；每个 taper 需要额外 FFT。 |
+
+三者均支持跨 trajectory batch 的在线聚合。Estimator 是 `analyser.psd` 的
+子插件，可通过 `qphase list --parent analyser.psd` 发现，并通过
+`qphase config schema analyser.psd/estimator.welch` 查询 schema。
 
 ### 频率轴
 
