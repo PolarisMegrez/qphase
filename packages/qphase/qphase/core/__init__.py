@@ -47,12 +47,14 @@ from .errors import (
     get_logger,
 )
 from .execution import ExecutionContext
+from .plugin_graph import PluginGraphResolver, ResolvedPluginNode
 from .progress import (
     ProgressEvent,
     ProgressReporter,
     ProgressSnapshot,
     ProgressTracker,
 )
+from .protocols import PluginManifest, SubpluginSlot
 from .registry import RegistryCenter, registry
 from .scan import ParameterGrid, ScanAxisSpec, ScanSpec
 from .scheduler import JobResult, Scheduler
@@ -81,6 +83,10 @@ __all__ = [
     # Registry
     "registry",
     "RegistryCenter",
+    "PluginGraphResolver",
+    "ResolvedPluginNode",
+    "PluginManifest",
+    "SubpluginSlot",
     # Scheduler
     "Scheduler",
     "JobResult",

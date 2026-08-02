@@ -18,10 +18,10 @@ ResultProtocol
     Protocol for serializable result containers.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, Protocol, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
@@ -33,8 +33,37 @@ LegacyProgressCallback = Callable[
 ProgressCallback = LegacyProgressCallback
 
 
+@dataclass(frozen=True)
+class SubpluginSlot:
+    """A named child-plugin selection owned by one parent plugin."""
+
+    namespace: str
+    cardinality: Literal["one", "optional", "many"] = "one"
+    default: str | None = None
+    protocol: str | None = None
+    allowed: frozenset[str] | None = None
+    description: str = ""
+
+    def __post_init__(self) -> None:
+        """Validate slot cardinality and namespace invariants."""
+        if not self.namespace.strip():
+            raise ValueError("subplugin namespace must not be empty")
+        if self.cardinality == "many" and self.default is not None:
+            raise ValueError("a many-valued subplugin slot cannot have one default")
+        if self.cardinality == "optional" and self.default is not None:
+            raise ValueError("an optional subplugin slot cannot have a default")
+
+
 @dataclass
-class EngineManifest:
+class PluginManifest:
+    """Relationships between a parent plugin and its child-plugin slots."""
+
+    subplugins: Mapping[str, SubpluginSlot] = field(default_factory=dict)
+    schema_version: str = "1.0"
+
+
+@dataclass
+class EngineManifest(PluginManifest):
     """Manifest declaring engine dependencies.
 
     Attributes
@@ -50,7 +79,7 @@ class EngineManifest:
 
     # Required plugin types (e.g., {'backend', 'model'}).
     # Use an empty set if the engine does not enforce any required plugins.
-    required_plugins: set[str]
+    required_plugins: set[str] = field(default_factory=set)
     # Optional plugin types (e.g., {'integrator', 'analyzer'})
     optional_plugins: set[str] = field(default_factory=set)
     # Default plugin implementations (e.g., {'integrator': 'euler_maruyama'})

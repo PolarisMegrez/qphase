@@ -341,27 +341,20 @@ class RegistryCenter:
                 params = {}
 
         merged_kwargs = {**(params or {}), **extra_kwargs}
-        full_name = f"{plugin_type}:{plugin_name}"
-
         schema = self.get_plugin_schema(plugin_type, plugin_name)
         if schema:
-            # Validate/Create config object
-            try:
-                # Use model_validate for Pydantic v2, or direct instantiation
-                if hasattr(schema, "model_validate"):
-                    config_obj = schema.model_validate(merged_kwargs)
-                else:
-                    config_obj = schema(**merged_kwargs)
+            from .plugin_graph import PluginGraphResolver
 
-                return self.create(full_name, config=config_obj, **extra_kwargs)
-            except Exception as e:
-                raise QPhaseConfigError(
-                    f"Invalid configuration for plugin "
-                    f"'{plugin_type}:{plugin_name}': {e}"
-                ) from e
+            node = PluginGraphResolver(self).resolve(
+                plugin_type,
+                str(plugin_name),
+                merged_kwargs,
+                parent_kwargs=extra_kwargs,
+            )
+            return node.instance
 
         # Fallback for plugins without schema (should be avoided in strict mode)
-        return self.create(full_name, **merged_kwargs)
+        return self.create(f"{plugin_type}:{plugin_name}", **merged_kwargs)
 
     def get_plugin_schema(self, namespace: str, name: str) -> type[Any] | None:
         """Get the configuration schema class for a specific plugin."""
