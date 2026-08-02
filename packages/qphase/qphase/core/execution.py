@@ -6,7 +6,9 @@ import hashlib
 import importlib.metadata
 import inspect
 import json
+import os
 import pickle
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,7 +21,9 @@ from .scan import ParameterGrid
 __all__ = [
     "CancellationToken",
     "CheckpointStore",
+    "BackendRuntimeSnapshot",
     "ExecutionContext",
+    "HardwareSnapshot",
     "ProgressEvent",
     "ProgressReporter",
     "ResourceSnapshot",
@@ -51,6 +55,59 @@ class CancellationToken:
 
 
 @dataclass(frozen=True)
+class HardwareSnapshot:
+    """Dynamic host facts sampled near the start of a logical job."""
+
+    logical_cpu_count: int | None
+    total_memory_mib: int | None
+    available_memory_mib: int | None
+
+    @classmethod
+    def collect(cls) -> HardwareSnapshot:
+        total, available = _host_memory_bytes()
+        return cls(
+            logical_cpu_count=os.cpu_count(),
+            total_memory_mib=_bytes_to_mib(total),
+            available_memory_mib=_bytes_to_mib(available),
+        )
+
+
+@dataclass(frozen=True)
+class BackendRuntimeSnapshot:
+    """Optional device facts supplied by the selected backend instance."""
+
+    name: str
+    device: str | None
+    total_memory_mib: int | None = None
+    available_memory_mib: int | None = None
+    capabilities: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def collect(cls, backend: Any | None) -> BackendRuntimeSnapshot | None:
+        if backend is None:
+            return None
+        name = _safe_backend_call(backend, "backend_name") or type(backend).__name__
+        device = _safe_backend_call(backend, "device")
+        payload: dict[str, Any] = {}
+        provider = getattr(backend, "runtime_resources", None)
+        if callable(provider):
+            try:
+                payload = dict(provider() or {})
+            except Exception:
+                payload = {}
+        capabilities = _safe_backend_call(backend, "capabilities")
+        return cls(
+            name=str(name),
+            device=None if device is None else str(device),
+            total_memory_mib=_memory_value_mib(payload, "total"),
+            available_memory_mib=_memory_value_mib(payload, "available"),
+            capabilities=(
+                dict(capabilities) if isinstance(capabilities, dict) else {}
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class ResourceSnapshot:
     """Core-collected workstation hints; engines decide how to use them."""
 
@@ -58,16 +115,89 @@ class ResourceSnapshot:
     memory_limit_mib: int | None
     gpu_device: int | str | None
     gpu_memory_fraction: float | None
+    hardware: HardwareSnapshot = field(default_factory=HardwareSnapshot.collect)
+    backend: BackendRuntimeSnapshot | None = None
 
     @classmethod
-    def from_system_config(cls, config: Any) -> ResourceSnapshot:
+    def from_system_config(
+        cls, config: Any, *, backend: Any | None = None
+    ) -> ResourceSnapshot:
         resources = config.scan_runtime.resources
         return cls(
             resources.cpu_worker_limit,
             resources.memory_limit_mib,
             resources.gpu_device,
             resources.gpu_memory_fraction,
+            HardwareSnapshot.collect(),
+            BackendRuntimeSnapshot.collect(backend),
         )
+
+
+def _safe_backend_call(backend: Any, name: str) -> Any | None:
+    value = getattr(backend, name, None)
+    if not callable(value):
+        return None
+    try:
+        return value()
+    except Exception:
+        return None
+
+
+def _memory_value_mib(payload: dict[str, Any], prefix: str) -> int | None:
+    mib = payload.get(f"{prefix}_memory_mib")
+    if mib is not None:
+        return int(mib)
+    byte_count = payload.get(f"{prefix}_memory_bytes")
+    return _bytes_to_mib(byte_count)
+
+
+def _bytes_to_mib(value: Any | None) -> int | None:
+    if value is None:
+        return None
+    return max(0, int(value) // (1024**2))
+
+
+def _host_memory_bytes() -> tuple[int | None, int | None]:
+    """Collect total and currently available physical memory without psutil."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            class MemoryStatus(ctypes.Structure):
+                _fields_ = [
+                    ("length", ctypes.c_ulong),
+                    ("memory_load", ctypes.c_ulong),
+                    ("total_physical", ctypes.c_ulonglong),
+                    ("available_physical", ctypes.c_ulonglong),
+                    ("total_page_file", ctypes.c_ulonglong),
+                    ("available_page_file", ctypes.c_ulonglong),
+                    ("total_virtual", ctypes.c_ulonglong),
+                    ("available_virtual", ctypes.c_ulonglong),
+                    ("available_extended_virtual", ctypes.c_ulonglong),
+                ]
+
+            status = MemoryStatus()
+            status.length = ctypes.sizeof(status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return int(status.total_physical), int(status.available_physical)
+        except Exception:
+            return None, None
+    if sys.platform.startswith("linux"):
+        try:
+            values: dict[str, int] = {}
+            for line in Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
+                name, raw = line.split(":", 1)
+                values[name] = int(raw.strip().split()[0]) * 1024
+            return values.get("MemTotal"), values.get("MemAvailable")
+        except Exception:
+            pass
+    try:
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        total = page_size * int(os.sysconf("SC_PHYS_PAGES"))
+        available = page_size * int(os.sysconf("SC_AVPHYS_PAGES"))
+        return total, available
+    except (AttributeError, OSError, ValueError):
+        return None, None
 
 
 class CheckpointStore:

@@ -137,3 +137,34 @@ def test_planner_batches_trajectories_when_one_point_exceeds_host_budget():
     assert plan.trajectory_batch_count > 1
     assert plan.scan_tile_size == 1
     assert plan.memory.estimated_peak_bytes <= plan.budget_bytes
+
+
+def test_planner_uses_dynamic_host_memory_when_limit_is_unset():
+    config = EngineConfig(
+        t0=0.0,
+        t1=1.0,
+        dt=0.01,
+        n_traj=2,
+        save_stride=10,
+    )
+    resources = SimpleNamespace(
+        memory_limit_mib=None,
+        hardware=SimpleNamespace(
+            available_memory_mib=8000,
+            total_memory_mib=32000,
+        ),
+    )
+
+    plan = build_execution_plan(
+        config=config,
+        grid=None,
+        model=FakeModel(),
+        backend=FakeNumpyBackend(),
+        integrator=FakeIntegrator(),
+        analysers={},
+        resources=resources,
+    )
+
+    assert plan.budget_bytes == 6000 * 1024**2
+    assert plan.available_device_bytes == 8000 * 1024**2
+    assert plan.device_total_bytes == 32000 * 1024**2

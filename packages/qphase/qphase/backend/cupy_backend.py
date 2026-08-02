@@ -192,6 +192,14 @@ class CuPyBackend(Backend):
     def backend_name(self) -> str:
         return "cupy"
 
+    def runtime_resources(self) -> dict[str, int]:
+        """Return current device-memory facts for execution planning."""
+        free, total = cp.cuda.runtime.memGetInfo()
+        return {
+            "available_memory_bytes": int(free),
+            "total_memory_bytes": int(total),
+        }
+
     def device(self) -> str | None:
         # Return configured device if set, otherwise current device
         if self.config.device:

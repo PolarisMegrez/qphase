@@ -1072,7 +1072,9 @@ class Scheduler:
         )
         context = ExecutionContext(
             parameter_grid=job.scan.compile() if job.scan is not None else None,
-            resources=ResourceSnapshot.from_system_config(effective_system),
+            resources=ResourceSnapshot.from_system_config(
+                effective_system, backend=backend
+            ),
             progress=reporter,
             cancellation=CancellationToken(),
             artifacts=ArtifactStore(run_dir, effective_system.scan_runtime),

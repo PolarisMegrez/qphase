@@ -20,16 +20,17 @@ import typer
 from rich.console import Console
 from rich.syntax import Syntax
 
-from qphase.core import (
-    SystemConfig,
-)
 from qphase.core.config_loader import (
     construct_plugins_config,
     load_global_config,
     save_global_config,
 )
 from qphase.core.registry import discovery, registry
-from qphase.core.system_config import load_system_config, save_user_config
+from qphase.core.system_config import (
+    load_system_config,
+    reset_user_config,
+    save_user_config,
+)
 from qphase.service import RegistryService
 
 app = typer.Typer(help="Manage configuration")
@@ -206,18 +207,7 @@ def reset_config(
             raise typer.Abort()
 
         try:
-            # Reset system config
-            # 1. Load package default
-            import importlib.resources as ilr
-
-            from qphase.core.utils import load_yaml
-
-            system_yaml_path = ilr.files("qphase.core").joinpath("system.yaml")
-            default_config_dict = load_yaml(Path(str(system_yaml_path)))
-
-            # 2. Save to user config path
-            config_obj = SystemConfig(**default_config_dict)
-            save_user_config(config_obj)
+            reset_user_config()
 
             console.print("[green]System configuration reset to defaults.[/green]")
         except Exception as e:

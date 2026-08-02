@@ -143,18 +143,25 @@ workspaces, and builds an execution plan. Resource policy is read from the
 a system configuration file. On CuPy, the plan also queries current device
 memory and applies the configured GPU memory fraction.
 
-When an analyser is configured and `keep_trajectory` is false, the engine may
-split a large scan into internal tiles. Each tile is integrated, analysed, and
-released before the next tile starts. Results are merged into one logical SDE
-dataset with named point views. Stable per-point random streams make analyser
-results independent of the selected scan tile size for a fixed seed.
+When analysers are configured and `keep_traj` is false, the engine may split a
+large scan into internal tiles and split each point into trajectory batches.
+Each batch is integrated, analysed, merged with Chan/Welford statistics, and
+released. Periodogram, Welch, and multitaper PSD estimators all support this
+trajectory dimension batching; it preserves each estimator's time-domain
+resolution and the existing `psd`, `psd_std`, and `psd_sem` result fields.
+Stable logical RNG groups make results independent of the selected scan tile
+and physical trajectory batch size for a fixed seed.
 
 If the full trajectory is requested, it must fit the available resource budget
-and is materialized as one logical result. Scan tiling cannot reduce the memory
-required by a single scan point; such workloads fail before integration with a
-memory estimate instead of relying on an out-of-memory error. Increasing
+and is materialized as one logical result. If even one trajectory plus analyser
+accumulator cannot fit, planning fails before integration with a memory estimate
+instead of relying on an out-of-memory error. Increasing
 `save_stride` reduces saved trajectory and FFT sizes, but it does not reduce the
 number of integration steps.
+
+`trajectory_batching` accepts `auto` (default), `off`, or `required`.
+`trajectory_batch_size` is an optional diagnostic/benchmark override; normal
+jobs should leave it unset so current host/device resources determine the batch.
 
 The selected tile size, estimated byte counts, resource budget, and random
 stream strategy are recorded in result metadata under `execution_plan`.

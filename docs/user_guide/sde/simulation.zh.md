@@ -108,21 +108,28 @@ integrator:
 
 ## 批量化参数扫描
 
-SDE 扫描使用 job 顶层的显式 `ScanSpec`。scheduler 将一个 `ParameterGrid`
-传给 SDE engine，薄 adapter 再把它编译为现有的参数重复和 trajectory fusion 表示。
+SDE 扫描使用 job 顶层的显式 `ScanSpec`。scheduler 将一个 `ParameterGrid` 和一个
+`ExecutionContext` 传给 SDE engine；扫描点不会展开为 scheduler job 或独立目录。
+engine 在分配轨迹前验证时间网格与 analyser 带宽，并估算状态、噪声、轨迹和 FFT
+workspace。资源策略只从 `ExecutionContext.resources` 对象读取，SDE 包不发现或
+读取 SystemConfig 路径。
 
 在批量运行中：
 
-* 扫描值会被广播为单个 `(n_scan * n_traj,)` 的集合体。
-* 后端的一次调用会同时推进所有扫描点上的所有轨迹。
+* engine 根据可用内存将扫描拆分为内部 tile，并可继续按 trajectory 分批。
 * 合并结果以一个带命名 point view 的逻辑 SDE dataset 暴露。
 * 保存时只有一个 job 目录和一个 artifact manifest，不会逐参数点建立目录。
 
-这在 GPU 上效果尤为明显：每个时间步较小的 CPU 启动开销被大量轨迹均摊，单个 CuPy kernel 启动即可更新整个集合体。
+当 analyser 已配置且 `keep_traj: false` 时，每个 trajectory batch 会依次完成积分、
+分析和释放。periodogram、Welch 与 multitaper PSD estimator 均支持该维度的在线聚合，
+并保持现有 `psd`、`psd_std`、`psd_sem` 字段及各自的时间分辨率。固定的逻辑 RNG
+group 保证相同 seed 下结果不依赖 scan tile 和物理 trajectory batch 大小。
 
-声明 `scan` 后，批量执行仍然自动完成。adapter 不修改 integrator、PSD、RNG、
-fused kernel 或 GPU batching 主逻辑。模型参数仍需接受标量或逐 trajectory 的一维
-数组。
+`trajectory_batching` 可取 `auto`（默认）、`off` 或 `required`；
+`trajectory_batch_size` 是诊断/benchmark 用的可选覆盖，生产任务通常应留空，由当前
+主机/设备资源决定。若单条 trajectory 加 analyser accumulator 仍无法放入预算，
+planner 会在积分前给出内存估算错误。增大 `save_stride` 会缩小保存轨迹和 FFT，
+但不会减少积分步数。
 
 ## Kernelized Terms（CuPy 核函数）
 

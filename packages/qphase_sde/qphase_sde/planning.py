@@ -331,9 +331,30 @@ def _memory_budget(
         return "gpu", budget, free, total, fraction
 
     limit_mib = getattr(resources, "memory_limit_mib", None)
-    if limit_mib is None:
-        return "host", None, None, None, None
-    return "host", int(limit_mib) * _MIB, None, None, None
+    hardware = getattr(resources, "hardware", None)
+    available_mib = getattr(hardware, "available_memory_mib", None)
+    total_mib = getattr(hardware, "total_memory_mib", None)
+    available_bytes = (
+        None if available_mib is None else int(available_mib) * _MIB
+    )
+    total_bytes = None if total_mib is None else int(total_mib) * _MIB
+    if limit_mib is not None:
+        configured = int(limit_mib) * _MIB
+        budget = (
+            configured
+            if available_bytes is None
+            else min(configured, int(available_bytes * _DEFAULT_DEVICE_FRACTION))
+        )
+        return "host", budget, available_bytes, total_bytes, None
+    if available_bytes is None:
+        return "host", None, None, total_bytes, None
+    return (
+        "host",
+        int(available_bytes * _DEFAULT_DEVICE_FRACTION),
+        available_bytes,
+        total_bytes,
+        None,
+    )
 
 
 def _cupy_memory_info() -> tuple[int, int] | None:

@@ -79,5 +79,6 @@ class KerrCavityConfig(BaseModel):
 ## 系统运行 Schema
 
 core 的存储、checkpoint、资源提示、进度和 CLI 行为都属于 `SystemConfig`。
-内置与用户级默认值由 system config loader 合并；job 可通过现有 `system` 字段覆盖
-同一 schema。解析后的值通过 `ExecutionContext` 传给资源包。
+`SystemConfigStore` 合并包内默认值与稀疏的机器/用户覆盖，读取时不会创建用户文件；
+job 可通过现有 `system` 字段覆盖同一 schema。动态硬件事实不进入持久化配置，而是
+在运行时采样为 `ResourceSnapshot`，通过 `ExecutionContext` 传给资源包。

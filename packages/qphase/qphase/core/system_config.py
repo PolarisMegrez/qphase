@@ -15,6 +15,8 @@ PathsConfig
 
 import importlib.resources as ilr
 import os
+import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -32,6 +34,10 @@ __all__ = [
     "ResourceHintsConfig",
     "ScanRuntimeConfig",
     "SystemConfig",
+    "SystemConfigStore",
+    "load_system_config",
+    "reset_user_config",
+    "save_user_config",
 ]
 
 logger = get_logger()
@@ -255,8 +261,167 @@ class SystemConfig(BaseModel):
         return self.reporting.progress.refresh_interval
 
 
-# Cache for system config
-_SYSTEM_CONFIG_CACHE: SystemConfig | None = None
+class SystemConfigStore:
+    """Load and persist core system policy through one explicit boundary."""
+
+    def __init__(
+        self,
+        *,
+        package_default_path: str | Path | None = None,
+        site_path: str | Path | None = None,
+        user_path: str | Path | None = None,
+        environ: Mapping[str, str] | None = None,
+    ) -> None:
+        self.package_default_path = (
+            None if package_default_path is None else Path(package_default_path)
+        )
+        self.site_path = None if site_path is None else Path(site_path)
+        self._explicit_site_path = site_path is not None
+        self.user_path = None if user_path is None else Path(user_path)
+        self.environ = os.environ if environ is None else environ
+        self._cache: SystemConfig | None = None
+        self._cache_sources: tuple[str, ...] | None = None
+
+    def default_config(self) -> SystemConfig:
+        """Return package defaults combined with an optional site policy."""
+        payload = self._load_package_defaults()
+        site_path = self._resolved_site_path()
+        if site_path is not None and site_path.exists():
+            payload = deep_merge_dicts(payload, self._load_mapping(site_path))
+        return self._validate(payload)
+
+    def load(
+        self,
+        *,
+        force_reload: bool = False,
+        config_path: str | Path | None = None,
+    ) -> SystemConfig:
+        """Resolve defaults, sparse user policy, environment, and explicit input."""
+        sources = self._source_signature(config_path)
+        if (
+            self._cache is not None
+            and not force_reload
+            and config_path is None
+            and sources == self._cache_sources
+        ):
+            return self._cache
+
+        payload = self.default_config().model_dump()
+        for path in self._override_paths(config_path):
+            if path.exists():
+                payload = deep_merge_dicts(payload, self._load_mapping(path))
+            elif path == (Path(config_path) if config_path is not None else None):
+                raise QPhaseConfigError(f"System config file not found: {path}")
+        payload.pop("parameter_scan", None)
+        result = self._validate(payload)
+        if config_path is None:
+            self._cache = result
+            self._cache_sources = sources
+        return result
+
+    def save_user(self, config: SystemConfig) -> Path:
+        """Persist only values differing from package and site defaults."""
+        path = self._resolved_user_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        sparse = _sparse_difference(
+            config.model_dump(), self.default_config().model_dump()
+        )
+        if sparse is _UNCHANGED:
+            sparse = {}
+        save_yaml(sparse, path)
+        self.clear_cache()
+        return path
+
+    def reset_user(self) -> None:
+        """Remove the user override; defaults remain inside the package."""
+        path = self._resolved_user_path()
+        if path.exists():
+            path.unlink()
+        self.clear_cache()
+
+    def clear_cache(self) -> None:
+        self._cache = None
+        self._cache_sources = None
+
+    def _load_package_defaults(self) -> dict[str, Any]:
+        try:
+            path = self.package_default_path
+            if path is None:
+                resource = ilr.files("qphase.core").joinpath("system.yaml")
+                path = Path(str(resource))
+            return self._load_mapping(path)
+        except QPhaseConfigError:
+            raise
+        except Exception as exc:
+            raise QPhaseConfigError(
+                f"Could not load packaged system defaults: {exc}"
+            ) from exc
+
+    def _load_mapping(self, path: Path) -> dict[str, Any]:
+        try:
+            payload = load_yaml(path)
+        except Exception as exc:
+            raise QPhaseConfigError(
+                f"Failed to load system config {path}: {exc}"
+            ) from exc
+        if payload is None:
+            return {}
+        if not isinstance(payload, dict):
+            raise QPhaseConfigError(
+                f"System config {path} must contain a YAML mapping"
+            )
+        return payload
+
+    def _validate(self, payload: dict[str, Any]) -> SystemConfig:
+        try:
+            return SystemConfig.model_validate(payload)
+        except Exception as exc:
+            raise QPhaseConfigError(f"Invalid system configuration: {exc}") from exc
+
+    def _resolved_user_path(self) -> Path:
+        return self.user_path or Path.home() / ".qphase" / "config.yaml"
+
+    def _resolved_site_path(self) -> Path | None:
+        if self._explicit_site_path:
+            return self.site_path
+        if sys.platform == "win32":
+            program_data = self.environ.get("PROGRAMDATA")
+            return (
+                Path(program_data) / "qphase" / "config.yaml"
+                if program_data
+                else None
+            )
+        return Path("/etc/qphase/config.yaml")
+
+    def _override_paths(self, config_path: str | Path | None) -> list[Path]:
+        paths = [self._resolved_user_path()]
+        env_path = self.environ.get("QPHASE_SYSTEM_CONFIG")
+        if env_path:
+            paths.append(Path(env_path))
+        if config_path is not None:
+            paths.append(Path(config_path))
+        return paths
+
+    def _source_signature(self, config_path: str | Path | None) -> tuple[str, ...]:
+        paths = [self._resolved_site_path(), *self._override_paths(config_path)]
+        return tuple("" if path is None else str(path.resolve()) for path in paths)
+
+
+def _sparse_difference(value: Any, baseline: Any) -> Any:
+    """Return a recursively sparse mapping relative to ``baseline``."""
+    if isinstance(value, dict) and isinstance(baseline, dict):
+        result = {
+            key: difference
+            for key, item in value.items()
+            if (difference := _sparse_difference(item, baseline.get(key)))
+            is not _UNCHANGED
+        }
+        return result if result else _UNCHANGED
+    return _UNCHANGED if value == baseline else value
+
+
+_UNCHANGED = object()
+_SYSTEM_CONFIG_STORE = SystemConfigStore()
 
 
 def load_system_config(
@@ -284,90 +449,16 @@ def load_system_config(
         Loaded system configuration
 
     """
-    global _SYSTEM_CONFIG_CACHE
-
-    if _SYSTEM_CONFIG_CACHE is not None and not force_reload and config_path is None:
-        return _SYSTEM_CONFIG_CACHE
-
-    # 1. Load package default
-    try:
-        system_yaml_path = ilr.files("qphase.core").joinpath("system.yaml")
-        config_dict = load_yaml(Path(str(system_yaml_path)))
-    except Exception:
-        logger.warning("Could not load default system.yaml from package")
-        config_dict = {}
-
-    # 2. System-wide config
-    sys_path = Path("/etc/qphase/config.yaml")
-    if sys_path.exists():
-        try:
-            sys_dict = load_yaml(sys_path)
-            config_dict = deep_merge_dicts(config_dict, sys_dict)
-        except Exception as e:
-            logger.warning(f"Failed to load system config {sys_path}: {e}")
-
-    # 3. User config
-    user_path = Path.home() / ".qphase" / "config.yaml"
-    if user_path.exists():
-        try:
-            user_dict = load_yaml(user_path)
-            config_dict = deep_merge_dicts(config_dict, user_dict)
-        except Exception as e:
-            logger.warning(f"Failed to load user config {user_path}: {e}")
-    else:
-        # Silent Generation: Create user config from package default if missing
-        try:
-            user_path.parent.mkdir(parents=True, exist_ok=True)
-            save_yaml(config_dict, user_path)
-            logger.info(f"Created default user config at {user_path}")
-        except Exception as e:
-            logger.warning(f"Failed to create default user config at {user_path}: {e}")
-
-    # 4. Environment variable
-    env_path = os.environ.get("QPHASE_SYSTEM_CONFIG")
-    if env_path:
-        path = Path(env_path)
-        if path.exists():
-            try:
-                env_dict = load_yaml(path)
-                config_dict = deep_merge_dicts(config_dict, env_dict)
-            except Exception as e:
-                logger.warning(f"Failed to load env config {path}: {e}")
-
-    # 5. Explicit path
-    if config_path:
-        path = Path(config_path)
-        if path.exists():
-            try:
-                explicit_dict = load_yaml(path)
-                config_dict = deep_merge_dicts(config_dict, explicit_dict)
-            except Exception as e:
-                raise QPhaseConfigError(
-                    f"Failed to load explicit config {path}: {e}"
-                ) from e
-
-    if "parameter_scan" in config_dict:
-        config_dict.pop("parameter_scan", None)
-        logger.warning(
-            "Ignoring removed system setting 'parameter_scan'; define explicit "
-            "job.scan axes instead."
-        )
-
-    try:
-        _SYSTEM_CONFIG_CACHE = SystemConfig(**config_dict)
-        return _SYSTEM_CONFIG_CACHE
-    except Exception as e:
-        raise QPhaseConfigError(f"Invalid system configuration: {e}") from e
+    return _SYSTEM_CONFIG_STORE.load(
+        force_reload=force_reload, config_path=config_path
+    )
 
 
 def save_user_config(config: SystemConfig) -> None:
-    """Save system configuration to user home directory."""
-    user_config_dir = Path.home() / ".qphase"
-    user_config_dir.mkdir(exist_ok=True)
-    user_config_path = user_config_dir / "config.yaml"
+    """Save a sparse system configuration override in the user profile."""
+    _SYSTEM_CONFIG_STORE.save_user(config)
 
-    config_dict = config.model_dump()
-    save_yaml(config_dict, user_config_path)
 
-    global _SYSTEM_CONFIG_CACHE
-    _SYSTEM_CONFIG_CACHE = None
+def reset_user_config() -> None:
+    """Remove the persisted user override and clear the config cache."""
+    _SYSTEM_CONFIG_STORE.reset_user()

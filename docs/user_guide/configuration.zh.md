@@ -116,9 +116,11 @@ input:
 
 ## SystemConfig
 
-内置默认值位于 `qphase.core/system.yaml`。用户级覆盖位于
-`~/.qphase/config.yaml`；也可以通过 `QPHASE_SYSTEM_CONFIG` 或显式加载路径提供
-其他文件。默认运行策略为：
+内置默认值位于 `qphase.core/system.yaml`。用户级覆盖可位于
+`~/.qphase/config.yaml`；读取配置不会自动创建该文件。通过
+`qphase config set --system` 写入时，只持久化相对内置/机器默认值发生变化的字段。
+`QPHASE_SYSTEM_CONFIG` 或显式加载路径可提供更高优先级的文件。解析顺序为：包内
+默认值、可选机器策略、用户覆盖、环境变量指定文件、显式加载路径。
 
 ```yaml
 auto_save_results: true
@@ -155,7 +157,8 @@ scan_runtime:
 
 `storage_layout` 可取 `auto`、`single`、`sharded` 或 `per_point`。`auto` 默认在
 dataset 超过 512 MiB 时分片。资源字段由 core 采集并通过 `ExecutionContext`
-传给 engine；scheduler 不据此进行多 job 资源调度。
+传给 engine；每个逻辑 job 还会单独采样 CPU、主机内存和可选 backend device 的
+动态事实。scheduler 不据此进行多 job 资源调度。
 
 checkpoint 只覆盖已完成的 scan chunk，不覆盖 SDE 单条轨迹内部的时间步。
 resume 会校验配置、插件、backend 与 dtype，只有兼容的 checkpoint 才会被接受。

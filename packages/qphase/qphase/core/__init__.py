@@ -46,7 +46,12 @@ from .errors import (
     configure_logging,
     get_logger,
 )
-from .execution import ExecutionContext
+from .execution import (
+    BackendRuntimeSnapshot,
+    ExecutionContext,
+    HardwareSnapshot,
+    ResourceSnapshot,
+)
 from .plugin_graph import PluginGraphResolver, ResolvedPluginNode
 from .progress import (
     ProgressEvent,
@@ -58,7 +63,13 @@ from .protocols import PluginManifest, SubpluginSlot
 from .registry import RegistryCenter, registry
 from .scan import ParameterGrid, ScanAxisSpec, ScanSpec
 from .scheduler import JobResult, Scheduler
-from .system_config import SystemConfig, load_system_config, save_user_config
+from .system_config import (
+    SystemConfig,
+    SystemConfigStore,
+    load_system_config,
+    reset_user_config,
+    save_user_config,
+)
 
 __all__ = [
     # Errors & Logging
@@ -98,11 +109,16 @@ __all__ = [
     "ScanAxisSpec",
     "ParameterGrid",
     "ExecutionContext",
+    "HardwareSnapshot",
+    "BackendRuntimeSnapshot",
+    "ResourceSnapshot",
     "DatasetResultProtocol",
     "DatasetSaveReport",
     # System config
     "SystemConfig",
+    "SystemConfigStore",
     "load_system_config",
+    "reset_user_config",
     "save_user_config",
     "get_system_param",
     # Config loader

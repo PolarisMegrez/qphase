@@ -126,9 +126,13 @@ migration error.
 
 ## System Configuration
 
-The packaged defaults live in `qphase.core/system.yaml`. User-wide overrides
-live in `~/.qphase/config.yaml`; `QPHASE_SYSTEM_CONFIG` or an explicit loader
-path can supply another file. The default policy is:
+The packaged defaults live in `qphase.core/system.yaml`. A user-wide override
+may live in `~/.qphase/config.yaml`; reading configuration does not create this
+file. When `qphase config set --system` writes it, only values that differ from
+the packaged/site defaults are persisted. `QPHASE_SYSTEM_CONFIG` or an explicit
+loader path can supply a higher-priority file. The resolution order is package
+defaults, optional machine policy, user override, environment-selected file,
+then an explicit loader path.
 
 ```yaml
 auto_save_results: true
@@ -165,8 +169,9 @@ scan_runtime:
 
 `storage_layout` may be `auto`, `single`, `sharded`, or `per_point`. In `auto`
 mode, datasets larger than 512 MiB are sharded by default. Resource values are
-hints collected by core and forwarded through `ExecutionContext`; the scheduler
-does not use them for multi-job resource allocation.
+hints collected by core and forwarded through `ExecutionContext`; dynamic CPU,
+host-memory, and optional backend-device facts are sampled separately for each
+logical job. The scheduler does not use them for multi-job resource allocation.
 
 Checkpointing covers completed scan chunks only. It does not checkpoint the
 internal time step of an SDE trajectory. Resume validates the configuration,

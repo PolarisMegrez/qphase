@@ -81,7 +81,8 @@ The loader deliberately rejects removed workflow forms with actionable errors:
 ## System Runtime Schema
 
 Core storage, checkpoint, resource-hint, progress, and CLI behavior belongs to
-`SystemConfig`. Packaged and user-level defaults are merged by the system
-configuration loader; a job may override the same schema through its existing
-`system` field. Resource packages receive resolved values through
-`ExecutionContext`.
+`SystemConfig`. `SystemConfigStore` merges packaged defaults with sparse
+machine/user overrides and never creates a user file during a read. A job may
+override the same schema through its existing `system` field. Dynamic hardware
+facts remain outside persisted configuration and are sampled into the
+`ResourceSnapshot` carried by `ExecutionContext`.

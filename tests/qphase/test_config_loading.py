@@ -1,12 +1,16 @@
 from pathlib import Path
 
 from qphase.core.config_loader import load_global_config, load_system_config
-from qphase.core.system_config import SystemConfig, save_user_config
+from qphase.core.system_config import (
+    SystemConfig,
+    SystemConfigStore,
+    save_user_config,
+)
 from qphase.core.utils import load_yaml
 
 
-def test_silent_generation_system_config(tmp_path, monkeypatch):
-    """Test that system config is silently generated if missing."""
+def test_missing_user_system_config_is_not_created_on_read(tmp_path, monkeypatch):
+    """Reading defaults must not persist a machine-specific config snapshot."""
     # Mock home directory to tmp_path
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
@@ -14,15 +18,57 @@ def test_silent_generation_system_config(tmp_path, monkeypatch):
     config_path = tmp_path / ".qphase" / "config.yaml"
     assert not config_path.exists()
 
-    # Load system config (should trigger generation)
+    # Load system config without an explicit persistence request.
     config = load_system_config(force_reload=True)
 
     assert isinstance(config, SystemConfig)
-    assert config_path.exists()
+    assert not config_path.exists()
 
-    # Verify content
-    saved_data = load_yaml(config_path)
-    assert "paths" in saved_data
+
+def test_system_config_store_persists_sparse_user_override(tmp_path):
+    package_path = tmp_path / "defaults.yaml"
+    package_path.write_text(
+        "auto_save_results: true\npaths:\n  output_dir: ./runs\n",
+        encoding="utf-8",
+    )
+    user_path = tmp_path / "user" / "config.yaml"
+    store = SystemConfigStore(
+        package_default_path=package_path,
+        site_path=tmp_path / "missing-site.yaml",
+        user_path=user_path,
+        environ={},
+    )
+    config = store.load()
+    config.paths.output_dir = "D:/results"
+
+    store.save_user(config)
+
+    assert load_yaml(user_path) == {"paths": {"output_dir": "D:/results"}}
+    assert store.load().paths.output_dir == "D:/results"
+
+
+def test_system_config_override_precedence(tmp_path):
+    package_path = tmp_path / "defaults.yaml"
+    package_path.write_text("auto_save_results: true\n", encoding="utf-8")
+    site_path = tmp_path / "site.yaml"
+    site_path.write_text("auto_save_results: false\n", encoding="utf-8")
+    user_path = tmp_path / "user.yaml"
+    user_path.write_text("paths:\n  output_dir: user-runs\n", encoding="utf-8")
+    env_path = tmp_path / "environment.yaml"
+    env_path.write_text("paths:\n  output_dir: env-runs\n", encoding="utf-8")
+    explicit_path = tmp_path / "explicit.yaml"
+    explicit_path.write_text("paths:\n  output_dir: explicit-runs\n", encoding="utf-8")
+    store = SystemConfigStore(
+        package_default_path=package_path,
+        site_path=site_path,
+        user_path=user_path,
+        environ={"QPHASE_SYSTEM_CONFIG": str(env_path)},
+    )
+
+    config = store.load(config_path=explicit_path)
+
+    assert config.auto_save_results is False
+    assert config.paths.output_dir == "explicit-runs"
 
 
 def test_silent_generation_global_config(tmp_path):
