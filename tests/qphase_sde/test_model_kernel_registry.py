@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from models.kernels.base import ModelKernelPlugin, ModelKernelRegistry
+from models.kernels.cupy_utils import get_lru_buffer
 
 
 class Backend:
@@ -51,3 +52,16 @@ def test_registry_rejects_non_plugin_provider():
 def test_kernel_schema_rejects_unknown_options():
     with pytest.raises(ValueError, match="extra"):
         Provider(unknown=True)
+
+
+def test_device_buffer_lru_bounds_retained_shapes():
+    cache = {}
+    keys = []
+
+    first = get_lru_buffer(cache, keys, "a", lambda: object())
+    get_lru_buffer(cache, keys, "b", lambda: object())
+    assert get_lru_buffer(cache, keys, "a", lambda: object()) is first
+    get_lru_buffer(cache, keys, "c", lambda: object())
+
+    assert keys == ["a", "c"]
+    assert set(cache) == {"a", "c"}

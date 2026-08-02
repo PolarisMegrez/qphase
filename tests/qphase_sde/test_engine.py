@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend, NumpyConfig
-from qphase_sde.engine import Engine, EngineConfig
+from qphase_sde.engine import Engine, EngineConfig, TrajectoryDivergenceError
 from qphase_sde.integrator.base import ChunkStepResult
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 
@@ -128,6 +128,36 @@ def test_engine_chunk_path_preserves_save_boundaries():
 
     assert trajectory.data.shape == (2, 4, 1)
     np.testing.assert_allclose(trajectory.data[0, :, 0], [0.0, 0.3, 0.6, 0.9])
+
+
+def test_engine_state_norm_guard_rejects_escaped_chunk_trajectory():
+    config = EngineConfig(
+        dt=0.1,
+        t0=0.0,
+        t1=1.0,
+        n_traj=1,
+        seed=7,
+        ic=[[0.0]],
+        max_state_norm=0.25,
+        state_check_interval_steps=1,
+    )
+    engine = Engine(
+        config=config,
+        plugins={
+            "backend": NumpyBackend(NumpyConfig(float_dtype="float32")),
+            "integrator": DummyChunkIntegrator(),
+            "model": DummySDEModel(),
+        },
+    )
+
+    with pytest.raises(TrajectoryDivergenceError, match="No PSD was produced"):
+        engine.run_sde(
+            model=DummySDEModel(),
+            ic=[[0.0]],
+            time={"t0": 0.0, "dt": 0.1, "steps": 10},
+            n_traj=1,
+            seed=7,
+        )
 
 
 def test_engine_records_selected_modes_in_state_dtype():

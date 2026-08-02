@@ -9,7 +9,7 @@ from qphase.backend.base import BackendBase
 from qphase_sde.kernels import compile_cached_kernel
 
 from models.kernels.base import ModelKernelPlugin
-from models.kernels.cupy_utils import broadcast_param
+from models.kernels.cupy_utils import broadcast_param, get_lru_buffer
 
 _DEVICE_SOURCE = r"""
 static __device__ __forceinline__ $CT$ c3_make_$S$($T$ x, $T$ y) {
@@ -259,6 +259,7 @@ _BUFFER_CACHE: dict[tuple[int, Any], Any] = {}
 _BUFFER_KEYS: list[tuple[int, Any]] = []
 _MAX_BUFFERS = 2
 _CHUNK_BUFFER_CACHE: dict[tuple[int, int, int, Any], tuple[Any, Any]] = {}
+_CHUNK_BUFFER_KEYS: list[tuple[int, int, int, Any]] = []
 _LAUNCH_REFERENCES: list[tuple[Any, ...]] = []
 _PARAMETER_NAMES = (
     "omega_a",
@@ -389,13 +390,15 @@ def fused_step_chunk(
     n_saves = len(save_offsets)
     n_record_modes = len(record_modes)
     key = (n, n_saves, n_record_modes, y.dtype)
-    buffers = _CHUNK_BUFFER_CACHE.get(key)
-    if buffers is None:
-        final_state = cp.empty_like(y)
-        saved_storage = cp.empty((n, max(1, n_saves), n_record_modes), dtype=y.dtype)
-        _CHUNK_BUFFER_CACHE[key] = (final_state, saved_storage)
-    else:
-        final_state, saved_storage = buffers
+    final_state, saved_storage = get_lru_buffer(
+        _CHUNK_BUFFER_CACHE,
+        _CHUNK_BUFFER_KEYS,
+        key,
+        lambda: (
+            cp.empty_like(y),
+            cp.empty((n, max(1, n_saves), n_record_modes), dtype=y.dtype),
+        ),
+    )
     threads = 64
     kernel(
         ((n + threads - 1) // threads,),

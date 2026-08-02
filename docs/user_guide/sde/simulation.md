@@ -48,6 +48,27 @@ engine:
 | `integrator` | `dict` | Configuration for the numerical solver. |
 | `backend` | `str` | The computational backend to use. |
 
+### Trajectory escape guard
+
+Models with only local attractors can leave their attraction basin during a
+long stochastic run while remaining finite in floating-point arithmetic. Set
+`max_state_norm` on `engine.sde` to reject such trajectories before PSD or
+other stationary analysis is performed. `state_check_interval_steps` controls
+the check cadence; accelerator runs synchronize only when a configured check
+is due.
+
+```yaml
+engine:
+  sde:
+    max_state_norm: 30.0
+    state_check_interval_steps: 1024
+```
+
+The bound is model- and parameter-dependent. It should lie above the stationary
+fluctuation scale and, when known, near the outer edge of the attraction basin.
+Exceeding it raises `TrajectoryDivergenceError`; it does not clip, reset, or
+silently discard trajectories.
+
 ## Integrators
 
 The framework supports several integration schemes. Choosing the right one is a trade-off between accuracy, stability, and computational cost.
@@ -109,25 +130,34 @@ To simulate a system, you need to define a model that implements the `SDEModel` 
 
 See the [Plugin Development](../../dev_guide/plugin_development.md) guide for details on how to write and register custom models.
 
-## Batched Parameter Scans
+## Resource-Aware Parameter Scans
 
 SDE scans use an explicit job-level `ScanSpec`. The scheduler passes one
-`ParameterGrid` to the SDE engine; a thin adapter compiles it into the existing
-parameter repetition and trajectory-fusion representation.
+`ParameterGrid` and one `ExecutionContext` to the SDE engine; scan points are
+never expanded into scheduler jobs or per-point run directories.
 
-In a batched run:
+Before allocating trajectory arrays, the engine validates the time grid and
+analyser bandwidth, estimates the state, noise, trajectory, and analyser
+workspaces, and builds an execution plan. Resource policy is read from the
+`ExecutionContext.resources` object. The SDE package does not discover or read
+a system configuration file. On CuPy, the plan also queries current device
+memory and applies the configured GPU memory fraction.
 
-* The scan values are broadcast into a single `(n_scan * n_traj,)` ensemble.
-* One backend call advances every trajectory for every scan point at once.
-* The merged result is exposed as one logical SDE dataset with named point views.
-* Saving creates one job directory and one artifact manifest, not one directory per point.
+When an analyser is configured and `keep_trajectory` is false, the engine may
+split a large scan into internal tiles. Each tile is integrated, analysed, and
+released before the next tile starts. Results are merged into one logical SDE
+dataset with named point views. Stable per-point random streams make analyser
+results independent of the selected scan tile size for a fixed seed.
 
-This is especially effective on GPUs: a small CPU launch overhead per time step is amortized over many trajectories, and a single CuPy kernel launch can update the whole ensemble.
+If the full trajectory is requested, it must fit the available resource budget
+and is materialized as one logical result. Scan tiling cannot reduce the memory
+required by a single scan point; such workloads fail before integration with a
+memory estimate instead of relying on an out-of-memory error. Increasing
+`save_stride` reduces saved trajectory and FFT sizes, but it does not reduce the
+number of integration steps.
 
-Batched execution remains automatic after declaring `scan`. The adapter does
-not alter the integrator, PSD, random-number generation, fused kernels, or GPU
-batching logic. Model parameters must still accept a scalar or one-dimensional
-per-trajectory array.
+The selected tile size, estimated byte counts, resource budget, and random
+stream strategy are recorded in result metadata under `execution_plan`.
 
 ## Kernelized Terms (CuPy)
 
@@ -171,5 +201,6 @@ model:
 ```
 
 Because `omega_a` has three values and the backend is CuPy, the SDE adapter
-builds one `3 * 20` trajectory ensemble and the `vdp_2mode` kernel evaluates it
-with fused CUDA kernels. The scheduler still sees one logical job.
+fuses as many points as the execution plan permits. The `vdp_2mode` kernel
+evaluates each internal tile with fused CUDA kernels. The scheduler still sees
+one logical job.

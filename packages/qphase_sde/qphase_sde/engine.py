@@ -14,20 +14,35 @@ Public API
 
 import time as _time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 from qphase.backend.base import BackendBase
+from qphase.backend.xputil import convert_to_numpy, get_xp
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 
 from qphase_sde.buffers import SDEBufferCache
 from qphase_sde.integrator.base import Integrator
 from qphase_sde.model import NoiseSpec, SDEModel
+from qphase_sde.planning import SDEExecutionPlan, build_execution_plan
 from qphase_sde.result import SDEResult
 from qphase_sde.state import TrajectorySet
 
-__all__ = ["Engine", "EngineConfig"]
+__all__ = ["Engine", "EngineConfig", "TrajectoryDivergenceError"]
+
+
+class TrajectoryDivergenceError(RuntimeError):
+    """Raised when an SDE trajectory leaves a configured state-norm bound."""
+
+
+@dataclass(frozen=True)
+class _GroupedRNG:
+    """Independent RNG handles grouped by scan point inside one fused tile."""
+
+    handles: tuple[Any, ...]
+    group_size: int
 
 
 class EngineConfig(BaseModel):
@@ -124,6 +139,26 @@ class EngineConfig(BaseModel):
         None,
         min_length=1,
         description="Physical mode indices to retain; None records every mode",
+        json_schema_extra={"scanable": False},
+    )
+
+    max_state_norm: float | None = Field(
+        None,
+        gt=0.0,
+        description=(
+            "Optional Euclidean-norm guard across all modes. The simulation "
+            "fails before analysis when any trajectory exceeds this value."
+        ),
+        json_schema_extra={"scanable": False},
+    )
+
+    state_check_interval_steps: int = Field(
+        1024,
+        ge=1,
+        description=(
+            "Integration-step interval for max_state_norm checks. Smaller "
+            "values detect escape sooner but synchronize accelerators more often."
+        ),
         json_schema_extra={"scanable": False},
     )
 
@@ -298,17 +333,50 @@ class Engine(EngineBase):
         if getattr(self.config, "mode", "simulate") == "analyze":
             return self._run_analyze(data)
         grid = context.parameter_grid if context is not None else None
+        model = self._required_model()
+        analysers = self._normalised_analysers()
+        backend = self._required_backend()
+        integrator = self._required_integrator()
+        plan = build_execution_plan(
+            config=self.config,
+            grid=grid,
+            model=model,
+            backend=backend,
+            integrator=integrator,
+            analysers=analysers,
+            resources=getattr(context, "resources", None),
+        )
         if grid is not None:
             from qphase_sde.scan import SDEParameterGridAdapter, SDEScanResult
 
-            with SDEParameterGridAdapter(self, grid) as adapter:
-                combined = self._run_simulate(data, reporter=reporter, context=context)
+            adapter = SDEParameterGridAdapter(self, grid)
+            if reporter is not None:
+                reporter.status(
+                    f"SDE scan plan: {plan.tile_count} tile(s), "
+                    f"{plan.scan_tile_size} point(s)/tile",
+                    stage="planning",
+                    metadata={"execution_plan": plan.to_dict()},
+                )
+            if plan.stream_analysis and plan.tile_count > 1:
+                combined = self._run_scan_tiled(
+                    data,
+                    adapter=adapter,
+                    plan=plan,
+                    reporter=reporter,
+                    context=context,
+                )
+            else:
+                with adapter:
+                    combined = self._run_simulate(
+                        data, reporter=reporter, context=context
+                    )
             if not isinstance(combined, SDEResult):
                 raise TypeError("SDE simulation did not return an SDEResult")
             combined.meta.update(
                 {
                     "scan_shape": grid.shape,
                     "scan_combine": grid.combine,
+                    "execution_plan": plan.to_dict(),
                 }
             )
             return SDEScanResult(
@@ -317,7 +385,141 @@ class Engine(EngineBase):
                 adapter.base_params,
                 adapter.base_n_traj,
             )
-        return self._run_simulate(data, reporter=reporter, context=context)
+        result = self._run_simulate(data, reporter=reporter, context=context)
+        if isinstance(result, SDEResult):
+            result.meta.setdefault("execution_plan", plan.to_dict())
+        return result
+
+    def _required_model(self) -> Any:
+        model = self.plugins.get("model")
+        if model is None or isinstance(model, dict):
+            raise RuntimeError("SDE engine requires exactly one model plugin")
+        return model
+
+    def _required_backend(self) -> BackendBase:
+        if self._default_backend is None:
+            raise RuntimeError("SDE engine requires a backend plugin")
+        return self._default_backend
+
+    def _required_integrator(self) -> Integrator:
+        if self._default_integrator is None:
+            raise RuntimeError("SDE engine requires an integrator plugin")
+        return self._default_integrator
+
+    def _normalised_analysers(self) -> dict[str, Any]:
+        analysers = self.plugins.get("analyser")
+        if not analysers:
+            return {}
+        if isinstance(analysers, dict):
+            return dict(analysers)
+        return {getattr(analysers, "name", "analyser"): analysers}
+
+    def _release_backend_pool(self) -> None:
+        backend = self._default_backend
+        release = getattr(backend, "free_all_blocks", None)
+        if callable(release):
+            release()
+
+    @classmethod
+    def _analysis_to_host(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: cls._analysis_to_host(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._analysis_to_host(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(cls._analysis_to_host(item) for item in value)
+        if hasattr(value, "shape") and hasattr(value, "dtype"):
+            return convert_to_numpy(value)
+        return value
+
+    def _run_scan_tiled(
+        self,
+        data: Any | None,
+        *,
+        adapter: Any,
+        plan: SDEExecutionPlan,
+        reporter: Any | None,
+        context: Any | None,
+    ) -> SDEResult:
+        """Integrate and analyze scan tiles without retaining the full trajectory."""
+        assert self.config is not None
+        analysers = self._normalised_analysers()
+        accumulated = {name: [] for name in analysers}
+        result_meta: dict[str, Any] = {}
+        total_work = plan.scan_size * plan.steps
+
+        for tile_index, start in enumerate(
+            range(0, plan.scan_size, plan.scan_tile_size)
+        ):
+            stop = min(start + plan.scan_tile_size, plan.scan_size)
+            point_count = stop - start
+            cancellation = getattr(context, "cancellation", None)
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
+            if reporter is not None:
+                reporter.status(
+                    f"SDE scan tile {tile_index + 1}/{plan.tile_count} "
+                    f"(points {start + 1}-{stop})",
+                    stage="sampling",
+                    metadata={"tile_index": tile_index, "tile_count": plan.tile_count},
+                )
+
+            with adapter.tile(start, stop):
+                tile_result = self._run_simulate(
+                    data,
+                    reporter=reporter,
+                    context=context,
+                    rng_group_seeds=adapter.point_seeds(start, stop),
+                    rng_group_size=adapter.base_n_traj,
+                    progress_offset=start * plan.steps,
+                    progress_scale=point_count,
+                    progress_total=total_work,
+                    progress_label=f"tile {tile_index + 1}/{plan.tile_count}",
+                )
+            if not isinstance(tile_result, SDEResult):
+                raise TypeError("SDE tile did not return an SDEResult")
+            if tile_result.trajectory is not None:
+                raise RuntimeError(
+                    "resource-aware scan tiling requires the tile trajectory to "
+                    "be released after analysis"
+                )
+            for name in analysers:
+                value = self._analysis_to_host(tile_result.analysis.get(name))
+                if point_count == 1:
+                    accumulated[name].append(value)
+                elif isinstance(value, list) and len(value) == point_count:
+                    accumulated[name].extend(value)
+                else:
+                    raise TypeError(
+                        f"analyser {name!r} did not return {point_count} "
+                        "point results for an SDE scan tile"
+                    )
+            if not result_meta:
+                result_meta.update(tile_result.meta)
+            self._release_backend_pool()
+            if reporter is not None:
+                reporter.update(
+                    completed=stop * plan.steps,
+                    total=total_work,
+                    unit="point-step",
+                    stage="sampling",
+                    message=(
+                        f"Completed SDE scan tile "
+                        f"{tile_index + 1}/{plan.tile_count}"
+                    ),
+                    metadata={"tile_index": tile_index, "tile_count": plan.tile_count},
+                )
+
+        result_meta.update(
+            {
+                "params": dict(adapter.base_params),
+                "rng_master_seed": adapter.master_seed,
+                "rng_strategy": plan.rng_strategy,
+                "drop_trajectory_reason": "analyzed_by_scan_tile",
+                "execution_plan": plan.to_dict(),
+            }
+        )
+        return SDEResult(trajectory=None, analysis=accumulated, meta=result_meta)
 
     def _run_analyze(self, data: Any | None) -> ResultProtocol:
         """Run analysers on upstream input data without performing a simulation.
@@ -358,6 +560,12 @@ class Engine(EngineBase):
         *,
         reporter: Any | None = None,
         context: Any | None = None,
+        rng_group_seeds: tuple[int, ...] | None = None,
+        rng_group_size: int | None = None,
+        progress_offset: int = 0,
+        progress_scale: int = 1,
+        progress_total: int | None = None,
+        progress_label: str | None = None,
     ) -> ResultProtocol:
         """Execute SDE simulation and optional per-job analysis."""
         assert self.config is not None
@@ -389,7 +597,8 @@ class Engine(EngineBase):
                 k: int, steps: int, eta: float, ic_index: int, ic_total: int
             ) -> None:
                 del eta
-                msg = f"Traj {ic_index + 1}/{ic_total} | Step {k}/{steps}"
+                prefix = f"{progress_label} | " if progress_label else ""
+                msg = f"{prefix}Traj {ic_index + 1}/{ic_total} | Step {k}/{steps}"
                 metadata: dict[str, Any] = {
                     "ic_index": ic_index,
                     "ic_total": ic_total,
@@ -399,9 +608,9 @@ class Engine(EngineBase):
                     if scan_summary is not None:
                         metadata["scan_summary"] = scan_summary
                 reporter.update(
-                    completed=ic_index * steps + k,
-                    total=ic_total * steps,
-                    unit="step",
+                    completed=progress_offset + progress_scale * k,
+                    total=progress_total or ic_total * steps,
+                    unit="point-step" if progress_scale > 1 else "step",
                     stage="sampling",
                     message=msg,
                     metadata=metadata,
@@ -417,6 +626,8 @@ class Engine(EngineBase):
             seed=self.config.seed,
             return_stride=self.config.save_stride,
             progress_cb=sde_progress_cb,
+            rng_group_seeds=rng_group_seeds,
+            rng_group_size=rng_group_size,
         )
 
         # Determine the backend name used for simulation to decide whether the
@@ -563,6 +774,8 @@ class Engine(EngineBase):
         warmup_min_steps: int = 0,
         warmup_min_seconds: float = 0.0,
         rng: Any | None = None,
+        rng_group_seeds: tuple[int, ...] | None = None,
+        rng_group_size: int | None = None,
     ) -> TrajectorySet:
         """Run a multi-trajectory SDE simulation.
 
@@ -618,6 +831,10 @@ class Engine(EngineBase):
             Minimum time before ETA estimation
         rng : any, optional
             Pre-configured RNG handle(s) (from scheduler)
+        rng_group_seeds : tuple[int, ...], optional
+            Stable seeds for scan-point groups inside a fused tile.
+        rng_group_size : int, optional
+            Number of adjacent trajectories driven by each grouped seed.
 
         Returns
         -------
@@ -707,11 +924,36 @@ class Engine(EngineBase):
         # creating State objects in the inner loop.
         y = y0
         t = float(t0)
+        state_norm_limit = (
+            None
+            if self.config is None or self.config.max_state_norm is None
+            else float(self.config.max_state_norm)
+        )
+        state_check_interval = (
+            1
+            if self.config is None
+            else int(self.config.state_check_interval_steps)
+        )
+        if state_norm_limit is not None:
+            self._check_state_norm(y, t, state_norm_limit)
+        next_state_check_step = state_check_interval
 
         # Setup RNG if not pre-configured
         if rng is None:
             try:
-                if per_traj_seeds is not None and len(per_traj_seeds) == n_traj:
+                if rng_group_seeds is not None:
+                    group_size = int(rng_group_size or 0)
+                    if group_size < 1 or len(rng_group_seeds) * group_size != n_traj:
+                        raise ValueError(
+                            "rng_group_seeds and rng_group_size do not cover n_traj"
+                        )
+                    handles = tuple(be.rng(int(value)) for value in rng_group_seeds)
+                    rng = (
+                        handles[0]
+                        if len(handles) == 1
+                        else _GroupedRNG(handles, group_size)
+                    )
+                elif per_traj_seeds is not None and len(per_traj_seeds) == n_traj:
                     rng = [be.rng(int(s)) for s in per_traj_seeds]
                 elif master_seed is not None:
                     if str(rng_stream) == "per_trajectory":
@@ -806,13 +1048,14 @@ class Engine(EngineBase):
                 assert callable(chunk_step)
                 n_chunk = min(requested_chunk_steps, steps - k)
                 noise_dtype = y.real.dtype if hasattr(y, "real") else y.dtype
-                raw_noise = be.randn(
+                raw_noise = self._draw_standard_normal(
+                    be,
                     rng,
                     (n_chunk, n_traj, model.noise_dim),
                     dtype=noise_dtype,
                 )
                 dt_sqrt = be.asarray(dt**0.5, dtype=raw_noise.dtype)
-                d_w = raw_noise * dt_sqrt
+                raw_noise *= dt_sqrt
                 save_offsets = tuple(
                     offset for offset in range(1, n_chunk + 1) if (k + offset) % rs == 0
                 )
@@ -821,13 +1064,22 @@ class Engine(EngineBase):
                     t,
                     dt,
                     model,
-                    d_w,
+                    raw_noise,
                     be,
                     n_steps=n_chunk,
                     save_offsets=save_offsets,
                     record_modes=record_modes,
                 )
                 y = result.final_state
+                next_k = k + n_chunk
+                next_t = t0 + next_k * dt
+                if state_norm_limit is not None and (
+                    next_k >= next_state_check_step or next_k >= steps
+                ):
+                    self._check_state_norm(y, next_t, state_norm_limit)
+                    next_state_check_step = (
+                        next_k // state_check_interval + 1
+                    ) * state_check_interval
                 n_saved = len(save_offsets)
                 if n_saved:
                     end = keep_counter + n_saved
@@ -857,21 +1109,28 @@ class Engine(EngineBase):
                     elif hasattr(y, "dtype"):
                         noise_dtype = y.dtype
 
-                    raw_noise = be.randn(
-                        rng, (n_traj, model.noise_dim), dtype=noise_dtype
+                    raw_noise = self._draw_standard_normal(
+                        be,
+                        rng,
+                        (n_traj, model.noise_dim),
+                        dtype=noise_dtype,
                     )
                     dt_sqrt = current_dt**0.5
                     if hasattr(raw_noise, "dtype"):
                         dt_sqrt = be.asarray(dt_sqrt, dtype=raw_noise.dtype)
 
-                    dW = buf_cache.get((n_traj, model.noise_dim), noise_dtype)
-                    try:
-                        dW[...] = raw_noise * dt_sqrt
-                        dy = integrator.step(y, t, current_dt, model, dW, be)
-                        y = y + dy
-                        t += current_dt
-                    finally:
-                        buf_cache.put(dW)
+                    raw_noise *= dt_sqrt
+                    dy = integrator.step(y, t, current_dt, model, raw_noise, be)
+                    y = y + dy
+                    t += current_dt
+
+                if state_norm_limit is not None and (
+                    k >= next_state_check_step or k >= steps
+                ):
+                    self._check_state_norm(y, t, state_norm_limit)
+                    next_state_check_step = (
+                        k // state_check_interval + 1
+                    ) * state_check_interval
 
                 while t >= next_save_time - 1e-12 and keep_counter < n_keep:
                     y_interp = buf_cache.get((n_traj, model.n_modes), y.dtype)
@@ -932,3 +1191,42 @@ class Engine(EngineBase):
             dt=dt * rs,
             meta={"mode_indices": list(record_modes)},
         )
+
+    @staticmethod
+    def _check_state_norm(y: Any, t: float, limit: float) -> None:
+        """Fail before downstream analysis when a trajectory has escaped."""
+        xp = get_xp(y)
+        squared_norm = xp.sum(xp.abs(y) ** 2, axis=-1)
+        max_norm = float(
+            np.asarray(convert_to_numpy(xp.sqrt(xp.max(squared_norm)))).item()
+        )
+        if not np.isfinite(max_norm) or max_norm > limit:
+            raise TrajectoryDivergenceError(
+                "SDE trajectory escaped the configured state bound at "
+                f"t={t:.9g}: max ||y||={max_norm:.9g}, limit={limit:.9g}. "
+                "No PSD was produced because the trajectory ensemble is not "
+                "stationary within the requested observation window."
+            )
+
+    @staticmethod
+    def _draw_standard_normal(
+        backend: BackendBase,
+        rng: Any,
+        shape: tuple[int, ...],
+        *,
+        dtype: Any,
+    ) -> Any:
+        """Draw point-stable noise for a grouped scan tile."""
+        if not isinstance(rng, _GroupedRNG):
+            return backend.randn(rng, shape, dtype=dtype)
+        trajectory_axis = 1 if len(shape) == 3 else 0
+        expected = len(rng.handles) * rng.group_size
+        if int(shape[trajectory_axis]) != expected:
+            raise ValueError("grouped RNG shape does not match the fused scan tile")
+        subshape = list(shape)
+        subshape[trajectory_axis] = rng.group_size
+        parts = tuple(
+            backend.randn(handle, tuple(subshape), dtype=dtype)
+            for handle in rng.handles
+        )
+        return backend.concatenate(parts, axis=trajectory_axis)

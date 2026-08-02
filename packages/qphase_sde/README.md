@@ -18,8 +18,12 @@
     - Define custom Hamiltonians and Dissipators via `SDEModel`.
     - Supports additive and multiplicative noise.
 - **Logical Parameter Scans**:
-    - Accepts the core `ParameterGrid` and compiles it into the existing
-      per-trajectory parameter repetition and GPU fusion path.
+    - Accepts the core `ParameterGrid` and resource snapshot through the
+      scheduler-owned `ExecutionContext`; it never reads system config paths.
+    - Plans memory before allocation and compiles the grid into resource-aware
+      internal tiles while retaining trajectory fusion within each tile.
+    - Uses stable per-point random streams so analysed results do not depend on
+      scan tile size for a fixed seed.
     - Returns one named-axis SDE dataset with point views and single or sharded
       persistence.
 

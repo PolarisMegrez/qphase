@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,7 @@ from qphase_sde.state import TrajectorySet
 
 
 class SDEParameterGridAdapter:
-    """Temporarily compile a logical grid into the established fused layout."""
+    """Expose a logical parameter grid as one or more fused SDE tiles."""
 
     def __init__(self, engine: Any, grid: ParameterGrid) -> None:
         self.engine = engine
@@ -27,13 +28,51 @@ class SDEParameterGridAdapter:
             raise RuntimeError("SDE scan requires exactly one model plugin")
         self.base_n_traj = int(engine.config.n_traj)
         self.base_params = dict(self.model.params)
+        self._scanned_values = self._validate_targets()
         self._had_scan_count = hasattr(engine.config, "_batch_scan_count")
         self._old_scan_count = getattr(engine.config, "_batch_scan_count", None)
+        self._had_scan_offset = hasattr(engine.config, "_batch_scan_offset")
+        self._old_scan_offset = getattr(engine.config, "_batch_scan_offset", None)
+        configured_seed = engine.config.seed
+        if configured_seed is None:
+            configured_seed = int(
+                np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0]
+            )
+        self.master_seed = int(configured_seed) % (1 << 64)
 
     def __enter__(self) -> SDEParameterGridAdapter:
-        """Apply the fused scan representation."""
+        """Apply the legacy full-grid fused representation."""
+        self._apply_range(0, self.grid.size)
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        """Restore the original engine and model configuration."""
+        del exc_type, exc, traceback
+        self._restore()
+
+    @contextmanager
+    def tile(self, start: int, stop: int):
+        """Temporarily expose the flat scan interval ``[start, stop)``."""
+        if start < 0 or stop > self.grid.size or start >= stop:
+            raise ValueError(f"invalid SDE scan tile [{start}, {stop})")
+        self._apply_range(start, stop)
+        try:
+            yield self
+        finally:
+            self._restore()
+
+    def point_seeds(self, start: int, stop: int) -> tuple[int, ...]:
+        """Return deterministic per-point seeds independent of tile boundaries."""
+        seeds: list[int] = []
+        for flat_index in range(start, stop):
+            sequence = np.random.SeedSequence([self.master_seed, flat_index])
+            seed = int(sequence.generate_state(1, dtype=np.uint64)[0])
+            seeds.append(seed)
+        return tuple(seeds)
+
+    def _validate_targets(self) -> dict[str, np.ndarray]:
         expected_prefix = f"model.{self.model.name}."
-        scanned: dict[str, Any] = {}
+        scanned: dict[str, np.ndarray] = {}
         for target, values in self.grid.target_arrays(flatten=True).items():
             if not target.startswith(expected_prefix):
                 raise ValueError(
@@ -43,20 +82,25 @@ class SDEParameterGridAdapter:
             parameter = target.removeprefix(expected_prefix)
             if "." in parameter or parameter not in self.base_params:
                 raise ValueError(f"unknown SDE model scan target {target!r}")
-            scanned[parameter] = np.repeat(values, self.base_n_traj)
+            scanned[parameter] = np.asarray(values)
+        return scanned
+
+    def _apply_range(self, start: int, stop: int) -> None:
+        scanned = {
+            name: np.repeat(values[start:stop], self.base_n_traj)
+            for name, values in self._scanned_values.items()
+        }
         self._replace_model_params({**self.base_params, **scanned})
-        self.engine.config.n_traj = self.grid.size * self.base_n_traj
-        object.__setattr__(self.engine.config, "_batch_scan_count", self.grid.size)
+        self.engine.config.n_traj = (stop - start) * self.base_n_traj
+        object.__setattr__(self.engine.config, "_batch_scan_count", stop - start)
+        object.__setattr__(self.engine.config, "_batch_scan_offset", start)
         object.__setattr__(
             self.engine.config,
             "_batch_scan_params",
             list(scanned),
         )
-        return self
 
-    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
-        """Restore the original engine and model configuration."""
-        del exc_type, exc, traceback
+    def _restore(self) -> None:
         self.engine.config.n_traj = self.base_n_traj
         self._replace_model_params(self.base_params)
         if self._had_scan_count:
@@ -65,6 +109,12 @@ class SDEParameterGridAdapter:
             )
         else:
             self.engine.config.__dict__.pop("_batch_scan_count", None)
+        if self._had_scan_offset:
+            object.__setattr__(
+                self.engine.config, "_batch_scan_offset", self._old_scan_offset
+            )
+        else:
+            self.engine.config.__dict__.pop("_batch_scan_offset", None)
         self.engine.config.__dict__.pop("_batch_scan_params", None)
 
     def _replace_model_params(self, params: dict[str, Any]) -> None:

@@ -5,6 +5,7 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.scan import ScanSpec
 from qphase_sde.analyser.lorentz_fitter import _load_input
+from qphase_sde.analyser.result import AnalysisResult
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 from qphase_sde.result import SDEResult
@@ -33,6 +34,21 @@ class ScannedDummyModel:
         return np.zeros(y.shape + (1,))
 
 
+class MeanAnalyzer:
+    name = "mean"
+    config = SimpleNamespace(expected_freq_max=None)
+
+    def analyze(self, data, backend):
+        del backend
+        return AnalysisResult({"mean": float(np.mean(np.asarray(data.data)))})
+
+
+class StochasticScannedModel(ScannedDummyModel):
+    def diffusion(self, y, t, params):
+        del t, params
+        return np.ones(y.shape + (1,))
+
+
 def _grid():
     return ScanSpec.model_validate(
         {
@@ -40,6 +56,19 @@ def _grid():
                 "rate": {
                     "target": "model.scanned_dummy.rate",
                     "values": [1.0, 2.0],
+                }
+            }
+        }
+    ).compile()
+
+
+def _four_point_grid():
+    return ScanSpec.model_validate(
+        {
+            "axes": {
+                "rate": {
+                    "target": "model.scanned_dummy.rate",
+                    "values": [1.0, 2.0, 3.0, 4.0],
                 }
             }
         }
@@ -75,6 +104,86 @@ def test_sde_engine_adapts_parameter_grid_to_existing_fused_path():
     assert result.point_view((1,)).meta["params"]["rate"] == 2.0
     assert engine.config.n_traj == 2
     assert model.params == {"rate": 1.0}
+
+
+def test_sde_engine_analyzes_resource_limited_scan_tiles():
+    model = ScannedDummyModel()
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=1.0,
+            dt=0.01,
+            n_traj=1000,
+            seed=7,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": model,
+            "analyser": {"mean": MeanAnalyzer()},
+        },
+    )
+    context = SimpleNamespace(
+        parameter_grid=_grid(),
+        progress=None,
+        resources=SimpleNamespace(
+            memory_limit_mib=4,
+            gpu_memory_fraction=None,
+        ),
+        cancellation=None,
+    )
+
+    result = engine.run(context=context)
+
+    assert result.combined.trajectory is None
+    assert len(result.combined.analysis["mean"]) == 2
+    assert result.combined.meta["execution_plan"]["scan_tile_size"] == 1
+    assert result.combined.meta["rng_strategy"] == "scan_point_seedsequence_v1"
+    assert engine.config.n_traj == 1000
+    assert model.params == {"rate": 1.0}
+
+
+def test_sde_scan_rng_is_independent_of_tile_size():
+    def run(memory_limit_mib):
+        model = StochasticScannedModel()
+        engine = Engine(
+            config=EngineConfig(
+                t0=0.0,
+                t1=0.1,
+                dt=0.01,
+                n_traj=5000,
+                seed=19,
+                ic=[[1.0]],
+                keep_traj=False,
+            ),
+            plugins={
+                "backend": NumpyBackend(),
+                "integrator": EulerMaruyama(),
+                "model": model,
+                "analyser": {"mean": MeanAnalyzer()},
+            },
+        )
+        context = SimpleNamespace(
+            parameter_grid=_four_point_grid(),
+            progress=None,
+            resources=SimpleNamespace(
+                memory_limit_mib=memory_limit_mib,
+                gpu_memory_fraction=None,
+            ),
+            cancellation=None,
+        )
+        result = engine.run(context=context)
+        means = [item["mean"] for item in result.combined.analysis["mean"]]
+        return result.combined.meta["execution_plan"]["scan_tile_size"], means
+
+    tile_one, means_one = run(3)
+    tile_two, means_two = run(4)
+
+    assert tile_one == 1
+    assert tile_two == 2
+    np.testing.assert_array_equal(means_one, means_two)
 
 
 def test_sde_scan_result_saves_finite_shards(tmp_path):
