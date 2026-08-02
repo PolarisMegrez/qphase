@@ -297,10 +297,41 @@ class PsdAnalyzer(Analyzer):
         P_std_mat = _np.vstack(P_std_list).T
         P_sem_mat = _np.vstack(P_sem_list).T
 
-        # Peak finding
-        peaks_info = {}
+        peaks_info = self._find_peaks(axis0, P_mat)
 
-        # Instantiate peak finder
+        result_dict = {
+            "axis": axis0,
+            "psd": P_mat,
+            "psd_std": P_std_mat,
+            "psd_sem": P_sem_mat,
+            "modes": modes,
+            "kind": kind,
+            "convention": convention,
+            "estimator": self.estimator.name,
+            "sample_dt": dt,
+            "nyquist": nyquist,
+            "peaks": peaks_info,
+            "uncertainty": {
+                "kind": "standard_error",
+                "field": "psd_sem",
+                "std_field": "psd_std",
+                "independent_unit": "trajectory",
+                "n_independent": estimate0.n_independent,
+                "ddof": 1,
+                "available": estimate0.n_independent > 1,
+            },
+        }
+
+        return AnalysisResult(data_dict=result_dict, meta=result_dict)
+
+    def create_result_accumulator(self) -> "PsdResultAccumulator":
+        """Create an exact cross-trajectory PSD statistics accumulator."""
+        return PsdResultAccumulator(self)
+
+    def _find_peaks(self, axis: Any, psd: Any) -> dict[Any, Any]:
+        """Run the configured peak finder once on a finalized PSD."""
+        config = cast(PsdAnalyzerConfig, self.config)
+        peaks_info: dict[Any, Any] = {}
         finder = None
         pf_conf = config.find_peaks
 
@@ -329,50 +360,27 @@ class PsdAnalyzer(Analyzer):
             finder = create_peak_finder(pf_conf)
 
         if finder:
-            for i, m in enumerate(modes):
-                p_data = P_mat[:, i]
+            for i, mode in enumerate(config.modes):
+                p_data = psd[:, i]
                 # Delegate to finder
                 try:
-                    p_info = finder.find_peaks(axis0, p_data)
-                    peaks_info[m] = p_info.model_dump()
+                    p_info = finder.find_peaks(axis, p_data)
+                    peaks_info[mode] = p_info.model_dump()
                 except Exception as e:
                     import logging
 
                     logging.getLogger(__name__).warning(
-                        f"Peak finding failed for mode {m}: {e}"
+                        f"Peak finding failed for mode {mode}: {e}"
                     )
                     # Fallback to empty
-                    peaks_info[m] = {
+                    peaks_info[mode] = {
                         "indices": [],
                         "frequencies": [],
                         "values": [],
                         "properties": {},
                     }
 
-        result_dict = {
-            "axis": axis0,
-            "psd": P_mat,
-            "psd_std": P_std_mat,
-            "psd_sem": P_sem_mat,
-            "modes": modes,
-            "kind": kind,
-            "convention": convention,
-            "estimator": self.estimator.name,
-            "sample_dt": dt,
-            "nyquist": nyquist,
-            "peaks": peaks_info,
-            "uncertainty": {
-                "kind": "standard_error",
-                "field": "psd_sem",
-                "std_field": "psd_std",
-                "independent_unit": "trajectory",
-                "n_independent": estimate0.n_independent,
-                "ddof": 1,
-                "available": estimate0.n_independent > 1,
-            },
-        }
-
-        return AnalysisResult(data_dict=result_dict, meta=result_dict)
+        return peaks_info
 
     def _compute_single(
         self,
@@ -726,3 +734,62 @@ class PsdAnalyzer(Analyzer):
             energy,
             n_traj,
         )
+
+
+class PsdResultAccumulator:
+    """Merge PSD batch results without retaining trajectory spectra."""
+
+    def __init__(self, analyzer: PsdAnalyzer) -> None:
+        self.analyzer = analyzer
+        self.count = 0
+        self.mean: _np.ndarray | None = None
+        self.m2: _np.ndarray | None = None
+        self.payload: dict[str, Any] | None = None
+
+    def update(self, payload: dict[str, Any]) -> None:
+        """Merge one independently analysed trajectory batch."""
+        partial_count = int(payload["uncertainty"]["n_independent"])
+        partial_mean = _np.asarray(payload["psd"])
+        partial_std = _np.asarray(payload["psd_std"])
+        partial_m2 = (
+            _np.zeros_like(partial_mean)
+            if partial_count < 2
+            else partial_std * partial_std * (partial_count - 1)
+        )
+        if self.payload is None:
+            self.payload = dict(payload)
+            self.mean = partial_mean.copy()
+            self.m2 = partial_m2.copy()
+            self.count = partial_count
+            return
+        if not _np.array_equal(self.payload["axis"], payload["axis"]):
+            raise ValueError("PSD trajectory batches produced different axes")
+        assert self.mean is not None and self.m2 is not None
+        total = self.count + partial_count
+        delta = partial_mean - self.mean
+        self.mean += delta * (partial_count / total)
+        self.m2 += partial_m2 + delta * delta * (
+            self.count * partial_count / total
+        )
+        self.count = total
+
+    def finalize(self) -> dict[str, Any]:
+        """Return the standard PSD payload expected by downstream analysers."""
+        if self.payload is None or self.mean is None or self.m2 is None:
+            raise RuntimeError("cannot finalize an empty PSD accumulator")
+        payload = dict(self.payload)
+        if self.count > 1:
+            std = _np.sqrt(_np.maximum(self.m2 / (self.count - 1), 0.0))
+            sem = std / _np.sqrt(float(self.count))
+        else:
+            std = _np.full(self.mean.shape, _np.nan, dtype=self.mean.dtype)
+            sem = std.copy()
+        payload["psd"] = self.mean
+        payload["psd_std"] = std
+        payload["psd_sem"] = sem
+        payload["peaks"] = self.analyzer._find_peaks(payload["axis"], self.mean)
+        uncertainty = dict(payload["uncertainty"])
+        uncertainty["n_independent"] = self.count
+        uncertainty["available"] = self.count > 1
+        payload["uncertainty"] = uncertainty
+        return payload

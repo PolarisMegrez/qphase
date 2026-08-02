@@ -13,6 +13,11 @@ class FakeBackend:
         return "cupy"
 
 
+class FakeNumpyBackend(FakeBackend):
+    def backend_name(self):
+        return "numpy"
+
+
 class FakeModel:
     name = "fake"
     n_modes = 2
@@ -100,3 +105,35 @@ def test_planner_tiles_production_shape_from_resource_object():
     assert plan.gpu_memory_fraction == 0.75
     assert plan.memory.full_scan_trajectory_bytes > 20 * 1024**3
     assert plan.budget_bytes == 3 * 1024**3
+
+
+def test_planner_batches_trajectories_when_one_point_exceeds_host_budget():
+    config = EngineConfig(
+        t0=0.0,
+        t1=100.0,
+        dt=0.01,
+        n_traj=1000,
+        save_stride=1,
+        record_modes=[0],
+        keep_traj=False,
+    )
+    psd = SimpleNamespace(
+        name="psd",
+        config=SimpleNamespace(expected_freq_max=None),
+        create_result_accumulator=lambda: None,
+    )
+
+    plan = build_execution_plan(
+        config=config,
+        grid=None,
+        model=FakeModel(),
+        backend=FakeNumpyBackend(),
+        integrator=FakeIntegrator(),
+        analysers={"psd": psd},
+        resources=SimpleNamespace(memory_limit_mib=4),
+    )
+
+    assert plan.trajectory_batch_size < config.n_traj
+    assert plan.trajectory_batch_count > 1
+    assert plan.scan_tile_size == 1
+    assert plan.memory.estimated_peak_bytes <= plan.budget_bytes

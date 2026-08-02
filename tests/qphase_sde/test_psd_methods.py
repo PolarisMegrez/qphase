@@ -213,6 +213,34 @@ def test_single_trajectory_marks_psd_uncertainty_unavailable():
     assert payload["uncertainty"]["available"] is False
 
 
+@pytest.mark.parametrize("method", ["periodogram", "welch", "multitaper"])
+def test_psd_accumulator_matches_full_trajectory_analysis(method):
+    """Online aggregation preserves the estimator's trajectory statistics."""
+    values = _make_sine_data(n_traj=11, n_time=256)
+    analyzer = PsdAnalyzer(
+        kind="complex",
+        modes=[0],
+        method=method,
+        nperseg=64 if method == "welch" else None,
+    )
+    full = analyzer.analyze(
+        TrajectorySet(values, t0=0.0, dt=0.1), BACKEND
+    ).data_dict
+    accumulator = analyzer.create_result_accumulator()
+    for start, stop in ((0, 3), (3, 8), (8, 11)):
+        partial = analyzer.analyze(
+            TrajectorySet(values[start:stop], t0=0.0, dt=0.1), BACKEND
+        ).data_dict
+        accumulator.update(partial)
+    merged = accumulator.finalize()
+
+    np.testing.assert_array_equal(merged["axis"], full["axis"])
+    np.testing.assert_allclose(merged["psd"], full["psd"], rtol=1e-12)
+    np.testing.assert_allclose(merged["psd_std"], full["psd_std"], rtol=1e-12)
+    np.testing.assert_allclose(merged["psd_sem"], full["psd_sem"], rtol=1e-12)
+    assert merged["uncertainty"]["n_independent"] == 11
+
+
 def test_expected_freq_max_guards_against_aliasing():
     """The optional physical-band hint rejects an undersampled PSD."""
     values = _make_sine_data(n_traj=2, n_time=128)

@@ -5,6 +5,7 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.scan import ScanSpec
 from qphase_sde.analyser.lorentz_fitter import _load_input
+from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.analyser.result import AnalysisResult
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
@@ -27,7 +28,7 @@ class ScannedDummyModel:
 
     def drift(self, y, t, params):
         del t
-        return -np.asarray(params["rate"])[:, None] * y
+        return -np.asarray(params["rate"])[..., None] * y
 
     def diffusion(self, y, t, params):
         del t, params
@@ -232,3 +233,82 @@ def test_lorentz_loader_consumes_sde_dataset_views():
 
     assert len(loaded) == 2
     assert [item.meta["params"]["rate"] for item in loaded] == [1.0, 2.0]
+
+
+def test_trajectory_batch_size_does_not_change_psd_random_streams():
+    def run(batch_size):
+        model = StochasticScannedModel()
+        engine = Engine(
+            config=EngineConfig(
+                t0=0.0,
+                t1=0.08,
+                dt=0.01,
+                n_traj=256,
+                trajectory_batching="required",
+                trajectory_batch_size=batch_size,
+                seed=23,
+                ic=[[1.0]],
+                keep_traj=False,
+            ),
+            plugins={
+                "backend": NumpyBackend(),
+                "integrator": EulerMaruyama(),
+                "model": model,
+                "analyser": {
+                    "psd": PsdAnalyzer(kind="complex", modes=[0])
+                },
+            },
+        )
+        result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
+        return result.analysis["psd"], result.meta["execution_plan"]
+
+    batch_64, plan_64 = run(64)
+    batch_128, plan_128 = run(128)
+
+    assert plan_64["trajectory_batch_count"] == 4
+    assert plan_128["trajectory_batch_count"] == 2
+    np.testing.assert_allclose(batch_64["psd"], batch_128["psd"], rtol=1e-12)
+    np.testing.assert_allclose(
+        batch_64["psd_std"], batch_128["psd_std"], rtol=1e-12
+    )
+
+
+def test_scan_runs_trajectory_batches_inside_each_parameter_point():
+    model = StochasticScannedModel()
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.04,
+            dt=0.01,
+            n_traj=128,
+            trajectory_batching="required",
+            trajectory_batch_size=64,
+            seed=29,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": model,
+            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+        },
+    )
+
+    result = engine.run(
+        context=SimpleNamespace(
+            parameter_grid=_grid(),
+            progress=None,
+            cancellation=None,
+        )
+    )
+
+    assert result.combined.trajectory is None
+    assert len(result.combined.analysis["psd"]) == 2
+    assert all(
+        item["uncertainty"]["n_independent"] == 128
+        for item in result.combined.analysis["psd"]
+    )
+    assert result.combined.meta["execution_plan"]["trajectory_batch_count"] == 2
+    assert engine.config.n_traj == 128
+    assert model.params == {"rate": 1.0}

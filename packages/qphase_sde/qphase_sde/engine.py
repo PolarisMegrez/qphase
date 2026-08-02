@@ -14,6 +14,7 @@ Public API
 
 import time as _time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
@@ -78,6 +79,17 @@ class EngineConfig(BaseModel):
     n_traj: int = Field(
         1,
         description="Number of trajectories",
+        json_schema_extra={"scanable": False},
+    )
+    trajectory_batching: Literal["auto", "off", "required"] = Field(
+        "auto",
+        description="Memory-aware batching across independent trajectories",
+        json_schema_extra={"scanable": False},
+    )
+    trajectory_batch_size: int | None = Field(
+        None,
+        ge=1,
+        description="Optional physical trajectory batch-size override",
         json_schema_extra={"scanable": False},
     )
     seed: int | None = Field(
@@ -357,7 +369,9 @@ class Engine(EngineBase):
                     stage="planning",
                     metadata={"execution_plan": plan.to_dict()},
                 )
-            if plan.stream_analysis and plan.tile_count > 1:
+            if plan.stream_analysis and (
+                plan.tile_count > 1 or plan.trajectory_batch_count > 1
+            ):
                 combined = self._run_scan_tiled(
                     data,
                     adapter=adapter,
@@ -385,7 +399,17 @@ class Engine(EngineBase):
                 adapter.base_params,
                 adapter.base_n_traj,
             )
-        result = self._run_simulate(data, reporter=reporter, context=context)
+        if plan.trajectory_batch_count > 1:
+            result = self._run_trajectory_batched(
+                data,
+                plan=plan,
+                reporter=reporter,
+                context=context,
+                point_index=0,
+                master_seed=self.config.seed,
+            )
+        else:
+            result = self._run_simulate(data, reporter=reporter, context=context)
         if isinstance(result, SDEResult):
             result.meta.setdefault("execution_plan", plan.to_dict())
         return result
@@ -465,17 +489,31 @@ class Engine(EngineBase):
                 )
 
             with adapter.tile(start, stop):
-                tile_result = self._run_simulate(
-                    data,
-                    reporter=reporter,
-                    context=context,
-                    rng_group_seeds=adapter.point_seeds(start, stop),
-                    rng_group_size=adapter.base_n_traj,
-                    progress_offset=start * plan.steps,
-                    progress_scale=point_count,
-                    progress_total=total_work,
-                    progress_label=f"tile {tile_index + 1}/{plan.tile_count}",
-                )
+                if plan.trajectory_batch_count > 1:
+                    if point_count != 1:
+                        raise RuntimeError(
+                            "trajectory-batched SDE scans require one point per tile"
+                        )
+                    tile_result = self._run_trajectory_batched(
+                        data,
+                        plan=plan,
+                        reporter=reporter,
+                        context=context,
+                        point_index=start,
+                        master_seed=adapter.master_seed,
+                    )
+                else:
+                    tile_result = self._run_simulate(
+                        data,
+                        reporter=reporter,
+                        context=context,
+                        rng_group_seeds=adapter.point_seeds(start, stop),
+                        rng_group_size=adapter.base_n_traj,
+                        progress_offset=start * plan.steps,
+                        progress_scale=point_count,
+                        progress_total=total_work,
+                        progress_label=f"tile {tile_index + 1}/{plan.tile_count}",
+                    )
             if not isinstance(tile_result, SDEResult):
                 raise TypeError("SDE tile did not return an SDEResult")
             if tile_result.trajectory is not None:
@@ -498,10 +536,24 @@ class Engine(EngineBase):
                 result_meta.update(tile_result.meta)
             self._release_backend_pool()
             if reporter is not None:
+                completed = (
+                    stop * plan.n_traj_per_point * plan.steps
+                    if plan.trajectory_batch_count > 1
+                    else stop * plan.steps
+                )
+                total = (
+                    plan.scan_size * plan.n_traj_per_point * plan.steps
+                    if plan.trajectory_batch_count > 1
+                    else total_work
+                )
                 reporter.update(
-                    completed=stop * plan.steps,
-                    total=total_work,
-                    unit="point-step",
+                    completed=completed,
+                    total=total,
+                    unit=(
+                        "trajectory-step"
+                        if plan.trajectory_batch_count > 1
+                        else "point-step"
+                    ),
                     stage="sampling",
                     message=(
                         f"Completed SDE scan tile "
@@ -520,6 +572,176 @@ class Engine(EngineBase):
             }
         )
         return SDEResult(trajectory=None, analysis=accumulated, meta=result_meta)
+
+    def _run_trajectory_batched(
+        self,
+        data: Any | None,
+        *,
+        plan: SDEExecutionPlan,
+        reporter: Any | None,
+        context: Any | None,
+        point_index: int,
+        master_seed: int | None,
+    ) -> SDEResult:
+        """Integrate one parameter point in bounded trajectory batches."""
+        assert self.config is not None
+        analysers = self._normalised_analysers()
+        accumulators = {
+            name: analyser.create_result_accumulator()
+            for name, analyser in analysers.items()
+        }
+        if len(accumulators) != len(analysers):
+            raise RuntimeError(
+                "trajectory batching requires an accumulator for every analyser"
+            )
+
+        if master_seed is None:
+            master_seed = int(
+                np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0]
+            )
+        master_seed = int(master_seed) % (1 << 64)
+        total_trajectories = plan.n_traj_per_point
+        base_params = dict(self._required_model().params)
+        result_meta: dict[str, Any] = {}
+
+        for batch_index, start in enumerate(
+            range(0, total_trajectories, plan.trajectory_batch_size)
+        ):
+            stop = min(start + plan.trajectory_batch_size, total_trajectories)
+            count = stop - start
+            cancellation = getattr(context, "cancellation", None)
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
+            group_size = plan.logical_rng_group_size
+            if count % group_size:
+                if stop != total_trajectories or count >= group_size:
+                    raise RuntimeError(
+                        "trajectory batch boundaries must align with logical RNG groups"
+                    )
+                group_size = count
+            first_group = start // plan.logical_rng_group_size
+            group_count = count // group_size
+            seeds = tuple(
+                int(
+                    np.random.SeedSequence(
+                        [master_seed, point_index, first_group + offset]
+                    ).generate_state(1, dtype=np.uint64)[0]
+                )
+                for offset in range(group_count)
+            )
+            if reporter is not None:
+                reporter.status(
+                    f"SDE trajectory batch {batch_index + 1}/"
+                    f"{plan.trajectory_batch_count}",
+                    stage="sampling",
+                    metadata={
+                        "trajectory_batch_index": batch_index,
+                        "trajectory_batch_count": plan.trajectory_batch_count,
+                    },
+                )
+            with self._trajectory_batch_scope(start, stop, total_trajectories):
+                partial = self._run_simulate(
+                    data,
+                    reporter=reporter,
+                    context=context,
+                    rng_group_seeds=seeds,
+                    rng_group_size=group_size,
+                    progress_offset=(
+                        point_index * total_trajectories + start
+                    )
+                    * plan.steps,
+                    progress_scale=count,
+                    progress_total=(
+                        plan.scan_size * total_trajectories * plan.steps
+                    ),
+                    progress_label=(
+                        f"trajectory batch {batch_index + 1}/"
+                        f"{plan.trajectory_batch_count}"
+                    ),
+                )
+            if not isinstance(partial, SDEResult):
+                raise TypeError("SDE trajectory batch did not return an SDEResult")
+            if partial.trajectory is not None:
+                raise RuntimeError(
+                    "trajectory batching requires keep_traj=false after analysis"
+                )
+            for name, accumulator in accumulators.items():
+                accumulator.update(self._analysis_to_host(partial.analysis[name]))
+            if not result_meta:
+                result_meta.update(partial.meta)
+            self._release_backend_pool()
+
+        result_meta.update(
+            {
+                "params": base_params,
+                "rng_master_seed": master_seed,
+                "rng_strategy": plan.rng_strategy,
+                "drop_trajectory_reason": "online_trajectory_aggregation",
+                "trajectory_batch_size": plan.trajectory_batch_size,
+                "trajectory_batch_count": plan.trajectory_batch_count,
+                "execution_plan": plan.to_dict(),
+            }
+        )
+        return SDEResult(
+            trajectory=None,
+            analysis={
+                name: accumulator.finalize()
+                for name, accumulator in accumulators.items()
+            },
+            meta=result_meta,
+        )
+
+    @contextmanager
+    def _trajectory_batch_scope(
+        self, start: int, stop: int, total_trajectories: int
+    ):
+        """Temporarily slice trajectory-shaped configuration and model values."""
+        assert self.config is not None
+        model = self._required_model()
+        original_n_traj = int(self.config.n_traj)
+        original_ic = self.config.ic
+        original_params = dict(model.params)
+        sliced_params = {
+            name: self._slice_trajectory_value(value, start, stop, total_trajectories)
+            for name, value in original_params.items()
+        }
+        self.config.n_traj = stop - start
+        self.config.ic = self._slice_trajectory_value(
+            original_ic, start, stop, total_trajectories
+        )
+        self._replace_model_params(model, sliced_params)
+        try:
+            yield
+        finally:
+            self.config.n_traj = original_n_traj
+            self.config.ic = original_ic
+            self._replace_model_params(model, original_params)
+
+    @staticmethod
+    def _slice_trajectory_value(
+        value: Any, start: int, stop: int, total_trajectories: int
+    ) -> Any:
+        if value is None:
+            return None
+        try:
+            array = np.asarray(value)
+        except Exception:
+            return value
+        if array.ndim > 0 and array.shape[0] == total_trajectories:
+            return value[start:stop]
+        return value
+
+    @staticmethod
+    def _replace_model_params(model: Any, params: dict[str, Any]) -> None:
+        if hasattr(model, "_params"):
+            model._params = params
+            return
+        current = getattr(model, "params", None)
+        if isinstance(current, dict):
+            current.clear()
+            current.update(params)
+            return
+        raise TypeError(f"model {model.name!r} does not expose mutable parameters")
 
     def _run_analyze(self, data: Any | None) -> ResultProtocol:
         """Run analysers on upstream input data without performing a simulation.
