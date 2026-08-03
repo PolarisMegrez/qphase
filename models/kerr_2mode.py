@@ -172,6 +172,47 @@ class Kerr2ModeModel(SDEModelPlugin):
 
     @classmethod
     @lru_cache(maxsize=1)
+    def cam_fpgen_dynamics(cls) -> Any:
+        """Return the exact fpgen normal-moment dynamics."""
+        import sympy as sp
+        from fpgen import (
+            LindbladChannel,
+            MasterEquation,
+            boson_modes,
+            derive_kramers_moyal,
+        )
+
+        a, b = boson_modes("a", "b")
+        parameters = sp.symbols(
+            "omega_a omega_b chi gamma_a gamma_b g", real=True
+        )
+        omega_a, omega_b, chi, gamma_a, gamma_b, coupling = parameters
+        master = MasterEquation(
+            modes=(a, b),
+            hamiltonian=(
+                omega_a * a.dag * a
+                + omega_b * b.dag * b
+                + coupling * (a.dag * b + a * b.dag)
+                + chi * a.dag**2 * a**2
+            ),
+            channels=(
+                LindbladChannel(a.dag, gamma_a),
+                LindbladChannel(b, gamma_b),
+            ),
+        )
+        return (
+            derive_kramers_moyal(master, "wigner")
+            .truncate(2)
+            .to_langevin()
+            .to_second_moment_dynamics(
+                parameters=parameters,
+                layout="normal",
+                closure="factorized_bilinear",
+            )
+        )
+
+    @classmethod
+    @lru_cache(maxsize=1)
     def cam_symbolic_matrices(cls) -> Any:
         import sympy as sp
         from qphase_cam.core.coordinates import symbolic_hermitian_matrix

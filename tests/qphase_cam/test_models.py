@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from qphase_cam.core.coordinates import matrix_to_vector
+from qphase_cam.core.fpgen import FPGenDynamicsAdapter
 
 from models.crosskerr_2mode import CrossKerr2ModeModel
 from models.kerr_2mode import Kerr2ModeModel
@@ -88,3 +90,25 @@ def test_declared_solution_capacities():
     assert Kerr2ModeModel.steady_state_capacity == 3
     assert Kerr3ModeModel.steady_state_capacity == 8
     assert CrossKerr2ModeModel.steady_state_capacity == 3
+
+
+def test_fpgen_dynamics_match_cam_vector_fast_paths(model):
+    adapter = FPGenDynamicsAdapter.from_model(model)
+    rng = np.random.default_rng(100 + model.n_modes)
+    raw = rng.normal(size=(model.n_modes, model.n_modes)) + 1j * rng.normal(
+        size=(model.n_modes, model.n_modes)
+    )
+    vector = matrix_to_vector(raw @ raw.conj().T)
+
+    np.testing.assert_allclose(
+        adapter.rhs(vector),
+        model.cam_residual_vector(vector, model.params),
+        atol=2e-12,
+    )
+    np.testing.assert_allclose(
+        adapter.jacobian(vector),
+        model.cam_jacobian_vector(vector, model.params),
+        atol=2e-12,
+    )
+    assert adapter.state_ids[0] == "r_diag_0"
+    assert adapter.provenance()["fingerprint"]

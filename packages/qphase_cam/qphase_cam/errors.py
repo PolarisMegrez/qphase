@@ -13,3 +13,11 @@ class SolutionCapacityError(CAMError):
 
 class JacobianUnavailableError(CAMError):
     """Raised when an operation requires an unavailable Jacobian."""
+
+
+class BifurcationCapabilityError(CAMError):
+    """Raised when a model cannot provide exact bifurcation dynamics."""
+
+
+class FPGenCompatibilityError(BifurcationCapabilityError):
+    """Raised when fpgen exposes an incompatible numerical contract."""

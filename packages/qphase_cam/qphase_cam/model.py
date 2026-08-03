@@ -41,3 +41,11 @@ class CAMVectorModel(Protocol):
     def cam_residual_vector(self, vector: Any, params: dict[str, Any]) -> Any: ...
 
     def cam_jacobian_vector(self, vector: Any, params: dict[str, Any]) -> Any: ...
+
+
+@runtime_checkable
+class CAMBifurcationModel(Protocol):
+    """Optional exact symbolic dynamics capability for bifurcation solvers."""
+
+    @classmethod
+    def cam_fpgen_dynamics(cls) -> Any: ...
