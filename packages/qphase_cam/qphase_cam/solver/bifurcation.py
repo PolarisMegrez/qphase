@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from itertools import product
 from typing import Any, ClassVar
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from qphase.core.protocols import PluginManifest, SubpluginSlot
-from scipy.optimize import least_squares
+from scipy.optimize import least_squares, root
 
+from qphase_cam.core.bordered import BorderedMultiplicitySystem
+from qphase_cam.core.coordinates import matrix_to_vector
 from qphase_cam.core.fpgen import FPGenDynamicsAdapter
 from qphase_cam.core.reduction import (
     CondensedScalarReduction,
@@ -126,19 +129,38 @@ class BifurcationSolver(CAMSolver):
         data: Any | None = None,
         context: Any | None = None,
     ) -> CAMBifurcationOutput:
-        del data
         if str(backend.backend_name()).lower() != "numpy":
             raise ValueError("bifurcation solver currently requires numpy")
-        if self.strategy.mode == "full":
-            raise BifurcationCapabilityError(
-                "full bordered-system strategy is not available yet"
-            )
         adapter = FPGenDynamicsAdapter.from_model(model)
         self._validate_controls(adapter)
         reporter = context.progress if context is not None else None
+        if self.strategy.mode == "full":
+            candidates, metadata = self._solve_full(
+                adapter, data=data, reporter=reporter
+            )
+            return CAMBifurcationOutput(
+                candidates=candidates,
+                target=self.target.name,
+                order=self.target.order,
+                metadata=metadata,
+            )
         if reporter is not None:
             reporter.status("Preparing scalar reduction", stage="reduce")
-        reduction = self._select_reduction(adapter)
+        try:
+            reduction = self._select_reduction(adapter)
+        except BifurcationCapabilityError:
+            if self.strategy.mode != "auto":
+                raise
+            candidates, metadata = self._solve_full(
+                adapter, data=data, reporter=reporter
+            )
+            metadata["fallback_reason"] = "no_regular_scalar_reduction"
+            return CAMBifurcationOutput(
+                candidates=candidates,
+                target=self.target.name,
+                order=self.target.order,
+                metadata=metadata,
+            )
         starts = reduction.initial_starts(
             self._control_bounds(),
             samples_per_control=self.discovery.config.samples_per_control,
@@ -172,11 +194,306 @@ class BifurcationSolver(CAMSolver):
             "coverage": "sampled_reduced_regular_branch",
             "fpgen": adapter.provenance(),
         }
+        if self.strategy.mode == "auto" and not candidates:
+            full_candidates, full_metadata = self._solve_full(
+                adapter, data=data, reporter=reporter
+            )
+            if full_candidates:
+                candidates = full_candidates
+                metadata = full_metadata
+                metadata["fallback_reason"] = "reduced_search_found_no_candidates"
         return CAMBifurcationOutput(
             candidates=candidates,
             target=self.target.name,
             order=self.target.order,
             metadata=metadata,
+        )
+
+    def _solve_full(
+        self,
+        adapter: FPGenDynamicsAdapter,
+        *,
+        data: Any | None,
+        reporter: Any | None,
+    ) -> tuple[list[CAMBifurcationCandidate], dict[str, Any]]:
+        system = BorderedMultiplicitySystem(
+            adapter,
+            n_state=int(adapter.model.n_modes) ** 2,
+            order=self.target.order,
+            control_names=tuple(self.config.controls),
+            base_params=adapter.model.params,
+        )
+        seeds = self._upstream_seeds(system, data)
+        seed_source = "upstream"
+        if not seeds:
+            seeds = self._discover_full_seeds(system, adapter)
+            seed_source = "domain_sampling"
+        candidates: list[CAMBifurcationCandidate] = []
+        solved: list[np.ndarray] = []
+        rejected = 0
+        if reporter is not None:
+            stage = reporter.stage(
+                "bordered_refine",
+                total=len(seeds),
+                unit="candidate",
+                message=f"Refining {len(seeds)} bordered candidates",
+            )
+        else:
+            from contextlib import nullcontext
+
+            stage = nullcontext()
+        with stage:
+            for seed in seeds:
+                result = least_squares(
+                    system.residual,
+                    seed,
+                    bounds=self._full_bounds(system),
+                    x_scale="jac",
+                    jac="3-point",
+                    ftol=self.config.refinement.tolerance,
+                    xtol=self.config.refinement.tolerance,
+                    gtol=self.config.refinement.tolerance,
+                    max_nfev=self.config.refinement.max_iterations,
+                )
+                if reporter is not None:
+                    reporter.advance()
+                value = np.asarray(result.x)
+                if any(
+                    scaled_distance(value, previous, self._full_scale(system))
+                    <= 1e-6
+                    for previous in solved
+                ):
+                    continue
+                solved.append(value)
+                candidate = self._full_candidate(
+                    system, adapter, value, result.cost, result.success
+                )
+                if candidate.success:
+                    candidates.append(candidate)
+                else:
+                    rejected += 1
+        return candidates, {
+            "control_names": tuple(self.config.controls),
+            "strategy": "full",
+            "start_count": len(seeds),
+            "rejected_count": rejected,
+            "coverage": f"{seed_source}_bordered_local_search",
+            "fpgen": adapter.provenance(),
+        }
+
+    def _upstream_seeds(
+        self, system: BorderedMultiplicitySystem, data: Any | None
+    ) -> list[np.ndarray]:
+        if data is None or not hasattr(data, "states"):
+            return []
+        seeds = []
+        grid_shape = tuple(getattr(data, "grid_shape", ()))
+        indices = np.ndindex(grid_shape) if grid_shape else [()]
+        for grid_index in indices:
+            point = data.point_view(grid_index) if grid_shape else data
+            states = np.asarray(point.states)
+            valid = np.asarray(
+                getattr(point, "valid_mask", np.ones(len(states), dtype=bool))
+            )
+            params = (
+                data.params_at(grid_index)
+                if hasattr(data, "params_at")
+                else dict(getattr(data, "params", {}))
+            )
+            if not all(name in params for name in self.config.controls):
+                continue
+            controls = {
+                name: float(params[name]) for name in self.config.controls
+            }
+            if not self._controls_in_bounds(controls):
+                continue
+            for state, is_valid in zip(states, valid, strict=True):
+                if not is_valid:
+                    continue
+                try:
+                    seeds.append(
+                        system.seed(matrix_to_vector(state), controls)
+                    )
+                except np.linalg.LinAlgError:
+                    continue
+        return seeds[: self.discovery.config.max_starts]
+
+    def _discover_full_seeds(
+        self,
+        system: BorderedMultiplicitySystem,
+        adapter: FPGenDynamicsAdapter,
+    ) -> list[np.ndarray]:
+        axes = [
+            np.linspace(
+                control.min,
+                control.max,
+                self.discovery.config.samples_per_control,
+            )
+            for control in self.config.controls.values()
+        ]
+        starts = []
+        known_states: list[np.ndarray] = []
+        for control_values in product(*axes):
+            controls = dict(
+                zip(self.config.controls, control_values, strict=True)
+            )
+            params = {**adapter.model.params, **controls}
+            for guess in self._state_guesses(adapter.model):
+                solution = root(
+                    lambda value, params=params: adapter.rhs(value, params),
+                    guess,
+                    jac=lambda value, params=params: adapter.jacobian(
+                        value, params
+                    ),
+                    options={"maxfev": self.config.refinement.max_iterations},
+                )
+                state = np.asarray(solution.x)
+                if not solution.success or np.linalg.norm(
+                    adapter.rhs(state, params)
+                ) > 1e-7:
+                    continue
+                if any(np.linalg.norm(state - item) < 1e-7 for item in known_states):
+                    continue
+                known_states.append(state)
+                try:
+                    starts.append(system.seed(state, controls))
+                except np.linalg.LinAlgError:
+                    continue
+                if len(starts) >= self.discovery.config.max_starts:
+                    return starts
+        return starts
+
+    def _full_candidate(
+        self,
+        system: BorderedMultiplicitySystem,
+        adapter: FPGenDynamicsAdapter,
+        value: np.ndarray,
+        cost: float,
+        optimizer_success: bool,
+    ) -> CAMBifurcationCandidate:
+        state, control_values, right, left = system.unpack(value)
+        controls = dict(
+            zip(self.config.controls, control_values, strict=True)
+        )
+        params = {**adapter.model.params, **controls}
+        diagnostics = system.diagnostics(value)
+        residual = system.residual(value)
+        full_residual = adapter.rhs(state, params)
+        matrix = self._vector_to_matrix(state, int(adapter.model.n_modes))
+        physical_eigenvalues = np.linalg.eigvalsh(matrix)
+        jacobian_eigenvalues = np.linalg.eigvals(adapter.jacobian(state, params))
+        threshold = max(np.sqrt(self.config.refinement.tolerance), 1e-9)
+        singular_tolerance = self.strategy.config.singular_tolerance
+        simple_zero = bool(
+            diagnostics.singular_values[-1] <= threshold
+            and (
+                len(diagnostics.singular_values) == 1
+                or diagnostics.singular_values[-2] > singular_tolerance
+            )
+        )
+        is_physical = bool(np.min(physical_eigenvalues) >= -threshold)
+        success = bool(
+            optimizer_success
+            and np.linalg.norm(residual) <= threshold
+            and np.linalg.norm(full_residual) <= threshold
+            and abs(diagnostics.coefficients[self.target.order])
+            > singular_tolerance
+            and simple_zero
+            and is_physical
+        )
+        return CAMBifurcationCandidate(
+            state_vector=state,
+            controls={name: float(item) for name, item in controls.items()},
+            full_residual_norm=float(np.linalg.norm(full_residual)),
+            search_residual_norm=float(np.linalg.norm(residual)),
+            success=success,
+            status="candidate" if success else "rejected",
+            method="bordered_full",
+            metadata={
+                "optimizer_cost": float(cost),
+                "reduced_coefficients": diagnostics.coefficients,
+                "jacobian_singular_values": diagnostics.singular_values,
+                "right_null_vector": right,
+                "left_null_vector": left,
+                "is_physical": is_physical,
+                "is_stable": bool(
+                    np.max(np.real(jacobian_eigenvalues)) <= threshold
+                ),
+                "minimum_physical_eigenvalue": float(
+                    np.min(physical_eigenvalues)
+                ),
+            },
+        )
+
+    def _full_bounds(
+        self, system: BorderedMultiplicitySystem
+    ) -> tuple[np.ndarray, np.ndarray]:
+        n = system.n_state
+        lower_state = np.full(n, -np.inf)
+        lower_state[: int(np.sqrt(n))] = 0.0
+        lower = np.concatenate(
+            (
+                lower_state,
+                np.asarray([item.min for item in self.config.controls.values()]),
+                np.full(2 * n, -np.inf),
+            )
+        )
+        upper = np.concatenate(
+            (
+                np.full(n, np.inf),
+                np.asarray([item.max for item in self.config.controls.values()]),
+                np.full(2 * n, np.inf),
+            )
+        )
+        return lower, upper
+
+    def _full_scale(self, system: BorderedMultiplicitySystem) -> np.ndarray:
+        n = system.n_state
+        nonlinear = max(
+            (
+                abs(float(system.base_params[name]))
+                for name in ("chi", "Gamma")
+                if name in system.base_params
+            ),
+            default=1.0,
+        )
+        state_scale = max(1.0, 1.0 / max(nonlinear, 1e-8))
+        return np.asarray(
+            [
+                *([state_scale] * n),
+                *(
+                    self._control_scale(control)
+                    for control in self.config.controls.values()
+                ),
+                *([1.0] * (2 * n)),
+            ]
+        )
+
+    def _state_guesses(self, model: Any) -> list[np.ndarray]:
+        n_modes = int(model.n_modes)
+        n_state = n_modes**2
+        nonlinear = max(
+            (
+                abs(float(model.params[name]))
+                for name in ("chi", "Gamma")
+                if name in model.params
+            ),
+            default=1.0,
+        )
+        scale = max(1.0, 1.0 / max(nonlinear, 1e-8))
+        guesses = [np.zeros(n_state)]
+        for value in (0.5, 1.0, scale):
+            guess = np.zeros(n_state)
+            guess[:n_modes] = value
+            guesses.append(guess)
+        return guesses
+
+    def _controls_in_bounds(self, controls: dict[str, float]) -> bool:
+        return all(
+            self.config.controls[name].min
+            <= value
+            <= self.config.controls[name].max
+            for name, value in controls.items()
         )
 
     def _validate_controls(self, adapter: FPGenDynamicsAdapter) -> None:

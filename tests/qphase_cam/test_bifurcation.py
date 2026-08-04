@@ -17,6 +17,7 @@ from fpgen import (
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_cam.bifurcation_result import CAMBifurcationResult
 from qphase_cam.engine import Engine
+from qphase_cam.result import CAMResult
 from qphase_cam.solver.bifurcation import (
     BifurcationSolver,
     BifurcationSolverConfig,
@@ -28,6 +29,8 @@ from qphase_cam.solver.bifurcation_discovery import (
 )
 from qphase_cam.solver.bifurcation_strategy import (
     AutoStrategy,
+    FullStrategy,
+    FullStrategyConfig,
     ReductionStrategyConfig,
 )
 from qphase_cam.solver.bifurcation_target import (
@@ -110,6 +113,46 @@ def test_fraction_free_solver_finds_known_physical_double_root():
     assert candidate.full_residual_norm < 1e-10
     assert candidate.metadata["is_physical"]
     assert output.metadata["reduced_degree"] == 2
+
+
+def test_full_solver_refines_upstream_fixed_point_to_known_fold():
+    expected_gamma = -6.0 + np.sqrt(28.0)
+    expected_q = (expected_gamma + 4.0) / 4.0
+    upstream = CAMResult(
+        states=np.asarray([[[expected_q, 0.0], [0.0, 0.5]]]),
+        residuals=np.asarray([0.0]),
+        success=np.asarray([True]),
+        valid_mask=np.asarray([True]),
+        solution_count=np.asarray(1),
+        params={
+            "gamma": expected_gamma,
+            "Gamma": 1.0,
+            "kappa": 1.0,
+        },
+    )
+    solver = BifurcationSolver(
+        BifurcationSolverConfig(
+            controls={"gamma": ControlRange(min=-1.0, max=0.0)}
+        ),
+        subplugins={
+            "target": EquilibriumMultiplicity(
+                EquilibriumMultiplicityConfig(order=2)
+            ),
+            "strategy": FullStrategy(FullStrategyConfig()),
+            "discovery": SeedDiscovery(SeedDiscoveryConfig()),
+        },
+    )
+    output = solver.solve(
+        TwoModeFoldModel(), NumpyBackend(), data=upstream
+    )
+    assert len(output.candidates) == 1
+    candidate = output.candidates[0]
+    np.testing.assert_allclose(candidate.controls["gamma"], expected_gamma)
+    np.testing.assert_allclose(
+        candidate.state_vector, [expected_q, 0.5, 0.0, 0.0]
+    )
+    assert candidate.method == "bordered_full"
+    assert output.metadata["coverage"] == "upstream_bordered_local_search"
 
 
 def test_engine_packs_tagged_bifurcation_output_and_passes_input(

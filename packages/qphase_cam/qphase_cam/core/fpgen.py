@@ -136,6 +136,21 @@ class FPGenDynamicsAdapter:
             )
         )
 
+    def directional(
+        self,
+        order: int,
+        vector: Any,
+        params: dict[str, Any],
+        *directions: Any,
+    ) -> np.ndarray:
+        return self.derivative_evaluator.directional(
+            order, vector, params, *directions
+        )
+
+    @cached_property
+    def derivative_evaluator(self) -> FPGenDerivativeEvaluator:
+        return FPGenDerivativeEvaluator(self)
+
     def provenance(self) -> dict[str, Any]:
         return {
             "fpgen_version": self._fpgen_version(),
@@ -179,3 +194,57 @@ class FPGenDynamicsAdapter:
         import fpgen
 
         return str(fpgen.__version__)
+
+
+class FPGenDerivativeEvaluator:
+    """Compile exact fpgen directional contractions on demand."""
+
+    def __init__(self, adapter: FPGenDynamicsAdapter) -> None:
+        self.adapter = adapter
+        self._functions: dict[int, Any] = {}
+
+    def directional(
+        self,
+        order: int,
+        vector: Any,
+        params: dict[str, Any],
+        *directions: Any,
+    ) -> np.ndarray:
+        if len(directions) != order:
+            raise ValueError("direction count must equal derivative order")
+        function = self._functions.get(order)
+        if function is None:
+            function = self._compile(order)
+            self._functions[order] = function
+        state = np.asarray(vector, dtype=float).reshape(-1)
+        parameter_values = self.adapter.parameter_vector(params)
+        direction_values = [
+            item
+            for direction in directions
+            for item in np.asarray(direction, dtype=float).reshape(-1)
+        ]
+        return np.asarray(
+            function(*state, *parameter_values, *direction_values),
+            dtype=float,
+        ).reshape(-1)
+
+    def _compile(self, order: int) -> Any:
+        import sympy as sp
+
+        dynamics = self.adapter.dynamics
+        n_state = len(dynamics.coordinates)
+        direction_symbols = tuple(
+            sp.Matrix(
+                sp.symbols(f"_d{slot}_0:{n_state}", real=True)
+            )
+            for slot in range(order)
+        )
+        expression = dynamics.directional(
+            order, state_directions=direction_symbols
+        )
+        arguments = (
+            *dynamics.coordinates,
+            *(item.symbol for item in dynamics.parameter_spec),
+            *(item for direction in direction_symbols for item in direction),
+        )
+        return sp.lambdify(arguments, expression, modules="numpy")
