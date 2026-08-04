@@ -15,7 +15,11 @@ from fpgen import (
     derive_kramers_moyal,
 )
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase.core.dataset import DatasetResultProtocol
+from qphase.core.protocols import ResultProtocol
 from qphase_cam.bifurcation_result import CAMBifurcationResult
+from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.core.reduction import CondensedScalarReduction
 from qphase_cam.engine import Engine
 from qphase_cam.result import CAMResult
 from qphase_cam.solver.bifurcation import (
@@ -111,6 +115,9 @@ def test_fraction_free_solver_finds_known_physical_double_root():
     np.testing.assert_allclose(candidate.controls["gamma"], expected_gamma)
     np.testing.assert_allclose(candidate.state_vector, [expected_q, 0.5, 0.0, 0.0])
     assert candidate.full_residual_norm < 1e-10
+    assert candidate.status == "verified"
+    assert candidate.metadata["verification_digits"] >= 50
+    assert candidate.metadata["verification_status"] == "verified"
     assert candidate.metadata["is_physical"]
     assert output.metadata["reduced_degree"] == 2
 
@@ -149,10 +156,38 @@ def test_full_solver_refines_upstream_fixed_point_to_known_fold():
     candidate = output.candidates[0]
     np.testing.assert_allclose(candidate.controls["gamma"], expected_gamma)
     np.testing.assert_allclose(
-        candidate.state_vector, [expected_q, 0.5, 0.0, 0.0]
+        candidate.state_vector, [expected_q, 0.5, 0.0, 0.0], atol=1e-14
     )
     assert candidate.method == "bordered_full"
+    assert candidate.status == "verified"
+    assert candidate.metadata["verification_status"] == "verified"
     assert output.metadata["coverage"] == "upstream_bordered_local_search"
+
+
+def test_condensed_reduction_verifies_known_fold_at_high_precision():
+    model = TwoModeFoldModel()
+    adapter = FPGenDynamicsAdapter.from_model(model)
+    plan = adapter.dynamics.linear_reduce(
+        candidate=adapter.dynamics.find_linear_reductions(
+            retained_dimension=1
+        )[0]
+    )
+    reduction = CondensedScalarReduction(
+        plan,
+        order=2,
+        control_names=("gamma",),
+        base_params=model.params,
+    )
+    expected_gamma = -6.0 + np.sqrt(28.0)
+    expected_q = (expected_gamma + 4.0) / 4.0
+    outcome = reduction.verify(
+        [expected_q + 1e-5, expected_gamma - 1e-5],
+        initial_digits=50,
+        max_digits=100,
+    )
+    assert outcome.success
+    assert outcome.digits == 50
+    np.testing.assert_allclose(outcome.value, [expected_q, expected_gamma])
 
 
 def test_engine_packs_tagged_bifurcation_output_and_passes_input(
@@ -193,10 +228,18 @@ def test_engine_packs_tagged_bifurcation_output_and_passes_input(
         }
     ).run(data=upstream)
     assert isinstance(result, CAMBifurcationResult)
+    assert isinstance(result, ResultProtocol)
+    assert isinstance(result, DatasetResultProtocol)
+    np.testing.assert_array_equal(result.axes["candidate"], [0])
     assert result.result_kind == "bifurcation_candidates"
     np.testing.assert_allclose(result.control_values, [[0.5]])
+    np.testing.assert_array_equal(result.verification_digits, [0])
+    np.testing.assert_array_equal(result.verification_status, ["not_run"])
     target = tmp_path / "bifurcation.npz"
     result.save(target)
     loaded = CAMBifurcationResult.load(target)
     np.testing.assert_allclose(loaded.state_vectors, result.state_vectors)
+    np.testing.assert_array_equal(
+        loaded.verification_status, result.verification_status
+    )
     assert target.with_suffix(".csv").exists()

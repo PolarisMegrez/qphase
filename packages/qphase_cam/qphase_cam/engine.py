@@ -197,6 +197,19 @@ class Engine(EngineBase):
             success=np.asarray([candidate.success for candidate in candidates]),
             status=np.asarray([candidate.status for candidate in candidates]),
             method=np.asarray([candidate.method for candidate in candidates]),
+            verification_digits=np.asarray(
+                [
+                    candidate.metadata.get("verification_digits", 0)
+                    for candidate in candidates
+                ],
+                dtype=int,
+            ),
+            verification_status=np.asarray(
+                [
+                    candidate.metadata.get("verification_status", "not_run")
+                    for candidate in candidates
+                ]
+            ),
             diagnostics=diagnostics,
             meta={
                 **output.metadata,

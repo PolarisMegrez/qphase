@@ -202,6 +202,14 @@ class BifurcationSolver(CAMSolver):
                 candidates = full_candidates
                 metadata = full_metadata
                 metadata["fallback_reason"] = "reduced_search_found_no_candidates"
+            else:
+                metadata["fallback_reason"] = (
+                    "reduced_search_found_no_candidates"
+                )
+                metadata["full_fallback"] = full_metadata
+                metadata["coverage"] = (
+                    "sampled_reduced_and_bordered_local_search"
+                )
         return CAMBifurcationOutput(
             candidates=candidates,
             target=self.target.name,
@@ -242,12 +250,14 @@ class BifurcationSolver(CAMSolver):
             from contextlib import nullcontext
 
             stage = nullcontext()
+        lower, upper = self._full_bounds(system)
         with stage:
             for seed in seeds:
+                initial = np.minimum(np.maximum(seed, lower), upper)
                 result = least_squares(
                     system.residual,
-                    seed,
-                    bounds=self._full_bounds(system),
+                    initial,
+                    bounds=(lower, upper),
                     x_scale="jac",
                     jac="3-point",
                     ftol=self.config.refinement.tolerance,
@@ -370,7 +380,10 @@ class BifurcationSolver(CAMSolver):
         value: np.ndarray,
         cost: float,
         optimizer_success: bool,
+        verification: Any | None = None,
     ) -> CAMBifurcationCandidate:
+        if verification is not None:
+            value = verification.value
         state, control_values, right, left = system.unpack(value)
         controls = dict(
             zip(self.config.controls, control_values, strict=True)
@@ -394,6 +407,7 @@ class BifurcationSolver(CAMSolver):
         is_physical = bool(np.min(physical_eigenvalues) >= -threshold)
         success = bool(
             optimizer_success
+            and (verification is None or verification.success)
             and np.linalg.norm(residual) <= threshold
             and np.linalg.norm(full_residual) <= threshold
             and abs(diagnostics.coefficients[self.target.order])
@@ -401,16 +415,43 @@ class BifurcationSolver(CAMSolver):
             and simple_zero
             and is_physical
         )
+        if success and verification is None:
+            verified = system.verify(
+                value,
+                initial_digits=self.config.verification.initial_digits,
+                max_digits=self.config.verification.max_digits,
+            )
+            return self._full_candidate(
+                system,
+                adapter,
+                verified.value,
+                cost,
+                optimizer_success,
+                verification=verified,
+            )
         return CAMBifurcationCandidate(
             state_vector=state,
             controls={name: float(item) for name, item in controls.items()},
             full_residual_norm=float(np.linalg.norm(full_residual)),
             search_residual_norm=float(np.linalg.norm(residual)),
             success=success,
-            status="candidate" if success else "rejected",
+            status="verified" if success else "rejected",
             method="bordered_full",
             metadata={
                 "optimizer_cost": float(cost),
+                "verification_digits": (
+                    verification.digits if verification is not None else 0
+                ),
+                "verification_residual_norm": (
+                    verification.residual_norm
+                    if verification is not None
+                    else np.nan
+                ),
+                "verification_status": (
+                    "verified"
+                    if verification is not None and verification.success
+                    else "failed"
+                ),
                 "reduced_coefficients": diagnostics.coefficients,
                 "jacobian_singular_values": diagnostics.singular_values,
                 "right_null_vector": right,
@@ -653,7 +694,10 @@ class BifurcationSolver(CAMSolver):
         value: np.ndarray,
         cost: float,
         optimizer_success: bool,
+        verification: Any | None = None,
     ) -> CAMBifurcationCandidate:
+        if verification is not None:
+            value = verification.value
         controls = dict(
             zip(self.config.controls, value[1:], strict=True)
         )
@@ -681,6 +725,7 @@ class BifurcationSolver(CAMSolver):
         )
         success = bool(
             optimizer_success
+            and (verification is None or verification.success)
             and finite_vector(vector)
             and search_norm <= threshold
             and full_norm <= threshold
@@ -688,16 +733,43 @@ class BifurcationSolver(CAMSolver):
             and regular
             and is_physical
         )
+        if success and verification is None:
+            verified = reduction.verify(
+                value,
+                initial_digits=self.config.verification.initial_digits,
+                max_digits=self.config.verification.max_digits,
+            )
+            return self._candidate(
+                reduction,
+                adapter,
+                verified.value,
+                cost,
+                optimizer_success,
+                verification=verified,
+            )
         return CAMBifurcationCandidate(
             state_vector=vector,
             controls={name: float(item) for name, item in controls.items()},
             full_residual_norm=full_norm,
             search_residual_norm=search_norm,
             success=success,
-            status="candidate" if success else "rejected",
+            status="verified" if success else "rejected",
             method=reduction.method,
             metadata={
                 "optimizer_cost": float(cost),
+                "verification_digits": (
+                    verification.digits if verification is not None else 0
+                ),
+                "verification_residual_norm": (
+                    verification.residual_norm
+                    if verification is not None
+                    else np.nan
+                ),
+                "verification_status": (
+                    "verified"
+                    if verification is not None and verification.success
+                    else "failed"
+                ),
                 "regularity_determinant": diagnostics.regularity_determinant,
                 "denominator_margin": diagnostics.denominator_margin,
                 "reduction_condition_number": diagnostics.condition_number,

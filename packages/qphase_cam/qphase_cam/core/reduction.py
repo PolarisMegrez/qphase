@@ -22,6 +22,14 @@ class ReductionDiagnostics:
     reduced_coefficients: np.ndarray
 
 
+@dataclass(frozen=True)
+class VerificationOutcome:
+    value: np.ndarray
+    digits: int
+    residual_norm: float
+    success: bool
+
+
 class FractionFreeScalarReduction:
     """Compiled regular-branch equations from a materialized fpgen reduction."""
 
@@ -105,6 +113,62 @@ class FractionFreeScalarReduction:
         self._polynomial_coefficients = sp.lambdify(
             self.parameter_symbols, polynomial.all_coeffs(), modules="numpy"
         )
+
+    def verify(
+        self,
+        value: Any,
+        *,
+        initial_digits: int,
+        max_digits: int,
+    ) -> VerificationOutcome:
+        fixed = {
+            specification.symbol: self.base_params[specification.name]
+            for specification in self.parameter_specs
+            if specification.name not in self.control_names
+        }
+        equations = tuple(
+            expression.subs(fixed) for expression in self.condition_expressions
+        )
+        current = tuple(float(item) for item in np.asarray(value).reshape(-1))
+        digits = initial_digits
+        while True:
+            try:
+                solution = sp.nsolve(
+                    equations,
+                    self.unknown_symbols,
+                    current,
+                    tol=sp.Float(10) ** (-(digits - 10)),
+                    maxsteps=100,
+                    prec=digits,
+                    verify=True,
+                )
+                solved = tuple(solution)
+                substitutions = dict(
+                    zip(self.unknown_symbols, solved, strict=True)
+                )
+                residual = max(
+                    abs(sp.N(expression.subs(substitutions), digits))
+                    for expression in equations
+                )
+                residual_float = float(residual)
+                success = residual_float <= 10.0 ** (-min(30, digits // 2))
+                if success or digits >= max_digits:
+                    return VerificationOutcome(
+                        value=np.asarray([float(item) for item in solved]),
+                        digits=digits,
+                        residual_norm=residual_float,
+                        success=success,
+                    )
+                current = solved
+            except (ArithmeticError, TypeError, ValueError, ZeroDivisionError):
+                if digits >= max_digits:
+                    return VerificationOutcome(
+                        value=np.asarray(current, dtype=float),
+                        digits=digits,
+                        residual_norm=np.inf,
+                        success=False,
+                    )
+            digits = min(2 * digits, max_digits)
 
     @property
     def retained_id(self) -> str:
@@ -239,7 +303,88 @@ class CondensedScalarReduction:
             )
             for derivative in range(order + 1)
         )
-        self._coefficient_functions = self._compile_coefficients(arguments)
+        coefficient_expressions, jet_symbols = self._coefficient_spec()
+        flattened_jets = tuple(item for row in jet_symbols for item in row)
+        function_arguments = (*arguments, *flattened_jets)
+        self._coefficient_functions = tuple(
+            sp.lambdify(function_arguments, expression, modules="numpy")
+            for expression in coefficient_expressions
+        )
+        self._mp_A_derivatives = tuple(
+            sp.lambdify(arguments, plan.A.diff(self.q, derivative), modules="mpmath")
+            for derivative in range(order + 1)
+        )
+        self._mp_b_derivatives = tuple(
+            sp.lambdify(arguments, plan.b.diff(self.q, derivative), modules="mpmath")
+            for derivative in range(order + 1)
+        )
+        self._mp_coefficient_functions = tuple(
+            sp.lambdify(function_arguments, expression, modules="mpmath")
+            for expression in coefficient_expressions
+        )
+
+    def verify(
+        self,
+        value: Any,
+        *,
+        initial_digits: int,
+        max_digits: int,
+    ) -> VerificationOutcome:
+        import mpmath as mp
+
+        previous_digits = mp.mp.dps
+        current = tuple(mp.mpf(str(float(item))) for item in np.asarray(value))
+        digits = initial_digits
+        try:
+            while True:
+                mp.mp.dps = digits
+                functions = tuple(
+                    (
+                        lambda *items, index=index: self._evaluate_mpmath(items)[1][
+                            index
+                        ]
+                    )
+                    for index in range(self.order)
+                )
+                try:
+                    solved = tuple(
+                        mp.findroot(
+                            functions,
+                            current,
+                            tol=mp.power(10, -(digits - 10)),
+                            maxsteps=100,
+                            verify=True,
+                            solver="mdnewton",
+                        )
+                    )
+                    residuals = self._evaluate_mpmath(solved)[1][: self.order]
+                    residual = mp.sqrt(sum(item * item for item in residuals))
+                    residual_float = float(residual)
+                    success = residual_float <= 10.0 ** (-min(30, digits // 2))
+                    if success or digits >= max_digits:
+                        return VerificationOutcome(
+                            value=np.asarray([float(item) for item in solved]),
+                            digits=digits,
+                            residual_norm=residual_float,
+                            success=success,
+                        )
+                    current = solved
+                except (
+                    ArithmeticError,
+                    TypeError,
+                    ValueError,
+                    ZeroDivisionError,
+                ):
+                    if digits >= max_digits:
+                        return VerificationOutcome(
+                            value=np.asarray(current, dtype=float),
+                            digits=digits,
+                            residual_norm=np.inf,
+                            success=False,
+                        )
+                digits = min(2 * digits, max_digits)
+        finally:
+            mp.mp.dps = previous_digits
 
     @property
     def retained_id(self) -> str:
@@ -363,7 +508,9 @@ class CondensedScalarReduction:
         )
         return jets, coefficients
 
-    def _compile_coefficients(self, arguments: tuple[Any, ...]) -> tuple[Any, ...]:
+    def _coefficient_spec(
+        self,
+    ) -> tuple[tuple[Any, ...], tuple[tuple[Any, ...], ...]]:
         time = sp.Symbol("_jet_t", real=True)
         jet_symbols = tuple(
             tuple(
@@ -383,15 +530,43 @@ class CondensedScalarReduction:
         expression = self.plan.retained_residual[0].subs(
             replacements, simultaneous=True
         )
-        flattened_jets = tuple(item for row in jet_symbols for item in row)
-        return tuple(
-            sp.lambdify(
-                (*arguments, *flattened_jets),
-                sp.diff(expression, time, derivative).subs(time, 0),
-                modules="numpy",
-            )
-            for derivative in range(self.order + 1)
+        return (
+            tuple(
+                sp.diff(expression, time, derivative).subs(time, 0)
+                for derivative in range(self.order + 1)
+            ),
+            jet_symbols,
         )
+
+    def _evaluate_mpmath(self, value: Any) -> tuple[list[Any], list[Any]]:
+        import mpmath as mp
+
+        array = tuple(value)
+        params = dict(self.base_params)
+        params.update(zip(self.control_names, array[1:], strict=True))
+        arguments = (
+            array[0],
+            *(mp.mpf(str(params[name])) for name in self.parameter_names),
+        )
+        matrices = [function(*arguments) for function in self._mp_A_derivatives]
+        vectors = [function(*arguments) for function in self._mp_b_derivatives]
+        jets = [mp.lu_solve(matrices[0], -vectors[0])]
+        for derivative in range(1, self.order + 1):
+            right = vectors[derivative].copy()
+            for index in range(1, derivative + 1):
+                right += (
+                    comb(derivative, index)
+                    * matrices[index]
+                    * jets[derivative - index]
+                )
+            jets.append(mp.lu_solve(matrices[0], -right))
+        function_arguments = [*arguments]
+        function_arguments.extend(item for jet in jets for item in jet)
+        coefficients = [
+            function(*function_arguments)
+            for function in self._mp_coefficient_functions
+        ]
+        return jets, coefficients
 
     def _arguments(self, value: Any) -> tuple[float, ...]:
         array = np.asarray(value, dtype=float)

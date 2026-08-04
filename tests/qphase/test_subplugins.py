@@ -86,6 +86,19 @@ def test_resolver_validates_cardinality_and_protocol():
         resolver.resolve("parent", "main", {"worker": {"bad": {}}})
 
 
+def test_registry_config_validation_accepts_declared_child_slots():
+    config = make_registry().validate_plugin_config(
+        "parent",
+        {
+            "name": "main",
+            "value": 4,
+            "worker": {"good": {"value": 7}},
+        },
+    )
+
+    assert config.value == 4
+
+
 def test_merge_replaces_different_single_child_and_merges_same_child():
     registry = make_registry()
     inherited = {"value": 2, "worker": {"good": {"value": 3}}}

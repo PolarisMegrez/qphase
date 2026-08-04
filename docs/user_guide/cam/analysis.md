@@ -9,7 +9,8 @@ The workspace-only `qphase_cam` package solves the steady-state matrix equation
 Use `engine.cam` with one backend, one CAM-capable model, one `cam_solver`, and
 zero or more `cam_postprocessor` plugins. Complete examples are available in
 `configs/jobs/vdp_2mode_cam.yaml`, `kerr_2mode_cam.yaml`,
-`crosskerr_2mode_cam.yaml`, and `kerr_3mode_cam.yaml`.
+`crosskerr_2mode_cam.yaml`, and `kerr_3mode_cam.yaml`. Higher-order equilibrium
+search is demonstrated by `configs/jobs/vdp_2mode_bifurcation.yaml`.
 
 ## Parameter Scans
 
@@ -47,6 +48,7 @@ coordinate and adaptive steps define a different topology.
 | `deflation` | Yes | NumPy | Required | Repels Newton iterations from roots already found. Useful when ordinary multi-start repeatedly returns the same root. |
 | `batched_newton` | Yes, if multiple guesses are supplied | NumPy or CuPy | Required | High-throughput parameter scans with a prepared seed set. Its default single identity guess normally finds at most one state. |
 | `continuation` | One traced sheet | NumPy | Required | Follows one pseudo-arclength sheet through folds from a known initial state; it is not an automatic all-state search. |
+| `bifurcation` | Variable candidates | NumPy | Exact fpgen dynamics | Jointly searches states and control parameters for equilibrium roots of multiplicity 2-4. |
 
 `batched_newton`, `deflation`, and `continuation` require a model Jacobian.
 Ordinary root and Cholesky solves can run without one. Finite-difference
@@ -55,6 +57,29 @@ Models may additionally implement `cam_residual_vector` and
 `cam_jacobian_vector` in the canonical CAM coordinate order. These optional
 callbacks avoid matrix reconstruction in root-solver hot paths; the solver
 falls back to the standard H/D and Jacobian capabilities when they are absent.
+
+### Higher-Order Equilibrium Bifurcations
+
+`cam_solver.bifurcation` is a solver, not a postprocessor. Its `controls`
+define an internal adaptive search domain, so it rejects an external
+`ScanSpec`. The required `target` subplugin currently supports
+`equilibrium_multiplicity` with `order: 2`, `3`, or `4`; exactly `order - 1`
+control parameters must be supplied.
+
+The default `strategy.auto` first asks fpgen for a regular scalar linear
+reduction. Small eliminated blocks use fraction-free equations; large blocks
+use implicit condensed derivatives without expanding a large rational
+expression. If no regular reduction exists, the solver uses a full bordered
+Lyapunov-Schmidt system with left and right zero vectors. `strategy.reduced`
+requires the scalar path, while `strategy.full` requires the bordered path.
+
+Float64 solves only discover candidates. Accepted candidates are refined from
+the exact fpgen expressions with mpmath, starting at `verification.initial_digits`
+and increasing up to `max_digits`. A `verified` candidate has passed the
+high-precision root conditions, complete CAM residual, regularity,
+non-degeneracy, and physicality checks. This is not interval certification and
+does not prove that no other candidates exist. Result metadata records search
+coverage and fpgen provenance.
 
 For an unknown multistable system, start with `multistability`. Set
 `guess_bounds: auto` to infer diagonal-balance scales and sample bounded plus
@@ -107,9 +132,9 @@ finding or CPU pseudo-arclength logic.
 | `deflation` | Yes | No |
 | `batched_newton` | Yes | Yes |
 | `continuation` | Yes | No |
+| `bifurcation` | Yes | No |
 | Rayleigh/Hamiltonian/physicality postprocessing | Yes | Yes, with result arrays transferred to CPU |
 | Jacobian spectrum | Yes | Yes |
-| Bifurcation refinement | Yes, on continuation output | No |
 
 `batched_newton` transfers converged states back to NumPy when constructing
 `CAMResult`; persistence and most postprocessing are therefore CPU-side even
@@ -161,3 +186,10 @@ flattens parameters, independent solution slots, Hermitian coordinates,
 residuals, frequencies, stability, and physicality fields. Large results may be
 stored as a bounded set of shards; `artifact_manifest.json` records the layout
 and `CAMResult.load_dataset` restores the same logical shape.
+
+`CAMBifurcationResult` instead has a variable candidate axis. It stores states,
+control values, residual norms, singular values, null vectors, reduced
+coefficients, physicality/stability flags, and explicit verification status and
+digits. Its NPZ retains complete diagnostics, while its CSV contains one row per
+candidate for filtering and plotting. Candidate indices are not global branch
+identifiers.

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from qphase.core.dataset import DatasetSaveReport
 from qphase.core.errors import QPhaseIOError
 
 
@@ -24,6 +25,8 @@ class CAMBifurcationResult:
     success: np.ndarray
     status: np.ndarray
     method: np.ndarray
+    verification_digits: np.ndarray
+    verification_status: np.ndarray
     diagnostics: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
     result_kind = "bifurcation_candidates"
@@ -37,8 +40,20 @@ class CAMBifurcationResult:
         return self.meta
 
     @property
+    def label(self) -> Any:
+        return self.meta.get("label")
+
+    @label.setter
+    def label(self, value: Any) -> None:
+        self.meta["label"] = value
+
+    @property
     def shape(self) -> tuple[int, ...]:
         return (int(len(self.states)),)
+
+    @property
+    def axes(self) -> dict[str, np.ndarray]:
+        return {"candidate": np.arange(len(self.states), dtype=int)}
 
     @property
     def nbytes(self) -> int:
@@ -49,6 +64,7 @@ class CAMBifurcationResult:
             self.full_residual_norm,
             self.search_residual_norm,
             self.success,
+            self.verification_digits,
             *self.diagnostics.values(),
         )
         return sum(np.asarray(value).nbytes for value in arrays)
@@ -67,6 +83,12 @@ class CAMBifurcationResult:
             success=self.success[position : position + 1],
             status=self.status[position : position + 1],
             method=self.method[position : position + 1],
+            verification_digits=self.verification_digits[
+                position : position + 1
+            ],
+            verification_status=self.verification_status[
+                position : position + 1
+            ],
             diagnostics={
                 name: self._candidate_slice(value, position)
                 for name, value in self.diagnostics.items()
@@ -89,6 +111,8 @@ class CAMBifurcationResult:
                 success=self.success,
                 status=self.status,
                 method=self.method,
+                verification_digits=self.verification_digits,
+                verification_status=self.verification_status,
                 diagnostics=np.asarray(self.diagnostics, dtype=object),
                 meta=np.asarray(self.meta, dtype=object),
             )
@@ -97,6 +121,29 @@ class CAMBifurcationResult:
             raise QPhaseIOError(
                 f"failed to save CAM bifurcation result to {target}: {exc}"
             ) from exc
+
+    def save_dataset(
+        self,
+        path: str | Path,
+        *,
+        layout: str,
+        shard_target_bytes: int,
+    ) -> DatasetSaveReport:
+        del layout, shard_target_bytes
+        target = Path(path)
+        self.save(target)
+        files = tuple(
+            item
+            for item in (target.with_suffix(".npz"), target.with_suffix(".csv"))
+            if item.exists()
+        )
+        return DatasetSaveReport(
+            layout="single",
+            files=files,
+            loader=(
+                "qphase_cam.bifurcation_result:CAMBifurcationResult.load"
+            ),
+        )
 
     @classmethod
     def load(cls, path: str | Path) -> CAMBifurcationResult:
@@ -111,6 +158,8 @@ class CAMBifurcationResult:
                 success=data["success"],
                 status=data["status"],
                 method=data["method"],
+                verification_digits=data["verification_digits"],
+                verification_status=data["verification_status"],
                 diagnostics=data["diagnostics"].item(),
                 meta=data["meta"].item(),
             )
@@ -124,6 +173,8 @@ class CAMBifurcationResult:
             "success",
             "status",
             "method",
+            "verification_digits",
+            "verification_status",
         ]
         with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
@@ -136,6 +187,8 @@ class CAMBifurcationResult:
                     "success": bool(self.success[index]),
                     "status": self.status[index],
                     "method": self.method[index],
+                    "verification_digits": self.verification_digits[index],
+                    "verification_status": self.verification_status[index],
                 }
                 row.update(
                     zip(

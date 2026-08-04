@@ -21,6 +21,18 @@ class ExactDynamics(Protocol):
         *directions: Any,
     ) -> np.ndarray: ...
 
+    def mpmath_rhs(self, vector: Any, params: dict[str, Any]) -> Any: ...
+
+    def mpmath_jacobian(self, vector: Any, params: dict[str, Any]) -> Any: ...
+
+    def mpmath_directional(
+        self,
+        order: int,
+        vector: Any,
+        params: dict[str, Any],
+        *directions: Any,
+    ) -> Any: ...
+
 
 @dataclass(frozen=True)
 class BorderedDiagnostics:
@@ -28,6 +40,14 @@ class BorderedDiagnostics:
     singular_values: np.ndarray
     right_null_vector: np.ndarray
     left_null_vector: np.ndarray
+
+
+@dataclass(frozen=True)
+class BorderedVerificationOutcome:
+    value: np.ndarray
+    digits: int
+    residual_norm: float
+    success: bool
 
 
 class BorderedMultiplicitySystem:
@@ -166,6 +186,152 @@ class BorderedMultiplicitySystem:
             right_null_vector=right,
             left_null_vector=left,
         )
+
+    def verify(
+        self,
+        value: Any,
+        *,
+        initial_digits: int,
+        max_digits: int,
+    ) -> BorderedVerificationOutcome:
+        import mpmath as mp
+
+        previous_digits = mp.mp.dps
+        current = tuple(mp.mpf(str(float(item))) for item in np.asarray(value))
+        digits = initial_digits
+        try:
+            while True:
+                mp.mp.dps = digits
+                functions = tuple(
+                    (
+                        lambda *items, index=index: self._mp_residual(
+                            items, include_gauge=True
+                        )[index]
+                    )
+                    for index in range(self.size + 1)
+                )
+                try:
+                    solved = tuple(
+                        mp.findroot(
+                            functions,
+                            current,
+                            tol=mp.power(10, -(digits - 10)),
+                            maxsteps=100,
+                            verify=True,
+                            solver="mdnewton",
+                        )
+                    )
+                    residuals = self._mp_residual(solved, include_gauge=True)
+                    residual = mp.sqrt(sum(item * item for item in residuals))
+                    residual_float = float(residual)
+                    success = residual_float <= 10.0 ** (-min(30, digits // 2))
+                    if success or digits >= max_digits:
+                        return BorderedVerificationOutcome(
+                            value=np.asarray([float(item) for item in solved]),
+                            digits=digits,
+                            residual_norm=residual_float,
+                            success=success,
+                        )
+                    current = solved
+                except (
+                    ArithmeticError,
+                    TypeError,
+                    ValueError,
+                    ZeroDivisionError,
+                ):
+                    if digits >= max_digits:
+                        return BorderedVerificationOutcome(
+                            value=np.asarray(current, dtype=float),
+                            digits=digits,
+                            residual_norm=np.inf,
+                            success=False,
+                        )
+                digits = min(2 * digits, max_digits)
+        finally:
+            mp.mp.dps = previous_digits
+
+    def _mp_residual(
+        self, value: Any, *, include_gauge: bool = False
+    ) -> list[Any]:
+        import mpmath as mp
+
+        array = tuple(value)
+        n = self.n_state
+        m = len(self.control_names)
+        state = array[:n]
+        controls = array[n : n + m]
+        right = mp.matrix(array[n + m : 2 * n + m])
+        left = mp.matrix(array[2 * n + m :])
+        params = self.params(controls)
+        residual = self.dynamics.mpmath_rhs(state, params)
+        jacobian = self.dynamics.mpmath_jacobian(state, params)
+        coefficients = self._mp_coefficients(
+            state, params, jacobian, right, left
+        )
+        output = [*residual, *(jacobian * right), *(jacobian.T * left)]
+        output.append((left.T * right)[0] - 1)
+        output.extend(coefficients[2 : self.order])
+        if include_gauge:
+            output.append((right.T * right)[0] - 1)
+        return output
+
+    def _mp_coefficients(
+        self,
+        state: Any,
+        params: dict[str, Any],
+        jacobian: Any,
+        right: Any,
+        left: Any,
+    ) -> list[Any]:
+        import mpmath as mp
+
+        n = self.n_state
+        bordered = mp.matrix(n + 1)
+        for row in range(n):
+            for column in range(n):
+                bordered[row, column] = jacobian[row, column]
+            bordered[row, n] = right[row]
+            bordered[n, row] = left[row]
+        b_vv = self.dynamics.mpmath_directional(
+            2, state, params, right, right
+        )
+        coefficient_2 = (left.T * b_vv)[0]
+        h_2 = mp.lu_solve(
+            bordered, mp.matrix([*list(-b_vv), mp.mpf("0")])
+        )[:n]
+        coefficients = [mp.mpf("0"), mp.mpf("0"), coefficient_2]
+        if self.order == 2:
+            return coefficients
+        forcing_3 = self.dynamics.mpmath_directional(
+            3, state, params, right, right, right
+        ) + 3 * self.dynamics.mpmath_directional(
+            2, state, params, right, h_2
+        )
+        coefficients.append((left.T * forcing_3)[0])
+        if self.order < 4:
+            return coefficients
+        h_3 = mp.lu_solve(
+            bordered, mp.matrix([*list(-forcing_3), mp.mpf("0")])
+        )[:n]
+        forcing_4 = (
+            self.dynamics.mpmath_directional(
+                4, state, params, right, right, right, right
+            )
+            + 6
+            * self.dynamics.mpmath_directional(
+                3, state, params, right, right, h_2
+            )
+            + 3
+            * self.dynamics.mpmath_directional(
+                2, state, params, h_2, h_2
+            )
+            + 4
+            * self.dynamics.mpmath_directional(
+                2, state, params, right, h_3
+            )
+        )
+        coefficients.append((left.T * forcing_4)[0])
+        return coefficients
 
     def unpack(
         self, value: Any

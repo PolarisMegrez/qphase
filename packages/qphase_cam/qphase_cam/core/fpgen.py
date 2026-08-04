@@ -147,6 +147,23 @@ class FPGenDynamicsAdapter:
             order, vector, params, *directions
         )
 
+    def mpmath_rhs(self, vector: Any, params: dict[str, Any]) -> Any:
+        return self.derivative_evaluator.mpmath_rhs(vector, params)
+
+    def mpmath_jacobian(self, vector: Any, params: dict[str, Any]) -> Any:
+        return self.derivative_evaluator.mpmath_jacobian(vector, params)
+
+    def mpmath_directional(
+        self,
+        order: int,
+        vector: Any,
+        params: dict[str, Any],
+        *directions: Any,
+    ) -> Any:
+        return self.derivative_evaluator.mpmath_directional(
+            order, vector, params, *directions
+        )
+
     @cached_property
     def derivative_evaluator(self) -> FPGenDerivativeEvaluator:
         return FPGenDerivativeEvaluator(self)
@@ -201,7 +218,7 @@ class FPGenDerivativeEvaluator:
 
     def __init__(self, adapter: FPGenDynamicsAdapter) -> None:
         self.adapter = adapter
-        self._functions: dict[int, Any] = {}
+        self._functions: dict[tuple[int, str], Any] = {}
 
     def directional(
         self,
@@ -212,10 +229,11 @@ class FPGenDerivativeEvaluator:
     ) -> np.ndarray:
         if len(directions) != order:
             raise ValueError("direction count must equal derivative order")
-        function = self._functions.get(order)
+        key = (order, "numpy")
+        function = self._functions.get(key)
         if function is None:
-            function = self._compile(order)
-            self._functions[order] = function
+            function = self._compile(order, "numpy")
+            self._functions[key] = function
         state = np.asarray(vector, dtype=float).reshape(-1)
         parameter_values = self.adapter.parameter_vector(params)
         direction_values = [
@@ -228,7 +246,66 @@ class FPGenDerivativeEvaluator:
             dtype=float,
         ).reshape(-1)
 
-    def _compile(self, order: int) -> Any:
+    def mpmath_rhs(self, vector: Any, params: dict[str, Any]) -> Any:
+        return self._mp_rhs(
+            *vector, *self._mp_parameter_values(params)
+        )
+
+    def mpmath_jacobian(self, vector: Any, params: dict[str, Any]) -> Any:
+        return self._mp_jacobian(
+            *vector, *self._mp_parameter_values(params)
+        )
+
+    def mpmath_directional(
+        self,
+        order: int,
+        vector: Any,
+        params: dict[str, Any],
+        *directions: Any,
+    ) -> Any:
+        if len(directions) != order:
+            raise ValueError("direction count must equal derivative order")
+        key = (order, "mpmath")
+        function = self._functions.get(key)
+        if function is None:
+            function = self._compile(order, "mpmath")
+            self._functions[key] = function
+        return function(
+            *vector,
+            *self._mp_parameter_values(params),
+            *(item for direction in directions for item in direction),
+        )
+
+    @cached_property
+    def _mp_rhs(self) -> Any:
+        import sympy as sp
+
+        dynamics = self.adapter.dynamics
+        arguments = (
+            *dynamics.coordinates,
+            *(item.symbol for item in dynamics.parameter_spec),
+        )
+        return sp.lambdify(arguments, dynamics.rhs, modules="mpmath")
+
+    @cached_property
+    def _mp_jacobian(self) -> Any:
+        import sympy as sp
+
+        dynamics = self.adapter.dynamics
+        arguments = (
+            *dynamics.coordinates,
+            *(item.symbol for item in dynamics.parameter_spec),
+        )
+        return sp.lambdify(arguments, dynamics.jacobian(), modules="mpmath")
+
+    def _mp_parameter_values(self, params: dict[str, Any]) -> tuple[Any, ...]:
+        import mpmath as mp
+
+        return tuple(
+            mp.mpf(str(params[name])) for name in self.adapter.parameter_names
+        )
+
+    def _compile(self, order: int, modules: str) -> Any:
         import sympy as sp
 
         dynamics = self.adapter.dynamics
@@ -247,4 +324,4 @@ class FPGenDerivativeEvaluator:
             *(item.symbol for item in dynamics.parameter_spec),
             *(item for direction in direction_symbols for item in direction),
         )
-        return sp.lambdify(arguments, expression, modules="numpy")
+        return sp.lambdify(arguments, expression, modules=modules)

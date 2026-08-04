@@ -392,13 +392,12 @@ class RegistryCenter:
     def validate_plugin_config(
         self, plugin_type: str, config_data: dict[str, Any]
     ) -> Any:
-        """Validate raw plugin configuration against its schema."""
+        """Validate a parent plugin and its declared child-plugin graph."""
         name = config_data.get("name")
         if not name:
             raise QPhaseConfigError(f"Plugin config for '{plugin_type}' missing 'name'")
 
-        schema = self.get_plugin_schema(plugin_type, name)
-        if not schema:
+        if not self.get_plugin_schema(plugin_type, name):
             raise QPhaseConfigError(
                 f"No configuration schema found for plugin "
                 f"'{plugin_type}:{name}'. All plugins must define a config_schema."
@@ -410,14 +409,15 @@ class RegistryCenter:
             if k not in ["name", "params"]:
                 params[k] = v
 
-        try:
-            if hasattr(schema, "model_validate"):
-                return schema.model_validate(params)
-            return schema(**params)
-        except Exception as e:
-            raise QPhaseConfigError(
-                f"Invalid configuration for '{plugin_type}:{name}': {e}"
-            ) from e
+        from .plugin_graph import PluginGraphResolver
+
+        node = PluginGraphResolver(self).resolve(
+            plugin_type,
+            str(name),
+            params,
+            instantiate=False,
+        )
+        return node.config
 
     # --------------------------- introspection ---------------------------
     def list(self, namespace: Namespace | None = None) -> dict[str, Any]:

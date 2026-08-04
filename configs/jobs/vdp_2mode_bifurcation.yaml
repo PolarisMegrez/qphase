@@ -1,0 +1,42 @@
+name: vdp_2mode_bifurcation
+save: true
+
+engine:
+  cam: {}
+
+plugins:
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    vdp_2mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      gamma_a: 2.0
+      gamma_b: 0.8
+      Gamma: 0.0001
+      g: 0.5
+  cam_solver:
+    bifurcation:
+      controls:
+        omega_a: {min: -0.3, max: 0.3, scale: 0.1}
+        gamma_b: {min: 0.2, max: 1.1, scale: 1.0}
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 8
+          condition_limit: 1.0e10
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 512
+          order_parameter_samples: 41
+      refinement:
+        tolerance: 1.0e-11
+        max_iterations: 100
+      verification:
+        initial_digits: 50
+        max_digits: 200

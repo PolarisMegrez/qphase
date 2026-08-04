@@ -20,6 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
@@ -189,6 +190,9 @@ def schema_to_yaml_map(
                 # Skip required fields for global.yaml generation
                 # We only want to populate defaults that can be overridden.
                 continue
+
+        if isinstance(value, BaseModel):
+            value = value.model_dump(mode="json")
 
         # Filter empty values in global mode
         if mode == "global":
