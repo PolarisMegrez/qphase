@@ -11,6 +11,7 @@ from scipy.optimize import least_squares
 
 from qphase_cam.core.fpgen import FPGenDynamicsAdapter
 from qphase_cam.core.reduction import (
+    CondensedScalarReduction,
     FractionFreeScalarReduction,
     finite_vector,
     scaled_distance,
@@ -142,6 +143,10 @@ class BifurcationSolver(CAMSolver):
             self._control_bounds(),
             samples_per_control=self.discovery.config.samples_per_control,
             max_starts=self.discovery.config.max_starts,
+            order_parameter_bounds=self.strategy.config.order_parameter_bounds,
+            order_parameter_samples=(
+                self.discovery.config.order_parameter_samples
+            ),
         )
         if reporter is not None:
             with reporter.stage(
@@ -194,7 +199,7 @@ class BifurcationSolver(CAMSolver):
 
     def _select_reduction(
         self, adapter: FPGenDynamicsAdapter
-    ) -> FractionFreeScalarReduction:
+    ) -> FractionFreeScalarReduction | CondensedScalarReduction:
         strategy_config = self.strategy.config
         candidates = adapter.dynamics.find_linear_reductions(
             retained_dimension=1,
@@ -210,7 +215,12 @@ class BifurcationSolver(CAMSolver):
         errors = []
         for candidate in candidates:
             if len(candidate.eliminated_indices) > 3:
-                continue
+                return CondensedScalarReduction(
+                    adapter.dynamics.linear_reduce(candidate=candidate),
+                    order=self.target.order,
+                    control_names=tuple(self.config.controls),
+                    base_params=adapter.model.params,
+                )
             if (
                 candidate.reduced_degree is not None
                 and candidate.reduced_degree < self.target.order
@@ -241,7 +251,7 @@ class BifurcationSolver(CAMSolver):
 
     def _refine(
         self,
-        reduction: FractionFreeScalarReduction,
+        reduction: FractionFreeScalarReduction | CondensedScalarReduction,
         adapter: FPGenDynamicsAdapter,
         starts: list[np.ndarray],
         *,
@@ -321,7 +331,7 @@ class BifurcationSolver(CAMSolver):
 
     def _candidate(
         self,
-        reduction: FractionFreeScalarReduction,
+        reduction: FractionFreeScalarReduction | CondensedScalarReduction,
         adapter: FPGenDynamicsAdapter,
         value: np.ndarray,
         cost: float,
@@ -368,7 +378,7 @@ class BifurcationSolver(CAMSolver):
             search_residual_norm=search_norm,
             success=success,
             status="candidate" if success else "rejected",
-            method="reduced_fraction_free",
+            method=reduction.method,
             metadata={
                 "optimizer_cost": float(cost),
                 "regularity_determinant": diagnostics.regularity_determinant,

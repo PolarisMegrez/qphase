@@ -19,6 +19,7 @@ class SeedDiscoveryConfig(PluginConfigBase):
     model_config = ConfigDict(extra="forbid")
     samples_per_control: int = Field(7, ge=2, le=101)
     max_starts: int = Field(4096, ge=1)
+    order_parameter_samples: int = Field(41, ge=5, le=1001)
 
 
 class SeedDiscovery:
