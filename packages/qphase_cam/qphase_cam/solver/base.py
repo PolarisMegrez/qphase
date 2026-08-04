@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from pydantic import ConfigDict
 from qphase.core.protocols import PluginConfigBase
@@ -24,6 +24,9 @@ class CAMSolver(ABC):
     description: ClassVar[str]
     config_schema: ClassVar[type[CAMSolverConfig]]
     supports_batch: ClassVar[bool] = False
+    output_kind: ClassVar[
+        Literal["fixed_points", "bifurcation_candidates"]
+    ] = "fixed_points"
 
     def __init__(
         self, config: CAMSolverConfig | None = None, **kwargs: Any

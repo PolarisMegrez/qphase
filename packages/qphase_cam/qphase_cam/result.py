@@ -26,6 +26,7 @@ class CAMResult:
     axes: dict[str, Any] = field(default_factory=dict)
     postprocess: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
+    result_kind = "fixed_points"
 
     @property
     def data(self) -> Any:

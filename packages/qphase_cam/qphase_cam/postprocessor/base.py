@@ -21,6 +21,7 @@ class CAMPostprocessor(ABC):
     name: ClassVar[str]
     description: ClassVar[str]
     config_schema: ClassVar[type[CAMPostprocessorConfig]]
+    accepted_result_kinds: ClassVar[frozenset[str]] = frozenset({"fixed_points"})
 
     def __init__(
         self, config: CAMPostprocessorConfig | None = None, **kwargs: Any

@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 from qphase.core.scan import ParameterGrid, execute_pointwise
 
+from qphase_cam.bifurcation_result import CAMBifurcationResult
 from qphase_cam.errors import SolutionCapacityError
 from qphase_cam.result import CAMResult
 from qphase_cam.state import CAMSolution
@@ -47,7 +48,6 @@ class Engine(EngineBase):
         context: Any | None = None,
         progress_cb: Callable[..., Any] | None = None,
     ) -> ResultProtocol:
-        del data
         model = self._required("model")
         backend = self._required("backend")
         solver = self._required("cam_solver")
@@ -57,12 +57,19 @@ class Engine(EngineBase):
         elif progress_cb is not None:
             progress_cb(None, None, "Solving CAM fixed points", "solve")
         grid = context.parameter_grid if context is not None else None
+        output_kind = getattr(solver, "output_kind", "fixed_points")
+        if grid is not None and output_kind == "bifurcation_candidates":
+            raise ValueError("bifurcation solver cannot be combined with ScanSpec")
         if grid is not None and solver.name == "continuation":
             raise ValueError(
                 "continuation cannot be combined with an external ScanSpec"
             )
-        output = self._solve_grid(solver, model, backend, grid, context)
-        result = self._pack(output, model, grid)
+        output = self._solve_grid(solver, model, backend, grid, context, data)
+        result = (
+            self._pack_bifurcation(output, model)
+            if output_kind == "bifurcation_candidates"
+            else self._pack(output, model, grid)
+        )
         result.meta.update(
             {
                 "engine": "cam",
@@ -75,6 +82,11 @@ class Engine(EngineBase):
         if postprocessors and not isinstance(postprocessors, dict):
             postprocessors = {postprocessors.name: postprocessors}
         for name, processor in postprocessors.items():
+            if result.result_kind not in processor.accepted_result_kinds:
+                raise ValueError(
+                    f"postprocessor {processor.name!r} does not accept "
+                    f"result kind {result.result_kind!r}"
+                )
             result.postprocess.update(processor.process(result, model, backend))
             result.meta.setdefault("postprocessors", []).append(name)
             if processor.result_metadata:
@@ -94,14 +106,15 @@ class Engine(EngineBase):
         backend: Any,
         grid: ParameterGrid | None,
         context: Any | None,
+        data: Any | None,
     ) -> Any:
         if grid is None:
-            return self._invoke_solver(solver, model, backend, context)
+            return self._invoke_solver(solver, model, backend, context, data)
         flattened = self._model_scan_params(model, grid)
         base_params = dict(model.params)
         if getattr(solver, "supports_batch", False):
             self._replace_model_params(model, {**base_params, **flattened})
-            output = self._invoke_solver(solver, model, backend, context)
+            output = self._invoke_solver(solver, model, backend, context, data)
             output.axes = dict(grid.axes)
             output.metadata.update(
                 {"scan_shape": grid.shape, "scan_combine": grid.combine}
@@ -113,7 +126,9 @@ class Engine(EngineBase):
             for target, value in point.targets.items():
                 params[target.rsplit(".", 1)[-1]] = value
             self._replace_model_params(model, params)
-            return list(self._invoke_solver(solver, model, backend, context).solutions)
+            return list(
+                self._invoke_solver(solver, model, backend, context, data).solutions
+            )
 
         rows = execute_pointwise(grid, solve_point, context=context)
         self._replace_model_params(model, {**base_params, **flattened})
@@ -127,12 +142,69 @@ class Engine(EngineBase):
 
     @staticmethod
     def _invoke_solver(
-        solver: Any, model: Any, backend: Any, context: Any | None
+        solver: Any,
+        model: Any,
+        backend: Any,
+        context: Any | None,
+        data: Any | None,
     ) -> Any:
         parameters = inspect.signature(solver.solve).parameters
+        kwargs = {}
         if "context" in parameters:
-            return solver.solve(model, backend, context=context)
-        return solver.solve(model, backend)
+            kwargs["context"] = context
+        if "data" in parameters:
+            kwargs["data"] = data
+        return solver.solve(model, backend, **kwargs)
+
+    @staticmethod
+    def _pack_bifurcation(output: Any, model: Any) -> CAMBifurcationResult:
+        from qphase_cam.core.coordinates import vector_to_matrix
+
+        candidates = list(output.candidates)
+        n_state = int(model.n_modes) ** 2
+        control_names = tuple(output.metadata.get("control_names", ()))
+        vectors = np.asarray(
+            [candidate.state_vector for candidate in candidates], dtype=float
+        ).reshape((-1, n_state))
+        states = np.asarray(vector_to_matrix(vectors, int(model.n_modes)))
+        controls = np.asarray(
+            [
+                [candidate.controls[name] for name in control_names]
+                for candidate in candidates
+            ],
+            dtype=float,
+        ).reshape((len(candidates), len(control_names)))
+        diagnostic_names = sorted(
+            set().union(*(candidate.metadata for candidate in candidates))
+        ) if candidates else []
+        diagnostics = {
+            name: np.asarray(
+                [candidate.metadata.get(name, np.nan) for candidate in candidates]
+            )
+            for name in diagnostic_names
+        }
+        return CAMBifurcationResult(
+            states=states,
+            state_vectors=vectors,
+            control_values=controls,
+            control_names=control_names,
+            full_residual_norm=np.asarray(
+                [candidate.full_residual_norm for candidate in candidates]
+            ),
+            search_residual_norm=np.asarray(
+                [candidate.search_residual_norm for candidate in candidates]
+            ),
+            success=np.asarray([candidate.success for candidate in candidates]),
+            status=np.asarray([candidate.status for candidate in candidates]),
+            method=np.asarray([candidate.method for candidate in candidates]),
+            diagnostics=diagnostics,
+            meta={
+                **output.metadata,
+                "target": output.target,
+                "order": output.order,
+                "model": model.name,
+            },
+        )
 
     @staticmethod
     def _model_scan_params(model: Any, grid: ParameterGrid) -> dict[str, Any]:

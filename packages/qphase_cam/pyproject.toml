@@ -22,11 +22,17 @@ dependencies = [
 "cam_solver.deflation" = "qphase_cam.solver.deflation:DeflationSolver"
 "cam_solver.batched_newton" = "qphase_cam.solver.batched_newton:BatchedNewtonSolver"
 "cam_solver.continuation" = "qphase_cam.solver.continuation:ContinuationSolver"
+"cam_solver.bifurcation" = "qphase_cam.solver.bifurcation:BifurcationSolver"
+"bifurcation_target.equilibrium_multiplicity" = "qphase_cam.solver.bifurcation_target:EquilibriumMultiplicity"
+"bifurcation_strategy.auto" = "qphase_cam.solver.bifurcation_strategy:AutoStrategy"
+"bifurcation_strategy.reduced" = "qphase_cam.solver.bifurcation_strategy:ReducedStrategy"
+"bifurcation_strategy.full" = "qphase_cam.solver.bifurcation_strategy:FullStrategy"
+"bifurcation_discovery.seeds" = "qphase_cam.solver.bifurcation_discovery:SeedDiscovery"
+"bifurcation_discovery.continuation" = "qphase_cam.solver.bifurcation_discovery:ContinuationDiscovery"
 "cam_postprocessor.rayleigh_frequency" = "qphase_cam.postprocessor.frequency:RayleighFrequency"
 "cam_postprocessor.hamiltonian_spectrum" = "qphase_cam.postprocessor.frequency:HamiltonianSpectrum"
 "cam_postprocessor.jacobian_spectrum" = "qphase_cam.postprocessor.jacobian:JacobianSpectrum"
 "cam_postprocessor.physicality" = "qphase_cam.postprocessor.physicality:Physicality"
-"cam_postprocessor.bifurcation" = "qphase_cam.postprocessor.bifurcation:Bifurcation"
 
 [tool.setuptools.packages.find]
 where = ["."]

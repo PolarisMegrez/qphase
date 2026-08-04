@@ -9,7 +9,6 @@ import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_cam.engine import Engine
 from qphase_cam.errors import SolutionCapacityError
-from qphase_cam.postprocessor.bifurcation import Bifurcation
 from qphase_cam.postprocessor.frequency import (
     HamiltonianSpectrum,
     RayleighFrequency,
@@ -126,39 +125,3 @@ def test_capacity_overflow_is_an_error(no_jacobian_model):
     )
     with pytest.raises(SolutionCapacityError):
         engine.run()
-
-
-def test_bifurcation_refines_after_cholesky_without_solver_jacobian():
-    class CrossingModel:
-        name = "crossing"
-        n_modes = 1
-        steady_state_capacity = 1
-        params = {"control": 0.0}
-
-        def cam_hamiltonian(self, state, params):
-            del params
-            return np.full(np.asarray(state).shape, -0.5j)
-
-        def cam_diffusion(self, state, params):
-            del params
-            return np.ones(np.asarray(state).shape)
-
-        def cam_jacobian(self, state, params):
-            return np.full(
-                np.asarray(state).shape[:-2] + (1, 1), params["control"] - 0.5
-            )
-
-    result = CAMResult(
-        states=np.ones((2, 1, 1, 1), dtype=complex),
-        residuals=np.zeros((2, 1)),
-        success=np.ones((2, 1), dtype=bool),
-        valid_mask=np.ones((2, 1), dtype=bool),
-        solution_count=np.ones(2, dtype=int),
-        params={"control": 0.0},
-        axes={"control": np.array([0.0, 1.0])},
-        meta={"continuation": True},
-    )
-    output = Bifurcation(tolerance=1e-9).process(
-        result, CrossingModel(), NumpyBackend()
-    )
-    np.testing.assert_allclose(output["bifurcation_values"], [0.5], atol=1e-8)

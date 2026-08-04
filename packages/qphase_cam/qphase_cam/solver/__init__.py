@@ -9,6 +9,7 @@ from .base import CAMSolver, CAMSolverConfig
 
 _LAZY_SOLVERS = {
     "BatchedNewtonSolver": (".batched_newton", "BatchedNewtonSolver"),
+    "BifurcationSolver": (".bifurcation", "BifurcationSolver"),
     "ContinuationSolver": (".continuation", "ContinuationSolver"),
     "DeflationSolver": (".deflation", "DeflationSolver"),
     "MultistabilitySolver": (".multistability", "MultistabilitySolver"),
@@ -28,6 +29,7 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "BatchedNewtonSolver",
+    "BifurcationSolver",
     "CAMSolver",
     "CAMSolverConfig",
     "ContinuationSolver",

@@ -26,3 +26,27 @@ class CAMSolverOutput:
     solutions: Any
     axes: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CAMBifurcationCandidate:
+    """One attempted high-order equilibrium candidate."""
+
+    state_vector: Any
+    controls: dict[str, float]
+    full_residual_norm: float
+    search_residual_norm: float
+    success: bool
+    status: str
+    method: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CAMBifurcationOutput:
+    """Variable-length candidate output returned by bifurcation solvers."""
+
+    candidates: list[CAMBifurcationCandidate]
+    target: str
+    order: int
+    metadata: dict[str, Any] = field(default_factory=dict)
