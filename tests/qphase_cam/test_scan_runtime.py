@@ -5,9 +5,15 @@ import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.scan import ScanSpec
+from qphase_cam.bifurcation_result import CAMBifurcationScanResult
 from qphase_cam.engine import Engine
 from qphase_cam.result import CAMResult
-from qphase_cam.state import CAMSolution, CAMSolverOutput
+from qphase_cam.state import (
+    CAMBifurcationCandidate,
+    CAMBifurcationOutput,
+    CAMSolution,
+    CAMSolverOutput,
+)
 
 from models.vdp_2mode import VDP2ModeModel
 
@@ -136,5 +142,132 @@ def test_continuation_rejects_external_scan():
                 "backend": NumpyBackend(),
                 "model": model,
                 "cam_solver": Continuation(),
+            }
+        ).run(context=context)
+
+
+def test_bifurcation_scan_preserves_empty_cases_and_round_trips(tmp_path):
+    class Reporter:
+        def status(self, *args, **kwargs):
+            pass
+
+        def update(self, *args, **kwargs):
+            pass
+
+    class Solver:
+        name = "bifurcation"
+        output_kind = "bifurcation_candidates"
+        config = SimpleNamespace(controls={"gamma_a": object()})
+
+        def solve(self, model, backend):
+            del backend
+            candidates = []
+            if model.params["omega_a"] > 0.0:
+                candidates.append(
+                    CAMBifurcationCandidate(
+                        state_vector=np.asarray([1.0, 1.0, 0.0, 0.0]),
+                        controls={"gamma_a": 0.5},
+                        full_residual_norm=1e-12,
+                        search_residual_norm=2e-12,
+                        success=True,
+                        status="verified",
+                        method="test",
+                        metadata={"is_physical": True, "is_stable": True},
+                    )
+                )
+            return CAMBifurcationOutput(
+                candidates=candidates,
+                target="equilibrium_multiplicity",
+                order=2,
+                metadata={
+                    "control_names": ("gamma_a",),
+                    "structural_coverage": "test",
+                    "numerical_coverage": "test",
+                },
+            )
+
+    grid = ScanSpec.model_validate(
+        {
+            "axes": {
+                "omega_a": {
+                    "target": "model.vdp_2mode.omega_a",
+                    "values": [-0.1, 0.1],
+                }
+            }
+        }
+    ).compile()
+    context = SimpleNamespace(
+        parameter_grid=grid,
+        progress=Reporter(),
+        checkpoints=SimpleNamespace(enabled=False),
+        cancellation=SimpleNamespace(raise_if_cancelled=lambda: None),
+    )
+    model = VDP2ModeModel(
+        omega_a=0.0,
+        omega_b=0.0,
+        gamma_a=2.0,
+        gamma_b=0.5,
+        Gamma=0.0001,
+        g=0.5,
+    )
+    result = Engine(
+        plugins={
+            "backend": NumpyBackend(),
+            "model": model,
+            "cam_solver": Solver(),
+        }
+    ).run(context=context)
+
+    assert isinstance(result, CAMBifurcationScanResult)
+    np.testing.assert_array_equal(result.data, [0, 1])
+    np.testing.assert_array_equal(result.candidate_offsets, [0, 0, 1])
+    assert len(result.point_view((0,)).states) == 0
+    assert len(result.point_view((1,)).states) == 1
+    assert result.params_at((1,))["omega_a"] == pytest.approx(0.1)
+    target = tmp_path / "bifurcation_scan.npz"
+    result.save(target)
+    loaded = CAMBifurcationScanResult.load(target)
+    np.testing.assert_array_equal(loaded.data, [0, 1])
+    assert target.with_name("bifurcation_scan_cases.csv").exists()
+    candidate_csv = target.with_name("bifurcation_scan_candidates.csv")
+    assert candidate_csv.exists()
+    header = candidate_csv.read_text(encoding="utf-8").splitlines()[0]
+    assert "r_diag_0" in header
+    assert "maximum_jacobian_real_part" in header
+
+
+def test_bifurcation_scan_rejects_control_axis():
+    class Solver:
+        name = "bifurcation"
+        output_kind = "bifurcation_candidates"
+        config = SimpleNamespace(controls={"omega_a": object()})
+
+    model = VDP2ModeModel(
+        omega_a=0.0,
+        omega_b=0.0,
+        gamma_a=2.0,
+        gamma_b=0.5,
+        Gamma=0.0001,
+        g=0.5,
+    )
+    context = SimpleNamespace(
+        parameter_grid=ScanSpec.model_validate(
+            {
+                "axes": {
+                    "omega_a": {
+                        "target": "model.vdp_2mode.omega_a",
+                        "values": [0.0],
+                    }
+                }
+            }
+        ).compile(),
+        progress=None,
+    )
+    with pytest.raises(ValueError, match="not solver controls"):
+        Engine(
+            plugins={
+                "backend": NumpyBackend(),
+                "model": model,
+                "cam_solver": Solver(),
             }
         ).run(context=context)

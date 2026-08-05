@@ -34,7 +34,10 @@ axis 支持 `values`、`linspace` 与 `logspace`，并可选择 Cartesian 或 zi
 
 `multistability` 与 `batched_newton` 分别使用自身的 tile 或 batch 策略消费 grid；
 `steady_state` 与 `deflation` 使用 CAM pointwise helper。`continuation` 会拒绝外部
-`ScanSpec`，因为 continuation 坐标及其自适应步长定义了另一类拓扑。
+`ScanSpec`，因为 continuation 坐标及其自适应步长定义了另一类拓扑。`bifurcation`
+则把外层 scan 解释为同一个逻辑 job 内的一组独立搜索 case。axis 可以指向固定模型
+参数，也可以指向 perturbation parameter 的基准值，但不能与每个 case 内部自适应
+搜索的 `controls` 重叠。
 
 ## 求解器
 
@@ -64,7 +67,8 @@ axis 支持 `values`、`linspace` 与 `logspace`，并可选择 Cartesian 或 zi
 
 `cam_solver.bifurcation` 要求 `order-1` 个 controls 和恰好一个
 `perturbation.parameter`。controls 用于定位临界参数值；perturbation 指定找到候选后
-实际变化的物理参数，并允许同时属于 controls。分类时其他参数固定在候选值。
+实际变化的物理参数，并允许同时属于 controls。分类时其他参数固定在候选值。可选的
+外层 `ScanSpec` 用于改变各 case 的固定参数，不会展开为 scheduler 子 job。
 
 `strategy.auto` 会运行全部可用的一维线性约化，并与 full bordered 搜索结果取并集。
 这比只选择首个序参量更昂贵，但不会把序参量选择变成隐含的覆盖假设。当前 discovery
@@ -75,6 +79,10 @@ axis 支持 `values`、`linspace` 与 `logspace`，并可选择 Cartesian 或 zi
 亚线性响应对应 `k<n-m`；transcritical 的 `(2,1,1)` 指数为 1，因此可以通过
 `max_exponent: 0.999` 标记为不满足筛选。响应对象固定为完整 R 或增广状态矩阵，
 具体实验读出属于 model-specific 后处理。
+
+metadata 将覆盖度拆分为结构约化覆盖、有限数值搜索覆盖、物理域过滤和奇异约化路径
+处理。这些字段用于审计搜索范围，不构成“所有候选均已找到”的证明。模型可以实现
+`cam_bifurcation_scales()`，为初值和约化根归一化提供物理尺度；未实现时使用单位尺度。
 
 对于大型 scan，`tile_workers` 表示请求的进程数，`n_tiles` 控制有界的 scan task
 数量。`n_tiles` 应大于 worker 数，以维持负载均衡；VDP 101 x 101 job 使用 24 个
@@ -144,4 +152,10 @@ slot。每个参数点默认按 `real(R[0,0])` 排序；slot 不是跨参数点�
 `CAMBifurcationResult` schema 2 包含 candidate table 和通过 `candidate_index`
 关联的 branch-response table。后者保存局部分支编号、`(n,k,m)`、指数分子/分母、
 扰动侧、幅度和完整状态矩阵领先系数。可通过 `to_candidate_table()`、
-`to_branch_table()` 与 `branch_view()` 读取；CSV 仅保存候选摘要，矩阵系数保存在 NPZ。
+`to_branch_table()` 与 `branch_view()` 读取。candidate CSV 包含规范状态坐标和数值
+诊断，branch CSV 包含标量分支诊断；完整矩阵系数保存在 NPZ。
+
+外层 bifurcation scan 返回 `CAMBifurcationScanResult`。它保存命名 case axes、展平的
+candidate table 和 `candidate_offsets`，因此零候选与多候选 case 均可无歧义表示。
+一个逻辑 job 只生成一份 NPZ，以及配套的 `cases`、`candidates` 和可选 `branches`
+CSV，不会为每个 case 新建运行目录。

@@ -14,6 +14,7 @@ from qphase.core.scan import ParameterGrid, execute_pointwise
 from qphase_cam.bifurcation_result import (
     CAMBifurcationBranchTable,
     CAMBifurcationResult,
+    CAMBifurcationScanResult,
 )
 from qphase_cam.core.fpgen import FPGenDynamicsAdapter
 from qphase_cam.errors import BifurcationCapabilityError, SolutionCapacityError
@@ -62,25 +63,24 @@ class Engine(EngineBase):
             progress_cb(None, None, "Solving CAM fixed points", "solve")
         grid = context.parameter_grid if context is not None else None
         output_kind = getattr(solver, "output_kind", "fixed_points")
-        if grid is not None and output_kind == "bifurcation_candidates":
-            raise ValueError("bifurcation solver cannot be combined with ScanSpec")
         if grid is not None and solver.name == "continuation":
             raise ValueError(
                 "continuation cannot be combined with an external ScanSpec"
             )
-        output = self._solve_grid(solver, model, backend, grid, context, data)
-        result = (
-            self._pack_bifurcation(output, model)
-            if output_kind == "bifurcation_candidates"
-            else self._pack(output, model, grid)
-        )
+        if grid is not None and output_kind == "bifurcation_candidates":
+            result = self._solve_bifurcation_grid(
+                solver, model, backend, grid, context, data
+            )
+        else:
+            output = self._solve_grid(solver, model, backend, grid, context, data)
+            result = (
+                self._pack_bifurcation(output, model)
+                if output_kind == "bifurcation_candidates"
+                else self._pack(output, model, grid)
+            )
+            result.meta.update(output.metadata)
         result.meta.update(
-            {
-                "engine": "cam",
-                "model": model.name,
-                "solver": solver.name,
-                **output.metadata,
-            }
+            {"engine": "cam", "model": model.name, "solver": solver.name}
         )
         postprocessors = self.plugins.get("cam_postprocessor", {})
         if postprocessors and not isinstance(postprocessors, dict):
@@ -102,6 +102,66 @@ class Engine(EngineBase):
         elif progress_cb is not None:
             progress_cb(1.0, None, "CAM analysis complete", "complete")
         return result
+
+    def _solve_bifurcation_grid(
+        self,
+        solver: Any,
+        model: Any,
+        backend: Any,
+        grid: ParameterGrid,
+        context: Any | None,
+        data: Any | None,
+    ) -> CAMBifurcationScanResult:
+        flattened = self._model_scan_params(model, grid)
+        controls = set(getattr(getattr(solver, "config", None), "controls", ()))
+        scanned_parameters = set(flattened)
+        overlap = controls & scanned_parameters
+        if overlap:
+            raise ValueError(
+                "bifurcation ScanSpec targets must be fixed case parameters, "
+                f"not solver controls: {sorted(overlap)}"
+            )
+        base_params = dict(model.params)
+
+        def solve_case(point: Any) -> CAMBifurcationResult:
+            params = dict(base_params)
+            for target, value in point.targets.items():
+                params[target.rsplit(".", 1)[-1]] = value
+            self._replace_model_params(model, params)
+            output = self._invoke_solver(solver, model, backend, context, data)
+            result = self._pack_bifurcation(output, model)
+            result.meta.update(output.metadata)
+            return result
+
+        try:
+            cases = execute_pointwise(grid, solve_case, context=context)
+        finally:
+            self._replace_model_params(model, base_params)
+        offsets = np.zeros(len(cases) + 1, dtype=int)
+        offsets[1:] = np.cumsum([len(case.states) for case in cases])
+        combined = CAMBifurcationResult.concatenate(cases)
+        parameter_arrays = grid.parameter_arrays(flatten=True)
+        case_params: dict[str, np.ndarray] = {}
+        for name, value in base_params.items():
+            if np.asarray(value).ndim == 0:
+                case_params[name] = np.full(grid.size, value)
+        for axis_name, target in grid.targets.items():
+            case_params[target.rsplit(".", 1)[-1]] = np.asarray(
+                parameter_arrays[axis_name]
+            )
+        return CAMBifurcationScanResult(
+            case_axes={name: np.asarray(values) for name, values in grid.axes.items()},
+            case_shape=grid.shape,
+            case_params=case_params,
+            candidate_offsets=offsets,
+            candidates=combined,
+            case_metadata=tuple(dict(case.meta) for case in cases),
+            meta={
+                "scan_shape": grid.shape,
+                "scan_combine": grid.combine,
+                "scan_targets": dict(grid.targets),
+            },
+        )
 
     def _solve_grid(
         self,
@@ -261,6 +321,11 @@ class Engine(EngineBase):
                     if adapter is not None
                     else (int(model.n_modes), int(model.n_modes))
                 ),
+                "fixed_params": {
+                    name: value
+                    for name, value in model.params.items()
+                    if np.asarray(value).ndim == 0
+                },
             },
         )
 

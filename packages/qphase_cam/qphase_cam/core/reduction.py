@@ -50,6 +50,7 @@ class FractionFreeScalarReduction:
         order: int,
         control_names: tuple[str, ...],
         base_params: dict[str, Any],
+        retained_scale: float = 1.0,
     ) -> None:
         plan = materialized.plan
         if len(plan.retained_symbols) != 1 or len(materialized.numerators) != 1:
@@ -65,6 +66,7 @@ class FractionFreeScalarReduction:
         self.parameter_names = tuple(item.name for item in self.parameter_specs)
         self.control_names = control_names
         self.base_params = dict(base_params)
+        self.retained_scale = float(retained_scale)
         unknown_symbols = [self.q]
         lookup = {item.name: item.symbol for item in self.parameter_specs}
         try:
@@ -282,10 +284,16 @@ class FractionFreeScalarReduction:
             first = np.flatnonzero(np.abs(coefficients) > 1e-14)
             if not first.size:
                 continue
-            for root in np.roots(coefficients[first[0] :]):
+            active = coefficients[first[0] :]
+            powers = np.arange(len(active) - 1, -1, -1, dtype=float)
+            scaled = active * np.power(self.retained_scale, powers)
+            norm = np.max(np.abs(scaled))
+            if not np.isfinite(norm) or norm == 0.0:
+                continue
+            for root in np.roots(scaled / norm):
                 if abs(root.imag) > 1e-8 * max(1.0, abs(root.real)):
                     continue
-                q = float(root.real)
+                q = float(root.real * self.retained_scale)
                 if self.retained_id.startswith("r_diag_") and q < -1e-10:
                     continue
                 starts.append(np.asarray((q, *controls), dtype=float))
@@ -325,6 +333,7 @@ class CondensedScalarReduction:
         order: int,
         control_names: tuple[str, ...],
         base_params: dict[str, Any],
+        retained_scale: float = 1.0,
     ) -> None:
         if len(plan.retained_symbols) != 1 or len(plan.retained_residual) != 1:
             raise BifurcationCapabilityError(
@@ -339,6 +348,7 @@ class CondensedScalarReduction:
         self.parameter_names = tuple(item.name for item in self.parameter_specs)
         self.control_names = control_names
         self.base_params = dict(base_params)
+        self.retained_scale = float(retained_scale)
         arguments = (self.q, *self.parameter_symbols)
         self._A_derivatives = tuple(
             sp.lambdify(
@@ -704,15 +714,7 @@ class CondensedScalarReduction:
         return params
 
     def _default_q_bounds(self) -> tuple[float, float]:
-        nonlinear = max(
-            (
-                abs(float(self.base_params[name]))
-                for name in ("chi", "Gamma")
-                if name in self.base_params
-            ),
-            default=1.0,
-        )
-        extent = max(10.0, 10.0 / max(nonlinear, 1e-8))
+        extent = max(10.0, 10.0 * self.retained_scale)
         if self.retained_id.startswith("r_diag_"):
             return 0.0, extent
         return -extent, extent

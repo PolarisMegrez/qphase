@@ -136,25 +136,9 @@ class CAMBifurcationResult:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            np.savez_compressed(
-                target,
-                states=self.states,
-                state_vectors=self.state_vectors,
-                control_values=self.control_values,
-                control_names=np.asarray(self.control_names),
-                full_residual_norm=self.full_residual_norm,
-                search_residual_norm=self.search_residual_norm,
-                success=self.success,
-                status=self.status,
-                method=self.method,
-                verification_digits=self.verification_digits,
-                verification_status=self.verification_status,
-                bifurcation_schema_version=np.asarray(self.schema_version),
-                **self._branch_arrays(),
-                diagnostics=np.asarray(self.diagnostics, dtype=object),
-                meta=np.asarray(self.meta, dtype=object),
-            )
+            np.savez_compressed(target, **self._npz_payload())
             self._save_csv(target.with_suffix(".csv"))
+            self._save_branch_csv(target.with_name(f"{target.stem}_branches.csv"))
         except Exception as exc:
             raise QPhaseIOError(
                 f"failed to save CAM bifurcation result to {target}: {exc}"
@@ -172,7 +156,11 @@ class CAMBifurcationResult:
         self.save(target)
         files = tuple(
             item
-            for item in (target.with_suffix(".npz"), target.with_suffix(".csv"))
+            for item in (
+                target.with_suffix(".npz"),
+                target.with_suffix(".csv"),
+                target.with_name(f"{target.stem}_branches.csv"),
+            )
             if item.exists()
         )
         return DatasetSaveReport(
@@ -184,73 +172,33 @@ class CAMBifurcationResult:
     @classmethod
     def load(cls, path: str | Path) -> CAMBifurcationResult:
         with np.load(Path(path), allow_pickle=True) as data:
-            return cls(
-                states=data["states"],
-                state_vectors=data["state_vectors"],
-                control_values=data["control_values"],
-                control_names=tuple(str(value) for value in data["control_names"]),
-                full_residual_norm=data["full_residual_norm"],
-                search_residual_norm=data["search_residual_norm"],
-                success=data["success"],
-                status=data["status"],
-                method=data["method"],
-                verification_digits=data["verification_digits"],
-                verification_status=data["verification_status"],
-                branches=cls._load_branches(data),
-                diagnostics=data["diagnostics"].item(),
-                meta=data["meta"].item(),
-            )
+            return cls._from_npz(data)
 
     def _save_csv(self, path: Path) -> None:
-        fields = [
-            "candidate",
-            *self.control_names,
-            "full_residual_norm",
-            "search_residual_norm",
-            "success",
-            "status",
-            "method",
-            "verification_digits",
-            "verification_status",
-            "is_physical",
-            "is_stable",
-            "classification_status",
-            "classification_accepted",
-            "signature_count",
-            "minimum_exponent",
+        rows = self.to_candidate_table()
+        fields = self._candidate_fields()
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+
+    def _save_branch_csv(self, path: Path) -> None:
+        rows = self.to_branch_table()
+        if not rows:
+            return
+        fields = [name for name in rows[0] if name != "leading_state_coefficient"] + [
+            "coefficient_frobenius_norm"
         ]
         with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
             writer.writeheader()
-            for index in range(len(self.states)):
-                row: dict[str, Any] = {
-                    "candidate": index,
-                    "full_residual_norm": self.full_residual_norm[index],
-                    "search_residual_norm": self.search_residual_norm[index],
-                    "success": bool(self.success[index]),
-                    "status": self.status[index],
-                    "method": self.method[index],
-                    "verification_digits": self.verification_digits[index],
-                    "verification_status": self.verification_status[index],
-                    "is_physical": self._diagnostic(index, "is_physical", False),
-                    "is_stable": self._diagnostic(index, "is_stable", False),
-                    "classification_status": self._diagnostic(
-                        index, "classification_status", "not_run"
-                    ),
-                    "classification_accepted": self._diagnostic(
-                        index, "classification_accepted", False
-                    ),
-                    "signature_count": self._signature_count(index),
-                    "minimum_exponent": self._minimum_exponent(index),
-                }
-                row.update(
-                    zip(
-                        self.control_names,
-                        self.control_values[index],
-                        strict=True,
-                    )
+            for row in rows:
+                output = {name: row[name] for name in fields[:-1]}
+                output["coefficient_frobenius_norm"] = float(
+                    np.linalg.norm(row["leading_state_coefficient"])
                 )
-                writer.writerow(row)
+                writer.writerow(output)
 
     def to_candidate_table(self) -> list[dict[str, Any]]:
         output = []
@@ -269,8 +217,19 @@ class CAMBifurcationResult:
                 "success": bool(self.success[index]),
                 "status": self.status[index],
                 "method": self.method[index],
+                "verification_digits": int(self.verification_digits[index]),
+                "verification_status": self.verification_status[index],
                 "is_physical": self._diagnostic(index, "is_physical", False),
                 "is_stable": self._diagnostic(index, "is_stable", False),
+                "minimum_physical_eigenvalue": self._diagnostic(
+                    index, "minimum_physical_eigenvalue", np.nan
+                ),
+                "maximum_jacobian_real_part": self._diagnostic(
+                    index, "maximum_jacobian_real_part", np.nan
+                ),
+                "verification_residual_norm": self._diagnostic(
+                    index, "verification_residual_norm", np.nan
+                ),
                 "classification_status": self._diagnostic(
                     index, "classification_status", "not_run"
                 ),
@@ -284,6 +243,131 @@ class CAMBifurcationResult:
                 row[str(state_id)] = self.state_vectors[index, state_index]
             output.append(row)
         return output
+
+    def subset(self, start: int, stop: int) -> CAMBifurcationResult:
+        if start < 0 or stop < start or stop > len(self.states):
+            raise IndexError("invalid bifurcation candidate slice")
+        return CAMBifurcationResult(
+            states=self.states[start:stop],
+            state_vectors=self.state_vectors[start:stop],
+            control_values=self.control_values[start:stop],
+            control_names=self.control_names,
+            full_residual_norm=self.full_residual_norm[start:stop],
+            search_residual_norm=self.search_residual_norm[start:stop],
+            success=self.success[start:stop],
+            status=self.status[start:stop],
+            method=self.method[start:stop],
+            verification_digits=self.verification_digits[start:stop],
+            verification_status=self.verification_status[start:stop],
+            branches=self._branch_range(start, stop),
+            diagnostics={
+                name: np.asarray(value)[start:stop]
+                for name, value in self.diagnostics.items()
+            },
+            meta=dict(self.meta),
+        )
+
+    @classmethod
+    def concatenate(cls, results: list[CAMBifurcationResult]) -> CAMBifurcationResult:
+        if not results:
+            raise ValueError("cannot concatenate an empty bifurcation result list")
+        control_names = results[0].control_names
+        if any(result.control_names != control_names for result in results):
+            raise ValueError("bifurcation scan cases produced different controls")
+        diagnostics = cls._concatenate_diagnostics(results)
+        branches = cls._concatenate_branches(results)
+        return cls(
+            states=np.concatenate([result.states for result in results], axis=0),
+            state_vectors=np.concatenate(
+                [result.state_vectors for result in results], axis=0
+            ),
+            control_values=np.concatenate(
+                [result.control_values for result in results], axis=0
+            ),
+            control_names=control_names,
+            full_residual_norm=np.concatenate(
+                [result.full_residual_norm for result in results]
+            ),
+            search_residual_norm=np.concatenate(
+                [result.search_residual_norm for result in results]
+            ),
+            success=np.concatenate([result.success for result in results]),
+            status=np.concatenate([result.status for result in results]),
+            method=np.concatenate([result.method for result in results]),
+            verification_digits=np.concatenate(
+                [result.verification_digits for result in results]
+            ),
+            verification_status=np.concatenate(
+                [result.verification_status for result in results]
+            ),
+            branches=branches,
+            diagnostics=diagnostics,
+            meta=dict(results[0].meta),
+        )
+
+    def _candidate_fields(self) -> list[str]:
+        return [
+            "candidate",
+            *self.control_names,
+            "full_residual_norm",
+            "search_residual_norm",
+            "success",
+            "status",
+            "method",
+            "verification_digits",
+            "verification_status",
+            "is_physical",
+            "is_stable",
+            "minimum_physical_eigenvalue",
+            "maximum_jacobian_real_part",
+            "verification_residual_norm",
+            "classification_status",
+            "classification_accepted",
+            "signature_count",
+            "minimum_exponent",
+            *(str(value) for value in self.meta.get("state_ids", ())),
+        ]
+
+    def _npz_payload(self, prefix: str = "") -> dict[str, Any]:
+        return {
+            f"{prefix}states": self.states,
+            f"{prefix}state_vectors": self.state_vectors,
+            f"{prefix}control_values": self.control_values,
+            f"{prefix}control_names": np.asarray(self.control_names),
+            f"{prefix}full_residual_norm": self.full_residual_norm,
+            f"{prefix}search_residual_norm": self.search_residual_norm,
+            f"{prefix}success": self.success,
+            f"{prefix}status": self.status,
+            f"{prefix}method": self.method,
+            f"{prefix}verification_digits": self.verification_digits,
+            f"{prefix}verification_status": self.verification_status,
+            f"{prefix}bifurcation_schema_version": np.asarray(self.schema_version),
+            **{
+                f"{prefix}{name}": value
+                for name, value in self._branch_arrays().items()
+            },
+            f"{prefix}diagnostics": np.asarray(self.diagnostics, dtype=object),
+            f"{prefix}meta": np.asarray(self.meta, dtype=object),
+        }
+
+    @classmethod
+    def _from_npz(cls, data: Any, prefix: str = "") -> CAMBifurcationResult:
+        return cls(
+            states=data[f"{prefix}states"],
+            state_vectors=data[f"{prefix}state_vectors"],
+            control_values=data[f"{prefix}control_values"],
+            control_names=tuple(str(value) for value in data[f"{prefix}control_names"]),
+            full_residual_norm=data[f"{prefix}full_residual_norm"],
+            search_residual_norm=data[f"{prefix}search_residual_norm"],
+            success=data[f"{prefix}success"],
+            status=data[f"{prefix}status"],
+            method=data[f"{prefix}method"],
+            verification_digits=data[f"{prefix}verification_digits"],
+            verification_status=data[f"{prefix}verification_status"],
+            branches=cls._load_branches(data, prefix=prefix),
+            diagnostics=data[f"{prefix}diagnostics"].item(),
+            meta=data[f"{prefix}meta"].item(),
+        )
 
     def to_branch_table(self) -> list[dict[str, Any]]:
         return [] if self.branches is None else self.branches.to_table()
@@ -302,12 +386,14 @@ class CAMBifurcationResult:
         }
 
     @classmethod
-    def _load_branches(cls, data: Any) -> CAMBifurcationBranchTable | None:
+    def _load_branches(
+        cls, data: Any, *, prefix: str = ""
+    ) -> CAMBifurcationBranchTable | None:
         names = tuple(CAMBifurcationBranchTable.__dataclass_fields__)
-        if not all(f"branch_{name}" in data.files for name in names):
+        if not all(f"{prefix}branch_{name}" in data.files for name in names):
             return None
         return CAMBifurcationBranchTable(
-            **{name: data[f"branch_{name}"] for name in names}
+            **{name: data[f"{prefix}branch_{name}"] for name in names}
         )
 
     def _branch_subset(self, position: int) -> CAMBifurcationBranchTable | None:
@@ -322,6 +408,65 @@ class CAMBifurcationResult:
         }
         values["candidate_index"] = np.zeros(np.count_nonzero(mask), dtype=int)
         return CAMBifurcationBranchTable(**values)
+
+    def _branch_range(self, start: int, stop: int) -> CAMBifurcationBranchTable | None:
+        if self.branches is None:
+            return None
+        mask = (self.branches.candidate_index >= start) & (
+            self.branches.candidate_index < stop
+        )
+        if not np.any(mask):
+            return None
+        values = {
+            name: np.asarray(getattr(self.branches, name))[mask]
+            for name in self.branches.__dataclass_fields__
+        }
+        values["candidate_index"] = values["candidate_index"] - start
+        return CAMBifurcationBranchTable(**values)
+
+    @staticmethod
+    def _concatenate_diagnostics(
+        results: list[CAMBifurcationResult],
+    ) -> dict[str, np.ndarray]:
+        names = sorted(set().union(*(result.diagnostics for result in results)))
+        output: dict[str, np.ndarray] = {}
+        for name in names:
+            exemplar = next(
+                np.asarray(result.diagnostics[name])
+                for result in results
+                if name in result.diagnostics
+            )
+            parts = []
+            for result in results:
+                if name in result.diagnostics:
+                    parts.append(np.asarray(result.diagnostics[name]))
+                    continue
+                shape = (len(result.states), *exemplar.shape[1:])
+                parts.append(np.full(shape, np.nan, dtype=object))
+            output[name] = np.concatenate(parts, axis=0)
+        return output
+
+    @staticmethod
+    def _concatenate_branches(
+        results: list[CAMBifurcationResult],
+    ) -> CAMBifurcationBranchTable | None:
+        rows: dict[str, list[np.ndarray]] = {
+            name: [] for name in CAMBifurcationBranchTable.__dataclass_fields__
+        }
+        offset = 0
+        for result in results:
+            if result.branches is not None:
+                for name in rows:
+                    values = np.asarray(getattr(result.branches, name))
+                    if name == "candidate_index":
+                        values = values + offset
+                    rows[name].append(values)
+            offset += len(result.states)
+        if not rows["candidate_index"]:
+            return None
+        return CAMBifurcationBranchTable(
+            **{name: np.concatenate(parts, axis=0) for name, parts in rows.items()}
+        )
 
     def _diagnostic(self, index: int, name: str, default: Any) -> Any:
         value = self.diagnostics.get(name)
@@ -353,3 +498,219 @@ class CAMBifurcationResult:
         if array.ndim > 0 and len(array) > position:
             return array[position : position + 1]
         return value
+
+
+@dataclass
+class CAMBifurcationScanResult:
+    """Ragged bifurcation candidates indexed by an outer parameter scan."""
+
+    case_axes: dict[str, np.ndarray]
+    case_shape: tuple[int, ...]
+    case_params: dict[str, np.ndarray]
+    candidate_offsets: np.ndarray
+    candidates: CAMBifurcationResult
+    case_metadata: tuple[dict[str, Any], ...]
+    meta: dict[str, Any] = field(default_factory=dict)
+    result_kind = "bifurcation_scan"
+    schema_version = "1.0"
+
+    @property
+    def data(self) -> np.ndarray:
+        return np.diff(self.candidate_offsets).reshape(self.case_shape)
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return self.meta
+
+    @property
+    def label(self) -> Any:
+        return self.meta.get("label")
+
+    @label.setter
+    def label(self, value: Any) -> None:
+        self.meta["label"] = value
+
+    @property
+    def axes(self) -> dict[str, np.ndarray]:
+        return self.case_axes
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return self.case_shape
+
+    @property
+    def nbytes(self) -> int:
+        arrays = (
+            *self.case_axes.values(),
+            *self.case_params.values(),
+            self.candidate_offsets,
+        )
+        return self.candidates.nbytes + sum(
+            np.asarray(value).nbytes for value in arrays
+        )
+
+    def params_at(self, index: tuple[int, ...]) -> dict[str, Any]:
+        flat = int(np.ravel_multi_index(index, self.case_shape))
+        return {
+            name: np.asarray(values).reshape(-1)[flat]
+            for name, values in self.case_params.items()
+        }
+
+    def point_view(self, index: tuple[int, ...]) -> CAMBifurcationResult:
+        flat = int(np.ravel_multi_index(index, self.case_shape))
+        start = int(self.candidate_offsets[flat])
+        stop = int(self.candidate_offsets[flat + 1])
+        result = self.candidates.subset(start, stop)
+        result.meta.update(
+            {
+                "case_index": flat,
+                "case_grid_index": tuple(int(value) for value in index),
+                "case_params": self.params_at(index),
+                "case_search": self.case_metadata[flat],
+            }
+        )
+        return result
+
+    def save(self, path: str | Path) -> None:
+        target = Path(path).with_suffix(".npz")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "bifurcation_scan_schema_version": np.asarray(self.schema_version),
+            "case_axes": np.asarray(self.case_axes, dtype=object),
+            "case_shape": np.asarray(self.case_shape, dtype=int),
+            "case_params": np.asarray(self.case_params, dtype=object),
+            "candidate_offsets": self.candidate_offsets,
+            "case_metadata": np.asarray(self.case_metadata, dtype=object),
+            "meta": np.asarray(self.meta, dtype=object),
+            **self.candidates._npz_payload(prefix="candidate_"),
+        }
+        try:
+            np.savez_compressed(target, **payload)
+            self._save_case_csv(target.with_name(f"{target.stem}_cases.csv"))
+            self._save_candidate_csv(target.with_name(f"{target.stem}_candidates.csv"))
+            self._save_branch_csv(target.with_name(f"{target.stem}_branches.csv"))
+        except Exception as exc:
+            raise QPhaseIOError(
+                f"failed to save CAM bifurcation scan to {target}: {exc}"
+            ) from exc
+
+    @classmethod
+    def load(cls, path: str | Path) -> CAMBifurcationScanResult:
+        with np.load(Path(path).with_suffix(".npz"), allow_pickle=True) as data:
+            return cls(
+                case_axes=data["case_axes"].item(),
+                case_shape=tuple(int(value) for value in data["case_shape"]),
+                case_params=data["case_params"].item(),
+                candidate_offsets=data["candidate_offsets"],
+                candidates=CAMBifurcationResult._from_npz(data, prefix="candidate_"),
+                case_metadata=tuple(data["case_metadata"].tolist()),
+                meta=data["meta"].item(),
+            )
+
+    def save_dataset(
+        self,
+        path: str | Path,
+        *,
+        layout: str,
+        shard_target_bytes: int,
+    ) -> DatasetSaveReport:
+        del layout, shard_target_bytes
+        target = Path(path).with_suffix(".npz")
+        self.save(target)
+        files = tuple(
+            item
+            for item in (
+                target,
+                target.with_name(f"{target.stem}_cases.csv"),
+                target.with_name(f"{target.stem}_candidates.csv"),
+                target.with_name(f"{target.stem}_branches.csv"),
+            )
+            if item.exists()
+        )
+        return DatasetSaveReport(
+            layout="single",
+            files=files,
+            loader=("qphase_cam.bifurcation_result:CAMBifurcationScanResult.load"),
+            schema_version=self.schema_version,
+        )
+
+    def _case_values(self, flat: int) -> dict[str, Any]:
+        index = tuple(int(value) for value in np.unravel_index(flat, self.case_shape))
+        values = {"case": flat, "candidate_count": int(self.data[index])}
+        axis_names = tuple(self.case_axes)
+        for position, name in enumerate(axis_names):
+            axis = np.asarray(self.case_axes[name])
+            values[name] = axis[
+                index[0] if len(self.case_shape) == 1 else index[position]
+            ]
+        return values
+
+    def _save_case_csv(self, path: Path) -> None:
+        fields = [
+            "case",
+            *self.case_axes,
+            "candidate_count",
+            "structural_coverage",
+            "numerical_coverage",
+        ]
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            for flat, metadata in enumerate(self.case_metadata):
+                row = self._case_values(flat)
+                row["structural_coverage"] = metadata.get(
+                    "structural_coverage", "unknown"
+                )
+                row["numerical_coverage"] = metadata.get(
+                    "numerical_coverage", "unknown"
+                )
+                writer.writerow(row)
+
+    def _save_candidate_csv(self, path: Path) -> None:
+        fields = ["case", *self.case_axes, *self.candidates._candidate_fields()]
+        rows = self.candidates.to_candidate_table()
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            for case in range(len(self.case_metadata)):
+                start = int(self.candidate_offsets[case])
+                stop = int(self.candidate_offsets[case + 1])
+                case_values = self._case_values(case)
+                for candidate in range(start, stop):
+                    row = {
+                        name: case_values[name] for name in ("case", *self.case_axes)
+                    }
+                    row.update(rows[candidate])
+                    writer.writerow(row)
+
+    def _save_branch_csv(self, path: Path) -> None:
+        rows = self.candidates.to_branch_table()
+        if not rows:
+            return
+        fields = [
+            "case",
+            *self.case_axes,
+            *(name for name in rows[0] if name != "leading_state_coefficient"),
+            "coefficient_frobenius_norm",
+        ]
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            for row in rows:
+                candidate = int(row["candidate_index"])
+                case = int(
+                    np.searchsorted(self.candidate_offsets, candidate, side="right") - 1
+                )
+                case_values = self._case_values(case)
+                output = {name: case_values[name] for name in ("case", *self.case_axes)}
+                output.update(
+                    {
+                        name: row[name]
+                        for name in row
+                        if name != "leading_state_coefficient"
+                    }
+                )
+                output["coefficient_frobenius_norm"] = float(
+                    np.linalg.norm(row["leading_state_coefficient"])
+                )
+                writer.writerow(output)

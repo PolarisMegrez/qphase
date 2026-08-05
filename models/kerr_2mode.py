@@ -166,6 +166,10 @@ class Kerr2ModeModel(SDEModelPlugin):
         )
         return self.cam_jacobian_vector(vector, params)
 
+    def cam_bifurcation_scales(self, params: dict[str, Any]) -> dict[str, Any]:
+        scale = max(1.0, 1.0 / max(abs(float(params["chi"])), 1.0e-12))
+        return {"state": [scale] * 4, "source": "model:chi"}
+
     @classmethod
     @lru_cache(maxsize=1)
     def cam_fpgen_dynamics(cls) -> Any:

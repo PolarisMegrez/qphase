@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from functools import lru_cache
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -180,6 +181,15 @@ def test_reduction_search_reports_budget_limited_coverage():
     assert not output.metadata["reduction_search"]["complete"]
 
 
+def test_reduction_structure_is_cached_between_fixed_parameter_cases():
+    solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
+    adapter = FPGenDynamicsAdapter.from_model(TwoModeFoldModel())
+    _, first = solver._select_reductions(adapter)
+    _, second = solver._select_reductions(adapter)
+    assert first["compile_cache_hit"] is False
+    assert second["compile_cache_hit"] is True
+
+
 def test_reduction_start_filter_rejects_singular_reconstruction():
     class SingularReduction:
         @staticmethod
@@ -231,6 +241,67 @@ def test_full_solver_refines_upstream_fixed_point_to_known_fold():
     assert candidate.status == "verified"
     assert candidate.metadata["verification_status"] == "verified"
     assert output.metadata["coverage"] == "upstream_bordered_local_search"
+
+
+def test_full_seed_discovery_preserves_distinct_control_points(monkeypatch):
+    solver = _solver(
+        3,
+        {
+            "gamma_a": ControlRange(min=0.1, max=1.0),
+            "gamma_b": ControlRange(min=0.2, max=2.0),
+        },
+    )
+    solver.discovery = SeedDiscovery(
+        SeedDiscoveryConfig(samples_per_control=2, max_starts=16)
+    )
+
+    class Adapter:
+        state_size = 4
+        diagonal_state_indices = (0, 1)
+        model = SimpleNamespace(params={"k": 1e-3})
+
+        @staticmethod
+        def rhs(state, params):
+            del state, params
+            return np.zeros(4)
+
+        @staticmethod
+        def jacobian(state, params):
+            del state, params
+            return np.eye(4)
+
+    class System:
+        @staticmethod
+        def seed(state, controls):
+            del state
+            return np.asarray([controls["gamma_a"], controls["gamma_b"]])
+
+    monkeypatch.setattr(
+        "qphase_cam.solver.bifurcation.root",
+        lambda *args, **kwargs: SimpleNamespace(success=True, x=np.zeros(4)),
+    )
+    monkeypatch.setattr(solver, "_state_is_physical", lambda *args: True)
+
+    starts = solver._discover_full_seeds(System(), Adapter())
+    assert len(starts) == 4
+    assert len({tuple(item) for item in starts}) == 4
+
+
+def test_pair_hopping_seed_scale_tracks_inverse_nonlinearity():
+    solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
+    adapter = SimpleNamespace(
+        state_size=4,
+        diagonal_state_indices=(0, 1),
+        model=SimpleNamespace(
+            params={"nonlinearity": 1e-4},
+            cam_bifurcation_scales=lambda params: {
+                "state": [1.0 / params["nonlinearity"]] * 4,
+                "source": "test",
+            },
+        ),
+    )
+    guesses = solver._state_guesses(adapter)
+    np.testing.assert_allclose(guesses[-1][[0, 1]], 1e4)
 
 
 def test_condensed_reduction_verifies_known_fold_at_high_precision():
@@ -346,6 +417,12 @@ def test_engine_persists_scaling_branch_table(tmp_path):
     assert result.to_branch_table()[0]["exponent_denominator"] == 2
     target = tmp_path / "classified.npz"
     result.save(target)
+    candidate_header = (
+        target.with_suffix(".csv").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert "r_diag_0" in candidate_header
+    assert "maximum_jacobian_real_part" in candidate_header
+    assert target.with_name("classified_branches.csv").exists()
     loaded = CAMBifurcationResult.load(target)
     assert loaded.branches is not None
     np.testing.assert_allclose(

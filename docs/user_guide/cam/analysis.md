@@ -37,7 +37,11 @@ jobs.
 `multistability` and `batched_newton` consume the grid through their native tile
 or batch strategies. `steady_state` and `deflation` use the CAM pointwise scan
 helper. `continuation` rejects an external `ScanSpec` because its continuation
-coordinate and adaptive steps define a different topology.
+coordinate and adaptive steps define a different topology. `bifurcation`
+interprets an external scan as a set of independent search cases inside one
+logical job. Its scan axes may target fixed model parameters, including the base
+value of the perturbation parameter, but must not overlap the adaptive
+`controls` searched inside each case.
 
 ## Solvers
 
@@ -61,8 +65,9 @@ falls back to the standard H/D and Jacobian capabilities when they are absent.
 ### Higher-Order Equilibrium Bifurcations
 
 `cam_solver.bifurcation` is a solver, not a postprocessor. Its `controls`
-define an internal adaptive search domain, so it rejects an external
-`ScanSpec`. The required `target` subplugin currently supports
+define the adaptive search domain within one case. An optional outer `ScanSpec`
+creates independent cases for fixed model parameters without expanding them
+into scheduler jobs. The required `target` subplugin currently supports
 `equilibrium_multiplicity` with `order: 2`, `3`, or `4`; exactly `order - 1`
 control parameters must be supplied. One scalar `perturbation.parameter` is
 also required. It selects the physical parameter varied after the critical
@@ -100,7 +105,12 @@ and increasing up to `max_digits`. A `verified` candidate has passed the
 high-precision root conditions, complete CAM residual, regularity,
 non-degeneracy, and physicality checks. This is not interval certification and
 does not prove that no other candidates exist. Result metadata records search
-coverage and fpgen provenance.
+coverage and fpgen provenance. Coverage is reported separately as structural
+reduction coverage, finite numerical-search coverage, physical-domain filtering,
+and treatment of singular reduction paths. These fields are an audit trail, not
+a completeness certificate. Models may implement `cam_bifurcation_scales()` to
+provide physically meaningful state scales for seed generation and reduced-root
+normalization; otherwise the solver uses unit scales.
 
 For an unknown multistable system, start with `multistability`. Set
 `guess_bounds: auto` to infer diagonal-balance scales and sample bounded plus
@@ -213,6 +223,13 @@ candidate table plus a branch-response table linked by `candidate_index`. The
 branch table contains local branch indices, `(n,k,m)`, exact exponent numerator
 and denominator, perturbation side, amplitude, and the complete leading state
 matrix coefficient. `to_candidate_table()`, `to_branch_table()`, and
-`branch_view()` avoid direct dependence on NPZ object internals. CSV contains a
-candidate summary; matrix coefficients remain in NPZ. Candidate and local
-branch indices are not global branch identifiers.
+`branch_view()` avoid direct dependence on NPZ object internals. Candidate CSV
+includes canonical state coordinates and numerical diagnostics; branch CSV
+includes scalar branch diagnostics, while complete matrix coefficients remain
+in NPZ. Candidate and local branch indices are not global branch identifiers.
+
+An outer bifurcation scan returns `CAMBifurcationScanResult`. It stores named
+case axes, one flattened candidate table, and `candidate_offsets` so zero- and
+multi-candidate cases remain distinguishable. One NPZ and companion `cases`,
+`candidates`, and optional `branches` CSV files are written for the logical job;
+no per-case run directories are created.

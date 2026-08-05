@@ -15,7 +15,8 @@
 `bifurcation_classifier`.
 Its first target is equilibrium multiplicity of order 2-4. It uses fpgen exact
 dynamics for scalar reduction or a full bordered-system fallback and returns a
-`CAMBifurcationResult`, not a fixed-capacity `CAMResult`.
+`CAMBifurcationResult`, not a fixed-capacity `CAMResult`. An outer parameter
+grid returns a ragged `CAMBifurcationScanResult`.
 
 All plugin implementations inherit the public base class in their namespace and
 declare a strict Pydantic `config_schema`.
@@ -28,9 +29,10 @@ pointwise solvers use the shared CAM helper. `CAMResult` implements the dataset
 protocol with named axes and fixed solution capacity, and persists as a single
 or sharded logical artifact without scheduler point jobs.
 
-Bifurcation control domains are adaptive solver inputs and are intentionally
-incompatible with an external `ScanSpec`. Candidate results use one variable
-candidate axis and support `point_view((candidate,))`, NPZ, and CSV output.
-One perturbation parameter is required. Classified reduced candidates expose a
-branch-response table with named `(n,k,m)` signatures and complete leading CAM
-state-matrix coefficients.
+Bifurcation control domains remain adaptive solver inputs. An external
+`ScanSpec` may vary fixed model parameters across independent cases in one
+logical job, but its axes cannot overlap those controls. Ragged scan results use
+`candidate_offsets` to preserve empty cases and support point views, NPZ, and
+case/candidate/branch CSV output. One perturbation parameter is required.
+Classified reduced candidates expose a branch-response table with named
+`(n,k,m)` signatures and complete leading CAM state-matrix coefficients.

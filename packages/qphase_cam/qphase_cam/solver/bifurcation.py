@@ -140,6 +140,13 @@ class BifurcationSolver(CAMSolver):
         self.strategy: BifurcationStrategy = subplugins["strategy"]
         self.discovery: BifurcationDiscovery = subplugins["discovery"]
         self.classifier: BifurcationClassifier = subplugins["classifier"]
+        self._reduction_cache: dict[
+            tuple[Any, ...],
+            tuple[
+                tuple[FractionFreeScalarReduction | CondensedScalarReduction, ...],
+                dict[str, Any],
+            ],
+        ] = {}
         if len(self.config.controls) != self.target.order - 1:
             raise ValueError(
                 "equilibrium multiplicity order m requires exactly m-1 controls"
@@ -266,8 +273,24 @@ class BifurcationSolver(CAMSolver):
             "rejected_count": rejected_count,
             "rejected_by_reason": dict(rejected_by_reason),
             "coverage": self._reduction_coverage(reduction_search),
+            "structural_coverage": self._reduction_coverage(reduction_search),
+            "numerical_coverage": "finite_control_grid_local_refinement",
+            "domain_coverage": {
+                "control_bounds": self._control_bounds(),
+                "physical_prefilter": True,
+                "raw_start_count": sum(
+                    item["start_count"] + item["nonphysical_start_count"]
+                    for item in reduction_runs
+                ),
+                "physical_start_count": sum(
+                    item["start_count"] for item in reduction_runs
+                ),
+            },
+            "singular_coverage": "not_covered_by_regular_reduction",
             "reduction_search": reduction_search,
+            "compile_cache_hit": bool(reduction_search.get("compile_cache_hit", False)),
             "fpgen": adapter.provenance(),
+            "state_scale_source": self._model_state_scales(adapter)[1],
             "perturbation_parameter": self.config.perturbation.parameter,
             "perturbation_scale": self.config.perturbation.scale,
             "perturbation_side": self.config.perturbation.side,
@@ -347,7 +370,8 @@ class BifurcationSolver(CAMSolver):
                     reporter.advance()
                 value = np.asarray(result.x)
                 if any(
-                    scaled_distance(value, previous, self._full_scale(system)) <= 1e-6
+                    scaled_distance(value, previous, self._full_scale(system, adapter))
+                    <= 1e-6
                     for previous in solved
                 ):
                     continue
@@ -369,7 +393,16 @@ class BifurcationSolver(CAMSolver):
             "rejected_count": rejected_count,
             "rejected_by_reason": dict(rejected_by_reason),
             "coverage": f"{seed_source}_bordered_local_search",
+            "structural_coverage": "full_bordered_local_system",
+            "numerical_coverage": f"{seed_source}_bordered_local_search",
+            "domain_coverage": {
+                "control_bounds": self._control_bounds(),
+                "physical_seed_filter": seed_source == "domain_sampling",
+                "seed_count": len(seeds),
+            },
+            "singular_coverage": "local_bordered_search",
             "fpgen": adapter.provenance(),
+            "state_scale_source": self._model_state_scales(adapter)[1],
             "perturbation_parameter": self.config.perturbation.parameter,
             "perturbation_scale": self.config.perturbation.scale,
             "perturbation_side": self.config.perturbation.side,
@@ -422,8 +455,8 @@ class BifurcationSolver(CAMSolver):
             for control in self.config.controls.values()
         ]
         starts = []
-        known_states: list[np.ndarray] = []
         for control_values in product(*axes):
+            known_states: list[np.ndarray] = []
             controls = dict(zip(self.config.controls, control_values, strict=True))
             params = {**adapter.model.params, **controls}
             for guess in self._state_guesses(adapter):
@@ -546,6 +579,9 @@ class BifurcationSolver(CAMSolver):
                 "left_null_vector": left,
                 "is_physical": is_physical,
                 "is_stable": bool(np.max(np.real(jacobian_eigenvalues)) <= threshold),
+                "maximum_jacobian_real_part": float(
+                    np.max(np.real(jacobian_eigenvalues))
+                ),
                 "minimum_physical_eigenvalue": float(np.min(physical_eigenvalues)),
                 "rejection_reasons": tuple(rejection_reasons),
                 "classification_status": (
@@ -580,20 +616,14 @@ class BifurcationSolver(CAMSolver):
         )
         return lower, upper
 
-    def _full_scale(self, system: BorderedMultiplicitySystem) -> np.ndarray:
+    def _full_scale(
+        self, system: BorderedMultiplicitySystem, adapter: FPGenDynamicsAdapter
+    ) -> np.ndarray:
         n = system.n_state
-        nonlinear = max(
-            (
-                abs(float(system.base_params[name]))
-                for name in ("chi", "Gamma")
-                if name in system.base_params
-            ),
-            default=1.0,
-        )
-        state_scale = max(1.0, 1.0 / max(nonlinear, 1e-8))
+        state_scales, _ = self._model_state_scales(adapter)
         return np.asarray(
             [
-                *([state_scale] * n),
+                *state_scales,
                 *(
                     self._control_scale(control)
                     for control in self.config.controls.values()
@@ -603,17 +633,9 @@ class BifurcationSolver(CAMSolver):
         )
 
     def _state_guesses(self, adapter: FPGenDynamicsAdapter) -> list[np.ndarray]:
-        model = adapter.model
         n_state = adapter.state_size
-        nonlinear = max(
-            (
-                abs(float(model.params[name]))
-                for name in ("chi", "Gamma")
-                if name in model.params
-            ),
-            default=1.0,
-        )
-        scale = max(1.0, 1.0 / max(nonlinear, 1e-8))
+        state_scales, _ = self._model_state_scales(adapter)
+        scale = float(np.max(state_scales))
         guesses = [np.zeros(n_state)]
         for value in (0.5, 1.0, scale):
             guess = np.zeros(n_state)
@@ -687,6 +709,20 @@ class BifurcationSolver(CAMSolver):
         dict[str, Any],
     ]:
         strategy_config = self.strategy.config
+        provenance = adapter.provenance()
+        cache_key = (
+            provenance.get("fingerprint"),
+            self.target.order,
+            tuple(self.config.controls),
+            repr(strategy_config.model_dump()),
+        )
+        cached = self._reduction_cache.get(cache_key)
+        if cached is not None:
+            reductions, cached_manifest = cached
+            self._prepare_reductions(reductions, adapter)
+            manifest = dict(cached_manifest)
+            manifest["compile_cache_hit"] = True
+            return reductions, manifest
         search = adapter.dynamics.search_linear_reductions(
             retained_dimension=1,
             retained_ids=(
@@ -738,7 +774,46 @@ class BifurcationSolver(CAMSolver):
                 reductions.append(reduction)
         manifest = search.manifest()
         manifest["consumer_errors"] = tuple(errors[:3])
-        return tuple(reductions), manifest
+        manifest["compile_cache_hit"] = False
+        output = tuple(reductions)
+        self._prepare_reductions(output, adapter)
+        if len(self._reduction_cache) >= 8:
+            self._reduction_cache.pop(next(iter(self._reduction_cache)))
+        self._reduction_cache[cache_key] = (output, dict(manifest))
+        return output, manifest
+
+    def _prepare_reductions(
+        self,
+        reductions: tuple[FractionFreeScalarReduction | CondensedScalarReduction, ...],
+        adapter: FPGenDynamicsAdapter,
+    ) -> None:
+        state_scales, _ = self._model_state_scales(adapter)
+        scale_by_id = dict(zip(adapter.state_ids, state_scales, strict=True))
+        for reduction in reductions:
+            reduction.base_params = dict(adapter.model.params)
+            reduction.retained_scale = float(
+                scale_by_id.get(reduction.retained_id, np.max(state_scales))
+            )
+
+    @staticmethod
+    def _model_state_scales(
+        adapter: FPGenDynamicsAdapter,
+    ) -> tuple[np.ndarray, str]:
+        provider = getattr(adapter.model, "cam_bifurcation_scales", None)
+        if not callable(provider):
+            return np.ones(adapter.state_size), "heuristic:unit"
+        payload = provider(dict(adapter.model.params))
+        source = "model"
+        if isinstance(payload, dict):
+            source = str(payload.get("source", source))
+            payload = payload.get("state", 1.0)
+        values = np.asarray(payload, dtype=float)
+        if values.ndim == 0:
+            values = np.full(adapter.state_size, float(values))
+        values = np.broadcast_to(values, (adapter.state_size,)).copy()
+        if not np.all(np.isfinite(values)) or np.any(values <= 0.0):
+            raise ValueError("CAM bifurcation state scales must be finite and positive")
+        return values, source
 
     def _refine(
         self,
@@ -916,6 +991,7 @@ class BifurcationSolver(CAMSolver):
             "jacobian_singular_values": np.linalg.svd(jacobian, compute_uv=False),
             "is_physical": is_physical,
             "is_stable": bool(np.max(np.real(jacobian_eigenvalues)) <= threshold),
+            "maximum_jacobian_real_part": float(np.max(np.real(jacobian_eigenvalues))),
             "minimum_physical_eigenvalue": float(np.min(physical_eigenvalues)),
             "rejection_reasons": tuple(rejection_reasons),
         }
