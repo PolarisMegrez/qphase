@@ -46,27 +46,12 @@ plugins:
         - [["2500.0+0.0j", "0.0+0.0j", "0.0+0.0j"],
            ["0.0+0.0j", "5000.0+0.0j", "0.0+0.0j"],
            ["0.0+0.0j", "0.0+0.0j", "7500.0+0.0j"]]
-      seed: 42
-      method: root
-      tolerance: 1.0e-10
-      residual_tolerance: 1.0e-7
       distance_tolerance: 1.0e-3
-      use_jacobian: true
-      capacity_patience: 10
-      n_workers: 1
-      tail_fraction: 0.1
-      tail_orders: 2.0
-      tile_workers: 24
-      n_tiles: 144
       discover_seeds: false
-      bounds_inference_starts: 64
-      seed_search_guesses: 80
       retry_guesses: 32
-      refine_suspicious: true
       refine_guesses: 16
   cam_postprocessor:
     rayleigh_frequency: {}
     hamiltonian_spectrum: {}
     jacobian_spectrum: {}
-    physicality:
-      residual_tolerance: 1.0e-7
+    physicality: {}

@@ -6,10 +6,10 @@ scan:
   axes:
     omega_b:
       target: model.pair_hopping_2mode.omega_b
-      linspace: {start: -0.04, stop: 0.12, num: 101}
+      linspace: {start: 0.48, stop: 0.52, num: 201}
     gamma_a:
       target: model.pair_hopping_2mode.gamma_a
-      linspace: {start: 0.85, stop: 1.03, num: 101}
+      linspace: {start: 0.88, stop: 0.92, num: 201}
 
 engine:
   cam: {}
@@ -21,11 +21,11 @@ plugins:
   model:
     pair_hopping_2mode:
       omega_a: 0.0
-      omega_b: 0.0
+      omega_b: 0.48
       g: 1.0
       k: 0.001
-      gamma_a: 0.9434369986
-      gamma_b: 1.0
+      gamma_a: 0.88
+      gamma_b: 3.767911788762655
   cam_solver:
     multistability:
       n_guesses: 4
@@ -34,35 +34,20 @@ plugins:
         diag_upper: [300.0, 300.0]
         offdiag_scale: 150.0
       initial_guesses:
-        - [["115.51202045+0.0j", "-70.41717080+76.18353107j"],
-           ["-70.41717080-76.18353107j", "109.95003238+0.0j"]]
+        - [["76.4822307951+0.0j", "-9.6642158551+36.0191088488j"],
+           ["-9.6642158551-36.0191088488j", "18.8797949733+0.0j"]]
+        - [["100.1318728121+0.0j", "-11.8153416211+47.4068959998j"],
+           ["-11.8153416211-47.4068959998j", "24.5262352983+0.0j"]]
+        - [["52.8325887781+0.0j", "-7.5130900891+24.6313216978j"],
+           ["-7.5130900891-24.6313216978j", "13.2333546483+0.0j"]]
         - [["0.0+0.0j", "0.0+0.0j"],
            ["0.0+0.0j", "0.0+0.0j"]]
-        - [["100.0+0.0j", "0.0+0.0j"],
-           ["0.0+0.0j", "100.0+0.0j"]]
-        - [["115.51202045+0.0j", "-63.37545372+68.56517796j"],
-           ["-63.37545372-68.56517796j", "109.95003238+0.0j"]]
-      seed: 42
-      method: root
-      tolerance: 1.0e-10
-      residual_tolerance: 1.0e-7
       distance_tolerance: 1.0e-3
-      use_jacobian: true
-      capacity_patience: 10
-      n_workers: 1
-      tail_fraction: 0.1
-      tail_orders: 2.0
-      tile_workers: 24
-      n_tiles: 144
       discover_seeds: false
-      bounds_inference_starts: 64
-      seed_search_guesses: 80
       retry_guesses: 32
-      refine_suspicious: true
       refine_guesses: 16
   cam_postprocessor:
     rayleigh_frequency: {}
     hamiltonian_spectrum: {}
     jacobian_spectrum: {}
-    physicality:
-      residual_tolerance: 1.0e-7
+    physicality: {}

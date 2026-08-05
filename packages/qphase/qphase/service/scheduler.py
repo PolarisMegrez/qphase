@@ -12,6 +12,8 @@ from qphase.core.config_loader import (
     get_config_for_job,
     list_available_jobs,
     load_jobs_from_files,
+    merge_plugin_config_sections,
+    registered_plugin_namespaces,
 )
 from qphase.core.registry import registry
 from qphase.core.scheduler import JobResult, Scheduler
@@ -214,17 +216,11 @@ class SchedulerService:
         }
 
     def _explicit_plugin_namespaces(self, job: JobConfig) -> set[str]:
-        plugin_keys = {
-            "backend",
-            "integrator",
-            "model",
-            "analyser",
-            "visualizer",
-            "analyzer",
-        }
         explicit = set(job.plugins.keys())
         job_extra = job.model_extra or {}
-        explicit.update(key for key in plugin_keys if key in job_extra)
+        explicit.update(
+            key for key in registered_plugin_namespaces() if key in job_extra
+        )
         return explicit
 
     def _inherited_global_defaults(
@@ -251,19 +247,7 @@ class SchedulerService:
         return inherited
 
     def _merged_plugin_config(self, merged_config: dict[str, Any]) -> dict[str, Any]:
-        plugin_keys = [
-            "backend",
-            "integrator",
-            "model",
-            "analyser",
-            "visualizer",
-            "analyzer",
-        ]
-        plugins_cfg = dict(merged_config.get("plugins", {}))
-        for key in plugin_keys:
-            if key in merged_config and key not in plugins_cfg:
-                plugins_cfg[key] = merged_config[key]
-        return plugins_cfg
+        return merge_plugin_config_sections(merged_config)
 
     def _expected_output_name(self, job: JobConfig) -> str | None:
         if isinstance(job.save, str):

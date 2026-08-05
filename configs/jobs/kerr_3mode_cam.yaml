@@ -33,25 +33,11 @@ plugins:
     multistability:
       n_guesses: 50
       guess_bounds: auto
-      seed: 42
-      method: root
-      tolerance: 1.0e-10
-      residual_tolerance: 1.0e-7
       distance_tolerance: 3.0
-      use_jacobian: true
-      capacity_patience: 10
-      n_workers: 1
-      tile_workers: 24
-      n_tiles: 288
-      discover_seeds: true
-      bounds_inference_starts: 128
-      seed_search_guesses: 200
       retry_guesses: 200
-      refine_suspicious: true
       refine_guesses: 50
   cam_postprocessor:
     rayleigh_frequency: {}
     hamiltonian_spectrum: {}
     jacobian_spectrum: {}
-    physicality:
-      residual_tolerance: 1.0e-7
+    physicality: {}

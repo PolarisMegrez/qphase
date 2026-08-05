@@ -59,6 +59,16 @@ Some resource packages also accept plugin namespaces at the job top level for
 compatibility with existing files. New resource packages should prefer the
 explicit `plugins` mapping.
 
+Project-wide numerical policy belongs in `configs/global.yaml`. For example,
+CAM multistability jobs inherit the random seed, root method, tolerances,
+Jacobian policy, worker request, and seed-discovery defaults from
+`cam_solver.multistability`. A job should normally override only experiment
+controls such as `n_guesses`, model-specific `guess_bounds` and
+`initial_guesses`, `distance_tolerance`, and retry/refinement budgets. Local
+targeted scans may also disable `discover_seeds` when validated explicit seeds
+are available. Global plugin defaults are merged by registry namespace, so new
+resource namespaces do not require scheduler-specific handling.
+
 ## Parameter Scans
 
 Scans are explicit. A list inside a plugin configuration is always a literal

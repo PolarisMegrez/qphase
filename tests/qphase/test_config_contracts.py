@@ -6,10 +6,17 @@ from pathlib import Path
 
 import pytest
 import yaml
-from qphase.core.config_loader import load_jobs_from_files
+from qphase.core.config import JobConfig
+from qphase.core.config_loader import (
+    load_jobs_from_files,
+    merge_plugin_config_sections,
+)
 from qphase.core.errors import QPhaseConfigError
 from qphase.core.registry import registry
 from qphase.core.scheduler import Scheduler
+from qphase.core.system_config import load_system_config
+
+from tests.plugins.dummy_plugin import DummyPlugin
 
 pytestmark = pytest.mark.integration
 
@@ -128,8 +135,6 @@ def test_scheduler_validation_respects_global_defaults(
     with open(global_file, "w") as f:
         yaml.dump({"integrator": {"dummy": {"param": 1.0}}}, f)
 
-    from qphase.core.system_config import load_system_config
-
     system_config = load_system_config(force_reload=True)
 
     data = {
@@ -143,6 +148,36 @@ def test_scheduler_validation_respects_global_defaults(
     scheduler = Scheduler(system_config=system_config)
 
     scheduler._validate_jobs(job_list)
+
+
+def test_dynamic_plugin_namespace_inherits_global_defaults(temp_workspace):
+    """New resource namespaces must not require scheduler hardcoding."""
+    registry.register(
+        namespace="research_solver",
+        name="search",
+        builder=DummyPlugin,
+        overwrite=True,
+    )
+    global_file = temp_workspace / "configs" / "global.yaml"
+    global_file.write_text(
+        "research_solver:\n  search:\n    seed: 42\n    n_guesses: 32\n",
+        encoding="utf-8",
+    )
+    job = JobConfig(
+        name="cam_defaults",
+        engine={"cam": {}},
+        plugins={
+            "research_solver": {"search": {"n_guesses": 4}},
+        },
+    )
+    scheduler = Scheduler(system_config=load_system_config(force_reload=True))
+
+    merged = merge_plugin_config_sections(scheduler._get_merged_config_for_job(job))
+
+    assert merged["research_solver"]["search"] == {
+        "seed": 42,
+        "n_guesses": 4,
+    }
 
 
 def test_scheduler_validation_still_reports_missing_required_plugin(

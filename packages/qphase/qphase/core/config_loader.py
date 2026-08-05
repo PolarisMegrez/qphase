@@ -28,6 +28,7 @@ list_available_jobs
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -260,6 +261,44 @@ def merge_configs(
     merged = deep_copy(global_config)
     merged = deep_merge_dicts(merged, job_config)
     return merged
+
+
+def registered_plugin_namespaces() -> set[str]:
+    """Return ordinary plugin namespaces currently known to the registry."""
+    from .registry import registry
+
+    compatibility_namespaces = {
+        "analyser",
+        "analyzer",
+        "backend",
+        "integrator",
+        "model",
+        "visualizer",
+    }
+    try:
+        namespaces = set(registry.list(namespace=None))
+    except Exception:
+        namespaces = set()
+    return (namespaces | compatibility_namespaces) - {
+        "default",
+        "engine",
+        "loader",
+        "resource",
+    }
+
+
+def merge_plugin_config_sections(config: dict[str, Any]) -> dict[str, Any]:
+    """Merge top-level global plugin defaults with explicit job plugins."""
+    plugins = deep_copy(config.get("plugins", {}))
+    for namespace in registered_plugin_namespaces():
+        inherited = config.get(namespace)
+        if not isinstance(inherited, Mapping):
+            continue
+        override = plugins.get(namespace, {})
+        plugins[namespace] = deep_merge_dicts(
+            dict(inherited), dict(override) if isinstance(override, Mapping) else {}
+        )
+    return plugins
 
 
 def get_config_for_job(

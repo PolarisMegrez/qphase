@@ -10,6 +10,7 @@ from qphase.core.config_loader import (
     get_config_for_job,
     load_global_config,
     load_jobs_from_files,
+    merge_plugin_config_sections,
     save_global_config,
 )
 from qphase.core.registry import RegistryCenter, registry
@@ -59,9 +60,11 @@ class ConfigService:
             "engine": job.engine,
             "params": job.params,
         }
-        return get_config_for_job(
+        merged = get_config_for_job(
             system_cfg, job_name=job.name, job_config_dict=job_override
         )
+        merged["plugins"] = merge_plugin_config_sections(merged)
+        return merged
 
     def preview_merged_config(self, job: JobConfig) -> MergedConfigPreview:
         if job.system:

@@ -56,6 +56,13 @@ plugins:
 部分现有资源包仍兼容 job 顶层插件命名空间。新资源包应优先使用显式
 `plugins` 映射。
 
+项目范围的数值策略应写入 `configs/global.yaml`。例如，CAM multistability job
+从 `cam_solver.multistability` 继承随机种子、root 方法、容差、Jacobian 策略、
+worker 请求和 seed-discovery 默认值。job 通常只覆盖 `n_guesses`、模型相关的
+`guess_bounds`/`initial_guesses`、`distance_tolerance` 以及 retry/refinement 预算。
+已有可靠显式种子的局部扫描还可以关闭 `discover_seeds`。global 插件默认值按 registry
+namespace 合并，因此新增资源包不需要在 scheduler 中增加硬编码分支。
+
 ## 参数扫描
 
 扫描必须显式声明。插件配置中的列表始终是插件本身的普通值，不再被解释为扫描。

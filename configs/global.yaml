@@ -20,8 +20,26 @@ analyser:
     modes: [0] # Default modes
     kind: complex # Default kind
     convention: symmetric  # PSD convention
-    dt: 1.0 # Sampling interval
     find_peaks: false # Whether to find peaks
+cam_solver:
+  multistability:
+    seed: 42
+    method: root
+    tolerance: 1.0e-10
+    residual_tolerance: 1.0e-7
+    use_jacobian: true
+    capacity_patience: 10
+    n_workers: 1
+    tail_fraction: 0.25
+    tail_orders: 3.0
+    tile_workers: 24
+    discover_seeds: true
+    bounds_inference_starts: 128
+    seed_search_guesses: 200
+    refine_suspicious: true
+cam_postprocessor:
+  physicality:
+    residual_tolerance: 1.0e-7
 engine:
   sde:
     t0: 0.0  # Start time

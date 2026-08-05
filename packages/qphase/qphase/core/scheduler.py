@@ -28,7 +28,11 @@ from typing import Any, TypedDict
 
 from .artifacts import ArtifactStore
 from .config import JobConfig, JobList
-from .config_loader import get_config_for_job
+from .config_loader import (
+    get_config_for_job,
+    merge_plugin_config_sections,
+    registered_plugin_namespaces,
+)
 from .dataset import DatasetResultProtocol, MappedDatasetResult, iter_dataset_views
 from .error_report import build_error_report, save_error_report
 from .errors import (
@@ -769,15 +773,7 @@ class Scheduler:
         """
         system_cfg = job.merge_with_system_config(self.system_config)
 
-        # Plugin namespaces that may appear as top-level keys in a job file.
-        plugin_keys = [
-            "backend",
-            "integrator",
-            "model",
-            "analyser",
-            "visualizer",
-            "analyzer",
-        ]
+        plugin_namespaces = registered_plugin_namespaces()
 
         # Merge global config with job config
         job_override: dict[str, Any] = {
@@ -788,7 +784,7 @@ class Scheduler:
         # Preserve top-level plugin sections (e.g. backend, analyser) that live in
         # JobConfig.model_extra so the merge/extraction logic sees them.
         job_extra = job.model_extra or {}
-        for key in plugin_keys:
+        for key in plugin_namespaces:
             if key in job_extra:
                 job_override[key] = job_extra[key]
 
@@ -888,22 +884,8 @@ class Scheduler:
         """Job body executed under the error boundary of :meth:`_run_job`."""
         merged_config = self._get_merged_config_for_job(job)
 
-        # Plugin namespaces that may appear as top-level keys in a job file.
-        plugin_keys = [
-            "backend",
-            "integrator",
-            "model",
-            "analyser",
-            "visualizer",
-            "analyzer",
-        ]
-
-        # Normalize config: move top-level plugin keys to 'plugins' if not present
-        # This supports the simplified config format where plugins are at the root
-        plugins_cfg = merged_config.get("plugins", {}).copy()
-        for key in plugin_keys:
-            if key in merged_config and key not in plugins_cfg:
-                plugins_cfg[key] = merged_config[key]
+        plugin_namespaces = registered_plugin_namespaces()
+        plugins_cfg = merge_plugin_config_sections(merged_config)
 
         # Determine target Engine class to inspect Manifest
         # This helps us decide which plugins are actually needed
@@ -941,7 +923,7 @@ class Scheduler:
         # This separates user overrides from merged defaults.
         job_extra = job.model_extra or {}
         explicit_namespaces = set(job.plugins.keys())
-        for key in plugin_keys:
+        for key in plugin_namespaces:
             if key in job_extra:
                 explicit_namespaces.add(key)
 
@@ -1328,20 +1310,11 @@ class Scheduler:
         This mirrors the resolution logic used in :meth:`_run_job` so that
         validation and execution agree on which plugins are available.
         """
-        plugin_keys = [
-            "backend",
-            "integrator",
-            "model",
-            "analyser",
-            "visualizer",
-            "analyzer",
-        ]
-
         namespaces: set[str] = set(job.plugins.keys())
 
         # Top-level plugin sections are stored as model extras by JobConfig
         job_extra = job.model_extra or {}
-        for key in plugin_keys:
+        for key in registered_plugin_namespaces():
             if key in job_extra:
                 namespaces.add(key)
 
@@ -1357,10 +1330,7 @@ class Scheduler:
             merged = get_config_for_job(
                 system_cfg, job_name=job.name, job_config_dict=job_override
             )
-            merged_plugins = dict(merged.get("plugins", {}))
-            for key in plugin_keys:
-                if key in merged and key not in merged_plugins:
-                    merged_plugins[key] = merged[key]
+            merged_plugins = merge_plugin_config_sections(merged)
             namespaces.update(merged_plugins.keys())
         except Exception as e:
             log.debug(

@@ -125,15 +125,16 @@ non-physical mathematical roots. `method: cholesky` enforces
 positive-semidefinite states but can miss non-PSD roots and may have different
 basins of attraction.
 
-For large scans, `tile_workers` is the requested process count and `n_tiles`
-controls the bounded number of scan tasks. Keep `n_tiles` larger than the worker
-count so work remains balanced; the VDP 101 x 101 job uses 24 requested workers
-and 288 tiles, matching the pre-migration scanner. On Windows, the solver limits
-BLAS threads and may reduce the effective process count according to available
-physical memory plus `SystemConfig.scan_runtime.resources`. If a spawned pool is
-terminated by memory pressure, it retries with fewer workers instead of losing
-the logical job immediately. Result metadata records requested/effective worker
-counts, tile count, and retries.
+For large scans, `tile_workers` is the requested process count. When neither
+`n_tiles` nor `tile_size` is configured, the solver targets four times the worker
+count (with a minimum of 16 tasks), so ordinary jobs do not need a static tile
+setting. Override the partition only after a workload-specific benchmark. On
+Windows, the solver limits BLAS threads and may reduce the effective process
+count according to available physical memory plus
+`SystemConfig.scan_runtime.resources`. If a spawned pool is terminated by memory
+pressure, it retries with fewer workers instead of losing the logical job
+immediately. Result metadata records requested/effective worker counts, tile
+count, and retries.
 
 The multistability scan follows a continuation-assisted search rather than
 treating points as unrelated roots. With `guess_bounds: auto`, it merges bounds

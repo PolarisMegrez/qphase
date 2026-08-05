@@ -84,11 +84,11 @@ metadata 将覆盖度拆分为结构约化覆盖、有限数值搜索覆盖、�
 处理。这些字段用于审计搜索范围，不构成“所有候选均已找到”的证明。模型可以实现
 `cam_bifurcation_scales()`，为初值和约化根归一化提供物理尺度；未实现时使用单位尺度。
 
-对于大型 scan，`tile_workers` 表示请求的进程数，`n_tiles` 控制有界的 scan task
-数量。`n_tiles` 应大于 worker 数，以维持负载均衡；VDP 101 x 101 job 使用 24 个
-请求 worker 和 288 个 tile，与迁移前 scanner 一致。在 Windows 上，solver 会限制
-BLAS 线程，并根据可用物理内存及 `SystemConfig.scan_runtime.resources` 下调实际
-进程数。若 spawned pool 因内存压力终止，会自动用更少 worker 重试，而不是立即使
+对于大型 scan，`tile_workers` 表示请求的进程数。未配置 `n_tiles` 或 `tile_size` 时，
+solver 默认生成约为 worker 数四倍且不少于 16 个 task，因此普通 job 不需要静态 tile
+参数；只有在特定 workload benchmark 后才应覆盖分区策略。在 Windows 上，solver
+会限制 BLAS 线程，并根据可用物理内存及 `SystemConfig.scan_runtime.resources` 下调
+实际进程数。若 spawned pool 因内存压力终止，会自动用更少 worker 重试，而不是立即使
 逻辑 job 失败。result metadata 会记录请求/实际 worker 数、tile 数和重试次数。
 
 multistability scan 使用 continuation-assisted 搜索，而不是把各参数点当作互不相关
