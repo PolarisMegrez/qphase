@@ -12,3 +12,6 @@ plugins:
   - type: model.crosskerr_2mode
     target: models.crosskerr_2mode:CrossKerr2ModeModel
     description: Two-mode cross-Kerr oscillator
+  - type: model.pair_hopping_2mode
+    target: models.pair_hopping_2mode:PairHopping2ModeModel
+    description: Two-mode pair-hopping CAM model

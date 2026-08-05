@@ -33,9 +33,7 @@ class ContinuationSolverConfig(CAMSolverConfig):
 class ContinuationSolver(CAMSolver):
     name: ClassVar[str] = "continuation"
     description: ClassVar[str] = "Pseudo-arclength CAM continuation"
-    config_schema: ClassVar[type[ContinuationSolverConfig]] = (
-        ContinuationSolverConfig
-    )
+    config_schema: ClassVar[type[ContinuationSolverConfig]] = ContinuationSolverConfig
 
     def solve(self, model: Any, backend: Any) -> CAMSolverOutput:
         if str(backend.backend_name()).lower() != "numpy":
@@ -92,9 +90,7 @@ class ContinuationSolver(CAMSolver):
                 )
             )
             values.append(lam)
-            tangent = self._tangent(
-                model, params, x, lam, resolver, backend, tangent
-            )
+            tangent = self._tangent(model, params, x, lam, resolver, backend, tangent)
             step = min(step * 1.1, self.config.max_step)
         return CAMSolverOutput(
             [[solution] for solution in solutions],
@@ -130,16 +126,12 @@ class ContinuationSolver(CAMSolver):
         jacobian = np.asarray(
             resolver.resolve(model, state, self._params(params, value), backend)
         )
-        parameter_derivative = self._parameter_derivative(
-            model, params, x, value
-        )
+        parameter_derivative = self._parameter_derivative(model, params, x, value)
         operator = np.hstack((jacobian, parameter_derivative[:, None]))
         tangent = np.linalg.svd(operator)[2][-1]
         tangent /= np.linalg.norm(tangent)
         preferred = (
-            np.concatenate(
-                (np.zeros_like(x), np.asarray([preference], dtype=float))
-            )
+            np.concatenate((np.zeros_like(x), np.asarray([preference], dtype=float)))
             if np.isscalar(preference)
             else np.asarray(preference)
         )
@@ -168,9 +160,7 @@ class ContinuationSolver(CAMSolver):
             jacobian = np.asarray(
                 resolver.resolve(model, state, current_params, backend)
             )
-            parameter_derivative = self._parameter_derivative(
-                model, params, x, value
-            )
+            parameter_derivative = self._parameter_derivative(model, params, x, value)
             operator = np.zeros((n_coordinates + 1, n_coordinates + 1))
             operator[:-1, :-1] = jacobian
             operator[:-1, -1] = parameter_derivative

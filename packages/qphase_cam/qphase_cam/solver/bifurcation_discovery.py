@@ -32,16 +32,3 @@ class SeedDiscovery:
 
     def seed_values(self, data: Any | None = None) -> list[Any]:
         return [] if data is None else [data]
-
-
-class ContinuationDiscoveryConfig(SeedDiscoveryConfig):
-    initial_step: float = Field(0.002, gt=0.0)
-    max_steps: int = Field(2000, ge=1)
-
-
-class ContinuationDiscovery(SeedDiscovery):
-    name: ClassVar[str] = "continuation"
-    description: ClassVar[str] = "Continuation-informed candidate discovery"
-    config_schema: ClassVar[type[ContinuationDiscoveryConfig]] = (
-        ContinuationDiscoveryConfig
-    )

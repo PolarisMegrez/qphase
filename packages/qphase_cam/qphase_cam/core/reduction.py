@@ -28,6 +28,14 @@ class VerificationOutcome:
     digits: int
     residual_norm: float
     success: bool
+    decimal_values: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class LocalScalingSeries:
+    coefficients: dict[tuple[int, int], float]
+    coefficient_decimals: dict[tuple[int, int], str]
+    state_tangent: np.ndarray
 
 
 class FractionFreeScalarReduction:
@@ -68,12 +76,10 @@ class FractionFreeScalarReduction:
         self.unknown_symbols = tuple(unknown_symbols)
         numerator = materialized.numerators[0]
         self.condition_expressions = tuple(
-            sp.diff(numerator, self.q, derivative)
-            for derivative in range(order)
+            sp.diff(numerator, self.q, derivative) for derivative in range(order)
         )
         self.coefficient_expressions = tuple(
-            sp.diff(numerator, self.q, derivative)
-            for derivative in range(order + 1)
+            sp.diff(numerator, self.q, derivative) for derivative in range(order + 1)
         )
         arguments = (self.q, *self.parameter_symbols)
         self._conditions = sp.lambdify(
@@ -82,9 +88,7 @@ class FractionFreeScalarReduction:
         search_jacobian = sp.Matrix(self.condition_expressions).jacobian(
             self.unknown_symbols
         )
-        self._search_jacobian = sp.lambdify(
-            arguments, search_jacobian, modules="numpy"
-        )
+        self._search_jacobian = sp.lambdify(arguments, search_jacobian, modules="numpy")
         self._reconstruct = sp.lambdify(
             arguments, materialized.reconstruct_full_state(), modules="numpy"
         )
@@ -143,9 +147,7 @@ class FractionFreeScalarReduction:
                     verify=True,
                 )
                 solved = tuple(solution)
-                substitutions = dict(
-                    zip(self.unknown_symbols, solved, strict=True)
-                )
+                substitutions = dict(zip(self.unknown_symbols, solved, strict=True))
                 residual = max(
                     abs(sp.N(expression.subs(substitutions), digits))
                     for expression in equations
@@ -158,6 +160,9 @@ class FractionFreeScalarReduction:
                         digits=digits,
                         residual_norm=residual_float,
                         success=success,
+                        decimal_values=tuple(
+                            str(sp.N(item, digits)) for item in solved
+                        ),
                     )
                 current = solved
             except (ArithmeticError, TypeError, ValueError, ZeroDivisionError):
@@ -167,8 +172,60 @@ class FractionFreeScalarReduction:
                         digits=digits,
                         residual_norm=np.inf,
                         success=False,
+                        decimal_values=tuple(str(item) for item in current),
                     )
             digits = min(2 * digits, max_digits)
+
+    def local_scaling_series(
+        self,
+        value: Any,
+        *,
+        perturbation: str,
+        scale: float,
+        max_total_order: int,
+        digits: int,
+    ) -> LocalScalingSeries:
+        lookup = {item.name: item.symbol for item in self.parameter_specs}
+        if perturbation not in lookup:
+            raise BifurcationCapabilityError(
+                f"unknown perturbation parameter {perturbation!r}"
+            )
+        point = np.asarray(value, dtype=float)
+        params = self._params(point)
+        substitutions = {
+            item.symbol: sp.Float(str(params[item.name]), digits)
+            for item in self.parameter_specs
+        }
+        substitutions[self.q] = sp.Float(str(point[0]), digits)
+        parameter_symbol = lookup[perturbation]
+        expression = self.materialized.reduced_residual[0]
+        coefficients: dict[tuple[int, int], float] = {}
+        decimals: dict[tuple[int, int], str] = {}
+        for total in range(max_total_order + 1):
+            for state_order in range(total + 1):
+                parameter_order = total - state_order
+                derivative = sp.diff(
+                    expression,
+                    self.q,
+                    state_order,
+                    parameter_symbol,
+                    parameter_order,
+                )
+                coefficient = sp.N(
+                    derivative.subs(substitutions)
+                    * sp.Float(str(scale), digits) ** parameter_order
+                    / (factorial(state_order) * factorial(parameter_order)),
+                    digits,
+                )
+                coefficients[(state_order, parameter_order)] = float(coefficient)
+                decimals[(state_order, parameter_order)] = str(coefficient)
+        reconstructed = self.materialized.reconstruct_full_state()
+        tangent = reconstructed.diff(self.q).subs(substitutions)
+        return LocalScalingSeries(
+            coefficients=coefficients,
+            coefficient_decimals=decimals,
+            state_tangent=np.asarray(tangent, dtype=float).reshape(-1),
+        )
 
     @property
     def retained_id(self) -> str:
@@ -239,16 +296,12 @@ class FractionFreeScalarReduction:
     def _arguments(self, value: Any) -> tuple[float, ...]:
         array = np.asarray(value, dtype=float)
         params = self._params(array)
-        parameter_values = (
-            float(params[name]) for name in self.parameter_names
-        )
+        parameter_values = (float(params[name]) for name in self.parameter_names)
         return (float(array[0]), *parameter_values)
 
     def _params(self, value: np.ndarray) -> dict[str, Any]:
         params = dict(self.base_params)
-        params.update(
-            zip(self.control_names, value[1:], strict=True)
-        )
+        params.update(zip(self.control_names, value[1:], strict=True))
         return params
 
     @staticmethod
@@ -339,11 +392,7 @@ class CondensedScalarReduction:
             while True:
                 mp.mp.dps = digits
                 functions = tuple(
-                    (
-                        lambda *items, index=index: self._evaluate_mpmath(items)[1][
-                            index
-                        ]
-                    )
+                    (lambda *items, index=index: self._evaluate_mpmath(items)[1][index])
                     for index in range(self.order)
                 )
                 try:
@@ -367,6 +416,9 @@ class CondensedScalarReduction:
                             digits=digits,
                             residual_norm=residual_float,
                             success=success,
+                            decimal_values=tuple(
+                                mp.nstr(item, n=digits) for item in solved
+                            ),
                         )
                     current = solved
                 except (
@@ -381,8 +433,80 @@ class CondensedScalarReduction:
                             digits=digits,
                             residual_norm=np.inf,
                             success=False,
+                            decimal_values=tuple(
+                                mp.nstr(item, n=digits) for item in current
+                            ),
                         )
                 digits = min(2 * digits, max_digits)
+        finally:
+            mp.mp.dps = previous_digits
+
+    def local_scaling_series(
+        self,
+        value: Any,
+        *,
+        perturbation: str,
+        scale: float,
+        max_total_order: int,
+        digits: int,
+    ) -> LocalScalingSeries:
+        import mpmath as mp
+
+        if perturbation not in self.parameter_names:
+            raise BifurcationCapabilityError(
+                f"unknown perturbation parameter {perturbation!r}"
+            )
+        point = np.asarray(value, dtype=float)
+        params = self._params(point)
+        q_zero = mp.mpf(str(point[0]))
+        perturbation_zero = mp.mpf(str(params[perturbation]))
+        perturbation_scale = mp.mpf(str(scale))
+        previous_digits = mp.mp.dps
+        mp.mp.dps = digits
+        try:
+
+            def reduced(q_value: Any, epsilon: Any) -> Any:
+                local = dict(params)
+                local[perturbation] = perturbation_zero + perturbation_scale * epsilon
+                return self._evaluate_mpmath_at(q_value, local)[1][0]
+
+            coefficients: dict[tuple[int, int], float] = {}
+            decimals: dict[tuple[int, int], str] = {}
+            for total in range(max_total_order + 1):
+                for state_order in range(total + 1):
+                    parameter_order = total - state_order
+
+                    def state_derivative(
+                        q_value: Any,
+                        parameter_order: int = parameter_order,
+                    ) -> Any:
+                        return mp.diff(
+                            lambda epsilon: reduced(q_value, epsilon),
+                            mp.mpf("0"),
+                            parameter_order,
+                        )
+
+                    derivative = mp.diff(state_derivative, q_zero, state_order)
+                    coefficient = derivative / (
+                        factorial(state_order) * factorial(parameter_order)
+                    )
+                    coefficients[(state_order, parameter_order)] = float(coefficient)
+                    decimals[(state_order, parameter_order)] = mp.nstr(
+                        coefficient, n=digits
+                    )
+            jets, _ = self._evaluate_mpmath_at(q_zero, params)
+            values: dict[int, float] = {self.plan.candidate.retained_indices[0]: 1.0}
+            values.update(
+                zip(
+                    self.plan.candidate.eliminated_indices,
+                    (float(item) for item in jets[1]),
+                    strict=True,
+                )
+            )
+            tangent = np.asarray(
+                [values[index] for index in range(len(values))], dtype=float
+            )
+            return LocalScalingSeries(coefficients, decimals, tangent)
         finally:
             mp.mp.dps = previous_digits
 
@@ -411,9 +535,7 @@ class CondensedScalarReduction:
         values: dict[int, float] = {
             self.plan.candidate.retained_indices[0]: float(np.asarray(value)[0])
         }
-        values.update(
-            zip(self.plan.candidate.eliminated_indices, jets[0], strict=True)
-        )
+        values.update(zip(self.plan.candidate.eliminated_indices, jets[0], strict=True))
         return np.asarray([values[index] for index in range(len(values))])
 
     def diagnostics(self, value: Any) -> ReductionDiagnostics:
@@ -495,9 +617,7 @@ class CondensedScalarReduction:
             right = vectors[derivative].copy()
             for index in range(1, derivative + 1):
                 right += (
-                    comb(derivative, index)
-                    * matrices[index]
-                    @ jets[derivative - index]
+                    comb(derivative, index) * matrices[index] @ jets[derivative - index]
                 )
             jets.append(np.linalg.solve(matrices[0], -right))
         function_arguments: list[Any] = [*arguments]
@@ -539,13 +659,18 @@ class CondensedScalarReduction:
         )
 
     def _evaluate_mpmath(self, value: Any) -> tuple[list[Any], list[Any]]:
-        import mpmath as mp
-
         array = tuple(value)
         params = dict(self.base_params)
         params.update(zip(self.control_names, array[1:], strict=True))
+        return self._evaluate_mpmath_at(array[0], params)
+
+    def _evaluate_mpmath_at(
+        self, q_value: Any, params: dict[str, Any]
+    ) -> tuple[list[Any], list[Any]]:
+        import mpmath as mp
+
         arguments = (
-            array[0],
+            q_value,
             *(mp.mpf(str(params[name])) for name in self.parameter_names),
         )
         matrices = [function(*arguments) for function in self._mp_A_derivatives]
@@ -555,27 +680,28 @@ class CondensedScalarReduction:
             right = vectors[derivative].copy()
             for index in range(1, derivative + 1):
                 right += (
-                    comb(derivative, index)
-                    * matrices[index]
-                    * jets[derivative - index]
+                    comb(derivative, index) * matrices[index] * jets[derivative - index]
                 )
             jets.append(mp.lu_solve(matrices[0], -right))
         function_arguments = [*arguments]
         function_arguments.extend(item for jet in jets for item in jet)
         coefficients = [
-            function(*function_arguments)
-            for function in self._mp_coefficient_functions
+            function(*function_arguments) for function in self._mp_coefficient_functions
         ]
         return jets, coefficients
 
     def _arguments(self, value: Any) -> tuple[float, ...]:
         array = np.asarray(value, dtype=float)
-        params = dict(self.base_params)
-        params.update(zip(self.control_names, array[1:], strict=True))
+        params = self._params(array)
         return (
             float(array[0]),
             *(float(params[name]) for name in self.parameter_names),
         )
+
+    def _params(self, value: np.ndarray) -> dict[str, Any]:
+        params = dict(self.base_params)
+        params.update(zip(self.control_names, value[1:], strict=True))
+        return params
 
     def _default_q_bounds(self) -> tuple[float, float]:
         nonlinear = max(
@@ -591,9 +717,7 @@ class CondensedScalarReduction:
             return 0.0, extent
         return -extent, extent
 
-    def _q_axis(
-        self, bounds: tuple[float, float], samples: int
-    ) -> np.ndarray:
+    def _q_axis(self, bounds: tuple[float, float], samples: int) -> np.ndarray:
         lower, upper = bounds
         if lower == 0.0 and upper > 0.0:
             linear = np.linspace(lower, upper, samples // 2 + 1)
@@ -606,9 +730,7 @@ class CondensedScalarReduction:
         return np.linspace(lower, upper, samples)
 
 
-def scaled_distance(
-    left: np.ndarray, right: np.ndarray, scales: np.ndarray
-) -> float:
+def scaled_distance(left: np.ndarray, right: np.ndarray, scales: np.ndarray) -> float:
     values = np.abs((np.asarray(left) - np.asarray(right)) / scales)
     finite = values[np.isfinite(values)]
     return float(np.max(finite)) if finite.size else np.inf

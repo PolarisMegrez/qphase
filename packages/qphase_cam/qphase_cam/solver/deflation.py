@@ -86,9 +86,7 @@ class DeflationSolver(CAMSolver):
                         iterations=iteration_count,
                     )
                 )
-        solutions = deduplicate_solutions(
-            solutions, self.config.distance_tolerance
-        )
+        solutions = deduplicate_solutions(solutions, self.config.distance_tolerance)
         solutions.sort(
             key=lambda item: model.cam_solution_sort_key(item.state, model.params)
         )

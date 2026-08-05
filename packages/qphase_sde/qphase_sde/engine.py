@@ -12,6 +12,7 @@ Public API
 ``EngineConfig`` : Configuration model for the engine.
 """
 
+import logging
 import time as _time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -32,6 +33,8 @@ from qphase_sde.result import SDEResult
 from qphase_sde.state import TrajectorySet
 
 __all__ = ["Engine", "EngineConfig", "TrajectoryDivergenceError"]
+
+log = logging.getLogger(__name__)
 
 
 class TrajectoryDivergenceError(RuntimeError):
@@ -358,17 +361,25 @@ class Engine(EngineBase):
             analysers=analysers,
             resources=getattr(context, "resources", None),
         )
+        plan_payload = plan.to_dict()
+        log.info("SDE execution plan: %s", plan_payload)
+        if context is not None and isinstance(
+            getattr(context, "metadata", None), dict
+        ):
+            context.metadata["execution_plan"] = plan_payload
+        if reporter is not None and (
+            plan.tile_count > 1 or plan.trajectory_batch_count > 1
+        ):
+            reporter.status(
+                self._execution_plan_summary(plan),
+                stage="planning",
+                metadata={"execution_plan": plan_payload},
+                importance="normal",
+            )
         if grid is not None:
             from qphase_sde.scan import SDEParameterGridAdapter, SDEScanResult
 
             adapter = SDEParameterGridAdapter(self, grid)
-            if reporter is not None:
-                reporter.status(
-                    f"SDE scan plan: {plan.tile_count} tile(s), "
-                    f"{plan.scan_tile_size} point(s)/tile",
-                    stage="planning",
-                    metadata={"execution_plan": plan.to_dict()},
-                )
             if plan.stream_analysis and (
                 plan.tile_count > 1 or plan.trajectory_batch_count > 1
             ):
@@ -413,6 +424,18 @@ class Engine(EngineBase):
         if isinstance(result, SDEResult):
             result.meta.setdefault("execution_plan", plan.to_dict())
         return result
+
+    @staticmethod
+    def _execution_plan_summary(plan: SDEExecutionPlan) -> str:
+        parts = [
+            f"SDE plan: {plan.tile_count} scan tile(s)",
+            f"{plan.trajectory_batch_size} trajectories/batch",
+        ]
+        if plan.trajectory_batch_count > 1:
+            parts.append(f"{plan.trajectory_batch_count} batches/point")
+        if plan.budget_bytes is not None:
+            parts.append(f"{plan.budget_bytes / (1024**3):.2f} GiB budget")
+        return "; ".join(parts)
 
     def _required_model(self) -> Any:
         model = self.plugins.get("model")
@@ -470,7 +493,7 @@ class Engine(EngineBase):
         analysers = self._normalised_analysers()
         accumulated = {name: [] for name in analysers}
         result_meta: dict[str, Any] = {}
-        total_work = plan.scan_size * plan.steps
+        total_work = plan.scan_size * plan.n_traj_per_point * plan.steps
 
         for tile_index, start in enumerate(
             range(0, plan.scan_size, plan.scan_tile_size)
@@ -509,8 +532,10 @@ class Engine(EngineBase):
                         context=context,
                         rng_group_seeds=adapter.point_seeds(start, stop),
                         rng_group_size=adapter.base_n_traj,
-                        progress_offset=start * plan.steps,
-                        progress_scale=point_count,
+                        progress_offset=(
+                            start * plan.n_traj_per_point * plan.steps
+                        ),
+                        progress_scale=point_count * plan.n_traj_per_point,
                         progress_total=total_work,
                         progress_label=f"tile {tile_index + 1}/{plan.tile_count}",
                     )
@@ -536,24 +561,10 @@ class Engine(EngineBase):
                 result_meta.update(tile_result.meta)
             self._release_backend_pool()
             if reporter is not None:
-                completed = (
-                    stop * plan.n_traj_per_point * plan.steps
-                    if plan.trajectory_batch_count > 1
-                    else stop * plan.steps
-                )
-                total = (
-                    plan.scan_size * plan.n_traj_per_point * plan.steps
-                    if plan.trajectory_batch_count > 1
-                    else total_work
-                )
                 reporter.update(
-                    completed=completed,
-                    total=total,
-                    unit=(
-                        "trajectory-step"
-                        if plan.trajectory_batch_count > 1
-                        else "point-step"
-                    ),
+                    completed=stop * plan.n_traj_per_point * plan.steps,
+                    total=total_work,
+                    unit="trajectory-step",
                     stage="sampling",
                     message=(
                         f"Completed SDE scan tile "
@@ -785,7 +796,7 @@ class Engine(EngineBase):
         rng_group_seeds: tuple[int, ...] | None = None,
         rng_group_size: int | None = None,
         progress_offset: int = 0,
-        progress_scale: int = 1,
+        progress_scale: int | None = None,
         progress_total: int | None = None,
         progress_label: str | None = None,
     ) -> ResultProtocol:
@@ -801,6 +812,13 @@ class Engine(EngineBase):
             "dt": self.config.dt,
             "steps": int((self.config.t1 - self.config.t0) / self.config.dt),
         }
+        if progress_scale is None:
+            progress_scale = int(self.config.n_traj)
+        effective_progress_total = (
+            progress_total
+            if progress_total is not None
+            else progress_offset + progress_scale * time_cfg["steps"]
+        )
 
         ic = self.config.ic
         if ic is None:
@@ -826,13 +844,14 @@ class Engine(EngineBase):
                     "ic_total": ic_total,
                 }
                 if context is not None:
-                    scan_summary = context.metadata.get("scan_summary")
+                    context_metadata = getattr(context, "metadata", {})
+                    scan_summary = context_metadata.get("scan_summary")
                     if scan_summary is not None:
                         metadata["scan_summary"] = scan_summary
                 reporter.update(
                     completed=progress_offset + progress_scale * k,
-                    total=progress_total or ic_total * steps,
-                    unit="point-step" if progress_scale > 1 else "step",
+                    total=effective_progress_total,
+                    unit="trajectory-step",
                     stage="sampling",
                     message=msg,
                     metadata=metadata,
@@ -851,6 +870,20 @@ class Engine(EngineBase):
             rng_group_seeds=rng_group_seeds,
             rng_group_size=rng_group_size,
         )
+        if reporter is not None:
+            reporter.update(
+                completed=(
+                    progress_offset + progress_scale * time_cfg["steps"]
+                ),
+                total=effective_progress_total,
+                unit="trajectory-step",
+                stage="sampling",
+                message=(
+                    f"{progress_label} complete"
+                    if progress_label
+                    else "Sampling complete"
+                ),
+            )
 
         # Determine the backend name used for simulation to decide whether the
         # trajectory can be retained. GPU backends (especially cupy) should not
@@ -873,6 +906,19 @@ class Engine(EngineBase):
             if not isinstance(analysers, dict):
                 # Single instance
                 analysers = {getattr(analysers, "name", "analyser"): analysers}
+
+            if reporter is not None:
+                analyser_names = tuple(str(name) for name in analysers)
+                stage = (
+                    "spectral-analysis"
+                    if any(name.lower() == "psd" for name in analyser_names)
+                    else "analysis"
+                )
+                reporter.status(
+                    f"Analyzing {self.config.n_traj} trajectories",
+                    stage=stage,
+                    metadata={"analysers": analyser_names},
+                )
 
             # Get backend used for simulation
             be = self._default_backend

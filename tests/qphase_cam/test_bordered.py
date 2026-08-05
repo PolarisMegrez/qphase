@@ -40,10 +40,7 @@ class ScalarNormalForm:
         x, _ = np.asarray(vector)
         derivative = 0.0
         terms = [(self.order, 1.0)]
-        terms.extend(
-            (power, params[f"p{power}"])
-            for power in range(self.order - 1)
-        )
+        terms.extend((power, params[f"p{power}"]) for power in range(self.order - 1))
         for power, coefficient in terms:
             if power >= order:
                 derivative += (
@@ -52,9 +49,7 @@ class ScalarNormalForm:
                     / factorial(power - order)
                     * x ** (power - order)
                 )
-        contraction = np.prod(
-            [np.asarray(direction)[0] for direction in directions]
-        )
+        contraction = np.prod([np.asarray(direction)[0] for direction in directions])
         return np.asarray([derivative * contraction, 0.0])
 
 

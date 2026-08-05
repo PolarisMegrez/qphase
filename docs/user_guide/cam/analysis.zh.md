@@ -45,6 +45,7 @@ axis 支持 `values`、`linspace` 与 `logspace`，并可选择 Cartesian 或 zi
 | `deflation` | 是 | NumPy | 必需 | 排斥已经找到的根；适合普通多初值搜索总是回到同一根的情况。 |
 | `batched_newton` | 提供多个初值时可以 | NumPy 或 CuPy | 必需 | 使用准备好的种子集合进行大规模参数扫描；默认只有单位阵初值，通常最多找到一个根。 |
 | `continuation` | 追踪一个 sheet | NumPy | 必需 | 从已知根开始进行伪弧长延拓并经过折叠；不负责自动寻找全部稳态。 |
+| `bifurcation` | 可变候选数 | NumPy | fpgen 精确动力学 | 联立搜索二至四重不动点，并分析相对于一个指定物理参数的状态 scaling。 |
 
 模型还可以按照 CAM 规范坐标顺序实现 `cam_residual_vector` 和
 `cam_jacobian_vector`。这些可选回调用于避免 root 求解热点中的矩阵重建；未提供时，
@@ -58,6 +59,22 @@ axis 支持 `values`、`linspace` 与 `logspace`，并可选择 Cartesian 或 zi
 
 `method: root` 在不受约束的 Hermitian 空间内求解，可能得到非物理数学根。
 `method: cholesky` 保证结果半正定，但会遗漏非 PSD 根，并且吸引域可能不同。
+
+### 高阶不动点分岔
+
+`cam_solver.bifurcation` 要求 `order-1` 个 controls 和恰好一个
+`perturbation.parameter`。controls 用于定位临界参数值；perturbation 指定找到候选后
+实际变化的物理参数，并允许同时属于 controls。分类时其他参数固定在候选值。
+
+`strategy.auto` 会运行全部可用的一维线性约化，并与 full bordered 搜索结果取并集。
+这比只选择首个序参量更昂贵，但不会把序参量选择变成隐含的覆盖假设。当前 discovery
+只注册 `seeds`；在真正实现分支追踪前不提供名不副实的 continuation discovery。
+
+默认 `bifurcation_classifier.scaling_signature` 对正规形
+`epsilon^k x^m + x^n=0` 输出具名 `(n,k,m)` 和精确指数 `k/(n-m)`。
+亚线性响应对应 `k<n-m`；transcritical 的 `(2,1,1)` 指数为 1，因此可以通过
+`max_exponent: 0.999` 标记为不满足筛选。响应对象固定为完整 R 或增广状态矩阵，
+具体实验读出属于 model-specific 后处理。
 
 对于大型 scan，`tile_workers` 表示请求的进程数，`n_tiles` 控制有界的 scan task
 数量。`n_tiles` 应大于 worker 数，以维持负载均衡；VDP 101 x 101 job 使用 24 个
@@ -123,3 +140,8 @@ slot。每个参数点默认按 `real(R[0,0])` 排序；slot 不是跨参数点�
 参数、slot、矩阵元、残差、频率、稳定性和物理解字段。大型结果可保存为有限数量
 的 shard；`artifact_manifest.json` 记录布局，`CAMResult.load_dataset` 会恢复相同
 的逻辑 shape。
+
+`CAMBifurcationResult` schema 2 包含 candidate table 和通过 `candidate_index`
+关联的 branch-response table。后者保存局部分支编号、`(n,k,m)`、指数分子/分母、
+扰动侧、幅度和完整状态矩阵领先系数。可通过 `to_candidate_table()`、
+`to_branch_table()` 与 `branch_view()` 读取；CSV 仅保存候选摘要，矩阵系数保存在 NPZ。

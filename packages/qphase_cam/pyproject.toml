@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Workspace-only coherent-amplitude matrix engine for QPhase"
 requires-python = ">=3.11"
 dependencies = [
-  "fpgen>=0.4,<0.5",
+  "fpgen>=0.5,<0.6",
   "numpy>=1.24",
   "scipy>=1.10",
   "sympy>=1.12",
@@ -28,7 +28,7 @@ dependencies = [
 "bifurcation_strategy.reduced" = "qphase_cam.solver.bifurcation_strategy:ReducedStrategy"
 "bifurcation_strategy.full" = "qphase_cam.solver.bifurcation_strategy:FullStrategy"
 "bifurcation_discovery.seeds" = "qphase_cam.solver.bifurcation_discovery:SeedDiscovery"
-"bifurcation_discovery.continuation" = "qphase_cam.solver.bifurcation_discovery:ContinuationDiscovery"
+"bifurcation_classifier.scaling_signature" = "qphase_cam.solver.bifurcation_classifier:ScalingSignatureClassifier"
 "cam_postprocessor.rayleigh_frequency" = "qphase_cam.postprocessor.frequency:RayleighFrequency"
 "cam_postprocessor.hamiltonian_spectrum" = "qphase_cam.postprocessor.frequency:HamiltonianSpectrum"
 "cam_postprocessor.jacobian_spectrum" = "qphase_cam.postprocessor.jacobian:JacobianSpectrum"

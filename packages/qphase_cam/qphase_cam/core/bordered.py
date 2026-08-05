@@ -48,10 +48,11 @@ class BorderedVerificationOutcome:
     digits: int
     residual_norm: float
     success: bool
+    decimal_values: tuple[str, ...] = ()
 
 
 class BorderedMultiplicitySystem:
-    """Square augmented system for a simple zero eigenvalue of order 2-4."""
+    """Gauge-fixed bordered system for a simple zero eigenvalue of order 2-4."""
 
     def __init__(
         self,
@@ -89,6 +90,7 @@ class BorderedMultiplicitySystem:
                 jacobian.T @ left,
                 np.asarray([np.dot(left, right) - 1.0]),
                 coefficients[2 : self.order],
+                np.asarray([np.dot(right, right) - 1.0]),
             )
         )
 
@@ -106,56 +108,29 @@ class BorderedMultiplicitySystem:
                 [left[None, :], np.zeros((1, 1))],
             ]
         )
-        b_vv = self.dynamics.directional(
-            2, state, params, right, right
-        )
+        b_vv = self.dynamics.directional(2, state, params, right, right)
         coefficient_2 = float(left @ b_vv)
-        h_2 = np.linalg.solve(
-            bordered, np.concatenate((-b_vv, [0.0]))
-        )[:-1]
+        h_2 = self._linear_solve(bordered, np.concatenate((-b_vv, [0.0])))[:-1]
         if self.order == 2:
             return np.asarray([0.0, 0.0, coefficient_2])
-        t_vvv = self.dynamics.directional(
-            3, state, params, right, right, right
-        )
-        b_vh2 = self.dynamics.directional(
-            2, state, params, right, h_2
-        )
+        t_vvv = self.dynamics.directional(3, state, params, right, right, right)
+        b_vh2 = self.dynamics.directional(2, state, params, right, h_2)
         forcing_3 = t_vvv + 3.0 * b_vh2
         coefficient_3 = float(left @ forcing_3)
         if self.order < 4:
             return np.asarray([0.0, 0.0, coefficient_2, coefficient_3])
-        h_3 = np.linalg.solve(
-            bordered, np.concatenate((-forcing_3, [0.0]))
-        )[:-1]
-        q_vvvv = self.dynamics.directional(
-            4, state, params, right, right, right, right
-        )
-        t_vvh2 = self.dynamics.directional(
-            3, state, params, right, right, h_2
-        )
-        b_h2h2 = self.dynamics.directional(
-            2, state, params, h_2, h_2
-        )
-        b_vh3 = self.dynamics.directional(
-            2, state, params, right, h_3
-        )
-        forcing_4 = (
-            q_vvvv
-            + 6.0 * t_vvh2
-            + 3.0 * b_h2h2
-            + 4.0 * b_vh3
-        )
+        h_3 = self._linear_solve(bordered, np.concatenate((-forcing_3, [0.0])))[:-1]
+        q_vvvv = self.dynamics.directional(4, state, params, right, right, right, right)
+        t_vvh2 = self.dynamics.directional(3, state, params, right, right, h_2)
+        b_h2h2 = self.dynamics.directional(2, state, params, h_2, h_2)
+        b_vh3 = self.dynamics.directional(2, state, params, right, h_3)
+        forcing_4 = q_vvvv + 6.0 * t_vvh2 + 3.0 * b_h2h2 + 4.0 * b_vh3
         coefficient_4 = float(left @ forcing_4)
-        return np.asarray(
-            [0.0, 0.0, coefficient_2, coefficient_3, coefficient_4]
-        )
+        return np.asarray([0.0, 0.0, coefficient_2, coefficient_3, coefficient_4])
 
     def seed(self, state: Any, controls: dict[str, float]) -> np.ndarray:
         vector = np.asarray(state, dtype=float).reshape(-1)
-        control_values = np.asarray(
-            [controls[name] for name in self.control_names]
-        )
+        control_values = np.asarray([controls[name] for name in self.control_names])
         params = self.params(control_values)
         jacobian = self.dynamics.jacobian(vector, params)
         left_vectors, _, right_vectors = np.linalg.svd(jacobian)
@@ -166,7 +141,7 @@ class BorderedMultiplicitySystem:
             raise np.linalg.LinAlgError(
                 "left and right near-null vectors have negligible overlap"
             )
-        right /= overlap
+        left /= overlap
         return np.concatenate(
             (
                 vector,
@@ -231,6 +206,9 @@ class BorderedMultiplicitySystem:
                             digits=digits,
                             residual_norm=residual_float,
                             success=success,
+                            decimal_values=tuple(
+                                mp.nstr(item, n=digits) for item in solved
+                            ),
                         )
                     current = solved
                 except (
@@ -245,14 +223,15 @@ class BorderedMultiplicitySystem:
                             digits=digits,
                             residual_norm=np.inf,
                             success=False,
+                            decimal_values=tuple(
+                                mp.nstr(item, n=digits) for item in current
+                            ),
                         )
                 digits = min(2 * digits, max_digits)
         finally:
             mp.mp.dps = previous_digits
 
-    def _mp_residual(
-        self, value: Any, *, include_gauge: bool = False
-    ) -> list[Any]:
+    def _mp_residual(self, value: Any, *, include_gauge: bool = False) -> list[Any]:
         import mpmath as mp
 
         array = tuple(value)
@@ -265,9 +244,7 @@ class BorderedMultiplicitySystem:
         params = self.params(controls)
         residual = self.dynamics.mpmath_rhs(state, params)
         jacobian = self.dynamics.mpmath_jacobian(state, params)
-        coefficients = self._mp_coefficients(
-            state, params, jacobian, right, left
-        )
+        coefficients = self._mp_coefficients(state, params, jacobian, right, left)
         output = [*residual, *(jacobian * right), *(jacobian.T * left)]
         output.append((left.T * right)[0] - 1)
         output.extend(coefficients[2 : self.order])
@@ -292,43 +269,26 @@ class BorderedMultiplicitySystem:
                 bordered[row, column] = jacobian[row, column]
             bordered[row, n] = right[row]
             bordered[n, row] = left[row]
-        b_vv = self.dynamics.mpmath_directional(
-            2, state, params, right, right
-        )
+        b_vv = self.dynamics.mpmath_directional(2, state, params, right, right)
         coefficient_2 = (left.T * b_vv)[0]
-        h_2 = mp.lu_solve(
-            bordered, mp.matrix([*list(-b_vv), mp.mpf("0")])
-        )[:n]
+        h_2 = mp.lu_solve(bordered, mp.matrix([*list(-b_vv), mp.mpf("0")]))[:n]
         coefficients = [mp.mpf("0"), mp.mpf("0"), coefficient_2]
         if self.order == 2:
             return coefficients
         forcing_3 = self.dynamics.mpmath_directional(
             3, state, params, right, right, right
-        ) + 3 * self.dynamics.mpmath_directional(
-            2, state, params, right, h_2
-        )
+        ) + 3 * self.dynamics.mpmath_directional(2, state, params, right, h_2)
         coefficients.append((left.T * forcing_3)[0])
         if self.order < 4:
             return coefficients
-        h_3 = mp.lu_solve(
-            bordered, mp.matrix([*list(-forcing_3), mp.mpf("0")])
-        )[:n]
+        h_3 = mp.lu_solve(bordered, mp.matrix([*list(-forcing_3), mp.mpf("0")]))[:n]
         forcing_4 = (
             self.dynamics.mpmath_directional(
                 4, state, params, right, right, right, right
             )
-            + 6
-            * self.dynamics.mpmath_directional(
-                3, state, params, right, right, h_2
-            )
-            + 3
-            * self.dynamics.mpmath_directional(
-                2, state, params, h_2, h_2
-            )
-            + 4
-            * self.dynamics.mpmath_directional(
-                2, state, params, right, h_3
-            )
+            + 6 * self.dynamics.mpmath_directional(3, state, params, right, right, h_2)
+            + 3 * self.dynamics.mpmath_directional(2, state, params, h_2, h_2)
+            + 4 * self.dynamics.mpmath_directional(2, state, params, right, h_3)
         )
         coefficients.append((left.T * forcing_4)[0])
         return coefficients
@@ -347,6 +307,14 @@ class BorderedMultiplicitySystem:
             array[n + m : 2 * n + m],
             array[2 * n + m :],
         )
+
+    @staticmethod
+    def _linear_solve(matrix: np.ndarray, right: np.ndarray) -> np.ndarray:
+        try:
+            return np.linalg.solve(matrix, right)
+        except np.linalg.LinAlgError:
+            solution, *_ = np.linalg.lstsq(matrix, right, rcond=None)
+            return solution
 
     def params(self, controls: np.ndarray) -> dict[str, Any]:
         params = dict(self.base_params)

@@ -21,9 +21,9 @@ def test_condensed_jets_match_explicit_vdp_reduced_dynamics():
         g=0.5,
     )
     adapter = FPGenDynamicsAdapter.from_model(model)
-    candidate = adapter.dynamics.find_linear_reductions(
+    candidate = adapter.dynamics.search_linear_reductions(
         retained_dimension=1
-    )[0]
+    ).candidates[0]
     plan = adapter.dynamics.linear_reduce(candidate=candidate)
     materialized = plan.materialize()
     condensed = CondensedScalarReduction(
@@ -79,9 +79,9 @@ def test_kerr_three_mode_condensed_reconstruction_solves_eliminated_block():
         g_ac=0.3,
     )
     adapter = FPGenDynamicsAdapter.from_model(model)
-    candidate = adapter.dynamics.find_linear_reductions(
+    candidate = adapter.dynamics.search_linear_reductions(
         retained_dimension=1
-    )[0]
+    ).candidates[0]
     reduction = CondensedScalarReduction(
         adapter.dynamics.linear_reduce(candidate=candidate),
         order=3,

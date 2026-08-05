@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
+from qphase.core.progress import ProgressReporter
 from qphase.core.scan import ScanSpec
 from qphase_sde.analyser.lorentz_fitter import _load_input
 from qphase_sde.analyser.psd import PsdAnalyzer
@@ -312,3 +313,55 @@ def test_scan_runs_trajectory_batches_inside_each_parameter_point():
     assert result.combined.meta["execution_plan"]["trajectory_batch_count"] == 2
     assert engine.config.n_traj == 128
     assert model.params == {"rate": 1.0}
+
+
+def test_sde_progress_uses_stable_trajectory_step_units():
+    events = []
+    reporter = ProgressReporter(events.append)
+    model = StochasticScannedModel()
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.04,
+            dt=0.01,
+            n_traj=128,
+            trajectory_batching="required",
+            trajectory_batch_size=64,
+            seed=31,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": model,
+            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+        },
+    )
+
+    engine.run(
+        context=SimpleNamespace(
+            parameter_grid=_grid(),
+            progress=reporter,
+            cancellation=None,
+            metadata={},
+        )
+    )
+
+    sampling = [
+        event
+        for event in events
+        if event.kind == "progress" and event.stage == "sampling"
+    ]
+    assert sampling
+    assert {event.unit for event in sampling} == {"trajectory-step"}
+    assert {event.total for event in sampling} == {2 * 128 * 4}
+    assert sampling[-1].completed == 2 * 128 * 4
+    assert any(event.stage == "spectral-analysis" for event in events)
+    plan_status = next(
+        event
+        for event in events
+        if event.kind == "status" and event.stage == "planning"
+    )
+    assert plan_status.importance == "normal"
+    assert plan_status.metadata["execution_plan"]["trajectory_batch_count"] == 2

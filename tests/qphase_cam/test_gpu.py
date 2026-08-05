@@ -57,9 +57,11 @@ def test_batched_newton_numpy_cupy_agree(model_name):
         varying, second = "omega_b", -0.011
         initial = np.eye(3)
         steady_method = "root"
-    root = SteadyStateSolver(
-        method=steady_method, initial_guess=initial, tolerance=1e-8
-    ).solve(Model(**base), NumpyBackend()).solutions[0]
+    root = (
+        SteadyStateSolver(method=steady_method, initial_guess=initial, tolerance=1e-8)
+        .solve(Model(**base), NumpyBackend())
+        .solutions[0]
+    )
     assert root.success
     batched_params = dict(base)
     batched_params[varying] = [base[varying], second]
@@ -68,12 +70,16 @@ def test_batched_newton_numpy_cupy_agree(model_name):
         "max_iterations": 20,
         "tolerance": 1e-7,
     }
-    numpy_rows = BatchedNewtonSolver(**options).solve(
-        Model(**batched_params), NumpyBackend()
-    ).solutions
-    cupy_rows = BatchedNewtonSolver(**options).solve(
-        Model(**batched_params), CuPyBackend()
-    ).solutions
+    numpy_rows = (
+        BatchedNewtonSolver(**options)
+        .solve(Model(**batched_params), NumpyBackend())
+        .solutions
+    )
+    cupy_rows = (
+        BatchedNewtonSolver(**options)
+        .solve(Model(**batched_params), CuPyBackend())
+        .solutions
+    )
     for numpy_row, cupy_row in zip(numpy_rows, cupy_rows, strict=True):
         assert numpy_row and cupy_row
         np.testing.assert_allclose(

@@ -29,9 +29,7 @@ class BatchedNewtonSolverConfig(CAMSolverConfig):
 class BatchedNewtonSolver(CAMSolver):
     name: ClassVar[str] = "batched_newton"
     description: ClassVar[str] = "Backend-native batched CAM Newton solver"
-    config_schema: ClassVar[type[BatchedNewtonSolverConfig]] = (
-        BatchedNewtonSolverConfig
-    )
+    config_schema: ClassVar[type[BatchedNewtonSolverConfig]] = BatchedNewtonSolverConfig
     supports_batch: ClassVar[bool] = True
 
     def solve(self, model: Any, backend: Any) -> CAMSolverOutput:
@@ -93,10 +91,7 @@ class BatchedNewtonSolver(CAMSolver):
                 CAMSolution(
                     states_cpu[batch_index, guess_index],
                     float(norms_cpu[batch_index, guess_index]),
-                    bool(
-                        norms_cpu[batch_index, guess_index]
-                        <= self.config.tolerance
-                    ),
+                    bool(norms_cpu[batch_index, guess_index] <= self.config.tolerance),
                     "batched-newton",
                     iterations=iterations,
                 )
@@ -173,9 +168,7 @@ class BatchedNewtonSolver(CAMSolver):
             return backend.asarray(value)
         value = np.asarray(self.config.initial_guesses, dtype=complex)
         if value.shape == (n_modes, n_modes):
-            value = np.broadcast_to(
-                value, (batch_size, 1, n_modes, n_modes)
-            ).copy()
+            value = np.broadcast_to(value, (batch_size, 1, n_modes, n_modes)).copy()
         elif value.ndim == 3 and value.shape[-2:] == (n_modes, n_modes):
             value = np.broadcast_to(
                 value[None, ...], (batch_size,) + value.shape

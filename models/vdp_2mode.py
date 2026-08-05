@@ -51,9 +51,7 @@ class VDP2ModeModel(SDEModelPlugin):
 
         out = xp.empty_like(y)
         out[:, 0] = (
-            -1j * omega_a
-            + gamma_a / 2.0
-            + nonlinear_gain * (1.0 - xp.abs(alpha) ** 2)
+            -1j * omega_a + gamma_a / 2.0 + nonlinear_gain * (1.0 - xp.abs(alpha) ** 2)
         ) * alpha - 1j * coupling * beta
         out[:, 1] = (-1j * omega_b - gamma_b / 2.0) * beta - 1j * coupling * alpha
         return out
@@ -71,9 +69,7 @@ class VDP2ModeModel(SDEModelPlugin):
 
         matrix = xp.zeros((y.shape[0], 2, 2), dtype=y.dtype)
         matrix[:, 0, 0] = (
-            -1j * omega_a
-            + gamma_a / 2.0
-            + nonlinear_gain * (1.0 - xp.abs(alpha) ** 2)
+            -1j * omega_a + gamma_a / 2.0 + nonlinear_gain * (1.0 - xp.abs(alpha) ** 2)
         )
         matrix[:, 0, 1] = -1j * coupling
         matrix[:, 1, 0] = -1j * coupling
@@ -90,8 +86,7 @@ class VDP2ModeModel(SDEModelPlugin):
         return self.diagonal_complex_diffusion(
             y,
             (
-                gamma_a / 2.0
-                + nonlinear_gain * (2.0 * xp.abs(alpha) ** 2 - 1.0),
+                gamma_a / 2.0 + nonlinear_gain * (2.0 * xp.abs(alpha) ** 2 - 1.0),
                 gamma_b / 2.0,
             ),
         )
@@ -123,9 +118,7 @@ class VDP2ModeModel(SDEModelPlugin):
         nonlinear_gain = self.parameter(params, "Gamma", xp)
         r_aa = xp.real(state[..., 0, 0])
         matrix = xp.zeros(state.shape, dtype=state.dtype)
-        matrix[..., 0, 0] = (
-            gamma_a / 2.0 + nonlinear_gain * (2.0 * r_aa - 1.0)
-        )
+        matrix[..., 0, 0] = gamma_a / 2.0 + nonlinear_gain * (2.0 * r_aa - 1.0)
         matrix[..., 1, 1] = gamma_b / 2.0
         return matrix
 
@@ -133,19 +126,14 @@ class VDP2ModeModel(SDEModelPlugin):
         """Evaluate the CAM residual directly in canonical real coordinates."""
         xp = get_xp(vector)
         vector = xp.asarray(vector)
-        r_aa, r_bb, r_ab_real, r_ab_imag = (
-            vector[..., index] for index in range(4)
-        )
+        r_aa, r_bb, r_ab_real, r_ab_imag = (vector[..., index] for index in range(4))
         omega_a = self.parameter(params, "omega_a", xp)
         omega_b = self.parameter(params, "omega_b", xp)
         gamma_a = self.parameter(params, "gamma_a", xp)
         gamma_b = self.parameter(params, "gamma_b", xp)
         nonlinear_gain = self.parameter(params, "Gamma", xp)
         coupling = self.parameter(params, "g", xp)
-        common = (
-            (gamma_a - gamma_b) / 2.0
-            - nonlinear_gain * (r_aa - 1.0)
-        )
+        common = (gamma_a - gamma_b) / 2.0 - nonlinear_gain * (r_aa - 1.0)
         residual = xp.empty_like(vector)
         residual[..., 0] = (
             gamma_a * r_aa
@@ -155,9 +143,7 @@ class VDP2ModeModel(SDEModelPlugin):
             - 2.0 * coupling * r_ab_imag
         )
         residual[..., 1] = -gamma_b * r_bb + gamma_b / 2.0 + 2.0 * coupling * r_ab_imag
-        residual[..., 2] = (
-            common * r_ab_real + (omega_a - omega_b) * r_ab_imag
-        )
+        residual[..., 2] = common * r_ab_real + (omega_a - omega_b) * r_ab_imag
         residual[..., 3] = (
             common * r_ab_imag
             + (omega_b - omega_a) * r_ab_real
@@ -178,10 +164,7 @@ class VDP2ModeModel(SDEModelPlugin):
         r_aa = vector[..., 0]
         r_ab_real = vector[..., 2]
         r_ab_imag = vector[..., 3]
-        common = (
-            (gamma_a - gamma_b) / 2.0
-            - nonlinear_gain * (r_aa - 1.0)
-        )
+        common = (gamma_a - gamma_b) / 2.0 - nonlinear_gain * (r_aa - 1.0)
         jacobian = xp.zeros(vector.shape[:-1] + (4, 4), dtype=vector.dtype)
         jacobian[..., 0, 0] = gamma_a - 4.0 * nonlinear_gain * (r_aa - 1.0)
         jacobian[..., 0, 3] = -2.0 * coupling
@@ -223,9 +206,7 @@ class VDP2ModeModel(SDEModelPlugin):
         )
 
         a, b = boson_modes("a", "b")
-        parameters = sp.symbols(
-            "omega_a omega_b gamma_a gamma_b Gamma g", real=True
-        )
+        parameters = sp.symbols("omega_a omega_b gamma_a gamma_b Gamma g", real=True)
         omega_a, omega_b, gamma_a, gamma_b, nonlinear_gain, coupling = parameters
         master = MasterEquation(
             modes=(a, b),
@@ -246,6 +227,12 @@ class VDP2ModeModel(SDEModelPlugin):
             .to_langevin()
             .to_second_moment_dynamics(
                 parameters=parameters,
+                parameter_domains={
+                    gamma_a: "nonnegative",
+                    gamma_b: "nonnegative",
+                    nonlinear_gain: "nonnegative",
+                    coupling: "nonnegative",
+                },
                 layout="normal",
                 closure="factorized_bilinear",
             )
@@ -266,16 +253,13 @@ class VDP2ModeModel(SDEModelPlugin):
         hamiltonian = sp.Matrix(
             [
                 [
-                    omega_a
-                    + sp.I * (gamma_a / 2 + nonlinear_gain * (1 - r_aa)),
+                    omega_a + sp.I * (gamma_a / 2 + nonlinear_gain * (1 - r_aa)),
                     coupling,
                 ],
                 [coupling, omega_b - sp.I * gamma_b / 2],
             ]
         )
-        diffusion = sp.diag(
-            gamma_a / 2 + nonlinear_gain * (2 * r_aa - 1), gamma_b / 2
-        )
+        diffusion = sp.diag(gamma_a / 2 + nonlinear_gain * (2 * r_aa - 1), gamma_b / 2)
         return CAMSymbolicSpec(
             hamiltonian,
             diffusion,

@@ -75,6 +75,9 @@ class ProgressEvent:
     metadata : Mapping[str, Any]
         Small structured extras (worker count, scan shape). Large arrays are
         forbidden.
+    importance : str
+        Consumer visibility hint. ``normal`` status events may be shown in a
+        concise UI; ``detail`` status events are reserved for verbose output.
     monotonic_time : float
         Filled by core when the event is received; ``0.0`` means unset.
 
@@ -87,6 +90,7 @@ class ProgressEvent:
     unit: str | None = None
     message: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    importance: str = "detail"
     monotonic_time: float = 0.0
 
     def __post_init__(self) -> None:
@@ -123,6 +127,7 @@ class ProgressSnapshot:
     rate: float | None = None
     remaining: float | None = None
     message: str = ""
+    importance: str = "detail"
     scan_summary: dict[str, Any] | None = None
     duration: float | None = None
     run_dir: str | None = None
@@ -149,6 +154,7 @@ class ProgressSnapshot:
             "rate": self.rate,
             "remaining": self.remaining,
             "message": self.message,
+            "importance": self.importance,
             "scan_summary": self.scan_summary,
             "duration": self.duration,
             "run_dir": self.run_dir,
@@ -228,6 +234,7 @@ class ProgressReporter:
         *,
         stage: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        importance: str = "detail",
     ) -> None:
         """Emit a message-only update that does not affect work estimates."""
         self._send(
@@ -236,6 +243,7 @@ class ProgressReporter:
                 stage=stage if stage is not None else self._stage,
                 message=message,
                 metadata=dict(metadata or {}),
+                importance=importance,
             )
         )
 
@@ -445,6 +453,7 @@ class ProgressTracker:
         now = event.monotonic_time
         if self._started_at is None:
             self._started_at = now
+        previous_stage = self._current_stage
         if event.stage:
             self._current_stage = event.stage
 
@@ -454,6 +463,20 @@ class ProgressTracker:
 
         key = (event.stage, event.unit)
         stats = self._stages.get(key)
+        resumed = (
+            stats is not None
+            and previous_stage is not None
+            and event.stage != previous_stage
+            and event.kind == "progress"
+        )
+        if resumed:
+            # Do not charge time spent in another stage to this stage's rate.
+            stats.last_completed = event.completed
+            stats.last_time = now
+            if event.total is not None:
+                stats.total = event.total
+            self._last_event = event
+            return event
         reset = stats is None or event.kind == "stage_started"
         if not reset and stats is not None:
             if (

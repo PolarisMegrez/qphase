@@ -19,6 +19,8 @@ class ReductionStrategyConfig(PluginConfigBase):
     retained_dimension: Literal[1] = 1
     order_parameter: str | None = None
     max_candidates: int = Field(8, ge=1)
+    partition_limit: int | None = Field(None, ge=1)
+    materialization_limit: int | None = Field(None, ge=1)
     condition_limit: float = Field(1e10, gt=1.0)
     singular_tolerance: float = Field(1e-10, gt=0.0)
     order_parameter_bounds: tuple[float, float] | None = None

@@ -62,6 +62,31 @@ def test_tracker_does_not_invent_progress_for_unknown_total() -> None:
     assert tracker.estimates(event) == (None, None, None)
 
 
+def test_tracker_excludes_other_stage_time_when_sampling_resumes() -> None:
+    clock = FakeClock()
+    tracker = ProgressTracker(
+        clock=clock,
+        eta_warmup_seconds=0.0,
+        eta_min_samples=1,
+        eta_smoothing=1.0,
+    )
+    tracker.observe(ProgressEvent(stage="sampling", completed=0, total=30, unit="step"))
+    clock.advance(1.0)
+    first = tracker.observe(
+        ProgressEvent(stage="sampling", completed=10, total=30, unit="step")
+    )
+    assert tracker.estimates(first)[1] == pytest.approx(10.0)
+
+    clock.advance(20.0)
+    tracker.observe(ProgressEvent(kind="status", stage="analysis"))
+    clock.advance(1.0)
+    resumed = tracker.observe(
+        ProgressEvent(stage="sampling", completed=20, total=30, unit="step")
+    )
+
+    assert tracker.estimates(resumed)[1] == pytest.approx(10.0)
+
+
 def test_non_tty_renderer_prints_milestones_without_carriage_returns() -> None:
     stream = io.StringIO()
     renderer = CliProgressRenderer(
@@ -100,3 +125,26 @@ def test_non_tty_renderer_prints_milestones_without_carriage_returns() -> None:
     assert output.count("solve_tiles") == 3
     assert "\r" not in output
     assert "global" not in output.lower()
+
+
+def test_non_tty_renderer_shows_only_normal_status_in_brief_mode() -> None:
+    stream = io.StringIO()
+    renderer = CliProgressRenderer(stream=stream, is_tty=False, verbose=False)
+    common = {
+        "kind": "job_status",
+        "job_name": "simulation",
+        "job_index": 0,
+        "total_jobs": 1,
+        "engine": "sde",
+        "stage": "planning",
+    }
+
+    renderer.handle(
+        ProgressSnapshot(**common, message="hidden detail", importance="detail")
+    )
+    renderer.handle(
+        ProgressSnapshot(**common, message="visible plan", importance="normal")
+    )
+
+    assert "hidden detail" not in stream.getvalue()
+    assert "visible plan" in stream.getvalue()

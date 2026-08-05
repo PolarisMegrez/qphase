@@ -24,13 +24,11 @@ class CAMSolver(ABC):
     description: ClassVar[str]
     config_schema: ClassVar[type[CAMSolverConfig]]
     supports_batch: ClassVar[bool] = False
-    output_kind: ClassVar[
-        Literal["fixed_points", "bifurcation_candidates"]
-    ] = "fixed_points"
+    output_kind: ClassVar[Literal["fixed_points", "bifurcation_candidates"]] = (
+        "fixed_points"
+    )
 
-    def __init__(
-        self, config: CAMSolverConfig | None = None, **kwargs: Any
-    ) -> None:
+    def __init__(self, config: CAMSolverConfig | None = None, **kwargs: Any) -> None:
         if config is not None and kwargs:
             raise TypeError("provide either config or keyword options, not both")
         source = kwargs if config is None else config.model_dump()

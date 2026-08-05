@@ -64,14 +64,35 @@ falls back to the standard H/D and Jacobian capabilities when they are absent.
 define an internal adaptive search domain, so it rejects an external
 `ScanSpec`. The required `target` subplugin currently supports
 `equilibrium_multiplicity` with `order: 2`, `3`, or `4`; exactly `order - 1`
-control parameters must be supplied.
+control parameters must be supplied. One scalar `perturbation.parameter` is
+also required. It selects the physical parameter varied after the critical
+point is located; it may also be one of the controls. All other parameters are
+held fixed during classification.
 
-The default `strategy.auto` first asks fpgen for a regular scalar linear
-reduction. Small eliminated blocks use fraction-free equations; large blocks
-use implicit condensed derivatives without expanding a large rational
-expression. If no regular reduction exists, the solver uses a full bordered
-Lyapunov-Schmidt system with left and right zero vectors. `strategy.reduced`
-requires the scalar path, while `strategy.full` requires the bordered path.
+The default `strategy.auto` evaluates every available scalar linear reduction
+and unions those candidates with a full bordered Lyapunov-Schmidt search. Small
+eliminated blocks use fraction-free equations; large blocks use implicit
+condensed derivatives without expanding a large rational expression. This is
+more expensive than selecting one reduction, but avoids making the selected
+order parameter an undocumented coverage assumption. `strategy.reduced` uses
+all available scalar paths without the full search, while `strategy.full`
+requires the bordered path. Bifurcation discovery currently supports domain
+and upstream `seeds`; a continuation discovery option is not advertised until
+it performs actual branch tracing.
+
+The default `bifurcation_classifier.scaling_signature` expands the reduced
+equation in the center coordinate `x` and the selected perturbation `epsilon`.
+For a lower-Newton-edge balance
+
+```text
+a epsilon^k x^m + b x^n = 0
+```
+
+it records the named signature `(n,k,m)` and the exact rational exponent
+`k/(n-m)`. Sublinear response is therefore `k < n-m`; a transcritical normal
+form has `(2,1,1)` and exponent one. Classification is for the complete normal
+or augmented CAM state matrix. A model-specific experimental readout may
+cancel its leading matrix coefficient and is a separate postprocessing task.
 
 Float64 solves only discover candidates. Accepted candidates are refined from
 the exact fpgen expressions with mpmath, starting at `verification.initial_digits`
@@ -187,9 +208,11 @@ residuals, frequencies, stability, and physicality fields. Large results may be
 stored as a bounded set of shards; `artifact_manifest.json` records the layout
 and `CAMResult.load_dataset` restores the same logical shape.
 
-`CAMBifurcationResult` instead has a variable candidate axis. It stores states,
-control values, residual norms, singular values, null vectors, reduced
-coefficients, physicality/stability flags, and explicit verification status and
-digits. Its NPZ retains complete diagnostics, while its CSV contains one row per
-candidate for filtering and plotting. Candidate indices are not global branch
-identifiers.
+`CAMBifurcationResult` instead has a variable candidate axis. Schema 2 stores a
+candidate table plus a branch-response table linked by `candidate_index`. The
+branch table contains local branch indices, `(n,k,m)`, exact exponent numerator
+and denominator, perturbation side, amplitude, and the complete leading state
+matrix coefficient. `to_candidate_table()`, `to_branch_table()`, and
+`branch_view()` avoid direct dependence on NPZ object internals. CSV contains a
+candidate summary; matrix coefficients remain in NPZ. Candidate and local
+branch indices are not global branch identifiers.

@@ -62,9 +62,7 @@ class Kerr3ModeModel(SDEModelPlugin):
 
         matrix = xp.zeros((y.shape[0], 3, 3), dtype=y.dtype)
         matrix[:, 0, 0] = (
-            -gamma_a / 2.0
-            - 1j * omega_a
-            - 2j * chi * (xp.abs(y[:, 0]) ** 2 - 1.0)
+            -gamma_a / 2.0 - 1j * omega_a - 2j * chi * (xp.abs(y[:, 0]) ** 2 - 1.0)
         )
         matrix[:, 0, 1] = -1j * coupling_ab
         matrix[:, 0, 2] = -1j * coupling_ac
@@ -98,9 +96,7 @@ class Kerr3ModeModel(SDEModelPlugin):
         coupling_ac = self.parameter(params, "g_ac", xp)
         r_aa = xp.real(state[..., 0, 0])
         matrix = xp.zeros(state.shape, dtype=state.dtype)
-        matrix[..., 0, 0] = (
-            omega_a + 2.0 * chi * (r_aa - 1.0) - 1j * gamma_a / 2.0
-        )
+        matrix[..., 0, 0] = omega_a + 2.0 * chi * (r_aa - 1.0) - 1j * gamma_a / 2.0
         matrix[..., 0, 1] = coupling_ab
         matrix[..., 0, 2] = coupling_ac
         matrix[..., 1, 0] = coupling_ab
@@ -331,6 +327,14 @@ class Kerr3ModeModel(SDEModelPlugin):
             .to_langevin()
             .to_second_moment_dynamics(
                 parameters=parameters,
+                parameter_domains={
+                    chi: "nonnegative",
+                    coupling_ab: "nonnegative",
+                    coupling_ac: "nonnegative",
+                    gamma_a: "nonnegative",
+                    gamma_b: "nonnegative",
+                    gamma_c: "nonnegative",
+                },
                 layout="normal",
                 closure="factorized_bilinear",
             )
@@ -347,9 +351,7 @@ class Kerr3ModeModel(SDEModelPlugin):
         omega_a, omega_b, omega_c, chi = sp.symbols(
             "omega_a omega_b omega_c chi", real=True
         )
-        gamma_a, gamma_b, gamma_c = sp.symbols(
-            "gamma_a gamma_b gamma_c", real=True
-        )
+        gamma_a, gamma_b, gamma_c = sp.symbols("gamma_a gamma_b gamma_c", real=True)
         coupling_ab, coupling_ac = sp.symbols("g_ab g_ac", real=True)
         r_aa = state[0, 0]
         hamiltonian = sp.Matrix(

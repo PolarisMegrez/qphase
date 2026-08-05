@@ -868,10 +868,7 @@ def _unique_rows(values: np.ndarray, tolerance: float = 1e-3) -> np.ndarray:
     unique: list[np.ndarray] = []
     for value in np.asarray(values):
         scale = max(1.0, float(np.linalg.norm(value)))
-        if all(
-            np.linalg.norm(value - known) > tolerance * scale
-            for known in unique
-        ):
+        if all(np.linalg.norm(value - known) > tolerance * scale for known in unique):
             unique.append(np.asarray(value))
     return np.asarray(unique)
 
@@ -1006,9 +1003,7 @@ def _solve_point(
 
     def process(solution: Any) -> None:
         nonlocal duplicate_streak
-        if not (
-            solution.success and solution.residual <= config.residual_tolerance
-        ):
+        if not (solution.success and solution.residual <= config.residual_tolerance):
             return
         vector = np.asarray(matrix_to_vector(solution.state))
         matching = next(

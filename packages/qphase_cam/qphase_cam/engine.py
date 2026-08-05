@@ -11,8 +11,12 @@ from pydantic import BaseModel, ConfigDict
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 from qphase.core.scan import ParameterGrid, execute_pointwise
 
-from qphase_cam.bifurcation_result import CAMBifurcationResult
-from qphase_cam.errors import SolutionCapacityError
+from qphase_cam.bifurcation_result import (
+    CAMBifurcationBranchTable,
+    CAMBifurcationResult,
+)
+from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.errors import BifurcationCapabilityError, SolutionCapacityError
 from qphase_cam.result import CAMResult
 from qphase_cam.state import CAMSolution
 
@@ -158,15 +162,36 @@ class Engine(EngineBase):
 
     @staticmethod
     def _pack_bifurcation(output: Any, model: Any) -> CAMBifurcationResult:
-        from qphase_cam.core.coordinates import vector_to_matrix
-
         candidates = list(output.candidates)
-        n_state = int(model.n_modes) ** 2
+        try:
+            adapter = FPGenDynamicsAdapter.from_model(model)
+        except BifurcationCapabilityError:
+            adapter = None
+        n_state = adapter.state_size if adapter is not None else int(model.n_modes) ** 2
         control_names = tuple(output.metadata.get("control_names", ()))
         vectors = np.asarray(
             [candidate.state_vector for candidate in candidates], dtype=float
         ).reshape((-1, n_state))
-        states = np.asarray(vector_to_matrix(vectors, int(model.n_modes)))
+        if candidates and adapter is not None:
+            states = np.asarray(
+                [
+                    adapter.state_matrix(
+                        candidate.state_vector,
+                        {**model.params, **candidate.controls},
+                    )
+                    for candidate in candidates
+                ]
+            )
+        elif candidates:
+            from qphase_cam.core.coordinates import vector_to_matrix
+
+            states = np.asarray(vector_to_matrix(vectors, int(model.n_modes)))
+        elif adapter is not None:
+            states = np.empty((0, *adapter.state_matrix_shape), dtype=complex)
+        else:
+            states = np.empty(
+                (0, int(model.n_modes), int(model.n_modes)), dtype=complex
+            )
         controls = np.asarray(
             [
                 [candidate.controls[name] for name in control_names]
@@ -174,9 +199,11 @@ class Engine(EngineBase):
             ],
             dtype=float,
         ).reshape((len(candidates), len(control_names)))
-        diagnostic_names = sorted(
-            set().union(*(candidate.metadata for candidate in candidates))
-        ) if candidates else []
+        diagnostic_names = (
+            sorted(set().union(*(candidate.metadata for candidate in candidates)))
+            if candidates
+            else []
+        )
         diagnostics = {
             name: np.asarray(
                 [candidate.metadata.get(name, np.nan) for candidate in candidates]
@@ -210,13 +237,80 @@ class Engine(EngineBase):
                     for candidate in candidates
                 ]
             ),
+            branches=Engine._pack_bifurcation_branches(
+                candidates,
+                adapter.state_matrix_shape
+                if adapter is not None
+                else (int(model.n_modes), int(model.n_modes)),
+            ),
             diagnostics=diagnostics,
             meta={
                 **output.metadata,
                 "target": output.target,
                 "order": output.order,
                 "model": model.name,
+                "state_layout": (
+                    adapter.state_layout if adapter is not None else "canonical"
+                ),
+                "moment_layout": (
+                    adapter.moment_layout if adapter is not None else "normal"
+                ),
+                "state_ids": adapter.state_ids if adapter is not None else (),
+                "state_matrix_shape": (
+                    adapter.state_matrix_shape
+                    if adapter is not None
+                    else (int(model.n_modes), int(model.n_modes))
+                ),
             },
+        )
+
+    @staticmethod
+    def _pack_bifurcation_branches(
+        candidates: list[Any], matrix_shape: tuple[int, int]
+    ) -> CAMBifurcationBranchTable | None:
+        rows: list[dict[str, Any]] = []
+        for candidate_index, candidate in enumerate(candidates):
+            local_branch_index = 0
+            for signature_index, signature in enumerate(
+                candidate.metadata.get("scaling_signatures", ())
+            ):
+                branches = signature.get("branches", ())
+                if not branches:
+                    branches = (
+                        {
+                            "epsilon_side": 0,
+                            "amplitude": np.nan,
+                            "leading_state_coefficient": np.full(
+                                matrix_shape, np.nan + 0j
+                            ),
+                        },
+                    )
+                for branch in branches:
+                    rows.append(
+                        {
+                            "candidate_index": candidate_index,
+                            "local_branch_index": local_branch_index,
+                            "signature_index": signature_index,
+                            "state_order": signature["state_order"],
+                            "perturbation_order": signature["perturbation_order"],
+                            "coupling_state_order": signature["coupling_state_order"],
+                            "exponent_numerator": signature["exponent_numerator"],
+                            "exponent_denominator": signature["exponent_denominator"],
+                            "epsilon_side": branch["epsilon_side"],
+                            "amplitude": branch["amplitude"],
+                            "real_branch": bool(branch["epsilon_side"]),
+                            "sublinear": signature["sublinear"],
+                            "leading_state_coefficient": branch[
+                                "leading_state_coefficient"
+                            ],
+                        }
+                    )
+                    local_branch_index += 1
+        if not rows:
+            return None
+        fields = CAMBifurcationBranchTable.__dataclass_fields__
+        return CAMBifurcationBranchTable(
+            **{name: np.asarray([row[name] for row in rows]) for name in fields}
         )
 
     @staticmethod

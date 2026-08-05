@@ -1045,6 +1045,7 @@ class Scheduler:
                     rate=rate,
                     remaining=remaining,
                     message=observed.message,
+                    importance=observed.importance,
                     monotonic_time=observed.monotonic_time,
                 )
             )

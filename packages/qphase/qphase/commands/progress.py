@@ -43,7 +43,11 @@ class CliProgressRenderer:
             self._clear_active()
             self._write_line(self._format_terminal(snapshot))
             return
-        if snapshot.kind == "job_status" and not self.verbose:
+        if (
+            snapshot.kind == "job_status"
+            and not self.verbose
+            and snapshot.importance != "normal"
+        ):
             return
         if self.is_tty:
             self._render_tty(snapshot)

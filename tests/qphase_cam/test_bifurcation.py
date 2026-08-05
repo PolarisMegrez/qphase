@@ -26,6 +26,11 @@ from qphase_cam.solver.bifurcation import (
     BifurcationSolver,
     BifurcationSolverConfig,
     ControlRange,
+    PerturbationConfig,
+)
+from qphase_cam.solver.bifurcation_classifier import (
+    ScalingSignatureClassifier,
+    ScalingSignatureConfig,
 )
 from qphase_cam.solver.bifurcation_discovery import (
     SeedDiscovery,
@@ -43,6 +48,8 @@ from qphase_cam.solver.bifurcation_target import (
 )
 from qphase_cam.state import CAMBifurcationCandidate, CAMBifurcationOutput
 
+from models.vdp_2mode import VDP2ModeModel
+
 
 class TwoModeFoldModel:
     """One nonlinear mode plus a decoupled linear mode with a known fold."""
@@ -56,9 +63,7 @@ class TwoModeFoldModel:
     @lru_cache(maxsize=1)
     def cam_fpgen_dynamics(cls):
         a, b = boson_modes("a", "b")
-        gamma, nonlinear_gain, kappa = sp.symbols(
-            "gamma Gamma kappa", real=True
-        )
+        gamma, nonlinear_gain, kappa = sp.symbols("gamma Gamma kappa", real=True)
         master = MasterEquation(
             modes=(a, b),
             channels=(
@@ -80,15 +85,17 @@ class TwoModeFoldModel:
 
 
 def _solver(order: int, controls: dict[str, ControlRange]) -> BifurcationSolver:
-    target = EquilibriumMultiplicity(
-        EquilibriumMultiplicityConfig(order=order)
-    )
+    target = EquilibriumMultiplicity(EquilibriumMultiplicityConfig(order=order))
     return BifurcationSolver(
-        BifurcationSolverConfig(controls=controls),
+        BifurcationSolverConfig(
+            controls=controls,
+            perturbation=PerturbationConfig(parameter=next(iter(controls))),
+        ),
         subplugins={
             "target": target,
             "strategy": AutoStrategy(ReductionStrategyConfig()),
             "discovery": SeedDiscovery(SeedDiscoveryConfig()),
+            "classifier": ScalingSignatureClassifier(ScalingSignatureConfig()),
         },
     )
 
@@ -99,6 +106,20 @@ def test_bifurcation_solver_validates_target_codimension():
     assert solver.target.order == 2
     with pytest.raises(ValueError, match="m-1 controls"):
         _solver(3, {"control": ControlRange(min=-1.0, max=1.0)})
+
+
+def test_nonnegative_model_control_rejects_negative_bounds():
+    solver = _solver(2, {"gamma_b": ControlRange(min=-0.1, max=1.0)})
+    model = VDP2ModeModel(
+        omega_a=0.0,
+        omega_b=0.0,
+        gamma_a=0.5,
+        gamma_b=0.8,
+        Gamma=0.01,
+        g=0.5,
+    )
+    with pytest.raises(ValueError, match="nonnegative"):
+        solver.solve(model, NumpyBackend())
 
 
 def test_old_bifurcation_postprocessor_is_removed():
@@ -119,7 +140,57 @@ def test_fraction_free_solver_finds_known_physical_double_root():
     assert candidate.metadata["verification_digits"] >= 50
     assert candidate.metadata["verification_status"] == "verified"
     assert candidate.metadata["is_physical"]
+    signature = candidate.metadata["scaling_signatures"][0]
+    assert (
+        signature["state_order"],
+        signature["perturbation_order"],
+        signature["coupling_state_order"],
+    ) == (2, 1, 0)
+    assert signature["exponent"] == pytest.approx(0.5)
     assert output.metadata["reduced_degree"] == 2
+    assert (
+        output.metadata["coverage"]
+        == "regular_reduction_exhaustive_and_bordered_local_search"
+    )
+    search = output.metadata["reduction_search"]
+    assert search["coverage"] == "exhaustive"
+    assert search["regular_branches_only"]
+    assert not search["returned_prefix"]
+
+
+def test_reduction_strategy_exposes_fpgen_work_budgets():
+    config = ReductionStrategyConfig(
+        partition_limit=12,
+        materialization_limit=4,
+        max_candidates=3,
+    )
+    assert config.partition_limit == 12
+    assert config.materialization_limit == 4
+    assert config.max_candidates == 3
+
+
+def test_reduction_search_reports_budget_limited_coverage():
+    solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
+    solver.strategy = AutoStrategy(ReductionStrategyConfig(partition_limit=4))
+    output = solver.solve(TwoModeFoldModel(), NumpyBackend())
+    assert (
+        output.metadata["coverage"]
+        == "regular_reduction_budget_limited_and_bordered_local_search"
+    )
+    assert not output.metadata["reduction_search"]["complete"]
+
+
+def test_reduction_start_filter_rejects_singular_reconstruction():
+    class SingularReduction:
+        @staticmethod
+        def reconstruct(start):
+            del start
+            raise ZeroDivisionError
+
+    solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
+    assert not solver._reduced_start_is_physical(
+        SingularReduction(), object(), np.zeros(2)
+    )
 
 
 def test_full_solver_refines_upstream_fixed_point_to_known_fold():
@@ -139,19 +210,17 @@ def test_full_solver_refines_upstream_fixed_point_to_known_fold():
     )
     solver = BifurcationSolver(
         BifurcationSolverConfig(
-            controls={"gamma": ControlRange(min=-1.0, max=0.0)}
+            controls={"gamma": ControlRange(min=-1.0, max=0.0)},
+            perturbation=PerturbationConfig(parameter="gamma"),
         ),
         subplugins={
-            "target": EquilibriumMultiplicity(
-                EquilibriumMultiplicityConfig(order=2)
-            ),
+            "target": EquilibriumMultiplicity(EquilibriumMultiplicityConfig(order=2)),
             "strategy": FullStrategy(FullStrategyConfig()),
             "discovery": SeedDiscovery(SeedDiscoveryConfig()),
+            "classifier": ScalingSignatureClassifier(ScalingSignatureConfig()),
         },
     )
-    output = solver.solve(
-        TwoModeFoldModel(), NumpyBackend(), data=upstream
-    )
+    output = solver.solve(TwoModeFoldModel(), NumpyBackend(), data=upstream)
     assert len(output.candidates) == 1
     candidate = output.candidates[0]
     np.testing.assert_allclose(candidate.controls["gamma"], expected_gamma)
@@ -168,9 +237,9 @@ def test_condensed_reduction_verifies_known_fold_at_high_precision():
     model = TwoModeFoldModel()
     adapter = FPGenDynamicsAdapter.from_model(model)
     plan = adapter.dynamics.linear_reduce(
-        candidate=adapter.dynamics.find_linear_reductions(
+        candidate=adapter.dynamics.search_linear_reductions(
             retained_dimension=1
-        )[0]
+        ).candidates[0]
     )
     reduction = CondensedScalarReduction(
         plan,
@@ -188,6 +257,26 @@ def test_condensed_reduction_verifies_known_fold_at_high_precision():
     assert outcome.success
     assert outcome.digits == 50
     np.testing.assert_allclose(outcome.value, [expected_q, expected_gamma])
+    state_vector = reduction.reconstruct(outcome.value)
+    classification = ScalingSignatureClassifier(ScalingSignatureConfig()).classify(
+        reduction,
+        outcome.value,
+        state_vector,
+        {**model.params, "gamma": expected_gamma},
+        adapter,
+        perturbation="gamma",
+        scale=1.0,
+        side="both",
+        verification_digits=outcome.digits,
+    )
+    assert classification["classification_status"] == "classified", classification
+    signature = classification["scaling_signatures"][0]
+    assert (
+        signature["state_order"],
+        signature["perturbation_order"],
+        signature["coupling_state_order"],
+    ) == (2, 1, 0)
+    assert signature["exponent"] == pytest.approx(0.5)
 
 
 def test_engine_packs_tagged_bifurcation_output_and_passes_input(
@@ -243,3 +332,23 @@ def test_engine_packs_tagged_bifurcation_output_and_passes_input(
         loaded.verification_status, result.verification_status
     )
     assert target.with_suffix(".csv").exists()
+
+
+def test_engine_persists_scaling_branch_table(tmp_path):
+    model = TwoModeFoldModel()
+    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).solve(
+        model, NumpyBackend()
+    )
+    result = Engine._pack_bifurcation(output, model)
+    assert result.branches is not None
+    assert result.branches.size == 2
+    assert result.to_candidate_table()[0]["signature_count"] == 1
+    assert result.to_branch_table()[0]["exponent_denominator"] == 2
+    target = tmp_path / "classified.npz"
+    result.save(target)
+    loaded = CAMBifurcationResult.load(target)
+    assert loaded.branches is not None
+    np.testing.assert_allclose(
+        loaded.branches.leading_state_coefficient,
+        result.branches.leading_state_coefficient,
+    )

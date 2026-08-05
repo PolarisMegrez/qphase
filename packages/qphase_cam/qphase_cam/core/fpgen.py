@@ -10,9 +10,16 @@ import numpy as np
 
 from qphase_cam.errors import BifurcationCapabilityError, FPGenCompatibilityError
 
-SUPPORTED_FPGEN_SERIES = (0, 4)
-SUPPORTED_MODEL_SCHEMAS = frozenset({"1.1"})
-SUPPORTED_STATE_LAYOUT = "hermitian-declared-index-v1"
+SUPPORTED_FPGEN_SERIES = (0, 5)
+SUPPORTED_MODEL_SCHEMAS = frozenset({"2.0"})
+SUPPORTED_MOMENT_API = "1.0"
+SUPPORTED_REDUCTION_API = "1.0"
+SUPPORTED_STATE_LAYOUTS = frozenset(
+    {
+        "hermitian-declared-index-v1",
+        "hermitian-normal-anomalous-declared-index-v2",
+    }
+)
 
 
 def _version_series(value: str) -> tuple[int, int]:
@@ -20,9 +27,7 @@ def _version_series(value: str) -> tuple[int, int]:
         major, minor, *_ = value.split(".")
         return int(major), int(minor)
     except (TypeError, ValueError) as exc:
-        raise FPGenCompatibilityError(
-            f"cannot parse fpgen version {value!r}"
-        ) from exc
+        raise FPGenCompatibilityError(f"cannot parse fpgen version {value!r}") from exc
 
 
 def validate_fpgen_runtime() -> None:
@@ -31,25 +36,27 @@ def validate_fpgen_runtime() -> None:
 
     if _version_series(fpgen.__version__) != SUPPORTED_FPGEN_SERIES:
         raise FPGenCompatibilityError(
-            "qphase_cam requires the reviewed fpgen 0.4.x API; "
+            "qphase_cam requires the reviewed fpgen 0.5.x API; "
             f"found {fpgen.__version__}"
         )
     if fpgen.MODEL_SCHEMA_VERSION not in SUPPORTED_MODEL_SCHEMAS:
         raise FPGenCompatibilityError(
             f"unsupported fpgen model schema {fpgen.MODEL_SCHEMA_VERSION!r}"
         )
-    if fpgen.STATE_LAYOUT_VERSION != SUPPORTED_STATE_LAYOUT:
+    if fpgen.MOMENT_DYNAMICS_API_VERSION != SUPPORTED_MOMENT_API:
         raise FPGenCompatibilityError(
-            f"unsupported fpgen state layout {fpgen.STATE_LAYOUT_VERSION!r}"
+            f"unsupported fpgen moment API {fpgen.MOMENT_DYNAMICS_API_VERSION!r}"
+        )
+    if fpgen.REDUCTION_API_VERSION != SUPPORTED_REDUCTION_API:
+        raise FPGenCompatibilityError(
+            f"unsupported fpgen reduction API {fpgen.REDUCTION_API_VERSION!r}"
         )
 
 
 def canonical_state_ids(n_modes: int) -> tuple[str, ...]:
     """Return fpgen IDs in QPhase's canonical Hermitian coordinate order."""
     diagonal = tuple(f"r_diag_{i}" for i in range(n_modes))
-    pairs = tuple(
-        (i, j) for i in range(n_modes) for j in range(i + 1, n_modes)
-    )
+    pairs = tuple((i, j) for i in range(n_modes) for j in range(i + 1, n_modes))
     real = tuple(f"r_re_{i}_{j}" for i, j in pairs)
     imag = tuple(f"r_im_{i}_{j}" for i, j in pairs)
     return diagonal + real + imag
@@ -92,11 +99,38 @@ class FPGenDynamicsAdapter:
 
     @property
     def state_ids(self) -> tuple[str, ...]:
-        return tuple(item.id for item in self.dynamics.state_spec)
+        return tuple(item.id for item in self.spec.state)
 
     @property
     def parameter_names(self) -> tuple[str, ...]:
-        return tuple(item.name for item in self.dynamics.parameter_spec)
+        return tuple(item.name for item in self.spec.parameters)
+
+    @property
+    def parameter_domains(self) -> dict[str, str]:
+        return {item.name: str(item.domain) for item in self.spec.parameters}
+
+    @property
+    def state_size(self) -> int:
+        return self.spec.state_size
+
+    @property
+    def state_layout(self) -> str:
+        return str(self.spec.provenance.state_layout_version)
+
+    @property
+    def moment_layout(self) -> str:
+        return str(self.spec.provenance.moment_layout)
+
+    @property
+    def state_matrix_shape(self) -> tuple[int, int]:
+        shape = self.spec.state_matrix_shape
+        if shape is None:
+            raise FPGenCompatibilityError("fpgen model has no state matrix")
+        return shape
+
+    @property
+    def diagonal_state_indices(self) -> tuple[int, ...]:
+        return tuple(int(item.index) for item in self.spec.state if item.kind == "diag")
 
     def parameter_vector(self, params: dict[str, Any] | None = None) -> np.ndarray:
         source = self.model.params if params is None else params
@@ -108,32 +142,38 @@ class FPGenDynamicsAdapter:
         return np.asarray([source[name] for name in self.parameter_names], dtype=float)
 
     @cached_property
-    def numpy_functions(self) -> dict[str, Any]:
-        namespace: dict[str, Any] = {}
-        exec(self.spec.numpy_source(), namespace)
-        return namespace
+    def compiled(self) -> Any:
+        return self.spec.compile_numpy()
 
     def rhs(self, vector: Any, params: dict[str, Any] | None = None) -> np.ndarray:
-        return np.asarray(
-            self.numpy_functions["rhs"](vector, self.parameter_vector(params))
-        )
+        return np.asarray(self.compiled.rhs(vector, self.parameter_vector(params)))
 
-    def jacobian(
+    def jacobian(self, vector: Any, params: dict[str, Any] | None = None) -> np.ndarray:
+        return np.asarray(self.compiled.jacobian(vector, self.parameter_vector(params)))
+
+    def state_matrix(
         self, vector: Any, params: dict[str, Any] | None = None
     ) -> np.ndarray:
         return np.asarray(
-            self.numpy_functions["jacobian"](
-                vector, self.parameter_vector(params)
-            )
+            self.compiled.state_matrix(vector, self.parameter_vector(params)),
+            dtype=complex,
         )
+
+    def physical_eigenvalues(
+        self, vector: Any, params: dict[str, Any] | None = None
+    ) -> np.ndarray:
+        if self.moment_layout not in {"normal", "augmented"}:
+            raise BifurcationCapabilityError(
+                f"moment layout {self.moment_layout!r} has no Hermitian PSD domain"
+            )
+        matrix = self.state_matrix(vector, params)
+        return np.linalg.eigvalsh((matrix + matrix.conjugate().T) / 2.0)
 
     def parameter_jacobian(
         self, vector: Any, params: dict[str, Any] | None = None
     ) -> np.ndarray:
         return np.asarray(
-            self.numpy_functions["parameter_jacobian"](
-                vector, self.parameter_vector(params)
-            )
+            self.compiled.parameter_jacobian(vector, self.parameter_vector(params))
         )
 
     def directional(
@@ -143,9 +183,35 @@ class FPGenDynamicsAdapter:
         params: dict[str, Any],
         *directions: Any,
     ) -> np.ndarray:
-        return self.derivative_evaluator.directional(
-            order, vector, params, *directions
+        return self.derivative_evaluator.directional(order, vector, params, *directions)
+
+    def mixed_directional(
+        self,
+        order: int,
+        vector: Any,
+        params: dict[str, Any],
+        *,
+        state_directions: tuple[Any, ...] = (),
+        parameter_directions: tuple[Any, ...] = (),
+    ) -> np.ndarray:
+        return self.derivative_evaluator.mixed_directional(
+            order,
+            vector,
+            params,
+            state_directions=state_directions,
+            parameter_directions=parameter_directions,
         )
+
+    def parameter_direction(self, name: str, scale: float = 1.0) -> np.ndarray:
+        try:
+            index = self.parameter_names.index(name)
+        except ValueError as exc:
+            raise BifurcationCapabilityError(
+                f"unknown fpgen parameter {name!r}"
+            ) from exc
+        direction = np.zeros(len(self.parameter_names), dtype=float)
+        direction[index] = float(scale)
+        return direction
 
     def mpmath_rhs(self, vector: Any, params: dict[str, Any]) -> Any:
         return self.derivative_evaluator.mpmath_rhs(vector, params)
@@ -164,6 +230,23 @@ class FPGenDynamicsAdapter:
             order, vector, params, *directions
         )
 
+    def mpmath_mixed_directional(
+        self,
+        order: int,
+        vector: Any,
+        params: dict[str, Any],
+        *,
+        state_directions: tuple[Any, ...] = (),
+        parameter_directions: tuple[Any, ...] = (),
+    ) -> Any:
+        return self.derivative_evaluator.mpmath_mixed_directional(
+            order,
+            vector,
+            params,
+            state_directions=state_directions,
+            parameter_directions=parameter_directions,
+        )
+
     @cached_property
     def derivative_evaluator(self) -> FPGenDerivativeEvaluator:
         return FPGenDerivativeEvaluator(self)
@@ -172,26 +255,35 @@ class FPGenDynamicsAdapter:
         return {
             "fpgen_version": self._fpgen_version(),
             "model_schema": self.spec.schema_version,
+            "moment_api": SUPPORTED_MOMENT_API,
+            "reduction_api": SUPPORTED_REDUCTION_API,
             "state_layout": self.spec.provenance.state_layout_version,
+            "matrix_semantics": self.spec.matrix_semantics,
+            "physical_domain_hint": self.spec.physical_domain_hint,
             "fingerprint": self.fingerprint,
             "derivation": self.spec.provenance.manifest(),
         }
 
     def _validate_contract(self) -> None:
-        expected = canonical_state_ids(int(self.model.n_modes))
-        actual = tuple(item.id for item in self.dynamics.state_spec)
-        if actual != expected:
+        actual = tuple(item.id for item in self.spec.state)
+        if not self.spec.supports("state_matrix"):
+            raise FPGenCompatibilityError("fpgen model has no state-matrix capability")
+        if self.state_layout not in SUPPORTED_STATE_LAYOUTS:
             raise FPGenCompatibilityError(
-                f"model {self.model.name!r} state layout mismatch: "
-                f"expected {expected}, found {actual}"
+                f"unsupported fpgen state layout {self.state_layout!r}"
             )
-        if len(actual) != int(self.model.n_modes) ** 2:
+        if tuple(item.index for item in self.spec.state) != tuple(range(len(actual))):
             raise FPGenCompatibilityError(
-                f"model {self.model.name!r} has an invalid CAM state size"
+                f"model {self.model.name!r} has non-contiguous state indices"
             )
-        parameter_names = tuple(
-            item.name for item in self.dynamics.parameter_spec
-        )
+        if self.moment_layout == "normal":
+            expected = canonical_state_ids(int(self.model.n_modes))
+            if actual != expected:
+                raise FPGenCompatibilityError(
+                    f"model {self.model.name!r} state layout mismatch: "
+                    f"expected {expected}, found {actual}"
+                )
+        parameter_names = tuple(item.name for item in self.spec.parameters)
         if len(set(parameter_names)) != len(parameter_names):
             raise FPGenCompatibilityError("fpgen parameter names are not unique")
         model_names = set(self.model.params)
@@ -199,11 +291,6 @@ class FPGenDynamicsAdapter:
             raise FPGenCompatibilityError(
                 f"model {self.model.name!r} parameter mismatch: fpgen has "
                 f"{sorted(parameter_names)}, model has {sorted(model_names)}"
-            )
-        if self.dynamics.state_layout_version != SUPPORTED_STATE_LAYOUT:
-            raise FPGenCompatibilityError(
-                f"model {self.model.name!r} uses unsupported state layout "
-                f"{self.dynamics.state_layout_version!r}"
             )
 
     @staticmethod
@@ -218,7 +305,7 @@ class FPGenDerivativeEvaluator:
 
     def __init__(self, adapter: FPGenDynamicsAdapter) -> None:
         self.adapter = adapter
-        self._functions: dict[tuple[int, str], Any] = {}
+        self._functions: dict[tuple[int, int, str], Any] = {}
 
     def directional(
         self,
@@ -227,34 +314,58 @@ class FPGenDerivativeEvaluator:
         params: dict[str, Any],
         *directions: Any,
     ) -> np.ndarray:
-        if len(directions) != order:
+        return self.mixed_directional(
+            order,
+            vector,
+            params,
+            state_directions=tuple(directions),
+        )
+
+    def mixed_directional(
+        self,
+        order: int,
+        vector: Any,
+        params: dict[str, Any],
+        *,
+        state_directions: tuple[Any, ...] = (),
+        parameter_directions: tuple[Any, ...] = (),
+    ) -> np.ndarray:
+        if len(state_directions) + len(parameter_directions) != order:
             raise ValueError("direction count must equal derivative order")
-        key = (order, "numpy")
+        key = (len(state_directions), len(parameter_directions), "numpy")
         function = self._functions.get(key)
         if function is None:
-            function = self._compile(order, "numpy")
+            function = self._compile(
+                len(state_directions), len(parameter_directions), "numpy"
+            )
             self._functions[key] = function
         state = np.asarray(vector, dtype=float).reshape(-1)
         parameter_values = self.adapter.parameter_vector(params)
-        direction_values = [
+        state_direction_values = [
             item
-            for direction in directions
+            for direction in state_directions
+            for item in np.asarray(direction, dtype=float).reshape(-1)
+        ]
+        parameter_direction_values = [
+            item
+            for direction in parameter_directions
             for item in np.asarray(direction, dtype=float).reshape(-1)
         ]
         return np.asarray(
-            function(*state, *parameter_values, *direction_values),
+            function(
+                *state,
+                *parameter_values,
+                *state_direction_values,
+                *parameter_direction_values,
+            ),
             dtype=float,
         ).reshape(-1)
 
     def mpmath_rhs(self, vector: Any, params: dict[str, Any]) -> Any:
-        return self._mp_rhs(
-            *vector, *self._mp_parameter_values(params)
-        )
+        return self._mp_rhs(*vector, *self._mp_parameter_values(params))
 
     def mpmath_jacobian(self, vector: Any, params: dict[str, Any]) -> Any:
-        return self._mp_jacobian(
-            *vector, *self._mp_parameter_values(params)
-        )
+        return self._mp_jacobian(*vector, *self._mp_parameter_values(params))
 
     def mpmath_directional(
         self,
@@ -263,17 +374,36 @@ class FPGenDerivativeEvaluator:
         params: dict[str, Any],
         *directions: Any,
     ) -> Any:
-        if len(directions) != order:
+        return self.mpmath_mixed_directional(
+            order,
+            vector,
+            params,
+            state_directions=tuple(directions),
+        )
+
+    def mpmath_mixed_directional(
+        self,
+        order: int,
+        vector: Any,
+        params: dict[str, Any],
+        *,
+        state_directions: tuple[Any, ...] = (),
+        parameter_directions: tuple[Any, ...] = (),
+    ) -> Any:
+        if len(state_directions) + len(parameter_directions) != order:
             raise ValueError("direction count must equal derivative order")
-        key = (order, "mpmath")
+        key = (len(state_directions), len(parameter_directions), "mpmath")
         function = self._functions.get(key)
         if function is None:
-            function = self._compile(order, "mpmath")
+            function = self._compile(
+                len(state_directions), len(parameter_directions), "mpmath"
+            )
             self._functions[key] = function
         return function(
             *vector,
             *self._mp_parameter_values(params),
-            *(item for direction in directions for item in direction),
+            *(item for direction in state_directions for item in direction),
+            *(item for direction in parameter_directions for item in direction),
         )
 
     @cached_property
@@ -301,27 +431,32 @@ class FPGenDerivativeEvaluator:
     def _mp_parameter_values(self, params: dict[str, Any]) -> tuple[Any, ...]:
         import mpmath as mp
 
-        return tuple(
-            mp.mpf(str(params[name])) for name in self.adapter.parameter_names
-        )
+        return tuple(mp.mpf(str(params[name])) for name in self.adapter.parameter_names)
 
-    def _compile(self, order: int, modules: str) -> Any:
+    def _compile(self, state_order: int, parameter_order: int, modules: str) -> Any:
         import sympy as sp
 
         dynamics = self.adapter.dynamics
         n_state = len(dynamics.coordinates)
         direction_symbols = tuple(
+            sp.Matrix(sp.symbols(f"_d{slot}_0:{n_state}", real=True))
+            for slot in range(state_order)
+        )
+        parameter_direction_symbols = tuple(
             sp.Matrix(
-                sp.symbols(f"_d{slot}_0:{n_state}", real=True)
+                sp.symbols(f"_p{slot}_0:{len(dynamics.parameter_spec)}", real=True)
             )
-            for slot in range(order)
+            for slot in range(parameter_order)
         )
         expression = dynamics.directional(
-            order, state_directions=direction_symbols
+            state_order + parameter_order,
+            state_directions=direction_symbols,
+            parameter_directions=parameter_direction_symbols,
         )
         arguments = (
             *dynamics.coordinates,
             *(item.symbol for item in dynamics.parameter_spec),
             *(item for direction in direction_symbols for item in direction),
+            *(item for direction in parameter_direction_symbols for item in direction),
         )
         return sp.lambdify(arguments, expression, modules=modules)

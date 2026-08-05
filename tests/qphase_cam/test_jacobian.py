@@ -22,9 +22,7 @@ from models.vdp_2mode import VDP2ModeModel
 
 def _state(n_modes: int):
     rng = np.random.default_rng(n_modes + 20)
-    raw = rng.normal(size=(n_modes, n_modes)) + 1j * rng.normal(
-        size=(n_modes, n_modes)
-    )
+    raw = rng.normal(size=(n_modes, n_modes)) + 1j * rng.normal(size=(n_modes, n_modes))
     return raw @ raw.conj().T
 
 
@@ -59,9 +57,9 @@ def _state(n_modes: int):
 )
 def test_analytic_symbolic_and_finite_difference_agree(model):
     state = _state(model.n_modes)
-    symbolic = SymbolicJacobian(
-        model.cam_symbolic_matrices(), model.n_modes, "numpy"
-    )(state, model.params)
+    symbolic = SymbolicJacobian(model.cam_symbolic_matrices(), model.n_modes, "numpy")(
+        state, model.params
+    )
     analytic = model.cam_jacobian(state, model.params)
     vector = matrix_to_vector(state)
     numerical = central_difference_jacobian(
@@ -88,9 +86,9 @@ def test_three_mode_symbolic_matches_finite_difference():
         g_ac=0.3,
     )
     state = _state(3)
-    symbolic = SymbolicJacobian(
-        model.cam_symbolic_matrices(), model.n_modes, "numpy"
-    )(state, model.params)
+    symbolic = SymbolicJacobian(model.cam_symbolic_matrices(), model.n_modes, "numpy")(
+        state, model.params
+    )
     resolver = JacobianResolver()
     analytic = resolver.resolve(model, state, model.params, NumpyBackend())
     vector = matrix_to_vector(state)
@@ -233,9 +231,7 @@ def test_vector_fast_path_matches_matrix_equations(model):
 def test_missing_jacobian_requires_explicit_fallback(no_jacobian_model):
     state = np.eye(2, dtype=complex)
     with pytest.raises(JacobianUnavailableError):
-        JacobianResolver().resolve(
-            no_jacobian_model, state, {}, NumpyBackend()
-        )
+        JacobianResolver().resolve(no_jacobian_model, state, {}, NumpyBackend())
     resolver = JacobianResolver(allow_finite_difference=True)
     jacobian = resolver.resolve(no_jacobian_model, state, {}, NumpyBackend())
     np.testing.assert_allclose(jacobian, -np.eye(4), atol=1e-8)

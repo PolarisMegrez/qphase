@@ -70,6 +70,12 @@ def get_xp(arr: Any):
     tensor([0.])
 
     """
+    # NumPy is overwhelmingly the common path for CPU solvers and
+    # postprocessing. Avoid importing optional backends for every scalar or
+    # small-array operation in pointwise scans.
+    if isinstance(arr, np.ndarray):
+        return np
+
     # CuPy detection
     try:
         import cupy as cp
@@ -113,8 +119,6 @@ def get_xp(arr: Any):
             )
     except Exception:
         pass
-    import numpy as np  # fallback
-
     return np
 
 
@@ -162,6 +166,11 @@ def convert_to_numpy(x: Any) -> np.ndarray:
     True
 
     """
+    if isinstance(x, np.ndarray):
+        return x
+    if isinstance(x, (np.generic, int, float, complex, bool, list, tuple)):
+        return np.asarray(x)
+
     try:
         import torch as th
 
@@ -185,8 +194,6 @@ def convert_to_numpy(x: Any) -> np.ndarray:
             pass
 
     try:
-        import numpy as np
-
         return np.asarray(x)
     except Exception:
         return x

@@ -1,4 +1,4 @@
-name: vdp_2mode_bifurcation
+name: pair_hopping_2mode_bifurcation
 save: true
 
 engine:
@@ -9,39 +9,41 @@ plugins:
     numpy:
       float_dtype: float64
   model:
-    vdp_2mode:
+    pair_hopping_2mode:
       omega_a: 0.0
       omega_b: 0.0
-      gamma_a: 2.0
-      gamma_b: 0.8
-      Gamma: 0.0001
-      g: 0.5
+      g: 1.0
+      k: 0.001
+      gamma_a: 1.0
+      gamma_b: 1.0
   cam_solver:
     bifurcation:
       controls:
-        omega_a: {min: -0.3, max: 0.3, scale: 0.1}
-        gamma_b: {min: 0.2, max: 1.1, scale: 1.0}
+        omega_b: {min: -1.0, max: 2.0, scale: 1.0, domain: real}
+        gamma_a: {min: 0.1, max: 1.0, scale: 0.5, domain: nonnegative}
       perturbation:
-        parameter: omega_a
+        parameter: omega_b
         scale: 1.0
         side: both
       target:
         equilibrium_multiplicity:
           order: 3
       strategy:
-        auto:
+        reduced:
           retained_dimension: 1
+          order_parameter: r_re_0_1
+          order_parameter_bounds: [-20.0, 20.0]
           max_candidates: 8
-          condition_limit: 1.0e10
+          condition_limit: 1.0e11
       discovery:
         seeds:
-          samples_per_control: 3
-          max_starts: 512
-          order_parameter_samples: 41
+          samples_per_control: 7
+          max_starts: 2048
+          order_parameter_samples: 61
       classifier:
         scaling_signature:
-          max_total_order: 6
-          coefficient_tolerance: 1.0e-9
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
           max_exponent: 0.999
       refinement:
         tolerance: 1.0e-11

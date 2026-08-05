@@ -184,9 +184,7 @@ class CrossKerr2ModeModel(SDEModelPlugin):
         )
 
         a, b = boson_modes("a", "b")
-        parameters = sp.symbols(
-            "omega_a omega_b chi gamma_a gamma_b g", real=True
-        )
+        parameters = sp.symbols("omega_a omega_b chi gamma_a gamma_b g", real=True)
         omega_a, omega_b, chi, gamma_a, gamma_b, coupling = parameters
         master = MasterEquation(
             modes=(a, b),
@@ -207,6 +205,12 @@ class CrossKerr2ModeModel(SDEModelPlugin):
             .to_langevin()
             .to_second_moment_dynamics(
                 parameters=parameters,
+                parameter_domains={
+                    chi: "nonnegative",
+                    coupling: "nonnegative",
+                    gamma_a: "nonnegative",
+                    gamma_b: "nonnegative",
+                },
                 layout="normal",
                 closure="factorized_bilinear",
             )

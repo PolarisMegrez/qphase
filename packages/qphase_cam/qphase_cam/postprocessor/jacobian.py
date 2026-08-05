@@ -36,9 +36,7 @@ class JacobianSpectrum(CAMPostprocessor):
         )
         for index in _successful_indices(result):
             state = backend.asarray(result.states[index])
-            jacobian = resolver.resolve(
-                model, state, result.params_at(index), backend
-            )
+            jacobian = resolver.resolve(model, state, result.params_at(index), backend)
             eigenvalues[index] = np.linalg.eigvals(convert_to_numpy(jacobian))
             sources[index] = resolver.last_source
         used_sources = sorted({str(value) for value in sources.flat if value})

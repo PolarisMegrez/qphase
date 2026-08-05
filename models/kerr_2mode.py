@@ -60,9 +60,7 @@ class Kerr2ModeModel(SDEModelPlugin):
 
         matrix = xp.zeros((y.shape[0], 2, 2), dtype=y.dtype)
         matrix[:, 0, 0] = (
-            gamma_a / 2.0
-            - 1j * omega_a
-            - 2j * chi * (xp.abs(y[:, 0]) ** 2 - 1.0)
+            gamma_a / 2.0 - 1j * omega_a - 2j * chi * (xp.abs(y[:, 0]) ** 2 - 1.0)
         )
         matrix[:, 0, 1] = -1j * coupling
         matrix[:, 1, 0] = -1j * coupling
@@ -87,9 +85,7 @@ class Kerr2ModeModel(SDEModelPlugin):
         coupling = self.parameter(params, "g", xp)
         r_aa = xp.real(state[..., 0, 0])
         matrix = xp.zeros(state.shape, dtype=state.dtype)
-        matrix[..., 0, 0] = (
-            omega_a + 2.0 * chi * (r_aa - 1.0) + 1j * gamma_a / 2.0
-        )
+        matrix[..., 0, 0] = omega_a + 2.0 * chi * (r_aa - 1.0) + 1j * gamma_a / 2.0
         matrix[..., 0, 1] = coupling
         matrix[..., 1, 0] = coupling
         matrix[..., 1, 1] = omega_b - 1j * gamma_b / 2.0
@@ -183,9 +179,7 @@ class Kerr2ModeModel(SDEModelPlugin):
         )
 
         a, b = boson_modes("a", "b")
-        parameters = sp.symbols(
-            "omega_a omega_b chi gamma_a gamma_b g", real=True
-        )
+        parameters = sp.symbols("omega_a omega_b chi gamma_a gamma_b g", real=True)
         omega_a, omega_b, chi, gamma_a, gamma_b, coupling = parameters
         master = MasterEquation(
             modes=(a, b),
@@ -206,6 +200,12 @@ class Kerr2ModeModel(SDEModelPlugin):
             .to_langevin()
             .to_second_moment_dynamics(
                 parameters=parameters,
+                parameter_domains={
+                    coupling: "nonnegative",
+                    chi: "nonnegative",
+                    gamma_a: "nonnegative",
+                    gamma_b: "nonnegative",
+                },
                 layout="normal",
                 closure="factorized_bilinear",
             )
