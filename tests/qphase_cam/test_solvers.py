@@ -22,6 +22,7 @@ from qphase_cam.solver.multistability import (
     _effective_worker_count,
     _partition_points,
     _solve_point,
+    _solve_tile_with,
 )
 from qphase_cam.solver.steady_state import SteadyStateSolver
 from qphase_cam.state import CAMSolution
@@ -219,6 +220,66 @@ def test_multistability_uses_spatial_tiles_for_two_dimensional_grid():
     flattened = [index for tile in tiles for index, _ in tile]
     assert len(tiles) == 289
     assert sorted(flattened) == list(range(101 * 101))
+
+
+def test_multistability_runs_dense_discovery_at_each_tile_center(monkeypatch):
+    attempted_guesses: list[int] = []
+
+    def solve_point(model, params, config, point_index, *, extra_guesses=None):
+        del model, params, point_index, extra_guesses
+        attempted_guesses.append(config.n_guesses)
+        return [CAMSolution(np.asarray([[1.0]]), 0.0, True, "test")], 1
+
+    monkeypatch.setattr(multistability_module, "_solve_point", solve_point)
+    config = MultistabilitySolverConfig(
+        n_guesses=4,
+        seed_search_guesses=40,
+        retry_guesses=4,
+        discover_seeds=True,
+    )
+
+    _solve_tile_with(
+        ThreeRootModel(0.0),
+        [(0, {"parameter": 0.0}), (1, {"parameter": 0.0})],
+        config,
+        global_seeds=[],
+        grid_shape=(2,),
+    )
+
+    assert attempted_guesses == [40, 4]
+
+
+def test_multistability_refinement_propagates_missing_solutions(monkeypatch):
+    roots = [
+        CAMSolution(np.asarray([[float(value)]]), 0.0, True, "test")
+        for value in range(3)
+    ]
+
+    def solve_point(model, params, config, point_index, *, extra_guesses=None):
+        del model, params, config, point_index, extra_guesses
+        return roots, 1
+
+    monkeypatch.setattr(multistability_module, "_solve_point", solve_point)
+    solver = MultistabilitySolver(n_guesses=1, refine_guesses=1)
+    indexed_rows = [
+        (0, roots, 1),
+        (1, roots[:2], 1),
+        (2, roots[:1], 1),
+    ]
+
+    refined, attempts, changed = solver._refine_suspicious_points(
+        ThreeRootModel(0.0),
+        indexed_rows,
+        [{"parameter": 0.0}] * 3,
+        (3,),
+        global_seeds=[],
+        global_bounds=None,
+        context=None,
+    )
+
+    assert [len(row) for _, row, _ in refined] == [3, 3, 3]
+    assert attempts == 2
+    assert changed == 2
 
 
 def test_multistability_limits_spawn_workers_by_available_memory(monkeypatch):

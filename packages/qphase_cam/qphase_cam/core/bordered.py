@@ -46,9 +46,11 @@ class BorderedDiagnostics:
 class BorderedVerificationOutcome:
     value: np.ndarray
     digits: int
-    residual_norm: float
+    multiplicity_residual_norm: float
+    full_residual_norm: float
     success: bool
-    decimal_values: tuple[str, ...] = ()
+    unknown_decimal_values: tuple[str, ...] = ()
+    full_state_decimal_values: tuple[str, ...] = ()
 
 
 class BorderedMultiplicitySystem:
@@ -198,16 +200,35 @@ class BorderedMultiplicitySystem:
                     )
                     residuals = self._mp_residual(solved, include_gauge=True)
                     residual = mp.sqrt(sum(item * item for item in residuals))
-                    residual_float = float(residual)
-                    success = residual_float <= 10.0 ** (-min(30, digits // 2))
+                    state = solved[: self.n_state]
+                    controls = solved[
+                        self.n_state : self.n_state + len(self.control_names)
+                    ]
+                    full_values = tuple(
+                        self.dynamics.mpmath_rhs(
+                            state, self._mp_params(controls)
+                        )
+                    )
+                    multiplicity_norm = float(residual)
+                    full_norm = float(
+                        mp.sqrt(sum(item * item for item in full_values))
+                    )
+                    tolerance = 10.0 ** (-min(30, digits // 2))
+                    success = (
+                        multiplicity_norm <= tolerance and full_norm <= tolerance
+                    )
                     if success or digits >= max_digits:
                         return BorderedVerificationOutcome(
                             value=np.asarray([float(item) for item in solved]),
                             digits=digits,
-                            residual_norm=residual_float,
+                            multiplicity_residual_norm=multiplicity_norm,
+                            full_residual_norm=full_norm,
                             success=success,
-                            decimal_values=tuple(
+                            unknown_decimal_values=tuple(
                                 mp.nstr(item, n=digits) for item in solved
+                            ),
+                            full_state_decimal_values=tuple(
+                                mp.nstr(item, n=digits) for item in state
                             ),
                         )
                     current = solved
@@ -221,9 +242,10 @@ class BorderedMultiplicitySystem:
                         return BorderedVerificationOutcome(
                             value=np.asarray(current, dtype=float),
                             digits=digits,
-                            residual_norm=np.inf,
+                            multiplicity_residual_norm=np.inf,
+                            full_residual_norm=np.inf,
                             success=False,
-                            decimal_values=tuple(
+                            unknown_decimal_values=tuple(
                                 mp.nstr(item, n=digits) for item in current
                             ),
                         )
@@ -241,7 +263,7 @@ class BorderedMultiplicitySystem:
         controls = array[n : n + m]
         right = mp.matrix(array[n + m : 2 * n + m])
         left = mp.matrix(array[2 * n + m :])
-        params = self.params(controls)
+        params = self._mp_params(controls)
         residual = self.dynamics.mpmath_rhs(state, params)
         jacobian = self.dynamics.mpmath_jacobian(state, params)
         coefficients = self._mp_coefficients(state, params, jacobian, right, left)
@@ -318,5 +340,15 @@ class BorderedMultiplicitySystem:
 
     def params(self, controls: np.ndarray) -> dict[str, Any]:
         params = dict(self.base_params)
+        params.update(zip(self.control_names, controls, strict=True))
+        return params
+
+    def _mp_params(self, controls: Any) -> dict[str, Any]:
+        import mpmath as mp
+
+        params = {
+            name: mp.mpf(str(value))
+            for name, value in self.base_params.items()
+        }
         params.update(zip(self.control_names, controls, strict=True))
         return params

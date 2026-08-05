@@ -414,10 +414,16 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=1.24,<3" },
-    { name = "pytest", marker = "extra == 'dev'" },
     { name = "sympy", specifier = ">=1.12,<2" },
 ]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+notebook = [
+    { name = "ipykernel" },
+    { name = "nbclient" },
+    { name = "nbformat" },
+]
+test = [{ name = "pytest" }]
 
 [[package]]
 name = "fsspec"

@@ -1,14 +1,17 @@
-"""Two-mode pair-hopping CAM model plugin."""
+"""Two-mode pair-hopping Ito SDE and CAM model plugin."""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from functools import lru_cache
 from typing import Any, ClassVar
 
 from pydantic import Field
 from qphase.backend.xputil import get_xp
 
-from .base import ModelConfig
+from .base import ModelConfig, SDEModelPlugin
+from .kernels.base import ModelKernelPlugin
+from .kernels.cayley_maruyama import PairHopping2ModeCayleyCuPyKernel
 
 
 class PairHopping2ModeConfig(ModelConfig):
@@ -20,8 +23,8 @@ class PairHopping2ModeConfig(ModelConfig):
     gamma_b: Any = Field(json_schema_extra={"scanable": True})
 
 
-class PairHopping2ModeModel:
-    """CAM-only pair-hopping model derived by fpgen."""
+class PairHopping2ModeModel(SDEModelPlugin):
+    """Two coupled gain/loss modes with coherent pair hopping."""
 
     name: ClassVar[str] = "pair_hopping_2mode"
     description: ClassVar[str] = "Two-mode pair-hopping oscillator"
@@ -29,28 +32,39 @@ class PairHopping2ModeModel:
     mode_count: ClassVar[int] = 2
     steady_state_capacity: ClassVar[int] = 5
 
-    def __init__(
-        self, config: PairHopping2ModeConfig | None = None, **kwargs: Any
-    ) -> None:
-        if config is not None and kwargs:
-            raise TypeError("provide either config or keyword parameters, not both")
-        source: Any = kwargs if config is None else config.model_dump()
-        self.config = self.config_schema.model_validate(source)
-        self._params = self.config.model_dump()
+    def kernel_plugins(self) -> Iterable[ModelKernelPlugin]:
+        return (PairHopping2ModeCayleyCuPyKernel(),)
 
-    @property
-    def n_modes(self) -> int:
-        return self.mode_count
+    def drift(self, y: Any, t: float, params: dict[str, Any]) -> Any:
+        del t
+        xp = get_xp(y)
+        return xp.einsum("...ij,...j->...i", self.drift_matrix(y, 0.0, params), y)
 
-    @property
-    def params(self) -> dict[str, Any]:
-        return self._params
+    def drift_matrix(self, y: Any, t: float, params: dict[str, Any]) -> Any:
+        del t
+        xp = get_xp(y)
+        alpha, beta = y[:, 0], y[:, 1]
+        omega_a = self.parameter(params, "omega_a", xp)
+        omega_b = self.parameter(params, "omega_b", xp)
+        coupling = self.parameter(params, "g", xp)
+        pair_coupling = self.parameter(params, "k", xp)
+        gamma_a = self.parameter(params, "gamma_a", xp)
+        gamma_b = self.parameter(params, "gamma_b", xp)
+        effective_ab = coupling + 2.0 * pair_coupling * xp.conj(alpha) * beta
+        effective_ba = coupling + 2.0 * pair_coupling * xp.conj(beta) * alpha
+        matrix = xp.zeros((y.shape[0], 2, 2), dtype=y.dtype)
+        matrix[:, 0, 0] = gamma_a / 2.0 - 1j * omega_a
+        matrix[:, 0, 1] = -1j * effective_ab
+        matrix[:, 1, 0] = -1j * effective_ba
+        matrix[:, 1, 1] = -gamma_b / 2.0 - 1j * omega_b
+        return matrix
 
-    def cam_solution_sort_key(self, state: Any, params: dict[str, Any]) -> float:
-        del params
-        xp = get_xp(state)
-        value = xp.real(state[..., 0, 0])
-        return float(value.item() if hasattr(value, "item") else value)
+    def diffusion(self, y: Any, t: float, params: dict[str, Any]) -> Any:
+        del t
+        xp = get_xp(y)
+        gamma_a = self.parameter(params, "gamma_a", xp)
+        gamma_b = self.parameter(params, "gamma_b", xp)
+        return self.diagonal_complex_diffusion(y, (gamma_a / 2.0, gamma_b / 2.0))
 
     def cam_hamiltonian(self, state: Any, params: dict[str, Any]) -> Any:
         xp = get_xp(state)

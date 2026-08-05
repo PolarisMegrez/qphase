@@ -56,3 +56,11 @@ plugins:
       verification:
         initial_digits: 50
         max_digits: 200
+  cam_postprocessor:
+    local_response_validation:
+      epsilon_min: 1.0e-12
+      epsilon_max: 1.0e-4
+      epsilon_points: 9
+      precision_digits: 100
+      residual_tolerance: 1.0e-40
+      fit_points: 4

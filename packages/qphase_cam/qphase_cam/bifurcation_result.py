@@ -58,9 +58,10 @@ class CAMBifurcationResult:
     verification_status: np.ndarray
     branches: CAMBifurcationBranchTable | None = None
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    postprocess: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
     result_kind = "bifurcation_candidates"
-    schema_version = "2.0"
+    schema_version = "3.0"
 
     @property
     def data(self) -> np.ndarray:
@@ -106,7 +107,12 @@ class CAMBifurcationResult:
                 for name in self.branches.__dataclass_fields__
             )
         )
-        return sum(np.asarray(value).nbytes for value in (*arrays, *branch_arrays))
+        arrays_nbytes = sum(
+            np.asarray(value).nbytes for value in (*arrays, *branch_arrays)
+        )
+        return arrays_nbytes + sum(
+            self._nested_nbytes(value) for value in self.postprocess.values()
+        )
 
     def point_view(self, index: tuple[int, ...]) -> CAMBifurcationResult:
         if len(index) != 1:
@@ -129,6 +135,9 @@ class CAMBifurcationResult:
                 name: self._candidate_slice(value, position)
                 for name, value in self.diagnostics.items()
             },
+            postprocess=self._subset_postprocess(
+                self.postprocess, position, position + 1
+            ),
             meta={**self.meta, "candidate_index": int(position)},
         )
 
@@ -139,6 +148,7 @@ class CAMBifurcationResult:
             np.savez_compressed(target, **self._npz_payload())
             self._save_csv(target.with_suffix(".csv"))
             self._save_branch_csv(target.with_name(f"{target.stem}_branches.csv"))
+            self._save_response_csv(target.with_name(f"{target.stem}_responses.csv"))
         except Exception as exc:
             raise QPhaseIOError(
                 f"failed to save CAM bifurcation result to {target}: {exc}"
@@ -160,6 +170,7 @@ class CAMBifurcationResult:
                 target.with_suffix(".npz"),
                 target.with_suffix(".csv"),
                 target.with_name(f"{target.stem}_branches.csv"),
+                target.with_name(f"{target.stem}_responses.csv"),
             )
             if item.exists()
         )
@@ -227,8 +238,11 @@ class CAMBifurcationResult:
                 "maximum_jacobian_real_part": self._diagnostic(
                     index, "maximum_jacobian_real_part", np.nan
                 ),
-                "verification_residual_norm": self._diagnostic(
-                    index, "verification_residual_norm", np.nan
+                "multiplicity_residual_norm": self._diagnostic(
+                    index, "multiplicity_residual_norm", np.nan
+                ),
+                "verified_full_residual_norm": self._diagnostic(
+                    index, "verified_full_residual_norm", np.nan
                 ),
                 "classification_status": self._diagnostic(
                     index, "classification_status", "not_run"
@@ -264,6 +278,7 @@ class CAMBifurcationResult:
                 name: np.asarray(value)[start:stop]
                 for name, value in self.diagnostics.items()
             },
+            postprocess=self._subset_postprocess(self.postprocess, start, stop),
             meta=dict(self.meta),
         )
 
@@ -302,6 +317,7 @@ class CAMBifurcationResult:
             ),
             branches=branches,
             diagnostics=diagnostics,
+            postprocess={},
             meta=dict(results[0].meta),
         )
 
@@ -320,7 +336,8 @@ class CAMBifurcationResult:
             "is_stable",
             "minimum_physical_eigenvalue",
             "maximum_jacobian_real_part",
-            "verification_residual_norm",
+            "multiplicity_residual_norm",
+            "verified_full_residual_norm",
             "classification_status",
             "classification_accepted",
             "signature_count",
@@ -347,6 +364,7 @@ class CAMBifurcationResult:
                 for name, value in self._branch_arrays().items()
             },
             f"{prefix}diagnostics": np.asarray(self.diagnostics, dtype=object),
+            f"{prefix}postprocess": np.asarray(self.postprocess, dtype=object),
             f"{prefix}meta": np.asarray(self.meta, dtype=object),
         }
 
@@ -366,8 +384,58 @@ class CAMBifurcationResult:
             verification_status=data[f"{prefix}verification_status"],
             branches=cls._load_branches(data, prefix=prefix),
             diagnostics=data[f"{prefix}diagnostics"].item(),
+            postprocess=(
+                data[f"{prefix}postprocess"].item()
+                if f"{prefix}postprocess" in data.files
+                else {}
+            ),
             meta=data[f"{prefix}meta"].item(),
         )
+
+    def _save_response_csv(self, path: Path) -> None:
+        response = self.postprocess.get("local_response_validation")
+        if not response or not len(response.get("candidate_index", ())):
+            return
+        fields = tuple(response)
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            size = len(response["candidate_index"])
+            for index in range(size):
+                writer.writerow(
+                    {
+                        name: np.asarray(values)[index]
+                        for name, values in response.items()
+                    }
+                )
+
+    @staticmethod
+    def _nested_nbytes(value: Any) -> int:
+        if isinstance(value, dict):
+            return sum(
+                CAMBifurcationResult._nested_nbytes(item)
+                for item in value.values()
+            )
+        return int(np.asarray(value).nbytes)
+
+    @staticmethod
+    def _subset_postprocess(
+        postprocess: dict[str, Any], start: int, stop: int
+    ) -> dict[str, Any]:
+        output: dict[str, Any] = {}
+        for name, value in postprocess.items():
+            if not isinstance(value, dict) or "candidate_index" not in value:
+                output[name] = value
+                continue
+            candidate_index = np.asarray(value["candidate_index"])
+            mask = (candidate_index >= start) & (candidate_index < stop)
+            subset = {
+                field: np.asarray(values)[mask]
+                for field, values in value.items()
+            }
+            subset["candidate_index"] = subset["candidate_index"] - start
+            output[name] = subset
+        return output
 
     def to_branch_table(self) -> list[dict[str, Any]]:
         return [] if self.branches is None else self.branches.to_table()
@@ -510,9 +578,10 @@ class CAMBifurcationScanResult:
     candidate_offsets: np.ndarray
     candidates: CAMBifurcationResult
     case_metadata: tuple[dict[str, Any], ...]
+    postprocess: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
     result_kind = "bifurcation_scan"
-    schema_version = "1.0"
+    schema_version = "2.0"
 
     @property
     def data(self) -> np.ndarray:
@@ -547,6 +616,9 @@ class CAMBifurcationScanResult:
         )
         return self.candidates.nbytes + sum(
             np.asarray(value).nbytes for value in arrays
+        ) + sum(
+            CAMBifurcationResult._nested_nbytes(value)
+            for value in self.postprocess.values()
         )
 
     def params_at(self, index: tuple[int, ...]) -> dict[str, Any]:
@@ -561,6 +633,9 @@ class CAMBifurcationScanResult:
         start = int(self.candidate_offsets[flat])
         stop = int(self.candidate_offsets[flat + 1])
         result = self.candidates.subset(start, stop)
+        result.postprocess = CAMBifurcationResult._subset_postprocess(
+            self.postprocess, start, stop
+        )
         result.meta.update(
             {
                 "case_index": flat,
@@ -581,6 +656,7 @@ class CAMBifurcationScanResult:
             "case_params": np.asarray(self.case_params, dtype=object),
             "candidate_offsets": self.candidate_offsets,
             "case_metadata": np.asarray(self.case_metadata, dtype=object),
+            "postprocess": np.asarray(self.postprocess, dtype=object),
             "meta": np.asarray(self.meta, dtype=object),
             **self.candidates._npz_payload(prefix="candidate_"),
         }
@@ -589,6 +665,7 @@ class CAMBifurcationScanResult:
             self._save_case_csv(target.with_name(f"{target.stem}_cases.csv"))
             self._save_candidate_csv(target.with_name(f"{target.stem}_candidates.csv"))
             self._save_branch_csv(target.with_name(f"{target.stem}_branches.csv"))
+            self._save_response_csv(target.with_name(f"{target.stem}_responses.csv"))
         except Exception as exc:
             raise QPhaseIOError(
                 f"failed to save CAM bifurcation scan to {target}: {exc}"
@@ -604,6 +681,11 @@ class CAMBifurcationScanResult:
                 candidate_offsets=data["candidate_offsets"],
                 candidates=CAMBifurcationResult._from_npz(data, prefix="candidate_"),
                 case_metadata=tuple(data["case_metadata"].tolist()),
+                postprocess=(
+                    data["postprocess"].item()
+                    if "postprocess" in data.files
+                    else {}
+                ),
                 meta=data["meta"].item(),
             )
 
@@ -624,6 +706,7 @@ class CAMBifurcationScanResult:
                 target.with_name(f"{target.stem}_cases.csv"),
                 target.with_name(f"{target.stem}_candidates.csv"),
                 target.with_name(f"{target.stem}_branches.csv"),
+                target.with_name(f"{target.stem}_responses.csv"),
             )
             if item.exists()
         )
@@ -633,6 +716,31 @@ class CAMBifurcationScanResult:
             loader=("qphase_cam.bifurcation_result:CAMBifurcationScanResult.load"),
             schema_version=self.schema_version,
         )
+
+    def _save_response_csv(self, path: Path) -> None:
+        response = self.postprocess.get("local_response_validation")
+        if not response or not len(response.get("candidate_index", ())):
+            return
+        fields = ("case", *self.case_axes, *response)
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            for index, candidate in enumerate(response["candidate_index"]):
+                case = int(
+                    np.searchsorted(
+                        self.candidate_offsets, int(candidate), side="right"
+                    )
+                    - 1
+                )
+                row = self._case_values(case)
+                row.pop("candidate_count", None)
+                row.update(
+                    {
+                        name: np.asarray(values)[index]
+                        for name, values in response.items()
+                    }
+                )
+                writer.writerow(row)
 
     def _case_values(self, flat: int) -> dict[str, Any]:
         index = tuple(int(value) for value in np.unravel_index(flat, self.case_shape))

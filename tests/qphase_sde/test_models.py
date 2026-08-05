@@ -12,6 +12,7 @@ from models.base import SDEModelPlugin
 from models.crosskerr_2mode import CrossKerr2ModeModel
 from models.kerr_2mode import Kerr2ModeModel
 from models.kerr_3mode import Kerr3ModeModel
+from models.pair_hopping_2mode import PairHopping2ModeModel
 from models.vdp_2mode import VDP2ModeModel
 
 
@@ -54,6 +55,18 @@ from models.vdp_2mode import VDP2ModeModel
             ),
             "kerr_3mode",
             3,
+        ),
+        (
+            PairHopping2ModeModel(
+                omega_a=0.0,
+                omega_b=0.1,
+                g=1.0,
+                k=0.001,
+                gamma_a=1.2941252717,
+                gamma_b=1.5490301811,
+            ),
+            "pair_hopping_2mode",
+            2,
         ),
     ],
 )
@@ -153,6 +166,45 @@ def test_crosskerr_2mode_equations_and_cayley_step():
         NumpyBackend(),
     )
     assert increment.shape == y.shape
+    assert np.all(np.isfinite(increment))
+
+
+def test_pair_hopping_2mode_equations_and_cayley_step():
+    model = PairHopping2ModeModel(
+        omega_a=0.0,
+        omega_b=0.1,
+        g=1.0,
+        k=0.001,
+        gamma_a=1.2941252717,
+        gamma_b=1.5490301811,
+    )
+    y = np.asarray([[1.0 + 2.0j, 3.0 - 1.0j]])
+    alpha, beta = y[0]
+    expected = np.asarray(
+        [[
+            model.params["gamma_a"] / 2.0 * alpha
+            - 1j * model.params["g"] * beta
+            - 2j * model.params["k"] * np.conj(alpha) * beta**2,
+            (-1j * model.params["omega_b"] - model.params["gamma_b"] / 2.0)
+            * beta
+            - 1j * model.params["g"] * alpha
+            - 2j * model.params["k"] * np.conj(beta) * alpha**2,
+        ]]
+    )
+    np.testing.assert_allclose(model.drift(y, 0.0, model.params), expected)
+    diffusion = model.diffusion(y, 0.0, model.params)
+    np.testing.assert_allclose(
+        np.diagonal(diffusion, axis1=1, axis2=2) ** 2,
+        [[model.params["gamma_a"] / 2.0, model.params["gamma_b"] / 2.0]],
+    )
+    increment = CayleyMaruyama(fused="off").step(
+        y,
+        0.0,
+        0.05,
+        model,
+        np.zeros((1, model.noise_dim)),
+        NumpyBackend(),
+    )
     assert np.all(np.isfinite(increment))
 
 

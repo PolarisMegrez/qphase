@@ -26,9 +26,11 @@ class ReductionDiagnostics:
 class VerificationOutcome:
     value: np.ndarray
     digits: int
-    residual_norm: float
+    multiplicity_residual_norm: float
+    full_residual_norm: float
     success: bool
-    decimal_values: tuple[str, ...] = ()
+    unknown_decimal_values: tuple[str, ...] = ()
+    full_state_decimal_values: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -128,7 +130,9 @@ class FractionFreeScalarReduction:
         max_digits: int,
     ) -> VerificationOutcome:
         fixed = {
-            specification.symbol: self.base_params[specification.name]
+            specification.symbol: sp.Float(
+                str(self.base_params[specification.name]), max_digits
+            )
             for specification in self.parameter_specs
             if specification.name not in self.control_names
         }
@@ -149,22 +153,39 @@ class FractionFreeScalarReduction:
                     verify=True,
                 )
                 solved = tuple(solution)
-                substitutions = dict(zip(self.unknown_symbols, solved, strict=True))
+                substitutions = {
+                    **fixed,
+                    **dict(zip(self.unknown_symbols, solved, strict=True)),
+                }
                 residual = max(
                     abs(sp.N(expression.subs(substitutions), digits))
                     for expression in equations
                 )
-                residual_float = float(residual)
-                success = residual_float <= 10.0 ** (-min(30, digits // 2))
+                state = tuple(
+                    sp.N(item.subs(substitutions), digits)
+                    for item in self.materialized.reconstruct_full_state()
+                )
+                full_residual = tuple(
+                    sp.N(item.subs(substitutions), digits)
+                    for item in self.materialized.validation_residual()
+                )
+                multiplicity_norm = float(residual)
+                full_norm = float(
+                    sp.sqrt(sum(abs(item) ** 2 for item in full_residual))
+                )
+                tolerance = 10.0 ** (-min(30, digits // 2))
+                success = multiplicity_norm <= tolerance and full_norm <= tolerance
                 if success or digits >= max_digits:
                     return VerificationOutcome(
                         value=np.asarray([float(item) for item in solved]),
                         digits=digits,
-                        residual_norm=residual_float,
+                        multiplicity_residual_norm=multiplicity_norm,
+                        full_residual_norm=full_norm,
                         success=success,
-                        decimal_values=tuple(
+                        unknown_decimal_values=tuple(
                             str(sp.N(item, digits)) for item in solved
                         ),
+                        full_state_decimal_values=tuple(str(item) for item in state),
                     )
                 current = solved
             except (ArithmeticError, TypeError, ValueError, ZeroDivisionError):
@@ -172,9 +193,10 @@ class FractionFreeScalarReduction:
                     return VerificationOutcome(
                         value=np.asarray(current, dtype=float),
                         digits=digits,
-                        residual_norm=np.inf,
+                        multiplicity_residual_norm=np.inf,
+                        full_residual_norm=np.inf,
                         success=False,
-                        decimal_values=tuple(str(item) for item in current),
+                        unknown_decimal_values=tuple(str(item) for item in current),
                     )
             digits = min(2 * digits, max_digits)
 
@@ -385,6 +407,15 @@ class CondensedScalarReduction:
             sp.lambdify(function_arguments, expression, modules="mpmath")
             for expression in coefficient_expressions
         )
+        full_arguments = (
+            *plan.dynamics.coordinates,
+            *self.parameter_symbols,
+        )
+        self._mp_full_residual = sp.lambdify(
+            full_arguments,
+            plan.dynamics.rhs,
+            modules="mpmath",
+        )
 
     def verify(
         self,
@@ -418,16 +449,39 @@ class CondensedScalarReduction:
                     )
                     residuals = self._evaluate_mpmath(solved)[1][: self.order]
                     residual = mp.sqrt(sum(item * item for item in residuals))
-                    residual_float = float(residual)
-                    success = residual_float <= 10.0 ** (-min(30, digits // 2))
+                    state = self._reconstruct_mpmath(solved)
+                    params = {
+                        name: mp.mpf(str(parameter))
+                        for name, parameter in self.base_params.items()
+                    }
+                    params.update(
+                        zip(self.control_names, solved[1:], strict=True)
+                    )
+                    full_residual = self._mp_full_residual(
+                        *state,
+                        *(params[name] for name in self.parameter_names),
+                    )
+                    full_values = tuple(full_residual)
+                    multiplicity_norm = float(residual)
+                    full_norm = float(
+                        mp.sqrt(sum(item * item for item in full_values))
+                    )
+                    tolerance = 10.0 ** (-min(30, digits // 2))
+                    success = (
+                        multiplicity_norm <= tolerance and full_norm <= tolerance
+                    )
                     if success or digits >= max_digits:
                         return VerificationOutcome(
                             value=np.asarray([float(item) for item in solved]),
                             digits=digits,
-                            residual_norm=residual_float,
+                            multiplicity_residual_norm=multiplicity_norm,
+                            full_residual_norm=full_norm,
                             success=success,
-                            decimal_values=tuple(
+                            unknown_decimal_values=tuple(
                                 mp.nstr(item, n=digits) for item in solved
+                            ),
+                            full_state_decimal_values=tuple(
+                                mp.nstr(item, n=digits) for item in state
                             ),
                         )
                     current = solved
@@ -441,9 +495,10 @@ class CondensedScalarReduction:
                         return VerificationOutcome(
                             value=np.asarray(current, dtype=float),
                             digits=digits,
-                            residual_norm=np.inf,
+                            multiplicity_residual_norm=np.inf,
+                            full_residual_norm=np.inf,
                             success=False,
-                            decimal_values=tuple(
+                            unknown_decimal_values=tuple(
                                 mp.nstr(item, n=digits) for item in current
                             ),
                         )
@@ -547,6 +602,14 @@ class CondensedScalarReduction:
         }
         values.update(zip(self.plan.candidate.eliminated_indices, jets[0], strict=True))
         return np.asarray([values[index] for index in range(len(values))])
+
+    def _reconstruct_mpmath(self, value: Any) -> tuple[Any, ...]:
+        jets, _ = self._evaluate_mpmath(value)
+        values = {self.plan.candidate.retained_indices[0]: tuple(value)[0]}
+        values.update(
+            zip(self.plan.candidate.eliminated_indices, jets[0], strict=True)
+        )
+        return tuple(values[index] for index in range(len(values)))
 
     def diagnostics(self, value: Any) -> ReductionDiagnostics:
         arguments = self._arguments(value)
@@ -669,8 +732,13 @@ class CondensedScalarReduction:
         )
 
     def _evaluate_mpmath(self, value: Any) -> tuple[list[Any], list[Any]]:
+        import mpmath as mp
+
         array = tuple(value)
-        params = dict(self.base_params)
+        params = {
+            name: mp.mpf(str(parameter))
+            for name, parameter in self.base_params.items()
+        }
         params.update(zip(self.control_names, array[1:], strict=True))
         return self._evaluate_mpmath_at(array[0], params)
 
@@ -678,6 +746,11 @@ class CondensedScalarReduction:
         self, q_value: Any, params: dict[str, Any]
     ) -> tuple[list[Any], list[Any]]:
         import mpmath as mp
+
+        params = {
+            name: value if isinstance(value, mp.mpf) else mp.mpf(str(value))
+            for name, value in params.items()
+        }
 
         arguments = (
             q_value,

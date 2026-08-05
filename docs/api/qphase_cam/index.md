@@ -8,7 +8,7 @@
 - `cam_solver`: `steady_state`, `multistability`, `deflation`,
   `batched_newton`, `continuation`, and `bifurcation`.
 - `cam_postprocessor`: `rayleigh_frequency`, `hamiltonian_spectrum`,
-  `jacobian_spectrum`, and `physicality`.
+  `jacobian_spectrum`, `physicality`, and `local_response_validation`.
 
 `cam_solver.bifurcation` owns four subplugin slots:
 `bifurcation_target`, `bifurcation_strategy`, `bifurcation_discovery`, and

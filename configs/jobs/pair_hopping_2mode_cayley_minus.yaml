@@ -1,0 +1,110 @@
+- name: pair_hopping_2mode_cayley_minus_sim
+  save: true
+  scan:
+    axes:
+      omega_b:
+        target: model.pair_hopping_2mode.omega_b
+        values:
+          - 0.49995
+          - 0.4999602835882638
+          - 0.499968452132776
+          - 0.4999749406383187
+          - 0.4999800946414723
+          - 0.4999841886116991
+          - 0.4999874405678424
+          - 0.4999900236884252
+          - 0.4999920755340377
+          - 0.499993705372941
+          - 0.499995
+          - 0.4999960283588264
+          - 0.4999968452132776
+          - 0.4999974940638319
+          - 0.4999980094641472
+          - 0.4999984188611699
+          - 0.4999987440567842
+          - 0.4999990023688425
+          - 0.4999992075534038
+          - 0.4999993705372941
+          - 0.4999995
+          - 0.4999996028358826
+          - 0.4999996845213278
+          - 0.4999997494063832
+          - 0.4999998009464147
+          - 0.499999841886117
+          - 0.4999998744056784
+          - 0.4999999002368842
+          - 0.4999999207553404
+          - 0.4999999370537294
+          - 0.49999995
+          - 0.4999999602835883
+          - 0.4999999684521328
+          - 0.4999999749406383
+          - 0.4999999800946415
+          - 0.4999999841886117
+          - 0.4999999874405678
+          - 0.4999999900236884
+          - 0.499999992075534
+          - 0.499999993705373
+          - 0.499999995
+  engine:
+    sde:
+      t0: 0.0
+      t1: 400000.0
+      dt: 0.05
+      n_traj: 200
+      seed: 42
+      ic:
+        - ["8.7454119854+0.0j", "-1.1050612448-4.1186291634j"]
+      adaptive: false
+      save_stride: 80
+      record_modes: [0]
+      keep_traj: false
+      max_state_norm: 1000.0
+      state_check_interval_steps: 2048
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    pair_hopping_2mode:
+      omega_a: 0.0
+      omega_b: 0.5
+      g: 1.0
+      k: 0.001
+      gamma_a: 0.8996030050008364
+      gamma_b: 3.767911788762655
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 0.7
+      find_peaks: true
+      estimator:
+        periodogram: {}
+
+- name: pair_hopping_2mode_cayley_minus_fit
+  input:
+    from: pair_hopping_2mode_cayley_minus_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_b
+      mode: 0
+      freq_min: 0.1
+      freq_max: 0.23
+      uncertainty: auto
+      clip_by_std: true
+      clip_sigma: 10.0
+      export:
+        - fit_results.csv
+        - psd_merged.csv

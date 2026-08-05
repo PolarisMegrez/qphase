@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import math
 import os
+from collections import deque
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from contextlib import contextmanager
@@ -97,10 +98,17 @@ class MultistabilitySolver(CAMSolver):
         else:
             global_bounds = None
             global_seeds = []
-        if batch_size > 1 and self.config.tile_workers > 1:
+        if batch_size > 1:
+            default_tile_count = (
+                1
+                if self.config.tile_workers == 1
+                and self.config.n_tiles is None
+                and self.config.tile_size is None
+                else self.config.n_tiles
+            )
             tiles = _partition_points(
                 indexed,
-                n_tiles=self.config.n_tiles,
+                n_tiles=default_tile_count,
                 tile_size=self.config.tile_size,
                 worker_count=self.config.tile_workers,
                 grid_shape=grid_shape,
@@ -333,19 +341,28 @@ class MultistabilitySolver(CAMSolver):
         context: Any | None,
     ) -> tuple[list[tuple[int, list[Any], int]], int, int]:
         rows = {index: list(row) for index, row, _ in indexed_rows}
-        suspicious: list[int] = []
-        for index, row in rows.items():
+        pending: deque[int] = deque()
+        queued: set[int] = set()
+        attempted_target: dict[int, int] = {}
+
+        def schedule_if_incomplete(index: int) -> None:
             neighbor_counts = [
                 len(rows[neighbor])
                 for neighbor in _neighbor_indices(index, grid_shape)
                 if neighbor in rows
             ]
-            if neighbor_counts and (
-                any(abs(len(row) - count) > 1 for count in neighbor_counts)
-                or (not row and any(count > 0 for count in neighbor_counts))
+            target = max(neighbor_counts, default=0)
+            if (
+                len(rows[index]) < target
+                and target > attempted_target.get(index, -1)
+                and index not in queued
             ):
-                suspicious.append(index)
-        if not suspicious:
+                pending.append(index)
+                queued.add(index)
+
+        for index in rows:
+            schedule_if_incomplete(index)
+        if not pending:
             return indexed_rows, 0, 0
 
         options = self.config.model_dump()
@@ -361,10 +378,24 @@ class MultistabilitySolver(CAMSolver):
             options["guess_bounds"] = _bounds_config(global_bounds)
         refine_config = MultistabilitySolverConfig.model_validate(options)
         attempts = 0
-        changed = 0
-        for completed, index in enumerate(suspicious, start=1):
+        changed: set[int] = set()
+        completed = 0
+        while pending:
+            index = pending.popleft()
+            queued.remove(index)
+            neighbor_indices = [
+                neighbor
+                for neighbor in _neighbor_indices(index, grid_shape)
+                if neighbor in rows
+            ]
+            target = max(
+                (len(rows[neighbor]) for neighbor in neighbor_indices), default=0
+            )
+            if len(rows[index]) >= target or target <= attempted_target.get(index, -1):
+                continue
+            attempted_target[index] = target
             extra = [solution.state for solution in rows[index]]
-            for neighbor in _neighbor_indices(index, grid_shape):
+            for neighbor in neighbor_indices:
                 extra.extend(solution.state for solution in rows.get(neighbor, []))
             extra.extend(global_seeds)
             recovered, count = _solve_point(
@@ -391,17 +422,20 @@ class MultistabilitySolver(CAMSolver):
                     )
                 )
                 rows[index] = merged
-                changed += 1
+                changed.add(index)
+                for neighbor in neighbor_indices:
+                    schedule_if_incomplete(neighbor)
+            completed += 1
             self._report_stage_progress(
                 context,
                 completed,
-                len(suspicious),
+                completed + len(pending),
                 "suspicious-point refinement",
             )
         return (
             [(index, rows[index], count) for index, _, count in indexed_rows],
             attempts,
-            changed,
+            len(changed),
         )
 
     @staticmethod
@@ -552,19 +586,28 @@ def _solve_tile_with(
 ) -> list[tuple[int, list[Any], int]]:
     solved: dict[int, list[Any]] = {}
     output: list[tuple[int, list[Any], int]] = []
-    for index, params in tile:
+    for tile_position, (index, params) in enumerate(tile):
         extra: list[np.ndarray] = []
         for neighbor in _neighbor_indices(index, grid_shape):
             extra.extend(solution.state for solution in solved.get(neighbor, []))
         extra.extend(global_seeds)
+        point_config = config
+        if (
+            tile_position == 0
+            and config.discover_seeds
+            and config.seed_search_guesses > config.n_guesses
+        ):
+            point_config = config.model_copy(
+                update={"n_guesses": config.seed_search_guesses}
+            )
         row, attempted = _solve_point(
             model,
             params,
-            config,
+            point_config,
             index,
             extra_guesses=extra,
         )
-        if not row and config.retry_guesses > config.n_guesses:
+        if not row and config.retry_guesses > point_config.n_guesses:
             retry_config = config.model_copy(update={"n_guesses": config.retry_guesses})
             row, retry_attempts = _solve_point(
                 model,

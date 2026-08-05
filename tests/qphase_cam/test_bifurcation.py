@@ -22,6 +22,7 @@ from qphase_cam.bifurcation_result import CAMBifurcationResult
 from qphase_cam.core.fpgen import FPGenDynamicsAdapter
 from qphase_cam.core.reduction import CondensedScalarReduction
 from qphase_cam.engine import Engine
+from qphase_cam.postprocessor.local_response import LocalResponseValidation
 from qphase_cam.result import CAMResult
 from qphase_cam.solver.bifurcation import (
     BifurcationSolver,
@@ -59,6 +60,11 @@ class TwoModeFoldModel:
     n_modes = 2
     steady_state_capacity = 2
     params = {"gamma": -1.0, "Gamma": 1.0, "kappa": 1.0}
+
+    @staticmethod
+    def cam_hamiltonian(state, params):
+        del state, params
+        return np.zeros((2, 2), dtype=complex)
 
     @classmethod
     @lru_cache(maxsize=1)
@@ -140,6 +146,10 @@ def test_fraction_free_solver_finds_known_physical_double_root():
     assert candidate.status == "verified"
     assert candidate.metadata["verification_digits"] >= 50
     assert candidate.metadata["verification_status"] == "verified"
+    assert candidate.metadata["multiplicity_residual_norm"] < 1e-30
+    assert candidate.metadata["verified_full_residual_norm"] < 1e-30
+    assert len(candidate.metadata["verified_full_state_decimal_values"]) == 4
+    assert "verification_residual_norm" not in candidate.metadata
     assert candidate.metadata["is_physical"]
     signature = candidate.metadata["scaling_signatures"][0]
     assert (
@@ -327,6 +337,9 @@ def test_condensed_reduction_verifies_known_fold_at_high_precision():
     )
     assert outcome.success
     assert outcome.digits == 50
+    assert outcome.multiplicity_residual_norm < 1e-30
+    assert outcome.full_residual_norm < 1e-30
+    assert len(outcome.full_state_decimal_values) == 4
     np.testing.assert_allclose(outcome.value, [expected_q, expected_gamma])
     state_vector = reduction.reconstruct(outcome.value)
     classification = ScalingSignatureClassifier(ScalingSignatureConfig()).classify(
@@ -429,3 +442,34 @@ def test_engine_persists_scaling_branch_table(tmp_path):
         loaded.branches.leading_state_coefficient,
         result.branches.leading_state_coefficient,
     )
+
+
+def test_local_response_validation_solves_and_persists_complete_branches(tmp_path):
+    model = TwoModeFoldModel()
+    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).solve(
+        model, NumpyBackend()
+    )
+    result = Engine._pack_bifurcation(output, model)
+    processor = LocalResponseValidation(
+        epsilon_min=1e-10,
+        epsilon_max=1e-6,
+        epsilon_points=4,
+        fit_points=3,
+        residual_tolerance=1e-25,
+    )
+    result.postprocess.update(processor.process(result, model, NumpyBackend()))
+    response = result.postprocess["local_response_validation"]
+    assert len(response["candidate_index"]) == 8
+    assert np.all(response["converged"])
+    assert np.all(response["continuous"])
+    assert np.max(response["full_residual_norm"]) < 1e-25
+    np.testing.assert_allclose(response["state_fit_exponent"], 0.5, atol=1e-3)
+
+    target = tmp_path / "response.npz"
+    result.save(target)
+    loaded = CAMBifurcationResult.load(target)
+    np.testing.assert_allclose(
+        loaded.postprocess["local_response_validation"]["delta_state_norm"],
+        response["delta_state_norm"],
+    )
+    assert target.with_name("response_responses.csv").exists()

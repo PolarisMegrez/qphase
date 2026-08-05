@@ -149,11 +149,19 @@ slot。每个参数点默认按 `real(R[0,0])` 排序；slot 不是跨参数点�
 的 shard；`artifact_manifest.json` 记录布局，`CAMResult.load_dataset` 会恢复相同
 的逻辑 shape。
 
-`CAMBifurcationResult` schema 2 包含 candidate table 和通过 `candidate_index`
+`CAMBifurcationResult` schema 3 包含 candidate table 和通过 `candidate_index`
 关联的 branch-response table。后者保存局部分支编号、`(n,k,m)`、指数分子/分母、
 扰动侧、幅度和完整状态矩阵领先系数。可通过 `to_candidate_table()`、
 `to_branch_table()` 与 `branch_view()` 读取。candidate CSV 包含规范状态坐标和数值
 诊断，branch CSV 包含标量分支诊断；完整矩阵系数保存在 NPZ。
+
+高精度验证明确区分重根方程的 `multiplicity_residual_norm` 与高精度重建后完整
+CAM 动力学的 `verified_full_residual_norm`，并保存规范状态与搜索未知量的十进制
+字符串。可选的 `local_response_validation` 后处理器固定临界 controls，只改变指定的
+微扰参数；它沿每条实局部分支求解完整 residual，并记录连续性、物理性、Jacobian
+稳定性、完整状态指数和 Rayleigh 频率有效指数。`rayleigh_visibility < 1e-3` 标记为
+`weak_projection`，表示标量读出在有限窗口可能遮蔽状态的次线性渐近响应。验证失败
+只影响响应状态，不删除数学候选。逐点结果另存为 `*_responses.csv`。
 
 外层 bifurcation scan 返回 `CAMBifurcationScanResult`。它保存命名 case axes、展平的
 candidate table 和 `candidate_offsets`，因此零候选与多候选 case 均可无歧义表示。

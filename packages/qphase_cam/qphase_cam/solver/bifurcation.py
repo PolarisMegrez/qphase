@@ -562,11 +562,25 @@ class BifurcationSolver(CAMSolver):
                 "verification_working_digits": (
                     verification.digits if verification is not None else 0
                 ),
-                "verified_decimal_values": (
-                    verification.decimal_values if verification is not None else ()
+                "verified_unknown_decimal_values": (
+                    verification.unknown_decimal_values
+                    if verification is not None
+                    else ()
                 ),
-                "verification_residual_norm": (
-                    verification.residual_norm if verification is not None else np.nan
+                "verified_full_state_decimal_values": (
+                    verification.full_state_decimal_values
+                    if verification is not None
+                    else ()
+                ),
+                "multiplicity_residual_norm": (
+                    verification.multiplicity_residual_norm
+                    if verification is not None
+                    else np.nan
+                ),
+                "verified_full_residual_norm": (
+                    verification.full_residual_norm
+                    if verification is not None
+                    else np.nan
                 ),
                 "verification_status": (
                     "verified"
@@ -973,11 +987,25 @@ class BifurcationSolver(CAMSolver):
             "verification_working_digits": (
                 verification.digits if verification is not None else 0
             ),
-            "verified_decimal_values": (
-                verification.decimal_values if verification is not None else ()
+            "verified_unknown_decimal_values": (
+                verification.unknown_decimal_values
+                if verification is not None
+                else ()
             ),
-            "verification_residual_norm": (
-                verification.residual_norm if verification is not None else np.nan
+            "verified_full_state_decimal_values": (
+                verification.full_state_decimal_values
+                if verification is not None
+                else ()
+            ),
+            "multiplicity_residual_norm": (
+                verification.multiplicity_residual_norm
+                if verification is not None
+                else np.nan
+            ),
+            "verified_full_residual_norm": (
+                verification.full_residual_norm
+                if verification is not None
+                else np.nan
             ),
             "verification_status": (
                 "verified"

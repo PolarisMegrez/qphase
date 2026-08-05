@@ -140,15 +140,17 @@ The multistability scan follows a continuation-assisted search rather than
 treating points as unrelated roots. With `guess_bounds: auto`, it merges bounds
 from representative corners and the grid center, performs a full-model global
 seed search, and adds those states to every point. Each spatial tile then starts
-near its center and propagates already converged cardinal-neighbor states. Empty
-points receive `retry_guesses`; after the first pass, solution-count jumps are
-revisited with `refine_guesses` plus surrounding states. `n_guesses` counts the
-fresh random guesses at each point; explicit, global, and neighbor guesses are
-additional. Analytic or symbolic Jacobians are used by default and their
-callbacks are reused across all root attempts at a parameter point. Once the
-model's declared solution capacity has been reached, the solver stops after
-`capacity_patience` successful duplicate convergences (default 10); failed
-guesses do not advance that counter.
+near its center, runs a denser seed search there, and propagates already
+converged cardinal-neighbor states. Empty points receive `retry_guesses`. After
+the tile pass, points with fewer solutions than a neighbor are revisited with
+`refine_guesses` plus surrounding states; recovered states are propagated across
+tile boundaries until no further solution count increases. `n_guesses` counts
+the fresh random guesses at each ordinary point; explicit, global, tile-center,
+and neighbor guesses are additional. Analytic or symbolic Jacobians are used by
+default and their callbacks are reused across all root attempts at a parameter
+point. Once the model's declared solution capacity has been reached, the solver
+stops after `capacity_patience` successful duplicate convergences (default 10);
+failed guesses do not advance that counter.
 
 ## Backend Support
 
@@ -166,6 +168,7 @@ finding or CPU pseudo-arclength logic.
 | `continuation` | Yes | No |
 | `bifurcation` | Yes | No |
 | Rayleigh/Hamiltonian/physicality postprocessing | Yes | Yes, with result arrays transferred to CPU |
+| Local bifurcation response validation | Yes | No |
 | Jacobian spectrum | Yes | Yes |
 
 `batched_newton` transfers converged states back to NumPy when constructing
@@ -219,7 +222,7 @@ residuals, frequencies, stability, and physicality fields. Large results may be
 stored as a bounded set of shards; `artifact_manifest.json` records the layout
 and `CAMResult.load_dataset` restores the same logical shape.
 
-`CAMBifurcationResult` instead has a variable candidate axis. Schema 2 stores a
+`CAMBifurcationResult` instead has a variable candidate axis. Schema 3 stores a
 candidate table plus a branch-response table linked by `candidate_index`. The
 branch table contains local branch indices, `(n,k,m)`, exact exponent numerator
 and denominator, perturbation side, amplitude, and the complete leading state
@@ -228,6 +231,23 @@ matrix coefficient. `to_candidate_table()`, `to_branch_table()`, and
 includes canonical state coordinates and numerical diagnostics; branch CSV
 includes scalar branch diagnostics, while complete matrix coefficients remain
 in NPZ. Candidate and local branch indices are not global branch identifiers.
+
+High-precision verification distinguishes `multiplicity_residual_norm`, the
+residual of the repeated-root equations, from `verified_full_residual_norm`, the
+residual of the complete CAM dynamics after high-precision reconstruction.
+Canonical state and search-unknown decimal strings are retained for audit and
+for initializing local response solves; ordinary `states` remain float64.
+
+The optional `local_response_validation` postprocessor fixes all critical
+controls and changes only the configured perturbation parameter. For each real
+local branch it solves the complete CAM residual on a logarithmic epsilon grid,
+then records convergence, branch continuity, physicality, Jacobian stability,
+the complete-state response exponent, and the Rayleigh-frequency response.
+`rayleigh_visibility < 1e-3` is reported as `weak_projection`: the scalar readout
+may look linear over a practical finite window even when its nonzero asymptotic
+term has the same sublinear exponent as the complete state. Validation status
+never removes or reclassifies a mathematical candidate. Results are stored in
+NPZ and an additional `*_responses.csv` table.
 
 An outer bifurcation scan returns `CAMBifurcationScanResult`. It stores named
 case axes, one flattened candidate table, and `candidate_offsets` so zero- and
