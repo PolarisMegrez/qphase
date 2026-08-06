@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -20,6 +20,51 @@ SUPPORTED_STATE_LAYOUTS = frozenset(
         "hermitian-normal-anomalous-declared-index-v2",
     }
 )
+
+
+class FPGenReductionSearchProtocol(Protocol):
+    """Narrow reduction-search surface consumed by qphase_cam."""
+
+    candidates: tuple[Any, ...]
+
+    def manifest(self) -> dict[str, Any]: ...
+
+
+class FPGenLinearReductionProtocol(Protocol):
+    """Narrow linear-reduction plan consumed by qphase_cam."""
+
+    retained_symbols: tuple[Any, ...]
+
+    def materialize(self, *, method: str = "fraction_free") -> Any: ...
+
+
+class FPGenCovarianceDynamicsProtocol(Protocol):
+    """Reviewed fpgen public surface hidden behind the CAM adapter."""
+
+    coordinates: tuple[Any, ...]
+    parameter_spec: tuple[Any, ...]
+    hamiltonian: Any
+    rhs: Any
+
+    def to_model_spec(self, *, name: str) -> Any: ...
+
+    def jacobian(self) -> Any: ...
+
+    def directional(
+        self,
+        order: int,
+        *,
+        state_directions: tuple[Any, ...] = (),
+        parameter_directions: tuple[Any, ...] = (),
+    ) -> Any: ...
+
+    def search_linear_reductions(
+        self, **kwargs: Any
+    ) -> FPGenReductionSearchProtocol: ...
+
+    def linear_reduce(
+        self, *, candidate: Any = None, order_parameters: Any = None
+    ) -> FPGenLinearReductionProtocol: ...
 
 
 def _version_series(value: str) -> tuple[int, int]:
@@ -67,7 +112,7 @@ class FPGenDynamicsAdapter:
     """A checked fpgen dynamics object bound to one CAM model instance."""
 
     model: Any
-    dynamics: Any
+    _dynamics: FPGenCovarianceDynamicsProtocol
 
     @classmethod
     def from_model(cls, model: Any) -> FPGenDynamicsAdapter:
@@ -85,13 +130,54 @@ class FPGenDynamicsAdapter:
             raise BifurcationCapabilityError(
                 "cam_fpgen_dynamics() must return fpgen.CovarianceDynamics"
             )
-        adapter = cls(model=model, dynamics=dynamics)
+        adapter = cls(model=model, _dynamics=dynamics)
         adapter._validate_contract()
         return adapter
 
     @cached_property
     def spec(self) -> Any:
-        return self.dynamics.to_model_spec(name=str(self.model.name))
+        return self._dynamics.to_model_spec(name=str(self.model.name))
+
+    @property
+    def state_symbols(self) -> tuple[Any, ...]:
+        return tuple(self._dynamics.coordinates)
+
+    @property
+    def parameter_symbols(self) -> tuple[Any, ...]:
+        return tuple(item.symbol for item in self._dynamics.parameter_spec)
+
+    @property
+    def symbolic_hamiltonian(self) -> Any:
+        return self._dynamics.hamiltonian
+
+    @property
+    def symbolic_rhs(self) -> Any:
+        return self._dynamics.rhs
+
+    def symbolic_jacobian(self) -> Any:
+        return self._dynamics.jacobian()
+
+    def symbolic_directional(
+        self,
+        order: int,
+        *,
+        state_directions: tuple[Any, ...] = (),
+        parameter_directions: tuple[Any, ...] = (),
+    ) -> Any:
+        return self._dynamics.directional(
+            order,
+            state_directions=state_directions,
+            parameter_directions=parameter_directions,
+        )
+
+    def search_linear_reductions(self, **kwargs: Any) -> FPGenReductionSearchProtocol:
+        return self._dynamics.search_linear_reductions(**kwargs)
+
+    def linear_reduction(self, *, candidate: Any) -> FPGenLinearReductionProtocol:
+        return self._dynamics.linear_reduce(candidate=candidate)
+
+    def materialized_linear_reduction(self, *, candidate: Any) -> Any:
+        return self.linear_reduction(candidate=candidate).materialize()
 
     @property
     def fingerprint(self) -> str:
@@ -435,23 +521,17 @@ class FPGenDerivativeEvaluator:
     def _mp_rhs(self) -> Any:
         import sympy as sp
 
-        dynamics = self.adapter.dynamics
-        arguments = (
-            *dynamics.coordinates,
-            *(item.symbol for item in dynamics.parameter_spec),
-        )
-        return sp.lambdify(arguments, dynamics.rhs, modules="mpmath")
+        arguments = (*self.adapter.state_symbols, *self.adapter.parameter_symbols)
+        return sp.lambdify(arguments, self.adapter.symbolic_rhs, modules="mpmath")
 
     @cached_property
     def _mp_jacobian(self) -> Any:
         import sympy as sp
 
-        dynamics = self.adapter.dynamics
-        arguments = (
-            *dynamics.coordinates,
-            *(item.symbol for item in dynamics.parameter_spec),
+        arguments = (*self.adapter.state_symbols, *self.adapter.parameter_symbols)
+        return sp.lambdify(
+            arguments, self.adapter.symbolic_jacobian(), modules="mpmath"
         )
-        return sp.lambdify(arguments, dynamics.jacobian(), modules="mpmath")
 
     def _mp_parameter_values(self, params: dict[str, Any]) -> tuple[Any, ...]:
         import mpmath as mp
@@ -461,26 +541,27 @@ class FPGenDerivativeEvaluator:
     def _compile(self, state_order: int, parameter_order: int, modules: str) -> Any:
         import sympy as sp
 
-        dynamics = self.adapter.dynamics
-        n_state = len(dynamics.coordinates)
+        n_state = len(self.adapter.state_symbols)
         direction_symbols = tuple(
             sp.Matrix(sp.symbols(f"_d{slot}_0:{n_state}", real=True))
             for slot in range(state_order)
         )
         parameter_direction_symbols = tuple(
             sp.Matrix(
-                sp.symbols(f"_p{slot}_0:{len(dynamics.parameter_spec)}", real=True)
+                sp.symbols(
+                    f"_p{slot}_0:{len(self.adapter.parameter_symbols)}", real=True
+                )
             )
             for slot in range(parameter_order)
         )
-        expression = dynamics.directional(
+        expression = self.adapter.symbolic_directional(
             state_order + parameter_order,
             state_directions=direction_symbols,
             parameter_directions=parameter_direction_symbols,
         )
         arguments = (
-            *dynamics.coordinates,
-            *(item.symbol for item in dynamics.parameter_spec),
+            *self.adapter.state_symbols,
+            *self.adapter.parameter_symbols,
             *(item for direction in direction_symbols for item in direction),
             *(item for direction in parameter_direction_symbols for item in direction),
         )

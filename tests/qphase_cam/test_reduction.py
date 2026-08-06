@@ -21,10 +21,8 @@ def test_condensed_jets_match_explicit_vdp_reduced_dynamics():
         g=0.5,
     )
     adapter = FPGenDynamicsAdapter.from_model(model)
-    candidate = adapter.dynamics.search_linear_reductions(
-        retained_dimension=1
-    ).candidates[0]
-    plan = adapter.dynamics.linear_reduce(candidate=candidate)
+    candidate = adapter.search_linear_reductions(retained_dimension=1).candidates[0]
+    plan = adapter.linear_reduction(candidate=candidate)
     materialized = plan.materialize()
     condensed = CondensedScalarReduction(
         plan,
@@ -40,7 +38,7 @@ def test_condensed_jets_match_explicit_vdp_reduced_dynamics():
         "gamma_a": point[3],
     }
     q = plan.retained_symbols[0]
-    arguments = (q, *(item.symbol for item in adapter.dynamics.parameter_spec))
+    arguments = (q, *adapter.parameter_symbols)
     expected_function = sp.lambdify(
         arguments,
         sp.Matrix(
@@ -54,7 +52,7 @@ def test_condensed_jets_match_explicit_vdp_reduced_dynamics():
     expected = np.asarray(
         expected_function(
             point[0],
-            *(params[item.name] for item in adapter.dynamics.parameter_spec),
+            *(params[name] for name in adapter.parameter_names),
         ),
         dtype=float,
     ).reshape(-1)
@@ -79,11 +77,9 @@ def test_kerr_three_mode_condensed_reconstruction_solves_eliminated_block():
         g_ac=0.3,
     )
     adapter = FPGenDynamicsAdapter.from_model(model)
-    candidate = adapter.dynamics.search_linear_reductions(
-        retained_dimension=1
-    ).candidates[0]
+    candidate = adapter.search_linear_reductions(retained_dimension=1).candidates[0]
     reduction = CondensedScalarReduction(
-        adapter.dynamics.linear_reduce(candidate=candidate),
+        adapter.linear_reduction(candidate=candidate),
         order=3,
         control_names=("omega_b", "gamma_b"),
         base_params=model.params,

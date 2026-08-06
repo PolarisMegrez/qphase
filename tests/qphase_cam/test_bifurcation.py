@@ -325,10 +325,8 @@ def test_pair_hopping_seed_scale_tracks_inverse_nonlinearity():
 def test_condensed_reduction_verifies_known_fold_at_high_precision():
     model = TwoModeFoldModel()
     adapter = FPGenDynamicsAdapter.from_model(model)
-    plan = adapter.dynamics.linear_reduce(
-        candidate=adapter.dynamics.search_linear_reductions(
-            retained_dimension=1
-        ).candidates[0]
+    plan = adapter.linear_reduction(
+        candidate=adapter.search_linear_reductions(retained_dimension=1).candidates[0]
     )
     reduction = CondensedScalarReduction(
         plan,

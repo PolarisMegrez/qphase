@@ -179,14 +179,12 @@ def test_pair_hopping_fpgen_contract():
     assert model.cam_solution_sort_key(state, model.params) == pytest.approx(2.0)
     hamiltonian = model.cam_hamiltonian(state, model.params)
     diffusion = model.cam_diffusion(state, model.params)
-    symbols = tuple(adapter.dynamics.coordinates) + tuple(
-        item.symbol for item in adapter.dynamics.parameter_spec
-    )
+    symbols = adapter.state_symbols + adapter.parameter_symbols
     values = tuple(vector) + tuple(adapter.parameter_vector())
     np.testing.assert_allclose(
         hamiltonian,
         np.asarray(
-            adapter.dynamics.hamiltonian.subs(dict(zip(symbols, values, strict=True))),
+            adapter.symbolic_hamiltonian.subs(dict(zip(symbols, values, strict=True))),
             dtype=complex,
         ),
     )

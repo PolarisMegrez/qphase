@@ -21,7 +21,12 @@ cam = ["qphase-cam"]
 gui = ["qphase[gui]"]
 
 [tool.uv.workspace]
-members = ["packages/*"]
+members = [
+    "packages/qphase",
+    "packages/qphase_sde",
+    "packages/qphase_viz",
+    "packages/qphase_cam",
+]
 
 [tool.uv.sources]
 fpgen = { path = "../fpgen", editable = true }

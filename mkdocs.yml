@@ -107,7 +107,9 @@ nav:
         - Models: api/qphase_sde/models.md
         - Analyzers: api/qphase_sde/analyzers.md
         - Output Formats: api/qphase_sde/output.md
-    - CAM: api/qphase_cam/index.md
+    - CAM:
+      - Overview: api/qphase_cam/index.md
+      - fpgen Contract: api/qphase_cam/fpgen_contract.md
   - Developer Guide:
     - Introduction: dev_guide/index.md
     - Architecture: dev_guide/architecture.md

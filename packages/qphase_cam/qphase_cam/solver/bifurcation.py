@@ -739,7 +739,7 @@ class BifurcationSolver(CAMSolver):
             manifest = dict(cached_manifest)
             manifest["compile_cache_hit"] = True
             return reductions, manifest
-        search = adapter.dynamics.search_linear_reductions(
+        search = adapter.search_linear_reductions(
             retained_dimension=1,
             retained_ids=(
                 None
@@ -759,7 +759,7 @@ class BifurcationSolver(CAMSolver):
                 try:
                     reductions.append(
                         CondensedScalarReduction(
-                            adapter.dynamics.linear_reduce(candidate=candidate),
+                            adapter.linear_reduction(candidate=candidate),
                             order=self.target.order,
                             control_names=tuple(self.config.controls),
                             base_params=adapter.model.params,
@@ -774,9 +774,9 @@ class BifurcationSolver(CAMSolver):
             ):
                 continue
             try:
-                materialized = adapter.dynamics.linear_reduce(
+                materialized = adapter.materialized_linear_reduction(
                     candidate=candidate
-                ).materialize()
+                )
                 reduction = FractionFreeScalarReduction(
                     materialized,
                     order=self.target.order,

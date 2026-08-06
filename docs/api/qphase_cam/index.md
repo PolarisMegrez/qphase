@@ -22,6 +22,13 @@ grid returns a ragged `CAMBifurcationScanResult`.
 All plugin implementations inherit the public base class in their namespace and
 declare a strict Pydantic `config_schema`.
 
+## External Symbolic Contract
+
+The workspace-only fpgen integration is isolated behind
+`FPGenDynamicsAdapter`. See the [fpgen integration contract](fpgen_contract.md)
+for the supported versions, numerical layouts, reduction API, and upgrade
+procedure.
+
 ## Scan Runtime
 
 `engine.cam` receives the core `ParameterGrid` directly. Native batch solvers
