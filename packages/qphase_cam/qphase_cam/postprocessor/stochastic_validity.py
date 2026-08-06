@@ -81,7 +81,8 @@ class StochasticValidity(CAMPostprocessor):
                     )
                 )
         output = self._columns(rows)
-        complete = int(np.count_nonzero(output["status"] == "complete"))
+        status = output.get("status")
+        complete = int(np.count_nonzero(status == "complete")) if status is not None else 0
         self.result_metadata = {
             "status": "complete" if complete else "no_supported_branches",
             "row_count": len(rows),
