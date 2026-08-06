@@ -149,6 +149,14 @@ class CAMBifurcationResult:
             self._save_csv(target.with_suffix(".csv"))
             self._save_branch_csv(target.with_name(f"{target.stem}_branches.csv"))
             self._save_response_csv(target.with_name(f"{target.stem}_responses.csv"))
+            self._save_postprocess_csv(
+                target.with_name(f"{target.stem}_response_summary.csv"),
+                "local_response_summary",
+            )
+            self._save_postprocess_csv(
+                target.with_name(f"{target.stem}_stochastic_validity.csv"),
+                "stochastic_validity",
+            )
         except Exception as exc:
             raise QPhaseIOError(
                 f"failed to save CAM bifurcation result to {target}: {exc}"
@@ -171,6 +179,8 @@ class CAMBifurcationResult:
                 target.with_suffix(".csv"),
                 target.with_name(f"{target.stem}_branches.csv"),
                 target.with_name(f"{target.stem}_responses.csv"),
+                target.with_name(f"{target.stem}_response_summary.csv"),
+                target.with_name(f"{target.stem}_stochastic_validity.csv"),
             )
             if item.exists()
         )
@@ -393,28 +403,27 @@ class CAMBifurcationResult:
         )
 
     def _save_response_csv(self, path: Path) -> None:
-        response = self.postprocess.get("local_response_validation")
-        if not response or not len(response.get("candidate_index", ())):
+        self._save_postprocess_csv(path, "local_response_validation")
+
+    def _save_postprocess_csv(self, path: Path, name: str) -> None:
+        table = self.postprocess.get(name)
+        if not table or not len(table.get("candidate_index", ())):
             return
-        fields = tuple(response)
+        fields = tuple(table)
         with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
             writer.writeheader()
-            size = len(response["candidate_index"])
+            size = len(table["candidate_index"])
             for index in range(size):
                 writer.writerow(
-                    {
-                        name: np.asarray(values)[index]
-                        for name, values in response.items()
-                    }
+                    {name: np.asarray(values)[index] for name, values in table.items()}
                 )
 
     @staticmethod
     def _nested_nbytes(value: Any) -> int:
         if isinstance(value, dict):
             return sum(
-                CAMBifurcationResult._nested_nbytes(item)
-                for item in value.values()
+                CAMBifurcationResult._nested_nbytes(item) for item in value.values()
             )
         return int(np.asarray(value).nbytes)
 
@@ -430,8 +439,7 @@ class CAMBifurcationResult:
             candidate_index = np.asarray(value["candidate_index"])
             mask = (candidate_index >= start) & (candidate_index < stop)
             subset = {
-                field: np.asarray(values)[mask]
-                for field, values in value.items()
+                field: np.asarray(values)[mask] for field, values in value.items()
             }
             subset["candidate_index"] = subset["candidate_index"] - start
             output[name] = subset
@@ -511,7 +519,24 @@ class CAMBifurcationResult:
                     continue
                 shape = (len(result.states), *exemplar.shape[1:])
                 parts.append(np.full(shape, np.nan, dtype=object))
-            output[name] = np.concatenate(parts, axis=0)
+            try:
+                output[name] = np.concatenate(parts, axis=0)
+            except ValueError:
+                packed = np.empty(
+                    sum(len(result.states) for result in results), dtype=object
+                )
+                offset = 0
+                for result in results:
+                    size = len(result.states)
+                    if name not in result.diagnostics:
+                        packed[offset : offset + size] = np.nan
+                    else:
+                        values = np.asarray(result.diagnostics[name], dtype=object)
+                        packed[offset : offset + size] = [
+                            values[index] for index in range(size)
+                        ]
+                    offset += size
+                output[name] = packed
         return output
 
     @staticmethod
@@ -614,11 +639,13 @@ class CAMBifurcationScanResult:
             *self.case_params.values(),
             self.candidate_offsets,
         )
-        return self.candidates.nbytes + sum(
-            np.asarray(value).nbytes for value in arrays
-        ) + sum(
-            CAMBifurcationResult._nested_nbytes(value)
-            for value in self.postprocess.values()
+        return (
+            self.candidates.nbytes
+            + sum(np.asarray(value).nbytes for value in arrays)
+            + sum(
+                CAMBifurcationResult._nested_nbytes(value)
+                for value in self.postprocess.values()
+            )
         )
 
     def params_at(self, index: tuple[int, ...]) -> dict[str, Any]:
@@ -666,6 +693,14 @@ class CAMBifurcationScanResult:
             self._save_candidate_csv(target.with_name(f"{target.stem}_candidates.csv"))
             self._save_branch_csv(target.with_name(f"{target.stem}_branches.csv"))
             self._save_response_csv(target.with_name(f"{target.stem}_responses.csv"))
+            self._save_postprocess_csv(
+                target.with_name(f"{target.stem}_response_summary.csv"),
+                "local_response_summary",
+            )
+            self._save_postprocess_csv(
+                target.with_name(f"{target.stem}_stochastic_validity.csv"),
+                "stochastic_validity",
+            )
         except Exception as exc:
             raise QPhaseIOError(
                 f"failed to save CAM bifurcation scan to {target}: {exc}"
@@ -682,9 +717,7 @@ class CAMBifurcationScanResult:
                 candidates=CAMBifurcationResult._from_npz(data, prefix="candidate_"),
                 case_metadata=tuple(data["case_metadata"].tolist()),
                 postprocess=(
-                    data["postprocess"].item()
-                    if "postprocess" in data.files
-                    else {}
+                    data["postprocess"].item() if "postprocess" in data.files else {}
                 ),
                 meta=data["meta"].item(),
             )
@@ -707,6 +740,8 @@ class CAMBifurcationScanResult:
                 target.with_name(f"{target.stem}_candidates.csv"),
                 target.with_name(f"{target.stem}_branches.csv"),
                 target.with_name(f"{target.stem}_responses.csv"),
+                target.with_name(f"{target.stem}_response_summary.csv"),
+                target.with_name(f"{target.stem}_stochastic_validity.csv"),
             )
             if item.exists()
         )
@@ -718,14 +753,17 @@ class CAMBifurcationScanResult:
         )
 
     def _save_response_csv(self, path: Path) -> None:
-        response = self.postprocess.get("local_response_validation")
-        if not response or not len(response.get("candidate_index", ())):
+        self._save_postprocess_csv(path, "local_response_validation")
+
+    def _save_postprocess_csv(self, path: Path, name: str) -> None:
+        table = self.postprocess.get(name)
+        if not table or not len(table.get("candidate_index", ())):
             return
-        fields = ("case", *self.case_axes, *response)
+        fields = ("case", *self.case_axes, *table)
         with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
             writer.writeheader()
-            for index, candidate in enumerate(response["candidate_index"]):
+            for index, candidate in enumerate(table["candidate_index"]):
                 case = int(
                     np.searchsorted(
                         self.candidate_offsets, int(candidate), side="right"
@@ -735,10 +773,7 @@ class CAMBifurcationScanResult:
                 row = self._case_values(case)
                 row.pop("candidate_count", None)
                 row.update(
-                    {
-                        name: np.asarray(values)[index]
-                        for name, values in response.items()
-                    }
+                    {name: np.asarray(values)[index] for name, values in table.items()}
                 )
                 writer.writerow(row)
 

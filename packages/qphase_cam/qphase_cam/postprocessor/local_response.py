@@ -55,7 +55,10 @@ class LocalResponseValidation(CAMPostprocessor):
         branches = candidates.branches
         if branches is None or branches.size == 0:
             self.result_metadata = {"status": "no_real_branches", "sample_count": 0}
-            return {self.name: self._empty()}
+            return {
+                self.name: self._empty(),
+                "local_response_summary": self._empty_summary(),
+            }
 
         magnitudes = np.geomspace(
             self.config.epsilon_min,
@@ -136,13 +139,10 @@ class LocalResponseValidation(CAMPostprocessor):
                             np.min(physical) >= -self.config.psd_tolerance
                         ),
                         "is_stable": bool(
-                            np.max(np.real(jacobian))
-                            <= self.config.stability_tolerance
+                            np.max(np.real(jacobian)) <= self.config.stability_tolerance
                         ),
                         "minimum_physical_eigenvalue": float(np.min(physical)),
-                        "maximum_jacobian_real_part": float(
-                            np.max(np.real(jacobian))
-                        ),
+                        "maximum_jacobian_real_part": float(np.max(np.real(jacobian))),
                         "delta_state_norm": delta_norm,
                         "state_effective_exponent": np.nan,
                         "rayleigh_frequency": rayleigh,
@@ -164,11 +164,12 @@ class LocalResponseValidation(CAMPostprocessor):
             "status": "complete" if rows else "no_real_branches",
             "sample_count": len(rows),
             "precision_digits": self.config.precision_digits,
-            "perturbation_parameter": candidates.meta.get(
-                "perturbation_parameter"
-            ),
+            "perturbation_parameter": candidates.meta.get("perturbation_parameter"),
         }
-        return {self.name: output}
+        return {
+            self.name: output,
+            "local_response_summary": self._summary(rows),
+        }
 
     def _newton(
         self,
@@ -219,9 +220,7 @@ class LocalResponseValidation(CAMPostprocessor):
                 for _ in range(16):
                     trial = state + damping * step
                     trial_values = adapter.mpmath_rhs(trial, mp_params)
-                    trial_residual = mp.sqrt(
-                        sum(item * item for item in trial_values)
-                    )
+                    trial_residual = mp.sqrt(sum(item * item for item in trial_values))
                     if trial_residual < residual:
                         state = trial
                         residual = trial_residual
@@ -243,9 +242,7 @@ class LocalResponseValidation(CAMPostprocessor):
         params.update(candidates.meta.get("fixed_params", {}))
         if hasattr(result, "candidate_offsets"):
             case = int(
-                np.searchsorted(
-                    result.candidate_offsets, candidate_index, side="right"
-                )
+                np.searchsorted(result.candidate_offsets, candidate_index, side="right")
                 - 1
             )
             params.update(
@@ -264,9 +261,7 @@ class LocalResponseValidation(CAMPostprocessor):
         return params
 
     @staticmethod
-    def _critical_state_decimals(
-        candidates: Any, index: int
-    ) -> tuple[str, ...] | None:
+    def _critical_state_decimals(candidates: Any, index: int) -> tuple[str, ...] | None:
         decimals = candidates.diagnostics.get("verified_full_state_decimal_values")
         if decimals is not None:
             values = np.asarray(decimals, dtype=object)[index]
@@ -361,6 +356,75 @@ class LocalResponseValidation(CAMPostprocessor):
         return {name: np.asarray([row[name] for row in rows]) for name in names}
 
     @staticmethod
+    def _summary(rows: list[dict[str, Any]]) -> dict[str, np.ndarray]:
+        if not rows:
+            return LocalResponseValidation._empty_summary()
+        output = []
+        for candidate_index in sorted({int(row["candidate_index"]) for row in rows}):
+            selected = [
+                row for row in rows if int(row["candidate_index"]) == candidate_index
+            ]
+            sample_count = len(selected)
+            converged = sum(bool(row["converged"]) for row in selected)
+            continuous = sum(bool(row["continuous"]) for row in selected)
+            physical = sum(bool(row["is_physical"]) for row in selected)
+            stable = sum(bool(row["is_stable"]) for row in selected)
+            state_fits = np.asarray(
+                [float(row["state_fit_exponent"]) for row in selected], dtype=float
+            )
+            rayleigh_fits = np.asarray(
+                [float(row["rayleigh_fit_exponent"]) for row in selected],
+                dtype=float,
+            )
+            state_fit_min, state_fit_max = LocalResponseValidation._finite_range(
+                state_fits
+            )
+            rayleigh_fit_min, rayleigh_fit_max = (
+                LocalResponseValidation._finite_range(rayleigh_fits)
+            )
+            output.append(
+                {
+                    "candidate_index": candidate_index,
+                    "branch_count": len({int(row["branch_index"]) for row in selected}),
+                    "sample_count": sample_count,
+                    "converged_count": converged,
+                    "continuous_count": continuous,
+                    "physical_count": physical,
+                    "stable_count": stable,
+                    "converged_fraction": converged / sample_count,
+                    "continuous_fraction": continuous / sample_count,
+                    "physical_fraction": physical / sample_count,
+                    "stable_fraction": stable / sample_count,
+                    "all_converged": converged == sample_count,
+                    "all_continuous": continuous == sample_count,
+                    "all_physical": physical == sample_count,
+                    "all_stable": stable == sample_count,
+                    "minimum_physical_eigenvalue": min(
+                        float(row["minimum_physical_eigenvalue"]) for row in selected
+                    ),
+                    "maximum_jacobian_real_part": max(
+                        float(row["maximum_jacobian_real_part"]) for row in selected
+                    ),
+                    "minimum_state_fit_exponent": state_fit_min,
+                    "maximum_state_fit_exponent": state_fit_max,
+                    "minimum_rayleigh_fit_exponent": rayleigh_fit_min,
+                    "maximum_rayleigh_fit_exponent": rayleigh_fit_max,
+                    "minimum_rayleigh_visibility": min(
+                        float(row["rayleigh_visibility"]) for row in selected
+                    ),
+                }
+            )
+        names = tuple(output[0])
+        return {name: np.asarray([row[name] for row in output]) for name in names}
+
+    @staticmethod
+    def _finite_range(values: np.ndarray) -> tuple[float, float]:
+        finite = values[np.isfinite(values)]
+        if not finite.size:
+            return np.nan, np.nan
+        return float(np.min(finite)), float(np.max(finite))
+
+    @staticmethod
     def _empty() -> dict[str, np.ndarray]:
         fields: dict[str, Any] = defaultdict(lambda: float)
         fields.update(
@@ -376,13 +440,76 @@ class LocalResponseValidation(CAMPostprocessor):
             }
         )
         names = (
-            "candidate_index", "branch_index", "epsilon_side", "epsilon",
-            "abs_epsilon", "asymptotic_exponent", "converged", "continuous",
-            "full_residual_norm", "is_physical", "is_stable",
-            "minimum_physical_eigenvalue", "maximum_jacobian_real_part",
-            "delta_state_norm", "state_effective_exponent", "rayleigh_frequency",
-            "delta_rayleigh_frequency", "rayleigh_effective_exponent",
-            "state_fit_exponent", "rayleigh_fit_exponent", "rayleigh_visibility",
+            "candidate_index",
+            "branch_index",
+            "epsilon_side",
+            "epsilon",
+            "abs_epsilon",
+            "asymptotic_exponent",
+            "converged",
+            "continuous",
+            "full_residual_norm",
+            "is_physical",
+            "is_stable",
+            "minimum_physical_eigenvalue",
+            "maximum_jacobian_real_part",
+            "delta_state_norm",
+            "state_effective_exponent",
+            "rayleigh_frequency",
+            "delta_rayleigh_frequency",
+            "rayleigh_effective_exponent",
+            "state_fit_exponent",
+            "rayleigh_fit_exponent",
+            "rayleigh_visibility",
             "rayleigh_projection_status",
         )
         return {name: np.asarray([], dtype=fields[name]) for name in names}
+
+    @staticmethod
+    def _empty_summary() -> dict[str, np.ndarray]:
+        integer = {
+            "candidate_index",
+            "branch_count",
+            "sample_count",
+            "converged_count",
+            "continuous_count",
+            "physical_count",
+            "stable_count",
+        }
+        boolean = {
+            "all_converged",
+            "all_continuous",
+            "all_physical",
+            "all_stable",
+        }
+        names = (
+            "candidate_index",
+            "branch_count",
+            "sample_count",
+            "converged_count",
+            "continuous_count",
+            "physical_count",
+            "stable_count",
+            "converged_fraction",
+            "continuous_fraction",
+            "physical_fraction",
+            "stable_fraction",
+            "all_converged",
+            "all_continuous",
+            "all_physical",
+            "all_stable",
+            "minimum_physical_eigenvalue",
+            "maximum_jacobian_real_part",
+            "minimum_state_fit_exponent",
+            "maximum_state_fit_exponent",
+            "minimum_rayleigh_fit_exponent",
+            "maximum_rayleigh_fit_exponent",
+            "minimum_rayleigh_visibility",
+        )
+        return {
+            name: np.asarray(
+                [],
+                dtype=int if name in integer else bool if name in boolean else float,
+            )
+            for name in names
+        }

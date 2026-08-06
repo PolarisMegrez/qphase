@@ -264,6 +264,31 @@ class FPGenDynamicsAdapter:
             "derivation": self.spec.provenance.manifest(),
         }
 
+    def closure_provenance(self) -> dict[str, Any]:
+        """Return a compact exactness summary for downstream diagnostics."""
+        derivation = dict(self.spec.provenance.manifest())
+        closure = derivation.get("moment_closure")
+        closure_exact = closure in (None, "none", "exact")
+        fpe_exact = bool(derivation.get("fpe_is_exact", False))
+        warnings = []
+        if not fpe_exact:
+            warnings.append("phase_space_fpe_truncated")
+        if not closure_exact:
+            warnings.append("moment_hierarchy_factorized")
+        return {
+            "representation": derivation.get("representation", "unknown"),
+            "original_kramers_moyal_order": derivation.get(
+                "original_kramers_moyal_order"
+            ),
+            "fpe_truncation_order": derivation.get("fpe_truncation_order"),
+            "discarded_term_count": int(derivation.get("discarded_term_count", 0)),
+            "fpe_is_exact": fpe_exact,
+            "moment_closure": closure,
+            "moment_closure_is_exact": closure_exact,
+            "deterministic_cam_is_exact": fpe_exact and closure_exact,
+            "warnings": tuple(warnings),
+        }
+
     def _validate_contract(self) -> None:
         actual = tuple(item.id for item in self.spec.state)
         if not self.spec.supports("state_matrix"):

@@ -64,3 +64,5 @@ plugins:
       precision_digits: 100
       residual_tolerance: 1.0e-40
       fit_points: 4
+    stochastic_validity:
+      probe_epsilon: 5.0e-5

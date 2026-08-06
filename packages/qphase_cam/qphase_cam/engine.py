@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, ClassVar
 
 import numpy as np
@@ -265,7 +265,7 @@ class Engine(EngineBase):
             else []
         )
         diagnostics = {
-            name: np.asarray(
+            name: Engine._pack_candidate_metadata(
                 [candidate.metadata.get(name, np.nan) for candidate in candidates]
             )
             for name in diagnostic_names
@@ -328,6 +328,36 @@ class Engine(EngineBase):
                 },
             },
         )
+
+    @staticmethod
+    def _pack_candidate_metadata(values: list[Any]) -> np.ndarray:
+        """Preserve a candidate axis for scalar, fixed-shape, and ragged values."""
+        if not values:
+            return np.asarray([])
+        if any(Engine._contains_mapping(value) for value in values):
+            output = np.empty(len(values), dtype=object)
+            output[:] = values
+            return output
+        arrays = [np.asarray(value) for value in values]
+        if all(array.ndim == 0 for array in arrays):
+            return np.asarray(values)
+        shapes = {array.shape for array in arrays}
+        if len(shapes) == 1:
+            try:
+                return np.stack(arrays, axis=0)
+            except (TypeError, ValueError):
+                pass
+        output = np.empty(len(values), dtype=object)
+        output[:] = values
+        return output
+
+    @staticmethod
+    def _contains_mapping(value: Any) -> bool:
+        if isinstance(value, Mapping):
+            return True
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            return any(Engine._contains_mapping(item) for item in value)
+        return False
 
     @staticmethod
     def _pack_bifurcation_branches(

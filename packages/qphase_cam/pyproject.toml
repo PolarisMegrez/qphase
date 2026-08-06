@@ -34,6 +34,7 @@ dependencies = [
 "cam_postprocessor.jacobian_spectrum" = "qphase_cam.postprocessor.jacobian:JacobianSpectrum"
 "cam_postprocessor.physicality" = "qphase_cam.postprocessor.physicality:Physicality"
 "cam_postprocessor.local_response_validation" = "qphase_cam.postprocessor.local_response:LocalResponseValidation"
+"cam_postprocessor.stochastic_validity" = "qphase_cam.postprocessor.stochastic_validity:StochasticValidity"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -18,11 +18,15 @@ from fpgen import (
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.protocols import ResultProtocol
-from qphase_cam.bifurcation_result import CAMBifurcationResult
+from qphase_cam.bifurcation_result import (
+    CAMBifurcationBranchTable,
+    CAMBifurcationResult,
+)
 from qphase_cam.core.fpgen import FPGenDynamicsAdapter
 from qphase_cam.core.reduction import CondensedScalarReduction
 from qphase_cam.engine import Engine
 from qphase_cam.postprocessor.local_response import LocalResponseValidation
+from qphase_cam.postprocessor.stochastic_validity import StochasticValidity
 from qphase_cam.result import CAMResult
 from qphase_cam.solver.bifurcation import (
     BifurcationSolver,
@@ -159,6 +163,10 @@ def test_fraction_free_solver_finds_known_physical_double_root():
     ) == (2, 1, 0)
     assert signature["exponent"] == pytest.approx(0.5)
     assert output.metadata["reduced_degree"] == 2
+    assert output.metadata["closure"]["representation"] == "wigner"
+    assert not output.metadata["closure"]["fpe_is_exact"]
+    assert not output.metadata["closure"]["moment_closure_is_exact"]
+    assert not output.metadata["closure"]["deterministic_cam_is_exact"]
     assert (
         output.metadata["coverage"]
         == "regular_reduction_exhaustive_and_bordered_local_search"
@@ -444,6 +452,56 @@ def test_engine_persists_scaling_branch_table(tmp_path):
     )
 
 
+def test_engine_packs_candidates_with_ragged_scaling_metadata(tmp_path):
+    model = TwoModeFoldModel()
+    signature = {
+        "state_order": 3,
+        "perturbation_order": 1,
+        "coupling_state_order": 0,
+        "exponent_numerator": 1,
+        "exponent_denominator": 3,
+        "exponent": 1.0 / 3.0,
+        "sublinear": True,
+        "branches": (),
+    }
+    output = CAMBifurcationOutput(
+        candidates=[
+            CAMBifurcationCandidate(
+                state_vector=np.asarray([1.0, 0.5, 0.0, 0.0]),
+                controls={"gamma": -0.5},
+                full_residual_norm=0.0,
+                search_residual_norm=0.0,
+                success=True,
+                status="verified",
+                method="test",
+                metadata={"scaling_signatures": (signature,)},
+            ),
+            CAMBifurcationCandidate(
+                state_vector=np.asarray([2.0, 0.5, 0.0, 0.0]),
+                controls={"gamma": -0.25},
+                full_residual_norm=0.0,
+                search_residual_norm=0.0,
+                success=True,
+                status="verified",
+                method="test",
+                metadata={"scaling_signatures": ()},
+            ),
+        ],
+        target="equilibrium_multiplicity",
+        order=3,
+        metadata={"control_names": ("gamma",)},
+    )
+    result = Engine._pack_bifurcation(output, model)
+    assert result.diagnostics["scaling_signatures"].shape == (2,)
+    assert result.to_candidate_table()[0]["signature_count"] == 1
+    assert result.to_candidate_table()[1]["signature_count"] == 0
+    target = tmp_path / "ragged.npz"
+    result.save(target)
+    loaded = CAMBifurcationResult.load(target)
+    assert loaded.to_candidate_table()[0]["signature_count"] == 1
+    assert loaded.to_candidate_table()[1]["signature_count"] == 0
+
+
 def test_local_response_validation_solves_and_persists_complete_branches(tmp_path):
     model = TwoModeFoldModel()
     output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).solve(
@@ -459,11 +517,15 @@ def test_local_response_validation_solves_and_persists_complete_branches(tmp_pat
     )
     result.postprocess.update(processor.process(result, model, NumpyBackend()))
     response = result.postprocess["local_response_validation"]
+    summary = result.postprocess["local_response_summary"]
     assert len(response["candidate_index"]) == 8
     assert np.all(response["converged"])
     assert np.all(response["continuous"])
     assert np.max(response["full_residual_norm"]) < 1e-25
     np.testing.assert_allclose(response["state_fit_exponent"], 0.5, atol=1e-3)
+    assert summary["sample_count"].tolist() == [8]
+    assert summary["all_converged"].tolist() == [True]
+    assert summary["all_continuous"].tolist() == [True]
 
     target = tmp_path / "response.npz"
     result.save(target)
@@ -473,3 +535,96 @@ def test_local_response_validation_solves_and_persists_complete_branches(tmp_pat
         response["delta_state_norm"],
     )
     assert target.with_name("response_responses.csv").exists()
+    assert target.with_name("response_response_summary.csv").exists()
+
+
+def test_stochastic_validity_estimates_additive_cubic_crossover(monkeypatch, tmp_path):
+    class Adapter:
+        moment_layout = "normal"
+
+        @staticmethod
+        def state_matrix(state, params):
+            del params
+            return np.asarray([[state[0]]], dtype=complex)
+
+        @staticmethod
+        def jacobian(state, params):
+            del state, params
+            return np.asarray([[0.0]])
+
+        @staticmethod
+        def parameter_jacobian(state, params):
+            del state, params
+            return np.asarray([[1.0]])
+
+        @staticmethod
+        def parameter_direction(name, scale=1.0):
+            assert name == "mu"
+            return np.asarray([scale])
+
+        @staticmethod
+        def closure_provenance():
+            return {
+                "representation": "wigner",
+                "fpe_is_exact": False,
+                "moment_closure": "factorized_bilinear",
+                "moment_closure_is_exact": False,
+                "deterministic_cam_is_exact": False,
+            }
+
+    class Model:
+        params = {"mu": 0.0}
+
+        @staticmethod
+        def cam_diffusion(state, params):
+            del state, params
+            return np.asarray([[1.0]])
+
+    monkeypatch.setattr(
+        "qphase_cam.postprocessor.stochastic_validity.FPGenDynamicsAdapter.from_model",
+        lambda model: Adapter(),
+    )
+    branches = CAMBifurcationBranchTable(
+        candidate_index=np.asarray([0]),
+        local_branch_index=np.asarray([0]),
+        signature_index=np.asarray([0]),
+        state_order=np.asarray([3]),
+        perturbation_order=np.asarray([1]),
+        coupling_state_order=np.asarray([0]),
+        exponent_numerator=np.asarray([1]),
+        exponent_denominator=np.asarray([3]),
+        epsilon_side=np.asarray([1]),
+        amplitude=np.asarray([1.0]),
+        real_branch=np.asarray([True]),
+        sublinear=np.asarray([True]),
+        leading_state_coefficient=np.asarray([[[1.0]]]),
+    )
+    result = CAMBifurcationResult(
+        states=np.asarray([[[1.0 + 0.0j]]]),
+        state_vectors=np.asarray([[1.0]]),
+        control_values=np.empty((1, 0)),
+        control_names=(),
+        full_residual_norm=np.asarray([0.0]),
+        search_residual_norm=np.asarray([0.0]),
+        success=np.asarray([True]),
+        status=np.asarray(["verified"]),
+        method=np.asarray(["test"]),
+        verification_digits=np.asarray([50]),
+        verification_status=np.asarray(["verified"]),
+        branches=branches,
+        meta={
+            "perturbation_parameter": "mu",
+            "perturbation_scale": 1.0,
+        },
+    )
+    processor = StochasticValidity(probe_epsilon=1.0)
+    result.postprocess.update(processor.process(result, Model(), NumpyBackend()))
+    diagnostic = result.postprocess["stochastic_validity"]
+    assert diagnostic["status"].tolist() == ["complete"]
+    np.testing.assert_allclose(diagnostic["projected_noise_intensity"], [2.0])
+    np.testing.assert_allclose(diagnostic["normal_form_state_coefficient"], [-1.0])
+    np.testing.assert_allclose(diagnostic["epsilon_crossover"], [2.0 * np.sqrt(2.0)])
+    assert diagnostic["regime"].tolist() == ["noise_dominated"]
+    target = tmp_path / "stochastic.npz"
+    result.save(target)
+    assert target.with_name("stochastic_stochastic_validity.csv").exists()

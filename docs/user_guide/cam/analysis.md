@@ -247,7 +247,28 @@ the complete-state response exponent, and the Rayleigh-frequency response.
 may look linear over a practical finite window even when its nonzero asymptotic
 term has the same sublinear exponent as the complete state. Validation status
 never removes or reclassifies a mathematical candidate. Results are stored in
-NPZ and an additional `*_responses.csv` table.
+NPZ and an additional `*_responses.csv` table. Candidate-level convergence,
+continuity, physicality, and stability fractions are stored separately in
+`*_response_summary.csv`; this distinguishes stability exactly at a multiple
+root from stability throughout the sampled perturbation window.
+
+The optional `stochastic_validity` postprocessor estimates whether finite
+sample-matrix noise is likely to mask the deterministic local response. For a
+normal Hermitian CAM with zero anomalous diffusion it pushes `D(R)` into the
+canonical coordinates of the instantaneous matrix `R=alpha alpha^dagger`,
+projects that covariance onto the left critical mode, and combines it with the
+classified additive normal form `(n,1,0)`. It reports critical-mode
+conditioning, the noncritical spectral gap, projected noise, a confining-form
+check, the characteristic fluctuation scale, and an `epsilon_crossover`.
+Supplying `probe_epsilon` additionally labels the point as `noise_dominated` or
+`response_dominated`.
+
+This is a regime diagnostic, not a linewidth predictor. Its noise process
+inherits the fpgen moment closure. Every row records the representation, FPE
+exactness, moment-closure policy, and noise semantics. Unsupported augmented,
+anomalous-noise, oscillatory-critical-mode, or non-additive signatures produce
+an explicit status and do not reject the bifurcation candidate. Results are
+stored in NPZ and `*_stochastic_validity.csv`.
 
 An outer bifurcation scan returns `CAMBifurcationScanResult`. It stores named
 case axes, one flattened candidate table, and `candidate_offsets` so zero- and

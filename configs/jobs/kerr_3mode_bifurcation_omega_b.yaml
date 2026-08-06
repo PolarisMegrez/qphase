@@ -12,18 +12,18 @@ plugins:
     kerr_3mode:
       omega_a: 0.0
       omega_b: 0.0
-      omega_c: 1.0
+      omega_c: 0.5
       chi: 0.001
       gamma_a: 1.0
       gamma_b: 1.0
-      gamma_c: 1.0
+      gamma_c: 0.5
       g_ab: 1.0
-      g_ac: 0.5
+      g_ac: 3.0
   cam_solver:
     bifurcation:
       controls:
-        omega_b: {min: -1.0, max: 1.0, scale: 0.5, domain: real}
-        g_ac: {min: 1.5, max: 3.5, scale: 1.0, domain: nonnegative}
+        omega_b: {min: -2.0, max: 0.0, scale: 1.0, domain: real}
+        gamma_c: {min: 0.4, max: 2.0, scale: 1.0, domain: nonnegative}
       perturbation:
         parameter: omega_b
         scale: 1.0
@@ -35,14 +35,14 @@ plugins:
         reduced:
           retained_dimension: 1
           order_parameter: r_diag_0
-          order_parameter_bounds: [0.0, 20000.0]
+          order_parameter_bounds: [0.0, 30000.0]
           max_candidates: 8
           condition_limit: 1.0e11
       discovery:
         seeds:
-          samples_per_control: 5
-          max_starts: 2048
-          order_parameter_samples: 81
+          samples_per_control: 6
+          max_starts: 4096
+          order_parameter_samples: 101
       classifier:
         scaling_signature:
           max_total_order: 8
@@ -52,5 +52,15 @@ plugins:
         tolerance: 1.0e-11
         max_iterations: 100
       verification:
-        initial_digits: 50
-        max_digits: 200
+        initial_digits: 60
+        max_digits: 240
+  cam_postprocessor:
+    local_response_validation:
+      epsilon_min: 1.0e-12
+      epsilon_max: 1.0e-4
+      epsilon_points: 9
+      precision_digits: 100
+      residual_tolerance: 1.0e-40
+      fit_points: 4
+    stochastic_validity:
+      probe_epsilon: 1.0e-4
