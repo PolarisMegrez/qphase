@@ -26,6 +26,7 @@ class FPGenReductionSearchProtocol(Protocol):
     """Narrow reduction-search surface consumed by qphase_cam."""
 
     candidates: tuple[Any, ...]
+    rejected_partitions: tuple[Any, ...]
 
     def manifest(self) -> dict[str, Any]: ...
 

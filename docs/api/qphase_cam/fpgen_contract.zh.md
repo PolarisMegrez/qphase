@@ -43,7 +43,13 @@ materialized reduction 可以越过 adapter 边界，因为 `qphase_cam.core.red
 
 约化搜索结果必须包含 candidates、coverage、truncation reasons 与
 `manifest()`；候选可通过 `linear_reduce(candidate=...)` 建立 plan，并支持
-fraction-free `materialize()`。该搜索只覆盖 regular affine-elimination branches；
+fraction-free `materialize()`。每个候选提供稳定、可序列化的 `chart_id`
+（`ret:<retained_ids>|eq:<retained_equations>`），用于区分同一 retained 变量的
+不同 equation partition，并支持跨 chart 去重与追溯；搜索结果同时携带
+`rejected_partitions` 明细（逐条记录被排除 partition 的原因与 retained 坐标），
+`manifest()` 中含 `rejected_partition_count` 与
+`materialization_skipped_oversized`（消元维数大于 3 的物化跳过）计数。
+该搜索只覆盖 regular affine-elimination branches；
 即使 coverage 为 exhaustive，也不能据此断言 singular branch 不存在。
 
 ## 升级流程

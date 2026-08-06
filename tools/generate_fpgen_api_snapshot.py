@@ -19,6 +19,7 @@ PUBLIC_TYPES = (
     "ReductionSearchResult",
     "LinearReductionPlan",
     "MaterializedReduction",
+    "RejectedPartition",
 )
 METHODS = (
     ("CovarianceDynamics", "to_model_spec"),

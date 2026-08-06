@@ -18,6 +18,7 @@ REQUIRED_EXPORTS = {
     "ReductionSearchResult",
     "LinearReductionPlan",
     "MaterializedReduction",
+    "RejectedPartition",
 }
 
 
@@ -86,6 +87,18 @@ def test_fpgen_adapter_numerical_and_reduction_contract():
     assert manifest["candidate_count"] >= len(search.candidates) == 1
     assert "coverage" in manifest
     assert "truncation_reasons" in manifest
+    assert len(search.rejected_partitions) == manifest["rejected_partition_count"]
+    assert {entry.reason for entry in search.rejected_partitions} <= {
+        "non_affine_eliminated_block",
+        "structurally_rank_deficient",
+    }
+    assert manifest["materialization_skipped_oversized"] >= 0
+
+    candidate = search.candidates[0]
+    assert candidate.chart_id == (
+        f"ret:{','.join(candidate.retained_ids)}"
+        f"|eq:{','.join(map(str, candidate.retained_equations))}"
+    )
 
     plan = adapter.linear_reduction(candidate=search.candidates[0])
     materialized = adapter.materialized_linear_reduction(candidate=search.candidates[0])

@@ -70,6 +70,14 @@ Reduction search must return `ReductionSearchResult` with candidates, coverage,
 truncation reasons, and `manifest()`. A selected candidate must support
 `linear_reduce(candidate=...)`; its plan must support fraction-free
 `materialize()` and expose the fields used by `qphase_cam.core.reduction`.
+Every candidate exposes a stable, serializable `chart_id`
+(`ret:<retained_ids>|eq:<retained_equations>`) that distinguishes equation
+partitions sharing the same retained variables, enabling cross-chart
+deduplication and provenance. The search result also carries
+`rejected_partitions` entries (per-partition rejection reason and retained
+coordinates), and `manifest()` reports `rejected_partition_count` and
+`materialization_skipped_oversized` (materialization skipped when the
+eliminated block exceeds dimension 3).
 Search covers regular affine-elimination branches only. Singular branches are
 not implied to be absent when coverage is exhaustive.
 
