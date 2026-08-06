@@ -1,14 +1,14 @@
-name: vdp_2mode_bifurcation
+name: crosskerr_2mode_bifurcation_gamma_b
 save: true
 
 scan:
   combine: cartesian
   axes:
-    Gamma:
-      target: model.vdp_2mode.Gamma
+    chi:
+      target: model.crosskerr_2mode.chi
       values: [0.01, 0.001, 0.0001]
     g:
-      target: model.vdp_2mode.g
+      target: model.crosskerr_2mode.g
       values: [0.5, 1.0, 2.0]
 
 engine:
@@ -19,20 +19,20 @@ plugins:
     numpy:
       float_dtype: float64
   model:
-    vdp_2mode:
+    crosskerr_2mode:
       omega_a: 0.0
       omega_b: 0.0
+      chi: 0.001
       gamma_a: 1.0
       gamma_b: 1.0
-      Gamma: 0.001
       g: 1.0
   cam_solver:
     bifurcation:
       controls:
-        omega_a: {min: -2.0, max: 2.0, scale: 1.0, domain: real}
+        omega_b: {min: -2.0, max: 2.0, scale: 1.0, domain: real}
         gamma_b: {min: 0.01, max: 5.0, scale: 1.0, domain: nonnegative}
       perturbation:
-        parameter: omega_a
+        parameter: omega_b
         scale: 1.0
         side: both
       target:

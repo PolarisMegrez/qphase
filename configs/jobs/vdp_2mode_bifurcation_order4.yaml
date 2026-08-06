@@ -1,4 +1,4 @@
-name: vdp_2mode_bifurcation
+name: vdp_2mode_bifurcation_order4
 save: true
 
 scan:
@@ -7,9 +7,6 @@ scan:
     Gamma:
       target: model.vdp_2mode.Gamma
       values: [0.01, 0.001, 0.0001]
-    g:
-      target: model.vdp_2mode.g
-      values: [0.5, 1.0, 2.0]
 
 engine:
   cam: {}
@@ -31,13 +28,14 @@ plugins:
       controls:
         omega_a: {min: -2.0, max: 2.0, scale: 1.0, domain: real}
         gamma_b: {min: 0.01, max: 5.0, scale: 1.0, domain: nonnegative}
+        g: {min: 0.01, max: 5.0, scale: 1.0, domain: nonnegative}
       perturbation:
         parameter: omega_a
         scale: 1.0
         side: both
       target:
         equilibrium_multiplicity:
-          order: 3
+          order: 4
       strategy:
         auto:
           retained_dimension: 1
