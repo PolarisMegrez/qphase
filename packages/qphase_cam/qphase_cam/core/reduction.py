@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from itertools import product
 from math import comb, factorial, isfinite
 from typing import Any
@@ -40,10 +41,35 @@ class LocalScalingSeries:
     state_tangent: np.ndarray
 
 
+@dataclass
+class SeedGenerationStats:
+    """Mutable skip bookkeeping for one ``initial_starts`` seed pass.
+
+    ``source`` labels the seed provenance category, ``skipped`` counts
+    evaluated candidate seeds discarded by reason, and ``truncated`` marks
+    that ``max_starts`` stopped enumeration before the domain was exhausted.
+    Skips are counted only for points that were actually evaluated, so
+    ``returned_starts + sum(skipped.values())`` always equals the number of
+    evaluated points, whether or not ``truncated`` is set.
+    """
+
+    source: str
+    skipped: Counter[str] = field(default_factory=Counter)
+    truncated: bool = False
+
+    def skip(self, reason: str) -> None:
+        self.skipped[reason] += 1
+
+    @property
+    def skipped_total(self) -> int:
+        return sum(self.skipped.values())
+
+
 class FractionFreeScalarReduction:
     """Compiled regular-branch equations from a materialized fpgen reduction."""
 
     method = "reduced_fraction_free"
+    seed_source = "reduction_roots"
 
     def __init__(
         self,
@@ -288,6 +314,7 @@ class FractionFreeScalarReduction:
         max_starts: int,
         order_parameter_bounds: tuple[float, float] | None = None,
         order_parameter_samples: int = 41,
+        stats: SeedGenerationStats | None = None,
     ) -> list[np.ndarray]:
         del order_parameter_bounds, order_parameter_samples
         axes = [
@@ -305,21 +332,31 @@ class FractionFreeScalarReduction:
             ).reshape(-1)
             first = np.flatnonzero(np.abs(coefficients) > 1e-14)
             if not first.size:
+                if stats is not None:
+                    stats.skip("zero_coefficients")
                 continue
             active = coefficients[first[0] :]
             powers = np.arange(len(active) - 1, -1, -1, dtype=float)
             scaled = active * np.power(self.retained_scale, powers)
             norm = np.max(np.abs(scaled))
             if not np.isfinite(norm) or norm == 0.0:
+                if stats is not None:
+                    stats.skip("non_finite_coefficients")
                 continue
             for root in np.roots(scaled / norm):
                 if abs(root.imag) > 1e-8 * max(1.0, abs(root.real)):
+                    if stats is not None:
+                        stats.skip("complex_root")
                     continue
                 q = float(root.real * self.retained_scale)
                 if self.retained_id.startswith("r_diag_") and q < -1e-10:
+                    if stats is not None:
+                        stats.skip("negative_retained")
                     continue
                 starts.append(np.asarray((q, *controls), dtype=float))
                 if len(starts) >= max_starts:
+                    if stats is not None:
+                        stats.truncated = True
                     return starts
         return starts
 
@@ -347,6 +384,7 @@ class CondensedScalarReduction:
 
     degree: int | None = None
     method = "reduced_condensed"
+    seed_source = "brentq_scan"
 
     def __init__(
         self,
@@ -630,6 +668,7 @@ class CondensedScalarReduction:
         max_starts: int,
         order_parameter_bounds: tuple[float, float] | None = None,
         order_parameter_samples: int = 41,
+        stats: SeedGenerationStats | None = None,
     ) -> list[np.ndarray]:
         q_bounds = order_parameter_bounds or self._default_q_bounds()
         q_axis = self._q_axis(q_bounds, order_parameter_samples)
@@ -650,10 +689,14 @@ class CondensedScalarReduction:
                 q_axis[:-1], q_axis[1:], values[:-1], values[1:], strict=True
             ):
                 if not np.isfinite(f_left) or not np.isfinite(f_right):
+                    if stats is not None:
+                        stats.skip("non_finite_residual")
                     continue
                 if f_left == 0.0:
                     root = float(left)
                 elif np.signbit(f_left) == np.signbit(f_right):
+                    if stats is not None:
+                        stats.skip("no_sign_change")
                     continue
                 else:
                     try:
@@ -667,11 +710,18 @@ class CondensedScalarReduction:
                             )
                         )
                     except (ValueError, np.linalg.LinAlgError):
+                        if stats is not None:
+                            stats.skip("brentq_failed")
                         continue
                 candidate = np.asarray((root, *controls), dtype=float)
-                if not any(np.linalg.norm(candidate - item) < 1e-8 for item in starts):
-                    starts.append(candidate)
+                if any(np.linalg.norm(candidate - item) < 1e-8 for item in starts):
+                    if stats is not None:
+                        stats.skip("duplicate_root")
+                    continue
+                starts.append(candidate)
                 if len(starts) >= max_starts:
+                    if stats is not None:
+                        stats.truncated = True
                     return starts
         return starts
 

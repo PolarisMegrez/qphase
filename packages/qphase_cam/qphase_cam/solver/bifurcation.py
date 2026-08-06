@@ -17,6 +17,7 @@ from qphase_cam.core.fpgen import FPGenDynamicsAdapter
 from qphase_cam.core.reduction import (
     CondensedScalarReduction,
     FractionFreeScalarReduction,
+    SeedGenerationStats,
     finite_vector,
     scaled_distance,
 )
@@ -27,6 +28,15 @@ from qphase_cam.state import (
 )
 
 from .base import CAMSolver, CAMSolverConfig
+from .bifurcation_audit import (
+    AUDIT_SCHEMA,
+    EMPTY_RESULT_NOTE,
+    REJECTION_COUNTER_SEMANTICS,
+    AuditConfig,
+    NearMissStore,
+    near_miss_json,
+    near_miss_selection_metadata,
+)
 from .bifurcation_classifier import BifurcationClassifier
 from .bifurcation_discovery import BifurcationDiscovery
 from .bifurcation_strategy import BifurcationStrategy
@@ -85,6 +95,7 @@ class BifurcationSolverConfig(CAMSolverConfig):
     refinement: RefinementConfig = Field(default_factory=RefinementConfig)
     verification: VerificationConfig = Field(default_factory=VerificationConfig)
     state_domain: StateDomainConfig = Field(default_factory=StateDomainConfig)
+    audit: AuditConfig = Field(default_factory=AuditConfig)
 
 
 class BifurcationSolver(CAMSolver):
@@ -214,20 +225,33 @@ class BifurcationSolver(CAMSolver):
         reduction_runs: list[dict[str, Any]] = []
         rejected_count = 0
         rejected_by_reason: Counter[str] = Counter()
+        near_misses = NearMissStore(
+            per_reason=self.config.audit.near_miss_per_reason,
+            total=self.config.audit.near_miss_total,
+        )
+        reduction_audits: list[dict[str, Any]] = []
+        prefilter_rejected_total: Counter[str] = Counter()
+        seed_skips_total: Counter[str] = Counter()
         for index, reduction in enumerate(reductions):
+            seed_stats = SeedGenerationStats(source=reduction.seed_source)
             starts = reduction.initial_starts(
                 self._control_bounds(),
                 samples_per_control=self.discovery.config.samples_per_control,
                 max_starts=self.discovery.config.max_starts,
                 order_parameter_bounds=self.strategy.config.order_parameter_bounds,
                 order_parameter_samples=(self.discovery.config.order_parameter_samples),
+                stats=seed_stats,
             )
             raw_start_count = len(starts)
-            starts = [
-                start
-                for start in starts
-                if self._reduced_start_is_physical(reduction, adapter, start)
-            ]
+            prefilter_rejected: Counter[str] = Counter()
+            physical_starts: list[np.ndarray] = []
+            for start in starts:
+                reason = self._reduced_start_prefilter_reason(reduction, adapter, start)
+                if reason is None:
+                    physical_starts.append(start)
+                else:
+                    prefilter_rejected[reason] += 1
+            starts = physical_starts
             if reporter is not None:
                 with reporter.stage(
                     f"refine_{index + 1}",
@@ -238,16 +262,28 @@ class BifurcationSolver(CAMSolver):
                         f"{reduction.retained_id}"
                     ),
                 ):
-                    found, rejected, run_rejected_count = self._refine(
-                        reduction, adapter, starts, reporter=reporter
+                    found, rejected, run_rejected_count, dedup_skipped = self._refine(
+                        reduction,
+                        adapter,
+                        starts,
+                        reporter=reporter,
+                        near_misses=near_misses,
+                        seed_source=seed_stats.source,
                     )
             else:
-                found, rejected, run_rejected_count = self._refine(
-                    reduction, adapter, starts, reporter=None
+                found, rejected, run_rejected_count, dedup_skipped = self._refine(
+                    reduction,
+                    adapter,
+                    starts,
+                    reporter=None,
+                    near_misses=near_misses,
+                    seed_source=seed_stats.source,
                 )
             candidates.extend(found)
             rejected_count += run_rejected_count
             rejected_by_reason.update(rejected)
+            prefilter_rejected_total.update(prefilter_rejected)
+            seed_skips_total.update(seed_stats.skipped)
             reduction_runs.append(
                 {
                     "state_id": reduction.retained_id,
@@ -257,6 +293,24 @@ class BifurcationSolver(CAMSolver):
                     "nonphysical_start_count": raw_start_count - len(starts),
                     "candidate_count": len(found),
                     "rejected_count": run_rejected_count,
+                    "rejected_by_reason": dict(rejected),
+                }
+            )
+            reduction_audits.append(
+                {
+                    "state_id": reduction.retained_id,
+                    "method": reduction.method,
+                    "seed_source": seed_stats.source,
+                    "raw_start_count": raw_start_count + seed_stats.skipped_total,
+                    "seed_start_count": raw_start_count,
+                    "physical_start_count": len(starts),
+                    "prefilter_rejected_count": raw_start_count - len(starts),
+                    "prefilter_rejected": dict(prefilter_rejected),
+                    "seed_skips": dict(seed_stats.skipped),
+                    "seed_truncated": seed_stats.truncated,
+                    "accepted_count": len(found),
+                    "rejected_count": run_rejected_count,
+                    "dedup_skipped_count": dedup_skipped,
                     "rejected_by_reason": dict(rejected),
                 }
             )
@@ -298,11 +352,60 @@ class BifurcationSolver(CAMSolver):
         }
         if self.strategy.mode == "auto":
             full_candidates, full_metadata = self._solve_full(
-                adapter, data=data, reporter=reporter
+                adapter, data=data, reporter=reporter, near_misses=near_misses
             )
             candidates = self._deduplicate_candidates([*candidates, *full_candidates])
             metadata["full_fallback"] = full_metadata
             metadata["coverage"] = f"{metadata['coverage']}_and_bordered_local_search"
+        full_audit = (
+            metadata.get("full_fallback", {}).get("audit")
+            if self.strategy.mode == "auto"
+            else None
+        )
+        near_miss_records = near_misses.finalize()
+        raw_total = sum(item["raw_start_count"] for item in reduction_audits)
+        physical_total = sum(item["physical_start_count"] for item in reduction_audits)
+        accepted_total = sum(item["accepted_count"] for item in reduction_audits)
+        dedup_total = sum(item["dedup_skipped_count"] for item in reduction_audits)
+        rejected_total = rejected_count
+        rejected_total_by_reason: Counter[str] = Counter(rejected_by_reason)
+        seed_truncated = any(item["seed_truncated"] for item in reduction_audits)
+        if full_audit is not None:
+            raw_total += full_audit["raw_start_count"]
+            physical_total += full_audit["seed_start_count"]
+            accepted_total += full_audit["accepted_count"]
+            rejected_total += full_audit["rejected_count"]
+            dedup_total += full_audit["dedup_skipped_count"]
+            rejected_total_by_reason.update(full_audit["rejected_by_reason"])
+            seed_skips_total.update(full_audit["seed_skips"])
+            seed_truncated = seed_truncated or full_audit["seed_truncated"]
+        metadata["audit"] = {
+            "schema": AUDIT_SCHEMA,
+            "path": self.strategy.mode,
+            "reductions": reduction_audits,
+            "totals": {
+                "raw_start_count": raw_total,
+                "physical_start_count": physical_total,
+                "prefilter_rejected_count": sum(prefilter_rejected_total.values()),
+                "prefilter_rejected": dict(prefilter_rejected_total),
+                "seed_skips": dict(seed_skips_total),
+                "seed_truncated": seed_truncated,
+                "accepted_count": accepted_total,
+                "rejected_count": rejected_total,
+                "dedup_skipped_count": dedup_total,
+                "rejected_by_reason": dict(rejected_total_by_reason),
+                "near_miss_saved": len(near_miss_records),
+                "near_miss_dropped": near_misses.dropped,
+                "unique_candidate_count": len(candidates),
+            },
+            "rejection_counter_semantics": REJECTION_COUNTER_SEMANTICS,
+            "near_miss_selection": near_miss_selection_metadata(self.config.audit),
+            "near_misses": near_miss_records,
+            "result_note": (
+                EMPTY_RESULT_NOTE if not candidates else "candidates_found"
+            ),
+        }
+        metadata["near_misses_json"] = near_miss_json(near_miss_records)
         return CAMBifurcationOutput(
             candidates=candidates,
             target=self.target.name,
@@ -324,6 +427,7 @@ class BifurcationSolver(CAMSolver):
         *,
         data: Any | None,
         reporter: Any | None,
+        near_misses: NearMissStore | None = None,
     ) -> tuple[list[CAMBifurcationCandidate], dict[str, Any]]:
         system = BorderedMultiplicitySystem(
             adapter,
@@ -332,14 +436,23 @@ class BifurcationSolver(CAMSolver):
             control_names=tuple(self.config.controls),
             base_params=adapter.model.params,
         )
-        seeds = self._upstream_seeds(system, data)
+        owns_near_misses = near_misses is None
+        if near_misses is None:
+            near_misses = NearMissStore(
+                per_reason=self.config.audit.near_miss_per_reason,
+                total=self.config.audit.near_miss_total,
+            )
+        seed_stats = SeedGenerationStats(source="upstream")
+        seeds = self._upstream_seeds(system, data, stats=seed_stats)
         seed_source = "upstream"
         if not seeds:
-            seeds = self._discover_full_seeds(system, adapter)
+            seed_stats = SeedGenerationStats(source="domain_sampling")
+            seeds = self._discover_full_seeds(system, adapter, stats=seed_stats)
             seed_source = "domain_sampling"
         candidates: list[CAMBifurcationCandidate] = []
         solved: list[np.ndarray] = []
         rejected_count = 0
+        dedup_skipped = 0
         rejected_by_reason: Counter[str] = Counter()
         if reporter is not None:
             stage = reporter.stage(
@@ -375,6 +488,7 @@ class BifurcationSolver(CAMSolver):
                     <= 1e-6
                     for previous in solved
                 ):
+                    dedup_skipped += 1
                     continue
                 solved.append(value)
                 candidate = self._full_candidate(
@@ -384,10 +498,38 @@ class BifurcationSolver(CAMSolver):
                     candidates.append(candidate)
                 else:
                     rejected_count += 1
-                    rejected_by_reason.update(
+                    reasons = tuple(
                         candidate.metadata.get("rejection_reasons", ("unknown",))
                     )
-        return candidates, {
+                    rejected_by_reason.update(reasons)
+                    near_misses.add(
+                        path="full",
+                        reduction=None,
+                        seed_source=seed_source,
+                        controls=candidate.controls,
+                        rejection_reasons=reasons,
+                        search_residual=candidate.search_residual_norm,
+                        full_residual=candidate.full_residual_norm,
+                        min_state_eigenvalue=candidate.metadata.get(
+                            "minimum_physical_eigenvalue", np.nan
+                        ),
+                    )
+        audit: dict[str, Any] = {
+            "schema": AUDIT_SCHEMA,
+            "path": "full",
+            "seed_source": seed_source,
+            "raw_start_count": len(seeds) + seed_stats.skipped_total,
+            "seed_start_count": len(seeds),
+            "seed_skips": dict(seed_stats.skipped),
+            "seed_truncated": seed_stats.truncated,
+            "accepted_count": len(candidates),
+            "rejected_count": rejected_count,
+            "dedup_skipped_count": dedup_skipped,
+            "rejected_by_reason": dict(rejected_by_reason),
+            "rejection_counter_semantics": REJECTION_COUNTER_SEMANTICS,
+            "near_miss_selection": near_miss_selection_metadata(self.config.audit),
+        }
+        metadata: dict[str, Any] = {
             "control_names": tuple(self.config.controls),
             "strategy": "full",
             "start_count": len(seeds),
@@ -408,10 +550,35 @@ class BifurcationSolver(CAMSolver):
             "perturbation_parameter": self.config.perturbation.parameter,
             "perturbation_scale": self.config.perturbation.scale,
             "perturbation_side": self.config.perturbation.side,
+            "audit": audit,
         }
+        if owns_near_misses:
+            records = near_misses.finalize()
+            audit["near_misses"] = records
+            audit["result_note"] = (
+                EMPTY_RESULT_NOTE if not candidates else "candidates_found"
+            )
+            audit["totals"] = {
+                "raw_start_count": audit["raw_start_count"],
+                "physical_start_count": len(seeds),
+                "seed_skips": dict(seed_stats.skipped),
+                "seed_truncated": seed_stats.truncated,
+                "accepted_count": len(candidates),
+                "rejected_count": rejected_count,
+                "dedup_skipped_count": dedup_skipped,
+                "rejected_by_reason": dict(rejected_by_reason),
+                "near_miss_saved": len(records),
+                "near_miss_dropped": near_misses.dropped,
+                "unique_candidate_count": len(candidates),
+            }
+            metadata["near_misses_json"] = near_miss_json(records)
+        return candidates, metadata
 
     def _upstream_seeds(
-        self, system: BorderedMultiplicitySystem, data: Any | None
+        self,
+        system: BorderedMultiplicitySystem,
+        data: Any | None,
+        stats: SeedGenerationStats | None = None,
     ) -> list[np.ndarray]:
         if data is None or not hasattr(data, "states"):
             return []
@@ -430,23 +597,35 @@ class BifurcationSolver(CAMSolver):
                 else dict(getattr(data, "params", {}))
             )
             if not all(name in params for name in self.config.controls):
+                if stats is not None:
+                    stats.skip("missing_controls")
                 continue
             controls = {name: float(params[name]) for name in self.config.controls}
             if not self._controls_in_bounds(controls):
+                if stats is not None:
+                    stats.skip("controls_out_of_bounds")
                 continue
             for state, is_valid in zip(states, valid, strict=True):
                 if not is_valid:
+                    if stats is not None:
+                        stats.skip("invalid_state")
                     continue
                 try:
                     seeds.append(system.seed(matrix_to_vector(state), controls))
                 except np.linalg.LinAlgError:
+                    if stats is not None:
+                        stats.skip("seed_failed")
                     continue
-        return seeds[: self.discovery.config.max_starts]
+        limit = self.discovery.config.max_starts
+        if stats is not None and len(seeds) > limit:
+            stats.truncated = True
+        return seeds[:limit]
 
     def _discover_full_seeds(
         self,
         system: BorderedMultiplicitySystem,
         adapter: FPGenDynamicsAdapter,
+        stats: SeedGenerationStats | None = None,
     ) -> list[np.ndarray]:
         axes = [
             np.linspace(
@@ -473,17 +652,27 @@ class BifurcationSolver(CAMSolver):
                     not solution.success
                     or np.linalg.norm(adapter.rhs(state, params)) > 1e-7
                 ):
+                    if stats is not None:
+                        stats.skip("fixed_point_not_converged")
                     continue
                 if not self._state_is_physical(adapter, state, params):
+                    if stats is not None:
+                        stats.skip("non_physical_state")
                     continue
                 if any(np.linalg.norm(state - item) < 1e-7 for item in known_states):
+                    if stats is not None:
+                        stats.skip("duplicate_state")
                     continue
                 known_states.append(state)
                 try:
                     starts.append(system.seed(state, controls))
                 except np.linalg.LinAlgError:
+                    if stats is not None:
+                        stats.skip("seed_failed")
                     continue
                 if len(starts) >= self.discovery.config.max_starts:
+                    if stats is not None:
+                        stats.truncated = True
                     return starts
         return starts
 
@@ -838,9 +1027,11 @@ class BifurcationSolver(CAMSolver):
         starts: list[np.ndarray],
         *,
         reporter: Any | None,
-    ) -> tuple[list[CAMBifurcationCandidate], Counter[str], int]:
+        near_misses: NearMissStore | None = None,
+        seed_source: str = "unknown",
+    ) -> tuple[list[CAMBifurcationCandidate], Counter[str], int, int]:
         if not starts:
-            return [], Counter(), 0
+            return [], Counter(), 0, 0
         tolerance = self.config.refinement.tolerance
         variable_scale = np.asarray(
             [
@@ -880,6 +1071,7 @@ class BifurcationSolver(CAMSolver):
         solved: list[np.ndarray] = []
         rejected: Counter[str] = Counter()
         rejected_count = 0
+        dedup_skipped = 0
         for start in starts:
             initial = np.minimum(np.maximum(start, lower), upper)
             result = least_squares(
@@ -900,6 +1092,7 @@ class BifurcationSolver(CAMSolver):
                 scaled_distance(value, previous, variable_scale) <= 1e-6
                 for previous in solved
             ):
+                dedup_skipped += 1
                 continue
             solved.append(value)
             candidate = self._candidate(
@@ -909,10 +1102,24 @@ class BifurcationSolver(CAMSolver):
                 accepted.append(candidate)
             else:
                 rejected_count += 1
-                rejected.update(
+                reasons = tuple(
                     candidate.metadata.get("rejection_reasons", ("unknown",))
                 )
-        return accepted, rejected, rejected_count
+                rejected.update(reasons)
+                if near_misses is not None:
+                    near_misses.add(
+                        path="reduced",
+                        reduction=reduction.retained_id,
+                        seed_source=seed_source,
+                        controls=candidate.controls,
+                        rejection_reasons=reasons,
+                        search_residual=candidate.search_residual_norm,
+                        full_residual=candidate.full_residual_norm,
+                        min_state_eigenvalue=candidate.metadata.get(
+                            "minimum_physical_eigenvalue", np.nan
+                        ),
+                    )
+        return accepted, rejected, rejected_count, dedup_skipped
 
     def _candidate(
         self,
@@ -990,9 +1197,7 @@ class BifurcationSolver(CAMSolver):
                 verification.digits if verification is not None else 0
             ),
             "verified_unknown_decimal_values": (
-                verification.unknown_decimal_values
-                if verification is not None
-                else ()
+                verification.unknown_decimal_values if verification is not None else ()
             ),
             "verified_full_state_decimal_values": (
                 verification.full_state_decimal_values
@@ -1005,9 +1210,7 @@ class BifurcationSolver(CAMSolver):
                 else np.nan
             ),
             "verified_full_residual_norm": (
-                verification.full_residual_norm
-                if verification is not None
-                else np.nan
+                verification.full_residual_norm if verification is not None else np.nan
             ),
             "verification_status": (
                 "verified"
@@ -1143,12 +1346,13 @@ class BifurcationSolver(CAMSolver):
             and np.min(eigenvalues) >= -self.config.state_domain.psd_tolerance
         )
 
-    def _reduced_start_is_physical(
+    def _reduced_start_prefilter_reason(
         self,
         reduction: FractionFreeScalarReduction | CondensedScalarReduction,
         adapter: FPGenDynamicsAdapter,
         start: np.ndarray,
-    ) -> bool:
+    ) -> str | None:
+        """Return the physical-prefilter rejection reason, or None if physical."""
         try:
             vector = reduction.reconstruct(start)
         except (
@@ -1157,11 +1361,21 @@ class BifurcationSolver(CAMSolver):
             FloatingPointError,
             ZeroDivisionError,
         ):
-            return False
+            return "reconstruction_error"
         controls = dict(zip(self.config.controls, start[1:], strict=True))
-        return self._state_is_physical(
+        if self._state_is_physical(
             adapter, vector, {**adapter.model.params, **controls}
-        )
+        ):
+            return None
+        return "psd_violation"
+
+    def _reduced_start_is_physical(
+        self,
+        reduction: FractionFreeScalarReduction | CondensedScalarReduction,
+        adapter: FPGenDynamicsAdapter,
+        start: np.ndarray,
+    ) -> bool:
+        return self._reduced_start_prefilter_reason(reduction, adapter, start) is None
 
     @staticmethod
     def _control_scale(control: ControlRange) -> float:

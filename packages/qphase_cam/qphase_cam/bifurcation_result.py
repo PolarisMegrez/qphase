@@ -795,6 +795,14 @@ class CAMBifurcationScanResult:
             "candidate_count",
             "structural_coverage",
             "numerical_coverage",
+            "raw_start_count",
+            "physical_start_count",
+            "accepted_count",
+            "rejected_count",
+            "top_rejection_reasons",
+            "near_miss_saved",
+            "coverage_note",
+            "result_note",
         ]
         with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
@@ -807,7 +815,37 @@ class CAMBifurcationScanResult:
                 row["numerical_coverage"] = metadata.get(
                     "numerical_coverage", "unknown"
                 )
+                row.update(self._case_audit_values(metadata))
                 writer.writerow(row)
+
+    @staticmethod
+    def _case_audit_values(metadata: dict[str, Any]) -> dict[str, Any]:
+        """Flat audit summary columns for one bifurcation scan case."""
+        audit = metadata.get("audit", {})
+        totals = audit.get("totals", {})
+        reasons = sorted(
+            (totals.get("rejected_by_reason") or {}).items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+        notes = []
+        if totals.get("seed_truncated"):
+            notes.append("seed_max_starts_truncated")
+        if audit.get("seed_source"):
+            notes.append(f"seed_source:{audit['seed_source']}")
+        return {
+            "raw_start_count": totals.get("raw_start_count", ""),
+            "physical_start_count": totals.get("physical_start_count", ""),
+            "accepted_count": totals.get("accepted_count", ""),
+            "rejected_count": totals.get(
+                "rejected_count", metadata.get("rejected_count", "")
+            ),
+            "top_rejection_reasons": ";".join(
+                f"{reason}:{count}" for reason, count in reasons[:3]
+            ),
+            "near_miss_saved": totals.get("near_miss_saved", ""),
+            "coverage_note": ";".join(notes),
+            "result_note": audit.get("result_note", ""),
+        }
 
     def _save_candidate_csv(self, path: Path) -> None:
         fields = ["case", *self.case_axes, *self.candidates._candidate_fields()]
