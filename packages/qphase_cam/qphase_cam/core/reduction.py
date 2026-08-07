@@ -43,22 +43,39 @@ class LocalScalingSeries:
 
 @dataclass
 class SeedGenerationStats:
-    """Mutable skip bookkeeping for one ``initial_starts`` seed pass.
+    """Mutable skip and workload bookkeeping for one seed-generation pass.
 
     ``source`` labels the seed provenance category, ``skipped`` counts
-    evaluated candidate seeds discarded by reason, and ``truncated`` marks
+    evaluated generation trials discarded by reason, and ``truncated`` marks
     that ``max_starts`` stopped enumeration before the domain was exhausted.
-    Skips are counted only for points that were actually evaluated, so
+    Skips are counted only for trials that were actually evaluated, so
     ``returned_starts + sum(skipped.values())`` always equals the number of
-    evaluated points, whether or not ``truncated`` is set.
+    evaluated trials, whether or not ``truncated`` is set.
+
+    ``workload`` counts evaluated generation work items per unit.  Each unit
+    is path-specific and is exposed in the audit as ``<unit>_count``:
+
+    * ``control_point`` — control grid points evaluated (all grid paths);
+    * ``polynomial_root`` — roots examined by fraction-free reductions;
+    * ``brent_interval`` — intervals examined by condensed reductions;
+    * ``fixed_point_guess`` — fixed-point solves attempted by full domain
+      sampling;
+    * ``upstream_seed`` — upstream states evaluated for seeding.
+
+    Workload units are never summed across different units; the audit merges
+    them per key only.
     """
 
     source: str
     skipped: Counter[str] = field(default_factory=Counter)
     truncated: bool = False
+    workload: Counter[str] = field(default_factory=Counter)
 
     def skip(self, reason: str) -> None:
         self.skipped[reason] += 1
+
+    def work(self, unit: str, count: int = 1) -> None:
+        self.workload[unit] += count
 
     @property
     def skipped_total(self) -> int:
@@ -324,6 +341,8 @@ class FractionFreeScalarReduction:
         )
         starts: list[np.ndarray] = []
         for controls in product(*axes):
+            if stats is not None:
+                stats.work("control_point")
             params = self._params(np.asarray((0.0, *controls), dtype=float))
             coefficients = np.asarray(
                 self._polynomial_coefficients(
@@ -345,6 +364,8 @@ class FractionFreeScalarReduction:
                     stats.skip("non_finite_coefficients")
                 continue
             for root in np.roots(scaled / norm):
+                if stats is not None:
+                    stats.work("polynomial_root")
                 if abs(root.imag) > 1e-8 * max(1.0, abs(root.real)):
                     if stats is not None:
                         stats.skip("complex_root")
@@ -672,6 +693,8 @@ class CondensedScalarReduction:
         )
         starts: list[np.ndarray] = []
         for controls in product(*control_axes):
+            if stats is not None:
+                stats.work("control_point")
             values = []
             for q in q_axis:
                 try:
@@ -682,6 +705,8 @@ class CondensedScalarReduction:
             for left, right, f_left, f_right in zip(
                 q_axis[:-1], q_axis[1:], values[:-1], values[1:], strict=True
             ):
+                if stats is not None:
+                    stats.work("brent_interval")
                 if not np.isfinite(f_left) or not np.isfinite(f_right):
                     if stats is not None:
                         stats.skip("non_finite_residual")

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import csv
 import importlib.util
 import json
+import time
 from functools import lru_cache
 from types import SimpleNamespace
 
@@ -188,6 +190,30 @@ def test_fraction_free_solver_finds_known_physical_double_root():
     assert search["coverage"] == "exhaustive"
     assert search["regular_branches_only"]
     assert not search["returned_prefix"]
+    # auto path merges the reduced and full-fallback audits by unit
+    audit = output.metadata["audit"]
+    totals = audit["totals"]
+    full_audit = output.metadata["full_fallback"]["audit"]
+    assert full_audit["seed_source"] == "domain_sampling"
+    assert full_audit["physical_check_stage"] == "generation"
+    assert full_audit["workload"]["fixed_point_guess_count"] > 0
+    assert totals["generated_candidate_count"] == (
+        sum(entry["generated_candidate_count"] for entry in audit["reductions"])
+        + full_audit["generated_candidate_count"]
+    )
+    assert totals["refinement_start_count"] == (
+        totals["accepted_count"]
+        + totals["rejected_count"]
+        + totals["refinement_duplicate_count"]
+    )
+    assert (
+        totals["near_miss_saved"] + totals["near_miss_dropped"]
+        == totals["rejected_count"]
+    )
+    assert set(totals["workload"]) >= {
+        "control_point_count",
+        "fixed_point_guess_count",
+    }
 
 
 def test_reduction_strategy_exposes_fpgen_work_budgets():
@@ -636,12 +662,17 @@ def test_stochastic_validity_estimates_additive_cubic_crossover(monkeypatch, tmp
     np.testing.assert_allclose(diagnostic["normal_form_state_coefficient"], [-1.0])
     np.testing.assert_allclose(diagnostic["epsilon_crossover"], [2.0 * np.sqrt(2.0)])
     assert diagnostic["regime"].tolist() == ["noise_dominated"]
+    # the empty-table schema mirrors the non-empty schema field-for-field
+    empty = StochasticValidity._empty()
+    assert tuple(diagnostic) == tuple(empty)
+    for name, values in diagnostic.items():
+        assert values.dtype.kind == empty[name].dtype.kind, name
     target = tmp_path / "stochastic.npz"
     result.save(target)
     assert target.with_name("stochastic_stochastic_validity.csv").exists()
 
 
-def test_stochastic_validity_accepts_empty_candidate_table(monkeypatch):
+def test_stochastic_validity_accepts_empty_candidate_table(monkeypatch, tmp_path):
     class Adapter:
         moment_layout = "normal"
 
@@ -682,9 +713,61 @@ def test_stochastic_validity_accepts_empty_candidate_table(monkeypatch):
     processor = StochasticValidity(probe_epsilon=1.0)
     output = processor.process(result, Model(), NumpyBackend())
     diagnostic = output["stochastic_validity"]
-    assert diagnostic["candidate_index"].size == 0
+    # the empty table carries the full stable schema, not just candidate_index
+    expected = StochasticValidity._empty()
+    assert tuple(diagnostic) == tuple(expected)
+    assert set(diagnostic) == {
+        "candidate_index",
+        "branch_index",
+        "epsilon_side",
+        "status",
+        "critical_eigenvalue_real",
+        "critical_eigenvalue_imag",
+        "noncritical_spectral_gap",
+        "critical_mode_condition_number",
+        "eigenvector_condition_number",
+        "noise_covariance_minimum_eigenvalue",
+        "projected_noise_intensity",
+        "parameter_forcing",
+        "branch_center_coefficient",
+        "normal_form_state_coefficient",
+        "normal_form_confining",
+        "critical_fluctuation_scale",
+        "epsilon_crossover",
+        "probe_epsilon",
+        "regime",
+        "noise_semantics",
+        "representation",
+        "fpe_is_exact",
+        "moment_closure",
+        "moment_closure_is_exact",
+        "deterministic_cam_is_exact",
+    }
+    for name, values in diagnostic.items():
+        assert values.size == 0
+        assert values.dtype == expected[name].dtype
+    assert diagnostic["candidate_index"].dtype.kind == "i"
+    assert diagnostic["status"].dtype.kind == "U"
+    assert diagnostic["critical_eigenvalue_real"].dtype.kind == "f"
+    assert diagnostic["normal_form_confining"].dtype.kind == "b"
     assert processor.result_metadata["status"] == "no_supported_branches"
     assert processor.result_metadata["row_count"] == 0
+    # NPZ round trip preserves the full empty schema and dtypes
+    result.postprocess.update(output)
+    target = tmp_path / "empty_stochastic.npz"
+    result.save(target)
+    loaded = CAMBifurcationResult.load(target)
+    loaded_table = loaded.postprocess["stochastic_validity"]
+    assert tuple(loaded_table) == tuple(diagnostic)
+    for name, values in loaded_table.items():
+        assert values.size == 0
+        assert values.dtype == diagnostic[name].dtype
+    # CSV round trip: a header-only file with the full column schema
+    csv_path = target.with_name("empty_stochastic_stochastic_validity.csv")
+    assert csv_path.exists()
+    lines = csv_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert next(csv.reader(lines)) == list(expected)
 
 
 def _fold_condensed_reduction() -> CondensedScalarReduction:
@@ -867,8 +950,48 @@ def test_near_miss_store_enforces_limits_and_prefers_small_residuals():
             min_state_eigenvalue=0.0,
         )
     records = store.finalize()
-    assert [record["full_residual"] for record in records] == [0.1, 0.2]
-    assert store.dropped == 1
+    # strict per-label cap: bucket "a" is saturated by the 0.1 record, so both
+    # multi-label records carrying "a" are rejected as a whole and neither
+    # "a" nor "b" grows beyond the per-reason limit.
+    assert [record["full_residual"] for record in records] == [0.1]
+    assert store.dropped == 2
+    reason_counts: dict[str, int] = {}
+    for record in records:
+        for reason in record["rejection_reasons"]:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    assert max(reason_counts.values()) <= 1
+
+
+def test_near_miss_store_stays_bounded_under_mass_rejection():
+    per_reason, total, n_reasons, count = 8, 64, 12, 100_000
+    store = NearMissStore(per_reason=per_reason, total=total)
+    start = time.perf_counter()
+    for index in range(count):
+        # descending residual: every record is better than all previous ones,
+        # forcing continuous top-k eviction under strict bucket caps
+        store.add(
+            path="reduced",
+            reduction="r",
+            seed_source="reduction_roots",
+            controls={"g": float(index)},
+            rejection_reasons=(f"reason_{index % n_reasons}", "shared"),
+            search_residual=0.0,
+            full_residual=float(count - index),
+            min_state_eigenvalue=0.0,
+        )
+    elapsed = time.perf_counter() - start
+    records = store.finalize()
+    assert store._added == count
+    assert len(records) == len(store._pool) <= total
+    assert all(len(bucket) <= per_reason for bucket in store._buckets.values())
+    stored_references = len(store._pool) + sum(
+        len(bucket) for bucket in store._buckets.values()
+    )
+    assert stored_references <= total + (n_reasons + 1) * per_reason
+    assert store.dropped == count - len(records)
+    # best records win: the kept pool holds the smallest residuals injected
+    assert max(record["full_residual"] for record in records) <= float(total)
+    assert elapsed < 30.0
 
 
 def test_near_miss_json_serializes_records():
@@ -979,16 +1102,23 @@ def test_reduced_audit_balances_seed_prefilter_and_refinement_counts():
     solver.strategy = ReducedStrategy(ReductionStrategyConfig())
     output = solver.solve(TwoModeFoldModel(), NumpyBackend())
     audit = output.metadata["audit"]
-    assert audit["schema"] == "cam_bifurcation_audit/1"
+    assert audit["schema"] == "cam_bifurcation_audit/2"
     assert audit["rejection_counter_semantics"] == REJECTION_COUNTER_SEMANTICS
     assert audit["result_note"] == "candidates_found"
+    assert audit["physical_status"] == "checked"
+    assert "generation_trial_count" in audit["field_units"]
+    assert any("refinement_start_count" in formula for formula in audit["conservation"])
     for entry in audit["reductions"]:
         assert entry["seed_source"] in {"reduction_roots", "brentq_scan"}
-        assert entry["raw_start_count"] == entry["seed_start_count"] + sum(
-            entry["seed_skips"].values()
-        )
-        assert entry["seed_start_count"] == (
-            entry["physical_start_count"] + entry["prefilter_rejected_count"]
+        assert entry["physical_status"] == "checked"
+        assert entry["physical_check_stage"] == "prefilter"
+        # generation trials = generated candidates + evaluated generation skips
+        assert entry["generation_trial_count"] == entry[
+            "generated_candidate_count"
+        ] + sum(entry["seed_skips"].values())
+        # generated candidates split into prefilter pass/reject (same unit)
+        assert entry["generated_candidate_count"] == (
+            entry["prefilter_pass_count"] + entry["prefilter_rejected_count"]
         )
         assert entry["prefilter_rejected_count"] == sum(
             entry["prefilter_rejected"].values()
@@ -997,20 +1127,41 @@ def test_reduced_audit_balances_seed_prefilter_and_refinement_counts():
             "reconstruction_error",
             "psd_violation",
         }
-        assert entry["physical_start_count"] == (
+        # refinement starts exhaust into accepted/rejected/duplicate
+        assert entry["refinement_start_count"] == entry["prefilter_pass_count"]
+        assert entry["refinement_start_count"] == (
             entry["accepted_count"]
             + entry["rejected_count"]
-            + entry["dedup_skipped_count"]
+            + entry["refinement_duplicate_count"]
         )
+        # path-specific workload units live in their own subfields
+        assert entry["workload"]["control_point_count"] > 0
+        if entry["seed_source"] == "reduction_roots":
+            assert "polynomial_root_count" in entry["workload"]
+            assert "brent_interval_count" not in entry["workload"]
+        else:
+            assert "brent_interval_count" in entry["workload"]
+            assert "polynomial_root_count" not in entry["workload"]
     totals = audit["totals"]
     for key in (
-        "raw_start_count",
-        "physical_start_count",
+        "generated_candidate_count",
+        "prefilter_pass_count",
+        "prefilter_rejected_count",
+        "refinement_start_count",
+        "refinement_duplicate_count",
         "accepted_count",
         "rejected_count",
-        "dedup_skipped_count",
     ):
         assert totals[key] == sum(entry[key] for entry in audit["reductions"])
+    # mixed-unit legacy fields must not come back
+    assert "raw_start_count" not in totals
+    assert "physical_start_count" not in totals
+    assert "generation_trial_count" not in totals
+    # workload totals merge per unit key only
+    for unit, count in totals["workload"].items():
+        assert count == sum(
+            entry["workload"].get(unit, 0) for entry in audit["reductions"]
+        )
     assert totals["near_miss_saved"] == len(audit["near_misses"])
     assert (
         totals["near_miss_saved"] + totals["near_miss_dropped"]
@@ -1048,20 +1199,64 @@ def test_full_path_audit_records_seed_provenance_and_balance():
     assert audit["path"] == "full"
     assert audit["seed_source"] == "upstream"
     assert audit["result_note"] == "candidates_found"
-    assert audit["raw_start_count"] == audit["seed_start_count"] + sum(
+    assert audit["physical_status"] == "checked"
+    assert audit["physical_check_stage"] == "generation"
+    assert audit["generation_trial_count"] == audit["generated_candidate_count"] + sum(
         audit["seed_skips"].values()
     )
+    assert audit["generated_candidate_count"] == audit["refinement_start_count"]
+    assert audit["workload"]["upstream_seed_count"] >= 1
     totals = audit["totals"]
     assert totals["accepted_count"] == 1
-    assert audit["seed_start_count"] == (
+    assert audit["refinement_start_count"] == (
         totals["accepted_count"]
         + totals["rejected_count"]
-        + totals["dedup_skipped_count"]
+        + totals["refinement_duplicate_count"]
     )
     assert (
         totals["near_miss_saved"] + totals["near_miss_dropped"]
         == totals["rejected_count"]
     )
+
+
+def test_full_path_checks_each_upstream_seed_physicality():
+    expected_gamma = -6.0 + np.sqrt(28.0)
+    expected_q = (expected_gamma + 4.0) / 4.0
+    upstream = CAMResult(
+        states=np.asarray(
+            [
+                [[expected_q, 0.0], [0.0, 0.5]],
+                [[-1.0, 0.0], [0.0, -0.5]],
+            ]
+        ),
+        residuals=np.asarray([0.0, 0.0]),
+        success=np.asarray([True, True]),
+        valid_mask=np.asarray([True, True]),
+        solution_count=np.asarray(2),
+        params={"gamma": expected_gamma, "Gamma": 1.0, "kappa": 1.0},
+    )
+    solver = BifurcationSolver(
+        BifurcationSolverConfig(
+            controls={"gamma": ControlRange(min=-1.0, max=0.0)},
+            perturbation=PerturbationConfig(parameter="gamma"),
+        ),
+        subplugins={
+            "target": EquilibriumMultiplicity(EquilibriumMultiplicityConfig(order=2)),
+            "strategy": FullStrategy(FullStrategyConfig()),
+            "discovery": SeedDiscovery(SeedDiscoveryConfig()),
+            "classifier": ScalingSignatureClassifier(ScalingSignatureConfig()),
+        },
+    )
+    output = solver.solve(TwoModeFoldModel(), NumpyBackend(), data=upstream)
+    audit = output.metadata["audit"]
+    assert audit["seed_source"] == "upstream"
+    # the non-PSD upstream state is filtered at generation, never refined
+    assert audit["workload"]["upstream_seed_count"] == 2
+    assert audit["seed_skips"].get("non_physical_state") == 1
+    assert audit["generated_candidate_count"] == 1
+    assert audit["refinement_start_count"] == 1
+    assert audit["totals"]["accepted_count"] == 1
+    assert len(output.candidates) == 1
 
 
 def test_empty_result_reports_standard_note_in_metadata_and_cases_csv(tmp_path):
@@ -1073,6 +1268,22 @@ def test_empty_result_reports_standard_note_in_metadata_and_cases_csv(tmp_path):
     audit = output.metadata["audit"]
     assert audit["result_note"] == EMPTY_RESULT_NOTE
     assert "not_exist" not in audit["result_note"]
+    # a zero-candidate case still has a complete, conserved account
+    totals = audit["totals"]
+    assert totals["accepted_count"] == 0
+    assert totals["generated_candidate_count"] > 0
+    assert totals["generated_candidate_count"] == (
+        totals["prefilter_pass_count"] + totals["prefilter_rejected_count"]
+    )
+    assert totals["refinement_start_count"] == (
+        totals["accepted_count"]
+        + totals["rejected_count"]
+        + totals["refinement_duplicate_count"]
+    )
+    assert (
+        totals["near_miss_saved"] + totals["near_miss_dropped"]
+        == totals["rejected_count"]
+    )
     result = Engine._pack_bifurcation(output, model)
     result.meta.update(output.metadata)
     scan = CAMBifurcationScanResult(
@@ -1085,20 +1296,38 @@ def test_empty_result_reports_standard_note_in_metadata_and_cases_csv(tmp_path):
     )
     target = tmp_path / "empty.npz"
     scan.save(target)
-    lines = target.with_name("empty_cases.csv").read_text(encoding="utf-8").splitlines()
-    header, row = lines[0], lines[1]
+    rows = list(
+        csv.DictReader(
+            target.with_name("empty_cases.csv").read_text(encoding="utf-8").splitlines()
+        )
+    )
+    (row,) = rows
     for field in (
-        "raw_start_count",
-        "physical_start_count",
+        "singular_coverage",
+        "generated_candidate_count",
+        "prefilter_pass_count",
+        "prefilter_rejected_count",
+        "refinement_start_count",
+        "refinement_duplicate_count",
         "accepted_count",
         "rejected_count",
+        "physical_status",
         "top_rejection_reasons",
         "near_miss_saved",
-        "coverage_note",
+        "near_miss_dropped",
+        "truncation_reasons",
+        "consumer_error_count",
+        "materialization_failure_count",
         "result_note",
     ):
-        assert field in header
-    assert EMPTY_RESULT_NOTE in row
+        assert field in row
+    for removed in ("raw_start_count", "physical_start_count", "coverage_note"):
+        assert removed not in row
+    assert row["result_note"] == EMPTY_RESULT_NOTE
+    assert row["accepted_count"] == "0"
+    assert row["physical_status"] == "checked"
+    assert int(row["generated_candidate_count"]) == totals["generated_candidate_count"]
+    assert int(row["refinement_start_count"]) == totals["refinement_start_count"]
     loaded = CAMBifurcationScanResult.load(target)
     loaded_audit = loaded.case_metadata[0]["audit"]
     assert loaded_audit["result_note"] == EMPTY_RESULT_NOTE
@@ -1108,3 +1337,51 @@ def test_empty_result_reports_standard_note_in_metadata_and_cases_csv(tmp_path):
     for payload in payloads:
         record = json.loads(payload)
         assert record["rejection_reasons"]
+
+
+def test_cases_csv_exposes_truncation_consumer_and_materialization_failures(
+    tmp_path,
+):
+    solver = _solver(2, {"gamma": ControlRange(min=-0.1, max=0.0)})
+    solver.strategy = ReducedStrategy(ReductionStrategyConfig())
+    model = TwoModeFoldModel()
+    output = solver.solve(model, NumpyBackend())
+    result = Engine._pack_bifurcation(output, model)
+    result.meta.update(output.metadata)
+    # inject the fpgen reduction-contract failure fields (new contract:
+    # materialization failures are reported with chart_id/error, outside
+    # rejected_reason_counts)
+    search = dict(result.meta["reduction_search"])
+    search["truncation_reasons"] = ["partition_limit", "materialization_limit"]
+    search["consumer_error_count"] = 2
+    search["consumer_errors"] = ("('r_diag_0',): boom",)
+    search["materialization_failure_count"] = 2
+    search["materialization_failures"] = (
+        {"chart_id": "ret:r_diag_0|eq:0", "error": "not polynomial"},
+        {"chart_id": "ret:r_diag_1|eq:1", "error": "bad denominator"},
+    )
+    result.meta["reduction_search"] = search
+    scan = CAMBifurcationScanResult(
+        case_axes={"gamma_b": np.asarray([1.0])},
+        case_shape=(1,),
+        case_params={"gamma_b": np.asarray([1.0])},
+        candidate_offsets=np.asarray([0, 0]),
+        candidates=result,
+        case_metadata=(dict(result.meta),),
+    )
+    target = tmp_path / "failures.npz"
+    scan.save(target)
+    (row,) = list(
+        csv.DictReader(
+            target.with_name("failures_cases.csv")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+    )
+    assert "partition_limit" in row["truncation_reasons"]
+    assert "materialization_limit" in row["truncation_reasons"]
+    assert row["consumer_error_count"] == "2"
+    assert "boom" in row["consumer_errors"]
+    assert row["materialization_failure_count"] == "2"
+    assert "ret:r_diag_0|eq:0: not polynomial" in row["materialization_failures"]
+    assert "ret:r_diag_1|eq:1: bad denominator" in row["materialization_failures"]

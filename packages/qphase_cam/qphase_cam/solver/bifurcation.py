@@ -29,6 +29,8 @@ from qphase_cam.state import (
 
 from .base import CAMSolver, CAMSolverConfig
 from .bifurcation_audit import (
+    AUDIT_CONSERVATION,
+    AUDIT_FIELD_UNITS,
     AUDIT_SCHEMA,
     EMPTY_RESULT_NOTE,
     REJECTION_COUNTER_SEMANTICS,
@@ -41,6 +43,27 @@ from .bifurcation_classifier import BifurcationClassifier
 from .bifurcation_discovery import BifurcationDiscovery
 from .bifurcation_strategy import BifurcationStrategy
 from .bifurcation_target import BifurcationTarget
+
+#: Audit count fields sharing the ``candidate start`` unit.  These are the
+#: only count fields aggregated into ``audit["totals"]``; generation-trial
+#: and workload counts keep per-path units and are merged per key only (see
+#: ``AUDIT_CONSERVATION``).
+_CANDIDATE_COUNT_FIELDS = (
+    "generated_candidate_count",
+    "prefilter_pass_count",
+    "prefilter_rejected_count",
+    "refinement_start_count",
+    "refinement_duplicate_count",
+    "accepted_count",
+    "rejected_count",
+)
+
+
+def _workload_fields(stats: SeedGenerationStats) -> dict[str, int]:
+    """Audit workload subfields for one seed pass; one unit per key."""
+    return {
+        f"{unit}_count": int(count) for unit, count in sorted(stats.workload.items())
+    }
 
 
 class ControlRange(BaseModel):
@@ -240,6 +263,7 @@ class BifurcationSolver(CAMSolver):
         reduction_audits: list[dict[str, Any]] = []
         prefilter_rejected_total: Counter[str] = Counter()
         seed_skips_total: Counter[str] = Counter()
+        workload_total: Counter[str] = Counter()
         for index, reduction in enumerate(reductions):
             seed_stats = SeedGenerationStats(source=reduction.seed_source)
             starts = reduction.initial_starts(
@@ -251,7 +275,7 @@ class BifurcationSolver(CAMSolver):
                 stats=seed_stats,
                 control_axes=self._control_seed_axes(),
             )
-            raw_start_count = len(starts)
+            generated_count = len(starts)
             prefilter_rejected: Counter[str] = Counter()
             physical_starts: list[np.ndarray] = []
             for start in starts:
@@ -293,14 +317,15 @@ class BifurcationSolver(CAMSolver):
             rejected_by_reason.update(rejected)
             prefilter_rejected_total.update(prefilter_rejected)
             seed_skips_total.update(seed_stats.skipped)
+            workload_total.update(_workload_fields(seed_stats))
             reduction_runs.append(
                 {
                     "state_id": reduction.retained_id,
                     "method": reduction.method,
                     "degree": reduction.degree,
-                    "start_count": len(starts),
-                    "nonphysical_start_count": raw_start_count - len(starts),
-                    "candidate_count": len(found),
+                    "refinement_start_count": len(starts),
+                    "prefilter_rejected_count": generated_count - len(starts),
+                    "accepted_count": len(found),
                     "rejected_count": run_rejected_count,
                     "rejected_by_reason": dict(rejected),
                 }
@@ -310,17 +335,23 @@ class BifurcationSolver(CAMSolver):
                     "state_id": reduction.retained_id,
                     "method": reduction.method,
                     "seed_source": seed_stats.source,
-                    "raw_start_count": raw_start_count + seed_stats.skipped_total,
-                    "seed_start_count": raw_start_count,
-                    "physical_start_count": len(starts),
-                    "prefilter_rejected_count": raw_start_count - len(starts),
+                    "physical_status": "checked",
+                    "physical_check_stage": "prefilter",
+                    "generation_trial_count": (
+                        generated_count + seed_stats.skipped_total
+                    ),
+                    "generated_candidate_count": generated_count,
+                    "prefilter_pass_count": len(starts),
+                    "prefilter_rejected_count": generated_count - len(starts),
                     "prefilter_rejected": dict(prefilter_rejected),
-                    "seed_skips": dict(seed_stats.skipped),
-                    "seed_truncated": seed_stats.truncated,
+                    "refinement_start_count": len(starts),
+                    "refinement_duplicate_count": dedup_skipped,
                     "accepted_count": len(found),
                     "rejected_count": run_rejected_count,
-                    "dedup_skipped_count": dedup_skipped,
                     "rejected_by_reason": dict(rejected),
+                    "seed_skips": dict(seed_stats.skipped),
+                    "seed_truncated": seed_stats.truncated,
+                    "workload": _workload_fields(seed_stats),
                 }
             )
         candidates = self._deduplicate_candidates(candidates)
@@ -332,7 +363,9 @@ class BifurcationSolver(CAMSolver):
                 reductions[0].retained_id if len(reductions) == 1 else None
             ),
             "reduced_degree": (reductions[0].degree if len(reductions) == 1 else None),
-            "start_count": sum(item["start_count"] for item in reduction_runs),
+            "refinement_start_count": sum(
+                item["refinement_start_count"] for item in reduction_runs
+            ),
             "rejected_count": rejected_count,
             "rejected_by_reason": dict(rejected_by_reason),
             "coverage": self._reduction_coverage(reduction_search),
@@ -344,13 +377,13 @@ class BifurcationSolver(CAMSolver):
                     name: control.sampling
                     for name, control in self.config.controls.items()
                 },
-                "physical_prefilter": True,
-                "raw_start_count": sum(
-                    item["start_count"] + item["nonphysical_start_count"]
-                    for item in reduction_runs
+                "physical_status": "checked",
+                "physical_check_stage": "prefilter",
+                "generated_candidate_count": sum(
+                    item["generated_candidate_count"] for item in reduction_audits
                 ),
-                "physical_start_count": sum(
-                    item["start_count"] for item in reduction_runs
+                "refinement_start_count": sum(
+                    item["refinement_start_count"] for item in reduction_audits
                 ),
             },
             "singular_coverage": "not_covered_by_regular_reduction",
@@ -376,41 +409,40 @@ class BifurcationSolver(CAMSolver):
             else None
         )
         near_miss_records = near_misses.finalize()
-        raw_total = sum(item["raw_start_count"] for item in reduction_audits)
-        physical_total = sum(item["physical_start_count"] for item in reduction_audits)
-        accepted_total = sum(item["accepted_count"] for item in reduction_audits)
-        dedup_total = sum(item["dedup_skipped_count"] for item in reduction_audits)
-        rejected_total = rejected_count
+        totals: dict[str, Any] = {
+            field: sum(item[field] for item in reduction_audits)
+            for field in _CANDIDATE_COUNT_FIELDS
+        }
         rejected_total_by_reason: Counter[str] = Counter(rejected_by_reason)
         seed_truncated = any(item["seed_truncated"] for item in reduction_audits)
         if full_audit is not None:
-            raw_total += full_audit["raw_start_count"]
-            physical_total += full_audit["seed_start_count"]
-            accepted_total += full_audit["accepted_count"]
-            rejected_total += full_audit["rejected_count"]
-            dedup_total += full_audit["dedup_skipped_count"]
+            for field in _CANDIDATE_COUNT_FIELDS:
+                totals[field] += full_audit[field]
+            prefilter_rejected_total.update(full_audit["prefilter_rejected"])
             rejected_total_by_reason.update(full_audit["rejected_by_reason"])
             seed_skips_total.update(full_audit["seed_skips"])
+            workload_total.update(full_audit["workload"])
             seed_truncated = seed_truncated or full_audit["seed_truncated"]
-        metadata["audit"] = {
-            "schema": AUDIT_SCHEMA,
-            "path": self.strategy.mode,
-            "reductions": reduction_audits,
-            "totals": {
-                "raw_start_count": raw_total,
-                "physical_start_count": physical_total,
-                "prefilter_rejected_count": sum(prefilter_rejected_total.values()),
+        totals.update(
+            {
                 "prefilter_rejected": dict(prefilter_rejected_total),
+                "rejected_by_reason": dict(rejected_total_by_reason),
                 "seed_skips": dict(seed_skips_total),
                 "seed_truncated": seed_truncated,
-                "accepted_count": accepted_total,
-                "rejected_count": rejected_total,
-                "dedup_skipped_count": dedup_total,
-                "rejected_by_reason": dict(rejected_total_by_reason),
+                "workload": dict(workload_total),
                 "near_miss_saved": len(near_miss_records),
                 "near_miss_dropped": near_misses.dropped,
                 "unique_candidate_count": len(candidates),
-            },
+            }
+        )
+        metadata["audit"] = {
+            "schema": AUDIT_SCHEMA,
+            "path": self.strategy.mode,
+            "physical_status": "checked",
+            "field_units": AUDIT_FIELD_UNITS,
+            "conservation": AUDIT_CONSERVATION,
+            "reductions": reduction_audits,
+            "totals": totals,
             "rejection_counter_semantics": REJECTION_COUNTER_SEMANTICS,
             "near_miss_selection": near_miss_selection_metadata(self.config.audit),
             "near_misses": near_miss_records,
@@ -456,7 +488,7 @@ class BifurcationSolver(CAMSolver):
                 total=self.config.audit.near_miss_total,
             )
         seed_stats = SeedGenerationStats(source="upstream")
-        seeds = self._upstream_seeds(system, data, stats=seed_stats)
+        seeds = self._upstream_seeds(system, adapter, data, stats=seed_stats)
         seed_source = "upstream"
         if not seeds:
             seed_stats = SeedGenerationStats(source="domain_sampling")
@@ -531,21 +563,28 @@ class BifurcationSolver(CAMSolver):
             "schema": AUDIT_SCHEMA,
             "path": "full",
             "seed_source": seed_source,
-            "raw_start_count": len(seeds) + seed_stats.skipped_total,
-            "seed_start_count": len(seeds),
-            "seed_skips": dict(seed_stats.skipped),
-            "seed_truncated": seed_stats.truncated,
+            "physical_status": "checked",
+            "physical_check_stage": "generation",
+            "generation_trial_count": len(seeds) + seed_stats.skipped_total,
+            "generated_candidate_count": len(seeds),
+            "prefilter_pass_count": len(seeds),
+            "prefilter_rejected_count": 0,
+            "prefilter_rejected": {},
+            "refinement_start_count": len(seeds),
+            "refinement_duplicate_count": dedup_skipped,
             "accepted_count": len(candidates),
             "rejected_count": rejected_count,
-            "dedup_skipped_count": dedup_skipped,
             "rejected_by_reason": dict(rejected_by_reason),
+            "seed_skips": dict(seed_stats.skipped),
+            "seed_truncated": seed_stats.truncated,
+            "workload": _workload_fields(seed_stats),
             "rejection_counter_semantics": REJECTION_COUNTER_SEMANTICS,
             "near_miss_selection": near_miss_selection_metadata(self.config.audit),
         }
         metadata: dict[str, Any] = {
             "control_names": tuple(self.config.controls),
             "strategy": "full",
-            "start_count": len(seeds),
+            "refinement_start_count": len(seeds),
             "rejected_count": rejected_count,
             "rejected_by_reason": dict(rejected_by_reason),
             "coverage": f"{seed_source}_bordered_local_search",
@@ -557,8 +596,11 @@ class BifurcationSolver(CAMSolver):
                     name: control.sampling
                     for name, control in self.config.controls.items()
                 },
-                "physical_seed_filter": seed_source == "domain_sampling",
-                "seed_count": len(seeds),
+                "physical_status": "checked",
+                "physical_check_stage": "generation",
+                "seed_source": seed_source,
+                "generated_candidate_count": len(seeds),
+                "refinement_start_count": len(seeds),
             },
             "singular_coverage": "local_bordered_search",
             "fpgen": adapter.provenance(),
@@ -575,15 +617,15 @@ class BifurcationSolver(CAMSolver):
             audit["result_note"] = (
                 EMPTY_RESULT_NOTE if not candidates else "candidates_found"
             )
+            audit["field_units"] = AUDIT_FIELD_UNITS
+            audit["conservation"] = AUDIT_CONSERVATION
             audit["totals"] = {
-                "raw_start_count": audit["raw_start_count"],
-                "physical_start_count": len(seeds),
+                **{field: audit[field] for field in _CANDIDATE_COUNT_FIELDS},
+                "prefilter_rejected": {},
+                "rejected_by_reason": dict(rejected_by_reason),
                 "seed_skips": dict(seed_stats.skipped),
                 "seed_truncated": seed_stats.truncated,
-                "accepted_count": len(candidates),
-                "rejected_count": rejected_count,
-                "dedup_skipped_count": dedup_skipped,
-                "rejected_by_reason": dict(rejected_by_reason),
+                "workload": _workload_fields(seed_stats),
                 "near_miss_saved": len(records),
                 "near_miss_dropped": near_misses.dropped,
                 "unique_candidate_count": len(candidates),
@@ -594,9 +636,18 @@ class BifurcationSolver(CAMSolver):
     def _upstream_seeds(
         self,
         system: BorderedMultiplicitySystem,
+        adapter: FPGenDynamicsAdapter,
         data: Any | None,
         stats: SeedGenerationStats | None = None,
     ) -> list[np.ndarray]:
+        """Build bordered-system seeds from upstream steady states.
+
+        Every upstream state is individually checked against the physical
+        domain (``adapter.state_matrix`` PSD via ``_state_is_physical``)
+        before it becomes a seed; states that fail are counted under the
+        ``non_physical_state`` skip reason, never as physical starts.  The
+        ``upstream_seed`` workload unit counts evaluated upstream states.
+        """
         if data is None or not hasattr(data, "states"):
             return []
         seeds = []
@@ -622,13 +673,21 @@ class BifurcationSolver(CAMSolver):
                 if stats is not None:
                     stats.skip("controls_out_of_bounds")
                 continue
+            check_params = {**adapter.model.params, **params}
             for state, is_valid in zip(states, valid, strict=True):
+                if stats is not None:
+                    stats.work("upstream_seed")
                 if not is_valid:
                     if stats is not None:
                         stats.skip("invalid_state")
                     continue
+                vector = matrix_to_vector(state)
+                if not self._state_is_physical(adapter, vector, check_params):
+                    if stats is not None:
+                        stats.skip("non_physical_state")
+                    continue
                 try:
-                    seeds.append(system.seed(matrix_to_vector(state), controls))
+                    seeds.append(system.seed(vector, controls))
                 except np.linalg.LinAlgError:
                     if stats is not None:
                         stats.skip("seed_failed")
@@ -650,10 +709,14 @@ class BifurcationSolver(CAMSolver):
         ]
         starts = []
         for control_values in product(*axes):
+            if stats is not None:
+                stats.work("control_point")
             known_states: list[np.ndarray] = []
             controls = dict(zip(self.config.controls, control_values, strict=True))
             params = {**adapter.model.params, **controls}
             for guess in self._state_guesses(adapter):
+                if stats is not None:
+                    stats.work("fixed_point_guess")
                 solution = root(
                     lambda value, params=params: adapter.rhs(value, params),
                     guess,
@@ -991,7 +1054,27 @@ class BifurcationSolver(CAMSolver):
             if reduction.degree >= self.target.order:
                 reductions.append(reduction)
         manifest = search.manifest()
+        manifest["consumer_error_count"] = len(errors)
         manifest["consumer_errors"] = tuple(errors[:3])
+        # fpgen reduction contract: the manifest carries
+        # ``materialization_failure_count`` and the search result carries
+        # ``materialization_failures`` (entries with ``chart_id`` and
+        # ``error``); ``rejected_reason_counts`` never contains
+        # ``materialization_failed``.  Keep a bounded serializable summary
+        # here; the count always reflects the full number of failures.
+        materialization_failures = tuple(
+            getattr(search, "materialization_failures", ())
+        )
+        manifest["materialization_failure_count"] = int(
+            manifest.get("materialization_failure_count", len(materialization_failures))
+        )
+        manifest["materialization_failures"] = tuple(
+            {
+                "chart_id": str(getattr(failure, "chart_id", "unknown")),
+                "error": str(getattr(failure, "error", failure)),
+            }
+            for failure in materialization_failures[:3]
+        )
         manifest["compile_cache_hit"] = False
         output = tuple(reductions)
         self._prepare_reductions(output, adapter)

@@ -407,8 +407,10 @@ class CAMBifurcationResult:
 
     def _save_postprocess_csv(self, path: Path, name: str) -> None:
         table = self.postprocess.get(name)
-        if not table or not len(table.get("candidate_index", ())):
+        if not table or "candidate_index" not in table:
             return
+        # Empty tables still write their header so downstream consumers can
+        # rely on a stable column schema.
         fields = tuple(table)
         with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
@@ -757,8 +759,10 @@ class CAMBifurcationScanResult:
 
     def _save_postprocess_csv(self, path: Path, name: str) -> None:
         table = self.postprocess.get(name)
-        if not table or not len(table.get("candidate_index", ())):
+        if not table or "candidate_index" not in table:
             return
+        # Empty tables still write their header so downstream consumers can
+        # rely on a stable column schema.
         fields = ("case", *self.case_axes, *table)
         with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
@@ -795,13 +799,28 @@ class CAMBifurcationScanResult:
             "candidate_count",
             "structural_coverage",
             "numerical_coverage",
-            "raw_start_count",
-            "physical_start_count",
+            "singular_coverage",
+            "generated_candidate_count",
+            "prefilter_pass_count",
+            "prefilter_rejected_count",
+            "refinement_start_count",
+            "refinement_duplicate_count",
             "accepted_count",
             "rejected_count",
+            "control_point_count",
+            "polynomial_root_count",
+            "brent_interval_count",
+            "fixed_point_guess_count",
+            "upstream_seed_count",
+            "physical_status",
             "top_rejection_reasons",
             "near_miss_saved",
-            "coverage_note",
+            "near_miss_dropped",
+            "truncation_reasons",
+            "consumer_error_count",
+            "consumer_errors",
+            "materialization_failure_count",
+            "materialization_failures",
             "result_note",
         ]
         with path.open("w", newline="", encoding="utf-8") as handle:
@@ -815,37 +834,74 @@ class CAMBifurcationScanResult:
                 row["numerical_coverage"] = metadata.get(
                     "numerical_coverage", "unknown"
                 )
+                row["singular_coverage"] = metadata.get("singular_coverage", "unknown")
                 row.update(self._case_audit_values(metadata))
                 writer.writerow(row)
 
     @staticmethod
     def _case_audit_values(metadata: dict[str, Any]) -> dict[str, Any]:
-        """Flat audit summary columns for one bifurcation scan case."""
+        """Flat audit summary columns for one bifurcation scan case.
+
+        Count columns use the ``candidate start`` unit from
+        ``audit["totals"]``; workload columns (``control_point_count``,
+        ``polynomial_root_count``, ``brent_interval_count``,
+        ``fixed_point_guess_count``, ``upstream_seed_count``) each keep
+        their own unit and are blank when the path never used that unit.
+        ``truncation_reasons`` lists every reduction-search truncation
+        reason plus ``seed_max_starts`` when seed generation was truncated.
+        """
         audit = metadata.get("audit", {})
         totals = audit.get("totals", {})
+        workload = totals.get("workload", {}) or {}
+        search = metadata.get("reduction_search") or {}
         reasons = sorted(
             (totals.get("rejected_by_reason") or {}).items(),
             key=lambda item: (-item[1], item[0]),
         )
-        notes = []
+        truncation = [str(reason) for reason in search.get("truncation_reasons", ())]
         if totals.get("seed_truncated"):
-            notes.append("seed_max_starts_truncated")
-        if audit.get("seed_source"):
-            notes.append(f"seed_source:{audit['seed_source']}")
-        return {
-            "raw_start_count": totals.get("raw_start_count", ""),
-            "physical_start_count": totals.get("physical_start_count", ""),
+            truncation.append("seed_max_starts")
+        consumer_errors = tuple(search.get("consumer_errors", ()))
+        materialization_failures = tuple(search.get("materialization_failures", ()))
+        values: dict[str, Any] = {
+            "generated_candidate_count": totals.get("generated_candidate_count", ""),
+            "prefilter_pass_count": totals.get("prefilter_pass_count", ""),
+            "prefilter_rejected_count": totals.get("prefilter_rejected_count", ""),
+            "refinement_start_count": totals.get("refinement_start_count", ""),
+            "refinement_duplicate_count": totals.get("refinement_duplicate_count", ""),
             "accepted_count": totals.get("accepted_count", ""),
             "rejected_count": totals.get(
                 "rejected_count", metadata.get("rejected_count", "")
+            ),
+            "physical_status": audit.get(
+                "physical_status", totals.get("physical_status", "")
             ),
             "top_rejection_reasons": ";".join(
                 f"{reason}:{count}" for reason, count in reasons[:3]
             ),
             "near_miss_saved": totals.get("near_miss_saved", ""),
-            "coverage_note": ";".join(notes),
+            "near_miss_dropped": totals.get("near_miss_dropped", ""),
+            "truncation_reasons": ";".join(truncation),
+            "consumer_error_count": search.get("consumer_error_count", ""),
+            "consumer_errors": ";".join(str(error) for error in consumer_errors),
+            "materialization_failure_count": search.get(
+                "materialization_failure_count", ""
+            ),
+            "materialization_failures": ";".join(
+                f"{failure.get('chart_id', 'unknown')}: {failure.get('error', '')}"
+                for failure in materialization_failures
+            ),
             "result_note": audit.get("result_note", ""),
         }
+        for unit in (
+            "control_point",
+            "polynomial_root",
+            "brent_interval",
+            "fixed_point_guess",
+            "upstream_seed",
+        ):
+            values[f"{unit}_count"] = workload.get(f"{unit}_count", "")
+        return values
 
     def _save_candidate_csv(self, path: Path) -> None:
         fields = ["case", *self.case_axes, *self.candidates._candidate_fields()]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any, ClassVar
 
 import numpy as np
@@ -82,7 +83,9 @@ class StochasticValidity(CAMPostprocessor):
                 )
         output = self._columns(rows)
         status = output.get("status")
-        complete = int(np.count_nonzero(status == "complete")) if status is not None else 0
+        complete = (
+            int(np.count_nonzero(status == "complete")) if status is not None else 0
+        )
         self.result_metadata = {
             "status": "complete" if complete else "no_supported_branches",
             "row_count": len(rows),
@@ -336,9 +339,62 @@ class StochasticValidity(CAMPostprocessor):
     @staticmethod
     def _columns(rows: list[dict[str, Any]]) -> dict[str, np.ndarray]:
         if not rows:
-            return {"candidate_index": np.asarray([], dtype=int)}
+            return StochasticValidity._empty()
         names = tuple(rows[0])
         return {name: np.asarray([row[name] for row in rows]) for name in names}
+
+    @staticmethod
+    def _empty() -> dict[str, np.ndarray]:
+        """Return the stable empty-table schema.
+
+        Every ``_base_row`` field is present with the same dtype kind the
+        non-empty table would produce.
+        """
+        fields: dict[str, Any] = defaultdict(lambda: float)
+        fields.update(
+            {
+                "candidate_index": int,
+                "branch_index": int,
+                "epsilon_side": int,
+                "status": str,
+                "normal_form_confining": bool,
+                "regime": str,
+                "noise_semantics": str,
+                "representation": str,
+                "fpe_is_exact": bool,
+                "moment_closure": str,
+                "moment_closure_is_exact": bool,
+                "deterministic_cam_is_exact": bool,
+            }
+        )
+        names = (
+            "candidate_index",
+            "branch_index",
+            "epsilon_side",
+            "status",
+            "critical_eigenvalue_real",
+            "critical_eigenvalue_imag",
+            "noncritical_spectral_gap",
+            "critical_mode_condition_number",
+            "eigenvector_condition_number",
+            "noise_covariance_minimum_eigenvalue",
+            "projected_noise_intensity",
+            "parameter_forcing",
+            "branch_center_coefficient",
+            "normal_form_state_coefficient",
+            "normal_form_confining",
+            "critical_fluctuation_scale",
+            "epsilon_crossover",
+            "probe_epsilon",
+            "regime",
+            "noise_semantics",
+            "representation",
+            "fpe_is_exact",
+            "moment_closure",
+            "moment_closure_is_exact",
+            "deterministic_cam_is_exact",
+        )
+        return {name: np.asarray([], dtype=fields[name]) for name in names}
 
 
 def canonical_sample_matrix_covariance(
