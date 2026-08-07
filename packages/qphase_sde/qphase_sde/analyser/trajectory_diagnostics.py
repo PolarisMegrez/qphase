@@ -26,6 +26,12 @@ from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
 from scipy.optimize import least_squares
 
+from ..coordinates import (
+    CANONICAL_COORDINATE_LAYOUT,
+    R_CONVENTION,
+    canonical_r_coordinates,
+    canonical_vector,
+)
 from ..utils import resolve_mode_columns
 from .base import Analyzer
 from .result import AnalysisResult
@@ -49,12 +55,8 @@ _G1_PREFERRED_RELATIVE_TOL = 0.02
 _BLOCK_SPECTRUM_MIN_SAMPLES = 8
 _BLOCK_SPECTRUM_MIN_BLOCKS = 2
 
-# Canonical R = alpha alpha^dagger coordinates (real, length n_modes**2).
-_COORDINATE_LAYOUT = (
-    "[diag(R)_0..diag(R)_{n-1}, Re(R_ij) for i<j in lexicographic order, "
-    "Im(R_ij) for i<j in lexicographic order]"
-)
-_R_CONVENTION = "R[i,j] = alpha_i * conj(alpha_j)"
+# Canonical R = alpha alpha^dagger coordinates (real, length n_modes**2) are
+# shared with the observer subpackage via ``qphase_sde.coordinates``.
 
 # Fewer blocks than this cannot support a meaningful covariance across blocks.
 _STATIONARITY_MIN_BLOCKS = 4
@@ -886,33 +888,6 @@ def _block_spectrum(
     return {"status": "ok", "entries": entries}
 
 
-def _canonical_r_coordinates(values: np.ndarray) -> np.ndarray:
-    """Real canonical coordinates of ``R = alpha alpha^dagger``.
-
-    ``R[..., i, j] = alpha[..., i] * conj(alpha[..., j])`` is vectorized along
-    a new last axis of length ``n_modes**2`` following ``_COORDINATE_LAYOUT``;
-    the diagonal entries are the mode populations ``|alpha_i|**2``.
-    """
-    n_modes = values.shape[-1]
-    r_matrix = values[..., :, None] * np.conj(values[..., None, :])
-    diagonal = np.real(np.diagonal(r_matrix, axis1=-2, axis2=-1))
-    upper_i, upper_j = np.triu_indices(n_modes, k=1)
-    upper = r_matrix[..., upper_i, upper_j]
-    return np.concatenate([diagonal, np.real(upper), np.imag(upper)], axis=-1)
-
-
-def _canonical_vector(raw: list[float], n_coordinates: int, label: str) -> np.ndarray:
-    """Validate a user-supplied flat canonical vector against ``n_modes**2``."""
-    vector = np.asarray(raw, dtype=float)
-    if vector.ndim != 1 or vector.size != n_coordinates:
-        raise ValueError(
-            f"{label} must be a flat real vector of length n_modes**2 = {n_coordinates}"
-        )
-    if not np.all(np.isfinite(vector)):
-        raise ValueError(f"{label} must contain only finite values")
-    return vector
-
-
 def _matrix_projection(
     values: np.ndarray,
     dt: float,
@@ -930,24 +905,24 @@ def _matrix_projection(
     n_coordinates = n_modes * n_modes
     reference = np.zeros(n_coordinates)
     if config.matrix_projection_reference is not None:
-        reference = _canonical_vector(
+        reference = canonical_vector(
             config.matrix_projection_reference,
             n_coordinates,
             "matrix_projection_reference",
         )
     left_vector = None
     if config.matrix_projection_left_vector is not None:
-        left_vector = _canonical_vector(
+        left_vector = canonical_vector(
             config.matrix_projection_left_vector,
             n_coordinates,
             "matrix_projection_left_vector",
         )
-    coordinates = _canonical_r_coordinates(values)
+    coordinates = canonical_r_coordinates(values)
     result: dict[str, Any] = {
         "status": "ok",
         "quantity": "matrix_projection",
-        "coordinate_layout": _COORDINATE_LAYOUT,
-        "convention": _R_CONVENTION,
+        "coordinate_layout": CANONICAL_COORDINATE_LAYOUT,
+        "convention": R_CONVENTION,
         "n_modes": n_modes,
         "n_coordinates": n_coordinates,
         "reference_vector": reference,
@@ -1015,14 +990,14 @@ def _stationarity_details(
         else:
             trimmed = values[:, : n_blocks * block_samples]
             blocks = trimmed.reshape(n_traj, n_blocks, block_samples, n_modes)
-            features = np.mean(_canonical_r_coordinates(blocks), axis=2)
+            features = np.mean(canonical_r_coordinates(blocks), axis=2)
             entry.update(_stationarity_features(features))
         entries.append(entry)
     return {
         "status": "ok",
         "feature": "block_mean_canonical_r",
-        "coordinate_layout": _COORDINATE_LAYOUT,
-        "convention": _R_CONVENTION,
+        "coordinate_layout": CANONICAL_COORDINATE_LAYOUT,
+        "convention": R_CONVENTION,
         "n_features": n_modes * n_modes,
         "entries": entries,
     }

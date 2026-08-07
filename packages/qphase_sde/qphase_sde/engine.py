@@ -28,6 +28,7 @@ from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 from qphase_sde.buffers import SDEBufferCache
 from qphase_sde.integrator.base import Integrator
 from qphase_sde.model import NoiseSpec, SDEModel
+from qphase_sde.observer.base import FirstPassageTriggeredError, ObserverContext
 from qphase_sde.planning import (
     SDEExecutionPlan,
     build_execution_plan,
@@ -43,6 +44,49 @@ log = logging.getLogger(__name__)
 
 class TrajectoryDivergenceError(RuntimeError):
     """Raised when an SDE trajectory leaves a configured state-norm bound."""
+
+
+def _merge_observer_payloads(
+    payloads: list[Any], per_trajectory_keys: tuple[str, ...]
+) -> dict[str, Any]:
+    """Merge per-batch observer payloads along the trajectory axis.
+
+    Keys listed in ``per_trajectory_keys`` hold arrays of length n_traj and
+    are concatenated in batch order (the row index is the global trajectory
+    id). Scalar/schema keys are taken from the first batch after checking the
+    rule echo is consistent; ``n_traj``/``n_hit``/``n_censored`` are
+    recomputed from the merged arrays.
+    """
+    if not payloads:
+        raise ValueError("no observer payloads to merge")
+    first = dict(payloads[0])
+    for payload in payloads[1:]:
+        for key in (
+            "observer",
+            "rule",
+            "action",
+            "direction",
+            "debounce_checks",
+            "check_interval_steps",
+            "observable",
+        ):
+            if payload.get(key) != first.get(key):
+                raise RuntimeError(
+                    f"observer payload rule echo mismatch across trajectory "
+                    f"batches for key {key!r}: {first.get(key)!r} != "
+                    f"{payload.get(key)!r}"
+                )
+    for key in per_trajectory_keys:
+        if key in first:
+            first[key] = np.concatenate(
+                [np.asarray(payload[key]) for payload in payloads], axis=0
+            )
+    if "hit" in first:
+        merged_hit = np.asarray(first["hit"], dtype=bool)
+        first["n_traj"] = int(merged_hit.shape[0])
+        first["n_hit"] = int(np.count_nonzero(merged_hit))
+        first["n_censored"] = int(np.count_nonzero(~merged_hit))
+    return first
 
 
 @dataclass(frozen=True)
@@ -272,7 +316,7 @@ class Engine(EngineBase):
     config_schema: ClassVar[type[EngineConfig]] = EngineConfig
     manifest: ClassVar[EngineManifest] = EngineManifest(
         required_plugins={"backend", "model", "integrator"},
-        optional_plugins={"analyser"},
+        optional_plugins={"analyser", "observer"},
         defaults={"integrator": "euler_maruyama"},
         input_plugins={"analyser"},
     )
@@ -358,6 +402,7 @@ class Engine(EngineBase):
         grid = context.parameter_grid if context is not None else None
         model = self._required_model()
         analysers = self._normalised_analysers()
+        observers = self._normalised_observers()
         backend = self._required_backend()
         integrator = self._required_integrator()
         plan = build_execution_plan(
@@ -367,6 +412,7 @@ class Engine(EngineBase):
             backend=backend,
             integrator=integrator,
             analysers=analysers,
+            observers=observers,
             resources=getattr(context, "resources", None),
         )
         plan_payload = plan.to_dict()
@@ -424,9 +470,12 @@ class Engine(EngineBase):
                 context=context,
                 point_index=0,
                 master_seed=self.config.seed,
+                observers=observers,
             )
         else:
-            result = self._run_simulate(data, reporter=reporter, context=context)
+            result = self._run_simulate(
+                data, reporter=reporter, context=context, observers=observers
+            )
         if isinstance(result, SDEResult):
             result.meta.setdefault("execution_plan", plan.to_dict())
         return result
@@ -467,6 +516,14 @@ class Engine(EngineBase):
             return dict(analysers)
         return {getattr(analysers, "name", "analyser"): analysers}
 
+    def _normalised_observers(self) -> dict[str, Any]:
+        observers = self.plugins.get("observer")
+        if not observers:
+            return {}
+        if isinstance(observers, dict):
+            return dict(observers)
+        return {getattr(observers, "name", "observer"): observers}
+
     def _release_backend_pool(self) -> None:
         backend = self._default_backend
         release = getattr(backend, "free_all_blocks", None)
@@ -497,7 +554,9 @@ class Engine(EngineBase):
         """Integrate and analyze scan tiles without retaining the full trajectory."""
         assert self.config is not None
         analysers = self._normalised_analysers()
+        observers = self._normalised_observers()
         accumulated: dict[str, list[Any]] = {name: [] for name in analysers}
+        accumulated_observers: dict[str, list[Any]] = {name: [] for name in observers}
         result_meta: dict[str, Any] = {}
         total_work = plan.scan_size * plan.n_traj_per_point * plan.steps
 
@@ -561,6 +620,13 @@ class Engine(EngineBase):
                         f"analyser {name!r} did not return {point_count} "
                         "point results for an SDE scan tile"
                     )
+            # Observer payloads cover the fused trajectory ensemble of the
+            # whole tile, so they accumulate one opaque entry per tile;
+            # per-scan-point observer views are Phase 2.
+            for name in observers:
+                value = self._analysis_to_host(tile_result.analysis.get(name))
+                if value is not None:
+                    accumulated_observers[name].append(value)
             if not result_meta:
                 result_meta.update(tile_result.meta)
             self._release_backend_pool()
@@ -585,6 +651,8 @@ class Engine(EngineBase):
                 "execution_plan": plan.to_dict(),
             }
         )
+        for name, payloads in accumulated_observers.items():
+            accumulated[name] = payloads
         return SDEResult(trajectory=None, analysis=accumulated, meta=result_meta)
 
     def _run_trajectory_batched(
@@ -596,10 +664,13 @@ class Engine(EngineBase):
         context: Any | None,
         point_index: int,
         master_seed: int | None,
+        observers: dict[str, Any] | None = None,
     ) -> SDEResult:
         """Integrate one parameter point in bounded trajectory batches."""
         assert self.config is not None
         analysers = self._normalised_analysers()
+        if observers is None:
+            observers = self._normalised_observers()
         accumulators = {
             name: analyser.create_result_accumulator()
             for name, analyser in analysers.items()
@@ -608,6 +679,8 @@ class Engine(EngineBase):
             raise RuntimeError(
                 "trajectory batching requires an accumulator for every analyser"
             )
+        # Observer payloads are collected per batch and merged afterwards.
+        observer_batches: dict[str, list[Any]] = {name: [] for name in observers}
 
         if master_seed is None:
             master_seed = int(
@@ -660,6 +733,7 @@ class Engine(EngineBase):
                     context=context,
                     rng_group_seeds=seeds,
                     rng_group_size=group_size,
+                    observers=observers,
                     progress_offset=(point_index * total_trajectories + start)
                     * plan.steps,
                     progress_scale=count,
@@ -677,6 +751,14 @@ class Engine(EngineBase):
                 )
             for name, accumulator in accumulators.items():
                 accumulator.update(self._analysis_to_host(partial.analysis[name]))
+            for name in observers:
+                payload = self._analysis_to_host(partial.analysis.get(name))
+                if payload is None:
+                    raise RuntimeError(
+                        f"observer {name!r} returned no payload for trajectory "
+                        f"batch {batch_index + 1}"
+                    )
+                observer_batches[name].append(payload)
             if not result_meta:
                 result_meta.update(partial.meta)
             self._release_backend_pool()
@@ -692,12 +774,18 @@ class Engine(EngineBase):
                 "execution_plan": plan.to_dict(),
             }
         )
+        analysis: dict[str, Any] = {
+            name: accumulator.finalize() for name, accumulator in accumulators.items()
+        }
+        for name, payloads in observer_batches.items():
+            # The row index of merged per-trajectory arrays is the global
+            # trajectory id: batches concatenate in order without renumbering.
+            analysis[name] = _merge_observer_payloads(
+                payloads, getattr(observers[name], "per_trajectory_keys", ())
+            )
         return SDEResult(
             trajectory=None,
-            analysis={
-                name: accumulator.finalize()
-                for name, accumulator in accumulators.items()
-            },
+            analysis=analysis,
             meta=result_meta,
         )
 
@@ -792,6 +880,7 @@ class Engine(EngineBase):
         context: Any | None = None,
         rng_group_seeds: tuple[int, ...] | None = None,
         rng_group_size: int | None = None,
+        observers: dict[str, Any] | None = None,
         progress_offset: int = 0,
         progress_scale: int | None = None,
         progress_total: int | None = None,
@@ -799,6 +888,9 @@ class Engine(EngineBase):
     ) -> ResultProtocol:
         """Execute SDE simulation and optional per-job analysis."""
         assert self.config is not None
+
+        if observers is None:
+            observers = self._normalised_observers()
 
         model = self.plugins.get("model")
         if not model:
@@ -873,7 +965,17 @@ class Engine(EngineBase):
             progress_cb=sde_progress_cb,
             rng_group_seeds=rng_group_seeds,
             rng_group_size=rng_group_size,
+            observers=observers,
         )
+        # Lift observer payloads out of the trajectory metadata immediately so
+        # they persist even when the trajectory itself is dropped below. They
+        # intentionally do not participate in the keep/drop auto-decision: a
+        # record-only observer must not change trajectory retention. In fused
+        # scan batches the payloads stay fused-ensemble values (per-scan-point
+        # observer views are Phase 2).
+        observer_results: dict[str, Any] = {}
+        if traj_set is not None:
+            observer_results = dict(traj_set.meta.pop("observers", {}))
         if reporter is not None:
             reporter.update(
                 completed=(progress_offset + progress_scale * time_cfg["steps"]),
@@ -1011,6 +1113,10 @@ class Engine(EngineBase):
                 # Drop trajectory to save memory
                 traj_set = None
 
+        # Observer outputs live alongside analyser outputs under their plugin
+        # keys so they survive trajectory drops and scan/batch merging.
+        analysis_results.update(observer_results)
+
         # Ensure model parameters are in metadata
         if model:
             if hasattr(model, "config") and hasattr(model.config, "model_dump"):
@@ -1046,6 +1152,7 @@ class Engine(EngineBase):
         rng: Any | None = None,
         rng_group_seeds: tuple[int, ...] | None = None,
         rng_group_size: int | None = None,
+        observers: dict[str, Any] | None = None,
     ) -> TrajectorySet:
         """Run a multi-trajectory SDE simulation.
 
@@ -1107,6 +1214,11 @@ class Engine(EngineBase):
             Stable seeds for scan-point groups inside a fused tile.
         rng_group_size : int, optional
             Number of adjacent trajectories driven by each grouped seed.
+        observers : dict[str, Any], optional
+            Online observers (SDEObserverProtocol) checked against the live
+            state at their configured cadence. Observers never mutate the
+            state or consume RNG; ``stop_batch`` truncates the output at the
+            confirming check and ``fail_job`` raises FirstPassageTriggeredError.
 
         Returns
         -------
@@ -1265,6 +1377,34 @@ class Engine(EngineBase):
             out[:, 0, :] = y[:, record_modes]
             keep_counter = 1
 
+        # Online observers: initialize against the run layout and check the
+        # initial condition. The engine schedules observe rounds at multiples
+        # of each observer's cadence; fused chunks are clamped so they always
+        # end exactly on a due step (observers never sample inside a chunk).
+        observer_items: list[tuple[str, Any]] = (
+            list(observers.items()) if observers else []
+        )
+        observer_intervals = [
+            max(1, int(observer.check_interval_steps)) for _, observer in observer_items
+        ]
+        next_observe_step: int | None = None
+        stop_observer: str | None = None
+        if observer_items:
+            observer_context = ObserverContext(
+                n_traj=n_traj,
+                n_modes=model.n_modes,
+                record_modes=record_modes,
+                dt=dt,
+                integration_t0=t0,
+                observation_t0=observation_t0,
+                total_steps=steps,
+                backend=be,
+            )
+            for _, observer in observer_items:
+                observer.initialize(observer_context)
+            next_observe_step = min(observer_intervals)
+            stop_observer = self._handle_observer_actions(observer_items, y, t, 0)
+
         # Progress tracking
         last_report_step = 0
         last_report_time = None
@@ -1325,11 +1465,16 @@ class Engine(EngineBase):
         # This reduces per-step allocation overhead, especially on GPU backends.
         buf_cache = SDEBufferCache(be, max_entries_per_key=2)
 
-        while t < t_end - 1e-12:
+        while t < t_end - 1e-12 and stop_observer is None:
             if use_chunked:
                 assert rng is not None, "RNG not initialized"
                 assert callable(chunk_step)
                 n_chunk = min(requested_chunk_steps, steps - k)
+                if next_observe_step is not None:
+                    # Clamp fused chunks so they end exactly on the next due
+                    # observer check; cadence stays exact without sampling
+                    # inside a chunk.
+                    n_chunk = min(n_chunk, max(1, next_observe_step - k))
                 noise_dtype = y.real.dtype if hasattr(y, "real") else y.dtype
                 noise_shape = (n_chunk, n_traj, model.noise_dim)
                 raw_noise = buf_cache.get(noise_shape, noise_dtype)
@@ -1437,6 +1582,18 @@ class Engine(EngineBase):
                     finally:
                         buf_cache.put(y_interp)
 
+            # Online observers run on their due steps (including chunk
+            # boundaries); actions are fail_job > stop_batch > record.
+            if (
+                observer_items
+                and next_observe_step is not None
+                and k >= next_observe_step
+            ):
+                stop_observer = self._handle_observer_actions(observer_items, y, t, k)
+                next_observe_step = min(
+                    (k // interval + 1) * interval for interval in observer_intervals
+                )
+
             # Progress reporting
             if progress_cb is not None:
                 now = _time.monotonic()
@@ -1474,22 +1631,40 @@ class Engine(EngineBase):
                     except Exception:
                         pass
 
-        if keep_counter != n_keep:
+        if stop_observer is None and keep_counter != n_keep:
             raise RuntimeError(
                 f"SDE observation saved {keep_counter} samples, expected {n_keep}"
             )
+        if stop_observer is not None and keep_counter < n_keep:
+            out = out[:, :keep_counter]
+
+        meta: dict[str, Any] = {
+            "mode_indices": list(record_modes),
+            "integration_t0": t0,
+            "observation_t0": observation_t0,
+            "integration_t1": t_end,
+            "warmup_steps": warmup_steps,
+        }
+        if stop_observer is not None:
+            meta.update(
+                {
+                    "stopped_early": True,
+                    "stop_reason": f"observer:{stop_observer}",
+                    "effective_steps": k,
+                }
+            )
+        if observer_items:
+            observer_payloads: dict[str, Any] = {}
+            for name, observer in observer_items:
+                observer.note_end_of_run(float(t), k)
+                observer_payloads[name] = observer.finalize()
+            meta["observers"] = observer_payloads
 
         return TrajectorySet(
             data=out,
             t0=observation_t0,
             dt=dt * rs,
-            meta={
-                "mode_indices": list(record_modes),
-                "integration_t0": t0,
-                "observation_t0": observation_t0,
-                "integration_t1": t_end,
-                "warmup_steps": warmup_steps,
-            },
+            meta=meta,
         )
 
     @staticmethod
@@ -1507,6 +1682,64 @@ class Engine(EngineBase):
                 "No PSD was produced because the trajectory ensemble is not "
                 "stationary within the requested observation window."
             )
+
+    def _handle_observer_actions(
+        self,
+        observer_items: list[tuple[str, Any]],
+        y: Any,
+        t: float,
+        step: int,
+    ) -> str | None:
+        """Run one observer round and apply whole-batch control-flow actions.
+
+        Every observer sees the state even when another one requests an
+        action. ``fail_job`` raises FirstPassageTriggeredError; the first
+        ``stop_batch`` requester is returned so the caller can stop the loop.
+        """
+        actions = [
+            (name, observer.observe(y, t, step)) for name, observer in observer_items
+        ]
+        failures = [name for name, action in actions if action == "fail_job"]
+        if failures:
+            raise self._observer_fail_job_error(observer_items, failures, t, step)
+        stops = [name for name, action in actions if action == "stop_batch"]
+        return stops[0] if stops else None
+
+    @staticmethod
+    def _observer_fail_job_error(
+        observer_items: list[tuple[str, Any]],
+        failures: list[str],
+        t: float,
+        step: int,
+    ) -> FirstPassageTriggeredError:
+        """Build a fail_job error carrying hit trajectory ids and times."""
+        instances = dict(observer_items)
+        details: dict[str, Any] = {}
+        parts: list[str] = []
+        for name in failures:
+            observer = instances[name]
+            observer.note_end_of_run(float(t), step)
+            payload = observer.finalize()
+            hit = np.asarray(payload.get("hit", []), dtype=bool)
+            times = np.asarray(payload.get("first_hit_time", []), dtype=float)
+            ids = [int(index) for index in np.nonzero(hit)[0]]
+            hit_times = [float(times[index]) for index in ids]
+            details[name] = {
+                "rule": payload.get("rule"),
+                "hit_trajectories": ids,
+                "first_hit_times": hit_times,
+            }
+            parts.append(
+                f"observer {name!r} (rule={payload.get('rule')!r}) confirmed "
+                f"hits on trajectories {ids} with first-hit times {hit_times}"
+            )
+        message = (
+            f"SDE observer fail_job action triggered at t={float(t):.9g} "
+            f"(step {int(step)}): " + "; ".join(parts)
+        )
+        return FirstPassageTriggeredError(
+            message, {"time": float(t), "step": int(step), "observers": details}
+        )
 
     @staticmethod
     def _draw_standard_normal_into(backend: BackendBase, rng: Any, out: Any) -> Any:

@@ -15,6 +15,7 @@ Version : 1.0.1 (Jan 2026)
 # Keep imports lightweight and avoid importing heavy submodules here; rely on
 # per-package __init__ to perform lazy registration as needed.
 from . import integrator as _qphase_integrators  # noqa: F401
+from . import observer as _qphase_observers  # noqa: F401
 
 # Import Engine class (v0.2 OO interface)
 from .engine import Engine  # noqa: F401

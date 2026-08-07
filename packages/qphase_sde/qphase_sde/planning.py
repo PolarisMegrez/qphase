@@ -85,11 +85,21 @@ class SDEExecutionPlan:
     stream_analysis: bool
     rng_strategy: str
     memory: SDEMemoryEstimate
+    observer_check_interval_steps: int | None = None
+    effective_chunk_steps: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Return JSON-compatible plan metadata."""
+        """Return JSON-compatible plan metadata.
+
+        The observer-derived fields are omitted when not applicable so plans
+        without observers keep their previous shape.
+        """
         payload = asdict(self)
         payload["scan_shape"] = list(self.scan_shape)
+        if self.observer_check_interval_steps is None:
+            payload.pop("observer_check_interval_steps")
+        if self.effective_chunk_steps is None:
+            payload.pop("effective_chunk_steps")
         return payload
 
 
@@ -101,6 +111,7 @@ def build_execution_plan(
     backend: Any,
     integrator: Any,
     analysers: dict[str, Any],
+    observers: dict[str, Any] | None = None,
     resources: Any | None,
     device_memory: tuple[int, int] | None = None,
 ) -> SDEExecutionPlan:
@@ -129,6 +140,12 @@ def build_execution_plan(
     chunk_steps = max(
         1, int(getattr(getattr(integrator, "config", None), "chunk_steps", 1))
     )
+    observer_check_interval_steps = _observer_check_interval(observers)
+    effective_chunk_steps: int | None = None
+    if observer_check_interval_steps is not None and chunk_steps > 1:
+        # Observers only run at chunk boundaries, so the engine clamps fused
+        # chunks to the check cadence; the plan reports the fusion cost.
+        effective_chunk_steps = max(1, min(chunk_steps, observer_check_interval_steps))
 
     trajectory_per_point = _checked_product(
         n_traj,
@@ -294,7 +311,23 @@ def build_execution_plan(
             else "legacy_batched_v1"
         ),
         memory=memory,
+        observer_check_interval_steps=observer_check_interval_steps,
+        effective_chunk_steps=effective_chunk_steps,
     )
+
+
+def _observer_check_interval(observers: dict[str, Any] | None) -> int | None:
+    """Smallest configured observer cadence, or None without observers."""
+    intervals = []
+    for observer in (observers or {}).values():
+        interval = getattr(observer, "check_interval_steps", None)
+        if interval is None:
+            interval = getattr(
+                getattr(observer, "config", None), "check_interval_steps", None
+            )
+        if interval is not None:
+            intervals.append(int(interval))
+    return min(intervals) if intervals else None
 
 
 def resolve_time_grid(*, t0: float, t1: float, dt: float) -> SDETimeGrid:
