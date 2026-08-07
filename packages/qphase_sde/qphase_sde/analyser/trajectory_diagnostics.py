@@ -3,7 +3,12 @@
 Beyond raw summaries this analyser fits exponential/Gaussian/Kubo line-shape
 models to the magnitude of the mean normalized first-order coherence (with an
 interleaved train/holdout split) and can emit compact per-trajectory
-per-block spectral features instead of full PSD cubes. Every output records
+per-block spectral features instead of full PSD cubes. Two opt-in whole-state
+diagnostics use all recorded modes jointly: ``stationarity_details`` adjudicates
+stationarity per trajectory from block-mean canonical ``R = alpha alpha^dagger``
+features (block covariance, radial quantiles, head-tail drift, change-point
+score), and ``matrix_projection`` projects the canonical R coordinates onto an
+explicit real left vector against an explicit reference. Every output records
 its units and conventions explicitly (see the ``*_unit``, ``sidedness`` and
 ``definition`` keys).
 """
@@ -43,6 +48,20 @@ _G1_PREFERRED_RELATIVE_TOL = 0.02
 # A block group must clear both thresholds to yield spectral features.
 _BLOCK_SPECTRUM_MIN_SAMPLES = 8
 _BLOCK_SPECTRUM_MIN_BLOCKS = 2
+
+# Canonical R = alpha alpha^dagger coordinates (real, length n_modes**2).
+_COORDINATE_LAYOUT = (
+    "[diag(R)_0..diag(R)_{n-1}, Re(R_ij) for i<j in lexicographic order, "
+    "Im(R_ij) for i<j in lexicographic order]"
+)
+_R_CONVENTION = "R[i,j] = alpha_i * conj(alpha_j)"
+
+# Fewer blocks than this cannot support a meaningful covariance across blocks.
+_STATIONARITY_MIN_BLOCKS = 4
+_STATIONARITY_RADIAL_QUANTILES = (0.1, 0.5, 0.9)
+# Above this covariance condition number the radial distance falls back to
+# Euclidean (the Mahalanobis metric would be dominated by numerical noise).
+_STATIONARITY_MAX_CONDITION = 1.0e6
 
 
 class TrajectoryDiagnosticsConfig(PluginConfigBase):
@@ -94,6 +113,43 @@ class TrajectoryDiagnosticsConfig(PluginConfigBase):
             "max(wing_factor * resolution_angular, local_hwhm_angular)"
         ),
     )
+    stationarity_details: bool = Field(
+        False,
+        description=(
+            "Adjudicate stationarity per trajectory from block-mean canonical "
+            "R features over block_durations: block covariance, radial "
+            "quantiles, head-tail drift, and a change-point score"
+        ),
+    )
+    matrix_projection: bool = Field(
+        False,
+        description=(
+            "Project canonical R = alpha alpha^dagger coordinates (built from "
+            "all recorded modes) onto matrix_projection_left_vector against "
+            "matrix_projection_reference"
+        ),
+    )
+    matrix_projection_reference: list[float] | None = Field(
+        None,
+        description=(
+            "Flat real canonical R coordinates of length n_modes**2 "
+            "subtracted before projection; None uses the zero matrix"
+        ),
+    )
+    matrix_projection_left_vector: list[float] | None = Field(
+        None,
+        description=(
+            "Flat real weights of length n_modes**2 applied to the canonical "
+            "coordinates; None emits coordinate summaries without a projection"
+        ),
+    )
+    matrix_projection_keep_coordinates: bool = Field(
+        False,
+        description=(
+            "Retain full per-trajectory canonical coordinate trajectories "
+            "(n_traj, n_time, n_modes**2) in the matrix_projection output"
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_durations(self) -> TrajectoryDiagnosticsConfig:
@@ -105,6 +161,29 @@ class TrajectoryDiagnosticsConfig(PluginConfigBase):
             raise ValueError("allan_taus must contain positive values")
         if len(set(self.modes)) != len(self.modes):
             raise ValueError("modes must not contain duplicates")
+        vectors = (
+            ("matrix_projection_reference", self.matrix_projection_reference),
+            ("matrix_projection_left_vector", self.matrix_projection_left_vector),
+        )
+        for label, vector in vectors:
+            if vector is None:
+                continue
+            if not self.matrix_projection:
+                raise ValueError(f"{label} requires matrix_projection=True")
+            root = math.isqrt(len(vector))
+            if root < 1 or root * root != len(vector):
+                raise ValueError(f"{label} must have length n_modes**2")
+        reference = self.matrix_projection_reference
+        left_vector = self.matrix_projection_left_vector
+        if (
+            reference is not None
+            and left_vector is not None
+            and len(reference) != len(left_vector)
+        ):
+            raise ValueError(
+                "matrix_projection_reference and matrix_projection_left_vector "
+                "must have matching lengths"
+            )
         return self
 
 
@@ -178,7 +257,7 @@ class TrajectoryDiagnostics(Analyzer):
                 )
             mode_results[int(mode)] = payload
 
-        result = {
+        result: dict[str, Any] = {
             "modes": list(config.modes),
             "t0": t0,
             "dt": dt,
@@ -186,6 +265,12 @@ class TrajectoryDiagnostics(Analyzer):
             "n_samples": int(values.shape[1]),
             "mode_results": mode_results,
         }
+        if config.matrix_projection:
+            result["matrix_projection"] = _matrix_projection(values, dt, config)
+        if config.stationarity_details:
+            result["stationarity"] = _stationarity_details(
+                values, dt, config.block_durations
+            )
         return AnalysisResult(
             data_dict=result,
             meta={
@@ -799,6 +884,259 @@ def _block_spectrum(
             entry.update(_block_spectrum_features(blocks, dt, wing_factor))
         entries.append(entry)
     return {"status": "ok", "entries": entries}
+
+
+def _canonical_r_coordinates(values: np.ndarray) -> np.ndarray:
+    """Real canonical coordinates of ``R = alpha alpha^dagger``.
+
+    ``R[..., i, j] = alpha[..., i] * conj(alpha[..., j])`` is vectorized along
+    a new last axis of length ``n_modes**2`` following ``_COORDINATE_LAYOUT``;
+    the diagonal entries are the mode populations ``|alpha_i|**2``.
+    """
+    n_modes = values.shape[-1]
+    r_matrix = values[..., :, None] * np.conj(values[..., None, :])
+    diagonal = np.real(np.diagonal(r_matrix, axis1=-2, axis2=-1))
+    upper_i, upper_j = np.triu_indices(n_modes, k=1)
+    upper = r_matrix[..., upper_i, upper_j]
+    return np.concatenate([diagonal, np.real(upper), np.imag(upper)], axis=-1)
+
+
+def _canonical_vector(raw: list[float], n_coordinates: int, label: str) -> np.ndarray:
+    """Validate a user-supplied flat canonical vector against ``n_modes**2``."""
+    vector = np.asarray(raw, dtype=float)
+    if vector.ndim != 1 or vector.size != n_coordinates:
+        raise ValueError(
+            f"{label} must be a flat real vector of length n_modes**2 = {n_coordinates}"
+        )
+    if not np.all(np.isfinite(vector)):
+        raise ValueError(f"{label} must contain only finite values")
+    return vector
+
+
+def _matrix_projection(
+    values: np.ndarray,
+    dt: float,
+    config: TrajectoryDiagnosticsConfig,
+) -> dict[str, Any]:
+    """Whole-state projection c(t) = left_vector . (vec(R(t)) - vec(reference)).
+
+    Canonical R coordinates are built from all recorded modes (never sliced
+    per mode). With no ``left_vector`` only coordinate summaries are emitted;
+    with no ``reference`` the zero matrix is used. When ``block_spectrum`` is
+    also enabled the real projection series is fed through the same
+    per-trajectory per-block periodogram features as the mode series.
+    """
+    n_traj, n_time, n_modes = values.shape
+    n_coordinates = n_modes * n_modes
+    reference = np.zeros(n_coordinates)
+    if config.matrix_projection_reference is not None:
+        reference = _canonical_vector(
+            config.matrix_projection_reference,
+            n_coordinates,
+            "matrix_projection_reference",
+        )
+    left_vector = None
+    if config.matrix_projection_left_vector is not None:
+        left_vector = _canonical_vector(
+            config.matrix_projection_left_vector,
+            n_coordinates,
+            "matrix_projection_left_vector",
+        )
+    coordinates = _canonical_r_coordinates(values)
+    result: dict[str, Any] = {
+        "status": "ok",
+        "quantity": "matrix_projection",
+        "coordinate_layout": _COORDINATE_LAYOUT,
+        "convention": _R_CONVENTION,
+        "n_modes": n_modes,
+        "n_coordinates": n_coordinates,
+        "reference_vector": reference,
+        "reference_norm": float(np.linalg.norm(reference)),
+        "time_unit": "seconds",
+        "dt": dt,
+        "mean_coordinates_per_trajectory": np.mean(coordinates, axis=1),
+    }
+    if left_vector is not None:
+        projection = (coordinates - reference[None, None, :]) @ left_vector
+        result.update(
+            {
+                "left_vector": left_vector,
+                "left_vector_norm": float(np.linalg.norm(left_vector)),
+                "projection_definition": (
+                    "c(t) = left_vector . (vec(R(t)) - vec(reference))"
+                ),
+                "projection_per_trajectory": projection,
+                "projection_mean_per_trajectory": np.mean(projection, axis=1),
+                "projection_std_per_trajectory": np.std(projection, axis=1),
+                "projection_min_per_trajectory": np.min(projection, axis=1),
+                "projection_max_per_trajectory": np.max(projection, axis=1),
+            }
+        )
+        if config.block_spectrum:
+            result["block_spectrum"] = _block_spectrum(
+                projection,
+                dt,
+                config.block_durations,
+                wing_factor=config.block_spectrum_wing_factor,
+            )
+    if config.matrix_projection_keep_coordinates:
+        result["coordinates_per_trajectory"] = coordinates
+    return result
+
+
+def _stationarity_details(
+    values: np.ndarray,
+    dt: float,
+    durations: list[float],
+) -> dict[str, Any]:
+    """Per-trajectory stationarity adjudication for each requested duration.
+
+    The feature vector is the within-block mean of the canonical R
+    coordinates (richer than the block-mean complex amplitude: it carries
+    second moments), trimmed to whole non-overlapping blocks. The trajectory
+    axis is preserved everywhere; entries with too few blocks report a
+    structured ``insufficient_data`` status instead of raising.
+    """
+    if not durations:
+        return {"status": "no_blocks_configured"}
+    n_traj, n_time, n_modes = values.shape
+    entries: list[dict[str, Any]] = []
+    for duration in durations:
+        block_samples = _duration_samples(duration, dt, "block duration")
+        n_blocks = n_time // block_samples
+        entry: dict[str, Any] = {
+            "duration": block_samples * dt,
+            "samples": block_samples,
+            "n_blocks": n_blocks,
+            "min_blocks": _STATIONARITY_MIN_BLOCKS,
+        }
+        if n_blocks < _STATIONARITY_MIN_BLOCKS:
+            entry["status"] = "insufficient_data"
+        else:
+            trimmed = values[:, : n_blocks * block_samples]
+            blocks = trimmed.reshape(n_traj, n_blocks, block_samples, n_modes)
+            features = np.mean(_canonical_r_coordinates(blocks), axis=2)
+            entry.update(_stationarity_features(features))
+        entries.append(entry)
+    return {
+        "status": "ok",
+        "feature": "block_mean_canonical_r",
+        "coordinate_layout": _COORDINATE_LAYOUT,
+        "convention": _R_CONVENTION,
+        "n_features": n_modes * n_modes,
+        "entries": entries,
+    }
+
+
+def _stationarity_features(features: np.ndarray) -> dict[str, Any]:
+    """Covariance, radial quantiles, drift, and change-point per trajectory.
+
+    ``features`` has shape ``(n_traj, n_blocks, n_features)``. Radial
+    distances from the per-trajectory median block feature use the
+    Mahalanobis metric of the block covariance when its condition number is
+    below ``_STATIONARITY_MAX_CONDITION`` and Euclidean distances otherwise.
+    The change-point statistic is a two-sample separation with per-split
+    pooled variance, combined in quadrature across features and maximized
+    over split points.
+    """
+    n_traj, n_blocks, n_features = features.shape
+    covariance = np.empty((n_traj, n_features, n_features))
+    median = np.median(features, axis=1)
+    centered = features - median[:, None, :]
+    metric: list[str] = []
+    radial = np.empty((n_traj, n_blocks))
+    for trajectory in range(n_traj):
+        cov = np.cov(features[trajectory], rowvar=False, ddof=1)
+        covariance[trajectory] = cov
+        condition = float(np.linalg.cond(cov))
+        if np.isfinite(condition) and condition < _STATIONARITY_MAX_CONDITION:
+            solved = np.linalg.solve(np.linalg.cholesky(cov), centered[trajectory].T)
+            radial[trajectory] = np.sqrt(np.sum(solved**2, axis=0))
+            metric.append("mahalanobis")
+        else:
+            radial[trajectory] = np.sqrt(np.sum(centered[trajectory] ** 2, axis=1))
+            metric.append("euclidean")
+    quantiles = np.quantile(
+        radial, list(_STATIONARITY_RADIAL_QUANTILES), axis=1
+    ).transpose()
+
+    side = max(1, n_blocks // 4)
+    head = features[:, :side]
+    tail = features[:, -side:]
+    delta = np.mean(head, axis=1) - np.mean(tail, axis=1)
+    if side > 1:
+        pooled_variance = 0.5 * (
+            np.var(head, axis=1, ddof=1) + np.var(tail, axis=1, ddof=1)
+        )
+    else:
+        pooled_variance = np.var(features, axis=1, ddof=1)
+    standard_error = np.sqrt(pooled_variance * 2.0 / side)
+    ratio = np.zeros_like(delta)
+    np.divide(np.abs(delta), standard_error, out=ratio, where=standard_error > 0.0)
+
+    counts = np.arange(1, n_blocks, dtype=float)
+    right_counts = n_blocks - counts
+    cum1 = np.cumsum(features, axis=1)
+    cum2 = np.cumsum(features**2, axis=1)
+    left_mean = cum1[:, :-1] / counts[None, :, None]
+    right_mean = (cum1[:, -1:] - cum1[:, :-1]) / right_counts[None, :, None]
+    left_var = cum2[:, :-1] / counts[None, :, None] - left_mean**2
+    right_var = (cum2[:, -1:] - cum2[:, :-1]) / right_counts[
+        None, :, None
+    ] - right_mean**2
+    pooled = (
+        (counts - 1.0)[None, :, None] * left_var
+        + (right_counts - 1.0)[None, :, None] * right_var
+    ) / (n_blocks - 2.0)
+    weight = counts * right_counts / n_blocks
+    scaled = np.zeros_like(left_mean)
+    np.divide(
+        (left_mean - right_mean) ** 2,
+        pooled,
+        out=scaled,
+        where=pooled > np.finfo(float).tiny,
+    )
+    separation = np.sqrt(np.sum(scaled * weight[None, :, None], axis=2))
+    split = np.argmax(separation, axis=1)
+    score = separation[np.arange(n_traj), split]
+
+    return {
+        "status": "ok",
+        "block_covariance": covariance,
+        "covariance_estimator": "sample covariance across blocks (ddof=1)",
+        "radial_quantiles": quantiles,
+        "radial_quantile_levels": list(_STATIONARITY_RADIAL_QUANTILES),
+        "radial_center": "per-trajectory median of block features",
+        "radial_distance_metric_per_trajectory": metric,
+        "radial_distance_definition": (
+            "mahalanobis when the covariance condition number is below "
+            f"{_STATIONARITY_MAX_CONDITION:.3g}, euclidean otherwise"
+        ),
+        "head_tail_drift": {
+            "delta": delta,
+            "standard_error": standard_error,
+            "significance_ratio": np.max(ratio, axis=1),
+            "blocks_per_side": side,
+            "definition": (
+                "mean(first K blocks) - mean(last K blocks) with K = "
+                "max(1, n_blocks // 4); significance_ratio is the max over "
+                "features of |delta| / standard_error with "
+                "standard_error**2 = pooled head/tail variance * 2/K "
+                "(all-block variance when K = 1)"
+            ),
+        },
+        "change_point": {
+            "score": score,
+            "block_index": (split + 1).astype(int),
+            "statistic": "two_sample_t_quadrature_max",
+            "definition": (
+                "max over splits of sqrt(sum_features (left_mean - "
+                "right_mean)**2 * (n_left*n_right/n_blocks) / "
+                "pooled_variance) with per-split pooled variance; "
+                "block_index is the first block of the right segment"
+            ),
+        },
+    }
 
 
 def _masked_mean(
