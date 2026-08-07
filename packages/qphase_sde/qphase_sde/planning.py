@@ -151,9 +151,14 @@ def build_execution_plan(
         real_itemsize,
         label="noise workspace",
     )
-    analyzer_workspace = _analyzer_workspace_bytes(trajectory_per_point, analysers)
-
     backend_name = _backend_name(backend)
+    analyzer_workspace = _analyzer_workspace_bytes(
+        trajectory_per_point,
+        analysers,
+        n_traj=n_traj,
+        backend_name=backend_name,
+    )
+
     budget_kind, budget, available, total, fraction = _memory_budget(
         backend_name,
         resources,
@@ -433,13 +438,43 @@ def _backend_name(backend: Any) -> str:
 
 
 def _analyzer_workspace_bytes(
-    trajectory_per_point: int, analysers: dict[str, Any]
+    trajectory_per_point: int,
+    analysers: dict[str, Any],
+    *,
+    n_traj: int,
+    backend_name: str,
 ) -> int:
-    if any(
-        str(name).lower() == "psd"
-        or str(getattr(analyser, "name", "")).lower() == "psd"
-        for name, analyser in analysers.items()
-    ):
+    """Estimate analysis workspace, honouring PSD estimator capabilities.
+
+    A backend-native estimator needs a device FFT workspace, which scales
+    with the configured trajectory FFT chunk when one is set. A host-side
+    estimator (e.g. Welch or multitaper) only stages a transfer copy on a
+    GPU backend, so it does not need a full device FFT workspace.
+    """
+    for name, analyser in analysers.items():
+        is_psd = (
+            str(name).lower() == "psd"
+            or str(getattr(analyser, "name", "")).lower() == "psd"
+        )
+        if not is_psd:
+            continue
+        estimator = getattr(analyser, "estimator", None)
+        capability_fn = getattr(estimator, "capabilities", None)
+        capabilities = capability_fn() if callable(capability_fn) else None
+        if (
+            capabilities is not None
+            and not getattr(capabilities, "backend_native", True)
+            and backend_name == "cupy"
+        ):
+            # Host-side estimator: only a transfer staging margin touches the
+            # device, not a full device-resident FFT workspace.
+            return trajectory_per_point // 2
+        chunk = getattr(
+            getattr(estimator, "config", None), "fft_chunk_trajectories", None
+        )
+        if chunk is not None and 0 < int(chunk) < n_traj:
+            # Chunked trajectory FFT: workspace scales with the chunk size.
+            return max(1, 2 * trajectory_per_point * int(chunk) // n_traj)
         # One complex FFT, one real power array, and a conservative cuFFT margin.
         return trajectory_per_point * 2
     return trajectory_per_point // 2 if analysers else 0

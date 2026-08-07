@@ -14,6 +14,11 @@ from .base import PsdEstimate, SpectralEstimatorCapabilities
 
 class PeriodogramEstimatorConfig(PluginConfigBase):
     window: str | None = Field(None, description="Window function name")
+    fft_chunk_trajectories: int | None = Field(
+        None,
+        ge=1,
+        description="Trajectories per FFT chunk; None transforms the full batch",
+    )
 
 
 class WelchEstimatorConfig(PluginConfigBase):
@@ -103,6 +108,27 @@ class PeriodogramEstimator(_EstimatorMath):
         norm: Literal["ortho"] | None = (
             "ortho" if convention in {"symmetric", "unitary"} else None
         )
+        count = int(x.shape[0])
+        chunk = self.config.fft_chunk_trajectories
+        if chunk is None or int(chunk) >= count:
+            mean, std, sem = self._power_moments(x, norm, backend)
+        else:
+            mean, std, sem = self._chunked_power_moments(x, norm, int(chunk), backend)
+        axis = convert_to_numpy(backend.fftfreq(n_time, d=dt))
+        return self.scaled(
+            axis,
+            mean,
+            std,
+            sem,
+            dt=dt,
+            convention=convention,
+            n_fft=n_time,
+            energy=float(np.sum(window * window)),
+            count=count,
+        )
+
+    def _power_moments(self, x, norm, backend) -> tuple[Any, Any, Any]:
+        """Mean/std/sem of per-trajectory powers from one full-batch FFT."""
         transformed = backend.fft(x, axis=-1, norm=norm)
         powers = backend.abs(transformed) ** 2
         del transformed
@@ -119,18 +145,48 @@ class PeriodogramEstimator(_EstimatorMath):
         else:
             std = np.full(mean.shape, np.nan, dtype=mean.dtype)
             sem = std.copy()
-        axis = convert_to_numpy(backend.fftfreq(n_time, d=dt))
-        return self.scaled(
-            axis,
-            mean,
-            std,
-            sem,
-            dt=dt,
-            convention=convention,
-            n_fft=n_time,
-            energy=float(np.sum(window * window)),
-            count=count,
-        )
+        return mean, std, sem
+
+    def _chunked_power_moments(
+        self, x, norm, chunk: int, backend
+    ) -> tuple[Any, Any, Any]:
+        """Trajectory-chunked FFT with Chan parallel variance combination.
+
+        Peak FFT workspace scales with ``chunk`` trajectories instead of the
+        full batch; per-chunk (count, mean, M2) statistics are combined
+        exactly on the host, so the result matches the single-pass estimator.
+        """
+        total = 0
+        mean_acc: Any = None
+        m2_acc: Any = None
+        for start in range(0, int(x.shape[0]), chunk):
+            transformed = backend.fft(x[start : start + chunk], axis=-1, norm=norm)
+            powers = backend.abs(transformed) ** 2
+            del transformed
+            n_c = int(powers.shape[0])
+            mean_c = convert_to_numpy(backend.mean(powers, axis=0))
+            if n_c > 1:
+                centered = powers - backend.asarray(mean_c)
+                m2_c = convert_to_numpy(backend.mean(centered * centered, axis=0)) * n_c
+            else:
+                m2_c = np.zeros_like(mean_c)
+            del powers
+            if total == 0:
+                total, mean_acc, m2_acc = n_c, mean_c, m2_c
+                continue
+            delta = mean_c - mean_acc
+            new_total = total + n_c
+            mean_acc = mean_acc + delta * (n_c / new_total)
+            m2_acc = m2_acc + m2_c + delta * delta * (total * n_c / new_total)
+            total = new_total
+        mean = mean_acc
+        if total > 1:
+            std = np.sqrt(np.maximum(m2_acc / (total - 1), 0.0))
+            sem = std / np.sqrt(float(total))
+        else:
+            std = np.full(mean.shape, np.nan, dtype=mean.dtype)
+            sem = std.copy()
+        return mean, std, sem
 
 
 class WelchEstimator(_EstimatorMath):

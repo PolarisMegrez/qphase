@@ -342,3 +342,45 @@ def test_estimator_capabilities_do_not_overclaim_time_streaming():
         capabilities = estimator.capabilities()
         assert capabilities.time_streaming is False
         assert capabilities.requires_full_trajectory is True
+
+
+def test_periodogram_fft_chunk_matches_full_batch_estimate():
+    """Chunked trajectory FFT must reproduce the full-batch periodogram."""
+    from qphase_sde.analyser.spectral_estimator.builtin import (
+        PeriodogramEstimator,
+        PeriodogramEstimatorConfig,
+    )
+
+    dt = 0.1
+    data = _make_sine_data(n_traj=8, n_time=512, dt=dt)[:, :, 0]
+    reference = PeriodogramEstimator().estimate(data, dt, "symmetric", BACKEND)
+    for chunk in (1, 3, 8, 16):
+        estimator = PeriodogramEstimator(
+            PeriodogramEstimatorConfig(fft_chunk_trajectories=chunk)
+        )
+        estimate = estimator.estimate(data, dt, "symmetric", BACKEND)
+        np.testing.assert_allclose(estimate.axis, reference.axis, rtol=0, atol=0)
+        np.testing.assert_allclose(
+            estimate.mean, reference.mean, rtol=1e-12, atol=1e-30
+        )
+        np.testing.assert_allclose(
+            estimate.std, reference.std, rtol=1e-9, atol=1e-30
+        )
+        np.testing.assert_allclose(
+            estimate.sem, reference.sem, rtol=1e-9, atol=1e-30
+        )
+
+
+def test_periodogram_fft_chunk_config_reaches_estimator():
+    discovery.discover_plugins()
+    analyzer = registry.create_plugin_instance(
+        "analyser",
+        {
+            "name": "psd",
+            "kind": "complex",
+            "modes": [0],
+            "estimator": {"periodogram": {"fft_chunk_trajectories": 4}},
+        },
+    )
+    assert analyzer.estimator.name == "periodogram"
+    assert analyzer.estimator.config.fft_chunk_trajectories == 4

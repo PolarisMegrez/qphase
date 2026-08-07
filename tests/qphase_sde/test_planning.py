@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 from qphase.core.scan import ScanSpec
+from qphase_sde.analyser.spectral_estimator.base import SpectralEstimatorCapabilities
 from qphase_sde.engine import EngineConfig
 from qphase_sde.planning import build_execution_plan
 
@@ -209,3 +210,103 @@ def test_planner_rejects_observation_boundary_off_the_integration_grid():
             analysers={},
             resources=None,
         )
+
+
+def _psd_analyser_with_estimator(estimator):
+    return SimpleNamespace(
+        name="psd",
+        config=SimpleNamespace(expected_freq_max=None),
+        estimator=estimator,
+        create_result_accumulator=lambda: None,
+    )
+
+
+def _workspace_plan(estimator, backend):
+    config = EngineConfig(
+        t0=0.0,
+        t1=100.0,
+        dt=0.01,
+        n_traj=8,
+        save_stride=10,
+        record_modes=[0],
+        keep_traj=False,
+    )
+    resources = (
+        SimpleNamespace(gpu_memory_fraction=0.75)
+        if backend.backend_name() == "cupy"
+        else SimpleNamespace(memory_limit_mib=4096)
+    )
+    return build_execution_plan(
+        config=config,
+        grid=None,
+        model=FakeModel(),
+        backend=backend,
+        integrator=FakeIntegrator(),
+        analysers={"psd": _psd_analyser_with_estimator(estimator)},
+        resources=resources,
+        device_memory=(4 * 1024**3, 4 * 1024**3),
+    )
+
+
+def _fake_estimator(*, backend_native, fft_chunk_trajectories=None):
+    return SimpleNamespace(
+        capabilities=lambda: SpectralEstimatorCapabilities(
+            backend_native=backend_native
+        ),
+        config=SimpleNamespace(fft_chunk_trajectories=fft_chunk_trajectories),
+    )
+
+
+def test_planner_workspace_relieves_device_for_host_side_estimator():
+    native = _workspace_plan(
+        _fake_estimator(backend_native=True), FakeBackend()
+    ).memory.analyzer_workspace_bytes
+    host_side = _workspace_plan(
+        _fake_estimator(backend_native=False), FakeBackend()
+    ).memory.analyzer_workspace_bytes
+
+    assert native == 4 * host_side
+
+
+def test_planner_workspace_scales_with_periodogram_fft_chunk():
+    full = _workspace_plan(
+        _fake_estimator(backend_native=True), FakeNumpyBackend()
+    ).memory.analyzer_workspace_bytes
+    chunked = _workspace_plan(
+        _fake_estimator(backend_native=True, fft_chunk_trajectories=2),
+        FakeNumpyBackend(),
+    ).memory.analyzer_workspace_bytes
+
+    assert full == 4 * chunked
+
+
+def test_planner_workspace_without_estimator_metadata_is_unchanged():
+    analysers = {
+        "psd": SimpleNamespace(
+            name="psd",
+            config=SimpleNamespace(expected_freq_max=None),
+            create_result_accumulator=lambda: None,
+        )
+    }
+    config = EngineConfig(
+        t0=0.0,
+        t1=100.0,
+        dt=0.01,
+        n_traj=8,
+        save_stride=10,
+        record_modes=[0],
+        keep_traj=False,
+    )
+    plan = build_execution_plan(
+        config=config,
+        grid=None,
+        model=FakeModel(),
+        backend=FakeNumpyBackend(),
+        integrator=FakeIntegrator(),
+        analysers=analysers,
+        resources=SimpleNamespace(memory_limit_mib=4096),
+    )
+
+    n_time = plan.steps // config.save_stride + 1
+    trajectory_bytes = 8 * n_time * 16
+    assert plan.memory.analyzer_workspace_bytes == 2 * trajectory_bytes
