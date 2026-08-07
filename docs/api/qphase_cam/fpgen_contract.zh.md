@@ -49,6 +49,9 @@ fraction-free `materialize()`。每个候选提供稳定、可序列化的 `char
 `rejected_partitions` 明细（逐条记录被排除 partition 的原因与 retained 坐标），
 `manifest()` 中含 `rejected_partition_count` 与
 `materialization_skipped_oversized`（消元维数大于 3 的物化跳过）计数。
+物化错误属于诊断信息而非 partition 拒绝：`materialization_failures` 按
+`chart_id` 逐条记录，`manifest()` 报告 `materialization_failure_count`，
+且不计入 `rejected_reason_counts`。
 该搜索只覆盖 regular affine-elimination branches；
 即使 coverage 为 exhaustive，也不能据此断言 singular branch 不存在。
 

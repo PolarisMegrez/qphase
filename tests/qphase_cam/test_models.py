@@ -117,7 +117,7 @@ def test_fpgen_dynamics_match_cam_vector_fast_paths(model):
     assert provenance["fingerprint"]
     assert provenance["model_schema"] == "2.0"
     assert provenance["moment_api"] == "1.0"
-    assert provenance["reduction_api"] == "1.0"
+    assert provenance["reduction_api"] == "1.1"
     assert provenance["matrix_semantics"] == "normal_second_moment"
     assert provenance["physical_domain_hint"] == "hermitian_psd"
     reconstructed = adapter.state_matrix(vector)

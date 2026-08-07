@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from collections import Counter
 
 import fpgen
 import numpy as np
@@ -93,6 +94,9 @@ def test_fpgen_adapter_numerical_and_reduction_contract():
         "non_affine_eliminated_block",
         "structurally_rank_deficient",
     }
+    reason_counts = Counter(entry.reason for entry in search.rejected_partitions)
+    assert manifest["rejected_reason_counts"] == dict(reason_counts)
+    assert "materialization_failed" not in manifest["rejected_reason_counts"]
     assert manifest["materialization_skipped_oversized"] >= 0
     assert manifest["materialization_failure_count"] == len(
         search.materialization_failures
