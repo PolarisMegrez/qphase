@@ -142,7 +142,9 @@ class WelchEstimator(_EstimatorMath):
         self.config = config or WelchEstimatorConfig()
 
     def capabilities(self) -> SpectralEstimatorCapabilities:
-        return SpectralEstimatorCapabilities(time_streaming=True)
+        # estimate() materializes the full record before segmenting; do not
+        # claim time streaming until an overlap-buffer implementation lands.
+        return SpectralEstimatorCapabilities(time_streaming=False)
 
     def estimate(self, x, dt, convention, backend) -> PsdEstimate:
         del backend

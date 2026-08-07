@@ -319,3 +319,26 @@ def test_psd_legacy_method_is_normalized_by_plugin_resolver():
     )
     assert analyzer.estimator.name == "multitaper"
     assert analyzer.estimator.config.nw == 3.5
+
+
+def test_estimator_capabilities_do_not_overclaim_time_streaming():
+    """Built-in estimators must not declare time streaming they do not implement.
+
+    Welch still materializes the full record before segmenting, so its
+    declaration stays ``time_streaming=False`` until a true overlap-buffer
+    streaming implementation is cross-checked against the non-streaming path.
+    """
+    from qphase_sde.analyser.spectral_estimator.builtin import (
+        MultitaperEstimator,
+        PeriodogramEstimator,
+        WelchEstimator,
+    )
+
+    for estimator in (
+        PeriodogramEstimator(),
+        WelchEstimator(),
+        MultitaperEstimator(),
+    ):
+        capabilities = estimator.capabilities()
+        assert capabilities.time_streaming is False
+        assert capabilities.requires_full_trajectory is True
