@@ -228,9 +228,7 @@ class SDEScanResult:
             bytes_per_point = max(self.nbytes // max(self.grid.size, 1), 1)
             points_per_shard = max(shard_target_bytes // bytes_per_point, 1)
         files: list[Path] = []
-        for shard_index, start in enumerate(
-            range(0, self.grid.size, points_per_shard)
-        ):
+        for shard_index, start in enumerate(range(0, self.grid.size, points_per_shard)):
             stop = min(start + points_per_shard, self.grid.size)
             shard = self._flat_slice(start, stop)
             prefix = "point" if layout == "per_point" else "shard"

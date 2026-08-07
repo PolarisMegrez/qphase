@@ -568,8 +568,7 @@ class Scheduler:
         upstream_status = self._run_statuses.get(source) if source else None
         if upstream_status in ("failed", "skipped_dependency"):
             note = (
-                f"skipped: upstream job '{source}' "
-                f"{upstream_status.replace('_', ' ')}"
+                f"skipped: upstream job '{source}' {upstream_status.replace('_', ' ')}"
             )
             log.info(f"Skipping job '{job.name}': {note}")
             result = JobResult(
@@ -619,9 +618,7 @@ class Scheduler:
         # Keep one compatibility cycle for tests/extensions that patched the
         # former private three-tuple return contract.
         outcome = (
-            _JobOutcome(*raw_outcome)
-            if isinstance(raw_outcome, tuple)
-            else raw_outcome
+            _JobOutcome(*raw_outcome) if isinstance(raw_outcome, tuple) else raw_outcome
         )
         results.append(outcome.result)
         self._run_statuses[job.name] = outcome.result.status
@@ -660,9 +657,7 @@ class Scheduler:
             "completed",
             {
                 "run_id": outcome.result.run_id,
-                "output_dir": str(
-                    outcome.result.run_dir.relative_to(self.session_dir)
-                ),
+                "output_dir": str(outcome.result.run_dir.relative_to(self.session_dir)),
             },
         )
 
@@ -756,9 +751,7 @@ class Scheduler:
             error_summary=report.summary,
             error_id=report.error_id,
             error_code=report.code,
-            error_report_path=(
-                str(report_path) if report_path is not None else None
-            ),
+            error_report_path=(str(report_path) if report_path is not None else None),
         )
 
     def _get_merged_config_for_job(self, job: JobConfig) -> dict[str, Any]:

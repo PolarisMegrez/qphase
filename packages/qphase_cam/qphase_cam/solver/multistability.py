@@ -61,7 +61,7 @@ class MultistabilitySolverConfig(CAMSolverConfig):
         return self
 
 
-class MultistabilitySolver(CAMSolver):
+class MultistabilitySolver(CAMSolver[MultistabilitySolverConfig]):
     name: ClassVar[str] = "multistability"
     description: ClassVar[str] = "Multi-start CAM steady-state search"
     config_schema: ClassVar[type[MultistabilitySolverConfig]] = (

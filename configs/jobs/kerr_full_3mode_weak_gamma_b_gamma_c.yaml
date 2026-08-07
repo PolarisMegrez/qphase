@@ -90,4 +90,3 @@ plugins:
   cam_postprocessor:
     stochastic_validity:
       probe_epsilon: 1.0e-4
-

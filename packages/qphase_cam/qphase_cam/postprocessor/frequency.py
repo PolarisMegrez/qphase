@@ -18,7 +18,7 @@ def _successful_indices(result: Any) -> list[tuple[int, ...]]:
     return [tuple(index) for index in np.argwhere(mask)]
 
 
-class RayleighFrequency(CAMPostprocessor):
+class RayleighFrequency(CAMPostprocessor[FrequencyConfig]):
     name: ClassVar[str] = "rayleigh_frequency"
     description: ClassVar[str] = "Compute Re Tr(HR) / Tr(R)"
     config_schema: ClassVar[type[FrequencyConfig]] = FrequencyConfig
@@ -39,7 +39,7 @@ class RayleighFrequency(CAMPostprocessor):
         return {"rayleigh_frequency": output}
 
 
-class HamiltonianSpectrum(CAMPostprocessor):
+class HamiltonianSpectrum(CAMPostprocessor[FrequencyConfig]):
     name: ClassVar[str] = "hamiltonian_spectrum"
     description: ClassVar[str] = "Compute all eigenvalues of H(R)"
     config_schema: ClassVar[type[FrequencyConfig]] = FrequencyConfig

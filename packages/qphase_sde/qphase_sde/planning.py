@@ -157,9 +157,7 @@ def build_execution_plan(
     if requested_batch is not None:
         trajectory_batch = min(n_traj, int(requested_batch))
     elif budget is not None and incremental and not should_keep:
-        available_for_trajectories = max(
-            0, budget - reserve - accumulator_workspace
-        )
+        available_for_trajectories = max(0, budget - reserve - accumulator_workspace)
         trajectory_batch = min(
             n_traj,
             max(1, available_for_trajectories // max(1, per_trajectory_work)),
@@ -183,15 +181,15 @@ def build_execution_plan(
     elif trajectory_batch < logical_rng_group:
         logical_rng_group = trajectory_batch
     trajectory_batch_count = math.ceil(n_traj / trajectory_batch)
-    stream_analysis = analysis_enabled and not should_keep and (
-        scan_size > 1 or trajectory_batch_count > 1
+    stream_analysis = (
+        analysis_enabled
+        and not should_keep
+        and (scan_size > 1 or trajectory_batch_count > 1)
     )
 
     working_per_point = per_trajectory_work * trajectory_batch
     retained_analysis_workspace = (
-        accumulator_workspace
-        if trajectory_batch_count > 1
-        else analyzer_workspace
+        accumulator_workspace if trajectory_batch_count > 1 else analyzer_workspace
     )
     fixed = reserve + retained_analysis_workspace
     if trajectory_batch_count > 1:
@@ -334,9 +332,7 @@ def _memory_budget(
     hardware = getattr(resources, "hardware", None)
     available_mib = getattr(hardware, "available_memory_mib", None)
     total_mib = getattr(hardware, "total_memory_mib", None)
-    available_bytes = (
-        None if available_mib is None else int(available_mib) * _MIB
-    )
+    available_bytes = None if available_mib is None else int(available_mib) * _MIB
     total_bytes = None if total_mib is None else int(total_mib) * _MIB
     if limit_mib is not None:
         configured = int(limit_mib) * _MIB
@@ -434,9 +430,7 @@ def _reserve_bytes(budget: int | None) -> int:
     return max(_MIB, min(_MAX_RESERVE_BYTES, budget // 16))
 
 
-def _minimum_working_set_message(
-    budget: int, required: int, backend_name: str
-) -> str:
+def _minimum_working_set_message(budget: int, required: int, backend_name: str) -> str:
     return (
         "A single scan point does not fit the available SDE working-set budget: "
         f"{required / _MIB:.1f} MiB estimated versus {budget / _MIB:.1f} MiB "

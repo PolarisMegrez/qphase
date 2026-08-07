@@ -34,7 +34,7 @@ class LocalResponseValidationConfig(CAMPostprocessorConfig):
         return self
 
 
-class LocalResponseValidation(CAMPostprocessor):
+class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
     """Validate classified local branches against the complete CAM residual."""
 
     name: ClassVar[str] = "local_response_validation"
@@ -379,8 +379,8 @@ class LocalResponseValidation(CAMPostprocessor):
             state_fit_min, state_fit_max = LocalResponseValidation._finite_range(
                 state_fits
             )
-            rayleigh_fit_min, rayleigh_fit_max = (
-                LocalResponseValidation._finite_range(rayleigh_fits)
+            rayleigh_fit_min, rayleigh_fit_max = LocalResponseValidation._finite_range(
+                rayleigh_fits
             )
             output.append(
                 {

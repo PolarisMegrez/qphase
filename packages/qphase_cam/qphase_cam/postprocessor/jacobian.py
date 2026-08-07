@@ -20,7 +20,7 @@ class JacobianSpectrumConfig(CAMPostprocessorConfig):
     stability_tolerance: float = 1e-10
 
 
-class JacobianSpectrum(CAMPostprocessor):
+class JacobianSpectrum(CAMPostprocessor[JacobianSpectrumConfig]):
     name: ClassVar[str] = "jacobian_spectrum"
     description: ClassVar[str] = "Compute CAM Jacobian eigenvalues and stability"
     config_schema: ClassVar[type[JacobianSpectrumConfig]] = JacobianSpectrumConfig

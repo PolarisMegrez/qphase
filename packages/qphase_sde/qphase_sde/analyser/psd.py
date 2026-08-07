@@ -169,9 +169,7 @@ def _legacy_estimator_values(config: PsdAnalyzerConfig) -> dict[str, Any]:
         "multitaper": ("nw", "k_tapers"),
     }[config.method]
     return {
-        name: value
-        for name in fields
-        if (value := getattr(config, name)) is not None
+        name: value for name in fields if (value := getattr(config, name)) is not None
     }
 
 
@@ -276,10 +274,7 @@ class PsdAnalyzer(Analyzer):
         if dt <= 0.0:
             raise ValueError("PSD sampling interval must be positive")
         nyquist = _np.pi / dt if convention in ("symmetric", "unitary") else 0.5 / dt
-        if (
-            config.expected_freq_max is not None
-            and config.expected_freq_max >= nyquist
-        ):
+        if config.expected_freq_max is not None and config.expected_freq_max >= nyquist:
             raise ValueError(
                 f"expected_freq_max={config.expected_freq_max:.6g} reaches or "
                 f"exceeds the PSD Nyquist limit {nyquist:.6g} for sample dt={dt:.6g}; "
@@ -574,12 +569,8 @@ class PsdAnalyzer(Analyzer):
         shifted_axis, shifted_mean = self._scale_and_shift(
             axis, mean, dt, convention, n_fft, energy
         )
-        _, shifted_std = self._scale_and_shift(
-            axis, std, dt, convention, n_fft, energy
-        )
-        _, shifted_sem = self._scale_and_shift(
-            axis, sem, dt, convention, n_fft, energy
-        )
+        _, shifted_std = self._scale_and_shift(axis, std, dt, convention, n_fft, energy)
+        _, shifted_sem = self._scale_and_shift(axis, sem, dt, convention, n_fft, energy)
         return _PsdEstimate(
             axis=shifted_axis,
             mean=shifted_mean,
@@ -800,9 +791,7 @@ class PsdResultAccumulator:
         total = self.count + partial_count
         delta = partial_mean - self.mean
         self.mean += delta * (partial_count / total)
-        self.m2 += partial_m2 + delta * delta * (
-            self.count * partial_count / total
-        )
+        self.m2 += partial_m2 + delta * delta * (self.count * partial_count / total)
         self.count = total
 
     def finalize(self) -> dict[str, Any]:

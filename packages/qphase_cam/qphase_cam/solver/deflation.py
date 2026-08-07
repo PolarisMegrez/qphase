@@ -29,7 +29,7 @@ class DeflationSolverConfig(CAMSolverConfig):
     damping: float = Field(1.0, gt=0.0, le=1.0)
 
 
-class DeflationSolver(CAMSolver):
+class DeflationSolver(CAMSolver[DeflationSolverConfig]):
     name: ClassVar[str] = "deflation"
     description: ClassVar[str] = "Deflated Newton CAM multi-root solver"
     config_schema: ClassVar[type[DeflationSolverConfig]] = DeflationSolverConfig

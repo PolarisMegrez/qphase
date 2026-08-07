@@ -163,7 +163,9 @@ class WelchEstimator(_EstimatorMath):
         if self.config.window is None:
             window = np.hanning(nperseg)
         window = window.astype(x.real.dtype if np.iscomplexobj(x) else x.dtype)
-        norm = "ortho" if convention in {"symmetric", "unitary"} else None
+        norm: Literal["backward", "ortho", "forward"] | None = (
+            "ortho" if convention in {"symmetric", "unitary"} else None
+        )
         trajectory_spectra = []
         for trajectory in x:
             segments = []
@@ -190,9 +192,7 @@ class WelchEstimator(_EstimatorMath):
 class MultitaperEstimator(_EstimatorMath):
     name: ClassVar[str] = "multitaper"
     description: ClassVar[str] = "DPSS multitaper PSD estimator"
-    config_schema: ClassVar[type[MultitaperEstimatorConfig]] = (
-        MultitaperEstimatorConfig
-    )
+    config_schema: ClassVar[type[MultitaperEstimatorConfig]] = MultitaperEstimatorConfig
 
     def __init__(self, config: MultitaperEstimatorConfig | None = None) -> None:
         self.config = config or MultitaperEstimatorConfig()
@@ -211,7 +211,9 @@ class MultitaperEstimator(_EstimatorMath):
         k_tapers = self.config.k_tapers or max(1, int(2 * self.config.nw) - 1)
         tapers = dpss(n_time, self.config.nw, Kmax=k_tapers, sym=False)
         tapers = tapers.astype(x.real.dtype if np.iscomplexobj(x) else x.dtype)
-        norm = "ortho" if convention in {"symmetric", "unitary"} else None
+        norm: Literal["backward", "ortho", "forward"] | None = (
+            "ortho" if convention in {"symmetric", "unitary"} else None
+        )
         trajectory_spectra = []
         for trajectory in x:
             spectra = [
@@ -235,7 +237,7 @@ class MultitaperEstimator(_EstimatorMath):
 
 def create_builtin_estimator(name: str, values: dict[str, Any]):
     """Construct a built-in estimator for direct Python compatibility."""
-    implementations = {
+    implementations: dict[str, Any] = {
         "periodogram": PeriodogramEstimator,
         "welch": WelchEstimator,
         "multitaper": MultitaperEstimator,

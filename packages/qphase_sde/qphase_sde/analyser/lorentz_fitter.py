@@ -373,9 +373,7 @@ def fit_lorentzian(
         linewidth_std = 2.0 * _standard_deviation(float(pcov[1, 1]))
         amplitude_std = _standard_deviation(float(pcov[2, 2]))
         base_std = _standard_deviation(float(pcov[3, 3]))
-        peak_intensity_variance = float(
-            pcov[2, 2] + pcov[3, 3] + 2.0 * pcov[2, 3]
-        )
+        peak_intensity_variance = float(pcov[2, 2] + pcov[3, 3] + 2.0 * pcov[2, 3])
         peak_intensity_std = _standard_deviation(peak_intensity_variance)
 
         reduced_chi2 = float("nan")
@@ -530,9 +528,7 @@ def _load_input(data: Any, pattern: str) -> list[LoadedResult]:
                 dataset_loaded.append(
                     LoadedResult(
                         path=Path("."),
-                        job_name=result.meta.get(
-                            "job_name", f"point_{flat_index:06d}"
-                        ),
+                        job_name=result.meta.get("job_name", f"point_{flat_index:06d}"),
                         result=result,
                     )
                 )

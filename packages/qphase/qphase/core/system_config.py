@@ -367,9 +367,7 @@ class SystemConfigStore:
         if payload is None:
             return {}
         if not isinstance(payload, dict):
-            raise QPhaseConfigError(
-                f"System config {path} must contain a YAML mapping"
-            )
+            raise QPhaseConfigError(f"System config {path} must contain a YAML mapping")
         return payload
 
     def _validate(self, payload: dict[str, Any]) -> SystemConfig:
@@ -387,9 +385,7 @@ class SystemConfigStore:
         if sys.platform == "win32":
             program_data = self.environ.get("PROGRAMDATA")
             return (
-                Path(program_data) / "qphase" / "config.yaml"
-                if program_data
-                else None
+                Path(program_data) / "qphase" / "config.yaml" if program_data else None
             )
         return Path("/etc/qphase/config.yaml")
 
@@ -449,9 +445,7 @@ def load_system_config(
         Loaded system configuration
 
     """
-    return _SYSTEM_CONFIG_STORE.load(
-        force_reload=force_reload, config_path=config_path
-    )
+    return _SYSTEM_CONFIG_STORE.load(force_reload=force_reload, config_path=config_path)
 
 
 def save_user_config(config: SystemConfig) -> None:

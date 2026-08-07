@@ -101,9 +101,7 @@ class BackendRuntimeSnapshot:
             device=None if device is None else str(device),
             total_memory_mib=_memory_value_mib(payload, "total"),
             available_memory_mib=_memory_value_mib(payload, "available"),
-            capabilities=(
-                dict(capabilities) if isinstance(capabilities, dict) else {}
-            ),
+            capabilities=(dict(capabilities) if isinstance(capabilities, dict) else {}),
         )
 
 
@@ -191,10 +189,13 @@ def _host_memory_bytes() -> tuple[int | None, int | None]:
             return values.get("MemTotal"), values.get("MemAvailable")
         except Exception:
             pass
+    sysconf = getattr(os, "sysconf", None)
+    if sysconf is None:
+        return None, None
     try:
-        page_size = int(os.sysconf("SC_PAGE_SIZE"))
-        total = page_size * int(os.sysconf("SC_PHYS_PAGES"))
-        available = page_size * int(os.sysconf("SC_AVPHYS_PAGES"))
+        page_size = int(sysconf("SC_PAGE_SIZE"))
+        total = page_size * int(sysconf("SC_PHYS_PAGES"))
+        available = page_size * int(sysconf("SC_AVPHYS_PAGES"))
         return total, available
     except (AttributeError, OSError, ValueError):
         return None, None

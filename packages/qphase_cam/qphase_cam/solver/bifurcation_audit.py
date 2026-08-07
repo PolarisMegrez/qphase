@@ -193,7 +193,7 @@ class NearMissStore:
         if self.per_reason <= 0 or self.total <= 0:
             self.dropped += 1
             return
-        record = {
+        record: dict[str, Any] = {
             "path": path,
             "reduction": reduction,
             "seed_source": seed_source,

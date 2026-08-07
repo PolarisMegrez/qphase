@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeAlias
 
 
 @dataclass
@@ -50,3 +50,7 @@ class CAMBifurcationOutput:
     target: str
     order: int
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+#: Union of all outputs a CAM solver plugin may return.
+CAMSolverResult: TypeAlias = "CAMSolverOutput | CAMBifurcationOutput"

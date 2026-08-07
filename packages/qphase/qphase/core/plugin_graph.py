@@ -76,9 +76,7 @@ class PluginGraphResolver:
     ) -> ResolvedPluginNode:
         identity = (namespace, name)
         if identity in ancestry:
-            chain = " -> ".join(
-                f"{ns}.{nm}" for ns, nm in (*ancestry, identity)
-            )
+            chain = " -> ".join(f"{ns}.{nm}" for ns, nm in (*ancestry, identity))
             raise QPhaseConfigError(f"subplugin cycle detected: {chain}")
         if len(ancestry) >= self.max_depth:
             raise QPhaseConfigError(

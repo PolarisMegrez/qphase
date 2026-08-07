@@ -20,12 +20,7 @@ def compile_cached_kernel(
     key = (name, dtype, digest, options)
     if key in _CUPY_KERNEL_CACHE:
         return _CUPY_KERNEL_CACHE[key]
-    slug = (
-        dtype.replace("<", "_")
-        .replace(">", "_")
-        .replace(",", "_")
-        .replace(" ", "_")
-    )
+    slug = dtype.replace("<", "_").replace(">", "_").replace(",", "_").replace(" ", "_")
     function_name = f"{name}_{slug}"
     source = code.replace(f"__{name}_func__", function_name)
     kernel = cp.RawKernel(source, function_name, options=options)

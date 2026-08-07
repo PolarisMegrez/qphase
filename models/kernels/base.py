@@ -24,9 +24,7 @@ class ModelKernelPlugin(ABC):
     operations: ClassVar[frozenset[str]]
     config_schema: ClassVar[type[ModelKernelConfig]] = ModelKernelConfig
 
-    def __init__(
-        self, config: ModelKernelConfig | None = None, **kwargs: Any
-    ) -> None:
+    def __init__(self, config: ModelKernelConfig | None = None, **kwargs: Any) -> None:
         if config is not None and kwargs:
             raise TypeError("provide either config or keyword parameters, not both")
         source: Any = kwargs if config is None else config.model_dump()

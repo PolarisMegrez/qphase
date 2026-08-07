@@ -363,9 +363,7 @@ class Engine(EngineBase):
         )
         plan_payload = plan.to_dict()
         log.info("SDE execution plan: %s", plan_payload)
-        if context is not None and isinstance(
-            getattr(context, "metadata", None), dict
-        ):
+        if context is not None and isinstance(getattr(context, "metadata", None), dict):
             context.metadata["execution_plan"] = plan_payload
         if reporter is not None and (
             plan.tile_count > 1 or plan.trajectory_batch_count > 1
@@ -383,7 +381,7 @@ class Engine(EngineBase):
             if plan.stream_analysis and (
                 plan.tile_count > 1 or plan.trajectory_batch_count > 1
             ):
-                combined = self._run_scan_tiled(
+                combined: ResultProtocol = self._run_scan_tiled(
                     data,
                     adapter=adapter,
                     plan=plan,
@@ -411,7 +409,7 @@ class Engine(EngineBase):
                 adapter.base_n_traj,
             )
         if plan.trajectory_batch_count > 1:
-            result = self._run_trajectory_batched(
+            result: ResultProtocol = self._run_trajectory_batched(
                 data,
                 plan=plan,
                 reporter=reporter,
@@ -491,7 +489,7 @@ class Engine(EngineBase):
         """Integrate and analyze scan tiles without retaining the full trajectory."""
         assert self.config is not None
         analysers = self._normalised_analysers()
-        accumulated = {name: [] for name in analysers}
+        accumulated: dict[str, list[Any]] = {name: [] for name in analysers}
         result_meta: dict[str, Any] = {}
         total_work = plan.scan_size * plan.n_traj_per_point * plan.steps
 
@@ -517,7 +515,7 @@ class Engine(EngineBase):
                         raise RuntimeError(
                             "trajectory-batched SDE scans require one point per tile"
                         )
-                    tile_result = self._run_trajectory_batched(
+                    tile_result: ResultProtocol = self._run_trajectory_batched(
                         data,
                         plan=plan,
                         reporter=reporter,
@@ -532,9 +530,7 @@ class Engine(EngineBase):
                         context=context,
                         rng_group_seeds=adapter.point_seeds(start, stop),
                         rng_group_size=adapter.base_n_traj,
-                        progress_offset=(
-                            start * plan.n_traj_per_point * plan.steps
-                        ),
+                        progress_offset=(start * plan.n_traj_per_point * plan.steps),
                         progress_scale=point_count * plan.n_traj_per_point,
                         progress_total=total_work,
                         progress_label=f"tile {tile_index + 1}/{plan.tile_count}",
@@ -567,8 +563,7 @@ class Engine(EngineBase):
                     unit="trajectory-step",
                     stage="sampling",
                     message=(
-                        f"Completed SDE scan tile "
-                        f"{tile_index + 1}/{plan.tile_count}"
+                        f"Completed SDE scan tile {tile_index + 1}/{plan.tile_count}"
                     ),
                     metadata={"tile_index": tile_index, "tile_count": plan.tile_count},
                 )
@@ -657,14 +652,10 @@ class Engine(EngineBase):
                     context=context,
                     rng_group_seeds=seeds,
                     rng_group_size=group_size,
-                    progress_offset=(
-                        point_index * total_trajectories + start
-                    )
+                    progress_offset=(point_index * total_trajectories + start)
                     * plan.steps,
                     progress_scale=count,
-                    progress_total=(
-                        plan.scan_size * total_trajectories * plan.steps
-                    ),
+                    progress_total=(plan.scan_size * total_trajectories * plan.steps),
                     progress_label=(
                         f"trajectory batch {batch_index + 1}/"
                         f"{plan.trajectory_batch_count}"
@@ -703,9 +694,7 @@ class Engine(EngineBase):
         )
 
     @contextmanager
-    def _trajectory_batch_scope(
-        self, start: int, stop: int, total_trajectories: int
-    ):
+    def _trajectory_batch_scope(self, start: int, stop: int, total_trajectories: int):
         """Temporarily slice trajectory-shaped configuration and model values."""
         assert self.config is not None
         model = self._required_model()
@@ -872,9 +861,7 @@ class Engine(EngineBase):
         )
         if reporter is not None:
             reporter.update(
-                completed=(
-                    progress_offset + progress_scale * time_cfg["steps"]
-                ),
+                completed=(progress_offset + progress_scale * time_cfg["steps"]),
                 total=effective_progress_total,
                 unit="trajectory-step",
                 stage="sampling",
@@ -1198,9 +1185,7 @@ class Engine(EngineBase):
             else float(self.config.max_state_norm)
         )
         state_check_interval = (
-            1
-            if self.config is None
-            else int(self.config.state_check_interval_steps)
+            1 if self.config is None else int(self.config.state_check_interval_steps)
         )
         if state_norm_limit is not None:
             self._check_state_norm(y, t, state_norm_limit)
@@ -1379,8 +1364,8 @@ class Engine(EngineBase):
                     elif hasattr(y, "dtype"):
                         noise_dtype = y.dtype
 
-                    noise_shape = (n_traj, model.noise_dim)
-                    raw_noise = buf_cache.get(noise_shape, noise_dtype)
+                    step_noise_shape = (n_traj, model.noise_dim)
+                    raw_noise = buf_cache.get(step_noise_shape, noise_dtype)
                     try:
                         self._draw_standard_normal_into(be, rng, raw_noise)
                         dt_sqrt = current_dt**0.5
@@ -1388,9 +1373,7 @@ class Engine(EngineBase):
                             dt_sqrt = be.asarray(dt_sqrt, dtype=raw_noise.dtype)
 
                         raw_noise *= dt_sqrt
-                        dy = integrator.step(
-                            y, t, current_dt, model, raw_noise, be
-                        )
+                        dy = integrator.step(y, t, current_dt, model, raw_noise, be)
                     finally:
                         buf_cache.put(raw_noise)
                     y = y + dy
@@ -1481,9 +1464,7 @@ class Engine(EngineBase):
             )
 
     @staticmethod
-    def _draw_standard_normal_into(
-        backend: BackendBase, rng: Any, out: Any
-    ) -> Any:
+    def _draw_standard_normal_into(backend: BackendBase, rng: Any, out: Any) -> Any:
         """Fill a cached noise array, including stable grouped RNG slices."""
         if not isinstance(rng, _GroupedRNG):
             fill = getattr(backend, "randn_into", None)
@@ -1505,7 +1486,5 @@ class Engine(EngineBase):
             if callable(fill):
                 fill(handle, target)
             else:
-                target[...] = backend.randn(
-                    handle, target.shape, dtype=target.dtype
-                )
+                target[...] = backend.randn(handle, target.shape, dtype=target.dtype)
         return out

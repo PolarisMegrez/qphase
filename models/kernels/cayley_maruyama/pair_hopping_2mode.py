@@ -97,7 +97,9 @@ static __device__ __forceinline__ void advance_pair_hopping_2mode_$S$(
 }
 """
 
-_STEP_SOURCE = _DEVICE_SOURCE + r"""
+_STEP_SOURCE = (
+    _DEVICE_SOURCE
+    + r"""
 extern "C" __global__
 void __pair_hopping_2mode_cayley_step_func__(
     const $CT$* __restrict__ y,
@@ -126,8 +128,11 @@ void __pair_hopping_2mode_cayley_step_func__(
     dy[i * 2 + 1] = cx_sub_$S$(beta, old_beta);
 }
 """
+)
 
-_CHUNK_SOURCE = _DEVICE_SOURCE + r"""
+_CHUNK_SOURCE = (
+    _DEVICE_SOURCE
+    + r"""
 extern "C" __global__
 void __pair_hopping_2mode_cayley_chunk_func__(
     const $CT$* __restrict__ y,
@@ -174,6 +179,7 @@ void __pair_hopping_2mode_cayley_chunk_func__(
     final_state[i * 2 + 1] = beta;
 }
 """
+)
 
 _CHUNK_BUFFER_CACHE: dict[tuple[int, int, int, Any], tuple[Any, Any]] = {}
 _CHUNK_BUFFER_KEYS: list[tuple[int, int, int, Any]] = []

@@ -99,8 +99,7 @@ class KerrFull3ModeModel(Kerr3ModeModel):
 
         a, b, c = boson_modes("a", "b", "c")
         parameters = sp.symbols(
-            "omega_a omega_b omega_c chi gamma_a gamma_b gamma_c "
-            "g_ab g_ac g_bc",
+            "omega_a omega_b omega_c chi gamma_a gamma_b gamma_c g_ab g_ac g_bc",
             real=True,
         )
         (
@@ -164,9 +163,7 @@ class KerrFull3ModeModel(Kerr3ModeModel):
             "omega_a omega_b omega_c chi", real=True
         )
         gamma_a, gamma_b, gamma_c = sp.symbols("gamma_a gamma_b gamma_c", real=True)
-        coupling_ab, coupling_ac, coupling_bc = sp.symbols(
-            "g_ab g_ac g_bc", real=True
-        )
+        coupling_ab, coupling_ac, coupling_bc = sp.symbols("g_ab g_ac g_bc", real=True)
         r_aa = state[0, 0]
         hamiltonian = sp.Matrix(
             [

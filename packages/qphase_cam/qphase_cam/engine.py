@@ -67,6 +67,7 @@ class Engine(EngineBase):
             raise ValueError(
                 "continuation cannot be combined with an external ScanSpec"
             )
+        result: CAMBifurcationScanResult | CAMBifurcationResult | CAMResult
         if grid is not None and output_kind == "bifurcation_candidates":
             result = self._solve_bifurcation_grid(
                 solver, model, backend, grid, context, data

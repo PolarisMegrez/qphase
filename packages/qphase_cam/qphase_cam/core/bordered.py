@@ -205,18 +205,12 @@ class BorderedMultiplicitySystem:
                         self.n_state : self.n_state + len(self.control_names)
                     ]
                     full_values = tuple(
-                        self.dynamics.mpmath_rhs(
-                            state, self._mp_params(controls)
-                        )
+                        self.dynamics.mpmath_rhs(state, self._mp_params(controls))
                     )
                     multiplicity_norm = float(residual)
-                    full_norm = float(
-                        mp.sqrt(sum(item * item for item in full_values))
-                    )
+                    full_norm = float(mp.sqrt(sum(item * item for item in full_values)))
                     tolerance = 10.0 ** (-min(30, digits // 2))
-                    success = (
-                        multiplicity_norm <= tolerance and full_norm <= tolerance
-                    )
+                    success = multiplicity_norm <= tolerance and full_norm <= tolerance
                     if success or digits >= max_digits:
                         return BorderedVerificationOutcome(
                             value=np.asarray([float(item) for item in solved]),
@@ -346,9 +340,6 @@ class BorderedMultiplicitySystem:
     def _mp_params(self, controls: Any) -> dict[str, Any]:
         import mpmath as mp
 
-        params = {
-            name: mp.mpf(str(value))
-            for name, value in self.base_params.items()
-        }
+        params = {name: mp.mpf(str(value)) for name, value in self.base_params.items()}
         params.update(zip(self.control_names, controls, strict=True))
         return params

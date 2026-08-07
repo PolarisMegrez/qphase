@@ -129,13 +129,13 @@ class BifurcationSolverConfig(CAMSolverConfig):
     audit: AuditConfig = Field(default_factory=AuditConfig)
 
 
-class BifurcationSolver(CAMSolver):
+class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     """Search model parameters for high-order CAM equilibrium roots."""
 
     name: ClassVar[str] = "bifurcation"
     description: ClassVar[str] = "High-order CAM equilibrium bifurcation search"
     config_schema: ClassVar[type[BifurcationSolverConfig]] = BifurcationSolverConfig
-    output_kind: ClassVar[str] = "bifurcation_candidates"
+    output_kind: ClassVar[Literal["bifurcation_candidates"]] = "bifurcation_candidates"
     manifest: ClassVar[PluginManifest] = PluginManifest(
         subplugins={
             "target": SubpluginSlot(
@@ -208,11 +208,11 @@ class BifurcationSolver(CAMSolver):
         self._validate_controls(adapter)
         reporter = context.progress if context is not None else None
         if self.strategy.mode == "full":
-            candidates, metadata = self._solve_full(
+            full_candidates, metadata = self._solve_full(
                 adapter, data=data, reporter=reporter
             )
             return CAMBifurcationOutput(
-                candidates=candidates,
+                candidates=full_candidates,
                 target=self.target.name,
                 order=self.target.order,
                 metadata=metadata,
@@ -224,12 +224,12 @@ class BifurcationSolver(CAMSolver):
         except BifurcationCapabilityError:
             if self.strategy.mode != "auto":
                 raise
-            candidates, metadata = self._solve_full(
+            full_candidates, metadata = self._solve_full(
                 adapter, data=data, reporter=reporter
             )
             metadata["fallback_reason"] = "no_regular_scalar_reduction"
             return CAMBifurcationOutput(
-                candidates=candidates,
+                candidates=full_candidates,
                 target=self.target.name,
                 order=self.target.order,
                 metadata=metadata,
@@ -241,13 +241,13 @@ class BifurcationSolver(CAMSolver):
                 if detail:
                     message = f"{message}: {detail}"
                 raise BifurcationCapabilityError(message)
-            candidates, metadata = self._solve_full(
+            full_candidates, metadata = self._solve_full(
                 adapter, data=data, reporter=reporter
             )
             metadata["fallback_reason"] = "no_regular_scalar_reduction"
             metadata["reduction_search"] = reduction_search
             return CAMBifurcationOutput(
-                candidates=candidates,
+                candidates=full_candidates,
                 target=self.target.name,
                 order=self.target.order,
                 metadata=metadata,
@@ -999,11 +999,11 @@ class BifurcationSolver(CAMSolver):
         )
         cached = self._reduction_cache.get(cache_key)
         if cached is not None:
-            reductions, cached_manifest = cached
-            self._prepare_reductions(reductions, adapter)
+            cached_reductions, cached_manifest = cached
+            self._prepare_reductions(cached_reductions, adapter)
             manifest = dict(cached_manifest)
             manifest["compile_cache_hit"] = True
-            return reductions, manifest
+            return cached_reductions, manifest
         search = adapter.search_linear_reductions(
             retained_dimension=1,
             retained_ids=(

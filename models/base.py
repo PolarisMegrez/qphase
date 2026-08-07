@@ -68,22 +68,16 @@ class SDEModelPlugin(ABC):
             return xp.asarray(value)
         return value
 
-    def diagonal_complex_diffusion(
-        self, y: Any, diagonal: Iterable[Any]
-    ) -> Any:
+    def diagonal_complex_diffusion(self, y: Any, diagonal: Iterable[Any]) -> Any:
         """Factor a non-negative diagonal complex covariance matrix."""
         xp = get_xp(y)
-        diffusion = xp.zeros(
-            (y.shape[0], self.n_modes, self.n_modes), dtype=y.dtype
-        )
+        diffusion = xp.zeros((y.shape[0], self.n_modes, self.n_modes), dtype=y.dtype)
         for mode, value in enumerate(diagonal):
             value = xp.asarray(value, dtype=y.real.dtype)
             diffusion[:, mode, mode] = xp.sqrt(xp.clip(value, 0.0, None))
         return diffusion
 
-    def cam_solution_sort_key(
-        self, state: Any, params: dict[str, Any]
-    ) -> float:
+    def cam_solution_sort_key(self, state: Any, params: dict[str, Any]) -> float:
         """Return the default per-point ordering key for CAM steady states."""
         del params
         value = get_xp(state).real(state[..., 0, 0])
@@ -132,9 +126,7 @@ class SDEModelPlugin(ABC):
         return step(y, t, dt, params, noise, backend)
 
     def supports_fused_chunk(self, scheme: str, backend: Any) -> bool:
-        return self._kernel_registry.supports(
-            scheme, backend, operation="step_chunk"
-        )
+        return self._kernel_registry.supports(scheme, backend, operation="step_chunk")
 
     def fused_step_chunk(
         self,

@@ -39,7 +39,7 @@ class StochasticValidityConfig(CAMPostprocessorConfig):
     )
 
 
-class StochasticValidity(CAMPostprocessor):
+class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
     """Estimate when projected sample-matrix noise masks local CAM response."""
 
     name: ClassVar[str] = "stochastic_validity"

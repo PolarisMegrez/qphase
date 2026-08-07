@@ -136,6 +136,7 @@ def test_planner_batches_trajectories_when_one_point_exceeds_host_budget():
     assert plan.trajectory_batch_size < config.n_traj
     assert plan.trajectory_batch_count > 1
     assert plan.scan_tile_size == 1
+    assert plan.budget_bytes is not None
     assert plan.memory.estimated_peak_bytes <= plan.budget_bytes
 
 

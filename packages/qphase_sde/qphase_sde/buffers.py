@@ -32,9 +32,7 @@ class SDEBufferCache:
 
     """
 
-    def __init__(
-        self, backend: BackendBase, max_entries_per_key: int = 2
-    ) -> None:
+    def __init__(self, backend: BackendBase, max_entries_per_key: int = 2) -> None:
         self.backend = backend
         self.max_entries_per_key = max(max_entries_per_key, 1)
         self._cache: dict[tuple[tuple[int, ...], str], list[Any]] = {}

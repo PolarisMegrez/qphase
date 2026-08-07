@@ -17,7 +17,7 @@ class PhysicalityConfig(CAMPostprocessorConfig):
     residual_tolerance: float = Field(1e-7, gt=0.0)
 
 
-class Physicality(CAMPostprocessor):
+class Physicality(CAMPostprocessor[PhysicalityConfig]):
     name: ClassVar[str] = "physicality"
     description: ClassVar[str] = "Check Hermitian and positive-semidefinite states"
     config_schema: ClassVar[type[PhysicalityConfig]] = PhysicalityConfig

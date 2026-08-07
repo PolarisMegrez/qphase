@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal, Protocol, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
 from pydantic import ConfigDict, Field, model_validator
 from qphase.core.protocols import PluginConfigBase
@@ -12,6 +12,7 @@ from qphase.core.protocols import PluginConfigBase
 class BifurcationStrategy(Protocol):
     name: ClassVar[str]
     mode: Literal["auto", "reduced", "full"]
+    config: Any
 
 
 class ReductionStrategyConfig(PluginConfigBase):
@@ -39,7 +40,7 @@ class AutoStrategy:
     name: ClassVar[str] = "auto"
     description: ClassVar[str] = "Reduced search with full-system fallback"
     config_schema: ClassVar[type[ReductionStrategyConfig]] = ReductionStrategyConfig
-    mode: Literal["auto"] = "auto"
+    mode: Literal["auto", "reduced"] = "auto"
 
     def __init__(self, config: ReductionStrategyConfig) -> None:
         self.config = config

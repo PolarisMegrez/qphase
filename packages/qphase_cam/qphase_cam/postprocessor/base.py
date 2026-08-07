@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Generic, TypeVar
 
 from pydantic import ConfigDict
 from qphase.core.protocols import PluginConfigBase
@@ -15,16 +15,20 @@ class CAMPostprocessorConfig(PluginConfigBase):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
 
-class CAMPostprocessor(ABC):
+PostprocessorConfigT = TypeVar("PostprocessorConfigT", bound=CAMPostprocessorConfig)
+
+
+class CAMPostprocessor(ABC, Generic[PostprocessorConfigT]):
     """Base class for computations applied after CAM solving."""
 
     name: ClassVar[str]
     description: ClassVar[str]
-    config_schema: ClassVar[type[CAMPostprocessorConfig]]
+    config_schema: ClassVar[type[PostprocessorConfigT]]
     accepted_result_kinds: ClassVar[frozenset[str]] = frozenset({"fixed_points"})
+    config: PostprocessorConfigT
 
     def __init__(
-        self, config: CAMPostprocessorConfig | None = None, **kwargs: Any
+        self, config: PostprocessorConfigT | None = None, **kwargs: Any
     ) -> None:
         if config is not None and kwargs:
             raise TypeError("provide either config or keyword options, not both")

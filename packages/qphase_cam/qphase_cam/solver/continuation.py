@@ -30,7 +30,7 @@ class ContinuationSolverConfig(CAMSolverConfig):
     initial_guess: Any | None = None
 
 
-class ContinuationSolver(CAMSolver):
+class ContinuationSolver(CAMSolver[ContinuationSolverConfig]):
     name: ClassVar[str] = "continuation"
     description: ClassVar[str] = "Pseudo-arclength CAM continuation"
     config_schema: ClassVar[type[ContinuationSolverConfig]] = ContinuationSolverConfig

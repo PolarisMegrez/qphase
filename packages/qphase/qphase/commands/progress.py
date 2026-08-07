@@ -81,9 +81,7 @@ class CliProgressRenderer:
         self._last_stage = key
         milestone = None
         if snapshot.fraction is not None:
-            milestone = int(
-                snapshot.fraction * 100.0 // self.milestone_percent
-            )
+            milestone = int(snapshot.fraction * 100.0 // self.milestone_percent)
         if not stage_changed and milestone is not None:
             if milestone <= self._last_milestone.get(key, -1):
                 return
@@ -147,10 +145,7 @@ class CliProgressRenderer:
 
     @staticmethod
     def _job_prefix(snapshot: ProgressSnapshot) -> str:
-        return (
-            f"[{snapshot.job_index + 1}/{snapshot.total_jobs}] "
-            f"{snapshot.job_name}"
-        )
+        return f"[{snapshot.job_index + 1}/{snapshot.total_jobs}] {snapshot.job_name}"
 
     def _clear_active(self) -> None:
         if not self._active:

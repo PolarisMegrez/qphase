@@ -46,8 +46,7 @@ class ScanAxisSpec(BaseModel):
     @model_validator(mode="after")
     def validate_generator(self) -> ScanAxisSpec:
         configured = sum(
-            value is not None
-            for value in (self.values, self.linspace, self.logspace)
+            value is not None for value in (self.values, self.linspace, self.logspace)
         )
         if configured != 1:
             raise ValueError(
@@ -131,9 +130,7 @@ class ParameterGrid:
         axes: OrderedDict[str, np.ndarray] = OrderedDict(
             (name, np.asarray(axis.generate())) for name, axis in spec.axes.items()
         )
-        targets = OrderedDict(
-            (name, axis.target) for name, axis in spec.axes.items()
-        )
+        targets = OrderedDict((name, axis.target) for name, axis in spec.axes.items())
         if spec.combine == "zipped":
             lengths = {int(values.size) for values in axes.values()}
             if len(lengths) != 1:

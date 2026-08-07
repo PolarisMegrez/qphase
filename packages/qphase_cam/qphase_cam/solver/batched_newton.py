@@ -26,7 +26,7 @@ class BatchedNewtonSolverConfig(CAMSolverConfig):
     line_search_steps: int = Field(5, ge=1)
 
 
-class BatchedNewtonSolver(CAMSolver):
+class BatchedNewtonSolver(CAMSolver[BatchedNewtonSolverConfig]):
     name: ClassVar[str] = "batched_newton"
     description: ClassVar[str] = "Backend-native batched CAM Newton solver"
     config_schema: ClassVar[type[BatchedNewtonSolverConfig]] = BatchedNewtonSolverConfig

@@ -352,8 +352,7 @@ def fused_step(
     source, ctype = _typed_source(_STEP_SOURCE, rdtype, "step")
     kernel = compile_cached_kernel("kerr_3mode_cayley_step", ctype, source)
     params_device = [
-        broadcast_param(params.get(name, 0.0), n, rdtype)
-        for name in _PARAMETER_NAMES
+        broadcast_param(params.get(name, 0.0), n, rdtype) for name in _PARAMETER_NAMES
     ]
     d_w = cp.asarray(noise, dtype=rdtype)
     dy = _get_buffer(n, y.dtype)
@@ -405,8 +404,7 @@ def fused_step_chunk(
     source, ctype = _typed_source(_CHUNK_SOURCE, rdtype, "chunk")
     kernel = compile_cached_kernel("kerr_3mode_cayley_chunk", ctype, source)
     params_device = [
-        broadcast_param(params.get(name, 0.0), n, rdtype)
-        for name in _PARAMETER_NAMES
+        broadcast_param(params.get(name, 0.0), n, rdtype) for name in _PARAMETER_NAMES
     ]
     d_w = cp.asarray(noise, dtype=rdtype)
     offsets = cp.asarray(save_offsets or (0,), dtype=cp.int32)

@@ -21,7 +21,7 @@ class SteadyStateSolverConfig(CAMSolverConfig):
     initial_guess: Any | None = None
 
 
-class SteadyStateSolver(CAMSolver):
+class SteadyStateSolver(CAMSolver[SteadyStateSolverConfig]):
     name: ClassVar[str] = "steady_state"
     description: ClassVar[str] = "SciPy CAM steady-state solver"
     config_schema: ClassVar[type[SteadyStateSolverConfig]] = SteadyStateSolverConfig

@@ -464,12 +464,11 @@ class ProgressTracker:
         key = (event.stage, event.unit)
         stats = self._stages.get(key)
         resumed = (
-            stats is not None
-            and previous_stage is not None
+            previous_stage is not None
             and event.stage != previous_stage
             and event.kind == "progress"
         )
-        if resumed:
+        if resumed and stats is not None:
             # Do not charge time spent in another stage to this stage's rate.
             stats.last_completed = event.completed
             stats.last_time = now
@@ -541,11 +540,7 @@ class ProgressTracker:
         samples (rate/remaining).
         """
         fraction = None
-        if (
-            event.completed is not None
-            and event.total is not None
-            and event.total > 0
-        ):
+        if event.completed is not None and event.total is not None and event.total > 0:
             fraction = min(max(event.completed / event.total, 0.0), 1.0)
 
         stats = self._stages.get((event.stage, event.unit))
@@ -559,10 +554,6 @@ class ProgressTracker:
 
         rate = stats.rate_ema
         remaining = None
-        if (
-            event.total is not None
-            and event.completed is not None
-            and rate > 0
-        ):
+        if event.total is not None and event.completed is not None and rate > 0:
             remaining = max(event.total - event.completed, 0.0) / rate
         return fraction, rate, remaining

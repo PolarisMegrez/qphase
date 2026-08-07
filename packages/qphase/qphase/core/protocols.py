@@ -27,9 +27,7 @@ from pydantic import BaseModel, ConfigDict
 
 # Deprecated callback retained for one compatibility cycle. New engines report
 # natural work counts through ``ExecutionContext.progress``.
-LegacyProgressCallback = Callable[
-    [float | None, float | None, str, str | None], None
-]
+LegacyProgressCallback = Callable[[float | None, float | None, str, str | None], None]
 ProgressCallback = LegacyProgressCallback
 
 
