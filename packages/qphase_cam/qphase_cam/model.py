@@ -44,6 +44,15 @@ class CAMVectorModel(Protocol):
 
 
 @runtime_checkable
+class CAMBogoliubovModel(CAMModel, Protocol):
+    """Optional interaction block used for linearized fluctuation spectra."""
+
+    def cam_bogoliubov_interaction(
+        self, state: Any, params: dict[str, Any]
+    ) -> Any: ...
+
+
+@runtime_checkable
 class CAMBifurcationModel(Protocol):
     """Optional exact symbolic dynamics capability for bifurcation solvers."""
 

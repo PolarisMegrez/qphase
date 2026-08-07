@@ -19,3 +19,10 @@ while sharing one parameter schema and one physical definition.
 See `docs/user_guide/cam/analysis.md` and the jobs under `configs/jobs/*_cam.yaml`.
 Higher-order searches require one physical perturbation parameter and classify
 the complete CAM state response with named `(n,k,m)` scaling signatures.
+
+For analysis scripts outside this workspace, install the resource package in
+that script environment before importing its result loader:
+
+```console
+uv pip install -e D:/Code/qphase/packages/qphase_cam
+```

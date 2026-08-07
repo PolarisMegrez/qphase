@@ -39,6 +39,6 @@ plugins:
       refine_guesses: 50
   cam_postprocessor:
     rayleigh_frequency: {}
-    hamiltonian_spectrum: {}
+    petermann_spectrum: {}
     jacobian_spectrum: {}
     physicality: {}

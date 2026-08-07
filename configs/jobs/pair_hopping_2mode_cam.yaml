@@ -36,6 +36,6 @@ plugins:
       distance_tolerance: 1.0e-3
   cam_postprocessor:
     rayleigh_frequency: {}
-    hamiltonian_spectrum: {}
+    petermann_spectrum: {}
     jacobian_spectrum: {}
     physicality: {}

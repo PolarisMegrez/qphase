@@ -91,6 +91,17 @@ class Kerr2ModeModel(SDEModelPlugin):
         matrix[..., 1, 1] = omega_b - 1j * gamma_b / 2.0
         return matrix
 
+    def cam_bogoliubov_interaction(
+        self, state: Any, params: dict[str, Any]
+    ) -> Any:
+        xp = get_xp(state)
+        state = xp.asarray(state)
+        interaction = xp.zeros_like(state, dtype=complex)
+        interaction[..., 0, 0] = (
+            2.0 * self.parameter(params, "chi", xp) * state[..., 0, 0]
+        )
+        return interaction
+
     def cam_diffusion(self, state: Any, params: dict[str, Any]) -> Any:
         xp = get_xp(state)
         state = xp.asarray(state)

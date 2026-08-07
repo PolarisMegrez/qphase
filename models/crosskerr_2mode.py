@@ -94,6 +94,17 @@ class CrossKerr2ModeModel(SDEModelPlugin):
         matrix[..., 1, 1] = omega_b + chi * (r_aa - 0.5) - 1j * gamma_b / 2.0
         return matrix
 
+    def cam_bogoliubov_interaction(
+        self, state: Any, params: dict[str, Any]
+    ) -> Any:
+        xp = get_xp(state)
+        state = xp.asarray(state)
+        chi = self.parameter(params, "chi", xp)
+        interaction = xp.zeros_like(state, dtype=complex)
+        interaction[..., 0, 0] = chi * state[..., 1, 1]
+        interaction[..., 1, 1] = chi * state[..., 0, 0]
+        return interaction
+
     def cam_diffusion(self, state: Any, params: dict[str, Any]) -> Any:
         xp = get_xp(state)
         state = xp.asarray(state)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -102,6 +103,45 @@ class CAMResult:
             if name in resolved:
                 resolved[name] = self._axis_at(name, grid_index)
         return resolved
+
+    def solution_order(
+        self,
+        key: Callable[[np.ndarray, dict[str, Any]], float] | None = None,
+        *,
+        descending: bool = False,
+    ) -> np.ndarray:
+        """Return independently ordered solution slots for every scan point.
+
+        The default key is ``real(R[0, 0])``. Invalid slots are represented by
+        ``-1`` at the end. This view does not imply branch continuity.
+        """
+        states = np.asarray(convert_to_numpy(self.states))
+        valid = np.asarray(convert_to_numpy(self.valid_mask), dtype=bool)
+        order = np.full(valid.shape, -1, dtype=np.int64)
+        key_function = key or self._r00_solution_key
+
+        for grid_index in np.ndindex(self.grid_shape or ()):
+            slots = np.flatnonzero(valid[grid_index])
+            if slots.size == 0:
+                continue
+            params = self.params_at(grid_index)
+            values = np.asarray(
+                [
+                    key_function(states[grid_index + (int(slot),)], params)
+                    for slot in slots
+                ],
+                dtype=float,
+            )
+            local_order = np.argsort(
+                -values if descending else values, kind="stable"
+            )
+            order[grid_index][: slots.size] = slots[local_order]
+        return order
+
+    @staticmethod
+    def _r00_solution_key(state: np.ndarray, params: dict[str, Any]) -> float:
+        del params
+        return float(np.real(state[0, 0]))
 
     def _value_at(self, value: Any, grid_index: tuple[int, ...]) -> Any:
         array = np.asarray(convert_to_numpy(value))

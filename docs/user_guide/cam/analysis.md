@@ -213,6 +213,11 @@ are sorted by `real(R[0,0])` unless the model overrides the key. A slot is not a
 global branch identifier and no continuity between neighboring scan points is
 implied.
 
+`CAMResult.solution_order()` constructs a non-mutating per-point ordering view.
+It uses `real(R[0,0])` by default, accepts a custom callable of `(state, params)`,
+and represents invalid slots with `-1`. Consumers can choose another matrix
+element or derived scalar without changing the stored canonical slots.
+
 `rayleigh_frequency` is the scalar matrix-weighted average
 `Re Tr(HR) / Tr(R)`. It is not generally a PSD peak: when `R` contains more
 than one mode, distinct modal frequencies can cancel in this average. The
@@ -220,6 +225,16 @@ complete complex Hamiltonian spectrum is stored as `hamiltonian_eigenvalues`,
 with its real part in `mode_frequencies`. Neither field proves that the
 underlying stochastic dynamics has a globally stationary distribution. The
 package does not emit an ambiguous `omega` field.
+
+The optional `petermann_spectrum` postprocessor stores aligned eigensystems for
+three distinct matrices. `hamiltonian_petermann_factors` belongs to `H(R)`;
+`bogoliubov_*` belongs to the doubled fluctuation block matrix; and
+`monodromy_*` belongs to that doubled matrix shifted into the rotating frame
+defined by `rayleigh_frequency`. The last object is a monodromy matrix, not the
+canonical-coordinate CAM Jacobian stored by `jacobian_spectrum`. Eigenvalues are
+ordered by real part and then imaginary part, with Petermann factors reordered
+identically. Models opt into this analysis through
+`cam_bogoliubov_interaction(state, params)`.
 
 The logical array shape is `scan_shape + (capacity, n_modes, n_modes)`. NPZ
 files contain the complete fixed-capacity result, while the companion CSV

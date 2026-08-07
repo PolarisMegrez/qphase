@@ -83,6 +83,17 @@ class PairHopping2ModeModel(SDEModelPlugin):
         matrix[..., 1, 1] = omega_b - 0.5j * gamma_b
         return matrix
 
+    def cam_bogoliubov_interaction(
+        self, state: Any, params: dict[str, Any]
+    ) -> Any:
+        xp = get_xp(state)
+        state = xp.asarray(state)
+        pair_coupling = self.parameter(params, "k", xp)
+        interaction = xp.zeros_like(state, dtype=complex)
+        interaction[..., 0, 1] = 2.0 * pair_coupling * state[..., 1, 0]
+        interaction[..., 1, 0] = 2.0 * pair_coupling * state[..., 0, 1]
+        return interaction
+
     def cam_diffusion(self, state: Any, params: dict[str, Any]) -> Any:
         xp = get_xp(state)
         state = xp.asarray(state)
