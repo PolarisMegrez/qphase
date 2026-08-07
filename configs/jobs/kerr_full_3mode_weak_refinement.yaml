@@ -1,0 +1,77 @@
+name: kerr_full_3mode_weak_refinement
+save: true
+
+engine:
+  cam: {}
+
+plugins:
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 1.0
+      omega_c: -0.4702002015
+      chi: 5.702200945e-5
+      gamma_a: 9.550294998e-4
+      gamma_b: 1.920740028
+      gamma_c: 4.212635355e-4
+      g_ab: 0.03747310969
+      g_ac: 0.2960772923
+      g_bc: 0.03724612727
+  cam_solver:
+    bifurcation:
+      controls:
+        g_bc:
+          min: 1.0e-3
+          max: 1.0
+          scale: 0.1
+          domain: nonnegative
+          sampling: log
+        gamma_c:
+          min: 1.0e-8
+          max: 5.0
+          scale: 0.1
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_b
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        reduced:
+          retained_dimension: 1
+          order_parameter: r_diag_0
+          order_parameter_bounds: [0.0, 2.0e7]
+          max_candidates: 8
+          condition_limit: 1.0e11
+      discovery:
+        seeds:
+          samples_per_control: 9
+          max_starts: 8192
+          order_parameter_samples: 61
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-12
+        max_iterations: 150
+      verification:
+        initial_digits: 80
+        max_digits: 300
+  cam_postprocessor:
+    local_response_validation:
+      epsilon_min: 1.0e-10
+      epsilon_max: 1.0e-2
+      epsilon_points: 25
+      precision_digits: 120
+      residual_tolerance: 1.0e-45
+      fit_points: 6
+    stochastic_validity:
+      probe_epsilon: 1.0e-4
