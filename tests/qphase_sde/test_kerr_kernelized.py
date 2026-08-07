@@ -22,6 +22,21 @@ def _cupy_available() -> bool:
 
 
 def _make_model(model_name):
+    if model_name == "kerr_full_3mode":
+        from models.kerr_full_3mode import KerrFull3ModeModel
+
+        return KerrFull3ModeModel(
+            omega_a=0.5,
+            omega_b=0.3,
+            omega_c=0.2,
+            chi=0.01,
+            gamma_a=1.0,
+            gamma_b=0.5,
+            gamma_c=1.0,
+            g_ab=0.1,
+            g_ac=0.05,
+            g_bc=0.2,
+        )
     if model_name == "crosskerr_2mode":
         from models.crosskerr_2mode import CrossKerr2ModeModel
 
@@ -52,7 +67,9 @@ def _make_model(model_name):
     )
 
 
-@pytest.fixture(params=["crosskerr_2mode", "kerr_2mode", "kerr_3mode"])
+@pytest.fixture(
+    params=["crosskerr_2mode", "kerr_2mode", "kerr_3mode", "kerr_full_3mode"]
+)
 def model(request):
     return _make_model(request.param)
 
@@ -63,6 +80,13 @@ class _CuPyBackendName:
         return "cupy"
 
 
+@pytest.fixture(scope="module")
+def cupy_backend():
+    from qphase.backend.cupy_backend import CuPyBackend
+
+    return CuPyBackend()
+
+
 def test_cayley_kernels_are_registered(model):
     backend = _CuPyBackendName()
 
@@ -71,9 +95,8 @@ def test_cayley_kernels_are_registered(model):
 
 
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
-def test_kernelized_terms_match_python(model):
+def test_kernelized_terms_match_python(model, cupy_backend):
     import cupy as cp
-    from qphase.backend.cupy_backend import CuPyBackend
 
     n = 64
     rng = np.random.default_rng(42)
@@ -83,7 +106,7 @@ def test_kernelized_terms_match_python(model):
     ).astype(np.complex64)
     y = cp.asarray(y_np)
 
-    drift, diffusion = model.kernelized_terms(y, 0.0, model.params, CuPyBackend())
+    drift, diffusion = model.kernelized_terms(y, 0.0, model.params, cupy_backend)
     cp.testing.assert_allclose(
         drift, cp.asarray(model.drift(y_np, 0.0, model.params)), rtol=1e-4, atol=1e-5
     )
@@ -193,7 +216,8 @@ def _cayley_chunk_worker(model_name, queue):
 
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
 @pytest.mark.parametrize(
-    "model_name", ["crosskerr_2mode", "kerr_2mode", "kerr_3mode"]
+    "model_name",
+    ["crosskerr_2mode", "kerr_2mode", "kerr_3mode", "kerr_full_3mode"],
 )
 @pytest.mark.parametrize("dtype_name", ["complex64", "complex128"])
 def test_cayley_fused_step(model_name, dtype_name):
@@ -215,7 +239,8 @@ def test_cayley_fused_step(model_name, dtype_name):
 
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
 @pytest.mark.parametrize(
-    "model_name", ["crosskerr_2mode", "kerr_2mode", "kerr_3mode"]
+    "model_name",
+    ["crosskerr_2mode", "kerr_2mode", "kerr_3mode", "kerr_full_3mode"],
 )
 def test_cayley_fused_chunk(model_name):
     context = multiprocessing.get_context("spawn")

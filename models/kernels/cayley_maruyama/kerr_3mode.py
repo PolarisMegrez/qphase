@@ -53,6 +53,7 @@ static __device__ __forceinline__ void advance_kerr_3mode_$S$(
     $T$ gamma_c,
     $T$ coupling_ab,
     $T$ coupling_ac,
+    $T$ coupling_bc,
     $T$ dt
 ) {
     $CT$ a = *alpha;
@@ -70,12 +71,16 @@ static __device__ __forceinline__ void advance_kerr_3mode_$S$(
             - coupling_ab * b.x - coupling_ac * c.x
     );
     $CT$ drift_b = c3_make_$S$(
-        -($T$)0.5 * gamma_b * b.x + omega_b * b.y + coupling_ab * a.y,
+        -($T$)0.5 * gamma_b * b.x + omega_b * b.y + coupling_ab * a.y
+            + coupling_bc * c.y,
         -($T$)0.5 * gamma_b * b.y - omega_b * b.x - coupling_ab * a.x
+            - coupling_bc * c.x
     );
     $CT$ drift_c = c3_make_$S$(
-        ($T$)0.5 * gamma_c * c.x + omega_c * c.y + coupling_ac * a.y,
+        ($T$)0.5 * gamma_c * c.x + omega_c * c.y + coupling_ac * a.y
+            + coupling_bc * b.y,
         ($T$)0.5 * gamma_c * c.y - omega_c * c.x - coupling_ac * a.x
+            - coupling_bc * b.x
     );
 
     $T$ sigma_a = sqrt(gamma_a / ($T$)4.0);
@@ -105,45 +110,55 @@ static __device__ __forceinline__ void advance_kerr_3mode_$S$(
         ($T$)1.0 + half_dt * gamma_b / ($T$)2.0,
         half_dt * omega_b
     );
+    $CT$ m12 = c3_make_$S$(($T$)0.0, half_dt * coupling_bc);
     $CT$ m20 = m02;
+    $CT$ m21 = m12;
     $CT$ m22 = c3_make_$S$(
         ($T$)1.0 - half_dt * gamma_c / ($T$)2.0,
         half_dt * omega_c
     );
 
-    $CT$ det = c3_sub_$S$(
-        c3_sub_$S$(
-            c3_mul_$S$(c3_mul_$S$(m00, m11), m22),
-            c3_mul_$S$(c3_mul_$S$(m01, m10), m22)
-        ),
-        c3_mul_$S$(c3_mul_$S$(m02, m20), m11)
+    $CT$ cofactor00 = c3_sub_$S$(
+        c3_mul_$S$(m11, m22), c3_mul_$S$(m12, m21)
     );
-    $CT$ numerator_a = c3_sub_$S$(
-        c3_sub_$S$(
-            c3_mul_$S$(c3_mul_$S$(rhs_a, m11), m22),
-            c3_mul_$S$(c3_mul_$S$(m01, rhs_b), m22)
+    $CT$ cofactor01 = c3_sub_$S$(
+        c3_mul_$S$(m02, m21), c3_mul_$S$(m01, m22)
+    );
+    $CT$ cofactor02 = c3_sub_$S$(
+        c3_mul_$S$(m01, m12), c3_mul_$S$(m02, m11)
+    );
+    $CT$ cofactor11 = c3_sub_$S$(
+        c3_mul_$S$(m00, m22), c3_mul_$S$(m02, m20)
+    );
+    $CT$ cofactor12 = c3_sub_$S$(
+        c3_mul_$S$(m02, m10), c3_mul_$S$(m00, m12)
+    );
+    $CT$ cofactor22 = c3_sub_$S$(
+        c3_mul_$S$(m00, m11), c3_mul_$S$(m01, m10)
+    );
+    $CT$ det = c3_add_$S$(
+        c3_add_$S$(
+            c3_mul_$S$(m00, cofactor00), c3_mul_$S$(m01, cofactor01)
         ),
-        c3_mul_$S$(c3_mul_$S$(m02, m11), rhs_c)
+        c3_mul_$S$(m02, cofactor02)
+    );
+    $CT$ numerator_a = c3_add_$S$(
+        c3_add_$S$(
+            c3_mul_$S$(rhs_a, cofactor00), c3_mul_$S$(rhs_b, cofactor01)
+        ),
+        c3_mul_$S$(rhs_c, cofactor02)
     );
     $CT$ numerator_b = c3_add_$S$(
-        c3_sub_$S$(
-            c3_mul_$S$(
-                rhs_b,
-                c3_sub_$S$(c3_mul_$S$(m00, m22), c3_mul_$S$(m02, m20))
-            ),
-            c3_mul_$S$(c3_mul_$S$(m10, rhs_a), m22)
+        c3_add_$S$(
+            c3_mul_$S$(rhs_a, cofactor01), c3_mul_$S$(rhs_b, cofactor11)
         ),
-        c3_mul_$S$(c3_mul_$S$(m10, m02), rhs_c)
+        c3_mul_$S$(rhs_c, cofactor12)
     );
     $CT$ numerator_c = c3_add_$S$(
-        c3_sub_$S$(
-            c3_mul_$S$(
-                rhs_c,
-                c3_sub_$S$(c3_mul_$S$(m00, m11), c3_mul_$S$(m01, m10))
-            ),
-            c3_mul_$S$(c3_mul_$S$(m20, m11), rhs_a)
+        c3_add_$S$(
+            c3_mul_$S$(rhs_a, cofactor02), c3_mul_$S$(rhs_b, cofactor12)
         ),
-        c3_mul_$S$(c3_mul_$S$(m20, m01), rhs_b)
+        c3_mul_$S$(rhs_c, cofactor22)
     );
     *alpha = c3_div_$S$(numerator_a, det);
     *beta = c3_div_$S$(numerator_b, det);
@@ -167,6 +182,7 @@ void __kerr_3mode_cayley_step_func__(
     const $T$* __restrict__ gamma_c,
     const $T$* __restrict__ g_ab,
     const $T$* __restrict__ g_ac,
+    const $T$* __restrict__ g_bc,
     $T$ dt,
     int n,
     $CT$* __restrict__ dy
@@ -183,7 +199,7 @@ void __kerr_3mode_cayley_step_func__(
         &alpha, &beta, &gamma, &dW[i * 6],
         ($T$)omega_a[i], ($T$)omega_b[i], ($T$)omega_c[i], ($T$)chi[i],
         ($T$)gamma_a[i], ($T$)gamma_b[i], ($T$)gamma_c[i],
-        ($T$)g_ab[i], ($T$)g_ac[i], dt
+        ($T$)g_ab[i], ($T$)g_ac[i], ($T$)g_bc[i], dt
     );
     dy[i * 3 + 0] = c3_sub_$S$(alpha, old_alpha);
     dy[i * 3 + 1] = c3_sub_$S$(beta, old_beta);
@@ -208,6 +224,7 @@ void __kerr_3mode_cayley_chunk_func__(
     const $T$* __restrict__ gamma_c,
     const $T$* __restrict__ g_ab,
     const $T$* __restrict__ g_ac,
+    const $T$* __restrict__ g_bc,
     $T$ dt,
     int n_steps,
     int n,
@@ -232,13 +249,14 @@ void __kerr_3mode_cayley_chunk_func__(
     $T$ gc = ($T$)gamma_c[i];
     $T$ gab = ($T$)g_ab[i];
     $T$ gac = ($T$)g_ac[i];
+    $T$ gbc = ($T$)g_bc[i];
     int save_cursor = 0;
 
     for (int step = 0; step < n_steps; ++step) {
         int noise_base = (step * n + i) * 6;
         advance_kerr_3mode_$S$(
             &alpha, &beta, &gamma, &dW[noise_base],
-            wa, wb, wc, ch, ga, gb, gc, gab, gac, dt
+            wa, wb, wc, ch, ga, gb, gc, gab, gac, gbc, dt
         );
         if (save_cursor < n_saves && step + 1 == save_offsets[save_cursor]) {
             int save_base = (i * n_saves + save_cursor) * n_record_modes;
@@ -274,6 +292,7 @@ _PARAMETER_NAMES = (
     "gamma_c",
     "g_ab",
     "g_ac",
+    "g_bc",
 )
 
 
@@ -333,7 +352,8 @@ def fused_step(
     source, ctype = _typed_source(_STEP_SOURCE, rdtype, "step")
     kernel = compile_cached_kernel("kerr_3mode_cayley_step", ctype, source)
     params_device = [
-        broadcast_param(params[name], n, rdtype) for name in _PARAMETER_NAMES
+        broadcast_param(params.get(name, 0.0), n, rdtype)
+        for name in _PARAMETER_NAMES
     ]
     d_w = cp.asarray(noise, dtype=rdtype)
     dy = _get_buffer(n, y.dtype)
@@ -385,7 +405,8 @@ def fused_step_chunk(
     source, ctype = _typed_source(_CHUNK_SOURCE, rdtype, "chunk")
     kernel = compile_cached_kernel("kerr_3mode_cayley_chunk", ctype, source)
     params_device = [
-        broadcast_param(params[name], n, rdtype) for name in _PARAMETER_NAMES
+        broadcast_param(params.get(name, 0.0), n, rdtype)
+        for name in _PARAMETER_NAMES
     ]
     d_w = cp.asarray(noise, dtype=rdtype)
     offsets = cp.asarray(save_offsets or (0,), dtype=cp.int32)

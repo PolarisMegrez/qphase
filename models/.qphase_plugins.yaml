@@ -9,6 +9,9 @@ plugins:
   - type: model.kerr_3mode
     target: models.kerr_3mode:Kerr3ModeModel
     description: Three-mode Kerr oscillator
+  - type: model.kerr_full_3mode
+    target: models.kerr_full_3mode:KerrFull3ModeModel
+    description: Fully connected three-mode Kerr oscillator
   - type: model.crosskerr_2mode
     target: models.crosskerr_2mode:CrossKerr2ModeModel
     description: Two-mode cross-Kerr oscillator

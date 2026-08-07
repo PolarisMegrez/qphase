@@ -16,13 +16,13 @@ void __kerr_3mode_terms_func__(
     const $CT$* y, const $T$* omega_a, const $T$* omega_b,
     const $T$* omega_c, const $T$* chi, const $T$* gamma_a,
     const $T$* gamma_b, const $T$* gamma_c, const $T$* g_ab,
-    const $T$* g_ac, int n, $CT$* drift, $CT$* diffusion
+    const $T$* g_ac, const $T$* g_bc, int n, $CT$* drift, $CT$* diffusion
 ) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= n) return;
     $CT$ a = y[i * 3], b = y[i * 3 + 1], c = y[i * 3 + 2];
     $T$ ga = gamma_a[i], gb = gamma_b[i], gc = gamma_c[i];
-    $T$ gab = g_ab[i], gac = g_ac[i];
+    $T$ gab = g_ab[i], gac = g_ac[i], gbc = g_bc[i];
     $T$ frequency_a = omega_a[i] + ($T$)2.0 * chi[i] *
         (a.x * a.x + a.y * a.y - ($T$)1.0);
 
@@ -31,13 +31,13 @@ void __kerr_3mode_terms_func__(
     drift[i * 3].y = -($T$)0.5 * ga * a.y - frequency_a * a.x
         - gab * b.x - gac * c.x;
     drift[i * 3 + 1].x = -($T$)0.5 * gb * b.x + omega_b[i] * b.y
-        + gab * a.y;
+        + gab * a.y + gbc * c.y;
     drift[i * 3 + 1].y = -($T$)0.5 * gb * b.y - omega_b[i] * b.x
-        - gab * a.x;
+        - gab * a.x - gbc * c.x;
     drift[i * 3 + 2].x = ($T$)0.5 * gc * c.x + omega_c[i] * c.y
-        + gac * a.y;
+        + gac * a.y + gbc * b.y;
     drift[i * 3 + 2].y = ($T$)0.5 * gc * c.y - omega_c[i] * c.x
-        - gac * a.x;
+        - gac * a.x - gbc * b.x;
 
     diffusion[i * 9].x = sqrt(($T$)(0.5 * ga));
     diffusion[i * 9].y = ($T$)0.0;
@@ -81,7 +81,7 @@ def kernelized_terms(
         )
     drift, diffusion = _BUFFERS[key]
     values = [
-        broadcast_param(params[name], n, rdtype)
+        broadcast_param(params.get(name, 0.0), n, rdtype)
         for name in (
             "omega_a",
             "omega_b",
@@ -92,6 +92,7 @@ def kernelized_terms(
             "gamma_c",
             "g_ab",
             "g_ac",
+            "g_bc",
         )
     ]
     threads = 256
