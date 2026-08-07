@@ -10,18 +10,25 @@ Public API
 ``SDEObserverProtocol`` : Protocol for online observers.
 ``Observer`` : Base class for observers.
 ``ObserverContext`` : Run-scoped context handed to observers at initialize.
-``FirstPassageTriggeredError`` : Raised for ``action="fail_job"`` hits.
+``ObserverDecision`` : Structured whole-batch control-flow request.
+``ObserverTriggeredError`` : Generic observer failure.
+``FirstPassageTriggeredError`` : Compatibility alias for observer failures.
 ``FirstPassageObserver`` : Online first-passage observer.
 ``FirstPassageObserverConfig`` : Configuration for the first-passage observer.
 """
 
 from .base import (
-    FirstPassageTriggeredError,
     Observer,
     ObserverContext,
+    ObserverDecision,
+    ObserverTriggeredError,
     SDEObserverProtocol,
 )
-from .first_passage import FirstPassageObserver, FirstPassageObserverConfig
+from .first_passage import (
+    FirstPassageObserver,
+    FirstPassageObserverConfig,
+    FirstPassageTriggeredError,
+)
 
 __all__ = [
     "FirstPassageObserver",
@@ -29,5 +36,7 @@ __all__ = [
     "FirstPassageTriggeredError",
     "Observer",
     "ObserverContext",
+    "ObserverDecision",
+    "ObserverTriggeredError",
     "SDEObserverProtocol",
 ]

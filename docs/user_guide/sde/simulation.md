@@ -138,7 +138,8 @@ never expanded into scheduler jobs or per-point run directories.
 
 Before allocating trajectory arrays, the engine validates the time grid and
 analyser bandwidth, estimates the state, noise, trajectory, and analyser
-workspaces, and builds an execution plan. Resource policy is read from the
+workspaces, and builds an execution plan. Host and device budgets are tracked
+separately, including host-side analysers used with a CuPy backend. Resource policy is read from the
 `ExecutionContext.resources` object. The SDE package does not discover or read
 a system configuration file. On CuPy, the plan also queries current device
 memory and applies the configured GPU memory fraction.
@@ -153,7 +154,9 @@ Stable logical RNG groups make results independent of the selected scan tile
 and physical trajectory batch size for a fixed seed.
 
 If the full trajectory is requested, it must fit the available resource budget
-and is materialized as one logical result. If even one trajectory plus analyser
+and is materialized as one logical result. With CuPy, explicit
+`keep_traj: true` runs analysis on device first and then transfers the retained
+record to host memory for serialization. If even one trajectory plus analyser
 accumulator cannot fit, planning fails before integration with a memory estimate
 instead of relying on an out-of-memory error. Increasing
 `save_stride` reduces saved trajectory and FFT sizes, but it does not reduce the
@@ -166,6 +169,60 @@ jobs should leave it unset so current host/device resources determine the batch.
 The selected tile size, estimated byte counts, resource budget, and random
 stream strategy are recorded in result metadata under `execution_plan`.
 
+## Online Observers
+
+Observers are plugins that inspect the live state without mutating it or
+consuming RNG. They are separate from analysers: an observer may request
+whole-batch control flow while an analyser consumes recorded trajectories.
+
+```yaml
+observer:
+  first_passage:
+    rule: state_norm
+    direction: above
+    threshold: 100.0
+    check_interval_steps: 100
+    debounce_checks: 2
+    action: record
+```
+
+`observer.first_passage` supports `state_norm`, `mode_magnitude`,
+`linear_projection`, and canonical-R `matrix_projection` rules. Its actions
+are `record`, `stop_batch`, and `fail_job`. A non-hit is right-censored and is
+stored with `first_hit_time=NaN` and `first_hit_step=-1`.
+
+On CuPy, observables and debounce masks remain on the active device; only
+newly confirmed event indices and values are copied to the host. Observer
+cadence can clamp a fused chunk so that checks occur on exact integration
+steps, but it does not disable the CuPy backend or the fused kernel. Progress
+continues to report actual completed trajectory-steps through the existing
+engine reporter. A smaller cadence may reduce throughput and is recorded as
+`effective_chunk_steps` in the execution plan.
+
+Observer implementations return a generic `ObserverDecision` and own their
+trajectory-batch payload merge and fused-scan payload split. Consequently each
+scan point view contains only its own trajectory events and recomputed aggregate
+counters. The SDE engine only schedules checks and
+applies `stop_batch`/`fail_job`; it does not interpret plugin-specific fields.
+
+## Trajectory Diagnostics
+
+`analyser.trajectory_diagnostics` provides reduced time-domain diagnostics:
+complex first-order coherence and model fits, angular-frequency Allan
+variance, non-overlapping block statistics and spectra, stationarity details,
+and optional canonical-R matrix projection. It is intended for selected,
+reduced experiments rather than unrestricted production trajectories.
+
+The current implementation materializes its input on the host. In a CuPy job,
+this means an explicit device-to-host transfer after sampling; it does not
+change the integration backend. Leave `matrix_projection_keep_coordinates`
+disabled unless the full coordinate trajectory is required. The analyser
+declares this host/full-record requirement and its workspace to the planner.
+Its internal coherence, Allan, block-spectrum, projection, and stationarity
+children share one host trajectory and one lazily built canonical-coordinate
+array; they are not scheduler jobs. Time-streaming diagnostics remain future
+work.
+
 ## Kernelized Terms (CuPy)
 
 Some built-in models provide an optional **fused drift+diffusion kernel** for the CuPy backend. When a kernel is available and the job uses `backend: cupy`, the integrator prefers the kernel path over calling the Python `drift` and `diffusion` methods separately. This removes Python-layer dispatch overhead and fuses the two term evaluations into a single CUDA launch.
@@ -176,6 +233,8 @@ Current models with CuPy kernels:
 * `model.kerr_2mode`
 * `model.crosskerr_2mode`
 * `model.kerr_3mode`
+* `model.kerr_full_3mode`
+* `model.pair_hopping_2mode`
 
 Kernelization is **automatic**; there is no explicit switch in the job file. If the model advertises support for the active backend, the integrator uses it. Otherwise it falls back to the standard Python implementation, so switching `backend` between `numpy` and `cupy` always produces valid results.
 

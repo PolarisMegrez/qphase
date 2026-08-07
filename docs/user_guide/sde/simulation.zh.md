@@ -110,8 +110,9 @@ integrator:
 
 SDE 扫描使用 job 顶层的显式 `ScanSpec`。scheduler 将一个 `ParameterGrid` 和一个
 `ExecutionContext` 传给 SDE engine；扫描点不会展开为 scheduler job 或独立目录。
-engine 在分配轨迹前验证时间网格与 analyser 带宽，并估算状态、噪声、轨迹和 FFT
-workspace。资源策略只从 `ExecutionContext.resources` 对象读取，SDE 包不发现或
+engine 在分配轨迹前验证时间网格与 analyser 带宽，并分别估算主机与设备上的状态、
+噪声、轨迹和 analyser workspace；CuPy 后端配合主机 analyser 时也会检查主存预算。
+资源策略只从 `ExecutionContext.resources` 对象读取，SDE 包不发现或
 读取 SystemConfig 路径。
 
 在批量运行中：
@@ -131,6 +132,53 @@ group 保证相同 seed 下结果不依赖 scan tile 和物理 trajectory batch 
 planner 会在积分前给出内存估算错误。增大 `save_stride` 会缩小保存轨迹和 FFT，
 但不会减少积分步数。
 
+显式设置 `keep_traj: true` 时，CuPy 路径先在设备上完成 analyser，再把需要保留的轨迹
+转移到主机以供序列化；该传输及主存峰值包含在 execution plan 中，不会关闭 GPU 积分。
+
+## 在线 Observer
+
+observer 是在积分过程中检查实时状态的插件，不得修改状态或消耗 RNG。它与 analyser
+职责不同：observer 可以请求整批控制流动作，analyser 则消费已经记录的轨迹。
+
+```yaml
+observer:
+  first_passage:
+    rule: state_norm
+    direction: above
+    threshold: 100.0
+    check_interval_steps: 100
+    debounce_checks: 2
+    action: record
+```
+
+`observer.first_passage` 支持 `state_norm`、`mode_magnitude`、
+`linear_projection` 和规范 R 坐标 `matrix_projection`。action 可取 `record`、
+`stop_batch` 或 `fail_job`。未命中的轨迹按右删失处理，保存为
+`first_hit_time=NaN`、`first_hit_step=-1`。
+
+在 CuPy 下，observable 和 debounce mask 均留在设备侧，只把新确认事件的索引和值传回
+主机。observer cadence 会把 fused chunk 钳制到准确的检查步，但不会关闭 CuPy 后端或
+融合 kernel。进度仍通过原有 engine reporter 按实际完成的 trajectory-step 上报。较短
+cadence 可能降低吞吐，并在 execution plan 中记录为 `effective_chunk_steps`。
+
+observer 实现返回通用 `ObserverDecision`，并自行负责 trajectory-batch payload 合并
+及 fused scan payload 拆分。因此每个 point view 只包含本参数点的轨迹事件，并重新计算
+聚合计数。
+SDE engine 只调度检查和执行 `stop_batch`/`fail_job`，不解释插件专用字段。
+
+## 轨迹诊断
+
+`analyser.trajectory_diagnostics` 提供减量时域诊断：复一阶相干性及模型拟合、角频率
+Allan 方差、无重叠 block 统计与频谱、平稳性判据，以及可选的规范 R 矩阵投影。它适合
+有选择的减量实验，不适合不受约束地处理超大完整轨迹。
+
+当前实现会在主机端物化输入。CuPy job 因而会在采样后发生显式 device-to-host 传输，
+但不会改变积分后端。除非确实需要完整坐标轨迹，否则应保持
+`matrix_projection_keep_coordinates: false`。该 analyser 已向 planner 声明主机执行、
+完整轨迹需求与 workspace；其 coherence、Allan、block spectrum、矩阵投影和平稳性
+内部 child 共享一次主机物化与规范坐标构造，并不成为 scheduler job。时域流式诊断仍
+属于后续工作。
+
 ## Kernelized Terms（CuPy 核函数）
 
 部分内置模型为 CuPy 后端提供了可选的**融合漂移+扩散核函数**。当核函数可用且任务使用 `backend: cupy` 时，积分器会优先使用核函数路径，而不是分别调用 Python 的 `drift` 和 `diffusion` 方法。这样可以消除 Python 层调度开销，并将两项计算融合到一次 CUDA 启动中。
@@ -141,6 +189,8 @@ planner 会在积分前给出内存估算错误。增大 `save_stride` 会缩小
 * `model.kerr_2mode`
 * `model.crosskerr_2mode`
 * `model.kerr_3mode`
+* `model.kerr_full_3mode`
+* `model.pair_hopping_2mode`
 
 核函数化是**自动的**；任务文件中不需要显式开关。如果模型声明支持当前后端，积分器就会使用它；否则会回退到标准 Python 实现。因此，在 `numpy` 和 `cupy` 之间切换 `backend` 始终能产生正确结果。
 

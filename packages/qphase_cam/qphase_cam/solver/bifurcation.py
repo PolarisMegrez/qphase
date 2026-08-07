@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections import Counter
 from itertools import product
 from typing import Any, ClassVar, Literal
@@ -1000,10 +1001,9 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         cached = self._reduction_cache.get(cache_key)
         if cached is not None:
             cached_reductions, cached_manifest = cached
-            self._prepare_reductions(cached_reductions, adapter)
             manifest = dict(cached_manifest)
             manifest["compile_cache_hit"] = True
-            return cached_reductions, manifest
+            return self._bind_reductions(cached_reductions, adapter), manifest
         search = adapter.search_linear_reductions(
             retained_dimension=1,
             retained_ids=(
@@ -1077,24 +1077,28 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         )
         manifest["compile_cache_hit"] = False
         output = tuple(reductions)
-        self._prepare_reductions(output, adapter)
         if len(self._reduction_cache) >= 8:
             self._reduction_cache.pop(next(iter(self._reduction_cache)))
         self._reduction_cache[cache_key] = (output, dict(manifest))
-        return output, manifest
+        return self._bind_reductions(output, adapter), manifest
 
-    def _prepare_reductions(
+    def _bind_reductions(
         self,
         reductions: tuple[FractionFreeScalarReduction | CondensedScalarReduction, ...],
         adapter: FPGenDynamicsAdapter,
-    ) -> None:
+    ) -> tuple[FractionFreeScalarReduction | CondensedScalarReduction, ...]:
+        """Bind runtime parameters without mutating cached structure templates."""
         state_scales, _ = self._model_state_scales(adapter)
         scale_by_id = dict(zip(adapter.state_ids, state_scales, strict=True))
+        bound = []
         for reduction in reductions:
-            reduction.base_params = dict(adapter.model.params)
-            reduction.retained_scale = float(
+            runtime_reduction = copy.copy(reduction)
+            runtime_reduction.base_params = dict(adapter.model.params)
+            runtime_reduction.retained_scale = float(
                 scale_by_id.get(reduction.retained_id, np.max(state_scales))
             )
+            bound.append(runtime_reduction)
+        return tuple(bound)
 
     @staticmethod
     def _model_state_scales(

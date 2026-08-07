@@ -70,7 +70,7 @@ The first backend slice focuses on read and preview workflows:
 | `GET /runs/{session_id}` | Read a session manifest. |
 | `GET /runs/{session_id}/events` | Read run progress events recorded by this local API process. |
 | `GET /runs/{session_id}/artifacts` | List artifacts under a session directory. |
-| `GET /artifacts?path=...` | Read a JSON/text artifact payload or return binary metadata. |
+| `GET /runs/{session_id}/artifact?path=...` | Read an artifact contained by that managed session. |
 
 Example plan request:
 
@@ -93,8 +93,11 @@ After a run completes, use the returned `session_id` to inspect events and artif
 ```bash
 curl http://127.0.0.1:8000/runs/SESSION_ID/events
 curl http://127.0.0.1:8000/runs/SESSION_ID/artifacts
-curl "http://127.0.0.1:8000/artifacts?path=/absolute/path/to/session_manifest.json"
+curl "http://127.0.0.1:8000/runs/SESSION_ID/artifact?path=session_manifest.json"
 ```
+
+Artifact paths are resolved inside the selected run session. Absolute paths
+outside that session and relative directory traversal are rejected.
 
 ## MVP Scope
 

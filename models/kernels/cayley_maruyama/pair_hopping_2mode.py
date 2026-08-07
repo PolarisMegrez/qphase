@@ -323,6 +323,10 @@ def fused_step_chunk(
         ),
         stream=cp.cuda.get_current_stream(),
     )
+    # The engine may recycle the noise buffer as soon as this function returns,
+    # and callers may copy the cached output before issuing another kernel.
+    # Complete this launch on its actual stream before either can happen.
+    cp.cuda.get_current_stream().synchronize()
     _retain_launch(d_w, offsets, modes_device, *params_device)
     return final_state, saved[:, :n_saves, :]
 

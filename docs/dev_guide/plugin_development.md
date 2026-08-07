@@ -151,6 +151,15 @@ class MyEngine:
         pass
 ```
 
+SDE analysers should inherit `qphase_sde.analyser.Analyzer`. The base class
+provides conservative planner defaults. Override `capabilities()` with an
+`AnalyzerExecutionCapabilities` value and `estimate_workspace()` with separate
+host/device byte estimates whenever the analyser transfers a full trajectory,
+supports trajectory batching or time streaming, or allocates a substantial
+workspace. Do not advertise batching/streaming until the corresponding public
+accumulator/stream protocol is implemented; these declarations control memory
+planning, not only documentation.
+
 ### Scan-Aware Engines
 
 The scheduler passes scan and runtime services through `ExecutionContext`.
@@ -251,6 +260,22 @@ If distributing the plugin as a Python package, use standard entry points in `py
 "analyser.my_analyser" = "my_package.analysis:MyAnalyser"
 ```
 
+## Online SDE Observer Plugins
+
+An online observer inherits `qphase_sde.observer.Observer`, declares a strict
+`config_schema`, and implements `initialize`, `observe`, and `finalize`.
+`observe` returns either `None` or an `ObserverDecision`; it must not return
+plugin-specific action strings or require the SDE engine to inspect its result
+fields. The observer also owns `merge_payloads` and `split_payload`, normally by
+declaring `per_trajectory_keys` and `invariant_payload_keys` on the base
+implementation. Override `_finalize_group_payload` when aggregate counters must
+be recomputed after either trajectory-batch merging or fused-scan splitting.
+
+Observers may use backend array operations on the live state but must not
+mutate it or consume RNG. Keep device-to-host transfers limited to event-size
+payloads. Child-specific error details belong in `ObserverDecision.details`;
+the engine wraps them in the generic `ObserverTriggeredError`.
+
 ## Optional: Kernelized Terms for CuPy
 
 For models that are evaluated many times per time step, you can provide an optional **fused drift+diffusion kernel** that the SDE integrator will use when the active backend is CuPy. This is purely optional: if the kernel is not available or the backend is not CuPy, the integrator falls back to the standard `drift`/`diffusion` methods.
@@ -310,3 +335,18 @@ def kernelized_terms(self, y, t, params, backend):
 ```
 
 Keep kernel implementations under the integration-scheme namespace. See `models/kernels/euler_maruyama/vdp_2mode.py` for a complete example.
+
+For an integration-specific fused step or chunk, implement a
+`ModelKernelPlugin` and register it from the model's `kernel_plugins()` method.
+Declare `scheme`, `backend_name`, and the supported `operations` (`step`,
+`step_chunk`, or `terms`). This keeps CUDA formulas model-owned while the SDE
+integrator consumes one stable capability interface.
+
+A RawKernel wrapper must define output ownership and stream completion. In
+particular, it must not return while a caller-visible cached output or a noise
+buffer that the engine may recycle can still be written or read on an
+untracked stream. Use the active CuPy stream consistently and establish a
+completion boundary before returning whenever the surrounding buffer protocol
+cannot carry a CUDA event. Test both isolated launches and `step -> chunk`
+call order; passing only a single kernel comparison does not detect reuse
+races.

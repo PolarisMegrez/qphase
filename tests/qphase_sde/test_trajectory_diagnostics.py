@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase_sde.analyser.trajectory_diagnostic import TrajectoryDiagnosticContext
 from qphase_sde.analyser.trajectory_diagnostics import (
     TrajectoryDiagnostics,
     TrajectoryDiagnosticsConfig,
@@ -60,6 +61,28 @@ def test_trajectory_diagnostics_rejects_real_input():
 
     with pytest.raises(ValueError, match="complex mode amplitudes"):
         analyser.analyze(data, NumpyBackend())
+
+
+def test_trajectory_diagnostic_context_builds_shared_coordinates_once():
+    calls = 0
+
+    def build(values):
+        nonlocal calls
+        calls += 1
+        return np.abs(values) ** 2
+
+    values = np.ones((2, 4, 1), dtype=np.complex128)
+    context = TrajectoryDiagnosticContext(
+        values=values,
+        dt=0.5,
+        t0=0.0,
+        modes=(0,),
+        mode_columns=(0,),
+        coordinate_builder=build,
+    )
+
+    assert context.canonical_coordinates() is context.canonical_coordinates()
+    assert calls == 1
 
 
 def _ou_phase_diffusion_trajectory(

@@ -151,6 +151,12 @@ class MyEngine:
         pass
 ```
 
+SDE analyser 应继承 `qphase_sde.analyser.Analyzer`。基类提供保守的 planner 默认值；
+当 analyser 会转移完整轨迹、支持 trajectory batching/time streaming，或分配较大
+workspace 时，应分别用 `AnalyzerExecutionCapabilities` 覆盖 `capabilities()`，并在
+`estimate_workspace()` 中给出主机/设备字节估算。在真正实现公开 accumulator/stream
+协议之前不得声明支持 batching/streaming；这些声明会直接参与内存规划，并非仅作文档。
+
 ### 支持 Scan 的 Engine
 
 scheduler 通过 `ExecutionContext` 传递 scan 与运行时服务。engine 负责数值执行
@@ -245,6 +251,19 @@ analyser.my_analyser: "plugins.my_analysis:MyAnalyser"
 "analyser.my_analyser" = "my_package.analysis:MyAnalyser"
 ```
 
+## 在线 SDE Observer 插件
+
+在线 observer 应继承 `qphase_sde.observer.Observer`，声明严格的
+`config_schema`，并实现 `initialize`、`observe` 与 `finalize`。`observe` 只返回
+`None` 或 `ObserverDecision`；不得返回插件专用 action 字符串，也不得要求 SDE engine
+解释其结果字段。observer 还负责 `merge_payloads` 与 `split_payload`，通常可通过基类的
+`per_trajectory_keys` 与 `invariant_payload_keys` 声明完成。若 trajectory batch 合并或
+fused scan 拆分后需要重算聚合计数，应覆盖 `_finalize_group_payload`。
+
+observer 可以对实时状态使用 backend 数组运算，但不得修改状态或消耗 RNG。设备到主机
+传输应限制为事件规模。插件专用错误详情放在 `ObserverDecision.details` 中，由 engine
+统一包装为 `ObserverTriggeredError`。
+
 ## 可选：CuPy 核函数化的漂移与扩散项
 
 对于那些每个时间步都需要多次求值的模型，你可以提供一个可选的**融合漂移+扩散核函数**。当活动后端为 CuPy 时，SDE 积分器会自动使用该核函数；如果核函数不可用或后端不是 CuPy，积分器会回退到标准的 `drift`/`diffusion` 方法。
@@ -303,3 +322,14 @@ def kernelized_terms(self, y, t, params, backend):
 ```
 
 建议将核函数实现放入对应积分方案的命名空间。完整示例请参阅 `models/kernels/euler_maruyama/vdp_2mode.py`。
+
+若要实现积分器专用的 fused step 或 chunk，应编写 `ModelKernelPlugin`，并由 model 的
+`kernel_plugins()` 注册。provider 需要声明 `scheme`、`backend_name` 和支持的
+`operations`（`step`、`step_chunk` 或 `terms`）。这样 CUDA 公式仍归 model 所有，
+SDE integrator 只消费稳定的 capability 接口。
+
+RawKernel wrapper 必须明确输出所有权和 stream 完成语义。尤其不能在调用方可见的缓存
+输出仍可能被写入，或 engine 可能复用的 noise buffer 仍可能被读取时直接返回。应始终
+使用活动 CuPy stream；当外围 buffer 协议无法携带 CUDA event 时，在返回前建立完成边界。
+测试必须同时覆盖独立 launch 和 `step -> chunk` 调用顺序；单次 kernel 数值对照无法发现
+复用竞态。

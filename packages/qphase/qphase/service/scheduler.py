@@ -105,8 +105,21 @@ class SchedulerService:
                 )
         return artifacts
 
-    def load_artifact(self, path: str | Path) -> dict[str, Any]:
-        artifact_path = Path(path).expanduser().resolve()
+    def load_artifact(
+        self, path: str | Path, *, session_dir: str | Path
+    ) -> dict[str, Any]:
+        """Load an artifact only when it belongs to the managed session."""
+        session_root = Path(session_dir).expanduser().resolve()
+        requested = Path(path).expanduser()
+        artifact_path = (
+            requested.resolve()
+            if requested.is_absolute()
+            else (session_root / requested).resolve()
+        )
+        if not artifact_path.is_relative_to(session_root):
+            raise PermissionError(
+                f"Artifact path is outside run session {session_root}: {artifact_path}"
+            )
         if not artifact_path.exists() or not artifact_path.is_file():
             raise FileNotFoundError(f"Artifact not found: {artifact_path}")
 

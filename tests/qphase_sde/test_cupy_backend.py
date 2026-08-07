@@ -97,8 +97,8 @@ def test_cupy_contract_noise_matches_numpy():
     np.testing.assert_allclose(out_np, cupy.asnumpy(out_cp), rtol=1e-5)
 
 
-def test_cupy_engine_forces_trajectory_drop():
-    """CuPy backend forces keep_traj=False and returns analysis only."""
+def test_cupy_engine_honours_explicit_trajectory_retention():
+    """CuPy analysis runs on device, then an explicit record moves to host."""
     be = CuPyBackend()
     engine = Engine(
         config=EngineConfig(
@@ -108,7 +108,7 @@ def test_cupy_engine_forces_trajectory_drop():
             n_traj=5,
             seed=42,
             ic=["1.0+0.0j", "0.0+0.0j"],
-            keep_traj=True,  # should be overridden
+            keep_traj=True,
         ),
         plugins={
             "backend": be,
@@ -133,7 +133,9 @@ def test_cupy_engine_forces_trajectory_drop():
     )
 
     result = engine.run()
-    assert result.trajectory is None
+    assert result.trajectory is not None
+    assert isinstance(result.trajectory.data, np.ndarray)
+    assert result.meta["trajectory_storage"] == "host"
     assert result.analysis["psd"]["ok"] is True
 
 
@@ -249,7 +251,7 @@ def test_cupy_vdp_end_to_end_smoke():
             seed=42,
             ic=["800.0+0.0j", "0.0-800.0j"],
             save_stride=10,
-            keep_traj=True,  # should be overridden by cupy policy
+            keep_traj=True,
         ),
         plugins={
             "backend": cp_be,
@@ -266,7 +268,8 @@ def test_cupy_vdp_end_to_end_smoke():
     )
 
     result = engine.run()
-    assert result.trajectory is None
+    assert result.trajectory is not None
+    assert isinstance(result.trajectory.data, np.ndarray)
     assert "psd" in result.analysis
     psd_data = result.analysis["psd"]
     assert "axis" in psd_data
@@ -354,5 +357,6 @@ analyser:
     result_path = captured_run_dir / "cupy_vdp_smoke.npz"
     assert result_path.exists()
     result = SDEResult.load(result_path)
-    assert result.trajectory is None
+    assert result.trajectory is not None
+    assert isinstance(result.trajectory.data, np.ndarray)
     assert "psd" in result.analysis

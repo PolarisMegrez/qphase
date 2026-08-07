@@ -36,9 +36,20 @@ from qphase_sde.coordinates import (
     canonical_r_coordinates,
     canonical_vector,
 )
-from qphase_sde.observer.base import Observer, ObserverContext
+from qphase_sde.observer.base import (
+    Observer,
+    ObserverContext,
+    ObserverDecision,
+    ObserverTriggeredError,
+)
 
-__all__ = ["FirstPassageObserver", "FirstPassageObserverConfig"]
+FirstPassageTriggeredError = ObserverTriggeredError
+
+__all__ = [
+    "FirstPassageObserver",
+    "FirstPassageObserverConfig",
+    "FirstPassageTriggeredError",
+]
 
 
 class FirstPassageObserverConfig(PluginConfigBase):
@@ -191,6 +202,16 @@ class FirstPassageObserver(Observer):
         "value_at_hit",
         "effective_end_time",
     )
+    invariant_payload_keys: ClassVar[tuple[str, ...]] = (
+        "status",
+        "observer",
+        "rule",
+        "action",
+        "direction",
+        "debounce_checks",
+        "check_interval_steps",
+        "observable",
+    )
 
     def __init__(
         self, config: FirstPassageObserverConfig | None = None, **kwargs: Any
@@ -253,11 +274,11 @@ class FirstPassageObserver(Observer):
         self._checks_seen = 0
         self._device: dict[str, Any] | None = None
 
-    def observe(self, y: Any, t: float, step: int) -> str | None:
+    def observe(self, y: Any, t: float, step: int) -> ObserverDecision | None:
         """Check the rule against the live state at a due step.
 
-        Returns the configured action when at least one trajectory newly
-        confirms a hit and the action is not ``"record"``; otherwise None.
+        Returns a structured decision when at least one trajectory newly
+        confirms a non-recording action; otherwise returns ``None``.
         """
         cfg = self._cfg
         if step % int(cfg.check_interval_steps) != 0:
@@ -297,7 +318,20 @@ class FirstPassageObserver(Observer):
         state["last_value"] = xp.where(state["hit"], state["last_value"], values)
         self._checks_seen += 1
         if n_new and cfg.action != "record":
-            return str(cfg.action)
+            indices = [int(index) for index in np.asarray(host_index).reshape(-1)]
+            hit_times = [float(self._first_hit_time[index]) for index in indices]
+            return ObserverDecision(
+                action=cfg.action,
+                message=(
+                    f"rule={cfg.rule!r} confirmed hits on trajectories "
+                    f"{indices} with first-hit times {hit_times}"
+                ),
+                details={
+                    "rule": cfg.rule,
+                    "hit_trajectories": indices,
+                    "first_hit_times": hit_times,
+                },
+            )
         return None
 
     def note_end_of_run(self, t: float, step: int) -> None:
@@ -360,6 +394,13 @@ class FirstPassageObserver(Observer):
                     "reference_vector": self._reference.copy(),
                 }
             )
+        return payload
+
+    def _finalize_group_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Recompute first-passage counters after trajectory merge or split."""
+        hit = np.asarray(payload["hit"], dtype=bool)
+        payload["n_hit"] = int(np.count_nonzero(hit))
+        payload["n_censored"] = int(np.count_nonzero(~hit))
         return payload
 
     def _observable_description(self) -> str:

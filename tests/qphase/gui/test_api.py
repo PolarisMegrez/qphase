@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from qphase.gui import create_app
@@ -103,12 +105,27 @@ def test_gui_api_reads_json_artifact(temp_workspace, sample_job_file):
     manifest_path = next(
         artifact["path"] for artifact in artifacts if artifact["kind"] == "manifest"
     )
-    artifact_response = client.get("/artifacts", params={"path": manifest_path})
+    artifact_response = client.get(
+        f"/runs/{session_id}/artifact", params={"path": manifest_path}
+    )
 
     assert artifact_response.status_code == 200
     payload = artifact_response.json()
     assert payload["content_type"] == "application/json"
     assert payload["content"]["session_id"] == session_id
+
+
+def test_gui_api_rejects_artifacts_outside_run_session(temp_workspace, sample_job_file):
+    client = TestClient(create_app())
+    run_response = client.post("/runs", json={"jobs": ["test_job"]})
+    session_id = run_response.json()["run"]["session_id"]
+
+    response = client.get(
+        f"/runs/{session_id}/artifact",
+        params={"path": Path(temp_workspace).parent / "outside.json"},
+    )
+
+    assert response.status_code == 403
 
 
 def test_gui_api_exposes_plugin_catalog_and_schema():

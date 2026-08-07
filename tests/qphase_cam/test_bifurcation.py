@@ -241,10 +241,17 @@ def test_reduction_search_reports_budget_limited_coverage():
 def test_reduction_structure_is_cached_between_fixed_parameter_cases():
     solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
     adapter = FPGenDynamicsAdapter.from_model(TwoModeFoldModel())
-    _, first = solver._select_reductions(adapter)
-    _, second = solver._select_reductions(adapter)
+    first_reductions, first = solver._select_reductions(adapter)
+    adapter.model.params = {**adapter.model.params, "kappa": 2.0}
+    second_reductions, second = solver._select_reductions(adapter)
     assert first["compile_cache_hit"] is False
     assert second["compile_cache_hit"] is True
+    assert first_reductions[0] is not second_reductions[0]
+    assert first_reductions[0].base_params["kappa"] == 1.0
+    assert second_reductions[0].base_params["kappa"] == 2.0
+    cached_reductions, _ = next(iter(solver._reduction_cache.values()))
+    assert cached_reductions[0] is not first_reductions[0]
+    assert cached_reductions[0] is not second_reductions[0]
 
 
 def test_reduction_start_filter_rejects_singular_reconstruction():

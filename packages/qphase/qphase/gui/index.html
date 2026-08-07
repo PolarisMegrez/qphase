@@ -191,7 +191,7 @@
       document.getElementById("view").innerHTML = jobPicker() + renderJson(data);
     };
     window.loadArtifact = async (path) => {
-      const data = await api(`/artifacts?path=${encodeURIComponent(path)}`);
+      const data = await api(`/runs/${state.sessionId}/artifact?path=${encodeURIComponent(path)}`);
       document.getElementById("view").innerHTML = renderJson(data);
     };
     window.saveConfig = async () => {

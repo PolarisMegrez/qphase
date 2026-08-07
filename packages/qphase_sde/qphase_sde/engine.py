@@ -28,7 +28,11 @@ from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 from qphase_sde.buffers import SDEBufferCache
 from qphase_sde.integrator.base import Integrator
 from qphase_sde.model import NoiseSpec, SDEModel
-from qphase_sde.observer.base import FirstPassageTriggeredError, ObserverContext
+from qphase_sde.observer.base import (
+    ObserverContext,
+    ObserverDecision,
+    ObserverTriggeredError,
+)
 from qphase_sde.planning import (
     SDEExecutionPlan,
     build_execution_plan,
@@ -44,49 +48,6 @@ log = logging.getLogger(__name__)
 
 class TrajectoryDivergenceError(RuntimeError):
     """Raised when an SDE trajectory leaves a configured state-norm bound."""
-
-
-def _merge_observer_payloads(
-    payloads: list[Any], per_trajectory_keys: tuple[str, ...]
-) -> dict[str, Any]:
-    """Merge per-batch observer payloads along the trajectory axis.
-
-    Keys listed in ``per_trajectory_keys`` hold arrays of length n_traj and
-    are concatenated in batch order (the row index is the global trajectory
-    id). Scalar/schema keys are taken from the first batch after checking the
-    rule echo is consistent; ``n_traj``/``n_hit``/``n_censored`` are
-    recomputed from the merged arrays.
-    """
-    if not payloads:
-        raise ValueError("no observer payloads to merge")
-    first = dict(payloads[0])
-    for payload in payloads[1:]:
-        for key in (
-            "observer",
-            "rule",
-            "action",
-            "direction",
-            "debounce_checks",
-            "check_interval_steps",
-            "observable",
-        ):
-            if payload.get(key) != first.get(key):
-                raise RuntimeError(
-                    f"observer payload rule echo mismatch across trajectory "
-                    f"batches for key {key!r}: {first.get(key)!r} != "
-                    f"{payload.get(key)!r}"
-                )
-    for key in per_trajectory_keys:
-        if key in first:
-            first[key] = np.concatenate(
-                [np.asarray(payload[key]) for payload in payloads], axis=0
-            )
-    if "hit" in first:
-        merged_hit = np.asarray(first["hit"], dtype=bool)
-        first["n_traj"] = int(merged_hit.shape[0])
-        first["n_hit"] = int(np.count_nonzero(merged_hit))
-        first["n_censored"] = int(np.count_nonzero(~merged_hit))
-    return first
 
 
 @dataclass(frozen=True)
@@ -620,13 +581,17 @@ class Engine(EngineBase):
                         f"analyser {name!r} did not return {point_count} "
                         "point results for an SDE scan tile"
                     )
-            # Observer payloads cover the fused trajectory ensemble of the
-            # whole tile, so they accumulate one opaque entry per tile;
-            # per-scan-point observer views are Phase 2.
             for name in observers:
                 value = self._analysis_to_host(tile_result.analysis.get(name))
-                if value is not None:
+                if point_count == 1 and value is not None:
                     accumulated_observers[name].append(value)
+                elif isinstance(value, list) and len(value) == point_count:
+                    accumulated_observers[name].extend(value)
+                else:
+                    raise TypeError(
+                        f"observer {name!r} did not return {point_count} "
+                        "point payloads for an SDE scan tile"
+                    )
             if not result_meta:
                 result_meta.update(tile_result.meta)
             self._release_backend_pool()
@@ -780,9 +745,7 @@ class Engine(EngineBase):
         for name, payloads in observer_batches.items():
             # The row index of merged per-trajectory arrays is the global
             # trajectory id: batches concatenate in order without renumbering.
-            analysis[name] = _merge_observer_payloads(
-                payloads, getattr(observers[name], "per_trajectory_keys", ())
-            )
+            analysis[name] = observers[name].merge_payloads(payloads)
         return SDEResult(
             trajectory=None,
             analysis=analysis,
@@ -970,12 +933,27 @@ class Engine(EngineBase):
         # Lift observer payloads out of the trajectory metadata immediately so
         # they persist even when the trajectory itself is dropped below. They
         # intentionally do not participate in the keep/drop auto-decision: a
-        # record-only observer must not change trajectory retention. In fused
-        # scan batches the payloads stay fused-ensemble values (per-scan-point
-        # observer views are Phase 2).
+        # record-only observer must not change trajectory retention.
         observer_results: dict[str, Any] = {}
         if traj_set is not None:
             observer_results = dict(traj_set.meta.pop("observers", {}))
+        n_scan = getattr(self.config, "_batch_scan_count", 1)
+        if not isinstance(n_scan, int) or n_scan < 1:
+            n_scan = 1
+        if n_scan > 1 and observer_results:
+            if int(self.config.n_traj) % n_scan:
+                raise ValueError(
+                    f"Observer ensemble has {self.config.n_traj} trajectories, "
+                    f"not divisible by scan count {n_scan}"
+                )
+            group_size = int(self.config.n_traj) // n_scan
+            observer_instances = observers or self._normalised_observers()
+            observer_results = {
+                name: observer_instances[name].split_payload(
+                    payload, [group_size] * n_scan
+                )
+                for name, payload in observer_results.items()
+            }
         if reporter is not None:
             reporter.update(
                 completed=(progress_offset + progress_scale * time_cfg["steps"]),
@@ -1036,10 +1014,6 @@ class Engine(EngineBase):
                     be = NumpyBackend()
 
             # Detect batch mode: the scheduler fuses scan points into one ensemble.
-            n_scan = getattr(self.config, "_batch_scan_count", 1)
-            if not isinstance(n_scan, int) or n_scan < 1:
-                n_scan = 1
-
             if n_scan > 1 and traj_set is not None:
                 # Split the combined trajectory into per-scan-point slices and run
                 # each analyzer on each slice so that PSD/dist/etc. remain per-point.
@@ -1084,22 +1058,22 @@ class Engine(EngineBase):
             # Decide whether to keep trajectory based on config
             should_keep = self.config.keep_traj
 
-            # GPU backends force trajectory drop to avoid large device-to-host
-            # transfers and GPU memory bloat. Users who need raw trajectories for
-            # plotting should run a separate job with the numpy backend.
-            if should_keep and backend_name == "cupy":
-                import logging
-
-                logging.getLogger(__name__).warning(
-                    "CuPy backend forces keep_traj=False to avoid large "
-                    "device-to-host transfers. Use the numpy backend if you "
-                    "need to keep raw trajectories."
-                )
-                should_keep = False
-
             if should_keep is None:
                 # Default behavior: drop if analyzed to save resources
                 should_keep = not bool(analysis_results)
+
+            if should_keep and backend_name == "cupy" and traj_set is not None:
+                # Explicit retention is a user-visible output request. Analysis
+                # runs on the device first, then the retained record moves to
+                # host memory so result serialization does not pin GPU memory.
+                traj_set = TrajectorySet(
+                    data=convert_to_numpy(traj_set.data),
+                    t0=traj_set.t0,
+                    dt=traj_set.dt,
+                    meta=dict(traj_set.meta),
+                )
+                meta["trajectory_storage"] = "host"
+                meta["trajectory_transfer"] = "device_to_host_after_analysis"
 
             if not should_keep and traj_set is not None:
                 # Preserve metadata before dropping trajectory
@@ -1218,7 +1192,7 @@ class Engine(EngineBase):
             Online observers (SDEObserverProtocol) checked against the live
             state at their configured cadence. Observers never mutate the
             state or consume RNG; ``stop_batch`` truncates the output at the
-            confirming check and ``fail_job`` raises FirstPassageTriggeredError.
+            confirming check and ``fail_job`` raises ObserverTriggeredError.
 
         Returns
         -------
@@ -1693,51 +1667,43 @@ class Engine(EngineBase):
         """Run one observer round and apply whole-batch control-flow actions.
 
         Every observer sees the state even when another one requests an
-        action. ``fail_job`` raises FirstPassageTriggeredError; the first
+        action. ``fail_job`` raises ObserverTriggeredError; the first
         ``stop_batch`` requester is returned so the caller can stop the loop.
         """
-        actions = [
+        decisions = [
             (name, observer.observe(y, t, step)) for name, observer in observer_items
         ]
-        failures = [name for name, action in actions if action == "fail_job"]
+        failures = [
+            (name, decision)
+            for name, decision in decisions
+            if decision is not None and decision.action == "fail_job"
+        ]
         if failures:
-            raise self._observer_fail_job_error(observer_items, failures, t, step)
-        stops = [name for name, action in actions if action == "stop_batch"]
+            raise self._observer_fail_job_error(failures, t, step)
+        stops = [
+            name
+            for name, decision in decisions
+            if decision is not None and decision.action == "stop_batch"
+        ]
         return stops[0] if stops else None
 
     @staticmethod
     def _observer_fail_job_error(
-        observer_items: list[tuple[str, Any]],
-        failures: list[str],
+        failures: list[tuple[str, ObserverDecision]],
         t: float,
         step: int,
-    ) -> FirstPassageTriggeredError:
-        """Build a fail_job error carrying hit trajectory ids and times."""
-        instances = dict(observer_items)
+    ) -> ObserverTriggeredError:
+        """Build a generic error from plugin-owned failure details."""
         details: dict[str, Any] = {}
         parts: list[str] = []
-        for name in failures:
-            observer = instances[name]
-            observer.note_end_of_run(float(t), step)
-            payload = observer.finalize()
-            hit = np.asarray(payload.get("hit", []), dtype=bool)
-            times = np.asarray(payload.get("first_hit_time", []), dtype=float)
-            ids = [int(index) for index in np.nonzero(hit)[0]]
-            hit_times = [float(times[index]) for index in ids]
-            details[name] = {
-                "rule": payload.get("rule"),
-                "hit_trajectories": ids,
-                "first_hit_times": hit_times,
-            }
-            parts.append(
-                f"observer {name!r} (rule={payload.get('rule')!r}) confirmed "
-                f"hits on trajectories {ids} with first-hit times {hit_times}"
-            )
+        for name, decision in failures:
+            details[name] = dict(decision.details)
+            parts.append(f"observer {name!r}: {decision.message}")
         message = (
             f"SDE observer fail_job action triggered at t={float(t):.9g} "
             f"(step {int(step)}): " + "; ".join(parts)
         )
-        return FirstPassageTriggeredError(
+        return ObserverTriggeredError(
             message, {"time": float(t), "step": int(step), "observers": details}
         )
 

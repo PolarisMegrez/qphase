@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 from qphase.core.scan import ScanSpec
 from qphase_sde.analyser.spectral_estimator.base import SpectralEstimatorCapabilities
+from qphase_sde.analyser.trajectory_diagnostics import TrajectoryDiagnostics
 from qphase_sde.engine import EngineConfig
 from qphase_sde.planning import build_execution_plan
 
@@ -260,12 +261,15 @@ def _fake_estimator(*, backend_native, fft_chunk_trajectories=None):
 def test_planner_workspace_relieves_device_for_host_side_estimator():
     native = _workspace_plan(
         _fake_estimator(backend_native=True), FakeBackend()
-    ).memory.analyzer_workspace_bytes
+    ).memory
     host_side = _workspace_plan(
         _fake_estimator(backend_native=False), FakeBackend()
-    ).memory.analyzer_workspace_bytes
+    ).memory
 
-    assert native == 4 * host_side
+    assert native.analyzer_device_workspace_bytes > 0
+    assert native.analyzer_host_workspace_bytes == 0
+    assert host_side.analyzer_device_workspace_bytes == 0
+    assert host_side.analyzer_host_workspace_bytes > 0
 
 
 def test_planner_workspace_scales_with_periodogram_fft_chunk():
@@ -310,3 +314,40 @@ def test_planner_workspace_without_estimator_metadata_is_unchanged():
     n_time = plan.steps // config.save_stride + 1
     trajectory_bytes = 8 * n_time * 16
     assert plan.memory.analyzer_workspace_bytes == 2 * trajectory_bytes
+
+
+def test_planner_accounts_for_host_diagnostics_on_cupy():
+    config = EngineConfig(
+        t0=0.0,
+        t1=100.0,
+        dt=0.01,
+        n_traj=8,
+        save_stride=10,
+        record_modes=[0, 1],
+        keep_traj=False,
+    )
+    diagnostics = TrajectoryDiagnostics(modes=[0, 1])
+    resources = SimpleNamespace(
+        gpu_memory_fraction=0.75,
+        memory_limit_mib=4096,
+        hardware=SimpleNamespace(
+            available_memory_mib=8192,
+            total_memory_mib=16384,
+        ),
+    )
+
+    plan = build_execution_plan(
+        config=config,
+        grid=None,
+        model=FakeModel(),
+        backend=FakeBackend(),
+        integrator=FakeIntegrator(),
+        analysers={"trajectory_diagnostics": diagnostics},
+        resources=resources,
+        device_memory=(4 * 1024**3, 4 * 1024**3),
+    )
+
+    assert plan.memory.analyzer_device_workspace_bytes == 0
+    assert plan.memory.analyzer_host_workspace_bytes > 0
+    assert plan.host_budget_bytes == 4096 * 1024**2
+    assert plan.memory.estimated_host_peak_bytes <= plan.host_budget_bytes

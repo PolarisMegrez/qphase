@@ -36,7 +36,12 @@ from qphase.core.protocols import (
 )
 
 from ..utils import resolve_mode_columns
-from .base import Analyzer
+from .base import (
+    Analyzer,
+    AnalyzerExecutionCapabilities,
+    AnalyzerWorkspaceEstimate,
+    AnalyzerWorkspaceRequest,
+)
 from .peak_finding import (
     RationalPeakFinderConfig,
     ScipyPeakFinderConfig,
@@ -240,6 +245,47 @@ class PsdAnalyzer(Analyzer):
         }
         result["estimator"] = {method: child_config}
         return result
+
+    def capabilities(self) -> AnalyzerExecutionCapabilities:
+        """Expose the selected estimator's real execution contract."""
+        capabilities = self.estimator.capabilities()
+        return AnalyzerExecutionCapabilities(
+            execution_location=(
+                "backend" if capabilities.backend_native else "host"
+            ),
+            requires_full_trajectory=capabilities.requires_full_trajectory,
+            supports_trajectory_batching=capabilities.trajectory_batching,
+            supports_time_streaming=capabilities.time_streaming,
+        )
+
+    def estimate_workspace(
+        self, request: AnalyzerWorkspaceRequest
+    ) -> AnalyzerWorkspaceEstimate:
+        """Estimate FFT or host-estimator workspace for one scan point."""
+        capabilities = self.estimator.capabilities()
+        trajectory_bytes = request.trajectory_bytes
+        if not capabilities.backend_native:
+            # Host estimators materialize the input and retain at least one
+            # trajectory-spectrum sized temporary while the backend source is
+            # still alive.
+            host_bytes = 2 * trajectory_bytes
+            return AnalyzerWorkspaceEstimate(host_bytes=host_bytes)
+
+        chunk = getattr(
+            getattr(self.estimator, "config", None),
+            "fft_chunk_trajectories",
+            None,
+        )
+        if chunk is not None and 0 < int(chunk) < request.n_traj:
+            workspace = max(
+                1,
+                2 * trajectory_bytes * int(chunk) // request.n_traj,
+            )
+        else:
+            workspace = 2 * trajectory_bytes
+        if request.backend_name == "cupy":
+            return AnalyzerWorkspaceEstimate(device_bytes=workspace)
+        return AnalyzerWorkspaceEstimate(host_bytes=workspace)
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         """Compute PSD for multiple modes.

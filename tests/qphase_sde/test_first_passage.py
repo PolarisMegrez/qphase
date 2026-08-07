@@ -591,7 +591,7 @@ def test_trajectory_batching_merges_observer_payloads():
     assert merged["n_hit"] == int(np.count_nonzero(reference["hit"]))
 
 
-def test_scan_fused_payload_keeps_full_trajectory_axis():
+def test_scan_fused_payload_exposes_per_point_observer_views():
     grid = ScanSpec.model_validate(
         {
             "axes": {
@@ -622,13 +622,15 @@ def test_scan_fused_payload_keeps_full_trajectory_axis():
 
     result = engine.run(context=SimpleNamespace(parameter_grid=grid, progress=None))
 
-    payload = result.combined.analysis["first_passage"]
-    assert payload["n_traj"] == 4
-    assert payload["hit"].shape == (4,)
+    payloads = result.combined.analysis["first_passage"]
+    assert [payload["n_traj"] for payload in payloads] == [2, 2]
+    assert all(payload["hit"].shape == (2,) for payload in payloads)
     # rate=1 crosses 0.9 at k=11 (0.99^k), rate=2 at k=6 (0.98^k).
     np.testing.assert_array_equal(
-        payload["first_hit_step"], [11, 11, 6, 6]
+        payloads[0]["first_hit_step"], [11, 11]
     )
+    np.testing.assert_array_equal(payloads[1]["first_hit_step"], [6, 6])
+    assert result.point_view((0,)).analysis["first_passage"]["n_traj"] == 2
 
 
 def test_planner_reports_observer_cadence_cost():

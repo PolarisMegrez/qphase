@@ -16,6 +16,13 @@ Public API
 ``DistAnalyzerConfig`` : Configuration for Distribution analyzer.
 """
 
+from .base import (
+    Analyzer,
+    AnalyzerExecutionCapabilities,
+    AnalyzerProtocol,
+    AnalyzerWorkspaceEstimate,
+    AnalyzerWorkspaceRequest,
+)
 from .dist import DistAnalyzer, DistAnalyzerConfig
 from .polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
 from .psd import PsdAnalyzer, PsdAnalyzerConfig
@@ -25,6 +32,11 @@ from .trajectory_diagnostics import (
 )
 
 __all__ = [
+    "Analyzer",
+    "AnalyzerExecutionCapabilities",
+    "AnalyzerProtocol",
+    "AnalyzerWorkspaceEstimate",
+    "AnalyzerWorkspaceRequest",
     "PsdAnalyzer",
     "PsdAnalyzerConfig",
     "DistAnalyzer",

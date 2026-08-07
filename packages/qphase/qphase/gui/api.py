@@ -152,7 +152,7 @@ def create_app(
 
     @app.get("/runs/{session_id}")
     def get_run(session_id: str) -> dict[str, Any]:
-        session_dir = Path(scheduler.system_config.paths.output_dir) / session_id
+        session_dir = _managed_session_dir(scheduler, session_id)
         try:
             return scheduler.load_session_manifest(session_dir)
         except Exception as exc:
@@ -160,7 +160,7 @@ def create_app(
 
     @app.get("/runs/{session_id}/artifacts")
     def list_run_artifacts(session_id: str) -> dict[str, Any]:
-        session_dir = Path(scheduler.system_config.paths.output_dir) / session_id
+        session_dir = _managed_session_dir(scheduler, session_id)
         if not session_dir.exists():
             raise HTTPException(status_code=404, detail="Run session not found")
         artifacts = scheduler.list_artifacts(session_dir)
@@ -168,14 +168,26 @@ def create_app(
             "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts]
         }
 
-    @app.get("/artifacts")
-    def get_artifact(path: str) -> dict[str, Any]:
+    @app.get("/runs/{session_id}/artifact")
+    def get_artifact(session_id: str, path: str) -> dict[str, Any]:
+        session_dir = _managed_session_dir(scheduler, session_id)
         try:
-            return scheduler.load_artifact(path)
+            return scheduler.load_artifact(path, session_dir=session_dir)
+        except PermissionError as exc:
+            raise _http_error(exc, status_code=403) from exc
         except Exception as exc:
             raise _http_error(exc, status_code=404) from exc
 
     return app
+
+
+def _managed_session_dir(scheduler: SchedulerService, session_id: str) -> Path:
+    """Resolve one direct child of the configured run-output directory."""
+    output_root = Path(scheduler.system_config.paths.output_dir).expanduser().resolve()
+    session_dir = (output_root / session_id).resolve()
+    if session_dir.parent != output_root:
+        raise HTTPException(status_code=403, detail="Invalid run session id")
+    return session_dir
 
 
 def _http_error(exc: Exception, status_code: int = 400) -> HTTPException:

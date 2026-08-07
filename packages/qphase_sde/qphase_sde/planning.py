@@ -50,9 +50,14 @@ class SDEMemoryEstimate:
     state_bytes_per_point: int
     noise_workspace_bytes_per_point: int
     analyzer_workspace_bytes: int
+    analyzer_device_workspace_bytes: int
+    analyzer_host_workspace_bytes: int
     reserve_bytes: int
+    host_reserve_bytes: int
     full_scan_trajectory_bytes: int
     estimated_peak_bytes: int
+    estimated_device_peak_bytes: int
+    estimated_host_peak_bytes: int
 
     def to_dict(self) -> dict[str, int]:
         """Return JSON-compatible estimate metadata."""
@@ -81,6 +86,9 @@ class SDEExecutionPlan:
     budget_bytes: int | None
     available_device_bytes: int | None
     device_total_bytes: int | None
+    host_budget_bytes: int | None
+    available_host_bytes: int | None
+    host_total_bytes: int | None
     gpu_memory_fraction: float | None
     stream_analysis: bool
     rng_strategy: str
@@ -169,10 +177,13 @@ def build_execution_plan(
         label="noise workspace",
     )
     backend_name = _backend_name(backend)
-    analyzer_workspace = _analyzer_workspace_bytes(
+    analyzer_device_workspace, analyzer_host_workspace = _analyzer_workspace_bytes(
         trajectory_per_point,
         analysers,
         n_traj=n_traj,
+        saved_samples=saved_samples,
+        n_record_modes=n_record_modes,
+        real_itemsize=real_itemsize,
         backend_name=backend_name,
     )
 
@@ -181,13 +192,14 @@ def build_execution_plan(
         resources,
         device_memory=device_memory,
     )
+    host_budget, host_available, host_total = _host_memory_budget(resources)
     reserve = _reserve_bytes(budget)
+    host_reserve = _reserve_bytes(host_budget)
     analysis_enabled = bool(analysers)
     should_keep = config.keep_traj is True or not analysis_enabled
-    if backend_name == "cupy" and config.keep_traj is True:
-        should_keep = False
     incremental = bool(analysers) and all(
         callable(getattr(analyser, "create_result_accumulator", None))
+        and _analyzer_capabilities(analyser).supports_trajectory_batching
         for analyser in analysers.values()
     )
     batching_mode = str(getattr(config, "trajectory_batching", "auto"))
@@ -210,6 +222,18 @@ def build_execution_plan(
             n_traj,
             max(1, available_for_trajectories // max(1, per_trajectory_work)),
         )
+    if host_budget is not None and incremental and not should_keep:
+        host_per_trajectory = analyzer_host_workspace // n_traj
+        if backend_name != "cupy":
+            host_per_trajectory += per_trajectory_work
+        if host_per_trajectory > 0:
+            host_available_for_batch = max(
+                0, host_budget - host_reserve - accumulator_workspace
+            )
+            trajectory_batch = min(
+                trajectory_batch,
+                max(1, host_available_for_batch // host_per_trajectory),
+            )
     if batching_mode == "off":
         trajectory_batch = n_traj
     if batching_mode == "required" and trajectory_batch == n_traj and n_traj > 1:
@@ -236,8 +260,20 @@ def build_execution_plan(
     )
 
     working_per_point = per_trajectory_work * trajectory_batch
+    analyzer_device_retained = (
+        0
+        if trajectory_batch_count > 1
+        else analyzer_device_workspace * trajectory_batch // n_traj
+    )
+    analyzer_host_retained = (
+        accumulator_workspace
+        if trajectory_batch_count > 1
+        else analyzer_host_workspace * trajectory_batch // n_traj
+    )
     retained_analysis_workspace = (
-        accumulator_workspace if trajectory_batch_count > 1 else analyzer_workspace
+        analyzer_device_retained
+        if backend_name == "cupy"
+        else analyzer_host_retained
     )
     fixed = reserve + retained_analysis_workspace
     if trajectory_batch_count > 1:
@@ -273,14 +309,39 @@ def build_execution_plan(
     tile_size = int(max(1, tile_size))
     tile_count = math.ceil(scan_size / tile_size)
     peak = fixed + working_per_point * tile_size
+    if backend_name == "cupy":
+        device_peak = peak
+        retained_host_trajectory = (
+            trajectory_per_point * scan_size if should_keep else 0
+        )
+        host_peak = (
+            host_reserve + analyzer_host_retained + retained_host_trajectory
+        )
+    else:
+        device_peak = 0
+        host_peak = peak
+    if host_budget is not None and host_peak > host_budget:
+        raise SDEMemoryPlanningError(
+            "The SDE analyser/retained trajectory requires "
+            f"{host_peak / _MIB:.1f} MiB of host memory but the host budget is "
+            f"{host_budget / _MIB:.1f} MiB. Reduce the saved trajectory, disable "
+            "keep_traj, or use analysers that support trajectory batching."
+        )
     memory = SDEMemoryEstimate(
         trajectory_bytes_per_point=trajectory_per_point,
         state_bytes_per_point=state_per_point,
         noise_workspace_bytes_per_point=noise_per_point,
-        analyzer_workspace_bytes=retained_analysis_workspace,
+        analyzer_workspace_bytes=(
+            analyzer_device_retained + analyzer_host_retained
+        ),
+        analyzer_device_workspace_bytes=analyzer_device_retained,
+        analyzer_host_workspace_bytes=analyzer_host_retained,
         reserve_bytes=reserve,
+        host_reserve_bytes=host_reserve,
         full_scan_trajectory_bytes=trajectory_per_point * scan_size,
         estimated_peak_bytes=peak,
+        estimated_device_peak_bytes=device_peak,
+        estimated_host_peak_bytes=host_peak,
     )
     return SDEExecutionPlan(
         scan_size=scan_size,
@@ -301,6 +362,9 @@ def build_execution_plan(
         budget_bytes=budget,
         available_device_bytes=available,
         device_total_bytes=total,
+        host_budget_bytes=host_budget,
+        available_host_bytes=host_available,
+        host_total_bytes=host_total,
         gpu_memory_fraction=fraction,
         stream_analysis=stream_analysis,
         rng_strategy=(
@@ -444,6 +508,29 @@ def _memory_budget(
     )
 
 
+def _host_memory_budget(
+    resources: Any | None,
+) -> tuple[int | None, int | None, int | None]:
+    """Return the host budget even when the active backend is a GPU."""
+    limit_mib = getattr(resources, "memory_limit_mib", None)
+    hardware = getattr(resources, "hardware", None)
+    available_mib = getattr(hardware, "available_memory_mib", None)
+    total_mib = getattr(hardware, "total_memory_mib", None)
+    available = None if available_mib is None else int(available_mib) * _MIB
+    total = None if total_mib is None else int(total_mib) * _MIB
+    if limit_mib is not None:
+        configured = int(limit_mib) * _MIB
+        budget = (
+            configured
+            if available is None
+            else min(configured, int(available * _DEFAULT_DEVICE_FRACTION))
+        )
+        return budget, available, total
+    if available is None:
+        return None, None, total
+    return int(available * _DEFAULT_DEVICE_FRACTION), available, total
+
+
 def _cupy_memory_info() -> tuple[int, int] | None:
     try:
         import cupy as cp
@@ -475,21 +562,51 @@ def _analyzer_workspace_bytes(
     analysers: dict[str, Any],
     *,
     n_traj: int,
+    saved_samples: int,
+    n_record_modes: int,
+    real_itemsize: int,
     backend_name: str,
-) -> int:
-    """Estimate analysis workspace, honouring PSD estimator capabilities.
+) -> tuple[int, int]:
+    """Estimate separate device and host analyser workspaces.
 
-    A backend-native estimator needs a device FFT workspace, which scales
-    with the configured trajectory FFT chunk when one is set. A host-side
-    estimator (e.g. Welch or multitaper) only stages a transfer copy on a
-    GPU backend, so it does not need a full device FFT workspace.
+    New analysers provide their own estimator. The PSD-specific fallback is
+    retained for lightweight test doubles and one-cycle external plugins.
     """
+    from qphase_sde.analyser.base import (
+        AnalyzerWorkspaceEstimate,
+        AnalyzerWorkspaceRequest,
+    )
+
+    request = AnalyzerWorkspaceRequest(
+        trajectory_bytes=trajectory_per_point,
+        n_traj=n_traj,
+        saved_samples=saved_samples,
+        n_record_modes=n_record_modes,
+        real_itemsize=real_itemsize,
+        backend_name=backend_name,
+    )
+    device_total = 0
+    host_total = 0
     for name, analyser in analysers.items():
+        estimator_fn = getattr(analyser, "estimate_workspace", None)
+        if callable(estimator_fn):
+            estimate = estimator_fn(request)
+            if not isinstance(estimate, AnalyzerWorkspaceEstimate):
+                raise TypeError(
+                    f"analyser {name!r} returned an invalid workspace estimate"
+                )
+            device_total += max(0, int(estimate.device_bytes))
+            host_total += max(0, int(estimate.host_bytes))
+            continue
         is_psd = (
             str(name).lower() == "psd"
             or str(getattr(analyser, "name", "")).lower() == "psd"
         )
         if not is_psd:
+            if backend_name == "cupy":
+                device_total += trajectory_per_point // 2
+            else:
+                host_total += trajectory_per_point // 2
             continue
         estimator = getattr(analyser, "estimator", None)
         capability_fn = getattr(estimator, "capabilities", None)
@@ -499,18 +616,43 @@ def _analyzer_workspace_bytes(
             and not getattr(capabilities, "backend_native", True)
             and backend_name == "cupy"
         ):
-            # Host-side estimator: only a transfer staging margin touches the
-            # device, not a full device-resident FFT workspace.
-            return trajectory_per_point // 2
+            host_total += 2 * trajectory_per_point
+            continue
         chunk = getattr(
             getattr(estimator, "config", None), "fft_chunk_trajectories", None
         )
         if chunk is not None and 0 < int(chunk) < n_traj:
             # Chunked trajectory FFT: workspace scales with the chunk size.
-            return max(1, 2 * trajectory_per_point * int(chunk) // n_traj)
+            workspace = max(1, 2 * trajectory_per_point * int(chunk) // n_traj)
+            if backend_name == "cupy":
+                device_total += workspace
+            else:
+                host_total += workspace
+            continue
         # One complex FFT, one real power array, and a conservative cuFFT margin.
-        return trajectory_per_point * 2
-    return trajectory_per_point // 2 if analysers else 0
+        workspace = trajectory_per_point * 2
+        if backend_name == "cupy":
+            device_total += workspace
+        else:
+            host_total += workspace
+    return device_total, host_total
+
+
+def _analyzer_capabilities(analyser: Any) -> Any:
+    """Return a conservative capability object for old analyser instances."""
+    from qphase_sde.analyser.base import AnalyzerExecutionCapabilities
+
+    provider = getattr(analyser, "capabilities", None)
+    if callable(provider):
+        capabilities = provider()
+        if isinstance(capabilities, AnalyzerExecutionCapabilities):
+            return capabilities
+        raise TypeError("analyser capabilities() returned an invalid value")
+    return AnalyzerExecutionCapabilities(
+        supports_trajectory_batching=callable(
+            getattr(analyser, "create_result_accumulator", None)
+        )
+    )
 
 
 def _accumulator_workspace_bytes(

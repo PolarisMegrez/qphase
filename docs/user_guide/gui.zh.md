@@ -70,7 +70,7 @@ uvicorn qphase.gui.api:create_app --factory --reload
 | `GET /runs/{session_id}` | 读取 session manifest。 |
 | `GET /runs/{session_id}/events` | 读取当前本地 API 进程记录的 run progress events。 |
 | `GET /runs/{session_id}/artifacts` | 列出 session 目录下的 artifacts。 |
-| `GET /artifacts?path=...` | 读取 JSON/text artifact payload，或返回二进制文件元数据。 |
+| `GET /runs/{session_id}/artifact?path=...` | 读取受管理 session 内的 artifact。 |
 
 plan 请求示例：
 
@@ -93,8 +93,11 @@ run 完成后，可使用返回的 `session_id` 查看事件和 artifacts：
 ```bash
 curl http://127.0.0.1:8000/runs/SESSION_ID/events
 curl http://127.0.0.1:8000/runs/SESSION_ID/artifacts
-curl "http://127.0.0.1:8000/artifacts?path=/absolute/path/to/session_manifest.json"
+curl "http://127.0.0.1:8000/runs/SESSION_ID/artifact?path=session_manifest.json"
 ```
+
+artifact 路径始终在选定 run session 内解析；API 会拒绝 session 外部绝对路径和相对目录
+穿越。
 
 ## MVP 范围
 

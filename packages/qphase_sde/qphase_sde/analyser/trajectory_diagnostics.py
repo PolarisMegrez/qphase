@@ -33,8 +33,17 @@ from ..coordinates import (
     canonical_vector,
 )
 from ..utils import resolve_mode_columns
-from .base import Analyzer
+from .base import (
+    Analyzer,
+    AnalyzerExecutionCapabilities,
+    AnalyzerWorkspaceEstimate,
+    AnalyzerWorkspaceRequest,
+)
 from .result import AnalysisResult
+from .trajectory_diagnostic import (
+    TrajectoryDiagnosticChild,
+    TrajectoryDiagnosticContext,
+)
 
 __all__ = ["TrajectoryDiagnostics", "TrajectoryDiagnosticsConfig"]
 
@@ -198,6 +207,30 @@ class TrajectoryDiagnostics(Analyzer):
         TrajectoryDiagnosticsConfig
     )
 
+    def capabilities(self) -> AnalyzerExecutionCapabilities:
+        """Declare the current full-record host implementation."""
+        return AnalyzerExecutionCapabilities(
+            execution_location="host",
+            requires_full_trajectory=True,
+            supports_trajectory_batching=False,
+            supports_time_streaming=False,
+        )
+
+    def estimate_workspace(
+        self, request: AnalyzerWorkspaceRequest
+    ) -> AnalyzerWorkspaceEstimate:
+        """Estimate D2H, canonical-coordinate, and diagnostic temporaries."""
+        materialization = (
+            request.trajectory_bytes if request.backend_name == "cupy" else 0
+        )
+        coordinate_bytes = (
+            request.trajectory_bytes * request.n_record_modes // 2
+        )
+        scratch = request.trajectory_bytes
+        return AnalyzerWorkspaceEstimate(
+            host_bytes=materialization + coordinate_bytes + scratch
+        )
+
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         config = cast(TrajectoryDiagnosticsConfig, self.config)
         array = _trajectory_array(data)
@@ -217,62 +250,35 @@ class TrajectoryDiagnostics(Analyzer):
             raise ValueError("trajectory sample spacing must be positive")
 
         columns = resolve_mode_columns(data, config.modes)
-        mode_results: dict[int, dict[str, Any]] = {}
-        for mode, column in zip(config.modes, columns, strict=True):
-            series = values[:, :, column]
-            payload: dict[str, Any] = {
-                "mean_amplitude_per_trajectory": np.mean(np.abs(series), axis=1),
-                "mean_power_per_trajectory": np.mean(np.abs(series) ** 2, axis=1),
-                "phase_increment": _phase_increment_summary(
-                    series, dt, config.amplitude_floor
-                ),
-                "block_statistics": _block_statistics(
-                    series,
-                    dt,
-                    config.block_durations,
-                    config.amplitude_floor,
-                ),
-            }
-            if config.coherence:
-                payload["coherence"] = _coherence(
-                    series,
-                    dt,
-                    max_lag=config.coherence_max_lag,
-                    center=config.center_coherence,
-                    keep_per_trajectory=config.keep_coherence_per_trajectory,
-                )
-            if config.allan:
-                payload["allan"] = _allan_variance(
-                    series,
-                    dt,
-                    taus=config.allan_taus,
-                    points=config.allan_points,
-                    min_windows=config.allan_min_windows,
-                    amplitude_floor=config.amplitude_floor,
-                )
-            if config.block_spectrum:
-                payload["block_spectrum"] = _block_spectrum(
-                    series,
-                    dt,
-                    config.block_durations,
-                    wing_factor=config.block_spectrum_wing_factor,
-                )
-            mode_results[int(mode)] = payload
-
+        diagnostic_context = TrajectoryDiagnosticContext(
+            values=values,
+            dt=dt,
+            t0=t0,
+            modes=tuple(config.modes),
+            mode_columns=tuple(columns),
+            coordinate_builder=canonical_r_coordinates,
+        )
         result: dict[str, Any] = {
             "modes": list(config.modes),
             "t0": t0,
             "dt": dt,
             "n_traj": int(values.shape[0]),
             "n_samples": int(values.shape[1]),
-            "mode_results": mode_results,
+            "mode_results": {},
         }
+        children: list[TrajectoryDiagnosticChild] = [_ModeSummaryChild()]
+        if config.coherence:
+            children.append(_CoherenceChild())
+        if config.allan:
+            children.append(_AllanChild())
+        if config.block_spectrum:
+            children.append(_BlockSpectrumChild())
         if config.matrix_projection:
-            result["matrix_projection"] = _matrix_projection(values, dt, config)
+            children.append(_MatrixProjectionChild())
         if config.stationarity_details:
-            result["stationarity"] = _stationarity_details(
-                values, dt, config.block_durations
-            )
+            children.append(_StationarityChild())
+        for child in children:
+            child.apply(diagnostic_context, result, config)
         return AnalysisResult(
             data_dict=result,
             meta={
@@ -282,6 +288,123 @@ class TrajectoryDiagnostics(Analyzer):
                 "n_traj": int(values.shape[0]),
                 "n_samples": int(values.shape[1]),
             },
+        )
+
+
+class _ModeSummaryChild:
+    name = "mode_summary"
+
+    def apply(
+        self,
+        context: TrajectoryDiagnosticContext,
+        result: dict[str, Any],
+        config: TrajectoryDiagnosticsConfig,
+    ) -> None:
+        for mode in context.modes:
+            series = context.series(mode)
+            result["mode_results"][mode] = {
+                "mean_amplitude_per_trajectory": np.mean(np.abs(series), axis=1),
+                "mean_power_per_trajectory": np.mean(np.abs(series) ** 2, axis=1),
+                "phase_increment": _phase_increment_summary(
+                    series, context.dt, config.amplitude_floor
+                ),
+                "block_statistics": _block_statistics(
+                    series,
+                    context.dt,
+                    config.block_durations,
+                    config.amplitude_floor,
+                ),
+            }
+
+
+class _CoherenceChild:
+    name = "coherence"
+
+    def apply(
+        self,
+        context: TrajectoryDiagnosticContext,
+        result: dict[str, Any],
+        config: TrajectoryDiagnosticsConfig,
+    ) -> None:
+        for mode in context.modes:
+            result["mode_results"][mode]["coherence"] = _coherence(
+                context.series(mode),
+                context.dt,
+                max_lag=config.coherence_max_lag,
+                center=config.center_coherence,
+                keep_per_trajectory=config.keep_coherence_per_trajectory,
+            )
+
+
+class _AllanChild:
+    name = "allan"
+
+    def apply(
+        self,
+        context: TrajectoryDiagnosticContext,
+        result: dict[str, Any],
+        config: TrajectoryDiagnosticsConfig,
+    ) -> None:
+        for mode in context.modes:
+            result["mode_results"][mode]["allan"] = _allan_variance(
+                context.series(mode),
+                context.dt,
+                taus=config.allan_taus,
+                points=config.allan_points,
+                min_windows=config.allan_min_windows,
+                amplitude_floor=config.amplitude_floor,
+            )
+
+
+class _BlockSpectrumChild:
+    name = "block_spectrum"
+
+    def apply(
+        self,
+        context: TrajectoryDiagnosticContext,
+        result: dict[str, Any],
+        config: TrajectoryDiagnosticsConfig,
+    ) -> None:
+        for mode in context.modes:
+            result["mode_results"][mode]["block_spectrum"] = _block_spectrum(
+                context.series(mode),
+                context.dt,
+                config.block_durations,
+                wing_factor=config.block_spectrum_wing_factor,
+            )
+
+
+class _MatrixProjectionChild:
+    name = "matrix_projection"
+
+    def apply(
+        self,
+        context: TrajectoryDiagnosticContext,
+        result: dict[str, Any],
+        config: TrajectoryDiagnosticsConfig,
+    ) -> None:
+        result[self.name] = _matrix_projection(
+            context.values,
+            context.canonical_coordinates(),
+            context.dt,
+            config,
+        )
+
+
+class _StationarityChild:
+    name = "stationarity"
+
+    def apply(
+        self,
+        context: TrajectoryDiagnosticContext,
+        result: dict[str, Any],
+        config: TrajectoryDiagnosticsConfig,
+    ) -> None:
+        result[self.name] = _stationarity_details(
+            context.canonical_coordinates(),
+            context.dt,
+            config.block_durations,
+            n_modes=context.values.shape[-1],
         )
 
 
@@ -890,6 +1013,7 @@ def _block_spectrum(
 
 def _matrix_projection(
     values: np.ndarray,
+    coordinates: np.ndarray,
     dt: float,
     config: TrajectoryDiagnosticsConfig,
 ) -> dict[str, Any]:
@@ -917,7 +1041,6 @@ def _matrix_projection(
             n_coordinates,
             "matrix_projection_left_vector",
         )
-    coordinates = canonical_r_coordinates(values)
     result: dict[str, Any] = {
         "status": "ok",
         "quantity": "matrix_projection",
@@ -960,9 +1083,11 @@ def _matrix_projection(
 
 
 def _stationarity_details(
-    values: np.ndarray,
+    coordinates: np.ndarray,
     dt: float,
     durations: list[float],
+    *,
+    n_modes: int,
 ) -> dict[str, Any]:
     """Per-trajectory stationarity adjudication for each requested duration.
 
@@ -974,7 +1099,7 @@ def _stationarity_details(
     """
     if not durations:
         return {"status": "no_blocks_configured"}
-    n_traj, n_time, n_modes = values.shape
+    n_traj, n_time, n_coordinates = coordinates.shape
     entries: list[dict[str, Any]] = []
     for duration in durations:
         block_samples = _duration_samples(duration, dt, "block duration")
@@ -988,9 +1113,11 @@ def _stationarity_details(
         if n_blocks < _STATIONARITY_MIN_BLOCKS:
             entry["status"] = "insufficient_data"
         else:
-            trimmed = values[:, : n_blocks * block_samples]
-            blocks = trimmed.reshape(n_traj, n_blocks, block_samples, n_modes)
-            features = np.mean(canonical_r_coordinates(blocks), axis=2)
+            trimmed = coordinates[:, : n_blocks * block_samples]
+            blocks = trimmed.reshape(
+                n_traj, n_blocks, block_samples, n_coordinates
+            )
+            features = np.mean(blocks, axis=2)
             entry.update(_stationarity_features(features))
         entries.append(entry)
     return {

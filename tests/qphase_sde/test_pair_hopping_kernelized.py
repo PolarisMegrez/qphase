@@ -40,19 +40,16 @@ def test_fused_step_matches_generic(model):
 
     rng = np.random.default_rng(71)
     y = cp.asarray(
-        (30.0 * rng.standard_normal((32, 2)) + 30.0j * rng.standard_normal((32, 2)))
-        .astype(np.complex128)
+        (
+            30.0 * rng.standard_normal((32, 2)) + 30.0j * rng.standard_normal((32, 2))
+        ).astype(np.complex128)
     )
     noise = cp.asarray(
         (rng.standard_normal((32, 4)) * np.sqrt(0.02)).astype(np.float64)
     )
     backend = CuPyBackend()
-    generic = CayleyMaruyama(fused="off").step(
-        y, 0.0, 0.02, model, noise, backend
-    )
-    fused = CayleyMaruyama(fused="required").step(
-        y, 0.0, 0.02, model, noise, backend
-    )
+    generic = CayleyMaruyama(fused="off").step(y, 0.0, 0.02, model, noise, backend)
+    fused = CayleyMaruyama(fused="required").step(y, 0.0, 0.02, model, noise, backend)
     cp.testing.assert_allclose(fused, generic, rtol=2e-12, atol=2e-12)
 
 
@@ -62,8 +59,9 @@ def test_fused_chunk_matches_repeated_steps(model):
 
     rng = np.random.default_rng(72)
     y = cp.asarray(
-        (20.0 * rng.standard_normal((16, 2)) + 20.0j * rng.standard_normal((16, 2)))
-        .astype(np.complex128)
+        (
+            20.0 * rng.standard_normal((16, 2)) + 20.0j * rng.standard_normal((16, 2))
+        ).astype(np.complex128)
     )
     noise = cp.asarray(
         (rng.standard_normal((8, 16, 4)) * np.sqrt(0.02)).astype(np.float64)
@@ -95,3 +93,49 @@ def test_fused_chunk_matches_repeated_steps(model):
     cp.testing.assert_allclose(
         chunk_saved, cp.stack(saved, axis=1), rtol=2e-12, atol=2e-12
     )
+
+
+@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+def test_fused_chunk_is_stable_after_single_step_launch(model):
+    """A preceding step launch must not corrupt chunk inputs or outputs."""
+    import cupy as cp
+
+    rng = np.random.default_rng(73)
+    backend = CuPyBackend()
+    integrator = CayleyMaruyama(fused="required", chunk_steps=8)
+    warm_state = cp.asarray(
+        (
+            10.0 * rng.standard_normal((32, 2)) + 10.0j * rng.standard_normal((32, 2))
+        ).astype(np.complex128)
+    )
+    warm_noise = cp.asarray(
+        (rng.standard_normal((32, 4)) * np.sqrt(0.02)).astype(np.float64)
+    )
+    integrator.step(warm_state, 0.0, 0.02, model, warm_noise, backend)
+
+    state = cp.asarray(
+        (
+            20.0 * rng.standard_normal((16, 2)) + 20.0j * rng.standard_normal((16, 2))
+        ).astype(np.complex128)
+    )
+    noise = cp.asarray(
+        (rng.standard_normal((8, 16, 4)) * np.sqrt(0.02)).astype(np.float64)
+    )
+    chunk = integrator.step_chunk(
+        state,
+        0.0,
+        0.02,
+        model,
+        noise,
+        backend,
+        n_steps=8,
+        save_offsets=(8,),
+        record_modes=(0, 1),
+    )
+    expected = state.copy()
+    for step in range(8):
+        expected += integrator.step(
+            expected, step * 0.02, 0.02, model, noise[step], backend
+        )
+
+    cp.testing.assert_allclose(chunk.final_state, expected, rtol=2e-12, atol=2e-12)
