@@ -19,6 +19,7 @@ PUBLIC_TYPES = (
     "ReductionSearchResult",
     "LinearReductionPlan",
     "MaterializedReduction",
+    "MaterializationFailure",
     "RejectedPartition",
 )
 METHODS = (

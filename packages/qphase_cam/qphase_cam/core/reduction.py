@@ -315,12 +315,13 @@ class FractionFreeScalarReduction:
         order_parameter_bounds: tuple[float, float] | None = None,
         order_parameter_samples: int = 41,
         stats: SeedGenerationStats | None = None,
+        control_axes: tuple[np.ndarray, ...] | None = None,
     ) -> list[np.ndarray]:
         del order_parameter_bounds, order_parameter_samples
-        axes = [
+        axes = control_axes or tuple(
             np.linspace(lower, upper, samples_per_control)
             for lower, upper in control_bounds
-        ]
+        )
         starts: list[np.ndarray] = []
         for controls in product(*axes):
             params = self._params(np.asarray((0.0, *controls), dtype=float))
@@ -492,22 +493,16 @@ class CondensedScalarReduction:
                         name: mp.mpf(str(parameter))
                         for name, parameter in self.base_params.items()
                     }
-                    params.update(
-                        zip(self.control_names, solved[1:], strict=True)
-                    )
+                    params.update(zip(self.control_names, solved[1:], strict=True))
                     full_residual = self._mp_full_residual(
                         *state,
                         *(params[name] for name in self.parameter_names),
                     )
                     full_values = tuple(full_residual)
                     multiplicity_norm = float(residual)
-                    full_norm = float(
-                        mp.sqrt(sum(item * item for item in full_values))
-                    )
+                    full_norm = float(mp.sqrt(sum(item * item for item in full_values)))
                     tolerance = 10.0 ** (-min(30, digits // 2))
-                    success = (
-                        multiplicity_norm <= tolerance and full_norm <= tolerance
-                    )
+                    success = multiplicity_norm <= tolerance and full_norm <= tolerance
                     if success or digits >= max_digits:
                         return VerificationOutcome(
                             value=np.asarray([float(item) for item in solved]),
@@ -644,9 +639,7 @@ class CondensedScalarReduction:
     def _reconstruct_mpmath(self, value: Any) -> tuple[Any, ...]:
         jets, _ = self._evaluate_mpmath(value)
         values = {self.plan.candidate.retained_indices[0]: tuple(value)[0]}
-        values.update(
-            zip(self.plan.candidate.eliminated_indices, jets[0], strict=True)
-        )
+        values.update(zip(self.plan.candidate.eliminated_indices, jets[0], strict=True))
         return tuple(values[index] for index in range(len(values)))
 
     def diagnostics(self, value: Any) -> ReductionDiagnostics:
@@ -669,13 +662,14 @@ class CondensedScalarReduction:
         order_parameter_bounds: tuple[float, float] | None = None,
         order_parameter_samples: int = 41,
         stats: SeedGenerationStats | None = None,
+        control_axes: tuple[np.ndarray, ...] | None = None,
     ) -> list[np.ndarray]:
         q_bounds = order_parameter_bounds or self._default_q_bounds()
         q_axis = self._q_axis(q_bounds, order_parameter_samples)
-        control_axes = [
+        control_axes = control_axes or tuple(
             np.linspace(lower, upper, samples_per_control)
             for lower, upper in control_bounds
-        ]
+        )
         starts: list[np.ndarray] = []
         for controls in product(*control_axes):
             values = []
@@ -786,8 +780,7 @@ class CondensedScalarReduction:
 
         array = tuple(value)
         params = {
-            name: mp.mpf(str(parameter))
-            for name, parameter in self.base_params.items()
+            name: mp.mpf(str(parameter)) for name, parameter in self.base_params.items()
         }
         params.update(zip(self.control_names, array[1:], strict=True))
         return self._evaluate_mpmath_at(array[0], params)

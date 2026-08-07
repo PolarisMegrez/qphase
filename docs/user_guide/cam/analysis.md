@@ -74,6 +74,12 @@ also required. It selects the physical parameter varied after the critical
 point is located; it may also be one of the controls. All other parameters are
 held fixed during classification.
 
+Each control accepts `sampling: linear|log` for discovery seeds. `linear` is
+the default. `log` requires a strictly positive lower bound and is appropriate
+when a threshold may span several decades, such as an induced weak-coupling
+rate of order `g^2/Delta`. Sampling changes only seed placement; refinement
+continues to solve for the physical control values with the configured bounds.
+
 The default `strategy.auto` evaluates every available scalar linear reduction
 and unions those candidates with a full bordered Lyapunov-Schmidt search. Small
 eliminated blocks use fraction-free equations; large blocks use implicit

@@ -49,12 +49,20 @@ class ControlRange(BaseModel):
     max: float
     scale: float | None = Field(None, gt=0.0)
     domain: Literal["auto", "real", "nonnegative"] = "auto"
+    sampling: Literal["linear", "log"] = "linear"
 
     @model_validator(mode="after")
     def validate_bounds(self) -> ControlRange:
         if self.max <= self.min:
             raise ValueError("control max must be greater than min")
+        if self.sampling == "log" and self.min <= 0.0:
+            raise ValueError("log-sampled control min must be positive")
         return self
+
+    def sample_values(self, count: int) -> np.ndarray:
+        if self.sampling == "log":
+            return np.geomspace(self.min, self.max, count)
+        return np.linspace(self.min, self.max, count)
 
 
 class RefinementConfig(BaseModel):
@@ -241,6 +249,7 @@ class BifurcationSolver(CAMSolver):
                 order_parameter_bounds=self.strategy.config.order_parameter_bounds,
                 order_parameter_samples=(self.discovery.config.order_parameter_samples),
                 stats=seed_stats,
+                control_axes=self._control_seed_axes(),
             )
             raw_start_count = len(starts)
             prefilter_rejected: Counter[str] = Counter()
@@ -331,6 +340,10 @@ class BifurcationSolver(CAMSolver):
             "numerical_coverage": "finite_control_grid_local_refinement",
             "domain_coverage": {
                 "control_bounds": self._control_bounds(),
+                "control_sampling": {
+                    name: control.sampling
+                    for name, control in self.config.controls.items()
+                },
                 "physical_prefilter": True,
                 "raw_start_count": sum(
                     item["start_count"] + item["nonphysical_start_count"]
@@ -540,6 +553,10 @@ class BifurcationSolver(CAMSolver):
             "numerical_coverage": f"{seed_source}_bordered_local_search",
             "domain_coverage": {
                 "control_bounds": self._control_bounds(),
+                "control_sampling": {
+                    name: control.sampling
+                    for name, control in self.config.controls.items()
+                },
                 "physical_seed_filter": seed_source == "domain_sampling",
                 "seed_count": len(seeds),
             },
@@ -628,11 +645,7 @@ class BifurcationSolver(CAMSolver):
         stats: SeedGenerationStats | None = None,
     ) -> list[np.ndarray]:
         axes = [
-            np.linspace(
-                control.min,
-                control.max,
-                self.discovery.config.samples_per_control,
-            )
+            control.sample_values(self.discovery.config.samples_per_control)
             for control in self.config.controls.values()
         ]
         starts = []
@@ -1324,6 +1337,12 @@ class BifurcationSolver(CAMSolver):
     def _control_bounds(self) -> tuple[tuple[float, float], ...]:
         return tuple(
             (control.min, control.max) for control in self.config.controls.values()
+        )
+
+    def _control_seed_axes(self) -> tuple[np.ndarray, ...]:
+        count = self.discovery.config.samples_per_control
+        return tuple(
+            item.sample_values(count) for item in self.config.controls.values()
         )
 
     def _state_is_physical(

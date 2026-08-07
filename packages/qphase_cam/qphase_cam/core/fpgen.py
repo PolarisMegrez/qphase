@@ -13,7 +13,7 @@ from qphase_cam.errors import BifurcationCapabilityError, FPGenCompatibilityErro
 SUPPORTED_FPGEN_SERIES = (0, 5)
 SUPPORTED_MODEL_SCHEMAS = frozenset({"2.0"})
 SUPPORTED_MOMENT_API = "1.0"
-SUPPORTED_REDUCTION_API = "1.0"
+SUPPORTED_REDUCTION_API = "1.1"
 SUPPORTED_STATE_LAYOUTS = frozenset(
     {
         "hermitian-declared-index-v1",

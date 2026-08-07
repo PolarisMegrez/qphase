@@ -6,7 +6,7 @@ QPhase 不得把其源码复制到 `packages/`，也不得依赖 fpgen 的内部
 ## 支持范围
 
 当前经过审查的契约为：fpgen `0.5.x`、model schema `2.0`、moment API
-`1.0`、reduction API `1.0`。支持的状态布局是
+`1.0`、reduction API `1.1`。支持的状态布局是
 `hermitian-declared-index-v1` 与
 `hermitian-normal-anomalous-declared-index-v2`。
 

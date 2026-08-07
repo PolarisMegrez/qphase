@@ -70,6 +70,11 @@ axis 支持 `values`、`linspace` 与 `logspace`，并可选择 Cartesian 或 zi
 实际变化的物理参数，并允许同时属于 controls。分类时其他参数固定在候选值。可选的
 外层 `ScanSpec` 用于改变各 case 的固定参数，不会展开为 scheduler 子 job。
 
+每个 control 可用 `sampling: linear|log` 指定 discovery seed 的采样方式，默认为
+`linear`。`log` 要求下界严格为正，适合搜索跨越多个数量级的阈值，例如弱耦合诱导的
+`g^2/Delta` 速率。该选项只改变初值覆盖；refinement 仍在原物理控制变量和配置边界内
+求解。
+
 `strategy.auto` 会运行全部可用的一维线性约化，并与 full bordered 搜索结果取并集。
 这比只选择首个序参量更昂贵，但不会把序参量选择变成隐含的覆盖假设。当前 discovery
 只注册 `seeds`；在真正实现分支追踪前不提供名不副实的 continuation discovery。

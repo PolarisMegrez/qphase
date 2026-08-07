@@ -18,6 +18,7 @@ REQUIRED_EXPORTS = {
     "ReductionSearchResult",
     "LinearReductionPlan",
     "MaterializedReduction",
+    "MaterializationFailure",
     "RejectedPartition",
 }
 
@@ -82,7 +83,7 @@ def test_fpgen_adapter_numerical_and_reduction_contract():
         return_limit=1,
     )
     manifest = search.manifest()
-    assert manifest["api_version"] == "1.0"
+    assert manifest["api_version"] == "1.1"
     assert manifest["regular_branches_only"] is True
     assert manifest["candidate_count"] >= len(search.candidates) == 1
     assert "coverage" in manifest
@@ -93,6 +94,9 @@ def test_fpgen_adapter_numerical_and_reduction_contract():
         "structurally_rank_deficient",
     }
     assert manifest["materialization_skipped_oversized"] >= 0
+    assert manifest["materialization_failure_count"] == len(
+        search.materialization_failures
+    )
 
     candidate = search.candidates[0]
     assert candidate.chart_id == (

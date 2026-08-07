@@ -11,7 +11,7 @@ The reviewed contract is:
 - fpgen release series: `0.5.x`
 - model schema: `2.0`
 - moment dynamics API: `1.0`
-- reduction API: `1.0`
+- reduction API: `1.1`
 - state layouts: `hermitian-declared-index-v1` and
   `hermitian-normal-anomalous-declared-index-v2`
 
@@ -77,7 +77,9 @@ deduplication and provenance. The search result also carries
 `rejected_partitions` entries (per-partition rejection reason and retained
 coordinates), and `manifest()` reports `rejected_partition_count` and
 `materialization_skipped_oversized` (materialization skipped when the
-eliminated block exceeds dimension 3).
+eliminated block exceeds dimension 3). Materialization errors are diagnostics,
+not partition rejections: `materialization_failures` records them by `chart_id`
+and `manifest()` reports `materialization_failure_count`.
 Search covers regular affine-elimination branches only. Singular branches are
 not implied to be absent when coverage is exhaustive.
 

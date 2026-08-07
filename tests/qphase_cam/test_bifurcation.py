@@ -719,6 +719,31 @@ def test_bifurcation_config_accepts_audit_section():
         BifurcationSolverConfig(**base, audit={"unknown": 1})
 
 
+def test_control_range_supports_logarithmic_seed_sampling():
+    control = ControlRange(min=1e-6, max=1.0, sampling="log")
+    np.testing.assert_allclose(control.sample_values(3), [1e-6, 1e-3, 1.0])
+    assert ControlRange(min=-1.0, max=1.0).sampling == "linear"
+    with pytest.raises(ValueError, match="must be positive"):
+        ControlRange(min=0.0, max=1.0, sampling="log")
+
+
+def test_condensed_initial_starts_accept_explicit_control_axis():
+    reduction = _fold_condensed_reduction()
+    stats = SeedGenerationStats(source=reduction.seed_source)
+    axis = np.asarray([-1.0, -0.1, 0.0])
+    starts = reduction.initial_starts(
+        ((-1.0, 0.0),),
+        samples_per_control=99,
+        max_starts=1000,
+        order_parameter_bounds=(-2.0, 2.0),
+        order_parameter_samples=21,
+        stats=stats,
+        control_axes=(axis,),
+    )
+    q_axis = reduction._q_axis((-2.0, 2.0), 21)
+    assert len(starts) + stats.skipped_total == (len(q_axis) - 1) * len(axis)
+
+
 def test_condensed_initial_starts_seed_stats_balance():
     reduction = _fold_condensed_reduction()
     stats = SeedGenerationStats(source=reduction.seed_source)
