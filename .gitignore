@@ -53,6 +53,7 @@ desktop.ini
 # User Data
 scripts/
 reports/
+skills/
 *.temp
 ~$*
 

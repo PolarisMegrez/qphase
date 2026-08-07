@@ -1,0 +1,92 @@
+# Retained Kerr-full baseline. The reproducible negative-side joint scaling
+# window is |omega_c + 1| = 1.764e-3...2.0e-2 (about 1.05 decades).
+- name: kerr_full_3mode_omega_c_log_negative_seed2_sim
+  save: true
+
+  scan:
+    axes:
+      omega_c:
+        target: model.kerr_full_3mode.omega_c
+        values: [-1.02, -1.01603813060699, -1.01286108166835,
+                 -1.01031338537721, -1.008270371084, -1.00663206458068,
+                 -1.00531829589694, -1.00426477621009, -1.00341995189335,
+                 -1.00274248175676, -1.00219921403011, -1.00176356409238,
+                 -1.00141421356237, -1.00113406709098, -1.00090941580611,
+                 -1.00072926647372, -1.00058480354764, -1.00046895778383,
+                 -1.00037606030931, -1.00030156521784, -1.00024182711751,
+                 -1.00019392274475, -1.0001555079154, -1.00012470281288,
+                 -1.0001]
+
+  engine:
+    sde:
+      t0: 0.0
+      t1: 100000.0
+      dt: 0.005
+      n_traj: 16
+      seed: 20260808
+      ic:
+        - ["2.5596906851531513+0.0j",
+           "1.8244433135188922+3.6934242845205207j",
+           "-23.925084375601617+0.7312746798613824j"]
+      adaptive: false
+      save_stride: 100
+      record_modes: [0]
+      keep_traj: false
+      max_state_norm: 20000.0
+      state_check_interval_steps: 1024
+
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: -0.8282592981043274
+      omega_c: -1.0
+      chi: 0.01
+      gamma_a: 3.0
+      gamma_b: 1.0
+      gamma_c: 0.06381888082869307
+      g_ab: 1.0
+      g_ac: 0.2
+      g_bc: 0.2
+
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      find_peaks: true
+      estimator:
+        periodogram: {}
+
+- name: kerr_full_3mode_omega_c_log_negative_seed2_fit
+  input:
+    from: kerr_full_3mode_omega_c_log_negative_seed2_sim
+    mode: dataset
+  save: true
+
+  engine:
+    sde:
+      mode: analyze
+
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: 0.5
+      freq_max: 1.5
+      fit_window: 0.02
+      uncertainty: auto
+      clip_by_std: false
+      clip_sigma: 10.0
+      export: [fit_results.csv, psd_merged.csv]

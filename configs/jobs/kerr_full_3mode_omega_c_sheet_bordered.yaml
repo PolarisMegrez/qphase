@@ -1,0 +1,81 @@
+name: kerr_full_3mode_omega_c_sheet_bordered
+save: true
+
+scan:
+  combine: zipped
+  axes:
+    omega_c:
+      target: model.kerr_full_3mode.omega_c
+      values: [-4.0, -1.0, -0.2, 0.5, 2.0, 1.0]
+    chi:
+      target: model.kerr_full_3mode.chi
+      values: [1.0e-4, 1.0e-2, 1.0e-2, 1.0e-3, 1.0e-3, 3.0e-3]
+    gamma_a:
+      target: model.kerr_full_3mode.gamma_a
+      values: [0.2, 3.0, 0.2, 1.0, 3.0, 3.0]
+    gamma_b:
+      target: model.kerr_full_3mode.gamma_b
+      values: [1.0, 1.0, 1.0, 3.0, 0.2, 1.0]
+    g_ab:
+      target: model.kerr_full_3mode.g_ab
+      values: [0.1, 1.0, 1.0, 1.0, 1.0, 0.5]
+    g_ac:
+      target: model.kerr_full_3mode.g_ac
+      values: [0.1, 0.2, 1.0, 0.2, 1.0, 1.0]
+    g_bc:
+      target: model.kerr_full_3mode.g_bc
+      values: [0.1, 0.2, 0.2, 1.0, 1.0, 3.0]
+
+engine:
+  cam: {}
+
+plugins:
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: -1.0
+      chi: 0.001
+      gamma_a: 1.0
+      gamma_b: 1.0
+      gamma_c: 1.0
+      g_ab: 1.0
+      g_ac: 1.0
+      g_bc: 1.0
+  cam_solver:
+    bifurcation:
+      controls:
+        omega_b: {min: -5.0, max: 5.0, scale: 1.0, domain: real}
+        gamma_c: {min: 0.01, max: 5.0, scale: 1.0, domain: nonnegative, sampling: log}
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        full:
+          singular_tolerance: 1.0e-10
+      discovery:
+        seeds:
+          samples_per_control: 5
+          max_starts: 128
+          order_parameter_samples: 41
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-10
+        max_iterations: 100
+      verification:
+        initial_digits: 60
+        max_digits: 200
+  cam_postprocessor:
+    stochastic_validity:
+      probe_epsilon: 1.0e-4
