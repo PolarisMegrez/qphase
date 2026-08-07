@@ -20,20 +20,36 @@ Strata (plan §3): the regular fixed-degree stratum requires the chart
 denominators and the leading coefficient to be nonzero.  When the leading
 coefficient vanishes the problem is rebuilt explicitly on the degree-drop
 stratum (drop the leading term, add the vanishing condition, resolve); it is
-never silently excluded.  Solutions where the chart denominators or cleared
-factors vanish are classified ``chart_singular`` instead of being dropped.
+never silently excluded.  A degree-drop stratum whose drop-condition ideal
+is unsatisfiable (it contains a nonzero constant) is *proven* empty and
+recorded as ``empty_inconsistent_stratum`` without entering the solver.
+Empty strata are unreachable by construction and never affect the verdict.
+Solutions where the chart denominators or cleared factors vanish are
+classified ``chart_singular`` instead of being dropped.
+
+Every result carries two independent judgements (audit P0-4): the algebraic
+``status`` of the primary reachable stratum, and a top-level
+``completeness`` (``complete``/``partial``/``failed``) that is ``complete``
+only when *no* reachable stratum is unresolved (solver error, timeout,
+unsupported, or partial factor coverage) — so a failed deeper stratum can
+never be hidden by a solved primary one.  ``counts["strata"]`` breaks the
+coverage down into unreachable-empty, fully-solved, positive-dimensional and
+unresolved layers.
 
 Solving: the derivative system in ``x`` is first reduced by pseudo-remainder
 (prem) chains, which for ``degree(p) == q`` degenerates to the proven
 elimination ``x = -b/(q*a)`` and for ``degree(p) > q`` shrinks the
 ``x``-degrees before the Groebner dimension check.  Pseudo-remainder
-reduction never loses common zeros of the original system, and every
-candidate is verified exactly against the original derivative equations, so
-extraneous factors introduced by leading-coefficient powers are filtered
-honestly.  If the reduced system is positive-dimensional the dimension is
-re-decided on the original system saturated with the stratum leading
-coefficient (Rabinowitsch trick), keeping ``positive_dimensional`` strictly
-distinct from solver failures.
+reduction preserves every common zero of the original system *except*
+possibly on the hypersurface where a divided-out content (a polynomial in
+the controls alone) vanishes; each such content factor is therefore solved
+as an explicit auxiliary system ``{original equations} + {factor == 0}``
+(audit P0-4), and every candidate is verified exactly against the original
+derivative equations, so extraneous factors introduced by
+leading-coefficient powers are filtered honestly.  If the reduced system is
+positive-dimensional the dimension is re-decided on the original system
+saturated with the stratum leading coefficient (Rabinowitsch trick),
+keeping ``positive_dimensional`` strictly distinct from solver failures.
 
 For ``degree(p) > q`` with exactly two controls (``q == 3``) a resultant path
 replaces the Groebner step, which is prohibitively slow on the prem-reduced
@@ -106,6 +122,32 @@ ALGEBRAIC_STATUSES = frozenset(
         STATUS_UNSUPPORTED,
         STATUS_SOLVER_ERROR,
     }
+)
+
+#: Stratum statuses for layers that provably cannot host a solution:
+#: ``empty_stratum`` -- the leading coefficient vanishes identically, so the
+#: effective degree is lower for every control value;
+#: ``empty_inconsistent_stratum`` -- the drop-condition ideal contains a
+#: nonzero constant, so no control value reaches this layer at all.
+STATUS_EMPTY_STRATUM = "empty_stratum"
+STATUS_EMPTY_INCONSISTENT = "empty_inconsistent_stratum"
+EMPTY_STRATUM_STATUSES = frozenset({STATUS_EMPTY_STRATUM, STATUS_EMPTY_INCONSISTENT})
+
+#: Case-level completeness values, independent of the per-stratum algebraic
+#: status (audit P0-4).  A *reachable* stratum is one not in
+#: :data:`EMPTY_STRATUM_STATUSES`.  A reachable stratum is *unresolved* when
+#: its status is ``solver_error``/``timeout``/``unsupported`` or its factor
+#: coverage is partial (numerically screened factors may hide roots).
+#: ``complete`` -- no reachable stratum is unresolved; ``partial`` -- some
+#: reachable stratum is unresolved but at least one was solved or decided
+#: positive-dimensional; ``failed`` -- every reachable stratum is unresolved.
+COMPLETENESS_COMPLETE = "complete"
+COMPLETENESS_PARTIAL = "partial"
+COMPLETENESS_FAILED = "failed"
+
+#: Stratum statuses that mean "roots may have been missed here".
+_UNRESOLVED_STRATUM_STATUSES = frozenset(
+    {STATUS_SOLVER_ERROR, STATUS_TIMEOUT, STATUS_UNSUPPORTED}
 )
 
 #: Per-solution classification values.
@@ -311,13 +353,20 @@ def enumerate_scalar_charts(adapter: Any) -> dict[str, Any]:
     }
 
 
-def _prem_reduce(f: Any, e: Any, x: Any) -> Any:
+def _prem_reduce(f: Any, e: Any, x: Any, contents: list[Any] | None = None) -> Any:
     """One pseudo-remainder reduction step; preserves common zeros of f, e.
 
-    The result is normalized to its primitive part in ``x``: the removed
-    content is a polynomial in the controls alone, whose zeros remain common
-    zeros of every reduced equation (so no original solution is lost), while
-    dropping the leading-coefficient-power blowup prem accumulates.
+    The result is normalized to its primitive part in ``x``.  The removed
+    content is a polynomial in the controls alone; dividing it out is only
+    zero-set-preserving where the content is nonzero: on the hypersurface
+    ``content == 0`` the pseudo-remainder vanishes identically in ``x`` (the
+    x-gcd of the system jumps degree there) while the primitive part may not,
+    so common zeros of the original equations on that hypersurface would be
+    lost (audit P0-4).  Every removed content is therefore appended to
+    ``contents`` when given, and :func:`_solve_stratum` solves the additional
+    content-locus systems ``{original equations} + {factor == 0}`` explicitly.
+    Removing a nonzero *rational* content (no control symbols) loses nothing
+    and is not recorded.
     """
     degree_f = sp.degree(f, x)
     degree_e = sp.degree(e, x)
@@ -326,28 +375,37 @@ def _prem_reduce(f: Any, e: Any, x: Any) -> Any:
     reduced = sp.expand(sp.prem(f, e, x))
     if reduced == 0 or (sp.degree(reduced, x) or 0) < 1:
         return reduced
-    return sp.expand(sp.Poly(reduced, x).primitive()[1].as_expr())
+    content, primitive = sp.Poly(reduced, x).primitive()
+    if contents is not None and content.free_symbols:
+        contents.append(content)
+    return sp.expand(primitive.as_expr())
 
 
-def _reduced_derivative_system(p: Any, x: Any, order: int) -> list[Any]:
+def _reduced_derivative_system(
+    p: Any, x: Any, order: int
+) -> tuple[list[Any], list[Any]]:
     """Pseudo-remainder reduction of ``{d_x^i p, i < order}`` in ``x``.
 
-    Every common zero of the original derivative system is a zero of the
-    reduced system (prem is a polynomial combination), so solving the reduced
-    system never loses solutions; candidates are verified exactly against the
-    original equations afterwards.  For ``degree(p) == order`` the lowest
-    equation is linear in ``x`` and the chain reproduces the proven
-    elimination ``x = -b/(q*a)``.
+    Returns ``(reduced, contents)``: the reduced equations and every
+    nonconstant control-polynomial content divided out along the way.
+    Every common zero of the original derivative system off the content
+    loci is a zero of the reduced system (prem is a polynomial combination);
+    zeros on a content locus are recovered by the explicit content-factor
+    systems solved in :func:`_solve_stratum`, and every candidate is verified
+    exactly against the original equations afterwards.  For
+    ``degree(p) == order`` the lowest equation is linear in ``x`` and the
+    chain reproduces the proven elimination ``x = -b/(q*a)``.
     """
     derivatives = [sp.expand(sp.diff(p, x, i)) for i in range(order)]
     reduced: list[Any] = [derivatives[-1]]
+    contents: list[Any] = []
     for i in range(order - 2, -1, -1):
         f = derivatives[i]
         for e in sorted(reduced, key=lambda item: (sp.degree(item, x) or 0)):
-            f = _prem_reduce(f, e, x)
+            f = _prem_reduce(f, e, x, contents)
         if f != 0:
             reduced.append(f)
-    return reduced
+    return reduced, contents
 
 
 def _filter_solution(
@@ -1282,6 +1340,7 @@ def _solve_stratum(
     drop_equations = [sp.expand(condition) for condition in drop_conditions]
     elimination = sp.degree(p_level, x) == order
     r0: Any = None
+    prem_contents: list[Any] = []
     if elimination:
         # degree(p) == q: the proven x = -b/(q*a) elimination reduces the
         # problem to q-1 polynomial equations in the controls alone.
@@ -1292,7 +1351,7 @@ def _solve_stratum(
     else:
         # degree(p) > q: prem chains shrink the x-degrees; every candidate is
         # verified exactly against the original derivative equations below.
-        reduced = _reduced_derivative_system(p_level, x, order)
+        reduced, prem_contents = _reduced_derivative_system(p_level, x, order)
         system = [e for e in (*drop_equations, *reduced) if e != 0]
         solve_unknowns = unknowns
         method = "prem_reduced"
@@ -1506,6 +1565,56 @@ def _solve_stratum(
                             assert raw is not None  # error is None => present
                             finish(raw, saturated_unknowns, {}, [])
 
+    # Content loci of the prem chain (audit P0-4): dividing out a
+    # control-polynomial content preserves zeros only off the content
+    # hypersurface, so every nonconstant content factor gets an explicit
+    # auxiliary system {original equations} + {factor == 0}, solved on the
+    # raw derivative equations.  Roots found there go through the same exact
+    # verification and classification below; a factor whose locus cannot be
+    # exhausted (solver failure or a positive-dimensional locus) degrades the
+    # stratum to partial completeness instead of silently losing roots.
+    content_factors: list[Any] = []
+    seen_factors: set[str] = set()
+    for content in prem_contents:
+        for factor, _multiplicity in sp.factor_list(content)[1]:
+            if not (factor.free_symbols & set(controls)) or str(factor) in seen_factors:
+                continue
+            seen_factors.add(str(factor))
+            content_factors.append(factor)
+    if content_factors:
+        stratum["prem_content_factors"] = [str(f) for f in content_factors]
+    if stratum["status"] == STATUS_SOLVED:
+        stratum.setdefault("completeness", "complete")
+        if content_factors:
+            known_keys = [
+                {str(k): str(v) for k, v in candidate.items()}
+                for candidate in candidates
+            ]
+            for factor in content_factors:
+                aux_system = [e for e in (*drop_equations, *original, factor) if e != 0]
+                try:
+                    aux_basis = sp.groebner(aux_system, *unknowns)
+                    if aux_basis.contains(sp.Integer(1)):
+                        continue  # the factor never vanishes on solutions
+                    if not aux_basis.is_zero_dimensional:
+                        raise ExactCheckError("content locus is positive-dimensional")
+                    raw, error = _solve_zero_dimensional(aux_system, unknowns)
+                    if error is not None:
+                        raise ExactCheckError(error)
+                except Exception as exc:  # noqa: BLE001 - honesty, not loss
+                    stratum["completeness"] = "partial"
+                    stratum.setdefault("content_locus_issues", []).append(
+                        f"{factor}: {type(exc).__name__}: {exc}"
+                    )
+                    continue
+                assert raw is not None  # error is None => solutions present
+                for entry in raw:
+                    candidate = dict(zip(unknowns, entry, strict=True))
+                    exact_key = {str(k): str(v) for k, v in candidate.items()}
+                    if exact_key not in known_keys:
+                        known_keys.append(exact_key)
+                        candidates.append(candidate)
+
     if stratum["status"] == STATUS_SOLVED:
         for solution in candidates:
             # Admit only exact zeros of the original derivative equations:
@@ -1560,6 +1669,32 @@ def _solve_stratum(
     return stratum
 
 
+def _inconsistent_drop_conditions(
+    drop_conditions: Sequence[Any], controls: Sequence[Any]
+) -> str | None:
+    """Prove the drop-condition ideal trivial; return the reason, else None.
+
+    Drop conditions are x-free polynomials in the controls.  A nonzero
+    constant condition makes the stratum unreachable outright; with several
+    conditions a Groebner basis over the controls decides whether 1 lies in
+    the ideal (Nullstellensatz: no complex common zero, hence no real one).
+    Any solver failure is treated as *undecided* -- the stratum is then
+    solved normally rather than wrongly discarded.
+    """
+    control_set = set(controls)
+    for condition in drop_conditions:
+        if not (condition.free_symbols & control_set):
+            return f"drop condition {condition} is a nonzero constant"
+    if len(drop_conditions) >= 2:
+        try:
+            basis = sp.groebner(list(drop_conditions), *controls)
+        except Exception:  # noqa: BLE001 - undecided: solve normally
+            return None
+        if basis.contains(sp.Integer(1)):
+            return "drop-condition ideal contains 1: no common control zero"
+    return None
+
+
 def solve_scalar_multiplicity(
     p: Any,
     x: Any,
@@ -1579,6 +1714,14 @@ def solve_scalar_multiplicity(
     degree of ``p`` before substitution; when it exceeds the actual degree
     the case is reported on the degree-drop stratum instead of being
     silently excluded.
+
+    The result carries two independent top-level judgements (audit P0-4):
+    ``status`` is the algebraic outcome of the primary reachable stratum,
+    while ``completeness`` (see the ``COMPLETENESS_*`` constants) states
+    whether *every* reachable stratum was resolved.  Empty strata -- an
+    identically vanishing leading coefficient (``empty_stratum``) or an
+    unsatisfiable drop-condition ideal (``empty_inconsistent_stratum``) --
+    are proven unreachable and never affect completeness.
     """
     started = time.perf_counter()
     controls = tuple(controls)
@@ -1586,6 +1729,7 @@ def solve_scalar_multiplicity(
     chart_factors = tuple(denominators) + tuple(cleared_factors)
     result: dict[str, Any] = {
         "status": None,
+        "completeness": None,
         "unknowns": [str(x), *(str(c) for c in controls)],
         "order": order,
         "strata": [],
@@ -1597,7 +1741,10 @@ def solve_scalar_multiplicity(
     result["nominal_degree"] = nominal
     result["degree"] = degree
     if nominal < order:
+        # A degree-D polynomial has no root of multiplicity > D: the answer
+        # is provably empty, hence complete.
         result["status"] = STATUS_UNSUPPORTED
+        result["completeness"] = COMPLETENESS_COMPLETE
         result["detail"] = f"polynomial degree {nominal} below target order {order}"
         return result
 
@@ -1617,7 +1764,25 @@ def solve_scalar_multiplicity(
                     "effective_degree": nominal - level,
                     "leading_coefficient": str(lead),
                     "drop_conditions": [str(c) for c in coefficients[:level]],
-                    "status": "empty_stratum",
+                    "status": STATUS_EMPTY_STRATUM,
+                    "solutions": [],
+                    "filtered": [],
+                }
+            )
+            continue
+        drop_conditions = [c for c in coefficients[:level] if not _is_exactly_zero(c)]
+        inconsistent = _inconsistent_drop_conditions(drop_conditions, controls)
+        if inconsistent is not None:
+            # Empty stratum, proven: the drop conditions are unsatisfiable,
+            # so no control value ever reaches this layer (audit P0-4).
+            result["strata"].append(
+                {
+                    "level": level,
+                    "effective_degree": nominal - level,
+                    "leading_coefficient": str(lead),
+                    "drop_conditions": [str(c) for c in drop_conditions],
+                    "status": STATUS_EMPTY_INCONSISTENT,
+                    "detail": inconsistent,
                     "solutions": [],
                     "filtered": [],
                 }
@@ -1626,7 +1791,6 @@ def solve_scalar_multiplicity(
         p_level = sum(
             coefficients[i] * x ** (nominal - i) for i in range(level, nominal + 1)
         )
-        drop_conditions = [c for c in coefficients[:level] if not _is_exactly_zero(c)]
         stratum = _solve_stratum(
             sp.expand(p_level),
             x=x,
@@ -1640,7 +1804,23 @@ def solve_scalar_multiplicity(
         )
         result["strata"].append(stratum)
 
-    processed = [s for s in result["strata"] if s["status"] != "empty_stratum"]
+    processed = [
+        s for s in result["strata"] if s["status"] not in EMPTY_STRATUM_STATUSES
+    ]
+    unresolved = [
+        s
+        for s in processed
+        if s["status"] in _UNRESOLVED_STRATUM_STATUSES
+        or s.get("completeness", COMPLETENESS_COMPLETE) != COMPLETENESS_COMPLETE
+    ]
+    if not unresolved:
+        result["completeness"] = COMPLETENESS_COMPLETE
+    elif any(
+        s["status"] in (STATUS_SOLVED, STATUS_POSITIVE_DIMENSIONAL) for s in processed
+    ):
+        result["completeness"] = COMPLETENESS_PARTIAL
+    else:
+        result["completeness"] = COMPLETENESS_FAILED
     if not processed:
         result["status"] = STATUS_UNSUPPORTED
         result["detail"] = "every stratum has effective degree below the target order"
@@ -1659,7 +1839,27 @@ def solve_scalar_multiplicity(
             result["status"] = STATUS_CHART_SINGULAR
         else:
             result["status"] = STATUS_SOLVED
-    counts: dict[str, Any] = {"regular": 0, "chart_singular": 0, "filtered": {}}
+    counts: dict[str, Any] = {
+        "regular": 0,
+        "chart_singular": 0,
+        "filtered": {},
+        # Coverage per stratum, distinguishing provably-unreachable empty
+        # layers, fully solved layers and unresolved ones (audit P0-4).
+        "strata": {
+            "empty_unreachable": len(result["strata"]) - len(processed),
+            "solved_complete": sum(
+                1
+                for s in processed
+                if s["status"] == STATUS_SOLVED
+                and s.get("completeness", COMPLETENESS_COMPLETE)
+                == COMPLETENESS_COMPLETE
+            ),
+            "positive_dimensional": sum(
+                1 for s in processed if s["status"] == STATUS_POSITIVE_DIMENSIONAL
+            ),
+            "unresolved": len(unresolved),
+        },
+    }
     for stratum in result["strata"]:
         for solution in stratum.get("solutions", []):
             key = (
@@ -1694,9 +1894,14 @@ def _reconstruct_and_check(
     """Reconstruct the full state and run the numerical physicality checks."""
     full = {**fixed_substitutions, **solution}
     state: list[float] = []
+    state_exact: list[str] = []
     imag_relative_max = 0.0
     for expr in materialized.reconstruct_full_state():
-        numeric = complex(sp.N(expr.subs(full), 40))
+        substituted = expr.subs(full)
+        # Canonical symbolic form of the reconstructed component: the primary
+        # cross-chart dedup key (audit P1-2).
+        state_exact.append(sp.sstr(substituted))
+        numeric = complex(sp.N(substituted, 40))
         scale = max(1.0, abs(numeric.real))
         imag_relative_max = max(imag_relative_max, abs(numeric.imag) / scale)
         state.append(numeric.real)
@@ -1713,6 +1918,7 @@ def _reconstruct_and_check(
     tolerance = 1e-9 * max(1.0, float(np.max(np.abs(eigenvalues))))
     return {
         "state": [float(v) for v in vector],
+        "state_exact": state_exact,
         "state_imag_relative_max": float(imag_relative_max),
         "min_state_eigenvalue": float(eigenvalues.min()),
         "physical": bool(
@@ -1733,6 +1939,9 @@ def run_case(case: MultiplicityCase, *, adapter: Any = None) -> dict[str, Any]:
         "case_key": case.key(),
         "case": case.to_dict(),
         "algebraic_status": None,
+        # Overwritten by the solver's verdict on the success path; any early
+        # return below means no stratum was analysed, hence failed.
+        "completeness": COMPLETENESS_FAILED,
     }
     try:
         if adapter is None:
@@ -1833,6 +2042,7 @@ def run_case(case: MultiplicityCase, *, adapter: Any = None) -> dict[str, Any]:
         record.update(
             {
                 "algebraic_status": result["status"],
+                "completeness": result["completeness"],
                 "nominal_degree": result["nominal_degree"],
                 "degree": result["degree"],
                 "strata": result["strata"],
@@ -1877,6 +2087,7 @@ def _failure_record(case: MultiplicityCase, status: str, detail: str) -> dict[st
         "case_key": case.key(),
         "case": case.to_dict(),
         "algebraic_status": status,
+        "completeness": COMPLETENESS_FAILED,
         "detail": detail,
     }
 
@@ -1981,12 +2192,25 @@ def deduplicate_solutions(
 
     Dedup happens only after full-state reconstruction and keeps every
     provenance entry (case key, chart, stratum) of each occurrence.
+
+    Merging is scoped to one physical parameter point (audit P1-2): the full
+    ``fixed_parameters`` vector of the case is part of every key, so two
+    cases differing in any fixed value never merge.  Within a parameter
+    point the primary key is the exact reconstructed state (``state_exact``
+    symbolic strings); solutions whose exact states are missing, or are
+    syntactically different but mathematically equal across charts, are
+    merged at a second level by matching float ``state``/``values`` rounded
+    to ``digits`` decimal digits.  The rounding grid ``10**-digits`` is
+    recorded on each group as ``merge_tolerance``, and ``exact_variants``
+    counts how many distinct exact states the second level folded together.
     """
-    groups: dict[tuple[Any, ...], dict[str, Any]] = {}
+    tolerance = 10.0 ** (-digits)
+    exact_groups: dict[tuple[Any, ...], dict[str, Any]] = {}
     for record in records:
         if record.get("record_type") != "case":
             continue
         case = record.get("case", {})
+        fixed_key = tuple(sorted((case.get("fixed_parameters") or {}).items()))
         for stratum in record.get("strata", []):
             for solution in stratum.get("solutions", []):
                 if solution.get("classification") != CLASSIFICATION_REGULAR:
@@ -1994,21 +2218,19 @@ def deduplicate_solutions(
                 state = solution.get("state")
                 if state is None:
                     continue
-                key = (
+                state_exact = solution.get("state_exact")
+                exact_key = (
                     case.get("model"),
-                    tuple(round(float(v), digits) for v in state),
-                    tuple(
-                        sorted(
-                            (name, round(float(value), digits))
-                            for name, value in solution.get("values", {}).items()
-                        )
-                    ),
+                    fixed_key,
+                    tuple(state_exact) if state_exact else None,
                 )
-                group = groups.setdefault(
-                    key,
+                group = exact_groups.setdefault(
+                    exact_key,
                     {
                         "state": state,
+                        "state_exact": state_exact,
                         "values": solution.get("values"),
+                        "fixed_parameters": dict(fixed_key),
                         "provenance": [],
                     },
                 )
@@ -2019,7 +2241,36 @@ def deduplicate_solutions(
                         "stratum": stratum.get("level"),
                     }
                 )
-    return list(groups.values())
+    # Second level: fold exact groups whose float states coincide within the
+    # same (model, fixed parameter point).
+    merged: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for (model, fixed_key, _exact_key), group in exact_groups.items():
+        float_key = (
+            model,
+            fixed_key,
+            tuple(round(float(v), digits) for v in group["state"]),
+            tuple(
+                sorted(
+                    (name, round(float(value), digits))
+                    for name, value in (group["values"] or {}).items()
+                )
+            ),
+        )
+        target = merged.get(float_key)
+        if target is None:
+            target = {
+                "state": group["state"],
+                "state_exact": group["state_exact"],
+                "values": group["values"],
+                "fixed_parameters": group["fixed_parameters"],
+                "merge_tolerance": tolerance,
+                "exact_variants": 0,
+                "provenance": [],
+            }
+            merged[float_key] = target
+        target["exact_variants"] += 1
+        target["provenance"].extend(group["provenance"])
+    return list(merged.values())
 
 
 def main(argv: Sequence[str] | None = None) -> int:

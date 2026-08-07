@@ -16,14 +16,18 @@ import sys
 import time
 
 import pytest
+import qphase_cam.solver.analytic_multiplicity as analytic_multiplicity
 import sympy as sp
-
 from qphase_cam.solver.analytic_multiplicity import (
-    ALGEBRAIC_STATUSES,
+    COMPLETENESS_COMPLETE,
+    COMPLETENESS_FAILED,
+    COMPLETENESS_PARTIAL,
     STATUS_CHART_SINGULAR,
     STATUS_DEGREE_DROP,
+    STATUS_EMPTY_INCONSISTENT,
     STATUS_POSITIVE_DIMENSIONAL,
     STATUS_SOLVED,
+    STATUS_SOLVER_ERROR,
     STATUS_TIMEOUT,
     MultiplicityCase,
     deduplicate_solutions,
@@ -50,7 +54,7 @@ def _filtered(result, level=0):
 
 
 def test_cubic_triple_root():
-    """p = x^3 + c1 x + c2 has a triple root only at c1 = c2 = 0, x = 0."""
+    """P = x^3 + c1 x + c2 has a triple root only at c1 = c2 = 0, x = 0."""
     result = solve_scalar_multiplicity(x**3 + c1 * x + c2, x, 3, (c1, c2))
     assert result["status"] == STATUS_SOLVED
     solutions = _solutions(result)
@@ -60,7 +64,7 @@ def test_cubic_triple_root():
 
 
 def test_quartic_quadruple_root():
-    """p = x^4 + c1 x^2 + c2 x + c3 has a quadruple root only at the origin."""
+    """P = x^4 + c1 x^2 + c2 x + c3 has a quadruple root only at the origin."""
     result = solve_scalar_multiplicity(
         x**4 + c1 * x**2 + c2 * x + c3, x, 4, (c1, c2, c3)
     )
@@ -117,7 +121,7 @@ def test_resultant_path_quintic_two_controls():
 
 
 def test_resultant_fallback_on_structural_common_factor():
-    """p with a built-in triple factor: resultants vanish -> honest fallback.
+    """P with a built-in triple factor: resultants vanish -> honest fallback.
 
     p = (x-(c1+c2))^3 (x-c1)(x-c2) has a triple root at x = c1+c2 for every
     generic (c1, c2), so the solution set is two-dimensional.  The resultant
@@ -152,7 +156,7 @@ def test_resultant_path_on_degree_drop_stratum():
 
 
 def test_degree_drop_stratum_is_solved_not_excluded():
-    """p = c0 x^4 + (x-1)^3 + c1 x: the c0 = 0 stratum is solved explicitly."""
+    """P = c0 x^4 + (x-1)^3 + c1 x: the c0 = 0 stratum is solved explicitly."""
     p = c0 * x**4 + (x - 1) ** 3 + c1 * x
     result = solve_scalar_multiplicity(p, x, 3, (c0, c1))
     assert result["status"] == STATUS_SOLVED
@@ -170,6 +174,7 @@ def test_degree_drop_status_when_fixed_values_kill_leading_coefficient():
         x**3 + c1 * x + c2, x, 3, (c1, c2), nominal_degree=4
     )
     assert result["status"] == STATUS_DEGREE_DROP
+    assert result["completeness"] == COMPLETENESS_COMPLETE
     assert result["strata"][0]["status"] == "empty_stratum"
     level1 = result["strata"][1]
     assert level1["status"] == STATUS_SOLVED
@@ -178,16 +183,123 @@ def test_degree_drop_status_when_fixed_values_kill_leading_coefficient():
     ]
 
 
+def test_inconsistent_drop_condition_stratum_is_proven_empty():
+    """Audit P0-4 reproduction: p = x^2 (x-1) + c0, order 2.
+
+    Stratum 1 requires the constant leading coefficient 1 to vanish: the
+    drop-condition ideal contains a nonzero constant, so the layer must be
+    proven empty (``empty_inconsistent_stratum``) instead of entering the
+    solver and erroring, and the unreachable layer must not poison the
+    top-level verdict.
+    """
+    result = solve_scalar_multiplicity(x**2 * (x - 1) + c0, x, 2, (c0,))
+    assert result["status"] == STATUS_SOLVED
+    assert result["completeness"] == COMPLETENESS_COMPLETE
+    stratum0, stratum1 = result["strata"]
+    assert stratum0["status"] == STATUS_SOLVED
+    found = {tuple(sorted(sol["exact"].items())) for sol in stratum0["solutions"]}
+    assert found == {
+        tuple(sorted({"x": "0", "c0": "0"}.items())),
+        tuple(sorted({"x": "2/3", "c0": "4/27"}.items())),
+    }
+    assert stratum1["status"] == STATUS_EMPTY_INCONSISTENT
+    assert stratum1["solutions"] == []
+    assert "nonzero constant" in stratum1["detail"]
+    # Coverage distinguishes the unreachable empty layer from the solved one.
+    assert result["counts"]["strata"] == {
+        "empty_unreachable": 1,
+        "solved_complete": 1,
+        "positive_dimensional": 0,
+        "unresolved": 0,
+    }
+
+
+def test_reachable_unresolved_deeper_stratum_blocks_complete(monkeypatch):
+    """A reachable deeper stratum that fails must block top-level ``complete``.
+
+    Stratum 0 of p = c0 x^4 + (x-1)^3 + c1 x solves via the resultant path;
+    an injected solver error on the (reachable) level-1 stratum must demote
+    the case to partial completeness while the per-stratum algebraic status
+    keeps the failure visible.
+    """
+    p = c0 * x**4 + (x - 1) ** 3 + c1 * x
+    original = analytic_multiplicity._solve_stratum
+
+    def failing_deeper(p_level, **kwargs):
+        stratum = original(p_level, **kwargs)
+        if kwargs["stratum_level"] == 1:
+            stratum["status"] = STATUS_SOLVER_ERROR
+            stratum["error"] = "injected failure"
+            stratum["solutions"] = []
+        return stratum
+
+    monkeypatch.setattr(analytic_multiplicity, "_solve_stratum", failing_deeper)
+    result = solve_scalar_multiplicity(p, x, 3, (c0, c1))
+    assert result["strata"][0]["status"] == STATUS_SOLVED
+    assert result["strata"][1]["status"] == STATUS_SOLVER_ERROR
+    assert result["completeness"] == COMPLETENESS_PARTIAL
+    assert result["counts"]["strata"]["solved_complete"] == 1
+    assert result["counts"]["strata"]["unresolved"] == 1
+
+
+def test_all_reachable_strata_unresolved_means_failed(monkeypatch):
+    """If every reachable stratum fails, completeness is ``failed``."""
+    original = analytic_multiplicity._solve_stratum
+
+    def failing(p_level, **kwargs):
+        stratum = original(p_level, **kwargs)
+        stratum["status"] = STATUS_SOLVER_ERROR
+        stratum["error"] = "injected failure"
+        stratum["solutions"] = []
+        return stratum
+
+    monkeypatch.setattr(analytic_multiplicity, "_solve_stratum", failing)
+    result = solve_scalar_multiplicity(x**3 + c1 * x + c2, x, 3, (c1, c2))
+    assert result["status"] == STATUS_SOLVER_ERROR
+    assert result["completeness"] == COMPLETENESS_FAILED
+
+
+def test_prem_content_factor_locus_is_solved_explicitly():
+    """Audit P0-4: prem content division must not silently drop the locus.
+
+    p = x^3 + c1 x + c1, order 2: the prem chain divides out the content
+    9*c1.  On the locus c1 = 0 the chain degenerates (p = x^3, a triple
+    root); the explicit content-locus system {p, p', c1} must now *generate*
+    that point and classify it (here: higher_multiplicity).  Before the fix
+    the point was never produced -- back-substitution can only delete
+    spurious candidates, never recover ungenerated ones.
+    """
+    result = solve_scalar_multiplicity(x**3 + c1 * x + c1, x, 2, (c1,))
+    assert result["status"] == STATUS_SOLVED
+    assert result["completeness"] == COMPLETENESS_COMPLETE
+    stratum = result["strata"][0]
+    assert stratum.get("prem_content_factors") == ["c1"]
+    # The admissible double root survives the content division.
+    assert [sol["exact"] for sol in stratum["solutions"]] == [
+        {"x": "-3/2", "c1": "-27/4"}
+    ]
+    locus = [
+        entry
+        for entry in stratum["filtered"]
+        if entry["exact"] == {"x": "0", "c1": "0"}
+    ]
+    assert locus and locus[0]["reason"] == "higher_multiplicity"
+
+
 def test_positive_dimensional_system():
     """(x + c1/2)^2 has a double root for every c1: a positive-dim set."""
     result = solve_scalar_multiplicity(x**2 + c1 * x + c1**2 / 4, x, 2, (c1,))
     assert result["status"] == STATUS_POSITIVE_DIMENSIONAL
+    # Positive-dimensional is a *decided* stratum (dimension proven by the
+    # saturated system), so it does not block completeness.
+    assert result["completeness"] == COMPLETENESS_COMPLETE
     assert _solutions(result) == []
 
 
 def test_chart_singular_solution_is_classified_not_dropped():
     """A solution on the chart denominator is chart_singular; on another
-    chart (different denominator) the same solution is regular."""
+    chart (different denominator) the same solution is regular.
+    """
     p = x**3 + c1 * x + c2
     singular = solve_scalar_multiplicity(p, x, 3, (c1, c2), denominators=(x,))
     assert singular["status"] == STATUS_CHART_SINGULAR
@@ -202,7 +314,7 @@ def test_chart_singular_solution_is_classified_not_dropped():
 
 
 def test_nonnegative_domain_allows_zero_boundary():
-    """nonnegative parameters may be exactly zero (the old script excluded them)."""
+    """Nonnegative parameters may be exactly zero (the old script excluded them)."""
     result = solve_scalar_multiplicity(
         x**3 + c1 * x + c2,
         x,
@@ -216,7 +328,7 @@ def test_nonnegative_domain_allows_zero_boundary():
 
 
 def test_nonnegative_domain_filters_negative_controls():
-    """p = x^3 + c1 x + 2 has a double root at c1 = -3, x = 1."""
+    """P = x^3 + c1 x + 2 has a double root at c1 = -3, x = 1."""
     p = x**3 + c1 * x + 2
     filtered = solve_scalar_multiplicity(
         p, x, 2, (c1,), parameter_domains={"c1": "nonnegative"}
@@ -263,6 +375,68 @@ def test_deduplicate_solutions_keeps_all_provenance():
     provenance = groups[0]["provenance"]
     assert {p["case_key"] for p in provenance} == {"k1", "k2"}
     assert {p["chart_id"] for p in provenance} == {"chart:a", "chart:b"}
+    # The float second-level grid is recorded on the group (audit P1-2).
+    assert groups[0]["merge_tolerance"] == 1e-9
+
+
+def test_deduplicate_solutions_never_merges_fixed_parameter_points():
+    """Same model/state/values at different fixed parameter points stay apart."""
+
+    def record(case_key, fixed, state_exact=None):
+        solution = {
+            "classification": "regular",
+            "state": [1.0, 2.0, 0.5, -0.25],
+            "values": {"x": 1.0, "gamma_a": 0.5},
+        }
+        if state_exact is not None:
+            solution["state_exact"] = state_exact
+        return {
+            "record_type": "case",
+            "case_key": case_key,
+            "case": {
+                "model": "m:M",
+                "chart_id": "chart:a",
+                "fixed_parameters": fixed,
+            },
+            "strata": [{"level": 0, "solutions": [solution]}],
+        }
+
+    # Audit P1-2 reproduction: identical state/controls but different fixed
+    # parameters -> two distinct candidates.
+    groups = deduplicate_solutions([record("k1", {"g": "1"}), record("k2", {"g": "2"})])
+    assert len(groups) == 2
+    assert {tuple(group["fixed_parameters"].items()) for group in groups} == {
+        (("g", "1"),),
+        (("g", "2"),),
+    }
+    assert all(group["merge_tolerance"] == 1e-9 for group in groups)
+
+    # Same physical parameter point -> merged across case keys.
+    same = deduplicate_solutions([record("k1", {"g": "1"}), record("k3", {"g": "1"})])
+    assert len(same) == 1
+    assert {p["case_key"] for p in same[0]["provenance"]} == {"k1", "k3"}
+
+    # Identical exact reconstructed states merge at the exact level.
+    exact_a = ["1", "2", "1/2", "-1/4"]
+    groups = deduplicate_solutions(
+        [
+            record("k1", {"g": "1"}, state_exact=exact_a),
+            record("k3", {"g": "1"}, state_exact=list(exact_a)),
+        ]
+    )
+    assert len(groups) == 1
+    assert groups[0]["exact_variants"] == 1
+
+    # Syntactically different but float-equal exact states (e.g. from two
+    # different charts) fold only at the approximate second level.
+    groups = deduplicate_solutions(
+        [
+            record("k1", {"g": "1"}, state_exact=exact_a),
+            record("k3", {"g": "1"}, state_exact=["2/2", "4/2", "1/2", "-1/4"]),
+        ]
+    )
+    assert len(groups) == 1
+    assert groups[0]["exact_variants"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -280,9 +454,8 @@ def test_enumerate_scalar_charts_kerr():
 
     from models.kerr_2mode import Kerr2ModeModel
 
-    adapter = FPGenDynamicsAdapter.from_model(
-        Kerr2ModeModel(**{name: 1.0 for name in Kerr2ModeModel.config_schema.model_fields})
-    )
+    params = {name: 1.0 for name in Kerr2ModeModel.config_schema.model_fields}
+    adapter = FPGenDynamicsAdapter.from_model(Kerr2ModeModel(**params))
     coverage = enumerate_scalar_charts(adapter)
     chart_ids = {chart["chart_id"] for chart in coverage["scalar_charts"]}
     # All equation partitions are kept and addressed by chart_id.
@@ -306,15 +479,20 @@ def test_kerr_2mode_triple_root_end_to_end():
     )
     record = run_case(case)
     _print_elapsed("kerr_2mode D=3 q=3", started, record)
-    assert record["algebraic_status"] in ALGEBRAIC_STATUSES - {STATUS_TIMEOUT}
-    assert record["strata"]
-    for stratum in record["strata"]:
-        for solution in stratum["solutions"]:
-            assert solution["checks"]["exact_multiplicity"] is True
-            if solution["classification"] == "regular":
-                assert "min_state_eigenvalue" in solution
-                assert "physical" in solution
-                assert "full_residual" in solution
+    # Pinned verdict (audit P1-1): the chart solves completely and is a
+    # *negative* case at this parameter point -- zero admissible triple
+    # roots, every candidate eliminated by an exact filter.
+    assert record["algebraic_status"] == STATUS_SOLVED
+    assert record["completeness"] == COMPLETENESS_COMPLETE
+    assert record["chart"]["chart_id"] == case.chart_id  # chart materialized
+    assert record["chart"]["reduced_degree"] == 3
+    assert record["counts"]["strata"]["unresolved"] == 0
+    solutions = [sol for stratum in record["strata"] for sol in stratum["solutions"]]
+    assert solutions == []
+    reasons = {
+        entry["reason"] for stratum in record["strata"] for entry in stratum["filtered"]
+    }
+    assert {"deeper_stratum", "nonreal"} <= reasons
 
 
 def test_crosskerr_2mode_triple_root_end_to_end():
@@ -328,8 +506,19 @@ def test_crosskerr_2mode_triple_root_end_to_end():
     )
     record = run_case(case)
     _print_elapsed("crosskerr_2mode D=3 q=3", started, record)
-    assert record["algebraic_status"] in ALGEBRAIC_STATUSES - {STATUS_TIMEOUT}
-    assert record["strata"]
+    # Pinned verdict (audit P1-1): complete solve, negative case -- all four
+    # exact candidates are nonreal, so no admissible triple root exists.
+    assert record["algebraic_status"] == STATUS_SOLVED
+    assert record["completeness"] == COMPLETENESS_COMPLETE
+    assert record["chart"]["chart_id"] == case.chart_id
+    assert record["chart"]["reduced_degree"] == 3
+    assert record["counts"]["strata"]["unresolved"] == 0
+    solutions = [sol for stratum in record["strata"] for sol in stratum["solutions"]]
+    assert solutions == []
+    reasons = {
+        entry["reason"] for stratum in record["strata"] for entry in stratum["filtered"]
+    }
+    assert reasons == {"nonreal"}
 
 
 def test_vdp_2mode_quadruple_root_end_to_end():
@@ -343,15 +532,24 @@ def test_vdp_2mode_quadruple_root_end_to_end():
     )
     record = run_case(case)
     _print_elapsed("vdp_2mode D=4 q=4", started, record)
-    assert record["algebraic_status"] in ALGEBRAIC_STATUSES - {STATUS_TIMEOUT}
-    assert record["strata"]
+    # Pinned verdict (audit P1-1): complete solve, negative case -- the
+    # multiplicity system is inconsistent (Groebner basis contains 1), so
+    # not even a complex quadruple root exists at this parameter point.
+    assert record["algebraic_status"] == STATUS_SOLVED
+    assert record["completeness"] == COMPLETENESS_COMPLETE
+    assert record["chart"]["chart_id"] == case.chart_id
+    assert record["chart"]["reduced_degree"] == 4
+    assert record["counts"]["strata"]["unresolved"] == 0
+    solutions = [sol for stratum in record["strata"] for sol in stratum["solutions"]]
+    assert solutions == []
 
 
 def test_pair_hopping_2mode_recovers_known_triple_root():
     """Cross-validation against the numerical (3,1,0) candidate of
     reports/cam_bifurcation_model_assessment.md §4:
     omega_a=0, g=1, k=1e-3, omega_b=0.1 fixed, controls (gamma_a, gamma_b),
-    gamma_a ≈ 1.29412527, gamma_b ≈ 1.54903018."""
+    gamma_a ≈ 1.29412527, gamma_b ≈ 1.54903018.
+    """
     started = time.perf_counter()
     case = MultiplicityCase(
         "models.pair_hopping_2mode:PairHopping2ModeModel",
@@ -362,7 +560,20 @@ def test_pair_hopping_2mode_recovers_known_triple_root():
     )
     record = run_case(case)
     _print_elapsed("pair_hopping_2mode D=5 q=3", started, record)
+    # Pinned verdict (audit P1-1): every stratum solves without solver
+    # error, but stratum 0 carries a degree-100 elimination factor that is
+    # only numerically screened (its exact quotient-field gcd exceeds the
+    # prototype budget), so the honest top-level completeness is *partial* --
+    # an explicit known solver limitation, not a silent success.
     assert record["algebraic_status"] == STATUS_SOLVED
+    assert record["completeness"] == COMPLETENESS_PARTIAL
+    assert record["chart"]["chart_id"] == case.chart_id
+    for stratum in record["strata"]:
+        assert stratum["status"] == STATUS_SOLVED
+    stratum0 = record["strata"][0]
+    assert stratum0["method"] == "resultant_elimination"
+    assert stratum0["completeness"] == "partial"
+    assert stratum0["resultant"]["skipped_factors"]
     regular = [
         solution
         for stratum in record["strata"]
@@ -376,9 +587,18 @@ def test_pair_hopping_2mode_recovers_known_triple_root():
             and abs(solution["values"]["gamma_b"] - 1.54903018) < 1e-6
         )
 
-    assert any(matches(solution) for solution in regular), json.dumps(
-        [solution["values"] for solution in regular], indent=1
-    )
+    matched = [solution for solution in regular if matches(solution)]
+    assert matched, json.dumps([solution["values"] for solution in regular], indent=1)
+    target = matched[0]
+    # Exact value: an algebraic number (CRootOf certificate), numerically the
+    # known root; the full CAM residual and physicality are checked in float.
+    assert "CRootOf" in target["exact"]["gamma_a"]
+    assert abs(target["values"]["x2"] - (-37.36014392)) < 1e-6
+    assert target["checks"]["exact_multiplicity"] is True
+    assert target["checks"]["reality"] == "exact"
+    assert target["checks"]["chart_factors_nonzero"] is True
+    assert target["physical"] is True
+    assert target["full_residual"] < 1e-9
     for solution in regular:
         assert solution["checks"]["exact_multiplicity"] is True
         assert "physical" in solution and "full_residual" in solution
@@ -458,7 +678,9 @@ def test_runner_real_subprocess_module_entry(tmp_path):
     started = time.perf_counter()
     records = run_cases([KERR_CASE], out, timeout_seconds=300.0)
     _print_elapsed("kerr_2mode D=3 q=3 (subprocess)", started, records[0])
-    assert records[0]["algebraic_status"] in ALGEBRAIC_STATUSES - {STATUS_TIMEOUT}
+    # Same pinned verdict as the in-process Kerr case (audit P1-1).
+    assert records[0]["algebraic_status"] == STATUS_SOLVED
+    assert records[0]["completeness"] == COMPLETENESS_COMPLETE
     assert records[0]["strata"]
     # The recorded case key matches the library key function.
     assert records[0]["case_key"] == KERR_CASE.key()
