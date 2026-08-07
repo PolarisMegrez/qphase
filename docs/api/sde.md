@@ -20,8 +20,8 @@ The main simulation driver. It orchestrates the integration loop, manages data s
 **Configuration (`EngineConfig`):**
 
 *   `dt` (`float`): Time step.
-*   `t0` (`float`): Start time.
-*   `t1` (`float`): End time.
+*   `t0` (`float`): Observation start; `[0, t0)` is integrated as warm-up and not retained.
+*   `t1` (`float`): Integration and observation end time.
 *   `n_traj` (`int`): Number of trajectories.
 *   `seed` (`int | None`): Random seed.
 *   `ic` (`Any | None`): Initial condition.
@@ -39,7 +39,7 @@ Executes the configured SDE job. The engine requires `backend`, `model`, and `in
 Container returned by the SDE engine and saved as `.npz`.
 
 *   `trajectory`: A `TrajectorySet` or `None` if raw data was dropped after analysis.
-*   `analysis`: Analyzer payloads keyed by analyzer name, for example `psd`, `dist`, or `pdist`.
+*   `analysis`: Analyzer payloads keyed by analyzer name, for example `psd`, `dist`, `pdist`, or `trajectory_diagnostics`.
 *   `meta`: Metadata, including model `params`, `t0`, `dt`, and drop reason when applicable.
 
 Saved archives contain `t0`, `dt`, `meta`, `analysis`, and optional `data`. When present, `data` has shape `(n_traj, n_time, n_modes)`.

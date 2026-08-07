@@ -85,6 +85,43 @@ f = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
 
 计算所选可观测量的成对或高维分布。
 
+## `trajectory_diagnostics`
+
+在不预设 Lorentz 或其他谱线模型的前提下计算时间域诊断量。它用于在解释 PSD 拟合线宽
+之前区分非平稳性、轨迹间差异、相干衰减和相位频率噪声。
+
+```yaml
+analyser:
+  trajectory_diagnostics:
+    modes: [0]
+    block_durations: [100.0, 1000.0]
+    coherence: true
+    coherence_max_lag: 500.0
+    allan: true
+    allan_taus: null
+    allan_points: 24
+    allan_min_windows: 8
+    amplitude_floor: 0.0
+```
+
+输出的 `mode_results[mode]` 包含：
+
+*   `block_statistics`：逐轨迹、非重叠分块的复振幅、振幅、功率与角频率均值。
+*   `phase_increment`：逐轨迹平均角频率、最大保存相位步，以及落在 Nyquist 相位边界
+    10% 范围内的步数比例。
+*   `coherence`：随延迟变化的复数 `g1`、归一化 `g1` 与跨轨迹 SEM 模长。
+*   `allan`：基于重叠相位二阶差分的角频率 Allan 方差、逐轨迹结果、系综均值与跨轨迹 SEM。
+
+所有配置时长都是物理时间，必须与保存后的采样间隔 `dt * save_stride` 对齐。自动 Allan
+时标使用对数分布的整数采样点。SEM 只把不同轨迹作为独立统计单元，不会把重叠时间窗
+计作额外独立样本。
+
+若 Lorentz 窄核的 HWHM 接近软模衰减率，它描述的是稳态中每次随机扰动后的恢复，而不只是
+配置初态的一次性弛豫。设置非零 engine `t0` 可在 PSD 和本 analyser 之前排除该初态瞬态。
+
+首版实现会在主机端物化传入的轨迹系综，尚不支持跨 trajectory batch 在线聚合，因此应先
+用于减量诊断任务；流式聚合留待后续阶段。
+
 ## `lorentz_fitter`
 
 对逻辑 SDE scan dataset 的 PSD point view 拟合 Lorentz 曲线。这是一个用于

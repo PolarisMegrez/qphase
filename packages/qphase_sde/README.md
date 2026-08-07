@@ -26,6 +26,10 @@
       scan tile size for a fixed seed.
     - Returns one named-axis SDE dataset with point views and single or sharded
       persistence.
+- **Stationary Observation**:
+    - Integrates `[0, t0)` as an unrecorded warm-up and analyzes `[t0, t1]`.
+    - Provides trajectory diagnostics for block stationarity, complex
+      first-order coherence, and angular-frequency Allan variance.
 
 ## Installation
 

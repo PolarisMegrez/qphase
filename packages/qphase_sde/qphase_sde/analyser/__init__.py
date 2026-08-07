@@ -19,6 +19,10 @@ Public API
 from .dist import DistAnalyzer, DistAnalyzerConfig
 from .polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
 from .psd import PsdAnalyzer, PsdAnalyzerConfig
+from .trajectory_diagnostics import (
+    TrajectoryDiagnostics,
+    TrajectoryDiagnosticsConfig,
+)
 
 __all__ = [
     "PsdAnalyzer",
@@ -27,4 +31,6 @@ __all__ = [
     "DistAnalyzerConfig",
     "PolarDistAnalyzer",
     "PolarDistAnalyzerConfig",
+    "TrajectoryDiagnostics",
+    "TrajectoryDiagnosticsConfig",
 ]

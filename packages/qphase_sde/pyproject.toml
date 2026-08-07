@@ -47,6 +47,7 @@ dependencies = [
 "analyser.dist" = "qphase_sde.analyser.dist:DistAnalyzer"
 "analyser.pdist" = "qphase_sde.analyser.polar_dist:PolarDistAnalyzer"
 "analyser.lorentz_fitter" = "qphase_sde.analyser.lorentz_fitter:LorentzFitter"
+"analyser.trajectory_diagnostics" = "qphase_sde.analyser.trajectory_diagnostics:TrajectoryDiagnostics"
 # PSD estimator subplugins
 "spectral_estimator.periodogram" = "qphase_sde.analyser.spectral_estimator:PeriodogramEstimator"
 "spectral_estimator.welch" = "qphase_sde.analyser.spectral_estimator:WelchEstimator"

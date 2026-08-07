@@ -18,14 +18,26 @@ Top-level keys live under `engine.sde` in a job file:
 | Key | Type | Description |
 | :-- | :-- | :-- |
 | `dt` | `float` | Integration time step. Must be small enough for stability. |
-| `t0` | `float` | Start time. |
-| `t1` | `float` | End time. |
+| `t0` | `float` | Observation start. The engine integrates from physical time zero and discards the warm-up interval `[0, t0)`. |
+| `t1` | `float` | Integration and observation end time. |
 | `n_traj` | `int` | Number of trajectories in the ensemble. |
 | `seed` | `int \| None` | Random seed for reproducibility. |
 | `ic` | `Any \| None` | Initial condition. |
 | `save_stride` | `int` | Store every `N`-th integrated step. See below. |
 | `keep_traj` | `bool \| None` | Whether to keep raw trajectory data after analysis. |
 | `record_modes` | `list[int] \| None` | Physical modes to retain; `None` stores all modes. |
+
+## Warm-up and observation
+
+The high-level engine always initializes the model at physical time zero. It
+integrates without retaining samples until `t0`, then stores samples from `t0`
+through `t1`. Both boundaries must be integer multiples of a fixed `dt`.
+Time-dependent models therefore continue to receive their physical integration
+time during warm-up.
+
+The warm-up is part of computational work but not stored trajectory memory. A
+nonzero `t0` removes initial-condition relaxation from stationary PSD and
+time-domain statistics; it does not remove stationary soft-mode fluctuations.
 
 ## `save_stride` and memory control
 
@@ -35,14 +47,14 @@ has effective sample interval `dt * save_stride`, which narrows the PSD Nyquist
 frequency but leaves the true frequency resolution unchanged:
 
 ```text
-df = 1 / t1                         # frequency resolution (unchanged)
+df = 1 / (t1 - t0)                  # frequency resolution (unchanged)
 f_Nyquist = pi / (dt * save_stride) # Nyquist frequency (reduced)
 ```
 
 Rough memory for the stored trajectory:
 
 ```text
-memory ~ n_traj * (t1 / (dt * save_stride)) * n_modes * dtype_bytes
+memory ~ n_traj * ((t1 - t0) / (dt * save_stride)) * n_modes * dtype_bytes
 ```
 
 `record_modes` reduces the final factor without changing the simulated state.
@@ -104,7 +116,7 @@ The engine returns and saves an `SDEResult` as a NumPy `.npz` archive.
 *   `trajectory` — a `TrajectorySet` or `None` if raw data was dropped after
     analysis.
 *   `analysis` — analyzer payloads keyed by analyzer name (`psd`, `dist`,
-    `pdist`).
+    `pdist`, `trajectory_diagnostics`).
 *   `meta` — metadata including model `params`, `t0`, `dt`, and the drop reason
     when applicable.
 

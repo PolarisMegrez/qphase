@@ -88,6 +88,53 @@ Computes marginal distributions of selected modes.
 
 Computes pairwise or higher-dimensional distributions for selected observables.
 
+## `trajectory_diagnostics`
+
+Computes time-domain diagnostics without assuming a Lorentzian or any other
+spectral line shape. This is useful for separating nonstationarity,
+trajectory-to-trajectory heterogeneity, loss of coherence, and phase-frequency
+noise before interpreting a fitted PSD linewidth.
+
+```yaml
+analyser:
+  trajectory_diagnostics:
+    modes: [0]
+    block_durations: [100.0, 1000.0]
+    coherence: true
+    coherence_max_lag: 500.0
+    allan: true
+    allan_taus: null
+    allan_points: 24
+    allan_min_windows: 8
+    amplitude_floor: 0.0
+```
+
+The payload contains `mode_results[mode]` with:
+
+*   `block_statistics`: per-trajectory, non-overlapping block means of the
+    complex amplitude, amplitude, power, and angular frequency.
+*   `phase_increment`: per-trajectory mean angular frequency, largest saved
+    phase step, and fraction of steps within 10% of the Nyquist phase boundary.
+*   `coherence`: complex `g1`, normalized `g1`, and cross-trajectory SEM
+    magnitude versus lag.
+*   `allan`: overlapping phase-second-difference angular-frequency Allan
+    variance, per-trajectory values, ensemble mean, and cross-trajectory SEM.
+
+All configured durations are physical times and must align with the saved
+sample interval `dt * save_stride`. Auto-selected Allan averaging times are
+logarithmically spaced integer sample counts. The SEM treats trajectories as
+the independent units; overlapping time windows do not inflate the sample
+count.
+
+A Lorentzian core with HWHM close to a soft-mode decay rate describes the
+stationary recovery after stochastic perturbations. It is not, by itself, the
+one-time relaxation from the configured initial condition. A nonzero engine
+`t0` removes that initial transient before this analyzer and the PSD run.
+
+The first implementation materializes each supplied trajectory ensemble on the
+host and does not provide online trajectory-batch aggregation. Use it for
+reduced diagnostic jobs; streaming accumulation is reserved for a later phase.
+
 ## `lorentz_fitter`
 
 Fits Lorentzians to PSD point views from a logical SDE scan dataset. It is a
