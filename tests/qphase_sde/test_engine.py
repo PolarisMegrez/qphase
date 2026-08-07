@@ -46,6 +46,20 @@ class TwoModeModel:
         return np.zeros(y.shape[:-1] + (2, 2), dtype=y.dtype)
 
 
+class UnitDriftModel:
+    name = "unit_drift"
+    n_modes = 1
+    noise_basis = "real"
+    noise_dim = 1
+    params = {}
+
+    def drift(self, y, t, p):
+        return np.ones_like(y)
+
+    def diffusion(self, y, t, p):
+        return np.zeros(y.shape[:-1] + (1, 1), dtype=y.dtype)
+
+
 def test_engine_initialization():
     """Test engine initialization."""
     config = EngineConfig(dt=0.01, t0=0.0, t1=0.1, n_traj=2, seed=None, ic=None)
@@ -171,7 +185,10 @@ class DummyChunkIntegrator:
         record_modes,
     ):
         del t, model, noise, backend, record_modes
-        saved = np.stack([y + offset * dt for offset in save_offsets], axis=1)
+        if save_offsets:
+            saved = np.stack([y + offset * dt for offset in save_offsets], axis=1)
+        else:
+            saved = np.empty((y.shape[0], 0, y.shape[1]), dtype=y.dtype)
         return ChunkStepResult(final_state=y + n_steps * dt, saved_states=saved)
 
 
@@ -197,6 +214,61 @@ def test_engine_chunk_path_preserves_save_boundaries():
 
     assert trajectory.data.shape == (2, 4, 1)
     np.testing.assert_allclose(trajectory.data[0, :, 0], [0.0, 0.3, 0.6, 0.9])
+
+
+def test_engine_integrates_warmup_but_only_returns_observation_window():
+    config = EngineConfig(
+        dt=0.1,
+        t0=0.2,
+        t1=1.0,
+        n_traj=1,
+        seed=7,
+        ic=[[0.0]],
+        save_stride=3,
+    )
+    engine = Engine(
+        config=config,
+        plugins={
+            "backend": NumpyBackend(NumpyConfig(float_dtype="float32")),
+            "integrator": DummyChunkIntegrator(),
+            "model": DummySDEModel(),
+        },
+    )
+
+    result = engine.run()
+    trajectory = result.trajectory
+
+    assert trajectory.t0 == pytest.approx(0.2)
+    assert trajectory.dt == pytest.approx(0.3)
+    assert trajectory.meta["integration_t0"] == pytest.approx(0.0)
+    assert trajectory.meta["warmup_steps"] == 2
+    np.testing.assert_allclose(trajectory.times, [0.2, 0.5, 0.8])
+    np.testing.assert_allclose(trajectory.data[0, :, 0], [0.2, 0.5, 0.8])
+
+
+def test_engine_non_chunk_path_samples_from_observation_start():
+    config = EngineConfig(
+        dt=0.1,
+        t0=0.2,
+        t1=1.0,
+        n_traj=1,
+        seed=7,
+        ic=[[0.0]],
+        save_stride=3,
+    )
+    engine = Engine(
+        config=config,
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": UnitDriftModel(),
+        },
+    )
+
+    trajectory = engine.run().trajectory
+
+    np.testing.assert_allclose(trajectory.times, [0.2, 0.5, 0.8])
+    np.testing.assert_allclose(trajectory.data[0, :, 0], [0.2, 0.5, 0.8])
 
 
 def test_engine_state_norm_guard_rejects_escaped_chunk_trajectory():

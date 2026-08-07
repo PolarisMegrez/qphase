@@ -169,3 +169,43 @@ def test_planner_uses_dynamic_host_memory_when_limit_is_unset():
     assert plan.budget_bytes == 6000 * 1024**2
     assert plan.available_device_bytes == 8000 * 1024**2
     assert plan.device_total_bytes == 32000 * 1024**2
+
+
+def test_planner_counts_warmup_as_work_but_not_as_saved_samples():
+    config = EngineConfig(
+        t0=2.0,
+        t1=10.0,
+        dt=0.1,
+        n_traj=2,
+        save_stride=5,
+    )
+
+    plan = build_execution_plan(
+        config=config,
+        grid=None,
+        model=FakeModel(),
+        backend=FakeNumpyBackend(),
+        integrator=FakeIntegrator(),
+        analysers={},
+        resources=SimpleNamespace(memory_limit_mib=None, hardware=None),
+    )
+
+    assert plan.steps == 100
+    assert plan.warmup_steps == 20
+    assert plan.observation_steps == 80
+    assert plan.saved_samples == 17
+
+
+def test_planner_rejects_observation_boundary_off_the_integration_grid():
+    config = EngineConfig(t0=0.15, t1=1.0, dt=0.1)
+
+    with pytest.raises(ValueError, match="t0=.*integer multiple"):
+        build_execution_plan(
+            config=config,
+            grid=None,
+            model=FakeModel(),
+            backend=FakeNumpyBackend(),
+            integrator=FakeIntegrator(),
+            analysers={},
+            resources=None,
+        )

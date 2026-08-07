@@ -10,7 +10,9 @@ __all__ = [
     "SDEExecutionPlan",
     "SDEMemoryEstimate",
     "SDEMemoryPlanningError",
+    "SDETimeGrid",
     "build_execution_plan",
+    "resolve_time_grid",
 ]
 
 
@@ -21,6 +23,23 @@ _MAX_RESERVE_BYTES = 256 * _MIB
 
 class SDEMemoryPlanningError(RuntimeError):
     """Raised when no valid SDE execution plan fits the supplied resources."""
+
+
+@dataclass(frozen=True)
+class SDETimeGrid:
+    """Resolved integration and observation intervals for one SDE run."""
+
+    integration_t0: float
+    observation_t0: float
+    integration_t1: float
+    dt: float
+    total_steps: int
+    warmup_steps: int
+    observation_steps: int
+
+    def saved_samples(self, save_stride: int) -> int:
+        """Return samples retained from the observation window, including t0."""
+        return self.observation_steps // int(save_stride) + 1
 
 
 @dataclass(frozen=True)
@@ -51,6 +70,8 @@ class SDEExecutionPlan:
     trajectory_batch_count: int
     logical_rng_group_size: int
     steps: int
+    warmup_steps: int
+    observation_steps: int
     saved_samples: int
     scan_tile_size: int
     tile_count: int
@@ -84,7 +105,12 @@ def build_execution_plan(
     device_memory: tuple[int, int] | None = None,
 ) -> SDEExecutionPlan:
     """Validate a job and choose an SDE-internal scan tile size."""
-    steps = _validate_time_grid(config)
+    time_grid = resolve_time_grid(
+        t0=config.t0,
+        t1=config.t1,
+        dt=config.dt,
+    )
+    steps = time_grid.total_steps
     _validate_analyser_sampling(config, analysers)
 
     scan_size = int(getattr(grid, "size", 1)) if grid is not None else 1
@@ -97,7 +123,7 @@ def build_execution_plan(
     n_record_modes = (
         len(record_modes) if record_modes is not None else int(model.n_modes)
     )
-    saved_samples = steps // int(config.save_stride) + 1
+    saved_samples = time_grid.saved_samples(int(config.save_stride))
     real_dtype, real_itemsize = _real_dtype(backend)
     complex_itemsize = real_itemsize * 2
     chunk_steps = max(
@@ -242,6 +268,8 @@ def build_execution_plan(
         trajectory_batch_count=trajectory_batch_count,
         logical_rng_group_size=logical_rng_group,
         steps=steps,
+        warmup_steps=time_grid.warmup_steps,
+        observation_steps=time_grid.observation_steps,
         saved_samples=saved_samples,
         scan_tile_size=tile_size,
         tile_count=tile_count,
@@ -264,17 +292,42 @@ def build_execution_plan(
     )
 
 
-def _validate_time_grid(config: Any) -> int:
-    dt = float(config.dt)
-    duration = float(config.t1) - float(config.t0)
+def resolve_time_grid(*, t0: float, t1: float, dt: float) -> SDETimeGrid:
+    """Resolve ``[0, t0)`` warm-up and ``[t0, t1]`` observation intervals."""
+    dt = float(dt)
+    observation_t0 = float(t0)
+    integration_t1 = float(t1)
     if dt <= 0.0:
         raise ValueError("dt must be positive")
-    if duration <= 0.0:
+    if observation_t0 < 0.0:
+        raise ValueError("t0 must be non-negative")
+    if integration_t1 <= observation_t0:
         raise ValueError("t1 must be greater than t0")
-    steps = int(duration / dt)
-    if steps < 1:
-        raise ValueError("the configured time interval contains no integration steps")
-    return steps
+
+    total_steps = _aligned_step_count(integration_t1, dt, "t1")
+    warmup_steps = _aligned_step_count(observation_t0, dt, "t0")
+    observation_steps = total_steps - warmup_steps
+    if observation_steps < 1:
+        raise ValueError("the configured observation interval contains no steps")
+    return SDETimeGrid(
+        integration_t0=0.0,
+        observation_t0=observation_t0,
+        integration_t1=integration_t1,
+        dt=dt,
+        total_steps=total_steps,
+        warmup_steps=warmup_steps,
+        observation_steps=observation_steps,
+    )
+
+
+def _aligned_step_count(value: float, dt: float, name: str) -> int:
+    raw = value / dt
+    rounded = round(raw)
+    if not math.isclose(raw, rounded, rel_tol=1e-10, abs_tol=1e-9):
+        raise ValueError(
+            f"{name}={value:.12g} must be an integer multiple of dt={dt:.12g}"
+        )
+    return int(rounded)
 
 
 def _validate_analyser_sampling(config: Any, analysers: dict[str, Any]) -> None:

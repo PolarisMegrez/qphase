@@ -28,7 +28,11 @@ from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 from qphase_sde.buffers import SDEBufferCache
 from qphase_sde.integrator.base import Integrator
 from qphase_sde.model import NoiseSpec, SDEModel
-from qphase_sde.planning import SDEExecutionPlan, build_execution_plan
+from qphase_sde.planning import (
+    SDEExecutionPlan,
+    build_execution_plan,
+    resolve_time_grid,
+)
 from qphase_sde.result import SDEResult
 from qphase_sde.state import TrajectorySet
 
@@ -64,7 +68,11 @@ class EngineConfig(BaseModel):
     # --- Time Domain ---
     t0: float = Field(
         0.0,
-        description="Start time",
+        ge=0.0,
+        description=(
+            "Observation start time. Integration always starts at physical time 0; "
+            "samples before t0 are warm-up and are not retained."
+        ),
         json_schema_extra={"scanable": False},
     )
     t1: float = Field(
@@ -796,10 +804,16 @@ class Engine(EngineBase):
         if not model:
             raise RuntimeError("Engine requires 'model' plugin.")
 
+        time_grid = resolve_time_grid(
+            t0=self.config.t0,
+            t1=self.config.t1,
+            dt=self.config.dt,
+        )
         time_cfg = {
-            "t0": self.config.t0,
+            "t0": time_grid.integration_t0,
+            "observation_start": time_grid.observation_t0,
             "dt": self.config.dt,
-            "steps": int((self.config.t1 - self.config.t0) / self.config.dt),
+            "steps": time_grid.total_steps,
         }
         if progress_scale is None:
             progress_scale = int(self.config.n_traj)
@@ -828,6 +842,7 @@ class Engine(EngineBase):
                 del eta
                 prefix = f"{progress_label} | " if progress_label else ""
                 msg = f"{prefix}Traj {ic_index + 1}/{ic_total} | Step {k}/{steps}"
+                stage = "warmup" if k < time_grid.warmup_steps else "sampling"
                 metadata: dict[str, Any] = {
                     "ic_index": ic_index,
                     "ic_total": ic_total,
@@ -841,7 +856,7 @@ class Engine(EngineBase):
                     completed=progress_offset + progress_scale * k,
                     total=effective_progress_total,
                     unit="trajectory-step",
-                    stage="sampling",
+                    stage=stage,
                     message=msg,
                     metadata=metadata,
                 )
@@ -1053,7 +1068,9 @@ class Engine(EngineBase):
         ic : array-like
             Initial conditions
         time : dict
-            Time spec with keys: t0 (optional), dt, steps
+            Time spec with keys: t0 (optional integration start), dt, steps,
+            and optional observation_start. Samples before observation_start
+            are integrated but not retained.
         n_traj : int
             Number of trajectories
         solver : Integrator, optional
@@ -1115,8 +1132,17 @@ class Engine(EngineBase):
 
         # Parse time config
         t0 = float(time.get("t0", 0.0))
+        observation_t0 = float(time.get("observation_start", t0))
         dt = float(time["dt"])
         steps = int(time["steps"])
+        if observation_t0 < t0:
+            raise ValueError("observation_start must not precede integration t0")
+        observation_offset = (observation_t0 - t0) / dt
+        warmup_steps = round(observation_offset)
+        if not np.isclose(observation_offset, warmup_steps, rtol=1e-10, atol=1e-9):
+            raise ValueError("observation_start must align with the integration dt")
+        if warmup_steps < 0 or warmup_steps >= steps:
+            raise ValueError("observation_start must lie before the integration end")
 
         # Initialize state
         # Ensure IC is on the correct backend
@@ -1231,10 +1257,13 @@ class Engine(EngineBase):
                 raise ValueError(f"record_modes must be within 0..{model.n_modes - 1}")
         else:
             record_modes = tuple(range(model.n_modes))
-        n_keep = (steps // rs) + 1
+        observation_steps = steps - warmup_steps
+        n_keep = (observation_steps // rs) + 1
         out = be.empty((n_traj, n_keep, len(record_modes)), dtype=y.dtype)
-        out[:, 0, :] = y[:, record_modes]
-        keep_counter = 1
+        keep_counter = 0
+        if warmup_steps == 0:
+            out[:, 0, :] = y[:, record_modes]
+            keep_counter = 1
 
         # Progress tracking
         last_report_step = 0
@@ -1248,7 +1277,8 @@ class Engine(EngineBase):
         # Main simulation loop
         t_end = t0 + steps * dt
         save_dt = dt * rs
-        next_save_time = t0 + save_dt
+        next_save_step = warmup_steps + (rs if keep_counter else 0)
+        next_save_time = t0 + next_save_step * dt
 
         # Adaptive stepping setup
         use_adaptive = False
@@ -1307,11 +1337,13 @@ class Engine(EngineBase):
                     self._draw_standard_normal_into(be, rng, raw_noise)
                     dt_sqrt = be.asarray(dt**0.5, dtype=raw_noise.dtype)
                     raw_noise *= dt_sqrt
-                    save_offsets = tuple(
-                        offset
-                        for offset in range(1, n_chunk + 1)
-                        if (k + offset) % rs == 0
-                    )
+                    save_offsets_list: list[int] = []
+                    target_step = next_save_step
+                    while target_step <= k + n_chunk:
+                        if target_step > k:
+                            save_offsets_list.append(target_step - k)
+                        target_step += rs
+                    save_offsets = tuple(save_offsets_list)
                     result = chunk_step(
                         y,
                         t,
@@ -1340,7 +1372,8 @@ class Engine(EngineBase):
                     end = keep_counter + n_saved
                     out[:, keep_counter:end, :] = result.saved_states
                     keep_counter = end
-                    next_save_time += n_saved * save_dt
+                    next_save_step += n_saved * rs
+                    next_save_time = t0 + next_save_step * dt
                 k += n_chunk
                 t = t0 + k * dt
             else:
@@ -1399,6 +1432,7 @@ class Engine(EngineBase):
 
                         out[:, keep_counter, :] = y_interp[:, record_modes]
                         keep_counter += 1
+                        next_save_step += rs
                         next_save_time += save_dt
                     finally:
                         buf_cache.put(y_interp)
@@ -1440,11 +1474,22 @@ class Engine(EngineBase):
                     except Exception:
                         pass
 
+        if keep_counter != n_keep:
+            raise RuntimeError(
+                f"SDE observation saved {keep_counter} samples, expected {n_keep}"
+            )
+
         return TrajectorySet(
             data=out,
-            t0=t0,
+            t0=observation_t0,
             dt=dt * rs,
-            meta={"mode_indices": list(record_modes)},
+            meta={
+                "mode_indices": list(record_modes),
+                "integration_t0": t0,
+                "observation_t0": observation_t0,
+                "integration_t1": t_end,
+                "warmup_steps": warmup_steps,
+            },
         )
 
     @staticmethod

@@ -36,7 +36,12 @@ class ChunkStepResult:
 
 @runtime_checkable
 class ChunkIntegrator(Protocol):
-    """Optional capability for fused multi-step fixed integration."""
+    """Optional capability for fused multi-step fixed integration.
+
+    ``save_offsets`` may be empty when a chunk lies entirely inside a warm-up
+    interval. Implementations must still advance the final state and return a
+    saved-state array with a zero-length sample axis.
+    """
 
     def supports_chunk_step(self, model: Any, backend: Any) -> bool: ...
 
