@@ -1,0 +1,223 @@
+# Q1 retains the two Q0 candidates with monotone linewidth growth, no observed
+# escape, and CAM W_noise > 0. The two simulations use a fresh seed.
+- name: collective_loss_kerr_3mode_q1_mixing_gain_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+          - -3.4323475095182657
+          - -3.434847509518266
+          - -3.4393475095182657
+          - -3.4473475095182656
+          - -3.4613475095182656
+          - -3.4853475095182656
+          - -3.5193475095182656
+  engine:
+    sde:
+      t0: 5000.0
+      t1: 105000.0
+      dt: 0.005
+      n_traj: 16
+      seed: 20260810
+      ic:
+        - - "14.8291665387201+0.0j"
+          - "-10.9649545442761-0.855084962729959j"
+          - "2.9835406713953-3.46476677398952j"
+      adaptive: false
+      save_stride: 50
+      record_modes: [0]
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 200.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 256, max_modes: 16}
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 2.871873863041401
+      omega_c: -3.4293475095182657
+      chi: 0.00034170970705869376
+      g_ab: 4.456013452511663
+      g_ac: 0.1773645841667803
+      g_bc: 0.0011725478677872413
+      pump_a: 0.592924446196244
+      kappa_bright: 1.0
+      kappa_dark: 0.8895516330092514
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 120.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 8.0
+      find_peaks: true
+      estimator: {periodogram: {fft_chunk_trajectories: 2}}
+    allan_variance: &q1_allan
+      modes: [0]
+      points: 48
+      min_windows: 8
+      min_independent_windows: 4
+
+- name: collective_loss_kerr_3mode_q1_mixing_gain_fit
+  input: {from: collective_loss_kerr_3mode_q1_mixing_gain_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: 2.3
+      freq_max: 3.6
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export: [fit_results.csv, psd_merged.csv]
+
+- name: collective_loss_kerr_3mode_q1_mixing_gain_allan
+  input: {from: collective_loss_kerr_3mode_q1_mixing_gain_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -3.4293475095182657
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.35
+      min_independent_windows: 16
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 20.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260810
+      min_frequency_rss_improvement: 0.05
+      normal_form: {n: 3, k: 1, m: 0, observable_order: 1}
+
+- name: collective_loss_kerr_3mode_q1_dark_window_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+          - 1.0972468284070491
+          - 1.097746828407049
+          - 1.0987468284070492
+          - 1.1007468284070492
+          - 1.1047468284070492
+          - 1.1167468284070492
+          - 1.1467468284070492
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 450000.0
+      dt: 0.01
+      n_traj: 16
+      seed: 20260810
+      ic:
+        - - "27.0599131679081+0.0j"
+          - "5.58509248890524-3.05307386623884j"
+          - "-10.3465690654246-1.61735544168341j"
+      adaptive: false
+      save_stride: 50
+      record_modes: [0]
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 180.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 256, max_modes: 16}
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: -0.01808028668165207
+      omega_c: 1.0967468284070492
+      chi: 3.548688561976006e-05
+      g_ab: 0.02159812544043017
+      g_ac: 0.5127408501488523
+      g_bc: 0.0021544100365580555
+      pump_a: 0.06607627469692187
+      kappa_bright: 1.0
+      kappa_dark: 0.2047542136164718
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 120.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 4.0
+      find_peaks: true
+      estimator: {periodogram: {fft_chunk_trajectories: 2}}
+    allan_variance: *q1_allan
+
+- name: collective_loss_kerr_3mode_q1_dark_window_fit
+  input: {from: collective_loss_kerr_3mode_q1_dark_window_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -0.2
+      freq_max: 0.5
+      fit_window: 0.15
+      uncertainty: auto
+      clip_by_std: false
+      export: [fit_results.csv, psd_merged.csv]
+
+- name: collective_loss_kerr_3mode_q1_dark_window_allan
+  input: {from: collective_loss_kerr_3mode_q1_dark_window_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: 1.0967468284070492
+      side: positive
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.35
+      min_independent_windows: 16
+      min_scaling_points: 5
+      target_scaling_decades: 1.5
+      max_scaling_reduced_chi2: 20.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260810
+      min_frequency_rss_improvement: 0.05
+      normal_form: {n: 3, k: 1, m: 0, observable_order: 1}

@@ -1,0 +1,112 @@
+# Q0 closure for the balanced detuning/gain candidate: moderate CAM window,
+# large noncritical gap, low Petermann trend, and modest projected noise.
+- name: collective_loss_kerr_3mode_q0_balanced_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+          - -3.3428295685350895
+          - -3.350612363535952
+          - -3.364452345136773
+          - -3.38906313029344
+          - -3.4228295685350895
+  engine:
+    sde:
+      t0: 100000.0
+      t1: 125000.0
+      dt: 0.01
+      n_traj: 8
+      seed: 20260809
+      ic:
+        - - "8.6953675489531+0.0j"
+          - "-1.69918953949012-0.00796893929840817j"
+          - "1.84624006347677-0.0248714150134143j"
+      adaptive: false
+      save_stride: 10
+      record_modes: [0]
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 256, max_modes: 16}
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.8779190085254308
+      omega_c: -3.3328295685350895
+      chi: 0.00023806401179085948
+      g_ab: 0.07966780197002098
+      g_ac: 0.8002007756974645
+      g_bc: 0.2621430526622278
+      pump_a: 0.004662309460559229
+      kappa_bright: 1.0
+      kappa_dark: 0.05496538036755185
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator: {periodogram: {fft_chunk_trajectories: 2}}
+    allan_variance:
+      modes: [0]
+      points: 36
+      min_windows: 8
+      min_independent_windows: 4
+
+- name: collective_loss_kerr_3mode_q0_balanced_fit
+  input: {from: collective_loss_kerr_3mode_q0_balanced_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -0.5
+      freq_max: 0.2
+      fit_window: 0.12
+      uncertainty: auto
+      clip_by_std: false
+      export: [fit_results.csv, psd_merged.csv]
+
+- name: collective_loss_kerr_3mode_q0_balanced_allan
+  input: {from: collective_loss_kerr_3mode_q0_balanced_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -3.3328295685350895
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.2
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 0.9
+      max_scaling_reduced_chi2: 20.0
+      bootstrap_samples: 500
+      bootstrap_seed: 20260809
+      min_frequency_rss_improvement: 0.05
+      normal_form: {n: 3, k: 1, m: 0, observable_order: 1}
