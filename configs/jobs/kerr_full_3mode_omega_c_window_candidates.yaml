@@ -1,0 +1,82 @@
+# Directed re-evaluation of three distinct Kerr-full triple-root directions.
+# The first zipped case is the retained baseline and calibrates recovery.
+name: kerr_full_3mode_omega_c_window_candidates
+save: true
+
+scan:
+  combine: zipped
+  axes:
+    chi:
+      target: model.kerr_full_3mode.chi
+      values: [0.01, 0.003, 0.01, 0.01]
+    gamma_a:
+      target: model.kerr_full_3mode.gamma_a
+      values: [3.0, 3.0, 5.0, 3.0]
+    g_ac:
+      target: model.kerr_full_3mode.g_ac
+      values: [0.2, 0.2, 0.2, 0.02]
+
+engine:
+  cam: {}
+
+plugins:
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: -0.85
+      omega_c: -1.0
+      chi: 0.01
+      gamma_a: 3.0
+      gamma_b: 1.0
+      gamma_c: 0.06
+      g_ab: 1.0
+      g_ac: 0.2
+      g_bc: 0.2
+  cam_solver:
+    bifurcation:
+      controls:
+        omega_b: {min: -1.5, max: -0.5, scale: 0.5, domain: real}
+        gamma_c: {min: 0.01, max: 0.12, scale: 0.05, domain: nonnegative}
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        reduced:
+          retained_dimension: 1
+          order_parameter: r_diag_0
+          order_parameter_bounds: [0.0, 40.0]
+          max_candidates: 8
+          condition_limit: 1.0e11
+      discovery:
+        seeds:
+          samples_per_control: 7
+          max_starts: 8192
+          order_parameter_samples: 101
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-12
+        max_iterations: 180
+      verification:
+        initial_digits: 80
+        max_digits: 300
+  cam_postprocessor:
+    local_response_validation:
+      epsilon_min: 1.0e-9
+      epsilon_max: 1.0e-1
+      epsilon_points: 41
+      precision_digits: 120
+      residual_tolerance: 1.0e-45
+      fit_points: 7
+    stochastic_validity:
+      probe_epsilon: 1.0e-4

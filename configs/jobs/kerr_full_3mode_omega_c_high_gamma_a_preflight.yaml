@@ -1,0 +1,92 @@
+# Reduced stochastic control for the smallest-crossover/highest-gap direction.
+- name: kerr_full_3mode_omega_c_high_gamma_a_preflight_sim
+  save: true
+
+  scan:
+    axes:
+      omega_c:
+        target: model.kerr_full_3mode.omega_c
+        values: [-1.0025, -1.003, -1.0037, -1.0045, -1.0055, -1.0062]
+
+  engine:
+    sde:
+      t0: 20000.0
+      t1: 60000.0
+      dt: 0.005
+      n_traj: 16
+      seed: 20260813
+      ic:
+        - ["2.755752881680172+0.0j",
+           "3.724705639805324+6.628070871455625j",
+           "-34.84867150583352+1.307004445273647j"]
+      adaptive: false
+      save_stride: 100
+      record_modes: [0]
+      keep_traj: false
+      max_state_norm: 20000.0
+      state_check_interval_steps: 1024
+
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: -0.7941568378826546
+      omega_c: -1.0
+      chi: 0.01
+      gamma_a: 5.0
+      gamma_b: 1.0
+      gamma_c: 0.07869247272964415
+      g_ab: 1.0
+      g_ac: 0.2
+      g_bc: 0.2
+
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 100.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      find_peaks: true
+      estimator:
+        periodogram: {}
+
+- name: kerr_full_3mode_omega_c_high_gamma_a_preflight_fit
+  input:
+    from: kerr_full_3mode_omega_c_high_gamma_a_preflight_sim
+    mode: dataset
+  save: true
+
+  engine:
+    sde:
+      mode: analyze
+
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: 0.5
+      freq_max: 1.5
+      fit_window: 0.02
+      uncertainty: auto
+      clip_by_std: false
+      clip_sigma: 10.0
+      export: [fit_results.csv, psd_merged.csv]

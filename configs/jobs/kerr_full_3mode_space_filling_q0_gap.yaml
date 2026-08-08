@@ -1,0 +1,87 @@
+# S1 Pareto representative: best noncritical gap, case 16/candidate 3.
+- name: kerr_full_3mode_space_filling_q0_gap_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.kerr_full_3mode.omega_c
+        values: [-1.000001, -1.000004472135955, -1.00002,
+                 -1.0000894427191, -1.0004]
+  engine:
+    sde:
+      t0: 5000.0
+      t1: 25000.0
+      dt: 0.005
+      n_traj: 8
+      seed: 20260808
+      ic:
+        - ["14.554788555366718+0.0j",
+           "80.23653866875783+2.881374441034362j",
+           "-42.66791664304404+6.243680733346368j"]
+      adaptive: false
+      save_stride: 50
+      record_modes: [0]
+      keep_traj: true
+      max_state_norm: 10000.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 256, max_modes: 16}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: -2.9870230168766887
+      omega_c: -1.0
+      chi: 1.0e-4
+      gamma_a: 3.1297021897782393
+      gamma_b: 0.09643018750297144
+      gamma_c: 0.6884363916013361
+      g_ab: 1.0990326431939839
+      g_ac: 3.1320619702247208
+      g_bc: 0.5724016573720344
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 470.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator: {periodogram: {}}
+    trajectory_diagnostics:
+      modes: [0]
+      block_durations: [2000.0, 5000.0]
+      coherence: true
+      coherence_max_lag: 1000.0
+      center_coherence: false
+      keep_coherence_per_trajectory: true
+      allan: true
+      allan_points: 24
+      allan_min_windows: 8
+      block_spectrum: true
+      block_spectrum_wing_factor: 3.0
+      stationarity_details: true
+
+- name: kerr_full_3mode_space_filling_q0_gap_fit
+  input: {from: kerr_full_3mode_space_filling_q0_gap_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: 2.0
+      freq_max: 4.2
+      fit_window: 0.05
+      uncertainty: auto
+      clip_by_std: false
+      export: [fit_results.csv, psd_merged.csv]

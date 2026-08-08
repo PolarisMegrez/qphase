@@ -1,0 +1,84 @@
+name: kerr_full_3mode_allan_lambda_validation
+save: true
+scan:
+  combine: zipped
+  axes:
+    omega_c:
+      target: model.kerr_full_3mode.omega_c
+      values: [1.0, 1.0, 1.0]
+    chi:
+      target: model.kerr_full_3mode.chi
+      values: [0.0001, 0.001, 0.001]
+    gamma_a:
+      target: model.kerr_full_3mode.gamma_a
+      values: [0.9637901114446895, 1.192197479699127,
+               0.32495582663040157]
+    gamma_b:
+      target: model.kerr_full_3mode.gamma_b
+      values: [0.20833426831502472, 1.477261120722963,
+               0.28554125124913715]
+    g_ab:
+      target: model.kerr_full_3mode.g_ab
+      values: [0.029464248258859665, 1.9680780156167588,
+               0.17413007373617226]
+    g_ac:
+      target: model.kerr_full_3mode.g_ac
+      values: [4.208110780283891, 0.023357178655009744,
+               1.136609186440216]
+    g_bc:
+      target: model.kerr_full_3mode.g_bc
+      values: [0.03624253539123171, 1.4243866723285246,
+               0.016525642834717833]
+engine:
+  cam:
+    case_failure_policy: record
+plugins:
+  backend:
+    numpy: {float_dtype: float64}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      gamma_a: 1.0
+      gamma_b: 1.0
+      gamma_c: 1.0
+      g_ab: 1.0
+      g_ac: 1.0
+      g_bc: 1.0
+  cam_solver:
+    bifurcation:
+      controls:
+        omega_b: {min: 1.0, max: 5.0, scale: 1.0, domain: real}
+        gamma_c:
+          min: 0.2
+          max: 1.0
+          scale: 1.0
+          domain: nonnegative
+          sampling: log
+      perturbation: {parameter: omega_c, scale: 1.0, side: both}
+      target:
+        equilibrium_multiplicity: {order: 3}
+      strategy:
+        reduced: {retained_dimension: 1, max_candidates: 9,
+                  condition_limit: 1.0e11}
+      discovery:
+        seeds: {samples_per_control: 4, max_starts: 2048,
+                order_parameter_samples: 41}
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement: {tolerance: 1.0e-11, max_iterations: 120}
+      verification: {initial_digits: 60, max_digits: 240}
+  cam_postprocessor:
+    local_response_validation:
+      epsilon_min: 0.003
+      epsilon_max: 0.12
+      epsilon_points: 41
+      fit_points: 7
+      precision_digits: 80
+      residual_tolerance: 1.0e-30
+    stochastic_validity: {probe_epsilon: 0.01}
