@@ -1,0 +1,209 @@
+name: reservoir_kerr_3mode_loss_controls_s0
+save: true
+system:
+  scan_runtime:
+    checkpoint:
+      enabled: true
+      interval_chunks: 1
+      keep_on_success: false
+scan:
+  combine: zipped
+  axes:
+    delta:
+      target: model.reservoir_kerr_3mode.delta
+      values:
+      - -1.0
+      - -1.0
+      - -1.0
+      - -1.0
+      - -1.0
+      - -1.0
+      - -1.0
+      - -1.0
+      - -1.0
+      - -1.0
+      - -1.0
+      - -1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+    chi:
+      target: model.reservoir_kerr_3mode.chi
+      values:
+      - 0.0001
+      - 0.0001
+      - 0.0001
+      - 0.0001
+      - 0.001
+      - 0.001
+      - 0.001
+      - 0.001
+      - 0.01
+      - 0.01
+      - 0.01
+      - 0.01
+      - 0.0001
+      - 0.0001
+      - 0.0001
+      - 0.0001
+      - 0.001
+      - 0.001
+      - 0.001
+      - 0.001
+      - 0.01
+      - 0.01
+      - 0.01
+      - 0.01
+    omega_r:
+      target: model.reservoir_kerr_3mode.omega_r
+      values:
+      - -0.02818126231431961
+      - 3.0228929687291384
+      - 0.19952237606048584
+      - -2.8420946653932333
+      - -0.02818126231431961
+      - 3.0228929687291384
+      - 0.19952237606048584
+      - -2.8420946653932333
+      - -0.02818126231431961
+      - 3.0228929687291384
+      - 0.19952237606048584
+      - -2.8420946653932333
+      - -0.02818126231431961
+      - 3.0228929687291384
+      - 0.19952237606048584
+      - -2.8420946653932333
+      - -0.02818126231431961
+      - 3.0228929687291384
+      - 0.19952237606048584
+      - -2.8420946653932333
+      - -0.02818126231431961
+      - 3.0228929687291384
+      - 0.19952237606048584
+      - -2.8420946653932333
+    g:
+      target: model.reservoir_kerr_3mode.g
+      values:
+      - 0.0437417198695977
+      - 0.22474653455767638
+      - 0.08038413074528328
+      - 2.8707137729913925
+      - 0.0437417198695977
+      - 0.22474653455767638
+      - 0.08038413074528328
+      - 2.8707137729913925
+      - 0.0437417198695977
+      - 0.22474653455767638
+      - 0.08038413074528328
+      - 2.8707137729913925
+      - 0.0437417198695977
+      - 0.22474653455767638
+      - 0.08038413074528328
+      - 2.8707137729913925
+      - 0.0437417198695977
+      - 0.22474653455767638
+      - 0.08038413074528328
+      - 2.8707137729913925
+      - 0.0437417198695977
+      - 0.22474653455767638
+      - 0.08038413074528328
+      - 2.8707137729913925
+    g_r:
+      target: model.reservoir_kerr_3mode.g_r
+      values:
+      - 2.7934061596661715
+      - 0.025789433620962213
+      - 0.3710245536165871
+      - 0.0930147574789487
+      - 2.7934061596661715
+      - 0.025789433620962213
+      - 0.3710245536165871
+      - 0.0930147574789487
+      - 2.7934061596661715
+      - 0.025789433620962213
+      - 0.3710245536165871
+      - 0.0930147574789487
+      - 2.7934061596661715
+      - 0.025789433620962213
+      - 0.3710245536165871
+      - 0.0930147574789487
+      - 2.7934061596661715
+      - 0.025789433620962213
+      - 0.3710245536165871
+      - 0.0930147574789487
+      - 2.7934061596661715
+      - 0.025789433620962213
+      - 0.3710245536165871
+      - 0.0930147574789487
+engine:
+  cam:
+    case_failure_policy: record
+plugins:
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    reservoir_kerr_3mode:
+      omega_r: 0.0
+      omega_0: 0.0
+      delta: 0.0
+      chi: 0.001
+      g: 0.2
+      g_r: 0.2
+      kappa_r: 1.0
+      pump_r: 0.5
+      kappa_local: 0.1
+  cam_solver:
+    bifurcation:
+      controls:
+        pump_r:
+          min: 0.001
+          max: 0.999
+          scale: 1.0
+          domain: nonnegative
+        kappa_local:
+          min: 0.0001
+          max: 2.0
+          scale: 0.1
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: delta
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
