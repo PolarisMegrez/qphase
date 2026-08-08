@@ -1,0 +1,109 @@
+name: reservoir_kerr_3mode_pump_nonlinearity_s0
+save: true
+system:
+  scan_runtime:
+    checkpoint:
+      enabled: true
+      interval_chunks: 1
+      keep_on_success: false
+scan:
+  combine: zipped
+  axes:
+    delta:
+      target: model.reservoir_kerr_3mode.delta
+      values:
+      - 1.5213716219848956
+      - 0.31398239937897743
+      - 0.05858754499607793
+      - 2.23393904877263
+    omega_r:
+      target: model.reservoir_kerr_3mode.omega_r
+      values:
+      - -3.851142004132271
+      - 2.0987258851528168
+      - -0.06369568407535553
+      - 3.380967527627945
+    g:
+      target: model.reservoir_kerr_3mode.g
+      values:
+      - 1.2972555180942593
+      - 0.04368082488277066
+      - 0.25098057315946676
+      - 0.15195922608023582
+    g_r:
+      target: model.reservoir_kerr_3mode.g_r
+      values:
+      - 3.2434150427394064
+      - 0.1759170162327824
+      - 0.70724988781765
+      - 0.038334440184244555
+    kappa_local:
+      target: model.reservoir_kerr_3mode.kappa_local
+      values:
+      - 0.04999832548021248
+      - 0.009118544131214674
+      - 0.0001260284362818552
+      - 0.3371050849536098
+engine:
+  cam:
+    case_failure_policy: record
+plugins:
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    reservoir_kerr_3mode:
+      omega_r: 0.0
+      omega_0: 0.0
+      delta: 1.0
+      chi: 0.001
+      g: 0.2
+      g_r: 0.2
+      kappa_r: 1.0
+      pump_r: 0.5
+      kappa_local: 0.1
+  cam_solver:
+    bifurcation:
+      controls:
+        pump_r:
+          min: 0.001
+          max: 0.999
+          scale: 1.0
+          domain: nonnegative
+        chi:
+          min: 1.0e-05
+          max: 0.1
+          scale: 0.01
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: delta
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64

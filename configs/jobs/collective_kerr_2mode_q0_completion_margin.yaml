@@ -1,0 +1,79 @@
+- name: collective_kerr_2mode_q0_completion_margin_sim
+  save: true
+  scan:
+    axes:
+      delta:
+        target: model.collective_kerr_2mode.delta
+        values: [0.158418215704, 0.157639936294, 0.156255938044, 0.153794802254, 0.149418215704]
+  engine:
+    sde:
+      t0: 2000.0
+      t1: 10000.0
+      dt: 0.005
+      n_traj: 8
+      seed: 20260808
+      ic: [["3.289646+0.0j", "2.953382+2.023404j"]]
+      adaptive: false
+      save_stride: 20
+      record_modes: [0, 1]
+      keep_traj: true
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 256, max_modes: 16}
+  model:
+    collective_kerr_2mode:
+      omega_0: 0.0
+      delta: 0.159418215704
+      chi: 0.0265535760080
+      g: 0.0213865190279
+      kappa_bright: 1.0
+      pump_bright: 0.987297504029
+      kappa_dark: 0.271831839490
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 10.0
+      find_peaks: true
+      estimator: {periodogram: {fft_chunk_trajectories: 2}}
+    trajectory_diagnostics:
+      modes: [0, 1]
+      block_durations: [1000.0, 2500.0]
+      coherence: true
+      coherence_max_lag: 500.0
+      center_coherence: false
+      keep_coherence_per_trajectory: true
+      allan: true
+      allan_points: 24
+      allan_min_windows: 8
+      block_spectrum: true
+      block_spectrum_wing_factor: 3.0
+      stationarity_details: true
+
+- name: collective_kerr_2mode_q0_completion_margin_fit
+  input: {from: collective_kerr_2mode_q0_completion_margin_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    lorentz_fitter:
+      scan_param: delta
+      mode: 0
+      freq_min: -2.0
+      freq_max: 0.2
+      fit_window: 0.15
+      uncertainty: auto
+      clip_by_std: false
+      export: [fit_results.csv, psd_merged.csv]

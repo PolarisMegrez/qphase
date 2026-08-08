@@ -1,0 +1,188 @@
+name: collective_kerr_2mode_nonlinear_dark_s1
+save: true
+system:
+  scan_runtime:
+    checkpoint:
+      enabled: true
+      interval_chunks: 1
+      keep_on_success: false
+scan:
+  combine: zipped
+  axes:
+    delta:
+      target: model.collective_kerr_2mode.delta
+      values:
+      - 0.18759197261252666
+      - 0.6971356737131976
+      - 2.8442851535835523
+      - 0.14543882433828828
+      - 0.07630291845275122
+      - 1.9807179812601303
+      - 1.5351996964858978
+      - 0.31122677167888885
+      - 0.4608379975408732
+      - 0.898079860797878
+      - 2.1987257994719513
+      - 0.059507298340817236
+      - 0.09822203952740986
+      - 4.862090161065769
+      - 0.6280132464647467
+      - 0.24053878960010125
+      - 0.2599330838441882
+      - 0.5032241685989747
+      - 3.9223401017101227
+      - 0.10542790923355833
+      - 0.055067299677514066
+      - 2.7439639448050066
+      - 1.1132499966822142
+      - 0.42934029416246156
+      - 0.33258370860294023
+      - 1.2441443552853615
+      - 1.5944061417602637
+      - 0.08209089578987305
+      - 0.13609943317019385
+      - 3.5096778245806344
+      - 0.8660460347946621
+      - 0.17436544384175437
+    g:
+      target: model.collective_kerr_2mode.g
+      values:
+      - 0.13170426288150194
+      - 2.856201952538537
+      - 0.0374939977360552
+      - 0.8033173178646423
+      - 0.010409776701486533
+      - 0.2432839395051623
+      - 0.09772046740179245
+      - 2.2561774859977795
+      - 0.02417614098428083
+      - 0.5695567982101098
+      - 0.1846351098711258
+      - 4.4027907813040095
+      - 0.06938291590661784
+      - 1.4527182425150331
+      - 0.01606932565562024
+      - 0.34057345502086367
+      - 0.01912328590108544
+      - 0.40447124073838675
+      - 0.05599229572263371
+      - 1.1699687475624494
+      - 0.15587254382009563
+      - 3.7350957427893188
+      - 0.030097261984865724
+      - 0.7125257158267299
+      - 0.07843564793155745
+      - 1.8048528353155824
+      - 0.012321375398539827
+      - 0.2869899176811248
+      - 0.04649571305885526
+      - 0.9967066793551174
+      - 0.11075593410075989
+      - 2.403145252802211
+    pump_bright:
+      target: model.collective_kerr_2mode.pump_bright
+      values:
+      - 0.39514097179751845
+      - 0.6921374216116964
+      - 0.20907936363015325
+      - 0.8985101000126451
+      - 0.5977846049051732
+      - 0.3084641921753064
+      - 0.8080110417865217
+      - 0.11087230041157453
+      - 0.8661873038718477
+      - 0.05551411657594144
+      - 0.5376233914820477
+      - 0.3656870880909264
+      - 0.14224443657323718
+      - 0.9606030619842931
+      - 0.4639589714538306
+      - 0.6281816262984649
+      - 0.034629420172423125
+      - 0.8226838777167722
+      - 0.3246025523077697
+      - 0.5200912890816107
+      - 0.9747679918119684
+      - 0.1943914574291557
+      - 0.676014139088802
+      - 0.4728192687220871
+      - 0.7371447815280407
+      - 0.4165658018225804
+      - 0.9156223007105291
+      - 0.24878021224867553
+      - 0.2567389517603442
+      - 0.5850014835037292
+      - 0.10050994812045246
+      - 0.7596365166362375
+engine:
+  cam:
+    case_failure_policy: record
+plugins:
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_kerr_2mode:
+      omega_0: 0.0
+      delta: 1.0
+      chi: 0.001
+      g: 0.5
+      kappa_bright: 1.0
+      pump_bright: 0.5
+      kappa_dark: 0.1
+  cam_solver:
+    bifurcation:
+      controls:
+        chi:
+          min: 1.0e-05
+          max: 0.1
+          scale: 0.01
+          domain: nonnegative
+          sampling: log
+        kappa_dark:
+          min: 0.0001
+          max: 2.0
+          scale: 0.1
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: delta
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        reduced:
+          retained_dimension: 1
+          max_candidates: 9
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 4
+          max_starts: 2048
+          order_parameter_samples: 41
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-11
+        max_iterations: 120
+      verification:
+        initial_digits: 60
+        max_digits: 240
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+  cam_postprocessor:
+    local_response_validation:
+      epsilon_min: 1.0e-10
+      epsilon_max: 0.01
+      epsilon_points: 13
+      fit_points: 5
+      precision_digits: 80
+      residual_tolerance: 1.0e-30
+    stochastic_validity:
+      probe_epsilon: 0.0001
