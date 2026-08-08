@@ -75,6 +75,51 @@ SCHEMES = (
         ("chi", "kappa_local"),
         (DELTA, OMEGA_R, G, G_R, PUMP),
     ),
+    Scheme(
+        "detuning_nonlinearity",
+        ("omega_r", "chi"),
+        (DELTA, G, G_R, PUMP, LOCAL),
+    ),
+    Scheme(
+        "detuning_direct_coupling",
+        ("omega_r", "g"),
+        (DELTA, G_R, PUMP, LOCAL),
+        True,
+    ),
+    Scheme(
+        "detuning_reservoir_coupling",
+        ("omega_r", "g_r"),
+        (DELTA, G, PUMP, LOCAL),
+        True,
+    ),
+    Scheme(
+        "detuning_local_loss",
+        ("omega_r", "kappa_local"),
+        (DELTA, G, G_R, PUMP),
+        True,
+    ),
+    Scheme(
+        "nonlinear_direct_coupling",
+        ("chi", "g"),
+        (DELTA, OMEGA_R, G_R, PUMP, LOCAL),
+    ),
+    Scheme(
+        "nonlinear_reservoir_coupling",
+        ("chi", "g_r"),
+        (DELTA, OMEGA_R, G, PUMP, LOCAL),
+    ),
+    Scheme(
+        "direct_reservoir_coupling",
+        ("g", "g_r"),
+        (DELTA, OMEGA_R, PUMP, LOCAL),
+        True,
+    ),
+    Scheme(
+        "direct_coupling_local_loss",
+        ("g", "kappa_local"),
+        (DELTA, OMEGA_R, G_R, PUMP),
+        True,
+    ),
 )
 
 RANGES: dict[str, dict[str, Any]] = {
