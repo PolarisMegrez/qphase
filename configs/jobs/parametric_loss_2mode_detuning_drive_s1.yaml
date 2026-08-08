@@ -1,0 +1,137 @@
+name: parametric_loss_2mode_detuning_drive_s1
+save: true
+system:
+  scan_runtime:
+    checkpoint:
+      enabled: true
+      interval_chunks: 1
+      keep_on_success: false
+scan:
+  combine: zipped
+  axes:
+    g:
+      target: model.parametric_loss_2mode.g
+      values:
+      - 0.01504857170643473
+      - 0.17215700946375254
+      - 1.366879285737509
+      - 0.0018671174093550665
+      - 0.0035596798802537267
+      - 2.739021872155709
+      - 0.3302522900880939
+      - 0.029356631047397646
+      - 0.045394142144799275
+      - 0.47779047230819965
+      - 4.211466828571246
+      - 0.005120917256918422
+      - 0.0012200262551857537
+      - 0.95460064760554
+      - 0.11081606741396895
+      - 0.010353047395550647
+    kappa_a:
+      target: model.parametric_loss_2mode.kappa_a
+      values:
+      - 1.9325902013986551
+      - 0.8429856470925554
+      - 3.027244076901715
+      - 0.2920369613146991
+      - 4.052546788906608
+      - 0.3360681824307662
+      - 1.0414746548524922
+      - 0.4775276785661248
+      - 2.64971304053303
+      - 0.23097377988227216
+      - 1.5153364412013761
+      - 0.7303540313066711
+      - 1.324083078664506
+      - 0.5494402313300512
+      - 4.644533950401583
+      - 0.42625424012112983
+    kappa_2:
+      target: model.parametric_loss_2mode.kappa_2
+      values:
+      - 1.1530038443491268e-05
+      - 0.01828587374847838
+      - 0.00018415521523388286
+      - 0.0011462625658104956
+      - 0.03645715021665284
+      - 5.783483538094694e-05
+      - 0.0058244541574239105
+      - 0.0003624373345656538
+      - 0.0052060525635951455
+      - 0.000961522792354194
+      - 0.09590560746990219
+      - 5.213177014536294e-05
+      - 0.0001646106004434244
+      - 0.003041097612030249
+      - 3.0333195198995736e-05
+      - 0.016483675698823027
+engine:
+  cam:
+    case_failure_policy: record
+plugins:
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    parametric_loss_2mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      epsilon: 0.3
+      g: 0.2
+      kappa_a: 0.5
+      kappa_b: 1.0
+      kappa_2: 0.01
+  cam_solver:
+    bifurcation:
+      controls:
+        omega_a:
+          min: -5.0
+          max: 5.0
+          scale: 1.0
+          domain: real
+        epsilon:
+          min: 0.001
+          max: 5.0
+          scale: 0.5
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_b
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-11
+        max_iterations: 100
+      verification:
+        initial_digits: 60
+        max_digits: 180
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+  cam_postprocessor:
+    local_response_validation:
+      epsilon_min: 1.0e-10
+      epsilon_max: 0.1
+      epsilon_points: 19
+      fit_points: 7
+      precision_digits: 80
+      residual_tolerance: 1.0e-30
