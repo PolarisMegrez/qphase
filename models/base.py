@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
+from functools import cache, lru_cache
 from typing import Any, ClassVar
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict
 from qphase.backend.xputil import get_xp
 from qphase_sde.model import FunctionalSDEModel
 
 from .kernels.base import ModelKernelPlugin, ModelKernelRegistry
 
-__all__ = ["ModelConfig", "SDEModelPlugin"]
+__all__ = ["FPGenBackedSDEModel", "ModelConfig", "SDEModelPlugin"]
 
 
 class ModelConfig(BaseModel):
@@ -167,4 +169,169 @@ class SDEModelPlugin(ABC):
             drift=self.drift,
             diffusion=self.diffusion,
             drift_matrix=self.drift_matrix,
+        )
+
+
+def _canonical_hermitian_vector(state: Any, xp: Any) -> Any:
+    n_modes = int(state.shape[-1])
+    pairs = tuple(
+        (i, j) for i in range(n_modes) for j in range(i + 1, n_modes)
+    )
+    values = [xp.real(state[..., index, index]) for index in range(n_modes)]
+    values.extend(xp.real(state[..., i, j]) for i, j in pairs)
+    values.extend(xp.imag(state[..., i, j]) for i, j in pairs)
+    return xp.stack(values, axis=-1)
+
+
+class _CompiledFPGenMatrix:
+    """Backend-aware scalar compilation of one fpgen symbolic matrix."""
+
+    def __init__(self, expression: Any, arguments: tuple[Any, ...], modules: Any):
+        import sympy as sp
+
+        matrix = sp.Matrix(expression)
+        self.shape = matrix.shape
+        self._functions = tuple(
+            sp.lambdify(arguments, value, modules=modules) for value in matrix
+        )
+
+    def __call__(
+        self,
+        state_vector: Any,
+        params: dict[str, Any],
+        parameter_names: tuple[str, ...],
+        xp: Any,
+    ) -> Any:
+        arguments = [
+            state_vector[..., index] for index in range(state_vector.shape[-1])
+        ]
+        arguments.extend(xp.asarray(params[name]) for name in parameter_names)
+        entries = [xp.asarray(function(*arguments)) for function in self._functions]
+        batch_shape = tuple(state_vector.shape[:-1])
+        if entries:
+            batch_shape = np.broadcast_shapes(
+                batch_shape, *(tuple(entry.shape) for entry in entries)
+            )
+        broadcast = [xp.broadcast_to(entry, batch_shape) for entry in entries]
+        stacked = xp.stack(broadcast, axis=-1)
+        return stacked.reshape(batch_shape + self.shape)
+
+
+class FPGenBackedSDEModel(SDEModelPlugin):
+    """Model whose numerical equations are compiled from fpgen output."""
+
+    @classmethod
+    def cam_fpgen_dynamics(cls) -> Any:
+        """Return the authoritative fpgen second-moment dynamics."""
+        raise NotImplementedError
+
+    @classmethod
+    @cache
+    def _fpgen_expression(cls, name: str) -> Any:
+        dynamics = cls.cam_fpgen_dynamics()
+        if name == "jacobian":
+            return dynamics.jacobian()
+        return getattr(dynamics, name)
+
+    @classmethod
+    @cache
+    def _fpgen_parameter_names(cls) -> tuple[str, ...]:
+        dynamics = cls.cam_fpgen_dynamics()
+        return tuple(item.symbol.name for item in dynamics.parameter_spec)
+
+    @classmethod
+    @cache
+    def _compiled_fpgen_matrix(
+        cls, name: str, backend_name: str
+    ) -> _CompiledFPGenMatrix:
+        dynamics = cls.cam_fpgen_dynamics()
+        if backend_name == "cupy":
+            import cupy as modules
+        else:
+            modules = "numpy"
+        arguments = tuple(dynamics.coordinates) + tuple(
+            item.symbol for item in dynamics.parameter_spec
+        )
+        return _CompiledFPGenMatrix(
+            cls._fpgen_expression(name), arguments, modules
+        )
+
+    @staticmethod
+    def _backend_name(xp: Any) -> str:
+        return "cupy" if xp.__name__.split(".", 1)[0] == "cupy" else "numpy"
+
+    def _evaluate_fpgen_matrix(
+        self, name: str, state_vector: Any, params: dict[str, Any], xp: Any
+    ) -> Any:
+        compiled = self._compiled_fpgen_matrix(name, self._backend_name(xp))
+        return compiled(state_vector, params, self._fpgen_parameter_names(), xp)
+
+    def drift(self, y: Any, t: float, params: dict[str, Any]) -> Any:
+        del t
+        xp = get_xp(y)
+        return xp.einsum("...ij,...j->...i", self.drift_matrix(y, 0.0, params), y)
+
+    def drift_matrix(self, y: Any, t: float, params: dict[str, Any]) -> Any:
+        del t
+        xp = get_xp(y)
+        state = xp.einsum("...i,...j->...ij", y, xp.conj(y))
+        return -1j * self.cam_hamiltonian(state, params)
+
+    def diffusion(self, y: Any, t: float, params: dict[str, Any]) -> Any:
+        del t
+        xp = get_xp(y)
+        state = xp.einsum("...i,...j->...ij", y, xp.conj(y))
+        covariance = self.cam_diffusion(state, params)
+        covariance = (covariance + xp.swapaxes(xp.conj(covariance), -1, -2)) / 2.0
+        eigenvalues, eigenvectors = xp.linalg.eigh(covariance)
+        eigenvalues = xp.clip(eigenvalues, 0.0, None)
+        return eigenvectors * xp.sqrt(eigenvalues)[..., None, :]
+
+    def cam_hamiltonian(self, state: Any, params: dict[str, Any]) -> Any:
+        xp = get_xp(state)
+        state = xp.asarray(state)
+        vector = _canonical_hermitian_vector(state, xp)
+        value = self._evaluate_fpgen_matrix("hamiltonian", vector, params, xp)
+        return xp.asarray(value, dtype=state.dtype)
+
+    def cam_diffusion(self, state: Any, params: dict[str, Any]) -> Any:
+        xp = get_xp(state)
+        state = xp.asarray(state)
+        vector = _canonical_hermitian_vector(state, xp)
+        value = self._evaluate_fpgen_matrix("diffusion", vector, params, xp)
+        return xp.asarray(value, dtype=state.dtype)
+
+    def cam_residual_vector(self, vector: Any, params: dict[str, Any]) -> Any:
+        xp = get_xp(vector)
+        vector = xp.asarray(vector)
+        value = self._evaluate_fpgen_matrix("rhs", vector, params, xp)
+        return xp.asarray(value[..., 0], dtype=vector.dtype)
+
+    def cam_jacobian_vector(self, vector: Any, params: dict[str, Any]) -> Any:
+        xp = get_xp(vector)
+        vector = xp.asarray(vector)
+        value = self._evaluate_fpgen_matrix("jacobian", vector, params, xp)
+        return xp.asarray(value, dtype=vector.dtype)
+
+    def cam_jacobian(self, state: Any, params: dict[str, Any]) -> Any:
+        xp = get_xp(state)
+        state = xp.asarray(state)
+        return self.cam_jacobian_vector(
+            _canonical_hermitian_vector(state, xp), params
+        )
+
+    @classmethod
+    @lru_cache(maxsize=1)
+    def cam_symbolic_matrices(cls) -> Any:
+        from qphase_cam.model import CAMSymbolicSpec
+
+        dynamics = cls.cam_fpgen_dynamics()
+        spec = dynamics.to_model_spec(name=cls.name)
+        return CAMSymbolicSpec(
+            dynamics.hamiltonian,
+            dynamics.diffusion,
+            dynamics.covariance,
+            tuple(dynamics.coordinates),
+            tuple(item.symbol for item in dynamics.parameter_spec),
+            version=f"fpgen:{spec.fingerprint}",
         )

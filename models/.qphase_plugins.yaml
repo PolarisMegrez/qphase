@@ -18,3 +18,9 @@ plugins:
   - type: model.pair_hopping_2mode
     target: models.pair_hopping_2mode:PairHopping2ModeModel
     description: Two-mode pair-hopping CAM model
+  - type: model.collective_kerr_2mode
+    target: models.collective_kerr_2mode:CollectiveKerr2ModeModel
+    description: Collectively damped two-mode Kerr oscillator
+  - type: model.reservoir_kerr_3mode
+    target: models.reservoir_kerr_3mode:ReservoirKerr3ModeModel
+    description: Explicit-reservoir three-mode Kerr oscillator
