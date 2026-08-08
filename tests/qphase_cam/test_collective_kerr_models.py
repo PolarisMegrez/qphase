@@ -7,6 +7,7 @@ import pytest
 from qphase_cam.core.fpgen import FPGenDynamicsAdapter
 
 from models.collective_kerr_2mode import CollectiveKerr2ModeModel
+from models.collective_loss_kerr_3mode import CollectiveLossKerr3ModeModel
 from models.reservoir_kerr_3mode import ReservoirKerr3ModeModel
 
 
@@ -21,6 +22,18 @@ from models.reservoir_kerr_3mode import ReservoirKerr3ModeModel
             pump_bright=0.4,
             kappa_dark=0.02,
         ),
+        CollectiveLossKerr3ModeModel(
+            omega_a=0.0,
+            omega_b=0.2,
+            omega_c=-0.1,
+            chi=0.01,
+            g_ab=0.4,
+            g_ac=0.3,
+            g_bc=0.05,
+            pump_a=0.2,
+            kappa_bright=1.0,
+            kappa_dark=0.02,
+        ),
         ReservoirKerr3ModeModel(
             omega_r=0.0,
             omega_0=0.0,
@@ -33,7 +46,7 @@ from models.reservoir_kerr_3mode import ReservoirKerr3ModeModel
             kappa_local=0.02,
         ),
     ),
-    ids=("collective", "explicit_reservoir"),
+    ids=("collective", "collective_loss", "explicit_reservoir"),
 )
 def fpgen_model(request):
     return request.param
@@ -131,6 +144,39 @@ def test_collective_model_has_exchange_symmetry_at_zero_detuning():
     )
     state = np.asarray([[1.4, 0.2 + 0.1j], [0.2 - 0.1j, 0.8]])
     swap = np.asarray([[0.0, 1.0], [1.0, 0.0]])
+    swapped = swap @ state @ swap
+
+    np.testing.assert_allclose(
+        model.cam_hamiltonian(swapped, model.params),
+        swap @ model.cam_hamiltonian(state, model.params) @ swap,
+    )
+    np.testing.assert_allclose(
+        model.cam_diffusion(swapped, model.params),
+        swap @ model.cam_diffusion(state, model.params) @ swap,
+    )
+
+
+def test_collective_loss_model_has_b_c_exchange_symmetry():
+    model = CollectiveLossKerr3ModeModel(
+        omega_a=0.0,
+        omega_b=0.2,
+        omega_c=0.2,
+        chi=0.03,
+        g_ab=0.4,
+        g_ac=0.4,
+        g_bc=0.05,
+        pump_a=0.3,
+        kappa_bright=1.1,
+        kappa_dark=0.04,
+    )
+    state = np.asarray(
+        [
+            [1.0, 0.2 + 0.1j, -0.1 + 0.3j],
+            [0.2 - 0.1j, 1.4, 0.15 + 0.05j],
+            [-0.1 - 0.3j, 0.15 - 0.05j, 0.8],
+        ]
+    )
+    swap = np.asarray([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
     swapped = swap @ state @ swap
 
     np.testing.assert_allclose(

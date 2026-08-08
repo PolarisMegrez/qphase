@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from models.collective_kerr_2mode import CollectiveKerr2ModeModel
+from models.collective_loss_kerr_3mode import CollectiveLossKerr3ModeModel
 from models.reservoir_kerr_3mode import ReservoirKerr3ModeModel
 
 pytestmark = pytest.mark.gpu
@@ -35,6 +36,19 @@ def _make_model(model_name: str):
             pump_bright=0.4,
             kappa_dark=0.02,
         )
+    if model_name == "collective_loss_kerr_3mode":
+        return CollectiveLossKerr3ModeModel(
+            omega_a=0.0,
+            omega_b=0.2,
+            omega_c=-0.1,
+            chi=0.01,
+            g_ab=0.4,
+            g_ac=0.3,
+            g_bc=0.05,
+            pump_a=0.2,
+            kappa_bright=1.0,
+            kappa_dark=0.02,
+        )
     return ReservoirKerr3ModeModel(
         omega_r=0.0,
         omega_0=0.0,
@@ -48,7 +62,13 @@ def _make_model(model_name: str):
     )
 
 
-@pytest.fixture(params=("collective_kerr_2mode", "reservoir_kerr_3mode"))
+@pytest.fixture(
+    params=(
+        "collective_kerr_2mode",
+        "collective_loss_kerr_3mode",
+        "reservoir_kerr_3mode",
+    )
+)
 def model(request):
     return _make_model(request.param)
 
@@ -97,7 +117,10 @@ def _step_worker(model_name: str, dtype_name: str, queue) -> None:
                 real_dtype
             )
         )
-        model.params["delta"] = cp.linspace(
+        scan_parameter = (
+            "omega_c" if model_name == "collective_loss_kerr_3mode" else "delta"
+        )
+        model.params[scan_parameter] = cp.linspace(
             -0.15, 0.15, n, dtype=real_dtype
         )
         backend = CuPyBackend()
@@ -180,7 +203,12 @@ def _chunk_worker(model_name: str, queue) -> None:
 
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
 @pytest.mark.parametrize(
-    "model_name", ("collective_kerr_2mode", "reservoir_kerr_3mode")
+    "model_name",
+    (
+        "collective_kerr_2mode",
+        "collective_loss_kerr_3mode",
+        "reservoir_kerr_3mode",
+    ),
 )
 @pytest.mark.parametrize("dtype_name", ("complex64", "complex128"))
 def test_fused_step_matches_fpgen_generic_path(model_name, dtype_name):
@@ -202,7 +230,12 @@ def test_fused_step_matches_fpgen_generic_path(model_name, dtype_name):
 
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
 @pytest.mark.parametrize(
-    "model_name", ("collective_kerr_2mode", "reservoir_kerr_3mode")
+    "model_name",
+    (
+        "collective_kerr_2mode",
+        "collective_loss_kerr_3mode",
+        "reservoir_kerr_3mode",
+    ),
 )
 def test_fused_chunk_matches_repeated_steps(model_name):
     context = multiprocessing.get_context("spawn")

@@ -21,6 +21,9 @@ plugins:
   - type: model.collective_kerr_2mode
     target: models.collective_kerr_2mode:CollectiveKerr2ModeModel
     description: Collectively damped two-mode Kerr oscillator
+  - type: model.collective_loss_kerr_3mode
+    target: models.collective_loss_kerr_3mode:CollectiveLossKerr3ModeModel
+    description: Three-mode Kerr oscillator with collective bright/dark loss
   - type: model.reservoir_kerr_3mode
     target: models.reservoir_kerr_3mode:ReservoirKerr3ModeModel
     description: Explicit-reservoir three-mode Kerr oscillator
