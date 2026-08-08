@@ -27,3 +27,6 @@ plugins:
   - type: model.reservoir_kerr_3mode
     target: models.reservoir_kerr_3mode:ReservoirKerr3ModeModel
     description: Explicit-reservoir three-mode Kerr oscillator
+  - type: model.parametric_loss_2mode
+    target: models.parametric_loss_2mode:ParametricLoss2ModeModel
+    description: Parametrically driven dimer with engineered two-photon loss

@@ -14,6 +14,7 @@ from .kerr_2mode import Kerr2ModeConfig, Kerr2ModeModel
 from .kerr_3mode import Kerr3ModeConfig, Kerr3ModeModel
 from .kerr_full_3mode import KerrFull3ModeConfig, KerrFull3ModeModel
 from .pair_hopping_2mode import PairHopping2ModeConfig, PairHopping2ModeModel
+from .parametric_loss_2mode import ParametricLoss2ModeConfig, ParametricLoss2ModeModel
 from .reservoir_kerr_3mode import ReservoirKerr3ModeConfig, ReservoirKerr3ModeModel
 from .vdp_2mode import VDP2ModeConfig, VDP2ModeModel
 
@@ -34,6 +35,8 @@ __all__ = [
     "ModelConfig",
     "PairHopping2ModeConfig",
     "PairHopping2ModeModel",
+    "ParametricLoss2ModeConfig",
+    "ParametricLoss2ModeModel",
     "ReservoirKerr3ModeConfig",
     "ReservoirKerr3ModeModel",
     "SDEModelPlugin",
