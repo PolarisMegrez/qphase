@@ -33,6 +33,7 @@ from ..coordinates import (
     canonical_vector,
 )
 from ..utils import resolve_mode_columns
+from .allan_statistics import calculate_allan_variance
 from .base import (
     Analyzer,
     AnalyzerExecutionCapabilities,
@@ -96,6 +97,11 @@ class TrajectoryDiagnosticsConfig(PluginConfigBase):
     )
     allan_points: int = Field(24, ge=2, le=256)
     allan_min_windows: int = Field(8, ge=1)
+    allan_min_independent_windows: int = Field(
+        1,
+        ge=1,
+        description="Minimum nominal non-overlapping Allan windows per trajectory",
+    )
     amplitude_floor: float = Field(
         0.0,
         ge=0.0,
@@ -346,12 +352,13 @@ class _AllanChild:
         config: TrajectoryDiagnosticsConfig,
     ) -> None:
         for mode in context.modes:
-            result["mode_results"][mode]["allan"] = _allan_variance(
+            result["mode_results"][mode]["allan"] = calculate_allan_variance(
                 context.series(mode),
                 context.dt,
                 taus=config.allan_taus,
                 points=config.allan_points,
                 min_windows=config.allan_min_windows,
+                min_independent_windows=config.allan_min_independent_windows,
                 amplitude_floor=config.amplitude_floor,
             )
 
@@ -542,86 +549,6 @@ def _coherence(
     if keep_per_trajectory:
         result["g1_per_trajectory"] = per_traj
     return result
-
-
-def _allan_variance(
-    series: np.ndarray,
-    dt: float,
-    *,
-    taus: list[float] | None,
-    points: int,
-    min_windows: int,
-    amplitude_floor: float,
-) -> dict[str, Any]:
-    n_traj, n_time = series.shape
-    max_m = (n_time - min_windows) // 2
-    if max_m < 1:
-        raise ValueError("trajectory is too short for the requested allan_min_windows")
-    if taus is None:
-        candidates = np.geomspace(1, max_m, num=points)
-        averaging_samples = np.unique(np.rint(candidates).astype(int))
-    else:
-        averaging_samples = np.unique(
-            np.asarray(
-                [_duration_samples(value, dt, "Allan tau") for value in taus],
-                dtype=int,
-            )
-        )
-        if averaging_samples[-1] > max_m:
-            raise ValueError(
-                "an Allan tau leaves fewer than allan_min_windows second differences"
-            )
-
-    amplitude = np.abs(series)
-    phase_increments = np.angle(series[:, 1:] * np.conj(series[:, :-1]))
-    valid_increments = (amplitude[:, 1:] > amplitude_floor) & (
-        amplitude[:, :-1] > amplitude_floor
-    )
-    phase = np.concatenate(
-        (
-            np.zeros((n_traj, 1), dtype=float),
-            np.cumsum(np.where(valid_increments, phase_increments, 0.0), axis=1),
-        ),
-        axis=1,
-    )
-    valid_cumulative = np.concatenate(
-        (
-            np.zeros((n_traj, 1), dtype=int),
-            np.cumsum(valid_increments, axis=1),
-        ),
-        axis=1,
-    )
-    per_traj = np.full((n_traj, len(averaging_samples)), np.nan, dtype=float)
-    valid_counts = np.zeros((n_traj, len(averaging_samples)), dtype=int)
-    for column, m in enumerate(averaging_samples):
-        delta = phase[:, 2 * m :] - 2.0 * phase[:, m:-m] + phase[:, : -2 * m]
-        valid = valid_cumulative[:, 2 * m :] - valid_cumulative[:, : -2 * m]
-        valid = valid == 2 * m
-        valid_counts[:, column] = np.sum(valid, axis=1)
-        mean_square = _masked_mean(delta**2, valid, axis=1)
-        tau = m * dt
-        per_traj[:, column] = mean_square / (2.0 * tau**2)
-
-    finite = np.isfinite(per_traj)
-    sample_count = np.sum(finite, axis=0)
-    mean = _masked_mean(per_traj, finite, axis=0)
-    sem = np.full(len(averaging_samples), np.nan, dtype=float)
-    for column, count in enumerate(sample_count):
-        if count > 1:
-            standard_deviation = np.std(per_traj[finite[:, column], column], ddof=1)
-            sem[column] = standard_deviation / math.sqrt(count)
-    return {
-        "quantity": "allan_variance",
-        "variable": "angular_frequency",
-        "tau_unit": "seconds",
-        "tau": averaging_samples.astype(float) * dt,
-        "angular_frequency_variance": mean,
-        "angular_frequency_variance_sem": sem,
-        "per_trajectory": per_traj,
-        "valid_second_differences": valid_counts,
-        "trajectory_sample_count": sample_count,
-        "definition": "overlapping_phase_second_difference",
-    }
 
 
 def _g1_exponential(lag: np.ndarray, gamma: float) -> np.ndarray:

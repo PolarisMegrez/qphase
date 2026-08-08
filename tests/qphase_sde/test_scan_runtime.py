@@ -5,6 +5,7 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.progress import ProgressReporter
 from qphase.core.scan import ScanSpec
+from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
 from qphase_sde.analyser.lorentz_fitter import _load_input
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.analyser.result import AnalysisResult
@@ -313,6 +314,50 @@ def test_scan_runs_trajectory_batches_inside_each_parameter_point():
     assert result.combined.meta["execution_plan"]["trajectory_batch_count"] == 2
     assert engine.config.n_traj == 128
     assert model.params == {"rate": 1.0}
+
+
+def test_allan_variance_runs_through_engine_trajectory_batches():
+    model = StochasticScannedModel()
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.8,
+            dt=0.01,
+            n_traj=128,
+            trajectory_batching="required",
+            trajectory_batch_size=64,
+            seed=37,
+            ic=[["1.0+0.0j"]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": model,
+            "analyser": {
+                "allan_variance": AllanVarianceAnalyzer(
+                    modes=[0],
+                    points=5,
+                    min_windows=2,
+                    min_independent_windows=1,
+                )
+            },
+        },
+    )
+
+    result = engine.run(
+        context=SimpleNamespace(
+            parameter_grid=None,
+            progress=None,
+            cancellation=None,
+        )
+    )
+
+    payload = result.analysis["allan_variance"]
+    assert result.trajectory is None
+    assert payload["n_traj"] == 128
+    assert payload["mode_results"][0]["allan"]["per_trajectory"].shape[0] == 128
+    assert result.meta["execution_plan"]["trajectory_batch_count"] == 2
 
 
 def test_sde_progress_uses_stable_trajectory_step_units():

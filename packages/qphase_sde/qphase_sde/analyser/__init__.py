@@ -16,6 +16,12 @@ Public API
 ``DistAnalyzerConfig`` : Configuration for Distribution analyzer.
 """
 
+from .allan_scaling import (
+    AllanScalingAnalyzer,
+    AllanScalingConfig,
+    NormalFormExpectation,
+)
+from .allan_variance import AllanVarianceAnalyzer, AllanVarianceConfig
 from .base import (
     Analyzer,
     AnalyzerExecutionCapabilities,
@@ -37,6 +43,11 @@ __all__ = [
     "AnalyzerProtocol",
     "AnalyzerWorkspaceEstimate",
     "AnalyzerWorkspaceRequest",
+    "AllanVarianceAnalyzer",
+    "AllanVarianceConfig",
+    "AllanScalingAnalyzer",
+    "AllanScalingConfig",
+    "NormalFormExpectation",
     "PsdAnalyzer",
     "PsdAnalyzerConfig",
     "DistAnalyzer",

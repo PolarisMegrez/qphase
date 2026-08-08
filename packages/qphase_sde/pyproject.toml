@@ -48,6 +48,8 @@ dependencies = [
 "analyser.pdist" = "qphase_sde.analyser.polar_dist:PolarDistAnalyzer"
 "analyser.lorentz_fitter" = "qphase_sde.analyser.lorentz_fitter:LorentzFitter"
 "analyser.trajectory_diagnostics" = "qphase_sde.analyser.trajectory_diagnostics:TrajectoryDiagnostics"
+"analyser.allan_variance" = "qphase_sde.analyser.allan_variance:AllanVarianceAnalyzer"
+"analyser.allan_scaling" = "qphase_sde.analyser.allan_scaling:AllanScalingAnalyzer"
 # Observer plugin
 "observer.first_passage" = "qphase_sde.observer.first_passage:FirstPassageObserver"
 # PSD estimator subplugins
