@@ -264,6 +264,15 @@ controls and changes only the configured perturbation parameter. For each real
 local branch it solves the complete CAM residual on a logarithmic epsilon grid,
 then records convergence, branch continuity, physicality, Jacobian stability,
 the complete-state response exponent, and the Rayleigh-frequency response.
+It also evaluates the largest Hamiltonian Petermann factor at the critical
+state and at every converged branch point. The response table contains
+`critical_hamiltonian_petermann_max`, `hamiltonian_petermann_max`,
+`hamiltonian_petermann_effective_exponent`, and
+`hamiltonian_petermann_fit_exponent`. The exponent convention is
+`K_H ~ |epsilon|^(-q_K)`, so a value consistent with zero means that the
+Hamiltonian Petermann factor has no resolved critical scaling. This quantity
+is distinct from the Jacobian critical-mode condition number reported by
+`stochastic_validity`.
 `rayleigh_visibility < 1e-3` is reported as `weak_projection`: the scalar readout
 may look linear over a practical finite window even when its nonzero asymptotic
 term has the same sublinear exponent as the complete state. Validation status
@@ -296,3 +305,17 @@ case axes, one flattened candidate table, and `candidate_offsets` so zero- and
 multi-candidate cases remain distinguishable. One NPZ and companion `cases`,
 `candidates`, and optional `branches` CSV files are written for the logical job;
 no per-case run directories are created.
+
+Large bifurcation campaigns may isolate ordinary per-case numerical failures:
+
+```yaml
+engine:
+  cam:
+    case_failure_policy: record  # abort (default) or record
+```
+
+`record` emits an empty case with `case_status`, exception type and message,
+flat/index coordinates, and scanned parameter values. It does not suppress
+`MemoryError`, cancellation, corrupt checkpoints, or process termination.
+Chunk persistence and resume remain core `SystemConfig.scan_runtime.checkpoint`
+policies; the CAM engine does not discover or override system configuration.

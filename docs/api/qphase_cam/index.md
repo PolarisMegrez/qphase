@@ -44,3 +44,8 @@ logical job, but its axes cannot overlap those controls. Ragged scan results use
 case/candidate/branch CSV output. One perturbation parameter is required.
 Classified reduced candidates expose a branch-response table with named
 `(n,k,m)` signatures and complete leading CAM state-matrix coefficients.
+
+`engine.cam.case_failure_policy` controls independent bifurcation-scan case
+failures. The default `abort` preserves fail-fast behavior; `record` stores an
+empty case with structured error metadata and continues. Core checkpoint and
+resume policy remains part of `SystemConfig`.

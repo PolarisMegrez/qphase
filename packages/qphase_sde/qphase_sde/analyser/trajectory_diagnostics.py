@@ -1148,7 +1148,7 @@ def _stationarity_features(features: np.ndarray) -> dict[str, Any]:
     metric: list[str] = []
     radial = np.empty((n_traj, n_blocks))
     for trajectory in range(n_traj):
-        cov = np.cov(features[trajectory], rowvar=False, ddof=1)
+        cov = np.atleast_2d(np.cov(features[trajectory], rowvar=False, ddof=1))
         covariance[trajectory] = cov
         condition = float(np.linalg.cond(cov))
         if np.isfinite(condition) and condition < _STATIONARITY_MAX_CONDITION:

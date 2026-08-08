@@ -567,9 +567,15 @@ def test_local_response_validation_solves_and_persists_complete_branches(tmp_pat
     assert np.all(response["continuous"])
     assert np.max(response["full_residual_norm"]) < 1e-25
     np.testing.assert_allclose(response["state_fit_exponent"], 0.5, atol=1e-3)
+    np.testing.assert_allclose(response["hamiltonian_petermann_max"], 1.0)
+    np.testing.assert_allclose(
+        response["hamiltonian_petermann_fit_exponent"], 0.0, atol=1e-12
+    )
     assert summary["sample_count"].tolist() == [8]
     assert summary["all_converged"].tolist() == [True]
     assert summary["all_continuous"].tolist() == [True]
+    np.testing.assert_allclose(summary["minimum_hamiltonian_petermann_max"], 1.0)
+    np.testing.assert_allclose(summary["maximum_hamiltonian_petermann_max"], 1.0)
 
     target = tmp_path / "response.npz"
     result.save(target)
@@ -577,6 +583,12 @@ def test_local_response_validation_solves_and_persists_complete_branches(tmp_pat
     np.testing.assert_allclose(
         loaded.postprocess["local_response_validation"]["delta_state_norm"],
         response["delta_state_norm"],
+    )
+    np.testing.assert_allclose(
+        loaded.postprocess["local_response_validation"][
+            "hamiltonian_petermann_max"
+        ],
+        response["hamiltonian_petermann_max"],
     )
     assert target.with_name("response_responses.csv").exists()
     assert target.with_name("response_response_summary.csv").exists()

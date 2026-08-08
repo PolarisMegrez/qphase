@@ -483,6 +483,19 @@ def test_stationarity_details_stationary_noise_scores_small():
     assert np.all(change_point["score"] < 20.0)
 
 
+def test_stationarity_details_preserves_single_feature_covariance_axis():
+    source = _stationary_noise_trajectory(n_traj=2)
+    single_mode = TrajectorySet(data=source.data[..., :1], dt=source.dt)
+
+    stationarity = _stationarity_entry(single_mode)
+    entry = stationarity["entries"][0]
+
+    assert stationarity["n_features"] == 1
+    assert entry["status"] == "ok"
+    assert entry["block_covariance"].shape == (2, 1, 1)
+    assert entry["head_tail_drift"]["delta"].shape == (2, 1)
+
+
 def test_stationarity_details_detects_level_shift():
     base = _stationary_noise_trajectory(n_traj=2, n_time=1024)
     shifted = base.data.copy()

@@ -164,7 +164,14 @@ slot。每个参数点默认按 `real(R[0,0])` 排序；slot 不是跨参数点�
 CAM 动力学的 `verified_full_residual_norm`，并保存规范状态与搜索未知量的十进制
 字符串。可选的 `local_response_validation` 后处理器固定临界 controls，只改变指定的
 微扰参数；它沿每条实局部分支求解完整 residual，并记录连续性、物理性、Jacobian
-稳定性、完整状态指数和 Rayleigh 频率有效指数。`rayleigh_visibility < 1e-3` 标记为
+稳定性、完整状态指数和 Rayleigh 频率有效指数。它还会在临界状态及每个收敛分支点
+计算最大的 Hamiltonian Petermann 因子。响应表包含
+`critical_hamiltonian_petermann_max`、`hamiltonian_petermann_max`、
+`hamiltonian_petermann_effective_exponent` 和
+`hamiltonian_petermann_fit_exponent`；指数约定为
+`K_H ~ |epsilon|^(-q_K)`。与零相容表示未解析出 Hamiltonian Petermann 临界标度，
+该量不同于 `stochastic_validity` 输出的 Jacobian 临界模条件数。
+`rayleigh_visibility < 1e-3` 标记为
 `weak_projection`，表示标量读出在有限窗口可能遮蔽状态的次线性渐近响应。验证失败
 只影响响应状态，不删除数学候选。逐点结果另存为 `*_responses.csv`。
 
@@ -172,3 +179,16 @@ CAM 动力学的 `verified_full_residual_norm`，并保存规范状态与搜索�
 candidate table 和 `candidate_offsets`，因此零候选与多候选 case 均可无歧义表示。
 一个逻辑 job 只生成一份 NPZ，以及配套的 `cases`、`candidates` 和可选 `branches`
 CSV，不会为每个 case 新建运行目录。
+
+大型 bifurcation campaign 可以隔离普通的单 case 数值失败：
+
+```yaml
+engine:
+  cam:
+    case_failure_policy: record  # 默认 abort，也可设为 record
+```
+
+`record` 会生成空 case，并记录 `case_status`、异常类型与消息、展平/多维索引和扫描
+参数。它不会吞掉 `MemoryError`、取消、损坏 checkpoint 或进程终止。chunk 持久化与
+resume 仍由 core 的 `SystemConfig.scan_runtime.checkpoint` 管理；CAM engine 不发现或
+覆盖 system config。

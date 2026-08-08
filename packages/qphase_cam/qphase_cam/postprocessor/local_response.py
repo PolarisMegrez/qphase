@@ -11,6 +11,7 @@ from pydantic import Field, model_validator
 from qphase_cam.core.fpgen import FPGenDynamicsAdapter
 
 from .base import CAMPostprocessor, CAMPostprocessorConfig
+from .petermann import eigensystem_petermann
 
 
 class LocalResponseValidationConfig(CAMPostprocessorConfig):
@@ -92,6 +93,9 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             coefficient = float(branches.amplitude[branch_index]) * tangent
             side = int(branches.epsilon_side[branch_index])
             critical_rayleigh = self._rayleigh(adapter, model, critical, params)
+            critical_petermann = self._hamiltonian_petermann_max(
+                adapter, model, critical, params
+            )
             visibility = self._rayleigh_visibility(
                 adapter, model, critical, params, tangent
             )
@@ -124,6 +128,9 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
                 physical = adapter.physical_eigenvalues(state, local_params)
                 jacobian = np.linalg.eigvals(adapter.jacobian(state, local_params))
                 rayleigh = self._rayleigh(adapter, model, state, local_params)
+                petermann = self._hamiltonian_petermann_max(
+                    adapter, model, state, local_params
+                )
                 branch_rows.append(
                     {
                         "candidate_index": candidate_index,
@@ -154,9 +161,14 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
                         "rayleigh_projection_status": (
                             "weak_projection" if visibility < 1e-3 else "resolved"
                         ),
+                        "critical_hamiltonian_petermann_max": critical_petermann,
+                        "hamiltonian_petermann_max": petermann,
+                        "hamiltonian_petermann_effective_exponent": np.nan,
+                        "hamiltonian_petermann_fit_exponent": np.nan,
                     }
                 )
             self._add_exponents(branch_rows)
+            self._add_petermann_exponents(branch_rows)
             rows.extend(branch_rows)
 
         output = self._columns(rows)
@@ -317,6 +329,18 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             return 0.0
         return float(abs(np.dot(gradient, tangent)) / denominator)
 
+    @staticmethod
+    def _hamiltonian_petermann_max(
+        adapter: FPGenDynamicsAdapter,
+        model: Any,
+        state: np.ndarray,
+        params: dict[str, Any],
+    ) -> float:
+        matrix = adapter.state_matrix(state, params)
+        hamiltonian = np.asarray(model.cam_hamiltonian(matrix, params))
+        _, factors = eigensystem_petermann(hamiltonian)
+        return float(np.max(factors))
+
     def _add_exponents(self, rows: list[dict[str, Any]]) -> None:
         for name, output_name in (
             ("delta_state_norm", "state_effective_exponent"),
@@ -347,6 +371,31 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             )
             for row in rows:
                 row[fit_name] = exponent
+
+    def _add_petermann_exponents(self, rows: list[dict[str, Any]]) -> None:
+        values = np.asarray(
+            [float(row["hamiltonian_petermann_max"]) for row in rows]
+        )
+        epsilon = np.asarray([float(row["abs_epsilon"]) for row in rows])
+        valid = (
+            np.isfinite(values)
+            & (values > 0.0)
+            & np.asarray([row["converged"] and row["continuous"] for row in rows])
+        )
+        indices = np.flatnonzero(valid)
+        for left, right in zip(indices[:-1], indices[1:], strict=True):
+            rows[right]["hamiltonian_petermann_effective_exponent"] = float(
+                -np.log(values[right] / values[left])
+                / np.log(epsilon[right] / epsilon[left])
+            )
+        fit = indices[: self.config.fit_points]
+        exponent = (
+            float(-np.polyfit(np.log(epsilon[fit]), np.log(values[fit]), 1)[0])
+            if len(fit) >= 3
+            else np.nan
+        )
+        for row in rows:
+            row["hamiltonian_petermann_fit_exponent"] = exponent
 
     @staticmethod
     def _columns(rows: list[dict[str, Any]]) -> dict[str, np.ndarray]:
@@ -382,6 +431,16 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             rayleigh_fit_min, rayleigh_fit_max = LocalResponseValidation._finite_range(
                 rayleigh_fits
             )
+            petermann_fits = np.asarray(
+                [
+                    float(row["hamiltonian_petermann_fit_exponent"])
+                    for row in selected
+                ],
+                dtype=float,
+            )
+            petermann_fit_min, petermann_fit_max = (
+                LocalResponseValidation._finite_range(petermann_fits)
+            )
             output.append(
                 {
                     "candidate_index": candidate_index,
@@ -412,6 +471,16 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
                     "minimum_rayleigh_visibility": min(
                         float(row["rayleigh_visibility"]) for row in selected
                     ),
+                    "minimum_hamiltonian_petermann_max": min(
+                        float(row["hamiltonian_petermann_max"])
+                        for row in selected
+                    ),
+                    "maximum_hamiltonian_petermann_max": max(
+                        float(row["hamiltonian_petermann_max"])
+                        for row in selected
+                    ),
+                    "minimum_hamiltonian_petermann_fit_exponent": petermann_fit_min,
+                    "maximum_hamiltonian_petermann_fit_exponent": petermann_fit_max,
                 }
             )
         names = tuple(output[0])
@@ -462,6 +531,10 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             "rayleigh_fit_exponent",
             "rayleigh_visibility",
             "rayleigh_projection_status",
+            "critical_hamiltonian_petermann_max",
+            "hamiltonian_petermann_max",
+            "hamiltonian_petermann_effective_exponent",
+            "hamiltonian_petermann_fit_exponent",
         )
         return {name: np.asarray([], dtype=fields[name]) for name in names}
 
@@ -505,6 +578,10 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             "minimum_rayleigh_fit_exponent",
             "maximum_rayleigh_fit_exponent",
             "minimum_rayleigh_visibility",
+            "minimum_hamiltonian_petermann_max",
+            "maximum_hamiltonian_petermann_max",
+            "minimum_hamiltonian_petermann_fit_exponent",
+            "maximum_hamiltonian_petermann_fit_exponent",
         )
         return {
             name: np.asarray(

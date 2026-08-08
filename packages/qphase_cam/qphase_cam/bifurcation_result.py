@@ -797,6 +797,9 @@ class CAMBifurcationScanResult:
             "case",
             *self.case_axes,
             "candidate_count",
+            "case_status",
+            "case_error_type",
+            "case_error_message",
             "structural_coverage",
             "numerical_coverage",
             "singular_coverage",
@@ -828,6 +831,9 @@ class CAMBifurcationScanResult:
             writer.writeheader()
             for flat, metadata in enumerate(self.case_metadata):
                 row = self._case_values(flat)
+                row["case_status"] = metadata.get("case_status", "complete")
+                row["case_error_type"] = metadata.get("case_error_type", "")
+                row["case_error_message"] = metadata.get("case_error_message", "")
                 row["structural_coverage"] = metadata.get(
                     "structural_coverage", "unknown"
                 )

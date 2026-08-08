@@ -6,7 +6,7 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.scan import ScanSpec
 from qphase_cam.bifurcation_result import CAMBifurcationScanResult
-from qphase_cam.engine import Engine
+from qphase_cam.engine import Engine, EngineConfig
 from qphase_cam.result import CAMResult
 from qphase_cam.state import (
     CAMBifurcationCandidate,
@@ -271,3 +271,149 @@ def test_bifurcation_scan_rejects_control_axis():
                 "cam_solver": Solver(),
             }
         ).run(context=context)
+
+
+def test_bifurcation_scan_records_case_failure(tmp_path):
+    class Solver:
+        name = "bifurcation"
+        output_kind = "bifurcation_candidates"
+        config = SimpleNamespace(controls={"gamma_a": object()})
+        target = SimpleNamespace(order=3)
+
+        def solve(self, model, backend):
+            del backend
+            if model.params["omega_a"] < 0.0:
+                raise ValueError("outside numerical chart")
+            return CAMBifurcationOutput(
+                candidates=[],
+                target="equilibrium_multiplicity",
+                order=3,
+                metadata={"control_names": ("gamma_a",)},
+            )
+
+    grid = ScanSpec.model_validate(
+        {
+            "axes": {
+                "omega_a": {
+                    "target": "model.vdp_2mode.omega_a",
+                    "values": [-0.1, 0.1],
+                }
+            }
+        }
+    ).compile()
+    context = _scan_context(grid)
+    result = Engine(
+        EngineConfig(case_failure_policy="record"),
+        plugins={
+            "backend": NumpyBackend(),
+            "model": _vdp_model(),
+            "cam_solver": Solver(),
+        },
+    ).run(context=context)
+
+    assert result.case_metadata[0]["case_status"] == "error"
+    assert result.case_metadata[0]["case_error_type"] == "ValueError"
+    assert result.case_metadata[0]["case_flat_index"] == 0
+    assert result.case_metadata[1]["case_status"] == "complete"
+    target = tmp_path / "recorded_failure.npz"
+    result.save(target)
+    rows = target.with_name("recorded_failure_cases.csv").read_text(
+        encoding="utf-8"
+    )
+    assert "case_status,case_error_type,case_error_message" in rows
+    assert "error,ValueError,outside numerical chart" in rows
+
+
+def test_bifurcation_scan_resume_does_not_repeat_completed_case():
+    class Checkpoints:
+        enabled = True
+
+        def __init__(self):
+            self.chunks = {}
+
+        def load_chunk(self, key):
+            return self.chunks.get(key)
+
+        def save_chunk(self, key, value):
+            self.chunks[key] = value
+
+    class Solver:
+        name = "bifurcation"
+        output_kind = "bifurcation_candidates"
+        config = SimpleNamespace(controls={"gamma_a": object()})
+        target = SimpleNamespace(order=3)
+
+        def __init__(self):
+            self.calls = []
+            self.fail_once = True
+
+        def solve(self, model, backend):
+            del backend
+            value = float(model.params["omega_a"])
+            self.calls.append(value)
+            if value == 0.0 and self.fail_once:
+                self.fail_once = False
+                raise RuntimeError("transient failure")
+            return CAMBifurcationOutput(
+                candidates=[],
+                target="equilibrium_multiplicity",
+                order=3,
+                metadata={"control_names": ("gamma_a",)},
+            )
+
+    grid = ScanSpec.model_validate(
+        {
+            "axes": {
+                "omega_a": {
+                    "target": "model.vdp_2mode.omega_a",
+                    "values": [-0.1, 0.0, 0.1],
+                }
+            }
+        }
+    ).compile()
+    checkpoints = Checkpoints()
+    context = _scan_context(grid, checkpoints=checkpoints)
+    solver = Solver()
+    engine = Engine(
+        plugins={
+            "backend": NumpyBackend(),
+            "model": _vdp_model(),
+            "cam_solver": solver,
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="transient failure"):
+        engine.run(context=context)
+    result = engine.run(context=context)
+
+    assert result.case_shape == (3,)
+    assert solver.calls.count(-0.1) == 1
+    assert solver.calls.count(0.0) == 2
+    assert solver.calls.count(0.1) == 1
+
+
+def _vdp_model():
+    return VDP2ModeModel(
+        omega_a=0.0,
+        omega_b=0.0,
+        gamma_a=2.0,
+        gamma_b=0.5,
+        Gamma=0.0001,
+        g=0.5,
+    )
+
+
+def _scan_context(grid, *, checkpoints=None):
+    class Reporter:
+        def status(self, *args, **kwargs):
+            pass
+
+        def update(self, *args, **kwargs):
+            pass
+
+    return SimpleNamespace(
+        parameter_grid=grid,
+        progress=Reporter(),
+        checkpoints=checkpoints or SimpleNamespace(enabled=False),
+        cancellation=SimpleNamespace(raise_if_cancelled=lambda: None),
+    )

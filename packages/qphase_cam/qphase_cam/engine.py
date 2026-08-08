@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict
@@ -19,13 +19,14 @@ from qphase_cam.bifurcation_result import (
 from qphase_cam.core.fpgen import FPGenDynamicsAdapter
 from qphase_cam.errors import BifurcationCapabilityError, SolutionCapacityError
 from qphase_cam.result import CAMResult
-from qphase_cam.state import CAMSolution
+from qphase_cam.state import CAMBifurcationOutput, CAMSolution
 
 
 class EngineConfig(BaseModel):
     """CAM engine configuration; task details belong to solver plugins."""
 
     model_config = ConfigDict(extra="allow")
+    case_failure_policy: Literal["abort", "record"] = "abort"
 
 
 class Engine(EngineBase):
@@ -129,9 +130,34 @@ class Engine(EngineBase):
             for target, value in point.targets.items():
                 params[target.rsplit(".", 1)[-1]] = value
             self._replace_model_params(model, params)
-            output = self._invoke_solver(solver, model, backend, context, data)
+            try:
+                output = self._invoke_solver(solver, model, backend, context, data)
+            except MemoryError:
+                raise
+            except Exception as exc:
+                if self.config.case_failure_policy == "abort":
+                    raise
+                target = getattr(solver, "target", None)
+                control_names = tuple(
+                    getattr(getattr(solver, "config", None), "controls", ())
+                )
+                output = CAMBifurcationOutput(
+                    candidates=[],
+                    target=str(getattr(target, "name", "equilibrium_multiplicity")),
+                    order=int(getattr(target, "order", 0)),
+                    metadata={
+                        "control_names": control_names,
+                        "case_status": "error",
+                        "case_error_type": type(exc).__name__,
+                        "case_error_message": str(exc),
+                        "case_flat_index": int(point.flat_index),
+                        "case_index": tuple(int(value) for value in point.index),
+                        "case_parameters": dict(point.values),
+                    },
+                )
             result = self._pack_bifurcation(output, model)
             result.meta.update(output.metadata)
+            result.meta.setdefault("case_status", "complete")
             return result
 
         try:
