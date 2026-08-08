@@ -98,6 +98,27 @@ def test_sde_factor_reconstructs_fpgen_normal_diffusion(fpgen_model):
     )
 
 
+def test_collective_diffusion_factor_supports_semidefinite_dark_mode():
+    model = CollectiveKerr2ModeModel(
+        omega_0=0.0,
+        delta=0.0,
+        chi=0.01,
+        g=0.5,
+        kappa_bright=1.0,
+        pump_bright=0.0,
+        kappa_dark=0.0,
+    )
+    state = np.asarray([[0.2 + 0.1j, -0.3 + 0.4j]])
+    density = np.einsum("...i,...j->...ij", state, state.conj())
+    factor = model.diffusion(state, 0.0, model.params)
+
+    np.testing.assert_allclose(
+        factor @ factor.conj().transpose(0, 2, 1),
+        model.cam_diffusion(density, model.params),
+        atol=1e-13,
+    )
+
+
 def test_collective_model_has_exchange_symmetry_at_zero_detuning():
     model = CollectiveKerr2ModeModel(
         omega_0=0.2,

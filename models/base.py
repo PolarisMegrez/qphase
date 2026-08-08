@@ -183,6 +183,36 @@ def _canonical_hermitian_vector(state: Any, xp: Any) -> Any:
     return xp.stack(values, axis=-1)
 
 
+def _positive_semidefinite_factor(covariance: Any, xp: Any) -> Any:
+    """Return a deterministic lower factor for a small Hermitian PSD matrix."""
+    n_modes = int(covariance.shape[-1])
+    factor = xp.zeros_like(covariance)
+    tolerance = xp.finfo(covariance.real.dtype).eps
+    for column in range(n_modes):
+        diagonal = xp.real(covariance[..., column, column])
+        if column:
+            previous = factor[..., column, :column]
+            diagonal = diagonal - xp.sum(
+                previous * xp.conj(previous), axis=-1
+            ).real
+        pivot = xp.sqrt(xp.clip(diagonal, 0.0, None))
+        factor[..., column, column] = pivot
+        usable = pivot > tolerance
+        denominator = xp.where(usable, pivot, 1.0)
+        for row in range(column + 1, n_modes):
+            residual = covariance[..., row, column]
+            if column:
+                residual = residual - xp.sum(
+                    factor[..., row, :column]
+                    * xp.conj(factor[..., column, :column]),
+                    axis=-1,
+                )
+            factor[..., row, column] = xp.where(
+                usable, residual / denominator, 0.0
+            )
+    return factor
+
+
 class _CompiledFPGenMatrix:
     """Backend-aware scalar compilation of one fpgen symbolic matrix."""
 
@@ -283,9 +313,7 @@ class FPGenBackedSDEModel(SDEModelPlugin):
         state = xp.einsum("...i,...j->...ij", y, xp.conj(y))
         covariance = self.cam_diffusion(state, params)
         covariance = (covariance + xp.swapaxes(xp.conj(covariance), -1, -2)) / 2.0
-        eigenvalues, eigenvectors = xp.linalg.eigh(covariance)
-        eigenvalues = xp.clip(eigenvalues, 0.0, None)
-        return eigenvectors * xp.sqrt(eigenvalues)[..., None, :]
+        return _positive_semidefinite_factor(covariance, xp)
 
     def cam_hamiltonian(self, state: Any, params: dict[str, Any]) -> Any:
         xp = get_xp(state)

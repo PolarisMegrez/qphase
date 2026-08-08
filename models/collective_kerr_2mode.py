@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from functools import lru_cache
 from typing import Any, ClassVar
 
 from pydantic import Field
 
 from .base import FPGenBackedSDEModel, ModelConfig
+from .kernels.base import ModelKernelPlugin
+from .kernels.cayley_maruyama import CollectiveKerr2ModeCayleyCuPyKernel
 
 
 class CollectiveKerr2ModeConfig(ModelConfig):
@@ -32,6 +35,9 @@ class CollectiveKerr2ModeModel(FPGenBackedSDEModel):
     )
     mode_count: ClassVar[int] = 2
     steady_state_capacity: ClassVar[int] = 8
+
+    def kernel_plugins(self) -> Iterable[ModelKernelPlugin]:
+        return (CollectiveKerr2ModeCayleyCuPyKernel(self),)
 
     @classmethod
     @lru_cache(maxsize=1)

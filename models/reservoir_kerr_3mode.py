@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from functools import lru_cache
 from typing import Any, ClassVar
 
 from pydantic import Field
 
 from .base import FPGenBackedSDEModel, ModelConfig
+from .kernels.base import ModelKernelPlugin
+from .kernels.cayley_maruyama import ReservoirKerr3ModeCayleyCuPyKernel
 
 
 class ReservoirKerr3ModeConfig(ModelConfig):
@@ -32,6 +35,9 @@ class ReservoirKerr3ModeModel(FPGenBackedSDEModel):
     config_schema: ClassVar[type[ReservoirKerr3ModeConfig]] = ReservoirKerr3ModeConfig
     mode_count: ClassVar[int] = 3
     steady_state_capacity: ClassVar[int] = 16
+
+    def kernel_plugins(self) -> Iterable[ModelKernelPlugin]:
+        return (ReservoirKerr3ModeCayleyCuPyKernel(self),)
 
     @classmethod
     @lru_cache(maxsize=1)
