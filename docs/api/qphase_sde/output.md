@@ -57,6 +57,20 @@ the shape and loader, and `SDEScanResult.load_dataset` restores the full view.
 *   `psd_merged.csv` — merged PSD table plus `<scan_value>_sem` columns used for uncertainty propagation.
 *   `fit_results.npz` / `fit_results.pkl` — same data in alternative formats.
 
+## Allan output
+
+`allan_variance` remains inside the logical SDE dataset. It stores overlapping
+and non-overlapping Allan variance, per-trajectory estimates, SEM, and valid
+window counts, but not the original complex trajectories when `keep_traj` is
+false. The downstream `allan_scaling` analyser writes:
+
+*   `allan_points.csv` — one row per perturbation with the detected white-FM tau
+    range, `tau * sigma_A^2`, SEM, effective non-overlapping window count, mean
+    angular frequency, and gate status.
+*   `allan_scaling.json` — selected common tau/epsilon windows, pure-power Allan
+    fit, frequency-response fit, bootstrap interval, normal-form expectations,
+    and explicit gate failures.
+
 ## Distribution outputs
 
 *   `dist_merged.npz` — optional merged distribution export for a scan dataset.

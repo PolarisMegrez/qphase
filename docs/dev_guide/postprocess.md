@@ -9,7 +9,9 @@ Postprocessing is not a separate core command or a separate resource package. It
 ## Design Principle
 
 - **Core** (`qphase`) provides generic aggregation and export utilities in `qphase.core.aggregation`.
-- **`qphase_sde`** provides the SDE-specific cross-job analyzer `lorentz_fitter`, which fits Lorentzian peaks to aggregated PSD data and writes merged outputs.
+- **`qphase_sde`** provides SDE-specific cross-job analyzers: `lorentz_fitter`
+  for PSD peaks and `allan_scaling` for white-FM windows and perturbation
+  scaling.
 - The **`qphase postprocess` CLI command has been removed**. Use `qphase run <workflow.yaml>` instead.
 
 ## Workflow Example
@@ -67,6 +69,8 @@ The scheduler will:
 | `psd_merged.csv` | `lorentz_fitter` | Frequency axis plus PSD and optional PSD SEM columns per scan value. |
 | `dist_merged.npz` | `lorentz_fitter` (optional) | Aggregated distribution payloads. |
 | `pdist_merged.pkl` | `lorentz_fitter` (optional) | Aggregated polar distribution payloads. |
+| `allan_points.csv` | `allan_scaling` | Per-point white-FM windows, Allan intensity, uncertainty, frequency, and gates. |
+| `allan_scaling.json` | `allan_scaling` | Common tau/epsilon window, bootstrap power-law fits, and normal-form checks. |
 
 The NPZ/PKL bundles include `__schema_version__` and `__created_by__` metadata via `qphase.core.aggregation`.
 
@@ -74,4 +78,5 @@ The NPZ/PKL bundles include `__schema_version__` and `__created_by__` metadata v
 
 - Single-result analysis (per-job PSD, peak finding, distributions) belongs to `analyser` plugins.
 - Dataset views, generic aggregation, and schema-versioned exporting belong to core.
-- SDE-specific curve fitting and payload extraction belongs to `qphase_sde.analyser.lorentz_fitter`.
+- SDE-specific curve fitting and payload extraction belongs to downstream
+  `qphase_sde` analyser plugins such as `lorentz_fitter` and `allan_scaling`.

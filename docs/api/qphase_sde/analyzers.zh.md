@@ -122,6 +122,50 @@ analyser:
 首版实现会在主机端物化传入的轨迹系综，尚不支持跨 trajectory batch 在线聚合，因此应先
 用于减量诊断任务；流式聚合留待后续阶段。
 
+## `allan_variance`
+
+当不需要 coherence 等完整轨迹诊断时，本 analyser 专门计算角频率 Allan 统计量。它与
+`trajectory_diagnostics` 不同，支持 trajectory batching，可与 `keep_traj: false` 配合：
+
+```yaml
+analyser:
+  allan_variance:
+    modes: [0]
+    points: 40
+    min_windows: 8
+    min_independent_windows: 4
+```
+
+每个 tau 同时输出既有的重叠估计和非重叠相位二阶差分估计，包括逐轨迹结果、跨轨迹
+SEM、实际有效非重叠窗口数以及每条轨迹的名义窗口数。此处“独立”只表示时间块不重叠；
+有色动力学仍可能使相邻块相关。因此，不应把所有块当作可交换样本，指数不确定度优先
+使用逐轨迹 bootstrap。
+
+## `allan_scaling`
+
+在 `mode: analyze` 中消费逻辑 SDE scan dataset。它逐参数点检测长时白 FM 区，再对连续
+微扰点取白区交集，计算 `N_A = tau * angular_frequency_allan_variance`，并拟合不带背景的
+`N_A = C * abs(epsilon) ** (-q)`。指数区间由逐轨迹 bootstrap 给出。
+
+```yaml
+analyser:
+  allan_scaling:
+    scan_param: omega_c
+    critical_value: 1.0
+    mode: 0
+    min_scaling_points: 5
+    target_scaling_decades: 1.0
+    normal_form: {n: 3, k: 1, m: 0, observable_order: 2}
+```
+
+对于正规形 `epsilon**k * x**m + x**n = 0`，预期频移指数为
+`observable_order * k / (n - m)`；在临界投影噪声保持规则白噪声时，预期 Allan 强度指数为
+`2 * (n - observable_order) * k / (n - m)`。最终 `status: ok` 同时要求 epsilon
+跨度充分、Allan 幂律拟合合格、频移非线性可辨认，且指数符合配置的正规形。插件输出
+`allan_points.csv` 和
+`allan_scaling.json`。旧 `trajectory_diagnostics` 结果仍可读取，但其独立窗口数会明确标记
+为估算值，而不是实测非重叠计数。
+
 ## `lorentz_fitter`
 
 对逻辑 SDE scan dataset 的 PSD point view 拟合 Lorentz 曲线。这是一个用于

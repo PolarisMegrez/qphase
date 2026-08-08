@@ -135,6 +135,60 @@ The first implementation materializes each supplied trajectory ensemble on the
 host and does not provide online trajectory-batch aggregation. Use it for
 reduced diagnostic jobs; streaming accumulation is reserved for a later phase.
 
+## `allan_variance`
+
+Computes focused angular-frequency Allan statistics when coherence and the
+other trajectory diagnostics are not needed. Unlike `trajectory_diagnostics`,
+this analyser supports trajectory batching and can be used with
+`keep_traj: false`:
+
+```yaml
+analyser:
+  allan_variance:
+    modes: [0]
+    points: 40
+    min_windows: 8
+    min_independent_windows: 4
+```
+
+For each tau it reports both the established overlapping estimate and a
+non-overlapping phase-second-difference estimate. The payload includes the
+per-trajectory values, cross-trajectory SEM, actual valid non-overlapping
+window counts, and the nominal windows per trajectory. "Independent" here
+means that the time blocks do not overlap; colored dynamics may still correlate
+adjacent blocks. Trajectory bootstrap is therefore preferred over treating all
+blocks as exchangeable samples.
+
+## `allan_scaling`
+
+Consumes a logical SDE scan dataset in `mode: analyze`. It detects a long-time
+white-FM region at every scan point, intersects those regions across contiguous
+perturbation points, computes
+`N_A = tau * angular_frequency_allan_variance`, and fits the background-free
+law `N_A = C * abs(epsilon) ** (-q)`. Per-trajectory bootstrap supplies the
+exponent interval.
+
+```yaml
+analyser:
+  allan_scaling:
+    scan_param: omega_c
+    critical_value: 1.0
+    mode: 0
+    min_scaling_points: 5
+    target_scaling_decades: 1.0
+    normal_form: {n: 3, k: 1, m: 0, observable_order: 2}
+```
+
+For the normal form `epsilon**k * x**m + x**n = 0`, the expected frequency
+exponent is `observable_order * k / (n - m)`. With regular projected white
+noise, the expected Allan-intensity exponent is
+`2 * (n - observable_order) * k / (n - m)`. Final `status: ok` requires
+sufficient epsilon span, an acceptable Allan power-law fit, resolved frequency
+nonlinearity, and agreement with configured normal-form exponents. The analyser exports
+`allan_points.csv` and `allan_scaling.json`. Legacy
+`trajectory_diagnostics` payloads remain readable, but their independent
+window counts are explicitly marked as estimated rather than measured.
+
 ## `lorentz_fitter`
 
 Fits Lorentzians to PSD point views from a logical SDE scan dataset. It is a

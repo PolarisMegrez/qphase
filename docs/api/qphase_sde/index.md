@@ -14,7 +14,7 @@ package for QPhase. It provides:
 *   Integrator plugins (`euler_maruyama`, `cayley_maruyama`, `milstein`, `srk`).
 *   SDE model implementations (`vdp_2mode`, `kerr_2mode`, `crosskerr_2mode`, `kerr_3mode`).
 *   Analyzer plugins (`psd`, `dist`, `pdist`, `trajectory_diagnostics`,
-    `lorentz_fitter`).
+    `allan_variance`, `allan_scaling`, `lorentz_fitter`).
 
 This section documents `qphase_sde`-specific behavior. For the core framework
 (scheduler, registry, plugin loading, result protocols), see the

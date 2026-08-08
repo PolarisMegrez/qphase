@@ -125,6 +125,8 @@ engine 在分配轨迹前验证时间网格与 analyser 带宽，并分别估算
 分析和释放。periodogram、Welch 与 multitaper PSD estimator 均支持该维度的在线聚合，
 并保持现有 `psd`、`psd_std`、`psd_sem` 字段及各自的时间分辨率。固定的逻辑 RNG
 group 保证相同 seed 下结果不依赖 scan tile 和物理 trajectory batch 大小。
+专用 `allan_variance` analyser 也支持该路径：它拼接逐轨迹 Allan 统计量，重新计算系综
+SEM 与有效非重叠窗口数，并在 `keep_traj: false` 时不写出采样轨迹。
 
 `trajectory_batching` 可取 `auto`（默认）、`off` 或 `required`；
 `trajectory_batch_size` 是诊断/benchmark 用的可选覆盖，生产任务通常应留空，由当前
@@ -178,6 +180,12 @@ Allan 方差、无重叠 block 统计与频谱、平稳性判据，以及可选�
 完整轨迹需求与 workspace；其 coherence、Allan、block spectrum、矩阵投影和平稳性
 内部 child 共享一次主机物化与规范坐标构造，并不成为 scheduler job。时域流式诊断仍
 属于后续工作。
+
+生产级 Allan 扫描应优先使用 `analyser.allan_variance`，而不是开启
+`trajectory_diagnostics` 内部的 Allan child。下游 `analyser.allan_scaling` job 可在不保存
+原始轨迹的条件下检测共同长时白 FM tau 窗口、执行逐轨迹 bootstrap 并检验扫描指数。
+这属于 trajectory batching 加积分后减量，而不是时间流式计算：单条物理轨迹记录仍须
+能够放入资源预算。
 
 ## Kernelized Terms（CuPy 核函数）
 

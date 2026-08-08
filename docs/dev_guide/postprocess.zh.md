@@ -9,7 +9,8 @@ description: 后处理架构
 ## 设计原则
 
 - **Core** (`qphase`) 在 `qphase.core.aggregation` 中提供通用的聚合与导出工具。
-- **`qphase_sde`** 提供 SDE 专属的跨 job 分析器 `lorentz_fitter`，用于对聚合后的 PSD 数据进行 Lorentzian 拟合并写出合并结果。
+- **`qphase_sde`** 提供 SDE 专属的跨 job analyser：`lorentz_fitter` 处理 PSD 峰，
+  `allan_scaling` 处理白 FM 窗口和微扰幂律。
 - **`qphase postprocess` CLI 命令已被移除**，请改用 `qphase run <workflow.yaml>`。
 
 ## 工作流示例
@@ -67,6 +68,8 @@ scheduler 会：
 | `psd_merged.csv` | `lorentz_fitter` | 频率轴加上每个扫描值对应的 PSD 与可选 PSD SEM 列。 |
 | `dist_merged.npz` | `lorentz_fitter`（可选） | 聚合后的 distribution payload。 |
 | `pdist_merged.pkl` | `lorentz_fitter`（可选） | 聚合后的极坐标 distribution payload。 |
+| `allan_points.csv` | `allan_scaling` | 逐点白 FM 窗口、Allan 强度、不确定度、频率与门控。 |
+| `allan_scaling.json` | `allan_scaling` | 共同 tau/epsilon 窗口、bootstrap 幂律拟合与正规形检验。 |
 
 NPZ/PKL bundle 会通过 `qphase.core.aggregation` 写入 `__schema_version__` 和 `__created_by__` 元数据。
 
@@ -74,4 +77,5 @@ NPZ/PKL bundle 会通过 `qphase.core.aggregation` 写入 `__schema_version__` �
 
 - 单个 result 内的分析（单 job PSD、寻峰、distribution）属于 `analyser` 插件。
 - Dataset view、通用聚合和带 schema version 的导出属于 core。
-- SDE 专属的曲线拟合与 payload 提取属于 `qphase_sde.analyser.lorentz_fitter`。
+- SDE 专属的曲线拟合与 payload 提取属于 `lorentz_fitter`、`allan_scaling` 等下游
+  `qphase_sde` analyser 插件。

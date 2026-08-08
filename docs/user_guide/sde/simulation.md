@@ -150,6 +150,10 @@ Each batch is integrated, analysed, merged with Chan/Welford statistics, and
 released. Periodogram, Welch, and multitaper PSD estimators all support this
 trajectory dimension batching; it preserves each estimator's time-domain
 resolution and the existing `psd`, `psd_std`, and `psd_sem` result fields.
+The focused `allan_variance` analyser also supports this path: it concatenates
+per-trajectory Allan statistics, recomputes ensemble SEM and valid
+non-overlapping window counts, and never writes the sampled trajectory when
+`keep_traj: false`.
 Stable logical RNG groups make results independent of the selected scan tile
 and physical trajectory batch size for a fixed seed.
 
@@ -222,6 +226,14 @@ Its internal coherence, Allan, block-spectrum, projection, and stationarity
 children share one host trajectory and one lazily built canonical-coordinate
 array; they are not scheduler jobs. Time-streaming diagnostics remain future
 work.
+
+For production Allan scans, prefer `analyser.allan_variance` over enabling the
+Allan child inside `trajectory_diagnostics`. A downstream
+`analyser.allan_scaling` job can then detect a common long-time white-FM tau
+window, perform trajectory bootstrap, and test the scan exponent without raw
+trajectory storage. This is trajectory batching and post-integration reduction,
+not time streaming: one physical trajectory record must still fit the resource
+budget.
 
 ## Kernelized Terms (CuPy)
 

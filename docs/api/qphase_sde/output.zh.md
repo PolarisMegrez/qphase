@@ -55,6 +55,17 @@ psd = archive["analysis"].item().get("psd")
 *   `psd_merged.csv` — 合并 PSD 以及不确定度传播使用的 `<scan_value>_sem` 列。
 *   `fit_results.npz` / `fit_results.pkl` — 相同数据的替代格式。
 
+## Allan 输出
+
+`allan_variance` 载荷保留在逻辑 SDE dataset 内，包含重叠与非重叠 Allan 方差、逐轨迹
+估计、SEM 和有效窗口计数；当 `keep_traj: false` 时不包含原始复轨迹。下游
+`allan_scaling` analyser 写出：
+
+*   `allan_points.csv`：每个微扰点一行，包含检测到的白 FM tau 范围、
+    `tau * sigma_A^2`、SEM、有效非重叠窗口数、平均角频率及门控状态。
+*   `allan_scaling.json`：选定的共同 tau/epsilon 窗口、纯幂律 Allan 拟合、频移响应拟合、
+    bootstrap 区间、正规形预期及明确的门控失败原因。
+
 ## 分布输出
 
 *   `dist_merged.npz` — scan dataset 的可选 distribution 合并导出。
