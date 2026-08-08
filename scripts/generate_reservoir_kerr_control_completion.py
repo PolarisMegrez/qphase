@@ -48,6 +48,18 @@ LOCAL = Dimension("kappa_local", 1.0e-4, 2.0)
 
 SCHEMES = (
     Scheme(
+        "pump_local_loss_scaled",
+        ("pump_r", "kappa_local"),
+        (DELTA, OMEGA_R, G, G_R),
+        True,
+    ),
+    Scheme(
+        "reservoir_detuning_pump_scaled",
+        ("omega_r", "pump_r"),
+        (DELTA, G, G_R, LOCAL),
+        True,
+    ),
+    Scheme(
         "pump_reservoir_coupling",
         ("pump_r", "g_r"),
         (DELTA, OMEGA_R, G, LOCAL),

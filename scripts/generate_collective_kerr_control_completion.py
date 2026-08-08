@@ -75,6 +75,8 @@ PUMP = Dimension("pump_bright", 0.01, 0.995, logarithmic=False)
 DARK = Dimension("kappa_dark", 1.0e-4, 2.0)
 
 SCHEMES = (
+    Scheme("loss_controls_scaled", ("pump_bright", "kappa_dark"), (DELTA, G), True),
+    Scheme("coupling_control_scaled", ("g", "pump_bright"), (DELTA, DARK), True),
     Scheme("coupling_dark", ("g", "kappa_dark"), (DELTA, PUMP), True),
     Scheme("nonlinear_coupling", ("chi", "g"), (DELTA, PUMP, DARK)),
     Scheme("nonlinear_pump", ("chi", "pump_bright"), (DELTA, G, DARK)),

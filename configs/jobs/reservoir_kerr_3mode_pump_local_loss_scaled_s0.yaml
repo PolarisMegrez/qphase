@@ -1,0 +1,149 @@
+name: reservoir_kerr_3mode_pump_local_loss_scaled_s0
+save: true
+system:
+  scan_runtime:
+    checkpoint:
+      enabled: true
+      interval_chunks: 1
+      keep_on_success: false
+scan:
+  combine: zipped
+  axes:
+    chi:
+      target: model.reservoir_kerr_3mode.chi
+      values:
+      - 0.0001
+      - 0.0001
+      - 0.0001
+      - 0.0001
+      - 0.001
+      - 0.001
+      - 0.001
+      - 0.001
+      - 0.01
+      - 0.01
+      - 0.01
+      - 0.01
+    delta:
+      target: model.reservoir_kerr_3mode.delta
+      values:
+      - 2.1631356094061056
+      - 0.07584627857065475
+      - 0.49567304223081526
+      - 1.413168946614095
+      - 2.1631356094061056
+      - 0.07584627857065475
+      - 0.49567304223081526
+      - 1.413168946614095
+      - 2.1631356094061056
+      - 0.07584627857065475
+      - 0.49567304223081526
+      - 1.413168946614095
+    omega_r:
+      target: model.reservoir_kerr_3mode.omega_r
+      values:
+      - 4.2175154108554125
+      - -1.8639182858169079
+      - 0.8766311965882778
+      - -3.210697388276458
+      - 4.2175154108554125
+      - -1.8639182858169079
+      - 0.8766311965882778
+      - -3.210697388276458
+      - 4.2175154108554125
+      - -1.8639182858169079
+      - 0.8766311965882778
+      - -3.210697388276458
+    g:
+      target: model.reservoir_kerr_3mode.g
+      values:
+      - 0.07408255721141115
+      - 0.8139555609487933
+      - 0.011031083529084164
+      - 2.490999650885001
+      - 0.07408255721141115
+      - 0.8139555609487933
+      - 0.011031083529084164
+      - 2.490999650885001
+      - 0.07408255721141115
+      - 0.8139555609487933
+      - 0.011031083529084164
+      - 2.490999650885001
+    g_r:
+      target: model.reservoir_kerr_3mode.g_r
+      values:
+      - 0.010960170581306576
+      - 3.2338896366849648
+      - 0.12028795365242496
+      - 0.2974103964206391
+      - 0.010960170581306576
+      - 3.2338896366849648
+      - 0.12028795365242496
+      - 0.2974103964206391
+      - 0.010960170581306576
+      - 3.2338896366849648
+      - 0.12028795365242496
+      - 0.2974103964206391
+engine:
+  cam:
+    case_failure_policy: record
+plugins:
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    reservoir_kerr_3mode:
+      omega_r: 0.0
+      omega_0: 0.0
+      delta: 1.0
+      chi: 0.001
+      g: 0.2
+      g_r: 0.2
+      kappa_r: 1.0
+      pump_r: 0.5
+      kappa_local: 0.1
+  cam_solver:
+    bifurcation:
+      controls:
+        pump_r:
+          min: 0.001
+          max: 0.999
+          scale: 1.0
+          domain: nonnegative
+        kappa_local:
+          min: 0.0001
+          max: 2.0
+          scale: 0.1
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: delta
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
