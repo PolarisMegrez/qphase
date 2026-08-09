@@ -9,6 +9,7 @@ from .collective_loss_kerr_3mode import (
     CollectiveLossKerr3ModeConfig,
     CollectiveLossKerr3ModeModel,
 )
+from .collective_vdp_2mode import CollectiveVDP2ModeConfig, CollectiveVDP2ModeModel
 from .crosskerr_2mode import CrossKerr2ModeConfig, CrossKerr2ModeModel
 from .kerr_2mode import Kerr2ModeConfig, Kerr2ModeModel
 from .kerr_3mode import Kerr3ModeConfig, Kerr3ModeModel
@@ -23,6 +24,8 @@ __all__ = [
     "CollectiveKerr2ModeModel",
     "CollectiveLossKerr3ModeConfig",
     "CollectiveLossKerr3ModeModel",
+    "CollectiveVDP2ModeConfig",
+    "CollectiveVDP2ModeModel",
     "CrossKerr2ModeConfig",
     "CrossKerr2ModeModel",
     "FPGenBackedSDEModel",

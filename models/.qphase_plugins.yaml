@@ -24,6 +24,9 @@ plugins:
   - type: model.collective_loss_kerr_3mode
     target: models.collective_loss_kerr_3mode:CollectiveLossKerr3ModeModel
     description: Three-mode Kerr oscillator with collective bright/dark loss
+  - type: model.collective_vdp_2mode
+    target: models.collective_vdp_2mode:CollectiveVDP2ModeModel
+    description: Two-mode van der Pol oscillator with collective bright/dark loss
   - type: model.reservoir_kerr_3mode
     target: models.reservoir_kerr_3mode:ReservoirKerr3ModeModel
     description: Explicit-reservoir three-mode Kerr oscillator

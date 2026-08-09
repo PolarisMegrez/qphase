@@ -2,6 +2,7 @@
 
 from .collective_kerr_2mode import CollectiveKerr2ModeCayleyCuPyKernel
 from .collective_loss_kerr_3mode import CollectiveLossKerr3ModeCayleyCuPyKernel
+from .collective_vdp_2mode import CollectiveVDP2ModeCayleyCuPyKernel
 from .crosskerr_2mode import CrossKerr2ModeCayleyCuPyKernel
 from .kerr_2mode import Kerr2ModeCayleyCuPyKernel
 from .kerr_3mode import Kerr3ModeCayleyCuPyKernel
@@ -13,6 +14,7 @@ from .vdp_2mode import VDP2ModeCayleyCuPyKernel
 __all__ = [
     "CollectiveKerr2ModeCayleyCuPyKernel",
     "CollectiveLossKerr3ModeCayleyCuPyKernel",
+    "CollectiveVDP2ModeCayleyCuPyKernel",
     "CrossKerr2ModeCayleyCuPyKernel",
     "Kerr2ModeCayleyCuPyKernel",
     "Kerr3ModeCayleyCuPyKernel",
