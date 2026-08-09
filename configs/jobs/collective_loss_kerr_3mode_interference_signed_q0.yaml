@@ -1,0 +1,1951 @@
+jobs:
+- name: collective_loss_kerr_3mode_acn_bcn_balanced_v_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -1.8638128414796058
+        - -1.8728649992173114
+        - -1.887470326163888
+        - -1.9110354894539456
+        - -1.9490570224821568
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 12.67624662084742+0j
+        - -0.916098494733234-0.3282850501276212j
+        - -1.213010193425024+0.276810748328814j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 1.7040472151711583
+      omega_c: -1.8490570224821568
+      chi: 0.00031315939393390603
+      g_ab: 0.1151042250131654
+      g_ac: -0.18841344313382216
+      g_bc: -0.018265558598118153
+      pump_a: 0.014102831238454397
+      kappa_dark: 0.05351278160863972
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcn_balanced_v_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_balanced_v_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcn_balanced_v_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_balanced_v_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -1.8490570224821568
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcn_balanced_w_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -1.8588585471478978
+        - -1.8665744459136597
+        - -1.8803644092554743
+        - -1.9050100266672025
+        - -1.9490570224821568
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 16.73530886927578+0j
+        - -1.694540033929093-0.3736452879049382j
+        - -1.602908581332503+0.4295240604704594j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 2.2720629535615444
+      omega_c: -1.8490570224821568
+      chi: 0.00015657969696695302
+      g_ab: 0.21967724119942067
+      g_ac: -0.18841344313382216
+      g_bc: -0.018265558598118153
+      pump_a: 0.019411570689664856
+      kappa_dark: 0.05351278160863972
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcn_balanced_w_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_balanced_w_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcn_balanced_w_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_balanced_w_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -1.8490570224821568
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcn_coupling_pair_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -3.688590210764554
+        - -3.69635004664716
+        - -3.7101729571686595
+        - -3.7347962685602925
+        - -3.7786587722599507
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 21.66081111355978+2.65268429971564e-15j
+        - -7.957828100074757-0.7289132520942073j
+        - -6.055950149287163+1.01685220532417j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 119.45266858832173
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 4.57631291821599
+      omega_c: -3.6786587722599506
+      chi: 0.00015552967217389842
+      g_ab: 1.7625471351281905
+      g_ac: -0.9676267903181648
+      g_bc: -0.0012253845492524878
+      pump_a: 0.20900520534013312
+      kappa_dark: 0.0002023324974913197
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcn_coupling_pair_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_coupling_pair_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcn_coupling_pair_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_coupling_pair_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -3.6786587722599506
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcn_gap_low_chi_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -2.709221736986923
+        - -2.7169813345959413
+        - -2.7308040674155905
+        - -2.7554275018036507
+        - -2.799291007593274
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 17.78067001861007+0j
+        - -0.3530414402845134-0.1055452748024635j
+        - -0.4797138639139135+0.08493035964312122j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 1.8096731949108364
+      omega_c: -2.699291007593274
+      chi: 0.00012932163934461816
+      g_ab: 0.03318398915476413
+      g_ac: -0.0783018743664513
+      g_bc: -0.10487863410717058
+      pump_a: 0.0011383831721339679
+      kappa_dark: 0.5383937454585123
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcn_gap_low_chi_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_gap_low_chi_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcn_gap_low_chi_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_gap_low_chi_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -2.699291007593274
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcn_gap_max_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -2.715502606927752
+        - -2.7248397422760116
+        - -2.7395546379989866
+        - -2.762744636650809
+        - -2.799291007593274
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 13.92760199539474+0j
+        - -0.2761203034661691-0.07993075669533097j
+        - -0.3695392008801911+0.06735947657579108j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 1.7965961657040261
+      omega_c: -2.699291007593274
+      chi: 0.0002586432786892363
+      g_ab: 0.03318398915476413
+      g_ac: -0.0783018743664513
+      g_bc: -0.10487863410717058
+      pump_a: 0.00113244761459392
+      kappa_dark: 0.8075906181877683
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcn_gap_max_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_gap_max_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcn_gap_max_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_gap_max_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -2.699291007593274
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcn_gap_mid_chi_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -2.7122631332973484
+        - -2.7209061629513833
+        - -2.7353078449114983
+        - -2.75930503705158
+        - -2.799291007593274
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 15.57007937212974+0j
+        - -0.306323589641575-0.090827098724355j
+        - -0.4183782687821008+0.07363648790903543j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 1.8389629635782467
+      omega_c: -2.699291007593274
+      chi: 0.00019398245901692724
+      g_ab: 0.03318398915476413
+      g_ac: -0.0783018743664513
+      g_bc: -0.10487863410717058
+      pump_a: 0.0011231558291221095
+      kappa_dark: 0.5383937454585123
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcn_gap_mid_chi_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_gap_mid_chi_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcn_gap_mid_chi_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_gap_mid_chi_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -2.699291007593274
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcn_gap_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -2.71496681639023
+        - -2.724203803387818
+        - -2.7388836947930035
+        - -2.7622137278139776
+        - -2.799291007593274
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 14.17301622582671+0j
+        - -0.2768087161151625-0.08154085630014647j
+        - -0.379610392898494+0.06650094704602001j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 1.8624285849775652
+      omega_c: -2.699291007593274
+      chi: 0.0002586432786892363
+      g_ab: 0.03318398915476413
+      g_ac: -0.0783018743664513
+      g_bc: -0.10487863410717058
+      pump_a: 0.0011110975823436734
+      kappa_dark: 0.5383937454585123
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcn_gap_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_gap_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcn_gap_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_gap_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -2.699291007593274
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcn_gap_window_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -2.7144034978689118
+        - -2.723529300300586
+        - -2.7381657941208397
+        - -2.7616406559704427
+        - -2.799291007593274
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 14.4624757639353+0j
+        - -0.2765647782419046-0.08318459310318546j
+        - -0.390899945814573+0.06525630970254119j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 1.940627812294455
+      omega_c: -2.699291007593274
+      chi: 0.0002586432786892363
+      g_ab: 0.03318398915476413
+      g_ac: -0.0783018743664513
+      g_bc: -0.10487863410717058
+      pump_a: 0.0010831673069182195
+      kappa_dark: 0.26919687272925613
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcn_gap_window_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_gap_window_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcn_gap_window_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_gap_window_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -2.699291007593274
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcn_high_visibility_w_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 0.9950615095831605
+        - 0.9872125121246578
+        - 0.9733238584209294
+        - 0.9487481463351614
+        - 0.9052618850022555
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 4.331194760664132+5.304183800131115e-16j
+        - -3.652081166853297+0.2307992980884318j
+        - 4.265405841465051+0.1984256623633087j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 0.634763315320015
+      omega_c: 1.0052618850022554
+      chi: 0.037277792686532286
+      g_ab: 0.4455808927094387
+      g_ac: -0.9372789834496629
+      g_bc: -0.005649336205589701
+      pump_a: 0.03638165450595939
+      kappa_dark: 0.013266979782624993
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcn_high_visibility_w_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_high_visibility_w_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcn_high_visibility_w_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_high_visibility_w_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: 1.0052618850022554
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcn_visibility_v_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 1.0292995069919466
+        - 1.0187823693894784
+        - 1.004444075244443
+        - 0.9848962964893844
+        - 0.9582462884485722
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 10.41660852194314+1.275666628436871e-15j
+        - 1.498616888892242-0.1601323579978375j
+        - 0.3900917318649647+0.5328870242924715j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: -2.9957092667934186
+      omega_c: 1.0582462884485722
+      chi: 0.0006085971855446238
+      g_ab: 0.4528694503795233
+      g_ac: -0.03118699176376381
+      g_bc: -0.07049950906338437
+      pump_a: 0.016958255760074765
+      kappa_dark: 0.004131065982592978
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcn_visibility_v_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_visibility_v_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcn_visibility_v_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_visibility_v_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: 1.0582462884485722
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcn_visibility_w_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 1.0384428308875153
+        - 1.0285600093288638
+        - 1.0137452125502786
+        - 0.9915371617129496
+        - 0.9582462884485722
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 13.79518664831914+1.689423117250434e-15j
+        - 2.060427352595353-0.164409724025069j
+        - 0.4241497121327767+0.7123614812215551j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: -3.8894157448964912
+      omega_c: 1.0582462884485722
+      chi: 0.0003042985927723119
+      g_ab: 0.6038259338393644
+      g_ac: -0.02570506843349358
+      g_bc: -0.07049950906338437
+      pump_a: 0.016958255760074765
+      kappa_dark: 0.004131065982592978
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcn_visibility_w_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_visibility_w_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcn_visibility_w_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_visibility_w_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: 1.0582462884485722
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcn_wmax_refined_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -1.4258121935382757
+        - -1.4316458539163865
+        - -1.4437156245551017
+        - -1.468687829625147
+        - -1.520355010777712
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 23.60218740187223+2.890434325457881e-15j
+        - -3.363739683033011-0.3938218310277979j
+        - -1.611490803459231+0.8754396750099066j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 119.57177631836001
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 3.1215805501915015
+      omega_c: -1.4203550107777119
+      chi: 5.837569923409237e-05
+      g_ab: 0.4369267192725563
+      g_ac: -0.10576211228805123
+      g_bc: -0.021076429998524326
+      pump_a: 0.022386488186053245
+      kappa_dark: 2.5057901369710232e-05
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcn_wmax_refined_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_wmax_refined_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcn_wmax_refined_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_wmax_refined_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -1.4203550107777119
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcp_balanced_refined_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -0.9564916408919242
+        - -0.9618788518485093
+        - -0.9734560981765266
+        - -0.9983358798705696
+        - -1.05180313102901
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 17.5591944592998+2.150381129018744e-15j
+        - -1.990262794222536-1.040430741264456j
+        - -2.338638614882554+0.9553969457901852j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 100.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 1.2
+      omega_c: -0.9518031310290098
+      chi: 7.510627290627429e-05
+      g_ab: 0.1487705148435459
+      g_ac: -0.11739474190421646
+      g_bc: 0.1249446528072051
+      pump_a: 0.03030664701099313
+      kappa_dark: 0.00010766140657151155
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcp_balanced_refined_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcp_balanced_refined_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcp_balanced_refined_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcp_balanced_refined_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -0.9518031310290098
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acn_bcp_wmax_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -1.002749575800127
+        - -1.003633431559398
+        - -1.006155749259616
+        - -1.0133538542830876
+        - -1.0338955631742595
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 30.58736154172569+3.745871440643722e-15j
+        - -23.87129636339645-0.1448475676122688j
+        - 21.85239624360756-0.1591104589512078j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 222.65438434359254
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 0.32929982990026474
+      omega_c: -1.0022727865725756
+      chi: 6.727486370258861e-05
+      g_ab: 3.1333999362070686
+      g_ac: -1.911910167604527
+      g_bc: 0.0032912170622969054
+      pump_a: 0.009776948635723133
+      kappa_dark: 0.006761151312696721
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 133.59263060615552
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acn_bcp_wmax_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcp_wmax_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acn_bcp_wmax_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acn_bcp_wmax_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -1.0022727865725756
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1
+- name: collective_loss_kerr_3mode_acp_bcn_fallback_q0_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -2.7450740137126934
+        - -2.7441346396791912
+        - -2.742661357756032
+        - -2.740350713063188
+        - -2.736726777404547
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 200000.0
+      dt: 0.04
+      n_traj: 8
+      seed: 20260820
+      ic:
+      - - 36.10093309550843+4.421089216164715e-15j
+        - -19.97121267988239-0.5825002947657665j
+        - 28.98541138264405-0.4206409085516265j
+      adaptive: false
+      save_stride: 10
+      record_modes:
+      - 0
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 252.13077086404644
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      kappa_bright: 1.0
+      omega_b: 2.3349667340517044
+      omega_c: -2.7467267774045467
+      chi: 1.891521812684076e-05
+      g_ab: 0.1148623275416092
+      g_ac: 4.569022276886267
+      g_bc: -1.0432578390511813
+      pump_a: 0.11010769408835493
+      kappa_dark: 0.08546999143498588
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 151.2784625184279
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      find_peaks: true
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 2
+    allan_variance:
+      modes:
+      - 0
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+- name: collective_loss_kerr_3mode_acp_bcn_fallback_q0_fit
+  input:
+    from: collective_loss_kerr_3mode_acp_bcn_fallback_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -6.0
+      freq_max: 6.0
+      fit_window: 0.2
+      uncertainty: auto
+      clip_by_std: false
+      export:
+      - fit_results.csv
+      - psd_merged.csv
+- name: collective_loss_kerr_3mode_acp_bcn_fallback_q0_allan
+  input:
+    from: collective_loss_kerr_3mode_acp_bcn_fallback_q0_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: -2.7467267774045467
+      side: positive
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form:
+        n: 3
+        k: 1
+        m: 0
+        observable_order: 1

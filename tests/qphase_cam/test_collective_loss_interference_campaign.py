@@ -24,6 +24,15 @@ def _campaign_module():
     return _script_module("generate_collective_loss_kerr_interference_campaign.py")
 
 
+def _refinement_module():
+    _campaign_module()
+    return _script_module("generate_collective_loss_kerr_local_refinement.py")
+
+
+def _q0_module():
+    return _script_module("generate_collective_loss_kerr_q0.py")
+
+
 def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
@@ -97,3 +106,73 @@ def test_interference_campaign_summary_collects_s1_diagnostics(tmp_path: Path):
     assert responses[0]["sector"] == "acn_bcp"
     assert responses[0]["scheme"] == "detuning_mixing"
     assert stochastic[0]["epsilon_crossover"] == "0.0001"
+
+
+def test_local_refinement_preserves_manifold_controls_and_sign_sector():
+    refinement = _refinement_module()
+    row = {
+        "label": "balanced",
+        "sector": "acn_bcp",
+        "scheme": "interference_acn_bcp_coupling_pair",
+        "omega_b": "2.0",
+        "omega_c": "-1.0",
+        "chi": "0.001",
+        "g_ab": "0.3",
+        "g_ac": "-0.1",
+        "g_bc": "0.05",
+        "pump_a": "0.02",
+        "kappa_dark": "0.001",
+    }
+
+    job = refinement._job(row)
+    solver = job["cam_solver"]["bifurcation"]
+    axes = job["scan"]["axes"]
+
+    assert set(solver["controls"]) == {"g_ab", "g_ac"}
+    assert solver["controls"]["g_ac"]["max"] < 0.0
+    assert "omega_c" not in axes
+    assert not (set(solver["controls"]) & set(axes))
+    assert {len(axis["values"]) for axis in axes.values()} == {21}
+
+
+def test_q0_generator_uses_candidate_matrix_and_logarithmic_epsilon(tmp_path: Path):
+    q0 = _q0_module()
+    run_dir = tmp_path / "candidate_job"
+    run_dir.mkdir()
+    candidate = {"case": 2, "candidate": 3}
+    candidate.update(
+        {
+            f"r_diag_{index}": value
+            for index, value in enumerate((4.5, 0.5, 0.5))
+        }
+    )
+    for left, right in ((0, 1), (0, 2), (1, 2)):
+        candidate[f"r_re_{left}_{right}"] = 0.0
+        candidate[f"r_im_{left}_{right}"] = 0.0
+    _write_csv(run_dir / "candidate_job_candidates.csv", [candidate])
+    row = {
+        "label": "example",
+        "run_dir": str(run_dir),
+        "case": "2",
+        "candidate_index": "3",
+        "epsilon_side": "-1",
+        "epsilon_noise": "0.001",
+        "epsilon_asym_frequency": "0.1",
+        "omega_b": "0.2",
+        "omega_c": "1.0",
+        "chi": "0.001",
+        "g_ab": "0.3",
+        "g_ac": "-0.1",
+        "g_bc": "0.05",
+        "pump_a": "0.02",
+        "kappa_dark": "0.001",
+    }
+
+    config = q0._job_config(row)
+    sim = config["jobs"][0]
+    values = sim["scan"]["axes"]["omega_c"]["values"]
+
+    assert len(values) == 5
+    assert np.all(np.diff(values) < 0.0)
+    assert sim["engine"]["sde"]["ic"] == [["2+0j", "0+0j", "0+0j"]]
+    assert sim["engine"]["sde"]["keep_traj"] is False
