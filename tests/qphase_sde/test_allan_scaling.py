@@ -29,7 +29,7 @@ def _result(
     )
     variance = np.mean(per_trajectory, axis=0)
     sem = np.std(per_trajectory, axis=0, ddof=1) / np.sqrt(trajectories)
-    frequency = 0.2 + 0.03 * epsilon + 0.4 * epsilon ** (1.0 / 3.0)
+    frequency = 0.2 + 0.4 * epsilon ** (1.0 / 3.0)
     phase_frequency = frequency + np.linspace(-1e-5, 1e-5, trajectories)
     payload = {
         "mode_results": {
@@ -81,6 +81,8 @@ def test_allan_scaling_recovers_white_fm_normal_form(tmp_path):
     assert summary["epsilon_window_decades"] == pytest.approx(2.0)
     assert summary["noise_fit"]["exponent"] == pytest.approx(4.0 / 3.0)
     assert summary["frequency_fit"]["exponent"] == pytest.approx(1.0 / 3.0)
+    assert summary["frequency_fit"]["model"] == ("omega0 + A * abs(epsilon) ** p")
+    assert "linear" not in summary["frequency_fit"]
     assert summary["normal_form"]["frequency_match"] is True
     assert summary["normal_form"]["allan_match"] is True
     assert all(row["accepted"] for row in result.data_dict["rows"])

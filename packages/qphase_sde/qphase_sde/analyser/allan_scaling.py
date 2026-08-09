@@ -525,15 +525,21 @@ def _fit_frequency(
         sigma_arg = np.where(np.isfinite(sigma), sigma, fallback)
 
     def model(
-        x: np.ndarray, offset: float, linear: float, amplitude: float, exponent: float
+        x: np.ndarray, offset: float, amplitude: float, exponent: float
     ) -> np.ndarray:
-        return offset + linear * x + amplitude * x**exponent
+        return offset + amplitude * x**exponent
 
     expected = (
         config.normal_form.frequency_exponent if config.normal_form else 1.0 / 3.0
     )
-    scale = max(float(np.ptp(frequency)), np.finfo(float).eps)
-    initial = [float(frequency[0]), 0.0, scale, expected]
+    denominator = float(epsilon[-1] ** expected - epsilon[0] ** expected)
+    amplitude = (
+        float((frequency[-1] - frequency[0]) / denominator)
+        if abs(denominator) > np.finfo(float).eps
+        else max(float(np.ptp(frequency)), np.finfo(float).eps)
+    )
+    offset = float(frequency[0] - amplitude * epsilon[0] ** expected)
+    initial = [offset, amplitude, expected]
     try:
         params, covariance = curve_fit(
             model,
@@ -542,7 +548,7 @@ def _fit_frequency(
             p0=initial,
             sigma=sigma_arg,
             absolute_sigma=sigma_arg is not None,
-            bounds=([-np.inf, -np.inf, -np.inf, 0.02], [np.inf, np.inf, np.inf, 1.5]),
+            bounds=([-np.inf, -np.inf, 0.02], [np.inf, np.inf, 1.5]),
             maxfev=50000,
         )
     except (RuntimeError, ValueError) as exc:
@@ -552,13 +558,11 @@ def _fit_frequency(
     linear_params, *_ = np.linalg.lstsq(linear_design, frequency, rcond=None)
     linear_residual = frequency - linear_design @ linear_params
     nonlinear_residual = frequency - fitted
-    exponent_sem = math.sqrt(max(float(covariance[3, 3]), 0.0))
+    exponent_sem = math.sqrt(max(float(covariance[2, 2]), 0.0))
     expected_fit: dict[str, Any] | None = None
     if config.normal_form is not None:
         expected = config.normal_form.frequency_exponent
-        expected_design = np.column_stack(
-            (np.ones(epsilon.size), epsilon, epsilon**expected)
-        )
+        expected_design = np.column_stack((np.ones(epsilon.size), epsilon**expected))
         if sigma_arg is None:
             expected_params, *_ = np.linalg.lstsq(
                 expected_design, frequency, rcond=None
@@ -573,17 +577,15 @@ def _fit_frequency(
         expected_fit = {
             "exponent": expected,
             "offset": float(expected_params[0]),
-            "linear": float(expected_params[1]),
-            "amplitude": float(expected_params[2]),
+            "amplitude": float(expected_params[1]),
             "rss": float(expected_residual @ expected_residual),
         }
     return {
         "status": "ok",
-        "model": "omega0 + b * epsilon + A * epsilon ** p",
+        "model": "omega0 + A * abs(epsilon) ** p",
         "offset": float(params[0]),
-        "linear": float(params[1]),
-        "amplitude": float(params[2]),
-        "exponent": float(params[3]),
+        "amplitude": float(params[1]),
+        "exponent": float(params[2]),
         "exponent_sem": exponent_sem,
         "nonlinear_rss": float(nonlinear_residual @ nonlinear_residual),
         "linear_rss": float(linear_residual @ linear_residual),

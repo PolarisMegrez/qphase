@@ -30,6 +30,8 @@
     - Integrates `[0, t0)` as an unrecorded warm-up and analyzes `[t0, t1]`.
     - Provides trajectory diagnostics for block stationarity, complex
       first-order coherence, and angular-frequency Allan variance.
+    - Estimates ensemble first-order coherence matrices, modal purity, and
+      trajectory-jackknife uncertainty without retaining raw trajectories.
 
 ## Installation
 

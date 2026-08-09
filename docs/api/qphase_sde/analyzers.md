@@ -80,6 +80,48 @@ correlated segments are not counted as independent samples. With one trajectory,
 
 When `find_peaks: true`, metadata also includes detected peak positions and heights.
 
+## `coherence_matrix`
+
+Computes the ensemble first-order coherence matrix
+
+```text
+R_ij = mean_trajectory,time(alpha_i * conj(alpha_j))
+rho_R = R / Tr(R)
+P_R = Tr(rho_R^2).
+```
+
+`P_R` is the purity of the normalized modal coherence matrix. It is not the
+purity of the complete many-body quantum density operator.
+
+```yaml
+analyser:
+  coherence_matrix:
+    modes: [0, 1, 2]
+    time_blocks: 8
+    min_block_samples: 32
+    confidence_level: 0.95
+```
+
+The output includes `matrix`, `normalized_matrix`, eigenvalues, `purity`,
+effective rank, spectral entropy, principal-mode fraction, connected
+covariance, and normalized first-order coherence. Matrix-element SEM is
+computed across independent trajectory-level time averages. Purity uncertainty
+uses a leave-one-trajectory-out jackknife and reports `purity_sem` and
+`purity_ci`.
+
+Contiguous `time_blocks` report matrices, purities, traces, and drift distances
+for stationarity diagnostics. They are explicitly not treated as independent
+samples. The analyser supports trajectory batching and can be used with
+`keep_traj: false`; only compact matrix statistics are retained.
+
+No phase-space ordering correction is applied. For Wigner trajectories the
+payload therefore follows the raw amplitude convention used by the configured
+model and CAM equations. A normal-order correction must be introduced through
+an explicit model-aware analysis, not by silently subtracting `1/2` here.
+
+All modes needed in `R` must be present in `engine.sde.record_modes`. Omit
+`modes` to analyze every recorded mode.
+
 ## `dist`
 
 Computes marginal distributions of selected modes.
@@ -166,7 +208,10 @@ white-FM region at every scan point, intersects those regions across contiguous
 perturbation points, computes
 `N_A = tau * angular_frequency_allan_variance`, and fits the background-free
 law `N_A = C * abs(epsilon) ** (-q)`. Per-trajectory bootstrap supplies the
-exponent interval.
+exponent interval. The phase-increment mean frequency is fitted separately as
+`omega = omega0 + A * abs(epsilon) ** p`. A linear model is retained only as a
+null hypothesis for resolving nonlinearity; no linear correction is included
+in the power-law model.
 
 ```yaml
 analyser:

@@ -77,6 +77,43 @@ f = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
 
 当 `find_peaks: true` 时，元数据还包含检测到的峰位与高度。
 
+## `coherence_matrix`
+
+计算系综一阶相干矩阵
+
+```text
+R_ij = mean_trajectory,time(alpha_i * conj(alpha_j))
+rho_R = R / Tr(R)
+P_R = Tr(rho_R^2).
+```
+
+这里的 `P_R` 是归一化模态相干矩阵的纯度，不是完整多体量子密度算符的纯度。
+
+```yaml
+analyser:
+  coherence_matrix:
+    modes: [0, 1, 2]
+    time_blocks: 8
+    min_block_samples: 32
+    confidence_level: 0.95
+```
+
+输出包括 `matrix`、`normalized_matrix`、本征值、`purity`、有效秩、谱熵、
+主模占比、连通协方差和归一化一阶相干度。矩阵元 SEM 以每条独立轨迹的
+时间平均为统计单位；纯度不确定度使用逐轨迹留一 jackknife，输出
+`purity_sem` 和 `purity_ci`。
+
+连续 `time_blocks` 用于报告矩阵、纯度、迹和漂移距离，以检查稳态收敛；
+插件不会把相关时间块当作独立样本。该 analyser 支持 trajectory batching，
+可以与 `keep_traj: false` 配合，只保留紧凑矩阵统计量。
+
+插件不自动实施相空间 ordering 修正。对于 Wigner 轨迹，输出遵循当前模型和
+CAM 方程使用的原始 amplitude 约定；若需要 normal-order 修正，应由显式、
+model-aware 的分析实现，而不是在通用插件中静默减去 `1/2`。
+
+`R` 所需的全部模式必须包含在 `engine.sde.record_modes` 中。省略 `modes`
+表示分析所有已记录模式。
+
 ## `dist`
 
 计算所选模式的边缘分布。
@@ -145,7 +182,9 @@ SEM、实际有效非重叠窗口数以及每条轨迹的名义窗口数。此�
 
 在 `mode: analyze` 中消费逻辑 SDE scan dataset。它逐参数点检测长时白 FM 区，再对连续
 微扰点取白区交集，计算 `N_A = tau * angular_frequency_allan_variance`，并拟合不带背景的
-`N_A = C * abs(epsilon) ** (-q)`。指数区间由逐轨迹 bootstrap 给出。
+`N_A = C * abs(epsilon) ** (-q)`。指数区间由逐轨迹 bootstrap 给出。相位增量的平均频率
+单独按 `omega = omega0 + A * abs(epsilon) ** p` 拟合。线性模型仅作为判断非线性是否
+可分辨的零假设；幂律模型中不加入额外线性修正项。
 
 ```yaml
 analyser:

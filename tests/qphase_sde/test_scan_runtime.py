@@ -6,6 +6,7 @@ from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.progress import ProgressReporter
 from qphase.core.scan import ScanSpec
 from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
+from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyzer
 from qphase_sde.analyser.lorentz_fitter import _load_input
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.analyser.result import AnalysisResult
@@ -357,6 +358,50 @@ def test_allan_variance_runs_through_engine_trajectory_batches():
     assert result.trajectory is None
     assert payload["n_traj"] == 128
     assert payload["mode_results"][0]["allan"]["per_trajectory"].shape[0] == 128
+    assert result.meta["execution_plan"]["trajectory_batch_count"] == 2
+
+
+def test_coherence_matrix_runs_through_engine_trajectory_batches():
+    model = StochasticScannedModel()
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.8,
+            dt=0.01,
+            n_traj=128,
+            trajectory_batching="required",
+            trajectory_batch_size=64,
+            seed=41,
+            ic=[["1.0+0.0j"]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": model,
+            "analyser": {
+                "coherence_matrix": CoherenceMatrixAnalyzer(
+                    modes=[0],
+                    time_blocks=2,
+                    min_block_samples=2,
+                )
+            },
+        },
+    )
+
+    result = engine.run(
+        context=SimpleNamespace(
+            parameter_grid=None,
+            progress=None,
+            cancellation=None,
+        )
+    )
+
+    payload = result.analysis["coherence_matrix"]
+    assert result.trajectory is None
+    assert payload["n_traj"] == 128
+    assert payload["per_trajectory_matrix"].shape == (128, 1, 1)
+    assert payload["purity"] == 1.0
     assert result.meta["execution_plan"]["trajectory_batch_count"] == 2
 
 

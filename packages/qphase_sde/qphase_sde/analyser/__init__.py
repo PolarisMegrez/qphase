@@ -29,6 +29,7 @@ from .base import (
     AnalyzerWorkspaceEstimate,
     AnalyzerWorkspaceRequest,
 )
+from .coherence_matrix import CoherenceMatrixAnalyzer, CoherenceMatrixConfig
 from .dist import DistAnalyzer, DistAnalyzerConfig
 from .polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
 from .psd import PsdAnalyzer, PsdAnalyzerConfig
@@ -47,6 +48,8 @@ __all__ = [
     "AllanVarianceConfig",
     "AllanScalingAnalyzer",
     "AllanScalingConfig",
+    "CoherenceMatrixAnalyzer",
+    "CoherenceMatrixConfig",
     "NormalFormExpectation",
     "PsdAnalyzer",
     "PsdAnalyzerConfig",
