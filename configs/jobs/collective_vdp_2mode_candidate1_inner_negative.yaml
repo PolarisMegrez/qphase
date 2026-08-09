@@ -1,0 +1,110 @@
+- name: collective_vdp_2mode_candidate1_inner_negative_sim
+  save: true
+  scan:
+    axes:
+      omega_b:
+        target: model.collective_vdp_2mode.omega_b
+        values:
+          - -0.006
+          - -0.0035
+          - -0.002
+          - -0.0012
+          - -0.0008
+          - -0.0005
+          - -0.00033
+          - -0.00022
+          - -0.00015
+          - -0.0001
+  engine:
+    sde:
+      t0: 5000.0
+      t1: 205000.0
+      dt: 0.04
+      n_traj: 16
+      seed: 20260829
+      ic:
+        - ["161.25963169+0.0j", "-50.5018721-169.03470011j"]
+      adaptive: false
+      save_stride: 20
+      record_modes: [0]
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 256, max_modes: 16}
+  model:
+    collective_vdp_2mode:
+      omega_a: 0.4919370522999223
+      omega_b: 0.0
+      Gamma: 3.0658145008312856e-05
+      g: 0.21087965229808767
+      pump_a: 2.3801279660479664
+      kappa_bright: 1.0
+      kappa_dark: 0.00014540662572435086
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 400.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 0.6
+      find_peaks: true
+      estimator: {periodogram: {fft_chunk_trajectories: 4}}
+    allan_variance:
+      modes: [0]
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+
+- name: collective_vdp_2mode_candidate1_inner_negative_fit
+  input: {from: collective_vdp_2mode_candidate1_inner_negative_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_b
+      mode: 0
+      freq_min: -0.4
+      freq_max: -0.1
+      fit_window: 0.15
+      uncertainty: auto
+      clip_by_std: false
+      export: [fit_results.csv, psd_merged.csv]
+
+- name: collective_vdp_2mode_candidate1_inner_negative_allan
+  input: {from: collective_vdp_2mode_candidate1_inner_negative_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling:
+      scan_param: omega_b
+      critical_value: 0.0
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.85
+      min_tau_decades: 0.2
+      min_averaging_samples: 16
+      max_relative_sem: 0.6
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.5
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 500
+      bootstrap_seed: 20260829
+      min_frequency_rss_improvement: 0.05
+      normal_form: {n: 3, k: 1, m: 0, observable_order: 1}
