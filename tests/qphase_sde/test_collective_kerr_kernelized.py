@@ -36,15 +36,16 @@ def _make_model(model_name: str):
             pump_bright=0.4,
             kappa_dark=0.02,
         )
-    if model_name == "collective_loss_kerr_3mode":
+    if model_name.startswith("collective_loss_kerr_3mode"):
+        signed = model_name.endswith("_signed")
         return CollectiveLossKerr3ModeModel(
             omega_a=0.0,
             omega_b=0.2,
             omega_c=-0.1,
             chi=0.01,
             g_ab=0.4,
-            g_ac=0.3,
-            g_bc=0.05,
+            g_ac=-0.3 if signed else 0.3,
+            g_bc=-0.05 if signed else 0.05,
             pump_a=0.2,
             kappa_bright=1.0,
             kappa_dark=0.02,
@@ -113,24 +114,26 @@ def _step_worker(model_name: str, dtype_name: str, queue) -> None:
             ).astype(dtype)
         )
         noise = cp.asarray(
-            (rng.standard_normal((n, model.noise_dim)) * np.sqrt(dt)).astype(
-                real_dtype
-            )
+            (rng.standard_normal((n, model.noise_dim)) * np.sqrt(dt)).astype(real_dtype)
         )
         scan_parameter = (
-            "omega_c" if model_name == "collective_loss_kerr_3mode" else "delta"
+            "omega_c"
+            if model_name.startswith("collective_loss_kerr_3mode")
+            else "delta"
         )
-        model.params[scan_parameter] = cp.linspace(
-            -0.15, 0.15, n, dtype=real_dtype
-        )
+        model.params[scan_parameter] = cp.linspace(-0.15, 0.15, n, dtype=real_dtype)
         backend = CuPyBackend()
-        generic = CayleyMaruyama(fused="off").step(
-            state, 0.0, dt, model, noise, backend
-        ).copy()
+        generic = (
+            CayleyMaruyama(fused="off")
+            .step(state, 0.0, dt, model, noise, backend)
+            .copy()
+        )
         cp.cuda.Stream.null.synchronize()
-        fused = CayleyMaruyama(fused="required").step(
-            state, 0.0, dt, model, noise, backend
-        ).copy()
+        fused = (
+            CayleyMaruyama(fused="required")
+            .step(state, 0.0, dt, model, noise, backend)
+            .copy()
+        )
         cp.cuda.Stream.null.synchronize()
         queue.put((True, float(cp.max(cp.abs(fused - generic)).get())))
     except Exception:
@@ -155,10 +158,9 @@ def _chunk_worker(model_name: str, queue) -> None:
             ).astype(np.complex64)
         )
         noise = cp.asarray(
-            (
-                rng.standard_normal((n_steps, n, model.noise_dim))
-                * np.sqrt(dt)
-            ).astype(np.float32)
+            (rng.standard_normal((n_steps, n, model.noise_dim)) * np.sqrt(dt)).astype(
+                np.float32
+            )
         )
         save_offsets = (2, 5, 7)
         record_modes = tuple(reversed(range(model.n_modes)))
@@ -207,6 +209,7 @@ def _chunk_worker(model_name: str, queue) -> None:
     (
         "collective_kerr_2mode",
         "collective_loss_kerr_3mode",
+        "collective_loss_kerr_3mode_signed",
         "reservoir_kerr_3mode",
     ),
 )
@@ -214,9 +217,7 @@ def _chunk_worker(model_name: str, queue) -> None:
 def test_fused_step_matches_fpgen_generic_path(model_name, dtype_name):
     context = multiprocessing.get_context("spawn")
     queue = context.Queue()
-    process = context.Process(
-        target=_step_worker, args=(model_name, dtype_name, queue)
-    )
+    process = context.Process(target=_step_worker, args=(model_name, dtype_name, queue))
     process.start()
     process.join(timeout=90)
 
@@ -234,6 +235,7 @@ def test_fused_step_matches_fpgen_generic_path(model_name, dtype_name):
     (
         "collective_kerr_2mode",
         "collective_loss_kerr_3mode",
+        "collective_loss_kerr_3mode_signed",
         "reservoir_kerr_3mode",
     ),
 )

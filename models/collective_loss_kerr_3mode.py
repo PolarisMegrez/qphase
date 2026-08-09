@@ -56,8 +56,7 @@ class CollectiveLossKerr3ModeModel(FPGenBackedSDEModel):
 
         a, b, c = boson_modes("a", "b", "c")
         parameters = sp.symbols(
-            "omega_a omega_b omega_c chi g_ab g_ac g_bc "
-            "pump_a kappa_bright kappa_dark",
+            "omega_a omega_b omega_c chi g_ab g_ac g_bc pump_a kappa_bright kappa_dark",
             real=True,
         )
         (
@@ -103,8 +102,8 @@ class CollectiveLossKerr3ModeModel(FPGenBackedSDEModel):
                     omega_c: "real",
                     chi: "nonnegative",
                     coupling_ab: "nonnegative",
-                    coupling_ac: "nonnegative",
-                    coupling_bc: "nonnegative",
+                    coupling_ac: "real",
+                    coupling_bc: "real",
                     pump_a: "nonnegative",
                     kappa_bright: "nonnegative",
                     kappa_dark: "nonnegative",

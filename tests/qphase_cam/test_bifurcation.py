@@ -585,9 +585,7 @@ def test_local_response_validation_solves_and_persists_complete_branches(tmp_pat
         response["delta_state_norm"],
     )
     np.testing.assert_allclose(
-        loaded.postprocess["local_response_validation"][
-            "hamiltonian_petermann_max"
-        ],
+        loaded.postprocess["local_response_validation"]["hamiltonian_petermann_max"],
         response["hamiltonian_petermann_max"],
     )
     assert target.with_name("response_responses.csv").exists()
@@ -827,6 +825,16 @@ def test_control_range_supports_logarithmic_seed_sampling():
     assert ControlRange(min=-1.0, max=1.0).sampling == "linear"
     with pytest.raises(ValueError, match="must be positive"):
         ControlRange(min=0.0, max=1.0, sampling="log")
+
+
+def test_control_range_supports_log_absolute_seed_sampling():
+    positive = ControlRange(min=1e-6, max=1.0, sampling="log_abs")
+    negative = ControlRange(min=-1.0, max=-1e-6, sampling="log_abs")
+
+    np.testing.assert_allclose(positive.sample_values(3), [1e-6, 1e-3, 1.0])
+    np.testing.assert_allclose(negative.sample_values(3), [-1.0, -1e-3, -1e-6])
+    with pytest.raises(ValueError, match="same sign"):
+        ControlRange(min=-1.0, max=1.0, sampling="log_abs")
 
 
 def test_condensed_initial_starts_accept_explicit_control_axis():

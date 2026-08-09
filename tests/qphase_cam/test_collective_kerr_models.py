@@ -189,6 +189,32 @@ def test_collective_loss_model_has_b_c_exchange_symmetry():
     )
 
 
+@pytest.mark.parametrize("g_ac,g_bc", ((-0.3, 0.05), (0.3, -0.05), (-0.3, -0.05)))
+def test_collective_loss_model_accepts_real_coupling_sectors(g_ac, g_bc):
+    model = CollectiveLossKerr3ModeModel(
+        omega_a=0.0,
+        omega_b=0.2,
+        omega_c=-0.1,
+        chi=0.01,
+        g_ab=0.4,
+        g_ac=g_ac,
+        g_bc=g_bc,
+        pump_a=0.2,
+        kappa_bright=1.0,
+        kappa_dark=0.02,
+    )
+    adapter = FPGenDynamicsAdapter.from_model(model)
+    vector = np.arange(1, adapter.state_size + 1, dtype=float) / 10.0
+
+    assert adapter.parameter_domains["g_ac"] == "real"
+    assert adapter.parameter_domains["g_bc"] == "real"
+    np.testing.assert_allclose(
+        model.cam_residual_vector(vector, model.params),
+        adapter.rhs(vector),
+        atol=1e-13,
+    )
+
+
 def test_explicit_reservoir_preserves_main_mode_exchange_symmetry():
     model = ReservoirKerr3ModeModel(
         omega_r=-0.1,

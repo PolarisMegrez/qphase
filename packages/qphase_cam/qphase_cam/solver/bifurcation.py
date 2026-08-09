@@ -73,7 +73,7 @@ class ControlRange(BaseModel):
     max: float
     scale: float | None = Field(None, gt=0.0)
     domain: Literal["auto", "real", "nonnegative"] = "auto"
-    sampling: Literal["linear", "log"] = "linear"
+    sampling: Literal["linear", "log", "log_abs"] = "linear"
 
     @model_validator(mode="after")
     def validate_bounds(self) -> ControlRange:
@@ -81,11 +81,23 @@ class ControlRange(BaseModel):
             raise ValueError("control max must be greater than min")
         if self.sampling == "log" and self.min <= 0.0:
             raise ValueError("log-sampled control min must be positive")
+        if self.sampling == "log_abs" and (
+            self.min == 0.0
+            or self.max == 0.0
+            or np.signbit(self.min) != np.signbit(self.max)
+        ):
+            raise ValueError(
+                "log_abs-sampled control bounds must be nonzero and have the same sign"
+            )
         return self
 
     def sample_values(self, count: int) -> np.ndarray:
         if self.sampling == "log":
             return np.geomspace(self.min, self.max, count)
+        if self.sampling == "log_abs":
+            sign = -1.0 if self.max < 0.0 else 1.0
+            magnitudes = np.geomspace(abs(self.min), abs(self.max), count)
+            return sign * magnitudes
         return np.linspace(self.min, self.max, count)
 
 
