@@ -127,6 +127,8 @@ engine 在分配轨迹前验证时间网格与 analyser 带宽，并分别估算
 group 保证相同 seed 下结果不依赖 scan tile 和物理 trajectory batch 大小。
 专用 `allan_variance` analyser 也支持该路径：它拼接逐轨迹 Allan 统计量，重新计算系综
 SEM 与有效非重叠窗口数，并在 `keep_traj: false` 时不写出采样轨迹。
+设备轨迹会按模式、按有界时间块传输；启用多个 Allan 模式不会要求在主机端同时复制
+完整的多模式记录。
 `coherence_matrix` 与 `moment_statistics` 也支持相同的 trajectory batch 合并协议，
 分别保留紧凑的一阶矩阵和 c-number 四阶矩。后者按有界时间分块归约，不会在复数轨迹
 之外再分配一份完整强度时序。

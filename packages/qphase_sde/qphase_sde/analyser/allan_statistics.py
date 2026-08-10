@@ -17,6 +17,18 @@ def _masked_mean(values: np.ndarray, mask: np.ndarray, *, axis: int) -> np.ndarr
     return result
 
 
+def _masked_square_mean(
+    values: np.ndarray, mask: np.ndarray, *, axis: int
+) -> np.ndarray:
+    count = np.sum(mask, axis=axis)
+    np.square(values, out=values)
+    values[~mask] = 0.0
+    total = np.sum(values, axis=axis)
+    result = np.full(np.shape(total), np.nan, dtype=float)
+    np.divide(total, count, out=result, where=count > 0)
+    return result
+
+
 def _duration_samples(value: float, dt: float) -> int:
     samples = int(round(value / dt))
     if samples < 1 or not math.isclose(
@@ -82,20 +94,20 @@ def calculate_allan_variance(
     valid_increments = (amplitude[:, 1:] > amplitude_floor) & (
         amplitude[:, :-1] > amplitude_floor
     )
-    phase = np.concatenate(
-        (
-            np.zeros((n_traj, 1), dtype=float),
-            np.cumsum(np.where(valid_increments, phase_increments, 0.0), axis=1),
-        ),
+    phase_increments[~valid_increments] = 0.0
+    phase = np.empty((n_traj, n_time), dtype=float)
+    phase[:, 0] = 0.0
+    np.cumsum(phase_increments, axis=1, out=phase[:, 1:])
+    count_dtype = np.int32 if n_time <= np.iinfo(np.int32).max else np.int64
+    valid_cumulative = np.empty((n_traj, n_time), dtype=count_dtype)
+    valid_cumulative[:, 0] = 0
+    np.cumsum(
+        valid_increments,
         axis=1,
+        dtype=count_dtype,
+        out=valid_cumulative[:, 1:],
     )
-    valid_cumulative = np.concatenate(
-        (
-            np.zeros((n_traj, 1), dtype=np.int64),
-            np.cumsum(valid_increments, axis=1, dtype=np.int64),
-        ),
-        axis=1,
-    )
+    del amplitude, phase_increments, valid_increments
 
     n_tau = len(averaging_samples)
     per_trajectory = np.full((n_traj, n_tau), np.nan, dtype=float)
@@ -110,7 +122,7 @@ def calculate_allan_variance(
         valid = valid_cumulative[:, 2 * m :] - valid_cumulative[:, : -2 * m]
         valid = valid == 2 * m
         valid_counts[:, column] = np.sum(valid, axis=1)
-        per_trajectory[:, column] = _masked_mean(delta**2, valid, axis=1) / (
+        per_trajectory[:, column] = _masked_square_mean(delta, valid, axis=1) / (
             2.0 * tau**2
         )
 
@@ -123,8 +135,8 @@ def calculate_allan_variance(
             valid_cumulative[:, starts + 2 * m] - valid_cumulative[:, starts]
         ) == 2 * m
         nonoverlap_valid_counts[:, column] = np.sum(nonoverlap_valid, axis=1)
-        nonoverlap_per_trajectory[:, column] = _masked_mean(
-            nonoverlap_delta**2, nonoverlap_valid, axis=1
+        nonoverlap_per_trajectory[:, column] = _masked_square_mean(
+            nonoverlap_delta, nonoverlap_valid, axis=1
         ) / (2.0 * tau**2)
 
     mean, sem, sample_count = summarize_trajectories(per_trajectory)

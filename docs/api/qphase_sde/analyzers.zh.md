@@ -95,6 +95,7 @@ analyser:
     modes: [0, 1, 2]
     time_blocks: 8
     min_block_samples: 32
+    time_chunk_samples: 8192
     confidence_level: 0.95
 ```
 
@@ -105,7 +106,8 @@ analyser:
 
 连续 `time_blocks` 用于报告矩阵、纯度、迹和漂移距离，以检查稳态收敛；
 插件不会把相关时间块当作独立样本。该 analyser 支持 trajectory batching，
-可以与 `keep_traj: false` 配合，只保留紧凑矩阵统计量。
+可以与 `keep_traj: false` 配合，只保留紧凑矩阵统计量。`time_chunk_samples`
+限制后端 workspace，选择模式时不会再物化第二份完整轨迹。
 
 插件不自动实施相空间 ordering 修正。对于 Wigner 轨迹，输出遵循当前模型和
 CAM 方程使用的原始 amplitude 约定；若需要 normal-order 修正，应由显式、
@@ -197,12 +199,16 @@ analyser:
     points: 40
     min_windows: 8
     min_independent_windows: 4
+    transfer_chunk_samples: 8192
 ```
 
 每个 tau 同时输出既有的重叠估计和非重叠相位二阶差分估计，包括逐轨迹结果、跨轨迹
 SEM、实际有效非重叠窗口数以及每条轨迹的名义窗口数。此处“独立”只表示时间块不重叠；
 有色动力学仍可能使相邻块相关。因此，不应把所有块当作可交换样本，指数不确定度优先
 使用逐轨迹 bootstrap。
+
+使用设备后端时，插件按模式逐个传输，并用 `transfer_chunk_samples` 限制每次传输的
+时间块长度。这不会改变 Allan 定义，同时避免在主机端复制全部已记录模式。
 
 ## `allan_scaling`
 

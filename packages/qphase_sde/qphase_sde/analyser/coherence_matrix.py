@@ -43,6 +43,11 @@ class CoherenceMatrixConfig(PluginConfigBase):
         ge=2,
         description="Minimum saved samples in each requested time block",
     )
+    time_chunk_samples: int = Field(
+        8192,
+        ge=1,
+        description="Maximum saved samples reduced in one backend operation",
+    )
     confidence_level: float = Field(
         0.95,
         gt=0.0,
@@ -83,27 +88,37 @@ class CoherenceMatrixAnalyzer(Analyzer):
         self, request: AnalyzerWorkspaceRequest
     ) -> AnalyzerWorkspaceEstimate:
         config = cast(CoherenceMatrixConfig, self.config)
-        matrix_bytes = (
+        n_modes = (
+            len(config.modes)
+            if config.modes is not None
+            else request.n_record_modes
+        )
+        chunk = min(config.time_chunk_samples, request.saved_samples)
+        chunk_bytes = (
             request.n_traj
-            * request.n_record_modes
-            * request.n_record_modes
-            * 2
+            * chunk
+            * n_modes
+            * 4
             * request.real_itemsize
         )
+        matrix_bytes = (
+            request.n_traj * n_modes * n_modes * 2 * request.real_itemsize
+        )
+        amplitude_bytes = request.n_traj * n_modes * 2 * request.real_itemsize
         block_bytes = (
             config.time_blocks
-            * request.n_record_modes
-            * request.n_record_modes
+            * n_modes
+            * n_modes
             * 2
             * request.real_itemsize
         )
-        retained = 2 * matrix_bytes + block_bytes
+        retained = 2 * matrix_bytes + amplitude_bytes + block_bytes
         if request.backend_name == "cupy":
             return AnalyzerWorkspaceEstimate(
-                device_bytes=retained,
+                device_bytes=chunk_bytes + retained,
                 host_bytes=matrix_bytes + block_bytes,
             )
-        return AnalyzerWorkspaceEstimate(host_bytes=retained)
+        return AnalyzerWorkspaceEstimate(host_bytes=chunk_bytes + retained)
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         config = cast(CoherenceMatrixConfig, self.config)
@@ -122,22 +137,33 @@ class CoherenceMatrixAnalyzer(Analyzer):
 
         modes = _resolve_modes(data, config.modes, int(values.shape[2]))
         columns = resolve_mode_columns(data, modes)
-        selected = values[:, :, columns]
-        per_trajectory = backend.einsum(
-            "rti,rtj->rij", selected, selected.conj()
-        ) / float(n_samples)
-        mean_amplitude = backend.mean(selected, axis=1)
+        n_modes = len(modes)
+        matrix_sum = backend.zeros(
+            (n_traj, n_modes, n_modes), dtype=values.dtype
+        )
+        amplitude_sum = backend.zeros((n_traj, n_modes), dtype=values.dtype)
 
         boundaries = _block_boundaries(
             n_samples, config.time_blocks, config.min_block_samples
         )
         block_matrices = []
         for start, stop in zip(boundaries[:-1], boundaries[1:], strict=True):
-            block = selected[:, start:stop]
-            matrix = backend.einsum(
-                "rti,rtj->ij", block, block.conj()
-            ) / float(n_traj * (stop - start))
+            block_sum = backend.zeros(
+                (n_traj, n_modes, n_modes), dtype=values.dtype
+            )
+            for chunk_start in range(start, stop, config.time_chunk_samples):
+                chunk_stop = min(stop, chunk_start + config.time_chunk_samples)
+                selected = values[:, chunk_start:chunk_stop, columns]
+                amplitude_sum += backend.einsum("rti->ri", selected)
+                block_sum += backend.einsum(
+                    "rti,rtj->rij", selected, selected.conj()
+                )
+            matrix_sum += block_sum
+            matrix = backend.mean(block_sum, axis=0) / float(stop - start)
             block_matrices.append(convert_to_numpy(matrix))
+
+        per_trajectory = matrix_sum / float(n_samples)
+        mean_amplitude = amplitude_sum / float(n_samples)
 
         payload = self._summarize(
             per_trajectory=np.asarray(convert_to_numpy(per_trajectory)),

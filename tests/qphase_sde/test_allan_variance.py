@@ -4,6 +4,7 @@ from qphase_sde.analyser.allan_variance import (
     AllanVarianceAnalyzer,
     AllanVarianceConfig,
 )
+from qphase_sde.analyser.base import AnalyzerWorkspaceRequest
 from qphase_sde.state import TrajectorySet
 
 
@@ -100,3 +101,73 @@ def test_allan_analyzer_advertises_trajectory_batching():
     assert capabilities.requires_full_trajectory is True
     assert capabilities.supports_trajectory_batching is True
     assert capabilities.supports_time_streaming is False
+
+
+def test_allan_workspace_materializes_one_mode_at_a_time():
+    analyzer = AllanVarianceAnalyzer(
+        AllanVarianceConfig(modes=[0, 1, 2], transfer_chunk_samples=8192)
+    )
+    trajectory_bytes = 60 * 1_000_001 * 3 * 16
+    request = AnalyzerWorkspaceRequest(
+        trajectory_bytes=trajectory_bytes,
+        n_traj=60,
+        saved_samples=1_000_001,
+        n_record_modes=3,
+        real_itemsize=8,
+        backend_name="cupy",
+    )
+
+    estimate = analyzer.estimate_workspace(request)
+    assert estimate.host_bytes == 5 * trajectory_bytes // 3
+    assert estimate.device_bytes < 8 * 1024**2
+
+
+def test_allan_device_transfer_is_time_chunked():
+    source = _phase_diffusion_trajectory(n_traj=3)
+    device = _DeviceLikeArray(source.data)
+    trajectory = TrajectorySet(
+        device,
+        t0=source.t0,
+        dt=source.dt,
+        meta=dict(source.meta),
+    )
+    analyzer = AllanVarianceAnalyzer(
+        AllanVarianceConfig(
+            modes=[2],
+            taus=[1.0, 2.0],
+            min_independent_windows=4,
+            transfer_chunk_samples=127,
+        )
+    )
+
+    payload = analyzer.analyze(trajectory, NumpyBackend()).data_dict
+    reference = analyzer.analyze(source, NumpyBackend()).data_dict
+
+    assert max(device.transfer_lengths) <= 127
+    assert sum(device.transfer_lengths) == source.n_steps
+    np.testing.assert_allclose(
+        payload["mode_results"][2]["allan"]["angular_frequency_variance"],
+        reference["mode_results"][2]["allan"]["angular_frequency_variance"],
+    )
+
+
+class _DeviceLikeSlice:
+    def __init__(self, array: np.ndarray) -> None:
+        self.array = array
+
+    def get(self) -> np.ndarray:
+        return self.array.copy()
+
+
+class _DeviceLikeArray:
+    def __init__(self, array: np.ndarray) -> None:
+        self.array = array
+        self.shape = array.shape
+        self.ndim = array.ndim
+        self.dtype = array.dtype
+        self.transfer_lengths: list[int] = []
+
+    def __getitem__(self, key):
+        selected = self.array[key]
+        self.transfer_lengths.append(int(selected.shape[1]))
+        return _DeviceLikeSlice(selected)

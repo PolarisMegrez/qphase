@@ -83,9 +83,11 @@ jobs:
       points: 80
       min_windows: 8
       min_independent_windows: 4
+      transfer_chunk_samples: 8192
     coherence_matrix:
       modes: [0, 1, 2]
       time_blocks: 16
+      time_chunk_samples: 8192
     moment_statistics:
       modes: [0, 1, 2]
       time_blocks: 16

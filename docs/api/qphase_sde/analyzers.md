@@ -99,6 +99,7 @@ analyser:
     modes: [0, 1, 2]
     time_blocks: 8
     min_block_samples: 32
+    time_chunk_samples: 8192
     confidence_level: 0.95
 ```
 
@@ -113,6 +114,8 @@ Contiguous `time_blocks` report matrices, purities, traces, and drift distances
 for stationarity diagnostics. They are explicitly not treated as independent
 samples. The analyser supports trajectory batching and can be used with
 `keep_traj: false`; only compact matrix statistics are retained.
+`time_chunk_samples` bounds the backend workspace; the analyser does not
+materialize a second full trajectory when selecting modes.
 
 No phase-space ordering correction is applied. For Wigner trajectories the
 payload therefore follows the raw amplitude convention used by the configured
@@ -221,6 +224,7 @@ analyser:
     points: 40
     min_windows: 8
     min_independent_windows: 4
+    transfer_chunk_samples: 8192
 ```
 
 For each tau it reports both the established overlapping estimate and a
@@ -230,6 +234,10 @@ window counts, and the nominal windows per trajectory. "Independent" here
 means that the time blocks do not overlap; colored dynamics may still correlate
 adjacent blocks. Trajectory bootstrap is therefore preferred over treating all
 blocks as exchangeable samples.
+
+On device backends, modes are copied to the host one at a time in bounded
+`transfer_chunk_samples` blocks. This preserves the Allan definition while
+avoiding a simultaneous host copy of every recorded mode.
 
 ## `allan_scaling`
 

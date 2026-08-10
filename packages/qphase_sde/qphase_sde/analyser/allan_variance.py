@@ -39,6 +39,11 @@ class AllanVarianceConfig(PluginConfigBase):
         description="Minimum nominal non-overlapping windows per trajectory",
     )
     amplitude_floor: float = Field(0.0, ge=0.0)
+    transfer_chunk_samples: int = Field(
+        8192,
+        ge=1,
+        description="Maximum saved samples copied from a device at once",
+    )
 
     @model_validator(mode="after")
     def validate_values(self) -> AllanVarianceConfig:
@@ -69,22 +74,33 @@ class AllanVarianceAnalyzer(Analyzer):
     def estimate_workspace(
         self, request: AnalyzerWorkspaceRequest
     ) -> AnalyzerWorkspaceEstimate:
-        materialization = (
-            request.trajectory_bytes if request.backend_name == "cupy" else 0
+        mode_bytes = request.trajectory_bytes // max(request.n_record_modes, 1)
+        chunk = min(
+            cast(AllanVarianceConfig, self.config).transfer_chunk_samples,
+            request.saved_samples,
+        )
+        transfer_bytes = (
+            request.n_traj * chunk * 2 * request.real_itemsize
+            if request.backend_name == "cupy"
+            else 0
         )
         return AnalyzerWorkspaceEstimate(
-            host_bytes=materialization + 2 * request.trajectory_bytes
+            device_bytes=transfer_bytes,
+            host_bytes=5 * mode_bytes,
         )
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         config = cast(AllanVarianceConfig, self.config)
         array = getattr(data, "data", data)
-        values = np.asarray(convert_to_numpy(array))
-        if values.ndim != 3 or not np.iscomplexobj(values):
+        if (
+            not hasattr(array, "ndim")
+            or array.ndim != 3
+            or not _is_complex_array(array)
+        ):
             raise ValueError(
                 "allan_variance expects complex shape (n_traj, n_time, n_modes)"
             )
-        if values.shape[1] < 3:
+        if array.shape[1] < 3:
             raise ValueError("allan_variance requires at least three samples")
         dt = float(getattr(data, "dt", 1.0))
         t0 = float(getattr(data, "t0", 0.0))
@@ -93,7 +109,9 @@ class AllanVarianceAnalyzer(Analyzer):
         columns = resolve_mode_columns(data, config.modes)
         mode_results: dict[int, dict[str, Any]] = {}
         for mode, column in zip(config.modes, columns, strict=True):
-            series = values[:, :, column]
+            series = _copy_mode_to_host(
+                array, column, config.transfer_chunk_samples
+            )
             mode_results[mode] = {
                 "allan": calculate_allan_variance(
                     series,
@@ -112,14 +130,38 @@ class AllanVarianceAnalyzer(Analyzer):
             "modes": list(config.modes),
             "t0": t0,
             "dt": dt,
-            "n_traj": int(values.shape[0]),
-            "n_samples": int(values.shape[1]),
+            "n_traj": int(array.shape[0]),
+            "n_samples": int(array.shape[1]),
             "mode_results": mode_results,
         }
         return AnalysisResult(data_dict=payload, meta=dict(payload, mode_results=None))
 
     def create_result_accumulator(self) -> AllanResultAccumulator:
         return AllanResultAccumulator()
+
+
+def _copy_mode_to_host(
+    array: Any, column: int, chunk_samples: int
+) -> np.ndarray:
+    if isinstance(array, np.ndarray):
+        return np.asarray(array[:, :, column])
+    n_traj, n_samples = int(array.shape[0]), int(array.shape[1])
+    first_stop = min(n_samples, chunk_samples)
+    first = np.asarray(convert_to_numpy(array[:, :first_stop, column]))
+    result = np.empty((n_traj, n_samples), dtype=first.dtype)
+    result[:, :first_stop] = first
+    for start in range(first_stop, n_samples, chunk_samples):
+        stop = min(n_samples, start + chunk_samples)
+        result[:, start:stop] = convert_to_numpy(array[:, start:stop, column])
+    return result
+
+
+def _is_complex_array(array: Any) -> bool:
+    try:
+        return bool(np.issubdtype(array.dtype, np.complexfloating))
+    except TypeError:
+        is_complex = getattr(array, "is_complex", None)
+        return bool(is_complex()) if callable(is_complex) else False
 
 
 def _masked_mean(values: np.ndarray, mask: np.ndarray, axis: int) -> np.ndarray:

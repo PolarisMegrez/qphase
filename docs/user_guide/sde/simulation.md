@@ -154,6 +154,9 @@ The focused `allan_variance` analyser also supports this path: it concatenates
 per-trajectory Allan statistics, recomputes ensemble SEM and valid
 non-overlapping window counts, and never writes the sampled trajectory when
 `keep_traj: false`.
+Device trajectories are transferred one mode at a time in bounded time chunks,
+so enabling several Allan modes does not require a simultaneous host copy of
+the complete multi-mode record.
 The `coherence_matrix` and `moment_statistics` analysers use the same merge
 contract for compact first-order matrices and c-number fourth-order moments.
 The latter reduces bounded time chunks and therefore does not allocate a full

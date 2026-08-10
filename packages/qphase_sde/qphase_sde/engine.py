@@ -726,6 +726,7 @@ class Engine(EngineBase):
                 observer_batches[name].append(payload)
             if not result_meta:
                 result_meta.update(partial.meta)
+            del partial
             self._release_backend_pool()
 
         result_meta.update(

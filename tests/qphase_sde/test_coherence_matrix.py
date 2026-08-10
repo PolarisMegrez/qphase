@@ -1,5 +1,6 @@
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase_sde.analyser.base import AnalyzerWorkspaceRequest
 from qphase_sde.analyser.coherence_matrix import (
     CoherenceMatrixAnalyzer,
     CoherenceMatrixConfig,
@@ -95,3 +96,29 @@ def test_coherence_matrix_advertises_trajectory_batching():
     assert capabilities.requires_full_trajectory is True
     assert capabilities.supports_trajectory_batching is True
     assert capabilities.supports_time_streaming is False
+
+
+def test_coherence_matrix_workspace_is_bounded_by_time_chunk():
+    analyzer = _analyzer(modes=[0, 1, 2], time_chunk_samples=8192)
+    short = AnalyzerWorkspaceRequest(
+        trajectory_bytes=1,
+        n_traj=60,
+        saved_samples=100_000,
+        n_record_modes=3,
+        real_itemsize=8,
+        backend_name="cupy",
+    )
+    long = AnalyzerWorkspaceRequest(
+        trajectory_bytes=1,
+        n_traj=60,
+        saved_samples=1_000_001,
+        n_record_modes=3,
+        real_itemsize=8,
+        backend_name="cupy",
+    )
+
+    short_estimate = analyzer.estimate_workspace(short)
+    long_estimate = analyzer.estimate_workspace(long)
+    assert short_estimate.device_bytes == long_estimate.device_bytes
+    assert long_estimate.device_bytes < 46 * 1024**2
+    assert long_estimate.host_bytes < 16 * 1024

@@ -352,10 +352,16 @@ class PsdAnalyzer(Analyzer):
             backend=backend,
         )
         axis0 = estimate0.axis
-        P_list = [estimate0.mean]
-        P_std_list = [estimate0.std]
-        P_sem_list = [estimate0.sem]
-        for column in mode_columns[1:]:
+        output_shape = (int(axis0.shape[0]), len(mode_columns))
+        P_mat = _np.empty(output_shape, dtype=estimate0.mean.dtype)
+        P_std_mat = _np.empty(output_shape, dtype=estimate0.std.dtype)
+        P_sem_mat = _np.empty(output_shape, dtype=estimate0.sem.dtype)
+        P_mat[:, 0] = estimate0.mean
+        P_std_mat[:, 0] = estimate0.std
+        P_sem_mat[:, 0] = estimate0.sem
+        n_independent = estimate0.n_independent
+        del estimate0
+        for index, column in enumerate(mode_columns[1:], start=1):
             estimate = self._estimate_single(
                 data_arr[:, :, column],
                 dt,
@@ -363,12 +369,10 @@ class PsdAnalyzer(Analyzer):
                 convention=convention,
                 backend=backend,
             )
-            P_list.append(estimate.mean)
-            P_std_list.append(estimate.std)
-            P_sem_list.append(estimate.sem)
-        P_mat = _np.vstack(P_list).T  # shape (n_freq, n_modes)
-        P_std_mat = _np.vstack(P_std_list).T
-        P_sem_mat = _np.vstack(P_sem_list).T
+            P_mat[:, index] = estimate.mean
+            P_std_mat[:, index] = estimate.std
+            P_sem_mat[:, index] = estimate.sem
+            del estimate
 
         peaks_info = self._find_peaks(axis0, P_mat)
 
@@ -389,9 +393,9 @@ class PsdAnalyzer(Analyzer):
                 "field": "psd_sem",
                 "std_field": "psd_std",
                 "independent_unit": "trajectory",
-                "n_independent": estimate0.n_independent,
+                "n_independent": n_independent,
                 "ddof": 1,
-                "available": estimate0.n_independent > 1,
+                "available": n_independent > 1,
             },
         }
 
@@ -820,13 +824,17 @@ class PsdResultAccumulator:
         partial_count = int(payload["uncertainty"]["n_independent"])
         partial_mean = _np.asarray(payload["psd"])
         partial_std = _np.asarray(payload["psd_std"])
-        partial_m2 = (
-            _np.zeros_like(partial_mean)
-            if partial_count < 2
-            else partial_std * partial_std * (partial_count - 1)
-        )
+        if partial_count < 2:
+            partial_m2 = _np.zeros_like(partial_mean)
+        else:
+            partial_m2 = _np.square(partial_std)
+            partial_m2 *= partial_count - 1
         if self.payload is None:
-            self.payload = dict(payload)
+            self.payload = {
+                key: value
+                for key, value in payload.items()
+                if key not in {"psd", "psd_std", "psd_sem", "peaks"}
+            }
             self.mean = partial_mean.copy()
             self.m2 = partial_m2.copy()
             self.count = partial_count
@@ -837,7 +845,10 @@ class PsdResultAccumulator:
         total = self.count + partial_count
         delta = partial_mean - self.mean
         self.mean += delta * (partial_count / total)
-        self.m2 += partial_m2 + delta * delta * (self.count * partial_count / total)
+        self.m2 += partial_m2
+        _np.square(delta, out=delta)
+        delta *= self.count * partial_count / total
+        self.m2 += delta
         self.count = total
 
     def finalize(self) -> dict[str, Any]:
