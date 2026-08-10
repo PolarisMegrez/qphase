@@ -114,6 +114,32 @@ model-aware 的分析实现，而不是在通用插件中静默减去 `1/2`。
 `R` 所需的全部模式必须包含在 `engine.sde.record_modes` 中。省略 `modes`
 表示分析所有已记录模式。
 
+## `moment_statistics`
+
+该 analyser 从记录的复振幅计算通用的 c-number 占据数矩：
+
+```text
+n_i = |alpha_i|^2
+G2_ij = mean_trajectory,time(n_i n_j)
+g2_ij = G2_ij / (mean(n_i) mean(n_j)).
+```
+
+```yaml
+analyser:
+  moment_statistics:
+    modes: [0, 1, 2]
+    time_blocks: 16
+    time_chunk_samples: 8192
+```
+
+输出包括各模式占据数、四阶矩、全部跨模式占据数乘积、协方差、归一化 `g2`、
+逐轨迹 SEM 和连续时间块平稳性诊断。`g2_sem` 使用逐轨迹留一 jackknife。
+插件支持 trajectory batching，并在合并全部批次后重新计算非线性比值。
+
+`time_chunk_samples` 限制后端临时内存。插件不会物化完整的 `|alpha|^2` 时序，
+所以达到该分块长度后，其 workspace 不随总观测时间继续增长。插件不自动执行
+Wigner 到 normal ordering 的修正，输出明确遵循模型原始 c-number 约定。
+
 ## `dist`
 
 计算所选模式的边缘分布。

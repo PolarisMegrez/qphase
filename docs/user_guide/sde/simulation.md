@@ -154,6 +154,10 @@ The focused `allan_variance` analyser also supports this path: it concatenates
 per-trajectory Allan statistics, recomputes ensemble SEM and valid
 non-overlapping window counts, and never writes the sampled trajectory when
 `keep_traj: false`.
+The `coherence_matrix` and `moment_statistics` analysers use the same merge
+contract for compact first-order matrices and c-number fourth-order moments.
+The latter reduces bounded time chunks and therefore does not allocate a full
+intensity trajectory in addition to the complex samples.
 Stable logical RNG groups make results independent of the selected scan tile
 and physical trajectory batch size for a fixed seed.
 

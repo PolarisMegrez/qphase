@@ -31,6 +31,7 @@ from .base import (
 )
 from .coherence_matrix import CoherenceMatrixAnalyzer, CoherenceMatrixConfig
 from .dist import DistAnalyzer, DistAnalyzerConfig
+from .moment_statistics import MomentStatisticsAnalyzer, MomentStatisticsConfig
 from .polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
 from .psd import PsdAnalyzer, PsdAnalyzerConfig
 from .trajectory_diagnostics import (
@@ -50,6 +51,8 @@ __all__ = [
     "AllanScalingConfig",
     "CoherenceMatrixAnalyzer",
     "CoherenceMatrixConfig",
+    "MomentStatisticsAnalyzer",
+    "MomentStatisticsConfig",
     "NormalFormExpectation",
     "PsdAnalyzer",
     "PsdAnalyzerConfig",

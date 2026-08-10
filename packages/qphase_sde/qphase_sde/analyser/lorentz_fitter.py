@@ -340,21 +340,43 @@ def fit_lorentzian(
 
         step = float(np.median(np.abs(np.diff(np.sort(x))))) if x.size > 1 else 1.0
         span = float(np.max(x) - np.min(x))
-        gamma_init = max(step * 5.0, span / max(x.size, 1), 1e-12)
+        gamma_floor = max(step * 5.0, span / max(x.size, 1), 1e-12)
         amplitude_init = max(float(np.max(y) - np.min(y)), 1e-12)
-        base_init = float(np.min(y))
-
-        popt, pcov = curve_fit(
-            _lorentzian_with_baseline,
-            x,
-            y,
-            p0=[float(x[peak_idx]), gamma_init, amplitude_init, base_init],
-            bounds=(
-                [float(np.min(x)), 1e-12, 0.0, -np.inf],
-                [float(np.max(x)), max(span, 1e-12), np.inf, np.inf],
-            ),
-            maxfev=10000,
+        base_init = float(np.percentile(y, 10.0))
+        gamma_seeds = {
+            gamma_floor,
+            max(gamma_floor, min(full_std, span)),
+            max(gamma_floor, span / 8.0),
+        }
+        bounds = (
+            [float(np.min(x)), 1e-12, 0.0, -np.inf],
+            [float(np.max(x)), max(span, 1e-12), np.inf, np.inf],
         )
+        solutions: list[tuple[float, np.ndarray, np.ndarray]] = []
+        errors: list[Exception] = []
+        for gamma_init in sorted(gamma_seeds):
+            try:
+                candidate, covariance = curve_fit(
+                    _lorentzian_with_baseline,
+                    x,
+                    y,
+                    p0=[
+                        float(x[peak_idx]),
+                        gamma_init,
+                        amplitude_init,
+                        base_init,
+                    ],
+                    bounds=bounds,
+                    maxfev=10000,
+                )
+            except (RuntimeError, ValueError) as exc:
+                errors.append(exc)
+                continue
+            residual = y - _lorentzian_with_baseline(x, *candidate)
+            solutions.append((float(residual @ residual), candidate, covariance))
+        if not solutions:
+            raise errors[-1] if errors else RuntimeError("Lorentz fit did not converge")
+        _, popt, pcov = min(solutions, key=lambda solution: solution[0])
 
         center, gamma, amplitude, base = (float(value) for value in popt)
         fitted = _lorentzian_with_baseline(x, *popt)

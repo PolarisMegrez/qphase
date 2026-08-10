@@ -45,6 +45,28 @@ def test_fit_lorentzian_recovers_synthetic_peak():
     assert result.R2 > 0.999
 
 
+def test_fit_lorentzian_recovers_fine_grid_peak_from_periodogram_noise():
+    axis = np.linspace(-0.6, 0.2, 40_001)
+    expected = lorentzian_with_baseline(
+        axis, center=-0.313, gamma=0.021, amplitude=60_000.0, base=1_000.0
+    )
+    rng = np.random.default_rng(22)
+    psd = np.maximum(expected * (1.0 + rng.normal(0.0, 0.2, axis.size)), 0.0)
+
+    result = fit_lorentzian(
+        axis,
+        psd,
+        fit_window=0.2,
+        freq_min=-0.6,
+        freq_max=0.2,
+    )
+
+    assert result.status == "ok"
+    assert result.center == pytest.approx(-0.313, abs=5e-4)
+    assert result.linewidth == pytest.approx(0.042, rel=0.03)
+    assert result.R2 > 0.9
+
+
 def test_lorentzian_jacobian_matches_finite_difference():
     """The Jacobian used for uncertainty propagation matches the fit model."""
     axis = np.linspace(-0.5, 1.5, 101)

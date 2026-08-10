@@ -122,6 +122,36 @@ an explicit model-aware analysis, not by silently subtracting `1/2` here.
 All modes needed in `R` must be present in `engine.sde.record_modes`. Omit
 `modes` to analyze every recorded mode.
 
+## `moment_statistics`
+
+Computes c-number occupation moments from recorded complex amplitudes:
+
+```text
+n_i = |alpha_i|^2
+G2_ij = mean_trajectory,time(n_i n_j)
+g2_ij = G2_ij / (mean(n_i) mean(n_j)).
+```
+
+```yaml
+analyser:
+  moment_statistics:
+    modes: [0, 1, 2]
+    time_blocks: 16
+    time_chunk_samples: 8192
+```
+
+The result contains modal occupations, fourth moments, all cross-mode
+occupation products, covariances, normalized `g2`, trajectory-level SEM, and
+contiguous-block stationarity diagnostics. `g2_sem` uses a
+leave-one-trajectory-out jackknife. The analyser supports trajectory batching
+and recomputes nonlinear ratios after merging all batches.
+
+`time_chunk_samples` bounds temporary backend memory. The analyser never
+materializes the complete `|alpha|^2` trajectory, so its workspace is
+independent of the total observation length once that chunk size is reached.
+No Wigner-to-normal-order correction is applied; the payload explicitly uses
+the configured model's raw c-number convention.
+
 ## `dist`
 
 Computes marginal distributions of selected modes.
