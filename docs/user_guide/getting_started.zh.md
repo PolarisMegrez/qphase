@@ -1,126 +1,107 @@
 ---
-description: QPhase 入门指南
+description: 使用 QPhase Project 与 Workflow
 ---
 
-# 入门指南
+# 快速开始
 
-本指南将介绍 QPhase 的安装流程，并演示如何运行第一个仿真任务。
+## 安装
 
-## 1. 安装
-
-### 前置要求
-
-*   **Python**：版本 3.11 或更高。
-*   **操作系统**：Windows、macOS 或 Linux。
-
-### 推荐：虚拟环境
-
-强烈建议使用虚拟环境，以避免与其他 Python 包发生冲突。
-
-```bash
-# 创建虚拟环境
-python -m venv .venv
-
-# 激活虚拟环境
-# Windows (PowerShell):
-.venv\Scripts\Activate.ps1
-# Linux/macOS:
-source .venv/bin/activate
-```
-
-### 从 PyPI 安装（推荐）
-
-QPhase 已发布至 PyPI，可直接通过 pip 安装：
-
-```bash
-pip install qphase
-```
-
-此命令仅安装核心框架。**为了运行本指南中的示例，还需要安装 SDE（随机微分方程）扩展包：**
-
-```bash
-pip install qphase-sde
-```
-
-### 从源码安装（面向开发者）
-
-若需参与 QPhase 开发或使用最新的未发布功能，请执行以下步骤：
+QPhase 需要 Python 3.11 或更高版本。在本 monorepo 中执行：
 
 ```bash
 git clone https://github.com/PolarisMegrez/qphase.git
 cd qphase
-pip install -e packages/qphase[standard]
-pip install -e packages/qphase_sde
-pip install -e packages/qphase_viz
+uv sync
 ```
 
-## 2. 初始化项目
-
-建议为仿真项目创建独立的文件夹，以便于组织配置文件与结果数据。
+## 创建 Project
 
 ```bash
-# 创建项目文件夹
-mkdir my_research
-cd my_research
-
-# 初始化 QPhase 项目结构
-qphase init
+qphase project init my-research --name "My Research"
+cd my-research
+qphase project show
 ```
 
-该命令将创建以下目录结构：
+初始化后包含：
 
-*   `configs/`：**配置文件目录**。
-    *   包含定义仿真任务 (Jobs) 和全局设置的 YAML 配置文件。
-    *   详见 [任务配置](configuration.md)。
-*   `plugins/`：**自定义代码目录**。
-    *   用于存放用户自定义的 Python 模块（如模型、后端等），QPhase 将自动加载该目录下的插件。
-    *   详见 [插件开发](../dev_guide/plugin_development.md)。
-*   `runs/`：**仿真数据目录**。
-    *   所有的仿真输出、日志及复现快照均按日期和运行 ID 组织在此目录下。
-    *   详见 [结果与复现](output.md)。
+```text
+qphase.toml                    # Project 身份与相对路径
+configs/defaults.yaml         # 项目范围的插件默认值
+configs/workflows/            # 可版本控制的 Workflow 文档
+models/                       # 本地插件目录
+runs/                         # Session 记录（通常不进入版本控制）
+```
 
-## 3. 创建第一个任务
+在 Project 目录外执行时使用 `qphase --project <path> ...`。否则 QPhase 会从
+当前目录向上查找 `qphase.toml`。
 
-“任务 (Job)” 是指由 YAML 文件定义的单次仿真运行。
-请新建文件 `configs/jobs/test_run.yaml` 并粘贴以下内容：
+## 创建 Workflow
+
+新建 `configs/workflows/examples/test_run.yaml`：
 
 ```yaml
-# configs/jobs/test_run.yaml
-name: test_run
+schema: qphase.workflow/2
+id: test_run
+title: First SDE run
+description: Small CPU example for installation verification
+collection: examples
+tags: [quickstart, sde]
 
-# 1. 选择引擎 (SDE 求解器)
-engine:
-  sde:
-    t0: 0.0
-    t1: 10.0
-    dt: 0.01
-    n_traj: 100
-    seed: 42
-    ic:
-      - ["1.0+0.0j", "0.0+0.0j"]
-
-# 2. 选择物理模型
-# (此处使用内置的示例模型)
-model:
-  vdp_2mode:  # 内置的范德波尔振荡器
-    omega_a: 1.0
-    omega_b: 1.0
-    gamma_a: 0.1
-    gamma_b: 0.1
-    Gamma: 1.0
-    g: 0.5
-
-backend:
-  numpy:         # 在 CPU 上运行
-    float_dtype: float64
+jobs:
+  - name: simulate
+    save: true
+    engine:
+      sde:
+        t0: 0.0
+        t1: 10.0
+        dt: 0.01
+        n_traj: 16
+        seed: 42
+        ic: [["1.0+0.0j", "0.0+0.0j"]]
+    backend:
+      numpy: {float_dtype: float64}
+    integrator:
+      euler_maruyama: {}
+    model:
+      vdp_2mode:
+        omega_a: 1.0
+        omega_b: 1.0
+        gamma_a: 0.1
+        gamma_b: 0.1
+        Gamma: 1.0
+        g: 0.5
 ```
 
-## 4. 运行仿真
+整个文档称为 Workflow，`simulate` 是其中的逻辑 Job。一个 Workflow 可以包含
+多个通过 `input` 或 `depends_on` 连接的 Job。
 
-使用 `qphase run` 命令执行任务：
+## 检查与运行
 
 ```bash
+qphase workflow list
+qphase workflow show test_run
+qphase run test_run --plan
 qphase run test_run
 ```
 
-若一切正常，终端将显示进度条，并在完成后提示结果保存路径（通常位于 `runs/` 目录下）。
+`--plan` 只校验并显示逻辑 Job 图，不创建 Session。正常执行时，CLI 显示简洁的
+进度，最终输出 Session 路径；完整诊断日志按 `SystemConfig` 写入 Session。
+
+## 查看结果
+
+```text
+runs/YYYY/MM/<session-id>/
+  session_manifest.json
+  events.jsonl
+  <job-name>/
+    config_snapshot.json
+    artifact_manifest.json
+    qphase.log
+    ...
+```
+
+`qphase gui` 可用于可视化浏览 Workflow 与 Session。CLI 仍然是脚本、agent 和
+远程服务器场景中的权威接口。
+
+继续阅读[核心概念](concepts.zh.md)、[Workflow 配置](configuration.zh.md)与
+[结果和可复现性](output.zh.md)。

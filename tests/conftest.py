@@ -9,8 +9,9 @@ import os
 from pathlib import Path
 
 import pytest
-from qphase.core.config_loader import load_system_config
 from qphase.core.registry import registry
+from qphase.core.project import ProjectContext
+from qphase.core.system_config import load_system_config
 
 # Layer markers used for test selection (registered in pyproject.toml).
 _LAYER_MARKERS = ("unit", "integration", "e2e", "gpu", "slow")
@@ -29,6 +30,7 @@ def setup_env():
     # Ensure we don't accidentally use user's config
     os.environ["QPHASE_CONFIG"] = ""
     os.environ["QPHASE_SYSTEM_CONFIG"] = ""
+    os.environ["QPHASE_PROJECT"] = str(Path(__file__).resolve().parents[1])
     yield
 
 
@@ -39,12 +41,27 @@ def temp_workspace(tmp_path):
     workspace.mkdir()
 
     config_dir = workspace / "configs"
-    config_dir.mkdir()
+    workflow_dir = config_dir / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (config_dir / "defaults.yaml").write_text("{}\n", encoding="utf-8")
 
     output_dir = workspace / "runs"
     output_dir.mkdir()
 
-    # Create a dummy system config pointing to this workspace
+    (workspace / "models").mkdir()
+    (workspace / "qphase.toml").write_text(
+        'schema = "qphase.project/2"\n'
+        'project_id = "test-project"\n'
+        'name = "Test Project"\n\n'
+        "[paths]\n"
+        'workflows = "configs/workflows"\n'
+        'defaults = "configs/defaults.yaml"\n'
+        'plugins = ["models"]\n'
+        'sessions = "runs"\n',
+        encoding="utf-8",
+    )
+
+    # Create a machine-policy override for this test.
     system_config_path = workspace / "system.yaml"
 
     # We need to mock the system config loading to use this path
@@ -57,30 +74,36 @@ def temp_workspace(tmp_path):
     with open(system_config_path, "w") as f:
         yaml.dump(
             {
-                "paths": {
-                    "config_dirs": [str(config_dir)],
-                    "output_dir": str(output_dir),
-                    "global_file": str(config_dir / "global.yaml"),
-                    "plugin_dirs": [str(workspace / "plugins")],
-                },
                 "scan_runtime": {
                     "storage_layout": "auto",
                     "auto_shard_threshold_mib": 512,
                     "shard_target_mib": 128,
-                },
+                }
             },
             f,
         )
 
     # Force reload of system config
     load_system_config(force_reload=True)
+    previous_project = os.environ.get("QPHASE_PROJECT")
+    os.environ["QPHASE_PROJECT"] = str(workspace)
 
     yield workspace
 
     # Cleanup
     os.environ.pop("QPHASE_SYSTEM_CONFIG", None)
+    if previous_project is None:
+        os.environ.pop("QPHASE_PROJECT", None)
+    else:
+        os.environ["QPHASE_PROJECT"] = previous_project
     # Reset system config cache
     load_system_config(force_reload=True)
+
+
+@pytest.fixture
+def temp_project(tmp_path):
+    """Create an isolated Project for scheduler/service tests."""
+    return ProjectContext.create(tmp_path / "project", name="Test Project")
 
 
 @pytest.fixture
@@ -95,7 +118,7 @@ def mock_registry():
 @pytest.fixture
 def sample_job_file(temp_workspace):
     """Create a sample job file in the temp workspace."""
-    job_file = temp_workspace / "configs" / "jobs" / "test_job.yaml"
+    job_file = temp_workspace / "configs" / "workflows" / "test_job.yaml"
     job_file.parent.mkdir(parents=True, exist_ok=True)
 
     import yaml
@@ -103,10 +126,17 @@ def sample_job_file(temp_workspace):
     with open(job_file, "w") as f:
         yaml.dump(
             {
-                "name": "test_job",
-                "engine": {"dummy": {"param": 10.0}},
-                "model": {"dummy": {"param": 1.0}},
-                "backend": {"dummy": {"param": 1.0}},
+                "schema": "qphase.workflow/2",
+                "id": "test_job",
+                "title": "Test Job",
+                "jobs": [
+                    {
+                        "name": "test_job",
+                        "engine": {"dummy": {"param": 10.0}},
+                        "model": {"dummy": {"param": 1.0}},
+                        "backend": {"dummy": {"param": 1.0}},
+                    }
+                ],
             },
             f,
         )

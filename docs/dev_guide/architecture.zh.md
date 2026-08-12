@@ -1,132 +1,98 @@
 ---
-description: 架构概述
+description: QPhase 2 架构
 ---
 
-# 架构概述
+# 架构
 
-本文档详细介绍了 QPhase 框架的架构设计。它面向希望了解内部机制、设计模式和系统结构决策的开发者。
+QPhase 是面向 Project 的科学工作流运行时。core 负责可迁移 Project 上下文、
+Workflow 校验、逻辑 Job 编排、Execution 控制、Session 记录、进度/日志和 Artifact
+持久化；资源包负责领域算法及其 CPU/GPU 执行策略。
 
-## 设计理念
+```text
+CLI / GUI / Python client
+          |
+qphase.service
+          |
+qphase.core: Project -> Workflow -> Execution -> Session -> Artifact
+          |
+resource-package Engine
+          |
+model / backend / solver / analyser / postprocessor plugins
+```
 
-QPhase 的架构旨在解决科学计算的特定挑战：可复现性、模块化和硬件无关性。与临时脚本不同（在临时脚本中，仿真逻辑与基础设施代码（I/O、配置、并行化）紧密耦合），QPhase 强制执行严格的关注点分离。
+CLI 与 GUI 是同一服务层的平级客户端。CLI 始终提供完整接口；GUI 只增加可视化交互，
+不引入第二套执行语义。
 
-### Shell-Kernel 二分法
+## 核心对象
 
-框架在概念上分为两个不同的层：
+- `ProjectContext` 解析严格的 `qphase.project/2` manifest 和 Project 相对路径；
+- `WorkflowSpec` 表示严格的 `qphase.workflow/2` 文档；
+- `ExecutionManager` 管理本地异步队列与协作式控制；
+- `Scheduler` 执行一个 Workflow 图并持久化一个 Session；
+- `ArtifactStore` 保存逻辑结果并描述其物理布局；
+- `ProjectService` 索引 Workflow 文档与 Session 历史。
 
-1.  **Shell（基础设施层）**：
-    *   **职责**：管理仿真的运维生命周期。这包括配置解析、依赖注入、任务调度、资源管理和结果持久化。
-    *   **特征**：通用、与物理无关且稳定。它为仿真提供"运行时环境"。
+Project、Workflow、Execution、Session 与 Artifact 使用稳定 ID。路径只是位置，不得
+成为跨客户端身份。
 
-2.  **Kernel（领域层）**：
-    *   **职责**：封装科学逻辑。这包括物理模型（哈密顿量、漂移/扩散向量）、数值积分器和后端实现。
-    *   **特征**：领域特定、模块化且可扩展。用户主要通过实现插件与此层交互。
+## Engine 与插件
 
-## 核心概念
+Engine 是资源包面向 scheduler 的唯一入口，通过 `EngineManifest` 声明插件槽位，
+scheduler 校验并注入插件实例。Engine 不是 Workflow；一个 Workflow 可以连接多个
+使用不同 Engine 的 Job。
 
-要理解 QPhase 的运作方式，必须区分三个基本概念：**任务**、**引擎**和**插件**。
+插件拥有严格 Pydantic schema 和 capability protocol。子插件槽位可以表达 PSD
+estimator 等内部策略族，而不需要把它们拆成无关的顶层插件类。
 
-### 1. 任务（"意图"）
-**任务**表示一个逻辑执行请求。它回答：*"我想运行哪个科学工作流步骤？"*
-*   **定义**：任务完全由其配置（已解析的 YAML 文档）定义。它包含复现仿真所需的所有参数。
-*   **隔离**：每个任务在其自己的隔离目录（`runs/{timestamp}_{job_name}/`）中运行。这确保一个仿真的副作用（如文件 I/O）不会污染另一个。
-*   **生命周期**：任务由 scheduler 加载，可选接收一个 `ParameterGrid`，执行一次，并在逻辑结果保存后完成。
+core 不根据 backend 名称猜测科学并行策略。`ScanSpec` 编译为 `ParameterGrid` 后，
+Engine 自行选择逐点、tile、融合、进程或 GPU 策略。101 x 101 scan 仍然是一个逻辑
+Job 和一个 Dataset Artifact。
 
-### 2. 引擎（"工作流"）
-**引擎**是一种特殊类型的插件，定义仿真的*生命周期*。它回答的问题是：*"仿真应该如何进行？"*
-*   **角色**：引擎充当"主循环"或协调器。
-    *   `sde` 引擎运行随机微分方程的时间步进循环。
-    *   `viz` 引擎运行数据处理和绘图管道。
-*   **协调**：引擎本身不执行底层物理或数学运算。相反，它请求其他插件（如模型或后端）来完成实际工作。
+## 配置所有权
 
-### 3. 插件（"构建块"）
-**插件**是实现特定功能的模块化组件。插件是引擎组装以构建仿真的"乐高积木"。
-*   **模型**：定义物理系统（例如漂移和扩散向量）。
-*   **后端**：提供计算原语（例如 NumPy 用于 CPU，PyTorch 用于 GPU）。
-*   **积分器**：实现数值求解器（例如 Euler-Maruyama）。
-*   **分析器**：将原始仿真数据处理成指标。
+| 所有者 | 内容 |
+| --- | --- |
+| `qphase.toml` | Project 身份与 Workflow/default/plugin/Session 相对路径。 |
+| `configs/defaults.yaml` | Project 范围插件默认值。 |
+| Workflow 文档 | 科学意图、Job 图、scan 和数据流。 |
+| `SystemConfig` | 与 Project 无关的机器策略、进度/日志、存储策略和资源提示。 |
+| 插件 schema | 插件专用字段和校验。 |
+| Engine manifest | 必需和可选插件命名空间。 |
 
-### 关系：依赖注入
-QPhase 的强大之处在于这些组件如何连接。您不需要编写代码来将它们连接在一起；**调度器**会根据配置为您完成。
-
-1.  **选择**：**任务**配置选择一个**引擎**（例如 `engine: sde`）。
-2.  **声明**：**引擎**通过**清单**声明它需要什么（例如"我需要一个 `model` 和一个 `backend`"）。
-3.  **注入**：**调度器**读取清单，在任务配置中查找请求的插件，通过**注册表**实例化它们，并将它们*注入*到引擎的构造函数中。
-
-## 核心架构模式
-
-### 1. 注册表模式与依赖注入
-
-为了实现模块化，QPhase 避免硬编码依赖。相反，它使用**注册表模式**结合**依赖注入**。
-
-*   **注册表**：一个集中的单例（`RegistryCenter`），维护组件名称（字符串）到其实现（类/工厂）的动态映射。这允许在运行时通过配置文件选择组件。
-*   **依赖注入**：当 `Engine` 被实例化时，它不直接实例化其依赖项（模型、后端）。相反，`Scheduler` 通过注册表解析这些依赖项并将它们注入到引擎的构造函数中。这种控制反转有助于测试和组件交换。
-
-### 2. 后端抽象（张量调度）
-
-现代科学计算的一个关键要求是硬件可移植性（CPU vs GPU）。QPhase 通过**后端抽象**来解决这个问题。
-
-*   **问题**：直接使用 `numpy` 或 `torch` 等库会将仿真代码耦合到特定的硬件后端。
-*   **解决方案**：框架定义了一个 `BackendBase` 协议，指定张量操作的标准接口。
-*   **实现**：具体实现（`NumpyBackend`、`TorchBackend`）包装底层库。仿真内核专门与抽象接口交互（按惯例命名为 `xp`），允许底层执行引擎通过配置切换而无需更改代码。
-
-### 3. 结构化子类型（协议）
-
-QPhase 利用 Python 的 `typing.Protocol`（PEP 544）进行接口定义，而不是抽象基类（ABC）。
-
-*   **理由**：这强制执行**结构化子类型**（鸭子类型）而非名义子类型。如果一个类实现了所需的方法，则它被视为有效的插件，无论其继承层次结构如何。
-*   **好处**：这减少了用户代码与框架核心之间的耦合。研究人员可以在不导入框架特定基类的情况下开发插件，从而简化分发和测试。
-
-### 4. 显式依赖契约（清单）
-
-为了确保松耦合系统中的健壮性，QPhase 采用**显式依赖契约**。
-
-*   **问题**："盲目"依赖注入可能导致运行时错误，如果引擎需要用户未配置的插件（例如特定的模型类型）。
-*   **解决方案**：引擎通过 `EngineManifest` 静态声明其依赖项。
-*   **机制**：`Scheduler` 在执行开始*之前*验证任务配置是否符合引擎的清单，确保所有必需的插件都存在且类型正确。
+SystemConfig 不得包含 Project 路径。动态硬件事实采样为 `ResourceSnapshot`，不作为
+持久化配置真值。
 
 ## 执行生命周期
 
-仿真的执行遵循由 `Scheduler` 管理的确定性生命周期：
+1. 发现 Project 并加载 `qphase.toml`；
+2. 发现包 entry point 与 Project 本地插件；
+3. 按稳定 ID 或 Project 相对路径解析 Workflow；
+4. 校验 Workflow schema、Job 图、Engine manifest 和插件 schema；
+5. 创建 Execution，scheduler 为本次尝试建立一个 Session；
+6. 对每个 Job 解析输入和插件、编译 `ParameterGrid`、构造 `ExecutionContext`；
+7. 对该逻辑 Job 调用一次资源包 Engine；
+8. 持久化快照、事件、日志、Artifact 和 manifest 状态。
 
-1.  **初始化**：CLI 入口点初始化应用程序上下文并加载系统配置。
-2.  **发现**：注册表扫描入口点和本地目录以填充组件目录。
-3.  **配置解析**：加载任务配置，根据 Pydantic 模式验证，并与全局默认值合并。
-4.  **验证**：调度器验证任务依赖项是否符合目标引擎的 `EngineManifest`。
-5.  **Context 构造**：将可选 `ScanSpec` 编译为 `ParameterGrid`，并在 `ExecutionContext` 中组装进度、取消、artifact、checkpoint 与资源服务。
-6.  **执行循环**：
-    *   **隔离**：配置唯一的运行目录。
-    *   **快照**：将已解析的配置序列化到 `config_snapshot.json` 以确保可复现性。
-    *   **实例化**：通过注册表实例化 `Engine` 及其依赖项。
-    *   **仿真**：执行引擎的 `run()` 方法运行物理循环。
-    *   **持久化**：逻辑结果连同 `artifact_manifest.json` 保存；大型 dataset 可在同一 job 目录内使用有限数量 shard。
+暂停/修订发生在 Job 边界；取消由 Engine 在支持的位置检查 token。core 当前不强制
+终止 GPU kernel，也不负责多个 Execution 的共享资源调度。
 
-## 目录结构
-
-项目采用由 `uv` 工作区管理的 monorepo 结构。
-
-### 源代码 (`packages/`)
-*   `qphase/`：**核心框架（Shell）**。
-    *   `core/`：调度器、注册表、配置、协议。
-    *   `commands/`：CLI 实现。
-*   `qphase_sde/`：**标准引擎**。
-    *   实现 SDE 求解器（Euler-Maruyama、SRK）。
-    *   包含标准物理模型（Kerr 腔、VdP）。
-*   `qphase_viz/`：**可视化引擎**。
-    *   处理绘图和数据后处理。
-*   `qphase_cam/`：**workspace CAM 引擎**。
-    *   求解相干振幅矩阵稳态并执行谱后处理。
-
-### 运行时产物 (`runs/`)
-执行仿真时，QPhase 按层次结构组织输出：
+## Session 布局
 
 ```text
-runs/<session-id>/
-├── session_manifest.json
-└── scan_job/                          # 整个 scan 只有一个逻辑 job
-    ├── config_snapshot.json
-    ├── artifact_manifest.json
-    └── result/                        # 选择 sharded 布局时
-        ├── shard_000000.npz
-        └── shard_000001.npz
+runs/YYYY/MM/<session-id>/
+  session_manifest.json
+  events.jsonl
+  qphase.log
+  <job-name>/
+    config_snapshot.json
+    artifact_manifest.json
+    result.npz
+    result/shard_*.npz
 ```
+
+`single`、`sharded` 或兼容性 `per_point` 只改变物理布局，不改变逻辑 Dataset shape。
+参数点不会获得独立 Session 或 Job 目录。
+
+可复用的生命周期与基础设施行为属于 core；科学决策、内存模型、batching、融合 kernel
+和领域后处理属于资源包。只有至少两个资源包需要同一个领域无关契约时，才应把能力
+加入 core。

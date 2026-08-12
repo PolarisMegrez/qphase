@@ -1,7 +1,7 @@
 """qphase: Generic result aggregation utilities
 ---------------------------------------------------------
 Core helpers for collecting, sorting, and exporting results that come from
-multiple upstream jobs or from a run directory. Resource packages can use
+multiple upstream Jobs or from a result directory. Resource packages can use
 these utilities to implement their own cross-job workflows without duplicating
 generic serialization logic.
 
@@ -9,8 +9,8 @@ Public API
 ----------
 AggregateResult
     Container that wraps multiple ``ResultProtocol`` objects.
-iter_directory_results
-    Discover result files under a run directory.
+iter_result_files
+    Discover result files under a directory or Session Job directory.
 write_table_csv
     Write a list of dict rows to a CSV file.
 write_columns_csv
@@ -107,7 +107,7 @@ class AggregateResult(ResultProtocol):
 
 @dataclass
 class DirectoryInputResult(ResultProtocol):
-    """Wrapper that passes an existing run directory as input data.
+    """Wrapper that passes an existing result directory as input data.
 
     Resource-package engines/analyzers receive the directory ``Path`` as
     ``data`` and are responsible for loading their own result files.
@@ -137,17 +137,17 @@ class DirectoryInputResult(ResultProtocol):
         raise NotImplementedError("DirectoryInputResult is read-only")
 
 
-def iter_directory_results(run_dir: str | Path, pattern: str = "*.npz") -> list[Path]:
-    """Discover result files under a run directory.
+def iter_result_files(directory: str | Path, pattern: str = "*.npz") -> list[Path]:
+    """Discover result files under a directory.
 
     The default discovery strategy mirrors the common layout produced by
-    parameter scans: ``run_dir/<job_name>/<result>.npz``. If no files are
-    found in subdirectories, the run directory itself is scanned.
+    parameter scans: ``directory/<job_name>/<result>.npz``. If no files are
+    found in subdirectories, the directory itself is scanned.
 
     Parameters
     ----------
-    run_dir : str | Path
-        Run directory or a single result file.
+    directory : str | Path
+        Result directory or a single result file.
     pattern : str, optional
         Glob pattern for result files, by default ``"*.npz"``.
 
@@ -162,11 +162,11 @@ def iter_directory_results(run_dir: str | Path, pattern: str = "*.npz") -> list[
         If the directory does not exist or no files match the pattern.
 
     """
-    root = Path(run_dir)
+    root = Path(directory)
     if root.is_file():
         return [root]
     if not root.exists():
-        raise QPhaseError(f"Run directory does not exist: {root}")
+        raise QPhaseError(f"Result directory does not exist: {root}")
 
     files = sorted(path for path in root.glob(f"*/{pattern}") if path.is_file())
     if not files:
@@ -176,17 +176,17 @@ def iter_directory_results(run_dir: str | Path, pattern: str = "*.npz") -> list[
     return files
 
 
-def load_directory_results(
-    run_dir: str | Path,
+def load_result_files(
+    directory: str | Path,
     loader: Callable[[Path], ResultProtocol] | None = None,
     pattern: str = "*.npz",
 ) -> dict[str, ResultProtocol] | dict[str, Path]:
-    """Discover and optionally load results under a run directory.
+    """Discover and optionally load results under a directory.
 
     Parameters
     ----------
-    run_dir : str | Path
-        Run directory or single file.
+    directory : str | Path
+        Result directory or single file.
     loader : Callable[[Path], ResultProtocol] | None, optional
         Loader to use for each discovered file. If ``None``, paths are returned.
     pattern : str, optional
@@ -198,7 +198,7 @@ def load_directory_results(
         Mapping from a derived result name to the loaded result or path.
 
     """
-    paths = iter_directory_results(run_dir, pattern)
+    paths = iter_result_files(directory, pattern)
     if loader is None:
         return {path.parent.name or path.stem: path for path in paths}
 

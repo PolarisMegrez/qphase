@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from qphase.core.config_loader import load_jobs_from_files
 from qphase.core.registry import discovery
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
+from qphase.core.workflow import load_workflow
 from qphase.main import app
 from typer.testing import CliRunner
 
@@ -21,7 +21,8 @@ def cpu_workflow_path():
     path = (
         Path(__file__).parent.parent.parent
         / "configs"
-        / "jobs"
+        / "workflows"
+        / "misc"
         / "cpu_smoke_kerr_2mode_fit.yaml"
     )
     if not path.exists():
@@ -35,7 +36,8 @@ def cpu_job_path():
     path = (
         Path(__file__).parent.parent.parent
         / "configs"
-        / "jobs"
+        / "workflows"
+        / "misc"
         / "cpu_smoke_kerr_2mode.yaml"
     )
     if not path.exists():
@@ -49,24 +51,14 @@ def _discover_plugins():
     discovery.discover_local_plugins()
 
 
-def test_cpu_smoke_run_and_postprocess(cpu_workflow_path, tmp_path):
+def test_cpu_smoke_run_and_postprocess(cpu_workflow_path, temp_project):
     """Run the CPU smoke workflow and postprocess its PSD output via analyse mode."""
     _discover_plugins()
 
-    job_list = load_jobs_from_files([cpu_workflow_path])
+    job_list = load_workflow(cpu_workflow_path)
     assert len(job_list.jobs) == 2
 
-    # Redirect output to a temp directory so we do not pollute the repo.
-    system_config = SystemConfig(
-        paths={
-            "output_dir": str(tmp_path / "runs"),
-            "global_file": "./configs/global.yaml",
-            "plugin_dirs": ["./models"],
-            "config_dirs": ["./configs"],
-        }
-    )
-
-    scheduler = Scheduler(system_config=system_config)
+    scheduler = Scheduler(system_config=SystemConfig(), project=temp_project)
     results = scheduler.run(job_list)
 
     assert len(results) == 2, "Expected one logical scan job + one fit job"
@@ -75,16 +67,16 @@ def test_cpu_smoke_run_and_postprocess(cpu_workflow_path, tmp_path):
     # Locate the fit job run directory.
     fit_result = next(r for r in results if r.job_name == "cpu_smoke_kerr_2mode_fit")
     sim_result = next(r for r in results if r.job_name == "cpu_smoke_kerr_2mode")
-    assert (sim_result.run_dir / "artifact_manifest.json").exists()
-    assert (fit_result.run_dir / "fit_results.csv").exists()
-    assert (fit_result.run_dir / "psd_merged.csv").exists()
+    assert (sim_result.job_dir / "artifact_manifest.json").exists()
+    assert (fit_result.job_dir / "fit_results.csv").exists()
+    assert (fit_result.job_dir / "psd_merged.csv").exists()
 
 
 def test_cpu_smoke_cli_list(cpu_job_path):
-    """CLI can list the CPU smoke job."""
+    """CLI can list the CPU smoke workflow."""
     _discover_plugins()
 
     runner = CliRunner()
-    result = runner.invoke(app, ["run", "--list"])
+    result = runner.invoke(app, ["workflow", "list"])
     assert result.exit_code == 0, result.output
     assert "cpu_smoke_kerr_2mode" in result.output

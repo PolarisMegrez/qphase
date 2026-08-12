@@ -81,7 +81,7 @@ class ErrorReport:
     engine: str | None = None
     stage: str | None = None
     plugin: str | None = None
-    run_dir: str | None = None
+    job_dir: str | None = None
     scan_context: dict[str, Any] | None = None
     context: dict[str, Any] = field(default_factory=dict)
     cause_chain: list[dict[str, str]] = field(default_factory=list)
@@ -205,7 +205,7 @@ def build_error_report(
     engine: str | None = None,
     stage: str | None = None,
     plugin: str | None = None,
-    run_dir: str | Path | None = None,
+    job_dir: str | Path | None = None,
     scan_context: dict[str, Any] | None = None,
     log_file: str | Path | None = None,
 ) -> ErrorReport:
@@ -232,7 +232,7 @@ def build_error_report(
         engine=engine or _string_or_none(context.get("engine")),
         stage=stage or _string_or_none(context.get("stage")),
         plugin=plugin or _string_or_none(context.get("plugin")),
-        run_dir=str(run_dir) if run_dir is not None else None,
+        job_dir=str(job_dir) if job_dir is not None else None,
         scan_context=scan_context,
         context=context,
         cause_chain=_cause_chain(exc),

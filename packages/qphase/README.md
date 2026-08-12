@@ -1,48 +1,41 @@
-# qphase — A Modular Toolkit for Phase-Space Simulation in Quantum Optics
+# qphase
 
-`qphase` is a small command-line tool for configuring and running phase-space simulations in quantum optics. It serves as the main entry point for the project, handling configuration loading and job execution.
+`qphase` is the core runtime and primary CLI for project-oriented scientific
+workflows. It discovers plugins, validates versioned Workflow documents,
+schedules logical Jobs, records Sessions, and exposes the local service API and
+GUI. Scientific algorithms live in resource packages such as `qphase-sde` and
+`qphase-cam`.
 
-## Features
+## Concepts
 
-- **CLI Interface (`qphase`)**: A simple command-line interface to run simulations and analysis tasks.
-- **Plugin Support**: Loads external packages (like `qphase-sde` and `qphase-viz`) to extend functionality.
-- **Session Management**: Basic job tracking with support for resuming interrupted runs and dry-run validation.
-- **Configuration**: Uses YAML/JSON files to define simulation parameters and workflows.
-- **Logical Scan Runtime**: Explicit Cartesian or zipped `ScanSpec` axes execute inside one logical job and persist as one dataset.
-
-## Installation
-
-```bash
-pip install qphase
-# Optional: Install standard backends (Numba, PyTorch)
-pip install qphase[standard]
-```
+- A **Project** is declared by `qphase.toml` and owns Workflows, local plugins,
+  defaults, and Session storage.
+- A **Workflow** is a versioned YAML document with a graph of logical Jobs.
+- An **Execution** is one attempt to run a Workflow; its persisted record is a
+  **Session**.
+- Jobs emit typed **Artifacts**. Parameter scans stay inside one logical Job.
 
 ## Quick Start
 
-1.  **Initialize a project**:
-    ```bash
-    qphase init
-    ```
+```bash
+qphase project init my-research
+qphase --project my-research project show
+qphase --project my-research workflow list
+qphase --project my-research run <workflow-id> --plan
+qphase --project my-research run <workflow-id>
+```
 
-2.  **Run a simulation**:
-    ```bash
-    qphase run my_simulation
-    ```
+Use `qphase config show` for Project plugin defaults and `qphase config show
+--system` for machine policy. Project paths are defined only by `qphase.toml`;
+`~/.qphase/config.yaml` is Project-independent.
 
-3.  **List available jobs**:
-    ```bash
-    qphase run --list
-    ```
+## Optional Dependencies
 
-## Project Structure
-
-This repository contains the following packages:
-- **`qphase`**: The main CLI and scheduler.
-- **`qphase-sde`**: The numerical solver for SDEs.
-- **`qphase-viz`**: Plotting utilities for simulation data.
-- **`qphase-cam`**: Workspace-only coherent-amplitude matrix solvers.
+```bash
+pip install qphase[standard]
+pip install qphase[gui]
+```
 
 ## License
 
-MIT License
+MIT License.

@@ -57,7 +57,8 @@ QPhase 使用 Pydantic 进行验证。常见问题包括：
 
 ### 注册表如何查找插件？
 
-注册表使用 Python 的标准 `importlib.metadata` 扫描 `qphase` 组中的入口点。它在启动时执行一次。它还扫描 `SystemConfig.paths.plugin_dirs` 中定义的目录以查找 `.qphase_plugins.yaml` 文件，以支持本地非安装插件。
+注册表使用 Python 的标准 `importlib.metadata` 扫描已安装的 entry point，并扫描
+`qphase.toml` 声明的 Project 本地插件目录。SystemConfig 不包含 Project 插件路径。
 
 ### 我可以覆盖核心插件吗？
 

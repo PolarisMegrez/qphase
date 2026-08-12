@@ -1,132 +1,113 @@
 ---
-description: Architecture Overview
+description: QPhase 2 architecture
 ---
 
-# Architecture Overview
+# Architecture
 
-This document details the architectural design of the QPhase framework. It is intended for developers seeking to understand the internal mechanisms, design patterns, and structural decisions that govern the system.
+QPhase is a project-oriented scientific workflow runtime. Core owns portable
+Project context, Workflow validation, logical-Job orchestration, Execution
+control, Session records, progress/logging, and Artifact persistence. Resource
+packages own domain algorithms and their CPU/GPU execution strategies.
 
-## Design Philosophy
+## Boundaries
 
-QPhase is architected to address the specific challenges of scientific computing: reproducibility, modularity, and hardware agnosticism. Unlike ad-hoc scripting, where simulation logic is tightly coupled with infrastructure code (I/O, configuration, parallelization), QPhase enforces a strict separation of concerns.
+```text
+CLI / GUI / Python client
+          |
+qphase.service
+          |
+qphase.core: Project -> Workflow -> Execution -> Session -> Artifact
+          |
+resource-package Engine
+          |
+model / backend / solver / analyser / postprocessor plugins
+```
 
-### The Shell-Kernel Dichotomy
+The CLI and GUI are peer clients of `qphase.service`; neither wraps the other.
+The CLI remains the complete interface. The GUI adds visual interaction but no
+separate execution semantics.
 
-The framework is conceptually divided into two distinct layers:
+## Runtime Concepts
 
-1.  **The Shell (Infrastructure Layer)**:
-    *   **Responsibility**: Manages the operational lifecycle of a simulation. This includes configuration parsing, dependency injection, job scheduling, resource management, and result persistence.
-    *   **Characteristics**: Generic, physics-agnostic, and stable. It provides the "runtime environment" for simulations.
+- `ProjectContext` resolves a strict `qphase.project/2` manifest and all
+  Project-relative paths.
+- `WorkflowSpec` is a strict `qphase.workflow/2` document containing stable
+  metadata and logical `JobConfig` nodes.
+- `ExecutionManager` owns the local asynchronous queue and cooperative control.
+- `Scheduler` executes one Workflow graph and persists one Session.
+- `ArtifactStore` saves each logical result and describes physical layout.
+- `ProjectService` indexes Workflow documents and Session history.
 
-2.  **The Kernel (Domain Layer)**:
-    *   **Responsibility**: Encapsulates the scientific logic. This includes physical models (Hamiltonians, Drift/Diffusion vectors), numerical integrators, and backend implementations.
-    *   **Characteristics**: Domain-specific, modular, and extensible. Users primarily interact with this layer by implementing plugins.
+Stable IDs identify Projects, Workflows, Executions, Sessions, and Artifacts.
+Paths are locations and must not become cross-client identity.
 
-## Core Concepts
+## Engine And Plugin Model
 
-To understand how QPhase operates, it is essential to distinguish between three fundamental concepts: the **Job**, the **Engine**, and the **Plugin**.
+An Engine is the only scheduler-facing entry point of a resource package. It
+declares plugin slots through `EngineManifest`; scheduler validates and injects
+selected plugin instances. An Engine is not a Workflow: a Workflow may connect
+several Jobs using different Engines.
 
-### 1. The Job (The "Intent")
-A **Job** represents one logical execution request. It answers the question: *"What scientific workflow step do I want to run?"*
-*   **Definition**: A Job is defined entirely by its configuration (a resolved YAML document). It contains all the parameters needed to reproduce a simulation.
-*   **Isolation**: Each Job runs in its own isolated directory (`runs/{timestamp}_{job_name}/`). This ensures that side effects (like file I/O) from one simulation do not contaminate another.
-*   **Lifecycle**: A Job is loaded by the Scheduler, optionally receives one `ParameterGrid`, executes once, and is finalized when its logical result is saved.
+Plugins own strict Pydantic configuration schemas and capability protocols.
+Child-plugin slots may expose internal strategy families such as PSD estimators
+without flattening them into unrelated top-level namespaces.
 
-### 2. The Engine (The "Workflow")
-An **Engine** is a special type of plugin that defines the *lifecycle* of a simulation. It answers the question: *"How should the simulation proceed?"*
-*   **Role**: The Engine acts as the "main loop" or orchestrator.
-    *   The `sde` engine runs a time-stepping loop for stochastic differential equations.
-    *   The `viz` engine runs a data processing and plotting pipeline.
-*   **Orchestration**: The Engine does not perform the low-level physics or math itself. Instead, it requests other plugins (like Models or Backends) to do the actual work.
+Core does not infer scientific parallelism from backend names. `ScanSpec`
+compiles to `ParameterGrid`, then the Engine chooses pointwise, tiled, fused,
+process, or GPU execution. A 101 x 101 scan remains one logical Job and one
+Dataset Artifact.
 
-### 3. The Plugin (The "Building Block")
-A **Plugin** is a modular component that implements a specific capability. Plugins are the "Lego blocks" that the Engine assembles to build a simulation.
-*   **Model**: Defines the physical system (e.g., drift and diffusion vectors).
-*   **Backend**: Provides the computational primitives (e.g., NumPy for CPU, PyTorch for GPU).
-*   **Integrator**: Implements the numerical solver (e.g., Euler-Maruyama).
-*   **Analyser**: Processes raw simulation data into metrics.
+## Configuration Ownership
 
-### The Relationship: Dependency Injection
-The power of QPhase lies in how these components connect. You do not write code to wire them together; the **Scheduler** does it for you based on the configuration.
+| Owner | Content |
+| --- | --- |
+| `qphase.toml` | Project identity and relative Workflow/default/plugin/Session paths. |
+| `configs/defaults.yaml` | Project-wide plugin defaults. |
+| Workflow document | Scientific intent, Job graph, scans, and data flow. |
+| `SystemConfig` | Project-independent machine policy, progress/logging, storage policy, and resource hints. |
+| plugin schema | Plugin-specific values and validation. |
+| Engine manifest | Required and optional plugin namespaces. |
 
-1.  **Selection**: The **Job** configuration selects an **Engine** (e.g., `engine: sde`).
-2.  **Declaration**: The **Engine** declares what it needs via a **Manifest** (e.g., "I require a `model` and a `backend`").
-3.  **Injection**: The **Scheduler** reads the Manifest, looks up the requested plugins in the Job config, instantiates them via the **Registry**, and *injects* them into the Engine's constructor.
-
-## Core Architectural Patterns
-
-### 1. Registry Pattern & Dependency Injection
-
-To achieve modularity, QPhase avoids hardcoded dependencies. Instead, it utilizes a **Registry Pattern** combined with **Dependency Injection**.
-
-*   **Registry**: A centralized singleton (`RegistryCenter`) that maintains a dynamic mapping of component names (strings) to their implementations (classes/factories). This allows components to be selected at runtime via configuration files.
-*   **Dependency Injection**: When an `Engine` is instantiated, it does not instantiate its dependencies (Model, Backend) directly. Instead, the `Scheduler` resolves these dependencies via the Registry and injects them into the Engine's constructor. This inversion of control facilitates testing and component swapping.
-
-### 2. Backend Abstraction (Tensor Dispatching)
-
-A critical requirement for modern scientific computing is hardware portability (CPU vs. GPU). QPhase addresses this through the **Backend Abstraction**.
-
-*   **Problem**: Direct usage of libraries like `numpy` or `torch` couples the simulation code to a specific hardware backend.
-*   **Solution**: The framework defines a `BackendBase` Protocol that specifies a standard interface for tensor operations.
-*   **Implementation**: Concrete implementations (`NumpyBackend`, `TorchBackend`) wrap the underlying libraries. The simulation kernel interacts exclusively with the abstract interface (conventionally named `xp`), allowing the underlying execution engine to be swapped via configuration without code changes.
-
-### 3. Structural Subtyping (Protocols)
-
-QPhase leverages Python's `typing.Protocol` (PEP 544) for interface definitions rather than Abstract Base Classes (ABCs).
-
-*   **Rationale**: This enforces **Structural Subtyping** (Duck Typing) rather than Nominal Subtyping. A class is considered a valid plugin if it implements the required methods, regardless of its inheritance hierarchy.
-*   **Benefit**: This reduces coupling between user code and the framework core. Researchers can develop plugins without importing framework-specific base classes, simplifying distribution and testing.
-
-### 4. Explicit Dependency Contracts (Manifests)
-
-To ensure robustness in a loosely coupled system, QPhase employs **Explicit Dependency Contracts**.
-
-*   **Problem**: "Blind" dependency injection can lead to runtime errors if an Engine requires a plugin (e.g., a specific Model type) that the user failed to configure.
-*   **Solution**: Engines declare their dependencies statically via an `EngineManifest`.
-*   **Mechanism**: The `Scheduler` validates the Job Configuration against the Engine's Manifest *before* execution begins, ensuring all required plugins are present and correctly typed.
+SystemConfig must not contain Project paths. Dynamic hardware observations are
+sampled into `ResourceSnapshot`, not persisted as configuration truth.
 
 ## Execution Lifecycle
 
-The execution of a simulation follows a deterministic lifecycle managed by the `Scheduler`:
+1. Discover Project and load `qphase.toml`.
+2. Discover package entry points and Project-local plugins.
+3. Resolve a Workflow by stable ID or Project-relative path.
+4. Validate Workflow schema, Job graph, Engine manifests, and plugin schemas.
+5. Create an Execution; scheduler creates one Session attempt.
+6. For each logical Job, resolve inputs and plugins, compile `ParameterGrid`,
+   and construct `ExecutionContext`.
+7. Invoke the resource Engine once for that logical Job.
+8. Persist snapshots, events, logs, Artifacts, and manifest status.
 
-1.  **Initialization**: The CLI entry point initializes the application context and loads the system configuration.
-2.  **Discovery**: The Registry scans entry points and local directories to populate the component catalog.
-3.  **Configuration Resolution**: Job configurations are loaded, validated against Pydantic schemas, and merged with global defaults.
-4.  **Validation**: The Scheduler validates job dependencies against the target Engine's `EngineManifest`.
-5.  **Context Construction**: An optional `ScanSpec` is compiled to `ParameterGrid`, and progress, cancellation, artifact, checkpoint, and resource services are assembled in `ExecutionContext`.
-6.  **Execution Loop**:
-    *   **Isolation**: A unique run directory is provisioned.
-    *   **Snapshotting**: The resolved configuration is serialized to `config_snapshot.json` for reproducibility.
-    *   **Instantiation**: The `Engine` and its dependencies are instantiated via the Registry.
-    *   **Simulation**: The Engine's `run()` method executes the physics loop.
-    *   **Persistence**: The logical result is stored with an `artifact_manifest.json`; large datasets may use bounded shards in the same job directory.
+Execution control is cooperative. Pause/revision occurs at Job boundaries;
+cancellation is observed where an Engine checks its token. Core does not kill
+GPU kernels or schedule several Executions against shared resources yet.
 
-## Directory Structure
-
-The project follows a monorepo structure managed by `uv` workspaces.
-
-### Source Code (`packages/`)
-*   `qphase/`: **The Core Framework (Shell)**.
-    *   `core/`: Scheduler, Registry, Configuration, Protocols.
-    *   `commands/`: CLI implementation.
-*   `qphase_sde/`: **Standard Engine**.
-    *   Implements SDE solvers (Euler-Maruyama, SRK).
-    *   Contains standard physics models (Kerr Cavity, VdP).
-*   `qphase_viz/`: **Visualization Engine**.
-    *   Handles plotting and data post-processing.
-*   `qphase_cam/`: **Workspace CAM Engine**.
-    *   Solves coherent-amplitude matrix steady states and postprocesses spectra.
-
-### Runtime Artifacts (`runs/`)
-When simulations are executed, QPhase organizes outputs hierarchically:
+## Session Layout
 
 ```text
-runs/<session-id>/
-├── session_manifest.json
-└── scan_job/                          # One logical job for the full scan
-    ├── config_snapshot.json
-    ├── artifact_manifest.json
-    └── result/                        # Sharded layout, when selected
-        ├── shard_000000.npz
-        └── shard_000001.npz
+runs/YYYY/MM/<session-id>/
+  session_manifest.json
+  events.jsonl
+  qphase.log
+  <job-name>/
+    config_snapshot.json
+    artifact_manifest.json
+    result.npz
+    result/shard_*.npz
 ```
+
+The physical `single`, `sharded`, or compatibility `per_point` layout does not
+change the logical Dataset shape. No parameter point receives a Session or Job
+directory.
+
+## Extension Rule
+
+Reusable lifecycle and infrastructure behavior belongs in core. Scientific
+decisions, memory models, batching, fused kernels, and domain postprocessing
+belong in resource packages. A feature should enter core only when at least two
+resource packages need the same domain-independent contract.

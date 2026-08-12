@@ -37,9 +37,7 @@ def test_tracker_estimates_only_the_current_stage_after_warmup() -> None:
     for completed in (1, 2, 3):
         clock.advance(1.0)
         event = tracker.observe(
-            ProgressEvent(
-                stage="solve", completed=completed, total=10, unit="tile"
-            )
+            ProgressEvent(stage="solve", completed=completed, total=10, unit="tile")
         )
 
     fraction, rate, remaining = tracker.estimates(event)
@@ -148,3 +146,18 @@ def test_non_tty_renderer_shows_only_normal_status_in_brief_mode() -> None:
 
     assert "hidden detail" not in stream.getvalue()
     assert "visible plan" in stream.getvalue()
+
+
+def test_progress_snapshot_preserves_plugin_activity_metadata() -> None:
+    snapshot = ProgressSnapshot(
+        kind="job_status",
+        job_name="simulation",
+        job_index=0,
+        total_jobs=1,
+        metadata={"active_plugins": ["analyser.psd", "analyser.allan_variance"]},
+    )
+
+    assert snapshot.to_dict()["metadata"]["active_plugins"] == [
+        "analyser.psd",
+        "analyser.allan_variance",
+    ]

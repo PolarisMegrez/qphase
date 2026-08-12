@@ -8,8 +8,9 @@ workspace 内的 `qphase_cam` 资源包求解稳态矩阵方程
 
 `engine.cam` 需要一个 backend、一个支持 CAM capability 的 model 和一个
 `cam_solver`，并可配置任意多个 `cam_postprocessor`。完整示例见
-`configs/jobs/vdp_2mode_cam.yaml`、`kerr_2mode_cam.yaml`、
-`crosskerr_2mode_cam.yaml` 和 `kerr_3mode_cam.yaml`。
+`configs/workflows/vdp_2mode/vdp_2mode_cam.yaml`、
+`configs/workflows/kerr_2mode/kerr_2mode_cam.yaml` 以及对应模型 Collection 下的
+Workflow。
 
 ## 参数扫描
 

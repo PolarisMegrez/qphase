@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 from pydantic import BaseModel
-from qphase.core.config import JobConfig, JobList
+from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.protocols import EngineManifest
 from qphase.core.registry import registry
 from qphase.core.system_config import SystemConfig
@@ -18,18 +18,14 @@ class OptionalAnalyserEngine:
 
 
 def _system_config(tmp_path):
-    return SystemConfig(
-        paths={
-            "output_dir": str(tmp_path / "runs"),
-            "global_file": str(tmp_path / "global.yaml"),
-            "config_dirs": [str(tmp_path / "configs")],
-            "plugin_dirs": [str(tmp_path / "plugins")],
-        }
-    )
+    return SystemConfig()
 
 
 def test_scheduler_service_builds_logical_plan_without_creating_session(tmp_path):
-    job_list = JobList(
+    job_list = WorkflowSpec(
+        schema="qphase.workflow/2",
+        id="test-workflow",
+        title="Test Workflow",
         jobs=[
             JobConfig(name="source", engine={"dummy": {"param": 1.0}}),
             JobConfig(
@@ -37,7 +33,7 @@ def test_scheduler_service_builds_logical_plan_without_creating_session(tmp_path
                 engine={"dummy": {}},
                 input={"from": "source", "mode": "dataset"},
             ),
-        ]
+        ],
     )
 
     plan = SchedulerService(_system_config(tmp_path)).build_plan(job_list)
@@ -52,9 +48,12 @@ def test_scheduler_service_builds_logical_plan_without_creating_session(tmp_path
 
 def test_scheduler_service_run_wraps_core_scheduler(tmp_path):
     system_config = MagicMock(spec=SystemConfig)
-    system_config.paths = MagicMock()
-    system_config.paths.output_dir = str(tmp_path / "runs")
-    job_list = JobList(jobs=[JobConfig(name="job", engine={"dummy": {}})])
+    job_list = WorkflowSpec(
+        schema="qphase.workflow/2",
+        id="test-workflow",
+        title="Test Workflow",
+        jobs=[JobConfig(name="job", engine={"dummy": {}})],
+    )
 
     with patch("qphase.service.scheduler.Scheduler") as scheduler_cls:
         scheduler = scheduler_cls.return_value
@@ -94,7 +93,12 @@ def test_scheduler_service_reports_cartesian_and_zipped_scan_shapes(tmp_path):
     )
 
     plan = SchedulerService(_system_config(tmp_path)).build_plan(
-        JobList(jobs=[cartesian, zipped])
+        WorkflowSpec(
+            schema="qphase.workflow/2",
+            id="test-workflow",
+            title="Test Workflow",
+            jobs=[cartesian, zipped],
+        )
     )
 
     assert plan.jobs[0].scan_summary["shape"] == [2, 3]
@@ -103,7 +107,10 @@ def test_scheduler_service_reports_cartesian_and_zipped_scan_shapes(tmp_path):
 
 
 def test_scheduler_service_marks_map_input_edge(tmp_path):
-    jobs = JobList(
+    jobs = WorkflowSpec(
+        schema="qphase.workflow/2",
+        id="test-workflow",
+        title="Test Workflow",
         jobs=[
             JobConfig(name="scan", engine={"dummy": {}}),
             JobConfig(
@@ -111,7 +118,7 @@ def test_scheduler_service_marks_map_input_edge(tmp_path):
                 engine={"dummy": {}},
                 input={"from": "scan", "mode": "map", "group_by": ["omega"]},
             ),
-        ]
+        ],
     )
 
     plan = SchedulerService(_system_config(tmp_path)).build_plan(jobs)
@@ -124,17 +131,20 @@ def test_scheduler_service_does_not_enable_optional_global_default(tmp_path):
         "engine", "optional_analyser", OptionalAnalyserEngine, overwrite=True
     )
     registry.register("analyser", "dummy", OptionalAnalyserEngine, overwrite=True)
-    global_file = tmp_path / "global.yaml"
+    global_file = tmp_path / "configs" / "defaults.yaml"
+    global_file.parent.mkdir()
     global_file.write_text("analyser:\n  dummy:\n    param: 3.0\n", encoding="utf-8")
     system_config = _system_config(tmp_path)
-    system_config.paths.global_file = str(global_file)
 
     plan = SchedulerService(system_config).build_plan(
-        JobList(
-            jobs=[JobConfig(name="job", engine={"optional_analyser": {}})]
+        WorkflowSpec(
+            schema="qphase.workflow/2",
+            id="test-workflow",
+            title="Test Workflow",
+            jobs=[JobConfig(name="job", engine={"optional_analyser": {}})],
         )
     )
 
     assert plan.jobs[0].optional_plugins == ["analyser"]
     assert plan.jobs[0].optional_plugins_enabled == []
-    assert plan.jobs[0].inherited_global_defaults == {}
+    assert plan.jobs[0].inherited_project_defaults == {}

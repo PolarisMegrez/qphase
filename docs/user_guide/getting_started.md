@@ -1,141 +1,118 @@
 ---
-description: Getting Started with QPhase
+description: Getting started with QPhase Projects and Workflows
 ---
 
 # Getting Started
 
-This guide covers the installation process for QPhase and walks you through running your first simulation.
+## Install
 
-## 1. Installation
-
-### Prerequisites
-
-*   **Python**: Version 3.11 or higher.
-*   **Operating System**: Windows, macOS, or Linux.
-
-### Recommended: Virtual Environment
-
-It is strongly recommended to use a virtual environment to avoid conflicts with other Python packages.
-
-```bash
-# Create a virtual environment
-python -m venv .venv
-
-# Activate it
-# Windows (PowerShell):
-.venv\Scripts\Activate.ps1
-# Linux/macOS:
-source .venv/bin/activate
-```
-
-### Install from PyPI (Recommended)
-
-QPhase is available on PyPI. You can install it directly using pip:
-
-```bash
-pip install qphase
-```
-
-This installs the core framework. **For the examples in this guide, you will also need the SDE (Stochastic Differential Equation) extension:**
-
-```bash
-pip install qphase-sde
-```
-
-### Install from Source (For Developers)
-
-To contribute to QPhase or use the latest unreleased features:
+QPhase requires Python 3.11 or newer. Install core plus the resource packages
+needed by the Project. From this monorepo:
 
 ```bash
 git clone https://github.com/PolarisMegrez/qphase.git
 cd qphase
-pip install -e packages/qphase[standard]
-pip install -e packages/qphase_sde
-pip install -e packages/qphase_viz
+uv sync
 ```
 
-## 2. Initialize a Project
-
-QPhase works best when you have a dedicated folder for your simulations. This keeps your configuration files and results organized.
+## Create A Project
 
 ```bash
-# Create a folder for your research project
-mkdir my_research
-cd my_research
-
-# Initialize the QPhase structure
-qphase init
+qphase project init my-research --name "My Research"
+cd my-research
+qphase project show
 ```
 
-This creates the following folders:
+Initialization creates:
 
-*   `configs/`: **Directory for configuration files.**
-    *   Contains YAML configuration files defining simulations (Jobs) and global settings.
-    *   See [Job Configuration](configuration.md) for details on how to write these files.
-*   `plugins/`: **Directory for custom physics code.**
-    *   A place for user-defined Python modules (Models, Backends, etc.) that QPhase will automatically load.
-    *   See [Plugin Development](../dev_guide/plugin_development.md) to learn how to extend QPhase.
-*   `runs/`: **Directory for simulation data.**
-    *   All simulation outputs, logs, and reproducibility snapshots are organized here by date and run ID.
-    *   See [Results & Reproducibility](output.md) for the directory structure.
+```text
+qphase.toml                    # Project identity and relative paths
+configs/defaults.yaml         # Project-wide plugin defaults
+configs/workflows/            # Versioned Workflow documents
+models/                       # Local plugin root
+runs/                         # Session records (normally not versioned)
+```
 
-## 3. Create Your First Job
+Use `qphase --project <path> ...` when invoking QPhase outside the Project
+directory. Project discovery otherwise walks upward until it finds
+`qphase.toml`.
 
-A "Job" is a single simulation run defined in a YAML file.
-Create a new file named `configs/jobs/test_run.yaml` and paste the following:
+## Create A Workflow
+
+Create `configs/workflows/examples/test_run.yaml`:
 
 ```yaml
-# configs/jobs/test_run.yaml
-name: test_run
+schema: qphase.workflow/2
+id: test_run
+title: First SDE run
+description: Small CPU example for installation verification
+collection: examples
+tags: [quickstart, sde]
 
-# 1. Choose the Engine (SDE Solver)
-engine:
-  sde:
-    t0: 0.0
-    t1: 10.0
-    dt: 0.01
-    n_traj: 100
-    seed: 42
-    ic:
-      - ["1.0+0.0j", "0.0+0.0j"]
-
-# 2. Choose the Physics Model
-# (Here we use a built-in example model)
-model:
-  vdp_2mode:  # Built-in Van der Pol oscillator
-    omega_a: 1.0
-    omega_b: 1.0
-    gamma_a: 0.1
-    gamma_b: 0.1
-    Gamma: 1.0
-    g: 0.5
-
-backend:
-  numpy:         # Run on CPU
-    float_dtype: float64
+jobs:
+  - name: simulate
+    save: true
+    engine:
+      sde:
+        t0: 0.0
+        t1: 10.0
+        dt: 0.01
+        n_traj: 16
+        seed: 42
+        ic: [["1.0+0.0j", "0.0+0.0j"]]
+    backend:
+      numpy: {float_dtype: float64}
+    integrator:
+      euler_maruyama: {}
+    model:
+      vdp_2mode:
+        omega_a: 1.0
+        omega_b: 1.0
+        gamma_a: 0.1
+        gamma_b: 0.1
+        Gamma: 1.0
+        g: 0.5
 ```
 
-## 4. Run the Simulation
+The document itself is a Workflow. `simulate` is its logical Job. A Workflow
+may contain several Jobs connected by `input` or `depends_on`.
 
-Now, tell QPhase to run the job you just defined:
+## Inspect And Run
 
 ```bash
+qphase workflow list
+qphase workflow show test_run
+qphase run test_run --plan
 qphase run test_run
 ```
 
-You should see a progress bar indicating the simulation status.
+`--plan` validates and displays the logical Job graph without creating a
+Session. A normal run prints a concise progress view and finally reports the
+Session path. Full diagnostic logs are stored in that Session according to
+`SystemConfig`.
 
-## 5. Check the Results
+## Find Results
 
-Look in the `runs/` folder. You will see a new directory with a timestamp (e.g., `runs/2026-01-01T12-00-00_test_run/`). Inside, you will find:
-*   `config_snapshot.json`: A record of the exact configuration used.
-*   `result.h5` (or similar): The simulation output data.
+Sessions use a bounded date hierarchy:
 
-## 6. Verification
-
-To verify your installation and see available plugins:
-
-```bash
-qphase --version
-qphase list
+```text
+runs/YYYY/MM/<session-id>/
+  session_manifest.json
+  events.jsonl
+  <job-name>/
+    config_snapshot.json
+    artifact_manifest.json
+    qphase.log
+    ...
 ```
+
+Use `qphase gui` for visual Workflow and Session browsing. The CLI remains the
+authoritative interface for scripting and remote/server use.
+
+## Next Steps
+
+- Read [Core Concepts](concepts.md) before designing automation around QPhase.
+- See [Workflow Configuration](configuration.md) for scans and data flow.
+- See [Results & Reproducibility](output.md) for Artifact layouts.
+- Use `qphase list`, `qphase show`, and `qphase config schema` to inspect
+  installed plugins.

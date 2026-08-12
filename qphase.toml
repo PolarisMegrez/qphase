@@ -1,0 +1,9 @@
+schema = "qphase.project/2"
+project_id = "qphase-workspace"
+name = "QPhase Workspace"
+
+[paths]
+workflows = "configs/workflows"
+defaults = "configs/defaults.yaml"
+plugins = ["models"]
+sessions = "runs"

@@ -1,22 +1,24 @@
 """qphase: Job Scheduler
 ---------------------------------------------------------
-Orchestrates the execution of simulation jobs, managing the complete lifecycle from
-dependency resolution to result persistence. The Scheduler handles serial execution
-of ``JobList`` items, passes logical scans to resource engines, manages run
-directory creation, aggregates structured progress events into snapshots, and
-builds structured error reports for failed jobs.
+Orchestrates Workflow Jobs from dependency resolution through Artifact persistence.
+The Scheduler handles serial logical-Job execution, passes scans to resource
+engines, manages Session/Job directories, aggregates progress events, and builds
+structured error reports.
 
 Public API
 ----------
 `Scheduler` : Main class for job execution and lifecycle management.
 `JobResult` : Dataclass containing job execution results and metadata.
-`run_jobs` : Convenience function to execute a JobList.
+`execute_workflow` : Convenience function to execute a WorkflowSpec.
 """
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
+import os
+import threading
 import time
 import uuid
 from collections import OrderedDict
@@ -27,7 +29,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from .artifacts import ArtifactStore
-from .config import JobConfig, JobList
+from .config import JobConfig, WorkflowSpec
 from .config_loader import (
     get_config_for_job,
     merge_plugin_config_sections,
@@ -45,7 +47,7 @@ from .errors import (
     get_logger,
 )
 from .execution import (
-    CancellationToken,
+    CancellationController,
     CheckpointStore,
     ExecutionContext,
     ProgressReporter,
@@ -55,9 +57,11 @@ from .execution import (
 )
 from .logging_context import bind_log_context, set_log_context
 from .progress import ProgressEvent, ProgressSnapshot, ProgressTracker
+from .project import ProjectContext
 from .protocols import ResultProtocol
 from .registry import registry
 from .system_config import SystemConfig, load_system_config
+from .utils import save_yaml
 
 log = get_logger()
 
@@ -68,8 +72,7 @@ class JobResult:
 
     job_index: int
     job_name: str
-    run_dir: Path
-    run_id: str
+    job_dir: Path
     success: bool
     status: str = "completed"  # "completed" | "failed" | "skipped_dependency"
     error_summary: str | None = None
@@ -95,7 +98,11 @@ class _JobOutcome:
 class SessionManifest(TypedDict):
     """Type definition for session manifest."""
 
+    schema: str
     session_id: str
+    project_id: str
+    workflow_id: str
+    workflow_hash: str
     start_time: str
     status: str
     jobs: dict[str, dict[str, Any]]
@@ -112,17 +119,14 @@ class Scheduler:
     ----------
     system_config : SystemConfig | None, optional
         System configuration. If None, loads from system.yaml.
-    default_output_dir : str | None, optional
-        Override default output directory from system config.
     on_progress : Callable[[ProgressSnapshot], None] | None, optional
         Callback for progress snapshots during job execution.
-    on_run_dir : Callable[[Path], None] | None, optional
-        Callback invoked with run directory after each job completes.
+    on_job_dir : Callable[[Path], None] | None, optional
+        Callback invoked with the Session Job directory after each Job completes.
 
     """
 
     system_config: SystemConfig
-    default_output_dir: str
     session_id: str | None
     session_dir: Path | None
     manifest: SessionManifest | None
@@ -130,22 +134,23 @@ class Scheduler:
     def __init__(
         self,
         system_config: SystemConfig | None = None,
-        default_output_dir: str | None = None,
+        project: ProjectContext | None = None,
         on_progress: Callable[[ProgressSnapshot], None] | None = None,
-        on_run_dir: Callable[[Path], None] | None = None,
+        on_job_dir: Callable[[Path], None] | None = None,
+        cancellation: CancellationController | None = None,
+        before_job: Callable[[JobConfig, int, int], JobConfig] | None = None,
     ):
         if system_config is None:
             self.system_config = load_system_config()
         else:
             self.system_config = system_config
 
-        if default_output_dir is None:
-            self.default_output_dir = self.system_config.paths.output_dir
-        else:
-            self.default_output_dir = default_output_dir
+        self.project = project or ProjectContext.discover()
 
         self.on_progress = on_progress
-        self.on_run_dir = on_run_dir
+        self.on_job_dir = on_job_dir
+        self.cancellation = cancellation or CancellationController()
+        self.before_job = before_job
         from .registry import registry
 
         self._registry = registry
@@ -154,9 +159,11 @@ class Scheduler:
         self.manifest = None
         self._session_log_path: Path | None = None
         self._session_log_handler: Any | None = None
-        self._run_statuses: dict[str, str] = {}
+        self._job_statuses: dict[str, str] = {}
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
 
-    def _initialize_session(self) -> None:
+    def _initialize_session(self, workflow: WorkflowSpec) -> None:
         """Initialize a new execution session."""
         # Generate session ID
         ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
@@ -164,9 +171,14 @@ class Scheduler:
         self.session_id = f"{ts}_{short_uuid}"
 
         # Create session directory
-        output_root = Path(self.default_output_dir).resolve()
-        self.session_dir = output_root / self.session_id
+        output_root = self.project.session_root
+        now = datetime.now()
+        self.session_dir = output_root / f"{now:%Y}" / f"{now:%m}" / self.session_id
         self.session_dir.mkdir(parents=True, exist_ok=True)
+
+        workflow_payload = workflow.model_dump(mode="json", by_alias=True)
+        workflow_hash = self._workflow_hash(workflow_payload)
+        save_yaml(workflow_payload, self.session_dir / "workflow_snapshot.yaml")
 
         # Attach the per-session log file (full DEBUG content). A failure here
         # surfaces one explicit warning and never blocks the run.
@@ -174,13 +186,25 @@ class Scheduler:
 
         # Initialize manifest
         self.manifest = {
+            "schema": "qphase.session/2",
             "session_id": self.session_id,
+            "project_id": self.project.project_id,
+            "workflow_id": workflow.id,
+            "workflow_hash": workflow_hash,
             "start_time": datetime.now().isoformat(),
             "status": "running",
             "jobs": {},
         }
         self._save_manifest()
+        self._start_session_heartbeat()
         log.debug(f"Initialized session {self.session_id} at {self.session_dir}")
+
+    @staticmethod
+    def _workflow_hash(payload: dict[str, Any]) -> str:
+        canonical = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
 
     def _attach_session_log(self) -> None:
         """Attach the session log file handler per reporting config."""
@@ -214,10 +238,56 @@ class Scheduler:
         if self.session_dir and self.manifest:
             manifest_path = self.session_dir / "session_manifest.json"
             try:
-                with open(manifest_path, "w", encoding="utf-8") as f:
+                temporary = manifest_path.with_suffix(".tmp")
+                with open(temporary, "w", encoding="utf-8") as f:
                     json.dump(self.manifest, f, indent=2)
+                temporary.replace(manifest_path)
             except Exception as e:
                 log.warning(f"Failed to save session manifest: {e}")
+
+    def _start_session_heartbeat(self) -> None:
+        if self.session_dir is None:
+            return
+        self._heartbeat_stop.clear()
+
+        def _heartbeat() -> None:
+            while not self._heartbeat_stop.is_set():
+                self._write_session_lock()
+                self._heartbeat_stop.wait(10.0)
+
+        self._heartbeat_thread = threading.Thread(
+            target=_heartbeat,
+            name=f"qphase-heartbeat-{self.session_id}",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+
+    def _write_session_lock(self) -> None:
+        if self.session_dir is None:
+            return
+        path = self.session_dir / "session.lock"
+        temporary = path.with_suffix(".tmp")
+        payload = {
+            "pid": os.getpid(),
+            "session_id": self.session_id,
+            "heartbeat": datetime.now().astimezone().isoformat(),
+        }
+        try:
+            temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            temporary.replace(path)
+        except OSError as exc:
+            log.warning("Failed to update session heartbeat: %s", exc)
+
+    def _stop_session_heartbeat(self) -> None:
+        self._heartbeat_stop.set()
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join(timeout=2.0)
+            self._heartbeat_thread = None
+        if self.session_dir is not None:
+            try:
+                (self.session_dir / "session.lock").unlink(missing_ok=True)
+            except OSError as exc:
+                log.warning("Failed to remove session heartbeat: %s", exc)
 
     def _update_job_status(
         self, job_name: str, status: str, metadata: dict[str, Any] | None = None
@@ -234,15 +304,15 @@ class Scheduler:
 
     def run(
         self,
-        job_list: JobList,
+        workflow: WorkflowSpec,
         dry_run: bool = False,
         resume_from: Path | None = None,
     ) -> list[JobResult]:
-        """Execute all jobs in the job list serially.
+        """Execute all jobs in the workflow serially.
 
         Parameters
         ----------
-        job_list : JobList
+        workflow : WorkflowSpec
             List of jobs to execute
         dry_run : bool, optional
             If True, simulate execution without running engines.
@@ -255,32 +325,63 @@ class Scheduler:
             Results for each executed job, in order
 
         """
+        if dry_run:
+            self.session_id = None
+            self.session_dir = None
+            self.manifest = None
+            self._validate_jobs(workflow)
+            results: list[JobResult] = []
+            job_results: dict[str, ResultProtocol] = {}
+            for job_idx, original in enumerate(workflow.jobs):
+                job = (
+                    self.before_job(original, job_idx, len(workflow.jobs))
+                    if self.before_job is not None
+                    else original
+                )
+                self._run_single(
+                    job,
+                    job_idx,
+                    len(workflow.jobs),
+                    workflow.jobs,
+                    job_results,
+                    results,
+                    dry_run=True,
+                )
+            return results
+
         # Step 0: Initialize Session
         if resume_from:
-            self._resume_session(resume_from)
+            self._resume_session(resume_from, workflow)
         else:
-            self._initialize_session()
+            self._initialize_session(workflow)
 
-        # Seed per-run job statuses from the manifest so that jobs depending
+        # Seed per-Session Job statuses from the manifest so that Jobs depending
         # on a previously failed upstream are marked skipped_dependency.
-        self._run_statuses = {}
+        self._job_statuses = {}
         if self.manifest:
             for name, entry in self.manifest["jobs"].items():
                 status = entry.get("status")
                 if status in ("failed", "skipped_dependency"):
-                    self._run_statuses[name] = status
+                    self._job_statuses[name] = status
 
         results: list[JobResult] = []
         job_results: dict[str, ResultProtocol] = {}
-        logical_jobs = job_list.jobs
+        logical_jobs = workflow.jobs
         try:
-            if dry_run:
-                log.info("Starting DRY RUN execution plan...")
-
             # Step 1: Validate jobs before execution
-            self._validate_jobs(job_list)
+            self._validate_jobs(workflow)
 
             for job_idx, job in enumerate(logical_jobs):
+                if self.cancellation.execution.cancelled:
+                    self._cancel_pending_jobs(logical_jobs[job_idx:], job_idx, results)
+                    break
+                if self.before_job is not None:
+                    replacement = self.before_job(job, job_idx, len(logical_jobs))
+                    if replacement.name != job.name:
+                        raise QPhaseConfigError(
+                            "a pending job revision must preserve the logical job name"
+                        )
+                    job = replacement
                 self._run_single(
                     job,
                     job_idx,
@@ -291,25 +392,33 @@ class Scheduler:
                     dry_run=dry_run,
                 )
 
-            if self.manifest and not dry_run:
+            if self.manifest:
                 failed = any(result.status == "failed" for result in results)
                 skipped = any(
                     result.status == "skipped_dependency" for result in results
                 )
+                cancelled = any(result.status == "cancelled" for result in results)
                 self.manifest["status"] = (
-                    "failed" if failed else "partial" if skipped else "completed"
+                    "failed"
+                    if failed
+                    else "cancelled"
+                    if cancelled
+                    else "partial"
+                    if skipped
+                    else "completed"
                 )
                 self._save_manifest()
             return results
         except Exception:
-            if self.manifest and not dry_run:
+            if self.manifest:
                 self.manifest["status"] = "failed"
                 self._save_manifest()
             raise
         finally:
+            self._stop_session_heartbeat()
             self._detach_session_log()
 
-    def _resume_session(self, session_path: Path) -> None:
+    def _resume_session(self, session_path: Path, workflow: WorkflowSpec) -> None:
         """Resume an existing session."""
         if not session_path.exists():
             raise QPhaseConfigError(f"Session directory not found: {session_path}")
@@ -325,9 +434,25 @@ class Scheduler:
             raise QPhaseConfigError(f"Failed to load session manifest: {e}") from e
 
         assert self.manifest is not None
+        if self.manifest.get("project_id") != self.project.project_id:
+            raise QPhaseConfigError(
+                "Session belongs to a different project and cannot be resumed"
+            )
+        if self.manifest.get("workflow_id") != workflow.id:
+            raise QPhaseConfigError(
+                "Session workflow does not match the requested workflow"
+            )
+        expected_hash = self._workflow_hash(
+            workflow.model_dump(mode="json", by_alias=True)
+        )
+        if self.manifest.get("workflow_hash") != expected_hash:
+            raise QPhaseConfigError(
+                "Session workflow content has changed and cannot be resumed"
+            )
         self.session_id = self.manifest["session_id"]
         self.session_dir = session_path
         self._attach_session_log()
+        self._start_session_heartbeat()
         log.info(f"Resuming session {self.session_id} from {self.session_dir}")
 
     def _handle_job_output(
@@ -335,7 +460,7 @@ class Scheduler:
         job: JobConfig,
         output_result: ResultProtocol,
         job_results: dict[str, ResultProtocol],
-        run_dir: Path,
+        job_dir: Path,
         context: ExecutionContext | None = None,
     ) -> None:
         """Handle job output based on job configuration.
@@ -356,8 +481,8 @@ class Scheduler:
             Result object from the job
         job_results : dict[str, ResultProtocol]
             Storage for job results that will be passed to downstream jobs
-        run_dir : Path
-            Run directory for this job (where results should be saved)
+        job_dir : Path
+            Session directory for this Job and its Artifacts.
         context : ExecutionContext | None
             Runtime artifact and checkpoint services for this logical job.
 
@@ -396,10 +521,10 @@ class Scheduler:
 
         # Save to disk if enabled
         if should_save:
-            # Build save path: run_dir / output_filename
+            # Build save path inside the Job's Session directory.
             # Note: filename should not include extension -
             # ResultProtocol.save() will add appropriate extension
-            save_path = run_dir / save_filename
+            save_path = job_dir / save_filename
 
             try:
                 if context is not None:
@@ -411,7 +536,7 @@ class Scheduler:
                 raise QPhaseIOError(
                     f"Failed to save job '{job.name}' output to '{save_path}': {e}",
                     code=ErrorCode.ARTIFACT_IO,
-                    hint="Check disk space and write permissions for the run "
+                    hint="Check disk space and write permissions for the Job "
                     "directory.",
                 ) from e
 
@@ -502,6 +627,10 @@ class Scheduler:
         dry_run: bool,
     ) -> None:
         """Execute one logical job and update the shared result state."""
+        token = self.cancellation.token_for(job.name)
+        if token.cancelled:
+            self._record_cancelled_job(job, job_idx, job_total, results)
+            return
         # Check if job is already completed (Resume Mode)
         if self.manifest and job.name in self.manifest["jobs"]:
             job_status = self.manifest["jobs"][job.name].get("status")
@@ -527,8 +656,7 @@ class Scheduler:
                 JobResult(
                     job_index=job_idx,
                     job_name=job.name,
-                    run_dir=Path("dry_run"),
-                    run_id="dry_run",
+                    job_dir=Path("dry_run"),
                     success=True,
                 )
             )
@@ -547,7 +675,7 @@ class Scheduler:
             return
 
         if not dry_run:
-            self._update_job_status(job.name, "pending")
+            self._update_job_status(job.name, "running")
 
         engine_name = job.get_engine_name()
         self._emit_snapshot(
@@ -559,13 +687,14 @@ class Scheduler:
                 engine=engine_name,
                 message="Starting job...",
                 scan_summary=self._scan_summary(job),
+                metadata={"plugins": self._configured_plugin_paths(job)},
             )
         )
 
         # Skip jobs whose upstream failed or was skipped earlier in this run.
         # Independent downstream jobs keep running (existing scheduler policy).
         source = job.input.from_ if job.input else None
-        upstream_status = self._run_statuses.get(source) if source else None
+        upstream_status = self._job_statuses.get(source) if source else None
         if upstream_status in ("failed", "skipped_dependency"):
             note = (
                 f"skipped: upstream job '{source}' {upstream_status.replace('_', ' ')}"
@@ -574,16 +703,15 @@ class Scheduler:
             result = JobResult(
                 job_index=job_idx,
                 job_name=job.name,
-                run_dir=(self.session_dir / job.name)
+                job_dir=(self.session_dir / job.name)
                 if self.session_dir
                 else Path("."),
-                run_id="",
                 success=False,
                 status="skipped_dependency",
                 error_summary=note,
             )
             results.append(result)
-            self._run_statuses[job.name] = "skipped_dependency"
+            self._job_statuses[job.name] = "skipped_dependency"
             self._update_job_status(job.name, "skipped_dependency", {"note": note})
             self._emit_snapshot(
                 ProgressSnapshot(
@@ -601,9 +729,9 @@ class Scheduler:
         try:
             input_result = self._resolve_input(job, job_results)
         except Exception as e:
-            result = self._fail_job(job, job_idx, job_total, e, run_dir=None)
+            result = self._fail_job(job, job_idx, job_total, e, job_dir=None)
             results.append(result)
-            self._run_statuses[job.name] = "failed"
+            self._job_statuses[job.name] = "failed"
             self._record_failure(result)
             return
 
@@ -621,10 +749,13 @@ class Scheduler:
             _JobOutcome(*raw_outcome) if isinstance(raw_outcome, tuple) else raw_outcome
         )
         results.append(outcome.result)
-        self._run_statuses[job.name] = outcome.result.status
+        self._job_statuses[job.name] = outcome.result.status
 
         if not outcome.result.success:
-            self._record_failure(outcome.result)
+            if outcome.result.status == "cancelled":
+                self._update_job_status(job.name, "cancelled")
+            else:
+                self._record_failure(outcome.result)
             return
 
         assert outcome.output is not None and outcome.context is not None
@@ -633,7 +764,7 @@ class Scheduler:
                 job,
                 outcome.output,
                 job_results,
-                outcome.result.run_dir,
+                outcome.result.job_dir,
                 outcome.context,
             )
             outcome.context.checkpoints.complete()
@@ -643,11 +774,10 @@ class Scheduler:
                 job_idx,
                 job_total,
                 e,
-                run_dir=outcome.result.run_dir,
-                run_id=outcome.result.run_id,
+                job_dir=outcome.result.job_dir,
             )
             results[-1] = failed
-            self._run_statuses[job.name] = "failed"
+            self._job_statuses[job.name] = "failed"
             self._record_failure(failed)
             return
 
@@ -656,8 +786,7 @@ class Scheduler:
             job.name,
             "completed",
             {
-                "run_id": outcome.result.run_id,
-                "output_dir": str(outcome.result.run_dir.relative_to(self.session_dir)),
+                "output_dir": str(outcome.result.job_dir.relative_to(self.session_dir)),
             },
         )
 
@@ -674,6 +803,47 @@ class Scheduler:
             },
         )
 
+    def _record_cancelled_job(
+        self,
+        job: JobConfig,
+        job_idx: int,
+        job_total: int,
+        results: list[JobResult],
+    ) -> None:
+        job_dir = self.session_dir / job.name if self.session_dir else Path(".")
+        results.append(
+            JobResult(
+                job_index=job_idx,
+                job_name=job.name,
+                job_dir=job_dir,
+                success=False,
+                status="cancelled",
+                error_summary="cancelled before execution",
+            )
+        )
+        self._job_statuses[job.name] = "cancelled"
+        self._update_job_status(job.name, "cancelled")
+        self._emit_snapshot(
+            ProgressSnapshot(
+                kind="job_skipped",
+                job_name=job.name,
+                job_index=job_idx,
+                total_jobs=job_total,
+                engine=job.get_engine_name(),
+                message="Cancelled before execution",
+            )
+        )
+
+    def _cancel_pending_jobs(
+        self,
+        jobs: list[JobConfig],
+        start_index: int,
+        results: list[JobResult],
+    ) -> None:
+        total = start_index + len(jobs)
+        for offset, job in enumerate(jobs):
+            self._record_cancelled_job(job, start_index + offset, total, results)
+
     def _emit_snapshot(self, snapshot: ProgressSnapshot) -> None:
         """Deliver a progress snapshot to the registered consumer."""
         if self.on_progress is not None:
@@ -689,6 +859,14 @@ class Scheduler:
         except Exception:
             return None
 
+    @staticmethod
+    def _configured_plugin_paths(job: JobConfig) -> list[str]:
+        return [
+            f"{namespace}.{name}"
+            for namespace, entries in job.plugins.items()
+            for name in entries
+        ]
+
     def _fail_job(
         self,
         job: JobConfig,
@@ -696,8 +874,7 @@ class Scheduler:
         job_total: int,
         exc: BaseException,
         *,
-        run_dir: Path | None,
-        run_id: str = "",
+        job_dir: Path | None,
         stage: str | None = None,
         plugin: str | None = None,
     ) -> JobResult:
@@ -713,12 +890,12 @@ class Scheduler:
             engine=job.get_engine_name(),
             stage=stage,
             plugin=plugin,
-            run_dir=run_dir,
+            job_dir=job_dir,
             scan_context=self._scan_summary(job),
             log_file=self._session_log_path,
         )
-        if run_dir is not None:
-            target_dir = run_dir
+        if job_dir is not None:
+            target_dir = job_dir
         elif self.session_dir is not None:
             target_dir = self.session_dir / job.name
         else:
@@ -736,7 +913,7 @@ class Scheduler:
                 total_jobs=job_total,
                 engine=job.get_engine_name(),
                 stage=stage,
-                run_dir=str(target_dir),
+                job_dir=str(target_dir),
                 error=summary,
                 message=report.summary,
             )
@@ -744,8 +921,7 @@ class Scheduler:
         return JobResult(
             job_index=job_idx,
             job_name=job.name,
-            run_dir=target_dir,
-            run_id=run_id,
+            job_dir=target_dir,
             success=False,
             status="failed",
             error_summary=report.summary,
@@ -764,8 +940,6 @@ class Scheduler:
             params, and any top-level plugin sections defined in the job.
 
         """
-        system_cfg = job.merge_with_system_config(self.system_config)
-
         plugin_namespaces = registered_plugin_namespaces()
 
         # Merge global config with job config
@@ -781,9 +955,7 @@ class Scheduler:
             if key in job_extra:
                 job_override[key] = job_extra[key]
 
-        return get_config_for_job(
-            system_cfg, job_name=job.name, job_config_dict=job_override
-        )
+        return get_config_for_job(self.project, job_config_dict=job_override)
 
     def _run_job(
         self,
@@ -797,7 +969,7 @@ class Scheduler:
         """Execute a single job and return its outcome.
 
         This method handles the complete job execution lifecycle:
-        1. Create run directory and generate run ID
+        1. Create the Session Job directory
         2. Merge global config with job-specific config
         3. Build plugin instances from configuration
         4. Instantiate and run the engine
@@ -828,8 +1000,7 @@ class Scheduler:
 
         """
         display_total = job_total if display_total is None else display_total
-        run_id = self._generate_run_id()
-        run_dir = self._create_run_dir(job, run_id)
+        job_dir = self._create_job_dir(job)
         engine_name = job.get_engine_name()
         tracker = self._make_tracker()
         clock_start = time.monotonic()
@@ -843,20 +1014,43 @@ class Scheduler:
                     job_idx,
                     display_total,
                     input_result,
-                    run_id=run_id,
-                    run_dir=run_dir,
+                    job_dir=job_dir,
                     engine_name=engine_name,
                     tracker=tracker,
                     clock_start=clock_start,
                 )
             except Exception as e:
+                if getattr(e, "code", None) == ErrorCode.CANCELLATION:
+                    self._emit_snapshot(
+                        ProgressSnapshot(
+                            kind="job_skipped",
+                            job_name=job.name,
+                            job_index=job_idx,
+                            total_jobs=display_total,
+                            engine=engine_name,
+                            stage=tracker.current_stage,
+                            job_dir=str(job_dir),
+                            message="Cancelled",
+                        )
+                    )
+                    return _JobOutcome(
+                        result=JobResult(
+                            job_index=job_idx,
+                            job_name=job.name,
+                            job_dir=job_dir,
+                            success=False,
+                            status="cancelled",
+                            error_summary="cancelled by user",
+                        ),
+                        output=None,
+                        context=None,
+                    )
                 result = self._fail_job(
                     job,
                     job_idx,
                     display_total,
                     e,
-                    run_dir=run_dir,
-                    run_id=run_id,
+                    job_dir=job_dir,
                     stage=tracker.current_stage,
                 )
                 return _JobOutcome(result=result, output=None, context=None)
@@ -868,8 +1062,7 @@ class Scheduler:
         display_total: int,
         input_result: ResultProtocol | None,
         *,
-        run_id: str,
-        run_dir: Path,
+        job_dir: Path,
         engine_name: str,
         tracker: ProgressTracker,
         clock_start: float,
@@ -968,11 +1161,11 @@ class Scheduler:
             engine_config_raw = job.engine.get(engine_name, {}).copy()
             engine_config_raw["name"] = engine_name
 
-        # Inject run_dir as output_dir for engines that support it
+        # Inject the Job directory as output_dir for engines that support it.
         # (e.g. VizEngine). We cast to str because config expects str.
         # Engines that don't support this field should have extra="allow"
         # in their config schema.
-        engine_config_raw["output_dir"] = str(run_dir)
+        engine_config_raw["output_dir"] = str(job_dir)
 
         # Instantiate engine via registry
         try:
@@ -988,7 +1181,7 @@ class Scheduler:
             ) from e
 
         # Also write snapshot
-        self._write_snapshot(run_dir, job, merged_config, job_idx)
+        self._write_snapshot(job_dir, job, merged_config, job_idx)
 
         # Structured progress plumbing: engines emit work events through the
         # reporter; the tracker aggregates them into snapshots. Legacy engines
@@ -1021,6 +1214,7 @@ class Scheduler:
                     remaining=remaining,
                     message=observed.message,
                     importance=observed.importance,
+                    metadata=observed.metadata,
                     monotonic_time=observed.monotonic_time,
                 )
             )
@@ -1052,17 +1246,18 @@ class Scheduler:
                 effective_system, backend=backend
             ),
             progress=reporter,
-            cancellation=CancellationToken(),
-            artifacts=ArtifactStore(run_dir, effective_system.scan_runtime),
+            cancellation=self.cancellation.token_for(job.name),
+            artifacts=ArtifactStore(job_dir, effective_system.scan_runtime),
             checkpoints=CheckpointStore(
-                run_dir,
+                job_dir,
                 effective_system.scan_runtime.checkpoint,
                 fingerprint,
             ),
-            run_dir=run_dir,
+            job_dir=job_dir,
             metadata={
                 "job_name": job.name,
                 "scan_summary": self._scan_summary(job),
+                "configured_plugins": self._configured_plugin_paths(job),
             },
         )
 
@@ -1162,19 +1357,18 @@ class Scheduler:
                 engine=engine_name,
                 message="Completed successfully",
                 duration=duration,
-                run_dir=str(run_dir),
+                job_dir=str(job_dir),
             )
         )
 
-        if self.on_run_dir is not None:
-            self.on_run_dir(run_dir)
+        if self.on_job_dir is not None:
+            self.on_job_dir(job_dir)
 
         return _JobOutcome(
             result=JobResult(
                 job_index=job_idx,
                 job_name=job.name,
-                run_dir=run_dir,
-                run_id=run_id,
+                job_dir=job_dir,
                 success=True,
                 status="completed",
             ),
@@ -1222,7 +1416,7 @@ class Scheduler:
             kwargs["progress_cb"] = progress_cb
         return engine.run(**kwargs)
 
-    def _validate_jobs(self, job_list: JobList) -> None:
+    def _validate_jobs(self, workflow: WorkflowSpec) -> None:
         """Validate job configurations and data flow.
 
         Performs two-stage validation:
@@ -1238,14 +1432,14 @@ class Scheduler:
         log.debug("Validating job configurations...")
 
         # Stage 1: Check each job has exactly one engine
-        self._validate_single_engine_per_job(job_list)
+        self._validate_single_engine_per_job(workflow)
 
         # Stage 2: Validate engine dependencies
-        for job in job_list.jobs:
+        for job in workflow.jobs:
             self._validate_job_dependencies(job)
 
         # Stage 3: Validate data flow
-        self._validate_data_flow(job_list)
+        self._validate_data_flow(workflow)
 
         log.debug("Job validation completed successfully")
 
@@ -1311,18 +1505,15 @@ class Scheduler:
             if key in job_extra:
                 namespaces.add(key)
 
-        # Merge in global defaults so required plugins supplied by global.yaml
+        # Merge project defaults so inherited required plugins are recognized.
         # are not reported as missing.
-        system_cfg = job.system if job.system is not None else self.system_config
         try:
             job_override = {
                 "plugins": job.plugins,
                 "engine": job.engine,
                 "params": job.params,
             }
-            merged = get_config_for_job(
-                system_cfg, job_name=job.name, job_config_dict=job_override
-            )
+            merged = get_config_for_job(self.project, job_config_dict=job_override)
             merged_plugins = merge_plugin_config_sections(merged)
             namespaces.update(merged_plugins.keys())
         except Exception as e:
@@ -1333,33 +1524,33 @@ class Scheduler:
 
         return namespaces
 
-    def _validate_single_engine_per_job(self, job_list: JobList) -> None:
+    def _validate_single_engine_per_job(self, workflow: WorkflowSpec) -> None:
         """Verify each job has exactly one engine."""
-        for job in job_list.jobs:
+        for job in workflow.jobs:
             if not job.get_engine_name():
                 raise QPhaseConfigError(
                     f"Job '{job.name}' is missing required 'engine' field"
                 )
 
-    def _validate_data_flow(self, job_list: JobList) -> None:
+    def _validate_data_flow(self, workflow: WorkflowSpec) -> None:
         """Validate input/output data flow.
 
         Checks:
         - Input references are valid (job name or engine name with no ambiguity)
         - Output references are valid (optional - can point to multiple jobs)
         """
-        jobs_by_name = {job.name: job for job in job_list.jobs}
+        jobs_by_name = {job.name: job for job in workflow.jobs}
         jobs_by_engine: dict[str, list[JobConfig]] = {}
 
         # Group jobs by engine name
-        for job in job_list.jobs:
+        for job in workflow.jobs:
             engine_name = job.get_engine_name()
             if engine_name not in jobs_by_engine:
                 jobs_by_engine[engine_name] = []
             jobs_by_engine[engine_name].append(job)
 
         # Validate input references
-        for job in job_list.jobs:
+        for job in workflow.jobs:
             if not job.input:
                 continue
             source = job.input.from_
@@ -1387,7 +1578,7 @@ class Scheduler:
                 )
 
         # Validate output references (optional - just check for existence)
-        for job in job_list.jobs:
+        for job in workflow.jobs:
             if not job.output:
                 continue
 
@@ -1461,34 +1652,22 @@ class Scheduler:
 
         return plugins
 
-    def _generate_run_id(self) -> str:
-        """Generate a unique run ID with timestamp and UUID suffix."""
-        # In session mode, run_id can be simpler or just a UUID,
-        # but we keep the timestamp for consistency.
-        ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-        return f"{ts}_{uuid.uuid4().hex[:8]}"
-
-    def _create_run_dir(self, job: JobConfig, run_id: str) -> Path:
-        """Create and return the run directory for a job."""
-        # If session is active, create directory inside session dir
+    def _create_job_dir(self, job: JobConfig) -> Path:
+        """Create and return this logical Job's Artifact directory."""
         if self.session_dir:
-            run_dir = self.session_dir / job.name
-            run_dir.mkdir(parents=True, exist_ok=True)
-            return run_dir
+            job_dir = self.session_dir / job.name
+            job_dir.mkdir(parents=True, exist_ok=True)
+            return job_dir
 
-        # Fallback for non-session execution (should not happen in normal flow
-        # Get the effective system config (job.system overrides global)
-        effective_system = job.system if job.system is not None else self.system_config
-        output_dir = effective_system.paths.output_dir
-
-        output_root = Path(output_dir).resolve()
-        run_dir = output_root / run_id
-        run_dir.mkdir(parents=True, exist_ok=True)
-        return run_dir
+        # Defensive fallback; normal Workflow execution always owns a Session.
+        output_root = self.project.session_root
+        job_dir = output_root / job.name
+        job_dir.mkdir(parents=True, exist_ok=True)
+        return job_dir
 
     def _write_snapshot(
         self,
-        run_dir: Path,
+        job_dir: Path,
         job: JobConfig,
         config: dict[str, Any],
         job_idx: int,
@@ -1497,8 +1676,8 @@ class Scheduler:
 
         Parameters
         ----------
-        run_dir : Path
-            Run directory for this job
+        job_dir : Path
+            Session directory for this Job.
         job : JobConfig
             Job configuration
         config : dict[str, Any]
@@ -1514,12 +1693,7 @@ class Scheduler:
             validated_plugins = job.get_all_plugin_configs()
 
             # Create and save snapshot
-            snapshot_manager = SnapshotManager(
-                Path(self.system_config.paths.output_dir)
-            )
-
-            # Get run_id from run_dir if available
-            run_id = run_dir.name if run_dir.name else None
+            snapshot_manager = SnapshotManager(self.project.session_root)
 
             # Create snapshot
             snapshot = snapshot_manager.create_snapshot(
@@ -1528,8 +1702,8 @@ class Scheduler:
                 system_config=self.system_config,
                 validated_plugins=validated_plugins,
                 engine_config=config.get("engine", {}),
-                run_id=run_id,
-                run_dir=run_dir,
+                session_id=self.session_id,
+                job_dir=job_dir,
                 input_job=job.input.from_ if job.input is not None else None,
                 output_job=job.output,
                 metadata={
@@ -1539,7 +1713,7 @@ class Scheduler:
             )
 
             # Save snapshot
-            snapshot_path = snapshot_manager.save_snapshot(snapshot, run_dir)
+            snapshot_path = snapshot_manager.save_snapshot(snapshot, job_dir)
             log.debug(f"Snapshot saved to {snapshot_path}")
 
         except Exception as e:
@@ -1548,27 +1722,27 @@ class Scheduler:
         # Don't raise - snapshot failure shouldn't stop job execution
 
 
-def run_jobs(
-    job_list: JobList,
+def execute_workflow(
+    workflow: WorkflowSpec,
     *,
-    default_output_dir: str | None = None,
+    project: ProjectContext | None = None,
     on_progress: Callable[[ProgressSnapshot], None] | None = None,
-    on_run_dir: Callable[[Path], None] | None = None,
+    on_job_dir: Callable[[Path], None] | None = None,
 ) -> list[JobResult]:
-    """Execute a list of jobs.
+    """Execute one Workflow.
 
-    Creates a Scheduler instance and runs all jobs in the provided job list.
+    Creates a Scheduler instance and runs all jobs in the provided workflow.
 
     Parameters
     ----------
-    job_list : JobList
-        List of jobs to execute
-    default_output_dir : str | None, optional
-        Override default output directory
+    workflow : WorkflowSpec
+        Workflow to execute
+    project : ProjectContext | None, optional
+        Explicit project boundary; discovered when omitted.
     on_progress : Callable[[ProgressSnapshot], None] | None, optional
         Progress callback function
-    on_run_dir : Callable[[Path], None] | None, optional
-        Callback invoked with run directory after each job completes
+    on_job_dir : Callable[[Path], None] | None, optional
+        Callback invoked with the Session Job directory after completion.
 
     Returns
     -------
@@ -1577,8 +1751,8 @@ def run_jobs(
 
     """
     scheduler = Scheduler(
-        default_output_dir=default_output_dir,
+        project=project,
         on_progress=on_progress,
-        on_run_dir=on_run_dir,
+        on_job_dir=on_job_dir,
     )
-    return scheduler.run(job_list)
+    return scheduler.run(workflow)

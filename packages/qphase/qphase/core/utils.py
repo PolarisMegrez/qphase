@@ -134,7 +134,7 @@ def schema_to_yaml_map(
     model_cls : type
         Pydantic model class with model_fields
     existing_values : dict[str, Any]
-        Existing values from global.yaml to merge
+        Existing values from project defaults to merge
     plugin_name : str
         Plugin name (unused, kept for API compatibility)
     mode : str, optional
@@ -187,7 +187,7 @@ def schema_to_yaml_map(
                 else:
                     comment = f"[REQUIRED] <{type_hint}>"
             else:
-                # Skip required fields for global.yaml generation
+                # Skip required fields for project-default generation
                 # We only want to populate defaults that can be overridden.
                 continue
 

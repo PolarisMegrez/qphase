@@ -1,7 +1,8 @@
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from qphase.core.config import JobConfig, JobList
+from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.scheduler import JobResult, Scheduler
 from qphase.core.system_config import SystemConfig
 
@@ -9,15 +10,8 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def mock_system_config(tmp_path):
-    config = MagicMock(spec=SystemConfig)
-    # Mock the paths attribute which is a nested object
-    config.paths = MagicMock()
-    config.paths.output_dir = str(tmp_path / "runs")
-    config.scan_runtime = MagicMock()
-    config.auto_save_results = True
-    config.progress_update_interval = 0.1
-    return config
+def mock_system_config():
+    return SystemConfig()
 
 
 @pytest.fixture
@@ -28,36 +22,47 @@ def simple_job_list():
         engine={"test_engine": {}},
         input={"from": "job1", "mode": "dataset"},
     )
-    return JobList(jobs=[job1, job2])
+    return WorkflowSpec(
+        schema="qphase.workflow/2",
+        id="test-workflow",
+        title="Test Workflow",
+        jobs=[job1, job2],
+    )
 
 
-def test_dry_run(mock_system_config, simple_job_list):
-    scheduler = Scheduler(system_config=mock_system_config)
+def test_dry_run(mock_system_config, simple_job_list, temp_project):
+    scheduler = Scheduler(system_config=mock_system_config, project=temp_project)
 
     with patch.object(scheduler, "_validate_jobs"):
         results = scheduler.run(simple_job_list, dry_run=True)
 
         assert len(results) == 2
         assert all(r.success for r in results)
-        assert all(r.run_id == "dry_run" for r in results)
+        assert all(r.job_dir == Path("dry_run") for r in results)
 
-        # Verify session was initialized
-        assert scheduler.session_id is not None
-        assert scheduler.session_dir is not None
-        assert scheduler.session_dir.exists()
+        # Planning must not create persisted Session state.
+        assert scheduler.session_id is None
+        assert scheduler.session_dir is None
+        assert not list(temp_project.session_root.rglob("session_manifest.json"))
 
 
-def test_resume_capability(mock_system_config, simple_job_list, tmp_path):
+def test_resume_capability(mock_system_config, simple_job_list, temp_project):
     # 1. Create a fake previous session
-    session_dir = tmp_path / "runs" / "old_session"
+    session_dir = temp_project.session_root / "old_session"
     session_dir.mkdir(parents=True)
 
     manifest = {
+        "schema": "qphase.session/2",
         "session_id": "old_session",
+        "project_id": temp_project.project_id,
+        "workflow_id": simple_job_list.id,
+        "workflow_hash": Scheduler._workflow_hash(
+            simple_job_list.model_dump(mode="json", by_alias=True)
+        ),
         "start_time": "2025-01-01T00:00:00",
         "status": "failed",
         "jobs": {
-            "job1": {"status": "completed", "run_id": "run1", "output_dir": "job1"},
+            "job1": {"status": "completed", "output_dir": "job1"},
             "job2": {"status": "failed"},
         },
     }
@@ -68,7 +73,7 @@ def test_resume_capability(mock_system_config, simple_job_list, tmp_path):
         json.dump(manifest, f)
 
     # 2. Run scheduler with resume
-    scheduler = Scheduler(system_config=mock_system_config)
+    scheduler = Scheduler(system_config=mock_system_config, project=temp_project)
 
     with (
         patch.object(scheduler, "_validate_jobs"),
@@ -77,9 +82,9 @@ def test_resume_capability(mock_system_config, simple_job_list, tmp_path):
         patch.object(scheduler, "_handle_job_output"),
     ):
         # Mock run_job to return success for job2
-        # Note: run_dir must be relative to session_dir for relative_to check to pass
+        # The Job directory must be relative to Session for manifest serialization.
         mock_run_job.return_value = (
-            JobResult(1, "job2", session_dir / "job2", "run2", True),
+            JobResult(1, "job2", session_dir / "job2", True),
             MagicMock(),
             MagicMock(),
         )
@@ -99,8 +104,8 @@ def test_resume_capability(mock_system_config, simple_job_list, tmp_path):
             assert new_manifest["status"] == "completed"
 
 
-def test_validate_command_logic(mock_system_config, simple_job_list):
-    scheduler = Scheduler(system_config=mock_system_config)
+def test_validate_command_logic(mock_system_config, simple_job_list, temp_project):
+    scheduler = Scheduler(system_config=mock_system_config, project=temp_project)
 
     # We just want to ensure _validate_jobs is called
     with patch.object(scheduler, "_validate_jobs") as mock_validate:

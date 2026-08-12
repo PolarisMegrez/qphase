@@ -1,281 +1,206 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>QPhase Console</title>
+  <title>QPhase Workbench</title>
   <style>
     :root {
       color-scheme: light;
-      --ink: #1d2428;
-      --muted: #66727a;
-      --line: #d8dfd9;
-      --panel: #fbfcf8;
-      --paper: #f4f0e7;
-      --accent: #116b5f;
-      --accent-2: #b45f2a;
-      --warn: #9c3d2f;
+      --ink: #202522;
+      --muted: #67716b;
+      --line: #d4dad5;
+      --paper: #f3f5f1;
+      --surface: #ffffff;
+      --surface-alt: #e9eeea;
+      --green: #11645a;
+      --green-soft: #dcebe6;
+      --amber: #a75d19;
+      --red: #a23d35;
+      --blue: #315f85;
+      --radius: 6px;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
       color: var(--ink);
-      background:
-        linear-gradient(135deg, rgba(17,107,95,.12), transparent 32%),
-        linear-gradient(315deg, rgba(180,95,42,.13), transparent 28%),
-        var(--paper);
-      font-family: Avenir Next, Segoe UI, sans-serif;
+      background-color: var(--paper);
+      background-image:
+        linear-gradient(rgba(32,37,34,.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(32,37,34,.035) 1px, transparent 1px);
+      background-size: 24px 24px;
+      font-family: Bahnschrift, "Trebuchet MS", sans-serif;
+      letter-spacing: 0;
     }
+    button, input, textarea, select { font: inherit; letter-spacing: 0; }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--surface);
+      color: var(--ink);
+      min-height: 34px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--green); color: var(--green); }
+    button.primary { background: var(--green); border-color: var(--green); color: white; }
+    button.danger { color: var(--red); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
     header {
+      height: 58px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
-      padding: 22px clamp(18px, 4vw, 48px);
-      border-bottom: 1px solid var(--line);
-      background: rgba(251,252,248,.78);
-      backdrop-filter: blur(14px);
+      padding: 0 22px;
+      color: white;
+      background: #24302b;
+      border-bottom: 3px solid var(--green);
     }
-    h1 { margin: 0; font-size: 24px; font-weight: 750; }
-    main {
-      display: grid;
-      grid-template-columns: minmax(220px, 280px) 1fr;
-      gap: 20px;
-      padding: 22px clamp(18px, 4vw, 48px) 48px;
-    }
-    nav, section {
-      border: 1px solid var(--line);
-      background: rgba(251,252,248,.84);
-      box-shadow: 0 18px 50px rgba(56, 48, 36, .08);
-    }
-    nav { padding: 12px; align-self: start; }
-    button {
-      border: 1px solid var(--line);
-      background: #fffdf7;
-      color: var(--ink);
-      min-height: 38px;
-      padding: 8px 12px;
-      font: inherit;
-      cursor: pointer;
-    }
-    nav button {
-      width: 100%;
-      display: block;
-      text-align: left;
-      margin: 0 0 8px;
-    }
-    button:hover,
-    button.active {
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-    section { padding: clamp(16px, 3vw, 26px); min-height: 520px; }
-    h2 { margin: 0 0 14px; font-size: 20px; }
-    .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
-    input, textarea {
-      width: 100%;
-      border: 1px solid var(--line);
-      background: #fffdf7;
-      color: var(--ink);
-      padding: 10px 12px;
-      font: inherit;
-    }
-    textarea {
-      min-height: 180px;
-      resize: vertical;
-      font-family: Consolas, monospace;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 12px;
-    }
-    .item {
-      border: 1px solid var(--line);
-      padding: 12px;
-      background: rgba(255,253,247,.76);
-    }
+    .brand { display: flex; align-items: baseline; gap: 12px; }
+    .brand strong { font-size: 19px; }
+    .brand span { color: #bac7c0; font-size: 12px; }
+    #health { font-size: 12px; }
+    .shell { display: grid; grid-template-columns: 190px minmax(0, 1fr); min-height: calc(100vh - 58px); }
+    nav { padding: 18px 12px; border-right: 1px solid var(--line); background: rgba(249,250,247,.92); }
+    nav button { width: 100%; border: 0; background: transparent; text-align: left; margin-bottom: 4px; }
+    nav button.active { color: var(--green); background: var(--green-soft); font-weight: 700; }
+    main { padding: 24px clamp(18px, 3vw, 40px) 50px; overflow: hidden; }
+    .page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: 22px; }
+    h2 { margin: 0 0 12px; font-size: 16px; }
+    h3 { margin: 0; font-size: 14px; }
     .muted { color: var(--muted); }
-    .ok { color: var(--accent); }
-    .warn { color: var(--warn); }
-    pre {
-      overflow: auto;
-      max-height: 460px;
-      padding: 14px;
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 12px; }
+    .panel, .card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+    .panel { padding: 16px; margin-bottom: 14px; }
+    .card { padding: 13px; }
+    .card-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; margin-bottom: 10px; }
+    .status { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; text-transform: uppercase; font-weight: 700; }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+    .status.running::before { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+    .status.completed::before { background: var(--blue); }
+    .status.failed::before, .status.interrupted::before { background: var(--red); }
+    .status.paused::before, .status.pause_requested::before { background: var(--amber); }
+    .meter { height: 7px; margin: 10px 0 7px; background: var(--surface-alt); overflow: hidden; }
+    .meter > span { display: block; height: 100%; background: var(--green); transition: width .25s ease; }
+    .job-row { padding: 10px 0; border-top: 1px solid var(--line); }
+    .job-row:first-child { border-top: 0; }
+    .job-line { display: flex; justify-content: space-between; gap: 12px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+    .chip { padding: 3px 6px; border: 1px solid #cbd4ce; color: #445049; background: #f6f8f5; font: 11px Consolas, monospace; }
+    input, textarea, select {
       border: 1px solid var(--line);
-      background: #1f2624;
-      color: #eef5eb;
-      font-size: 13px;
+      border-radius: 4px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 8px 10px;
     }
+    input, select { min-height: 34px; }
+    textarea { width: 100%; min-height: 430px; resize: vertical; font: 12px Consolas, monospace; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 9px 8px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+    pre { overflow: auto; max-height: 480px; padding: 12px; color: #e8eee9; background: #202723; font: 12px Consolas, monospace; }
+    .empty { padding: 34px 18px; text-align: center; color: var(--muted); border: 1px dashed #b9c2bc; }
+    .error { padding: 10px 12px; color: var(--red); background: #f8e9e6; border-left: 3px solid var(--red); }
+    dialog { width: min(820px, 92vw); border: 1px solid var(--line); border-radius: var(--radius); padding: 0; }
+    dialog::backdrop { background: rgba(25,32,28,.48); }
+    .dialog-body { padding: 18px; }
     @media (max-width: 760px) {
-      main { grid-template-columns: 1fr; }
-      header { align-items: flex-start; flex-direction: column; }
+      .shell { grid-template-columns: 1fr; }
+      nav { display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px; }
+      nav button { min-width: 120px; margin: 0; text-align: center; }
+      header .brand span { display: none; }
+      main { padding: 18px 12px 40px; }
+      .page-head { align-items: start; flex-direction: column; }
     }
   </style>
 </head>
 <body>
   <header>
-    <div>
-      <h1>QPhase Console</h1>
-      <div class="muted">Local workflow control backed by qphase.service</div>
-    </div>
-    <div id="health" class="muted">Checking API...</div>
+    <div class="brand"><strong>QPhase</strong><span id="projectName">loading project</span></div>
+    <div id="health">Connecting</div>
   </header>
-  <main>
+  <div class="shell">
     <nav id="tabs"></nav>
-    <section>
-      <h2 id="title"></h2>
+    <main>
+      <div class="page-head"><h1 id="title"></h1><div id="actions" class="toolbar"></div></div>
       <div id="view"></div>
-    </section>
-  </main>
+    </main>
+  </div>
+  <dialog id="editor"><div class="dialog-body"><div class="page-head"><h2 id="editorTitle"></h2><button onclick="closeEditor()" title="Close">&times;</button></div><textarea id="editorText"></textarea><div id="editorError"></div><div class="toolbar" style="margin-top:12px"><button class="primary" id="editorSave">Save</button><button onclick="closeEditor()">Cancel</button></div></div></dialog>
   <script>
-    const tabs = ["Jobs", "Config", "Plugins", "Plan", "Run", "Results"];
-    let state = { jobs: [], selectedJob: "", sessionId: "", artifacts: [] };
+    const tabs = ["Executions", "Workflows", "Sessions", "Plugins", "Settings"];
+    const terminal = new Set(["completed", "partial", "failed", "cancelled"]);
+    let state = { tab: "Executions", executions: [], selectedExecution: null, selectedDoc: null, workflowCollection: null, workflowTag: null, poll: null };
+    const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+    const urlArg = (value) => encodeURIComponent(String(value)).replaceAll("'", "%27");
     const api = async (url, options = {}) => {
       const response = await fetch(url, options);
-      if (!response.ok) throw new Error(await response.text());
-      return response.json();
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
+      return response.status === 204 ? null : response.json();
     };
-    const escapeHtml = (text) => String(text)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
-    const renderJson = (data) => {
-      return `<pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
-    };
-    const jobPicker = () => `
-      <div class="toolbar">
-        <input id="jobInput" value="${escapeHtml(state.selectedJob)}" placeholder="job name">
-        <button onclick="setJob()">Select</button>
-      </div>`;
-    const show = (name) => {
-      document.querySelectorAll("nav button").forEach((button) => {
-        button.classList.toggle("active", button.textContent === name);
-      });
-      document.getElementById("title").textContent = name;
-      routes[name]();
-    };
-    window.setJob = () => {
-      state.selectedJob = document.getElementById("jobInput").value.trim();
-      show("Jobs");
-    };
-    window.loadJob = async (name) => {
-      state.selectedJob = name;
-      const data = await api(`/jobs/${encodeURIComponent(name)}`);
-      document.getElementById("view").innerHTML = jobPicker() + renderJson(data);
-    };
-    window.buildPlan = async () => {
-      const input = document.getElementById("jobInput");
-      const job = state.selectedJob || input?.value.trim();
-      if (!job) return;
-      state.selectedJob = job;
-      const data = await api("/plans", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobs: [job] })
-      });
-      document.getElementById("view").innerHTML = jobPicker() + renderJson(data);
-    };
-    window.runJob = async () => {
-      const input = document.getElementById("jobInput");
-      const job = state.selectedJob || input?.value.trim();
-      if (!job) return;
-      state.selectedJob = job;
-      const data = await api("/runs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobs: [job] })
-      });
-      state.sessionId = data.run?.session_id || "";
-      document.getElementById("view").innerHTML = jobPicker() + renderJson(data);
-    };
-    window.loadArtifact = async (path) => {
-      const data = await api(`/runs/${state.sessionId}/artifact?path=${encodeURIComponent(path)}`);
-      document.getElementById("view").innerHTML = renderJson(data);
-    };
-    window.saveConfig = async () => {
-      const data = JSON.parse(document.getElementById("configText").value);
-      await api("/config/global", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data })
-      });
-      document.getElementById("health").textContent = "Config saved";
-    };
-    const jobCard = (job) => `
-      <div class="item">
-        <strong>${escapeHtml(job)}</strong><br>
-        <button onclick="loadJob('${escapeHtml(job)}')">Open</button>
-        <button onclick="state.selectedJob='${escapeHtml(job)}'; buildPlan()">Plan</button>
-        <button onclick="state.selectedJob='${escapeHtml(job)}'; runJob()">Run</button>
-      </div>`;
-    const pluginCard = (plugin) => `
-      <div class="item">
-        <strong>${escapeHtml(plugin.namespace)}.${escapeHtml(plugin.name)}</strong><br>
-        <span class="muted">schema: ${plugin.schema_available ? "yes" : "no"}</span>
-      </div>`;
-    const artifactCard = (artifact) => `
-      <div class="item">
-        <strong>${escapeHtml(artifact.kind)}</strong><br>
-        <span class="muted">${escapeHtml(artifact.path)}</span><br>
-        <button onclick="loadArtifact('${escapeHtml(artifact.path)}')">Open</button>
-      </div>`;
-    const routes = {
-      Jobs: async () => {
-        const data = await api("/jobs");
-        state.jobs = data.jobs;
-        document.getElementById("view").innerHTML = jobPicker() + `
-          <div class="grid">${data.jobs.map(jobCard).join("")}</div>`;
-      },
-      Config: async () => {
-        const data = await api("/config/global");
-        document.getElementById("view").innerHTML = `
-          <textarea id="configText">${escapeHtml(JSON.stringify(data, null, 2))}</textarea>
-          <div class="toolbar"><button onclick="saveConfig()">Save</button></div>`;
-      },
-      Plugins: async () => {
-        const data = await api("/plugins");
-        document.getElementById("view").innerHTML = `
-          <div class="grid">${data.plugins.map(pluginCard).join("")}</div>`;
-      },
-      Plan: () => {
-        document.getElementById("view").innerHTML = jobPicker()
-          + `<button onclick="buildPlan()">Build plan</button>`;
-      },
-      Run: () => {
-        document.getElementById("view").innerHTML = jobPicker()
-          + `<button onclick="runJob()">Run now</button>`;
-      },
-      Results: async () => {
-        if (!state.sessionId) {
-          document.getElementById("view").innerHTML = `
-            <p class="muted">Run a job first, then results appear here.</p>`;
-          return;
-        }
-        const manifest = await api(`/runs/${state.sessionId}`);
-        const events = await api(`/runs/${state.sessionId}/events`);
-        const artifacts = await api(`/runs/${state.sessionId}/artifacts`);
-        state.artifacts = artifacts.artifacts;
-        document.getElementById("view").innerHTML = `
-          <h3>Session ${escapeHtml(state.sessionId)}</h3>
-          ${renderJson(manifest)}
-          <h3>Events</h3>${renderJson(events)}
-          <h3>Artifacts</h3>
-          <div class="grid">${artifacts.artifacts.map(artifactCard).join("")}</div>`;
+    const jsonRequest = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const status = (value) => `<span class="status ${esc(value)}">${esc(value)}</span>`;
+    const fmtTime = (value) => value ? new Date(value).toLocaleString() : "-";
+    const showError = (error) => { document.getElementById("view").innerHTML = `<div class="error">${esc(error.message || error)}</div>`; };
+    function setTab(tab) {
+      state.tab = tab;
+      document.querySelectorAll("nav button").forEach(button => button.classList.toggle("active", button.dataset.tab === tab));
+      document.getElementById("title").textContent = tab;
+      document.getElementById("actions").innerHTML = "";
+      routes[tab]().catch(showError);
+    }
+    function pluginChips(plugins) { return `<div class="chips">${plugins.map(item => `<span class="chip">${esc(item.path)}</span>`).join("")}</div>`; }
+    function jobRows(jobs, executionId) {
+      return jobs.map(job => `<div class="job-row"><div class="job-line"><div><strong>${esc(job.name)}</strong> <span class="muted">engine.${esc(job.engine)}</span></div>${status(job.status)}</div>${job.stage ? `<div class="muted">${esc(job.stage)} 路 ${esc(job.message)}</div>` : ""}${job.fraction != null ? `<div class="meter"><span style="width:${Math.round(job.fraction * 100)}%"></span></div>` : ""}${pluginChips(job.plugins)}${["queued","paused"].includes(state.executions.find(x => x.execution_id === executionId)?.state) && job.status === "pending" ? `<button style="margin-top:8px" onclick="reviseJob('${esc(executionId)}','${esc(job.name)}')">Revise pending job</button>` : ""}</div>`).join("");
+    }
+    function executionCard(item) {
+      const fraction = item.jobs.length ? item.jobs.filter(job => job.status === "completed").length / item.jobs.length : 0;
+      return `<div class="card"><div class="card-head"><div><h3>${esc(item.execution_id)}</h3><div class="muted">${fmtTime(item.submitted_at)}</div></div>${status(item.state)}</div><div class="meter"><span style="width:${Math.round(fraction * 100)}%"></span></div><div>${esc(item.current_job || "Waiting")} ${item.current_stage ? `路 ${esc(item.current_stage)}` : ""}</div><div class="muted">${esc(item.latest_message)}</div><div class="toolbar" style="margin-top:10px"><button onclick="openExecution('${esc(item.execution_id)}')">Open</button>${["running","queued"].includes(item.state) ? `<button onclick="executionAction('${esc(item.execution_id)}','pause')">Pause at boundary</button>` : ""}${item.state === "paused" ? `<button onclick="executionAction('${esc(item.execution_id)}','resume')">Resume</button>` : ""}${!terminal.has(item.state) ? `<button class="danger" onclick="executionAction('${esc(item.execution_id)}','cancel')">Cancel</button>` : ""}</div></div>`;
+    }
+    async function refreshExecutions() {
+      const data = await api("/executions"); state.executions = data.executions;
+      if (state.tab !== "Executions") return;
+      if (state.selectedExecution) {
+        const item = data.executions.find(value => value.execution_id === state.selectedExecution);
+        if (item) renderExecutionDetail(item); else state.selectedExecution = null;
+      } else {
+        document.getElementById("view").innerHTML = data.executions.length ? `<div class="grid">${data.executions.slice().reverse().map(executionCard).join("")}</div>` : `<div class="empty">No executions</div>`;
       }
-    };
-    document.getElementById("tabs").innerHTML = tabs
-      .map((tab) => `<button onclick="show('${tab}')">${tab}</button>`)
-      .join("");
-    api("/health")
-      .then(() => {
-        document.getElementById("health").innerHTML = "<span class='ok'>API online</span>";
-      })
-      .catch(() => {
-        document.getElementById("health").innerHTML = "<span class='warn'>API offline</span>";
-      });
-    show("Jobs");
+    }
+    function renderExecutionDetail(item) {
+      document.getElementById("actions").innerHTML = `<button onclick="state.selectedExecution=null; refreshExecutions()">Back</button>`;
+      document.getElementById("view").innerHTML = `<div class="panel"><div class="card-head"><div><h2>${esc(item.execution_id)}</h2><div class="muted">Session ${esc(item.session_id || "not allocated")}</div></div>${status(item.state)}</div><div>${esc(item.current_job || "Waiting")} ${item.current_stage ? `路 ${esc(item.current_stage)}` : ""}</div><div class="muted">${esc(item.latest_message)}</div><div class="toolbar" style="margin-top:12px">${["running","queued"].includes(item.state) ? `<button onclick="executionAction('${esc(item.execution_id)}','pause')">Pause at next job</button>` : ""}${item.state === "paused" ? `<button class="primary" onclick="executionAction('${esc(item.execution_id)}','resume')">Resume</button>` : ""}${!terminal.has(item.state) ? `<button class="danger" onclick="executionAction('${esc(item.execution_id)}','cancel')">Cancel execution</button>` : ""}<button onclick="loadEvents('${esc(item.execution_id)}')">Events</button></div></div><div class="panel"><h2>Logical jobs</h2>${jobRows(item.jobs, item.execution_id)}</div><div id="eventPanel"></div>`;
+    }
+    window.openExecution = (id) => { state.selectedExecution = id; const item = state.executions.find(value => value.execution_id === id); if (item) renderExecutionDetail(item); };
+    window.executionAction = async (id, action) => { await api(`/executions/${id}/${action}`, {method:"POST"}); await refreshExecutions(); };
+    window.loadEvents = async (id) => { const data = await api(`/executions/${id}/events`); document.getElementById("eventPanel").innerHTML = `<div class="panel"><h2>Event journal</h2><pre>${esc(JSON.stringify(data.events, null, 2))}</pre></div>`; };
+    window.reviseJob = async (executionId, jobName) => { const docs = await api("/workflows"); let found = null; for (const source of docs.workflows) { const payload = await api(`/workflows/${encodeURIComponent(source.id)}`); found = payload.jobs.find(job => job.name === jobName); if (found) break; } if (!found) throw new Error("Job snapshot not found"); openEditor(`Revise ${jobName}`, JSON.stringify(found, null, 2), async content => { await api(`/executions/${executionId}/jobs/${encodeURIComponent(jobName)}`, jsonRequest("PUT", {job: JSON.parse(content)})); await refreshExecutions(); }); };
+    async function submitWorkflow(name) { const item = await api("/executions", jsonRequest("POST", {workflow:name})); state.selectedExecution = item.execution_id; setTab("Executions"); }
+    window.submitWorkflow = submitWorkflow;
+    async function renderWorkflows() { const query = document.getElementById("workflowQuery")?.value || ""; const params = new URLSearchParams(); if (query) params.set("query", query); if (state.workflowCollection) params.set("collection", state.workflowCollection); if (state.workflowTag) params.set("tag", state.workflowTag); const data = await api(`/workflows?${params}`); const active = [state.workflowCollection && `Collection: ${state.workflowCollection}`, state.workflowTag && `Tag: ${state.workflowTag}`].filter(Boolean); document.getElementById("actions").innerHTML = `<input id="workflowQuery" type="search" placeholder="Search ID or title" value="${esc(query)}" onkeydown="if(event.key==='Enter') renderWorkflows()"><button onclick="renderWorkflows()">Search</button>${active.length ? `<button onclick="clearWorkflowFilters()">Clear ${esc(active.join(" · "))}</button>` : ""}`; document.getElementById("view").innerHTML = data.workflows.length ? `<div class="grid">${data.workflows.map(item => `<div class="card"><h3>${esc(item.title)}</h3><div class="muted">${esc(item.id)} · ${item.job_count} jobs${item.collection ? ` · <button onclick="filterWorkflows(decodeURIComponent('${urlArg(item.collection)}'),null)">${esc(item.collection)}</button>` : ""}</div>${item.tags?.length ? `<div class="chips">${item.tags.map(tag => `<button class="chip" onclick="filterWorkflows(null,decodeURIComponent('${urlArg(tag)}'))">${esc(tag)}</button>`).join("")}</div>` : ""}<div class="toolbar" style="margin-top:12px"><button onclick="viewWorkflow('${esc(item.id)}')">Inspect</button><button onclick="planWorkflow('${esc(item.id)}')">Plan</button><button class="primary" onclick="submitWorkflow('${esc(item.id)}')">Run</button></div></div>`).join("")}</div>` : `<div class="empty">No matching workflows</div>`; }
+    window.filterWorkflows = (collection, tag) => { state.workflowCollection = collection; state.workflowTag = tag; renderWorkflows(); };
+    window.clearWorkflowFilters = () => { state.workflowCollection = null; state.workflowTag = null; renderWorkflows(); };
+    window.viewWorkflow = async name => { const data = await api(`/workflows/${encodeURIComponent(name)}`); document.getElementById("view").innerHTML = `<pre>${esc(JSON.stringify(data, null, 2))}</pre>`; };
+    window.planWorkflow = async name => { const data = await api("/plans", jsonRequest("POST", {workflow:name})); document.getElementById("view").innerHTML = `<pre>${esc(JSON.stringify(data, null, 2))}</pre>`; };
+    async function renderSessions() { const data = await api("/sessions"); document.getElementById("view").innerHTML = data.sessions.length ? `<div class="panel"><table><thead><tr><th>Session</th><th>Status</th><th>Started</th><th></th></tr></thead><tbody>${data.sessions.map(item => `<tr><td><strong>${esc(item.alias || item.session_id)}</strong><div class="muted">${esc(item.session_id)}</div></td><td>${status(item.status)}</td><td>${fmtTime(item.start_time)}</td><td><button onclick="openSession('${esc(item.session_id)}')">Open</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">No sessions</div>`; }
+    window.openSession = async id => { const item = await api(`/sessions/${id}`); const artifacts = await api(`/sessions/${id}/artifacts`); document.getElementById("view").innerHTML = `<div class="panel"><div class="card-head"><div><h2>${esc(item.alias || item.session_id)}</h2><div class="muted">${esc(item.session_id)}</div></div>${status(item.status)}</div>${item.note ? `<p>${esc(item.note)}</p>` : ""}<div class="toolbar"><button onclick="renameSession('${esc(id)}','${esc(item.alias || "")}')">Rename</button><button onclick="noteSession('${esc(id)}')">Edit note</button><button class="danger" onclick="deleteSession('${esc(id)}')">Delete</button></div></div><div class="panel"><h2>Artifacts</h2><table><tbody>${artifacts.artifacts.map(file => `<tr><td>${esc(file.job_name || "session")}</td><td>${esc(file.kind)}</td><td>${esc(String(file.path).split(/[\\/]/).pop())}</td><td>${file.size ?? ""}</td><td><button onclick="openArtifact('${esc(id)}','${esc(file.artifact_id)}')">Open</button></td></tr>`).join("")}</tbody></table></div>`; };
+    window.renameSession = (id, alias) => openEditor("Session alias", alias, async content => { await api(`/sessions/${id}`, jsonRequest("PATCH", {alias:content.trim() || null})); await renderSessions(); });
+    window.noteSession = async id => { const item = await api(`/sessions/${id}`); openEditor("Session note", item.note || "", async content => { await api(`/sessions/${id}`, jsonRequest("PATCH", {note:content.trim() || null})); await openSession(id); }); };
+    window.deleteSession = async id => { if (confirm("Move this session to trash?")) { await api(`/sessions/${id}`, {method:"DELETE"}); await renderSessions(); } };
+    window.openArtifact = async (session, artifact) => { const data = await api(`/sessions/${session}/artifacts/${artifact}`); document.getElementById("view").innerHTML = data.content == null ? `<div class="panel">Binary artifact</div>` : `<pre>${esc(typeof data.content === "string" ? data.content : JSON.stringify(data.content, null, 2))}</pre>`; };
+    async function renderPlugins() { const data = await api("/plugins"); const groups = Object.groupBy ? Object.groupBy(data.plugins, item => item.namespace) : data.plugins.reduce((acc,item) => ((acc[item.namespace] ||= []).push(item),acc),{}); document.getElementById("view").innerHTML = Object.entries(groups).sort().map(([namespace, items]) => `<div class="panel"><h2>${esc(namespace)}</h2><div class="grid">${items.map(item => `<div class="card"><h3>${esc(item.name)}</h3><div class="muted">${esc(item.description || item.package || "")}</div></div>`).join("")}</div></div>`).join(""); }
+    async function renderSettings() { const docs = await api("/workflow-docs"); document.getElementById("view").innerHTML = `<div class="panel"><h2>Workflow documents</h2><table><tbody>${docs.documents.map(doc => `<tr><td><strong>${esc(doc.title)}</strong><div class="muted">${esc(doc.workflow_id)} · ${esc(doc.doc_id)}</div></td><td><button onclick="editDocument('${esc(doc.doc_id)}')">Edit</button></td></tr>`).join("")}</tbody></table></div>`; }
+    window.editDocument = async id => { const doc = await api(`/workflow-docs/${id}`); openEditor(id, doc.content, async content => { await api(`/workflow-docs/${id}`, {method:"PUT", headers:{"Content-Type":"application/json","If-Match":doc.revision}, body:JSON.stringify({content})}); await renderSettings(); }); };
+    function openEditor(title, content, save) { document.getElementById("editorTitle").textContent = title; document.getElementById("editorText").value = content; document.getElementById("editorError").innerHTML = ""; document.getElementById("editorSave").onclick = async () => { try { await save(document.getElementById("editorText").value); closeEditor(); } catch(error) { document.getElementById("editorError").innerHTML = `<div class="error">${esc(error.message)}</div>`; } }; document.getElementById("editor").showModal(); }
+    window.closeEditor = () => document.getElementById("editor").close();
+    const routes = { Executions: refreshExecutions, Workflows: renderWorkflows, Sessions: renderSessions, Plugins: renderPlugins, Settings: renderSettings };
+    document.getElementById("tabs").innerHTML = tabs.map(tab => `<button data-tab="${tab}" onclick="setTab('${tab}')">${tab}</button>`).join("");
+    Promise.all([api("/health"), api("/project")]).then(([, project]) => { document.getElementById("health").textContent = "API online"; document.getElementById("projectName").textContent = `${project.name} · ${project.project_id}`; document.getElementById("projectName").title = project.root; }).catch(() => document.getElementById("health").textContent = "API offline");
+    setTab("Executions"); state.poll = setInterval(() => refreshExecutions().catch(() => {}), 2000);
   </script>
 </body>
 </html>

@@ -203,5 +203,5 @@ Cross-job postprocessing is implemented as a scheduler workflow:
 
 The `lorentz_fitter` analyzer reads the logical SDE scan dataset, fits one
 Lorentzian per scan value, and writes `fit_results.csv` and `psd_merged.csv` to
-the job's run directory. Dataset views and generic export utilities live in
+the Session Job directory. Dataset views and generic export utilities live in
 core.

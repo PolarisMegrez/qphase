@@ -1,0 +1,83 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_line_shape_trajectory_diagnostic
+title: Kerr Full 3Mode Line Shape Trajectory Diagnostic
+collection: kerr_full_3mode
+tags:
+- kerr_full_3mode
+jobs:
+# Each repeated scan point is an independent n_traj=1 realization. Keeping
+# points separate prevents the PSD analyzer from erasing trajectory identity.
+- name: kerr_full_3mode_line_shape_trajectory_diagnostic
+  save: true
+
+  scan:
+    axes:
+      omega_c:
+        target: model.kerr_full_3mode.omega_c
+        values:
+        # epsilon = 0.015, eight replicas
+          [-0.985, -0.985, -0.985, -0.985, -0.985, -0.985, -0.985, -0.985, -0.965371113531286,
+          -0.965371113531286, -0.965371113531286, -0.965371113531286, -0.965371113531286,
+            -0.965371113531286, -0.965371113531286, -0.965371113531286, -0.939511886746409,
+            -0.939511886746409, -0.939511886746409, -0.939511886746409, -0.939511886746409,
+            -0.939511886746409, -0.939511886746409, -0.939511886746409, -0.920056014795794,
+            -0.920056014795794, -0.920056014795794, -0.920056014795794, -0.920056014795794,
+            -0.920056014795794, -0.920056014795794, -0.920056014795794, -0.894342203342723,
+            -0.894342203342723, -0.894342203342723, -0.894342203342723, -0.894342203342723,
+            -0.894342203342723, -0.894342203342723, -0.894342203342723, -0.860357599562311,
+            -0.860357599562311, -0.860357599562311, -0.860357599562311, -0.860357599562311,
+            -0.860357599562311, -0.860357599562311, -0.860357599562311]
+
+  engine:
+    sde:
+      t0: 0.0
+      t1: 10000.0
+      dt: 0.005
+      n_traj: 1
+      seed: 20260807
+      ic:
+      - ["1.58453427+0.0j", "1.38582083+3.01794092j", "-16.71334157+0.75670294j"]
+      adaptive: false
+      save_stride: 100
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      max_state_norm: 20000.0
+      state_check_interval_steps: 1024
+
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: -0.854332923964663
+      omega_c: -1.0
+      chi: 0.05
+      gamma_a: 4.0
+      gamma_b: 1.0
+      gamma_c: 0.07502418826324694
+      g_ab: 1.0
+      g_ac: 0.2
+      g_bc: 0.2
+
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 4.0
+      find_peaks: false
+      estimator:
+        periodogram: {}
+    pdist:
+      modes: [0, 1, 2]
+      bins: 128
+      density: true

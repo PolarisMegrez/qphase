@@ -23,7 +23,7 @@ where:
 
 ## Configuration
 
-To use the SDE engine, you need to specify it in your job configuration file (e.g., `job.yaml`).
+To use the SDE engine, configure it in a `qphase.workflow/2` document.
 
 ```yaml
 engine:
@@ -134,7 +134,7 @@ See the [Plugin Development](../../dev_guide/plugin_development.md) guide for de
 
 SDE scans use an explicit job-level `ScanSpec`. The scheduler passes one
 `ParameterGrid` and one `ExecutionContext` to the SDE engine; scan points are
-never expanded into scheduler jobs or per-point run directories.
+never expanded into scheduler Jobs or per-point directories.
 
 Before allocating trajectory arrays, the engine validates the time grid and
 analyser bandwidth, estimates the state, noise, trajectory, and analyser

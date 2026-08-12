@@ -1,9 +1,9 @@
 """Test scheduler validation logic."""
 
 import pytest
-from qphase.core.config_loader import load_jobs_from_files
 from qphase.core.errors import QPhaseConfigError
 from qphase.core.scheduler import Scheduler
+from qphase.core.workflow import load_workflow
 
 pytestmark = pytest.mark.integration
 
@@ -11,7 +11,7 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def valid_job_file(temp_workspace):
     """Create a valid job file."""
-    job_file = temp_workspace / "configs" / "jobs" / "valid_job.yaml"
+    job_file = temp_workspace / "configs" / "workflows" / "valid_job.yaml"
     job_file.parent.mkdir(parents=True, exist_ok=True)
 
     import yaml
@@ -19,10 +19,17 @@ def valid_job_file(temp_workspace):
     with open(job_file, "w") as f:
         yaml.dump(
             {
-                "name": "valid_job",
-                "engine": {"dummy": {"param": 10.0}},
-                "backend": {"dummy": {"param": 1.0}},
-                "model": {"dummy": {"param": 1.0}},
+                "schema": "qphase.workflow/2",
+                "id": "valid",
+                "title": "Valid",
+                "jobs": [
+                    {
+                        "name": "valid_job",
+                        "engine": {"dummy": {"param": 10.0}},
+                        "backend": {"dummy": {"param": 1.0}},
+                        "model": {"dummy": {"param": 1.0}},
+                    }
+                ],
             },
             f,
         )
@@ -32,7 +39,7 @@ def valid_job_file(temp_workspace):
 @pytest.fixture
 def invalid_job_file(temp_workspace):
     """Create an invalid job file (multiple engines)."""
-    job_file = temp_workspace / "configs" / "jobs" / "invalid_job.yaml"
+    job_file = temp_workspace / "configs" / "workflows" / "invalid_job.yaml"
     job_file.parent.mkdir(parents=True, exist_ok=True)
 
     import yaml
@@ -40,13 +47,20 @@ def invalid_job_file(temp_workspace):
     with open(job_file, "w") as f:
         yaml.dump(
             {
-                "name": "invalid_job",
-                "engine": {
-                    "dummy": {"param": 10.0},
-                    "viz": {"param": 1.0},  # Second engine
-                },
-                "backend": {"dummy": {"param": 1.0}},
-                "model": {"dummy": {"param": 1.0}},
+                "schema": "qphase.workflow/2",
+                "id": "invalid",
+                "title": "Invalid",
+                "jobs": [
+                    {
+                        "name": "invalid_job",
+                        "engine": {
+                            "dummy": {"param": 10.0},
+                            "viz": {"param": 1.0},  # Second engine
+                        },
+                        "backend": {"dummy": {"param": 1.0}},
+                        "model": {"dummy": {"param": 1.0}},
+                    }
+                ],
             },
             f,
         )
@@ -55,7 +69,7 @@ def invalid_job_file(temp_workspace):
 
 def test_job_validation_success(valid_job_file, dummy_model):
     """Test successful validation."""
-    job_list = load_jobs_from_files([valid_job_file])
+    job_list = load_workflow(valid_job_file)
     scheduler = Scheduler()
 
     # Should not raise exception
@@ -68,7 +82,7 @@ def test_job_validation_failure(invalid_job_file, dummy_model):
     # But if it passes loader, scheduler should catch it
 
     try:
-        job_list = load_jobs_from_files([invalid_job_file])
+        job_list = load_workflow(invalid_job_file)
         scheduler = Scheduler()
 
         with pytest.raises(QPhaseConfigError):

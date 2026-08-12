@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import typer
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
 
 def gui_command(
     host: str = typer.Option("127.0.0.1", "--host", help="Host to bind"),
@@ -11,6 +13,12 @@ def gui_command(
     reload: bool = typer.Option(False, "--reload", help="Enable Uvicorn reload"),
 ) -> None:
     """Launch the local QPhase GUI API and web console."""
+    if host.lower() not in _LOOPBACK_HOSTS:
+        typer.echo(
+            "QPhase GUI has no remote authentication and only permits loopback "
+            "binding. Use an SSH tunnel for remote access."
+        )
+        raise typer.Exit(code=2)
     try:
         import uvicorn
     except ImportError as exc:

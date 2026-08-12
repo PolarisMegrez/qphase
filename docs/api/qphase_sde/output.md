@@ -76,4 +76,4 @@ false. The downstream `allan_scaling` analyser writes:
 *   `dist_merged.npz` — optional merged distribution export for a scan dataset.
 *   `pdist_merged.pkl` — optional merged polar-distribution export for a scan dataset.
 
-For details on the run directory layout, see [User Guide: Output](../../user_guide/output.md).
+For details on the Session and Job directory layout, see [User Guide: Output](../../user_guide/output.md).

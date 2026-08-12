@@ -1,0 +1,64 @@
+schema: qphase.workflow/2
+id: vdp_2mode_cupy
+title: Vdp 2Mode Cupy
+collection: vdp_2mode
+tags:
+- vdp_2mode
+jobs:
+- name: vdp_2mode_cupy_sim
+  save: true
+  scan:
+    axes:
+      omega_a:
+        target: model.vdp_2mode.omega_a
+        values: [0.01165914, 0.01359356, 0.01584893, 0.0184785, 0.02154435, 0.02511886, 0.02928645,
+            0.03414549, 0.03981072, 0.04641589, 0.05411695, 0.06309573, 0.07356423, 0.08576959, 0.1]
+  engine:
+    sde:
+      t0: 0.0
+      t1: 200000.0
+      dt: 0.1
+      n_traj: 100
+      seed: 42
+      ic:
+      - ["800.0+0.0j", "0.0-800.0j"]
+      adaptive: false
+      save_stride: 20
+      keep_traj: false
+  backend:
+    cupy:
+      float_dtype: float32
+      device: cuda
+  integrator:
+    euler_maruyama: {}
+  model:
+    vdp_2mode:
+      omega_a: 0.01165914
+      omega_b: 0.0
+      gamma_a: 2.0
+      gamma_b: 1.0
+      Gamma: 0.00001
+      g: 0.5
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      find_peaks: true
+
+- name: vdp_2mode_cupy_fit
+  input:
+    from: vdp_2mode_cupy_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_a
+      mode: 0
+      clip_by_std: true
+      clip_sigma: 10.0
+      export:
+      - fit_results.csv
+      - psd_merged.csv

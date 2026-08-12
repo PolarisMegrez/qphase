@@ -1,0 +1,74 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_omega_c_leading_order_precision
+title: Kerr Full 3Mode Omega C Leading Order Precision
+collection: kerr_full_3mode
+tags:
+- kerr_full_3mode
+jobs:
+# Retained deterministic reference for the omega_c=-1 Kerr-full candidate.
+# The state normal form is (n,k,m)=(3,1,0); observable sublinear order may vary.
+- name: kerr_full_3mode_omega_c_leading_order_precision
+  save: true
+
+  engine:
+    cam: {}
+
+  plugins:
+    backend:
+      numpy:
+        float_dtype: float64
+    model:
+      kerr_full_3mode:
+        omega_a: 0.0
+        omega_b: -0.8282592981043274
+        omega_c: -1.0
+        chi: 0.01
+        gamma_a: 3.0
+        gamma_b: 1.0
+        gamma_c: 0.06381888082869307
+        g_ab: 1.0
+        g_ac: 0.2
+        g_bc: 0.2
+    cam_solver:
+      bifurcation:
+        controls:
+          omega_b: {min: -1.2, max: 0.0, scale: 0.5, domain: real}
+          gamma_c: {min: 0.01, max: 0.12, scale: 0.05, domain: nonnegative}
+        perturbation:
+          parameter: omega_c
+          scale: 1.0
+          side: both
+        target:
+          equilibrium_multiplicity:
+            order: 3
+        strategy:
+          reduced:
+            retained_dimension: 1
+            order_parameter: r_diag_0
+            order_parameter_bounds: [0.0, 100.0]
+            max_candidates: 8
+            condition_limit: 1.0e11
+        discovery:
+          seeds:
+            samples_per_control: 9
+            max_starts: 8192
+            order_parameter_samples: 101
+        classifier:
+          scaling_signature:
+            max_total_order: 8
+            coefficient_tolerance: 1.0e-14
+            max_exponent: 0.999
+        refinement:
+          tolerance: 1.0e-13
+          max_iterations: 180
+        verification:
+          initial_digits: 100
+          max_digits: 400
+    cam_postprocessor:
+      local_response_validation:
+        epsilon_min: 1.0e-12
+        epsilon_max: 2.0e-2
+        epsilon_points: 47
+        precision_digits: 200
+        residual_tolerance: 1.0e-65
+        fit_points: 9

@@ -1,0 +1,101 @@
+schema: qphase.workflow/2
+id: collective_kerr_2mode_nonlinear_coupling_s0
+title: Collective Kerr 2Mode Nonlinear Coupling S0
+collection: collective_kerr_2mode
+tags:
+- collective_kerr_2mode
+jobs:
+- name: collective_kerr_2mode_nonlinear_coupling_s0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+  scan:
+    combine: zipped
+    axes:
+      delta:
+        target: model.collective_kerr_2mode.delta
+        values:
+        - 4.519058212802282
+        - 0.05796309597081807
+        - 0.2204300629328181
+        - 0.8921231867447674
+      pump_bright:
+        target: model.collective_kerr_2mode.pump_bright
+        values:
+        - 0.6547721365466714
+        - 0.08043764645699411
+        - 0.875001450041309
+        - 0.3372496073646471
+      kappa_dark:
+        target: model.collective_kerr_2mode.kappa_dark
+        values:
+        - 0.002928089736803919
+        - 1.067064410746929
+        - 0.0002490653819519492
+        - 0.08753486865293751
+  engine:
+    cam:
+      case_failure_policy: record
+  plugins:
+    backend:
+      numpy:
+        float_dtype: float64
+    model:
+      collective_kerr_2mode:
+        omega_0: 0.0
+        delta: 1.0
+        chi: 0.001
+        g: 0.5
+        kappa_bright: 1.0
+        pump_bright: 0.5
+        kappa_dark: 0.1
+    cam_solver:
+      bifurcation:
+        controls:
+          chi:
+            min: 1.0e-05
+            max: 0.1
+            scale: 0.01
+            domain: nonnegative
+            sampling: log
+          g:
+            min: 0.005
+            max: 5.0
+            scale: 0.5
+            domain: nonnegative
+            sampling: log
+        perturbation:
+          parameter: delta
+          scale: 1.0
+          side: both
+        target:
+          equilibrium_multiplicity:
+            order: 3
+        strategy:
+          reduced:
+            retained_dimension: 1
+            max_candidates: 4
+            condition_limit: 100000000000.0
+        discovery:
+          seeds:
+            samples_per_control: 3
+            max_starts: 1024
+            order_parameter_samples: 31
+        classifier:
+          scaling_signature:
+            max_total_order: 8
+            coefficient_tolerance: 1.0e-14
+            max_exponent: 0.999
+        refinement:
+          tolerance: 1.0e-09
+          max_iterations: 60
+        verification:
+          initial_digits: 40
+          max_digits: 120
+        audit:
+          near_miss_per_reason: 8
+          near_miss_total: 64

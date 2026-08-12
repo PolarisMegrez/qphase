@@ -1,0 +1,97 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_omega_c_low_gac_preflight
+title: Kerr Full 3Mode Omega C Low Gac Preflight
+collection: kerr_full_3mode
+tags:
+- kerr_full_3mode
+jobs:
+# Reduced stochastic check of the wide physical/stable low-g_ac direction.
+- name: kerr_full_3mode_omega_c_low_gac_preflight_sim
+  save: true
+
+  scan:
+    axes:
+      omega_c:
+        target: model.kerr_full_3mode.omega_c
+        values: [-1.0045, -1.0065, -1.0095, -1.014, -1.021, -1.031, -1.046, -1.068]
+
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 80000.0
+      dt: 0.005
+      n_traj: 16
+      seed: 20260812
+      ic:
+      - ["2.661955233170776+0.0j", "-2.429173415069264+3.991919289087015j", "-27.02029904608989+0.05605682399093755j"]
+      adaptive: false
+      save_stride: 100
+      record_modes: [0]
+      keep_traj: false
+      max_state_norm: 20000.0
+      state_check_interval_steps: 1024
+
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 256
+      max_modes: 16
+
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: -1.2910235619782748
+      omega_c: -1.0
+      chi: 0.01
+      gamma_a: 3.0
+      gamma_b: 1.0
+      gamma_c: 0.058947539866588364
+      g_ab: 1.0
+      g_ac: 0.02
+      g_bc: 0.2
+
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 100.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      find_peaks: true
+      estimator:
+        periodogram: {}
+
+- name: kerr_full_3mode_omega_c_low_gac_preflight_fit
+  input:
+    from: kerr_full_3mode_omega_c_low_gac_preflight_sim
+    mode: dataset
+  save: true
+
+  engine:
+    sde:
+      mode: analyze
+
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: 0.5
+      freq_max: 1.5
+      fit_window: 0.02
+      uncertainty: auto
+      clip_by_std: false
+      clip_sigma: 10.0
+      export: [fit_results.csv, psd_merged.csv]

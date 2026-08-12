@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.model import CAMBogoliubovModel
 
 from models.collective_kerr_2mode import CollectiveKerr2ModeModel
 from models.collective_loss_kerr_3mode import CollectiveLossKerr3ModeModel
@@ -212,6 +213,58 @@ def test_collective_loss_model_accepts_real_coupling_sectors(g_ac, g_bc):
         model.cam_residual_vector(vector, model.params),
         adapter.rhs(vector),
         atol=1e-13,
+    )
+
+
+def test_collective_loss_bogoliubov_block_matches_wirtinger_linearization():
+    model = CollectiveLossKerr3ModeModel(
+        omega_a=0.1,
+        omega_b=0.4,
+        omega_c=-0.2,
+        chi=0.03,
+        g_ab=0.35,
+        g_ac=-0.12,
+        g_bc=0.07,
+        pump_a=0.18,
+        kappa_bright=1.1,
+        kappa_dark=0.06,
+    )
+    amplitude = np.asarray([1.4, 0.3 + 0.2j, -0.15 + 0.25j], dtype=complex)
+    state = np.outer(amplitude, amplitude.conj())
+    interaction = model.cam_bogoliubov_interaction(state, model.params)
+
+    assert isinstance(model, CAMBogoliubovModel)
+    np.testing.assert_allclose(
+        interaction,
+        np.diag([2.0 * model.params["chi"] * state[0, 0], 0.0, 0.0]),
+    )
+
+    step = 1e-6
+    derivative_real = np.empty((model.n_modes, model.n_modes), dtype=complex)
+    derivative_imag = np.empty_like(derivative_real)
+
+    def drift(value):
+        return model.drift(value[None, :], 0.0, model.params)[0]
+
+    for column in range(model.n_modes):
+        offset = np.zeros(model.n_modes, dtype=complex)
+        offset[column] = step
+        derivative_real[:, column] = (
+            drift(amplitude + offset) - drift(amplitude - offset)
+        ) / (2.0 * step)
+        offset[column] = 1j * step
+        derivative_imag[:, column] = (
+            drift(amplitude + offset) - drift(amplitude - offset)
+        ) / (2.0 * step)
+
+    normal_block = 0.5j * (derivative_real - 1j * derivative_imag)
+    anomalous_block = 0.5j * (derivative_real + 1j * derivative_imag)
+    hamiltonian = model.cam_hamiltonian(state, model.params)
+    np.testing.assert_allclose(
+        normal_block, hamiltonian + interaction, rtol=2e-9, atol=2e-9
+    )
+    np.testing.assert_allclose(
+        anomalous_block, interaction, rtol=2e-9, atol=2e-9
     )
 
 

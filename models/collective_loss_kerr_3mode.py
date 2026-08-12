@@ -7,6 +7,7 @@ from functools import lru_cache
 from typing import Any, ClassVar
 
 from pydantic import Field
+from qphase.backend.xputil import get_xp
 
 from .base import FPGenBackedSDEModel, ModelConfig
 from .kernels.base import ModelKernelPlugin
@@ -41,6 +42,18 @@ class CollectiveLossKerr3ModeModel(FPGenBackedSDEModel):
 
     def kernel_plugins(self) -> Iterable[ModelKernelPlugin]:
         return (CollectiveLossKerr3ModeCayleyCuPyKernel(self),)
+
+    def cam_bogoliubov_interaction(
+        self, state: Any, params: dict[str, Any]
+    ) -> Any:
+        """Return the gauge-fixed Kerr interaction block for Nambu linearization."""
+        xp = get_xp(state)
+        state = xp.asarray(state)
+        interaction = xp.zeros_like(state, dtype=complex)
+        interaction[..., 0, 0] = (
+            2.0 * self.parameter(params, "chi", xp) * state[..., 0, 0]
+        )
+        return interaction
 
     @classmethod
     @lru_cache(maxsize=1)

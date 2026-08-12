@@ -1,0 +1,73 @@
+schema: qphase.workflow/2
+id: kerr_3mode_bifurcation_omega_b
+title: Kerr 3Mode Bifurcation Omega B
+collection: kerr_3mode
+tags:
+- kerr_3mode
+jobs:
+- name: kerr_3mode_bifurcation_omega_b
+  save: true
+
+  engine:
+    cam: {}
+
+  plugins:
+    backend:
+      numpy:
+        float_dtype: float64
+    model:
+      kerr_3mode:
+        omega_a: 0.0
+        omega_b: 0.0
+        omega_c: 0.5
+        chi: 0.001
+        gamma_a: 1.0
+        gamma_b: 1.0
+        gamma_c: 0.5
+        g_ab: 1.0
+        g_ac: 3.0
+    cam_solver:
+      bifurcation:
+        controls:
+          omega_b: {min: -2.0, max: 0.0, scale: 1.0, domain: real}
+          gamma_c: {min: 0.4, max: 2.0, scale: 1.0, domain: nonnegative}
+        perturbation:
+          parameter: omega_b
+          scale: 1.0
+          side: both
+        target:
+          equilibrium_multiplicity:
+            order: 3
+        strategy:
+          reduced:
+            retained_dimension: 1
+            order_parameter: r_diag_0
+            order_parameter_bounds: [0.0, 30000.0]
+            max_candidates: 8
+            condition_limit: 1.0e11
+        discovery:
+          seeds:
+            samples_per_control: 6
+            max_starts: 4096
+            order_parameter_samples: 101
+        classifier:
+          scaling_signature:
+            max_total_order: 8
+            coefficient_tolerance: 1.0e-14
+            max_exponent: 0.999
+        refinement:
+          tolerance: 1.0e-11
+          max_iterations: 100
+        verification:
+          initial_digits: 60
+          max_digits: 240
+    cam_postprocessor:
+      local_response_validation:
+        epsilon_min: 1.0e-12
+        epsilon_max: 1.0e-4
+        epsilon_points: 9
+        precision_digits: 100
+        residual_tolerance: 1.0e-40
+        fit_points: 4
+      stochastic_validity:
+        probe_epsilon: 1.0e-4

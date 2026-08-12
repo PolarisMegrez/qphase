@@ -44,7 +44,8 @@ plugins:
             Introduction: 简介
             Getting Started: 入门指南
             Command Line Interface: 命令行界面
-            Job Configuration: 任务配置
+            Core Concepts: 核心概念
+            Workflow Configuration: Workflow 配置
             GUI & Local API: GUI 与本地 API
             Results & Reproducibility: 结果与复现
             SDE Physics: SDE 物理
@@ -87,7 +88,8 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started: user_guide/getting_started.md
-  - Job Configuration: user_guide/configuration.md
+  - Core Concepts: user_guide/concepts.md
+  - Workflow Configuration: user_guide/configuration.md
   - GUI & Local API: user_guide/gui.md
   - Results & Reproducibility: user_guide/output.md
   - SDE Physics:

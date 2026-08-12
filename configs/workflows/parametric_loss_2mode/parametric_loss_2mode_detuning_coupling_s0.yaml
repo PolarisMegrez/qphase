@@ -1,0 +1,136 @@
+schema: qphase.workflow/2
+id: parametric_loss_2mode_detuning_coupling_s0
+title: Parametric Loss 2Mode Detuning Coupling S0
+collection: parametric_loss_2mode
+tags:
+- parametric_loss_2mode
+jobs:
+- name: parametric_loss_2mode_detuning_coupling_s0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+  scan:
+    combine: zipped
+    axes:
+      epsilon:
+        target: model.parametric_loss_2mode.epsilon
+        values:
+        - 0.11036960804014648
+        - 0.011247348304408825
+        - 0.001769044516888664
+        - 1.194786444967499
+        - 1.8406146964716885
+        - 0.0033310313879042434
+        - 0.06549268190476913
+        - 0.4622198666450119
+        - 0.2083951702071707
+        - 0.029405475561946757
+        - 0.007415152285962269
+        - 4.080332503521864
+        - 0.9139743574551008
+        - 0.001358912166053949
+        - 0.014649608843055443
+        - 0.14435398361319268
+      kappa_a:
+        target: model.parametric_loss_2mode.kappa_a
+        values:
+        - 0.7313839515192248
+        - 1.1703915272208474
+        - 0.2805079760136407
+        - 4.1656554111729065
+        - 0.4053173027651019
+        - 2.8642999298630594
+        - 0.4812432954808928
+        - 1.7896008466802367
+        - 0.22813702214089693
+        - 3.42540535011286
+        - 0.8993240362424475
+        - 1.4233898760984087
+        - 0.5843532079700999
+        - 2.20399318411372
+        - 0.3338149147692174
+        - 2.3258716765176284
+      kappa_2:
+        target: model.parametric_loss_2mode.kappa_2
+        values:
+        - 0.002163545130751623
+        - 1.9145709115799212e-05
+        - 0.08536715592408209
+        - 0.0008942137966439184
+        - 9.832131230329089e-05
+        - 0.007766708065205333
+        - 0.00018722956843858295
+        - 0.022119296335109236
+        - 0.00011203205459997199
+        - 0.011688660888547262
+        - 5.1871926125142285e-05
+        - 0.004655109716008507
+        - 0.045091832866995564
+        - 0.0005353933514805578
+        - 0.0012961299518196097
+        - 1.0106742950112483e-05
+  engine:
+    cam:
+      case_failure_policy: record
+  plugins:
+    backend:
+      numpy:
+        float_dtype: float64
+    model:
+      parametric_loss_2mode:
+        omega_a: 0.0
+        omega_b: 0.0
+        epsilon: 0.3
+        g: 0.2
+        kappa_a: 0.5
+        kappa_b: 1.0
+        kappa_2: 0.01
+    cam_solver:
+      bifurcation:
+        controls:
+          omega_a:
+            min: -5.0
+            max: 5.0
+            scale: 1.0
+            domain: real
+          g:
+            min: 0.001
+            max: 5.0
+            scale: 0.5
+            domain: nonnegative
+            sampling: log
+        perturbation:
+          parameter: omega_b
+          scale: 1.0
+          side: both
+        target:
+          equilibrium_multiplicity:
+            order: 3
+        strategy:
+          auto:
+            retained_dimension: 1
+            max_candidates: 4
+            condition_limit: 100000000000.0
+        discovery:
+          seeds:
+            samples_per_control: 3
+            max_starts: 1024
+            order_parameter_samples: 31
+        classifier:
+          scaling_signature:
+            max_total_order: 8
+            coefficient_tolerance: 1.0e-14
+            max_exponent: 0.999
+        refinement:
+          tolerance: 1.0e-09
+          max_iterations: 60
+        verification:
+          initial_digits: 40
+          max_digits: 120
+        audit:
+          near_miss_per_reason: 8
+          near_miss_total: 64

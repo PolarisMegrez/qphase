@@ -42,6 +42,6 @@ QPhase uses the standard Python `logging` module, but normal CLI lifecycle
 messages are rendered from progress snapshots rather than INFO logs.
 
 *   **Console**: Shows concise progress plus warning/error briefs; no traceback by default.
-*   **Session file**: `runs/<session-id>/qphase.log` is created automatically and records DEBUG details and tracebacks.
+*   **Session file**: `runs/YYYY/MM/<session-id>/qphase.log` is created automatically and records DEBUG details and tracebacks.
 *   **Error report**: A failed job writes `error_report.json` with the error ID, context, cause chain, traceback, and log path.
 *   **Context**: File records include session, job, engine, and stage fields.

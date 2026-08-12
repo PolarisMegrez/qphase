@@ -57,7 +57,9 @@ This error comes from the `EngineManifest` validation. Your Engine class likely 
 
 ### How does the Registry find plugins?
 
-The Registry uses Python's standard `importlib.metadata` to scan for entry points in the `qphase` group. It does this once at startup. It also scans directories defined in `SystemConfig.paths.plugin_dirs` for `.qphase_plugins.yaml` files to support local, non-installed plugins.
+The Registry uses Python's standard `importlib.metadata` to scan installed entry
+points. It also scans the Project-local plugin directories declared by
+`qphase.toml`. SystemConfig does not contain Project plugin paths.
 
 ### Can I override a core plugin?
 

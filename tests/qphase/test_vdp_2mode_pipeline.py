@@ -21,11 +21,11 @@ from pathlib import Path
 
 import pytest
 from qphase.core import system_config as system_config_module
-from qphase.core.config_loader import load_jobs_from_files
 from qphase.core.registry import discovery
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
 from qphase.core.utils import save_yaml
+from qphase.core.workflow import load_workflow
 from qphase.main import app
 from typer.testing import CliRunner
 
@@ -38,7 +38,8 @@ def vdp_workflow_path():
     path = (
         Path(__file__).parent.parent.parent
         / "configs"
-        / "jobs"
+        / "workflows"
+        / "vdp_2mode"
         / "vdp_2mode_smoke.yaml"
     )
     if not path.exists():
@@ -58,28 +59,12 @@ def _discover_plugins():
 
 def _make_system_config(tmp_path: Path) -> SystemConfig:
     """Build a temporary system config that keeps test outputs in tmp_path."""
-    repo = _repo_root()
-    return SystemConfig(
-        paths={
-            "output_dir": str(tmp_path / "runs"),
-            "global_file": str(repo / "configs" / "global.yaml"),
-            "config_dirs": [str(repo / "configs")],
-            "plugin_dirs": [str(repo / "models")],
-        }
-    )
+    return SystemConfig()
 
 
 def _write_system_config(tmp_path: Path) -> Path:
     """Write a temporary system.yaml and return its path."""
-    repo = _repo_root()
-    cfg = {
-        "paths": {
-            "output_dir": str(tmp_path / "runs"),
-            "global_file": str(repo / "configs" / "global.yaml"),
-            "config_dirs": [str(repo / "configs")],
-            "plugin_dirs": [str(repo / "models")],
-        }
-    }
+    cfg = {}
     path = tmp_path / "system.yaml"
     save_yaml(cfg, path)
     return path
@@ -99,33 +84,35 @@ def _extract_json(output: str) -> dict:
     return json.loads(output[start : end + 1])
 
 
-def test_vdp_2mode_smoke_workflow_scheduler(vdp_workflow_path, tmp_path):
+def test_vdp_2mode_smoke_workflow_scheduler(vdp_workflow_path, temp_project):
     """Run the VDP workflow through the scheduler and verify all artifacts."""
     _discover_plugins()
 
-    job_list = load_jobs_from_files([vdp_workflow_path])
+    job_list = load_workflow(vdp_workflow_path)
     assert len(job_list.jobs) == 3, "Expected sim + 2 fit jobs"
 
-    scheduler = Scheduler(system_config=_make_system_config(tmp_path))
+    scheduler = Scheduler(
+        system_config=_make_system_config(temp_project.root), project=temp_project
+    )
     results = scheduler.run(job_list)
 
     assert len(results) == 3, "Expected one logical sim job + 2 fit jobs"
     assert all(r.success for r in results), f"Job failed: {results}"
 
     sim = next(r for r in results if r.job_name == "vdp_2mode_sim")
-    npz_files = list(sim.run_dir.glob("*.npz"))
+    npz_files = list(sim.job_dir.glob("*.npz"))
     assert len(npz_files) == 1, "Expected one logical scan dataset"
-    assert (sim.run_dir / "config_snapshot.json").exists()
-    assert (sim.run_dir / "artifact_manifest.json").exists()
+    assert (sim.job_dir / "config_snapshot.json").exists()
+    assert (sim.job_dir / "artifact_manifest.json").exists()
 
     for mode in (0, 1):
         fit = next(r for r in results if r.job_name == f"vdp_2mode_fit_mode{mode}")
-        assert (fit.run_dir / "fit_results.csv").exists()
-        assert (fit.run_dir / "psd_merged.csv").exists()
-        assert (fit.run_dir / "dist_merged.npz").exists()
-        assert (fit.run_dir / "pdist_merged.pkl").exists()
+        assert (fit.job_dir / "fit_results.csv").exists()
+        assert (fit.job_dir / "psd_merged.csv").exists()
+        assert (fit.job_dir / "dist_merged.npz").exists()
+        assert (fit.job_dir / "pdist_merged.pkl").exists()
 
-        with open(fit.run_dir / "fit_results.csv", newline="") as handle:
+        with open(fit.job_dir / "fit_results.csv", newline="") as handle:
             rows = list(csv.DictReader(handle))
         assert len(rows) == 3, "Expected one fit row per scan value"
         for row in rows:
@@ -165,19 +152,11 @@ def test_vdp_2mode_smoke_cli_run(vdp_workflow_path, tmp_path):
     assert result.exit_code == 0, result.output
 
     report = _extract_json(result.output)
-    assert report["success_count"] == 3
-    assert report["total_count"] == 3
-
-    for entry in report["results"]:
-        assert entry["success"], entry
-
-    fit_dirs = [
-        Path(entry["run_dir"])
-        for entry in report["results"]
-        if entry["job_name"].startswith("vdp_2mode_fit_mode")
-    ]
-    assert len(fit_dirs) == 2
-    for fit_dir in fit_dirs:
+    assert report["completed"] == 3
+    assert report["failed"] == 0
+    session = Path(report["session_dir"])
+    for mode in (0, 1):
+        fit_dir = session / f"vdp_2mode_fit_mode{mode}"
         assert (fit_dir / "fit_results.csv").exists()
         assert (fit_dir / "psd_merged.csv").exists()
         assert (fit_dir / "dist_merged.npz").exists()

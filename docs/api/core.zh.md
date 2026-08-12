@@ -4,108 +4,57 @@ description: 核心 API 参考
 
 # 核心 API 参考
 
-本节记录了 QPhase 框架的核心组件，包括调度器、注册表和配置模型。
+## Project 与 Workflow
 
-## 调度器
+`ProjectContext.discover()` 按显式路径、`QPHASE_PROJECT` 或向上搜索解析当前
+`qphase.project/2` manifest，并暴露 Workflow catalog、defaults、项目插件目录和
+Session 根目录。
 
-`Scheduler` 负责逻辑 job、依赖解析、结构化数据流、execution context 和结果持久化。
+`WorkflowCatalog` 递归列出严格的 `qphase.workflow/2` 文档，并按稳定 Workflow ID
+解析。`load_workflow()` 校验文档并返回包含逻辑 `JobConfig` 节点的
+`WorkflowSpec`。
 
-### `class qphase.core.Scheduler`
+## Scheduler
 
-**参数：**
+```python
+Scheduler(
+    system_config: SystemConfig | None = None,
+    project: ProjectContext | None = None,
+    on_progress: Callable[[ProgressSnapshot], None] | None = None,
+    on_job_dir: Callable[[Path], None] | None = None,
+    cancellation: CancellationController | None = None,
+)
+```
 
-*   `system_config` (`SystemConfig`, 可选)：系统配置对象。如果未提供，则从 `system.yaml` 加载。
-*   `default_output_dir` (`str`, 可选)：覆盖系统配置中指定的默认输出目录。
-*   `on_progress` (`Callable[[ProgressSnapshot], None]`, 可选)：接收结构化 job 生命周期和 stage 工作量快照。
-*   `on_run_dir` (`Callable[[Path], None]`, 可选)：每个任务完成后调用的回调函数，用于接收运行目录的路径。
+`Scheduler.run(workflow, dry_run=False, resume_from=None)` 校验逻辑 Job 图，解析
+engine 和插件，将 scan grid 交给资源包 engine，持久化 Artifact，并返回
+`list[JobResult]`。
 
-**方法：**
-
-#### `run(job_list: JobList) -> list[JobResult]`
-
-串行执行任务列表。此方法处理：
-1.  **依赖解析**：确保任务按照其依赖关系以正确的顺序执行。
-2.  **Scan Context**：编译一个可选 `ScanSpec`，不把参数点展开为 job。
-3.  **目录管理**：为每个逻辑 job 创建一个运行目录。
-4.  **快照**：保存配置快照以确保可复现性。
-
-**返回：**
-*   `list[JobResult]`：包含每个任务执行状态和元数据的结果对象列表。
-
----
+每次新 Execution 创建一个 Session，并保存 Workflow 快照和内容哈希。恢复要求
+Project ID、Workflow ID 和 Workflow hash 全部一致。
 
 ## 配置
 
-### `class qphase.core.JobConfig`
+- `WorkflowSpec`：版本化 Workflow 身份、标题、Collection、Tag 和 Jobs。
+- `JobConfig`：一个 engine、插件配置、结构化输入、输出、ScanSpec 和保存意图。
+- `SystemConfig`：只包含机器策略，包括默认保存、scan 存储与 checkpoint、资源
+  提示、进度和日志。
+- `ProjectManifest`：可迁移的 Project 身份和项目相对路径。
 
-表示单个仿真任务的配置。
+Project 路径不得写入 `SystemConfig`。
 
-**字段：**
+## Scan 与 Execution
 
-*   `name` (`str`)：**必需。** 任务的唯一标识符。
-*   `engine` (`dict[str, Any]`)：**必需。** 仿真引擎的配置。必须恰好包含一个键（引擎名称），映射到其配置字典。
-*   `plugins` (`dict[str, dict[str, Any]]`)：**可选。** 插件配置，按插件类型组织（例如 `backend`、`model`）。
-*   `params` (`dict[str, Any]`)：**可选。** 任务特定参数的字典。
-*   `scan` (`ScanSpec | None`)：**可选。** 显式命名参数轴。
-*   `input` (`InputSpec | None`)：**可选。** 结构化上游 dataset 或 map 输入。
-*   `output` (`str | None`)：**可选。** 输出目标（文件名或下游任务名称）。
-*   `tags` (`list[str]`)：**可选。** 用于分类的标签列表。
-*   `depends_on` (`list[str]`)：**可选。** 此任务依赖的任务名称列表。
+`ScanSpec` 和 `ScanAxisSpec` 校验显式 `values`、`linspace` 和 `logspace` axes。
+`ParameterGrid` 是传给 engine 的编译后表示；scan 始终是一个逻辑 Job。
 
-### `class qphase.core.SystemConfig`
+`ExecutionContext` 携带 grid、资源快照、进度 reporter、取消令牌、ArtifactStore
+和 CheckpointStore。engine 应通过 context 报告自然工作单位。
 
-表示全局系统设置。
+## Registry
 
-**字段：**
+`RegistryCenter` 按 namespace/name 发现、校验并创建插件。已安装资源包使用 entry
+point，Project 本地插件从 `qphase.toml` 声明的路径发现。
 
-*   `paths` (`PathsConfig`)：配置、插件和输出的目录路径。
-*   `auto_save_results` (`bool`)：是否自动将结果保存到磁盘。
-*   `scan_runtime` (`ScanRuntimeConfig`)：dataset 布局、chunk checkpoint 与工作站资源提示。
-*   `reporting` (`ReportingConfig`)：进度刷新、ETA 估算以及终端/session 日志策略。
-
-### 进度与错误类型
-
-engine 通过 `ExecutionContext.progress` 使用自然工作单位发送
-`ProgressEvent`。`ProgressTracker` 只估算当前 stage 的速率和剩余时间，
-`ProgressSnapshot` 是面向客户端的 DTO。QPhase 不使用异构 job 外推全局 ETA。
-
-失败的 `JobResult` 提供 `status`、`error_id`、`error_code`、
-`error_summary` 和 `error_report_path`；对应 JSON 报告保存完整 cause chain 与
-traceback。
-
-### Scan 与 Dataset 类型
-
-`ScanSpec` 和 `ScanAxisSpec` 校验显式 `values`、`linspace` 与 `logspace` axis；
-`ParameterGrid` 是传给 engine 的编译后运行时表示。`DatasetResultProtocol` 定义
-命名 axes、逻辑 shape、point view 与布局感知持久化。`ExecutionContext` 在执行期
-携带这些 scan 与运行时服务。
-
----
-
-## 注册表
-
-### `class qphase.core.RegistryCenter`
-
-管理插件的中央注册表。它支持动态发现、注册和工厂式组件实例化。
-
-**方法：**
-
-#### `register(namespace: str, name: str, target: Any)`
-注册新插件。
-
-*   `namespace`：插件的类别（例如 "backend"、"model"）。
-*   `name`：插件在其命名空间内的唯一名称。
-*   `target`：插件类或工厂函数。
-
-#### `create(full_name: str, config: Any = None, **kwargs) -> Any`
-实例化插件。
-
-*   `full_name`：插件的完整标识符（例如 "backend:numpy"）。
-*   `config`：传递给插件构造函数的配置对象。
-*   `**kwargs`：传递给构造函数的额外关键字参数。
-
-#### `list(namespace: str | None = None) -> dict`
-列出已注册的插件。
-
-*   `namespace`：如果提供，则将列表过滤到特定命名空间。
-*   **返回**：将插件名称映射到其元数据的字典。
+主要方法包括 `register()`、`register_lazy()`、`create()`、`list()` 和
+`get_plugin_schema()`。

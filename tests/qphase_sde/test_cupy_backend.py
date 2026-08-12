@@ -12,7 +12,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from qphase.backend.numpy_backend import NumpyBackend
 
 pytestmark = [pytest.mark.gpu, pytest.mark.integration]
@@ -28,12 +27,10 @@ except Exception:  # pragma: no cover
 if not _CUPY_AVAILABLE:
     pytest.skip("No CUDA device available", allow_module_level=True)
 
-from qphase.backend.cupy_backend import CuPyBackend
-from qphase_sde.engine import Engine, EngineConfig
-from qphase_sde.integrator.euler_maruyama import EulerMaruyama
-from qphase_sde.integrator.milstein import Milstein
-from qphase_sde.integrator.srk import GenericSRK
-from qphase_sde.model import FunctionalSDEModel
+from qphase.backend.cupy_backend import CuPyBackend  # noqa: E402
+from qphase_sde.engine import Engine, EngineConfig  # noqa: E402
+from qphase_sde.integrator.srk import GenericSRK  # noqa: E402
+from qphase_sde.model import FunctionalSDEModel  # noqa: E402
 
 
 def _dummy_model():
@@ -148,26 +145,24 @@ def test_cupy_vs_numpy_psd_periodogram():
 
     n_traj, n_time = 4, 256
     t = np.arange(n_time) * 0.1
-    signal = np.exp(1j * 2.0 * t)[None, :] + 0.1 * np.random.randn(
-        n_traj, n_time
-    ) + 0.1j * np.random.randn(n_traj, n_time)
+    signal = (
+        np.exp(1j * 2.0 * t)[None, :]
+        + 0.1 * np.random.randn(n_traj, n_time)
+        + 0.1j * np.random.randn(n_traj, n_time)
+    )
 
     analyzer = PsdAnalyzer(
         config=PsdAnalyzerConfig(modes=[0], kind="complex", convention="symmetric")
     )
 
     axis_np, P_np = analyzer._compute_single(signal, 0.1, backend=np_be)
-    axis_cp, P_cp = analyzer._compute_single(
-        cp_be.asarray(signal), 0.1, backend=cp_be
-    )
+    axis_cp, P_cp = analyzer._compute_single(cp_be.asarray(signal), 0.1, backend=cp_be)
 
     np.testing.assert_allclose(axis_np, axis_cp, rtol=1e-6)
     np.testing.assert_allclose(P_np, P_cp, rtol=1e-4)
 
     estimate_np = analyzer._estimate_single(signal, 0.1, backend=np_be)
-    estimate_cp = analyzer._estimate_single(
-        cp_be.asarray(signal), 0.1, backend=cp_be
-    )
+    estimate_cp = analyzer._estimate_single(cp_be.asarray(signal), 0.1, backend=cp_be)
     np.testing.assert_allclose(estimate_np.std, estimate_cp.std, rtol=1e-4)
     np.testing.assert_allclose(estimate_np.sem, estimate_cp.sem, rtol=1e-4)
 
@@ -180,9 +175,7 @@ def test_cupy_dist_matches_numpy():
     cp_be = CuPyBackend()
 
     n_traj, n_time = 4, 256
-    data = np.random.randn(n_traj, n_time, 2) + 1j * np.random.randn(
-        n_traj, n_time, 2
-    )
+    data = np.random.randn(n_traj, n_time, 2) + 1j * np.random.randn(n_traj, n_time, 2)
 
     dist_np = DistAnalyzer(
         config=DistAnalyzerConfig(modes=[0], bins=20, density=True)
@@ -201,15 +194,16 @@ def test_cupy_dist_matches_numpy():
 
 def test_cupy_polar_dist_matches_numpy():
     """CuPy polar_dist analyzer matches numpy reference."""
-    from qphase_sde.analyser.polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
+    from qphase_sde.analyser.polar_dist import (
+        PolarDistAnalyzer,
+        PolarDistAnalyzerConfig,
+    )
 
     np_be = NumpyBackend()
     cp_be = CuPyBackend()
 
     n_traj, n_time = 4, 256
-    data = np.random.randn(n_traj, n_time, 2) + 1j * np.random.randn(
-        n_traj, n_time, 2
-    )
+    data = np.random.randn(n_traj, n_time, 2) + 1j * np.random.randn(n_traj, n_time, 2)
 
     pdist_np = PolarDistAnalyzer(
         config=PolarDistAnalyzerConfig(modes=[0], bins=20, density=True)
@@ -228,7 +222,6 @@ def test_cupy_polar_dist_matches_numpy():
 def test_cupy_vdp_end_to_end_smoke():
     """End-to-end smoke test of the VDP model on CuPy with PSD analysis."""
     from qphase_sde.analyser.psd import PsdAnalyzer, PsdAnalyzerConfig
-    from qphase_sde.model import FunctionalSDEModel
 
     from models.vdp_2mode import VDP2ModeModel
 
@@ -277,12 +270,12 @@ def test_cupy_vdp_end_to_end_smoke():
     assert psd_data["psd"].shape[1] == 1  # one mode requested
 
 
-def test_cupy_scheduler_vdp_smoke(tmp_path):
+def test_cupy_scheduler_vdp_smoke(tmp_path, temp_project):
     """Run a minimal vdp_2mode job via the scheduler on CuPy."""
-    from qphase.core.config_loader import load_jobs_from_files
     from qphase.core.registry import discovery
     from qphase.core.scheduler import Scheduler
     from qphase.core.system_config import SystemConfig
+    from qphase.core.workflow import load_workflow
 
     discovery.discover_plugins()
     discovery.discover_local_plugins()
@@ -290,71 +283,69 @@ def test_cupy_scheduler_vdp_smoke(tmp_path):
     config_path = tmp_path / "cupy_vdp.yaml"
     config_path.write_text(
         """
-name: cupy_vdp_smoke
-save: true
-engine:
-  sde:
-    t0: 0.0
-    t1: 100.0
-    dt: 0.1
-    n_traj: 10
-    seed: 42
-    ic:
-      - ["800.0+0.0j", "0.0-800.0j"]
-    adaptive: false
-    save_stride: 10
-    keep_traj: true
-backend:
-  cupy:
-    float_dtype: float32
-integrator:
-  srk:
-    method: heun
-model:
-  vdp_2mode:
-    omega_a: 0.00251189
-    omega_b: 0.0
-    gamma_a: 2.0
-    gamma_b: 1.0
-    Gamma: 0.00001
-    g: 0.5
-analyser:
-  psd:
-    modes: [0]
-    kind: complex
-    find_peaks: false
+schema: qphase.workflow/2
+id: cupy_vdp_smoke
+title: CuPy VDP smoke test
+jobs:
+  - name: cupy_vdp_smoke
+    save: true
+    engine:
+      sde:
+        t0: 0.0
+        t1: 100.0
+        dt: 0.1
+        n_traj: 10
+        seed: 42
+        ic:
+          - ["800.0+0.0j", "0.0-800.0j"]
+        adaptive: false
+        save_stride: 10
+        keep_traj: true
+    backend:
+      cupy:
+        float_dtype: float32
+    integrator:
+      srk:
+        method: heun
+    model:
+      vdp_2mode:
+        omega_a: 0.00251189
+        omega_b: 0.0
+        gamma_a: 2.0
+        gamma_b: 1.0
+        Gamma: 0.00001
+        g: 0.5
+    analyser:
+      psd:
+        modes: [0]
+        kind: complex
+        find_peaks: false
 """
     )
 
-    repo = Path(__file__).parent.parent.parent
-    system_config = SystemConfig(
-        paths={
-            "output_dir": str(tmp_path / "runs"),
-            "global_file": str(repo / "configs" / "global.yaml"),
-            "config_dirs": [str(repo / "configs")],
-            "plugin_dirs": [str(repo / "models")],
-        }
-    )
+    system_config = SystemConfig()
 
-    job_list = load_jobs_from_files([config_path])
-    captured_run_dir = None
+    job_list = load_workflow(config_path)
+    captured_job_dir = None
 
-    def _on_run_dir(run_dir: Path) -> None:
-        nonlocal captured_run_dir
-        captured_run_dir = run_dir
+    def _on_job_dir(job_dir: Path) -> None:
+        nonlocal captured_job_dir
+        captured_job_dir = job_dir
 
     scheduler = Scheduler(
-        system_config=system_config, on_run_dir=_on_run_dir
+        system_config=system_config,
+        project=temp_project,
+        on_job_dir=_on_job_dir,
     )
     results = scheduler.run(job_list)
 
     assert len(results) == 1
     assert results[0].success
-    assert captured_run_dir is not None
+    assert captured_job_dir is not None
 
     from qphase_sde.result import SDEResult
 
-    result_path = captured_run_dir / "cupy_vdp_smoke.npz"
+    result_path = captured_job_dir / "cupy_vdp_smoke.npz"
     assert result_path.exists()
     result = SDEResult.load(result_path)
     assert result.trajectory is not None

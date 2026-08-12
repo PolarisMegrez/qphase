@@ -1,0 +1,47 @@
+schema: qphase.workflow/2
+id: kerr_2mode_cam
+title: Kerr 2Mode Cam
+collection: kerr_2mode
+tags:
+- kerr_2mode
+jobs:
+- name: kerr_2mode_cam
+  save: true
+
+  scan:
+    combine: cartesian
+    axes:
+      omega_b:
+        target: model.kerr_2mode.omega_b
+        logspace: {start: -5, stop: -1, num: 121}
+      gamma_b:
+        target: model.kerr_2mode.gamma_b
+        values: [1.042848239, 2.220148004]
+
+  engine:
+    cam: {}
+
+  plugins:
+    backend:
+      numpy:
+        float_dtype: float64
+    model:
+      kerr_2mode:
+        omega_a: 0.0
+        omega_b: 0.00000001
+        gamma_a: 1.0
+        gamma_b: 1.042848239
+        chi: 0.0001
+        g: 0.75
+    cam_solver:
+      multistability:
+        n_guesses: 50
+        guess_bounds: auto
+        distance_tolerance: 3.0
+        retry_guesses: 200
+        refine_guesses: 50
+    cam_postprocessor:
+      rayleigh_frequency: {}
+      petermann_spectrum: {}
+      jacobian_spectrum: {}
+      physicality: {}

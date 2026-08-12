@@ -3,23 +3,31 @@
 from __future__ import annotations
 
 import importlib.resources as resources
-from pathlib import Path
+from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from qphase.core.errors import QPhaseError
-from qphase.core.progress import ProgressSnapshot
-from qphase.service import ConfigService, RegistryService, SchedulerService
+from qphase.core.system_config import load_system_config
+from qphase.service import (
+    ConfigService,
+    ExecutionManager,
+    ProjectService,
+    RegistryService,
+    SchedulerService,
+)
+
+from .application import ApplicationContext
 
 
-class JobSelectionRequest(BaseModel):
-    jobs: list[str] = Field(default_factory=list)
+class WorkflowSelectionRequest(BaseModel):
+    workflow: str = Field(min_length=1)
 
 
-class RunRequest(JobSelectionRequest):
+class ExecutionRequest(WorkflowSelectionRequest):
     resume_from: str | None = None
 
 
@@ -27,8 +35,21 @@ class JobValidationRequest(BaseModel):
     job: dict[str, Any]
 
 
-class GlobalConfigRequest(BaseModel):
+class ProjectDefaultsRequest(BaseModel):
     data: dict[str, Any]
+
+
+class SessionUpdateRequest(BaseModel):
+    alias: str | None = None
+    note: str | None = None
+
+
+class WorkflowDocumentRequest(BaseModel):
+    content: str
+
+
+class PendingJobRevisionRequest(BaseModel):
+    job: dict[str, Any]
 
 
 def create_app(
@@ -36,14 +57,59 @@ def create_app(
     config_service: ConfigService | None = None,
     registry_service: RegistryService | None = None,
     scheduler_service: SchedulerService | None = None,
+    application_context: ApplicationContext | None = None,
 ) -> FastAPI:
     """Create a local FastAPI app backed by QPhase services."""
-    config = config_service or ConfigService()
-    registry = registry_service or RegistryService()
-    scheduler = scheduler_service or SchedulerService(config.load_system_config())
+    owned_context = application_context is None
+    if application_context is not None:
+        context = application_context
+    elif any((config_service, registry_service, scheduler_service)):
+        system = (
+            config_service.load_system_config()
+            if config_service is not None
+            else scheduler_service.system_config
+            if scheduler_service is not None
+            else load_system_config()
+        )
+        project = (
+            scheduler_service.project
+            if scheduler_service
+            else application_context.project
+            if application_context
+            else None
+        )
+        if project is None:
+            from qphase.core.project import ProjectContext
 
-    app = FastAPI(title="QPhase Local GUI API", version="0.1.0")
-    app.state.run_events = {}
+            project = ProjectContext.discover()
+        config = config_service or ConfigService(project, system)
+        registry = registry_service or RegistryService(
+            system_config=system, project=project
+        )
+        scheduler = scheduler_service or SchedulerService(system, project=project)
+        context = ApplicationContext(
+            project,
+            system,
+            config,
+            registry,
+            scheduler,
+            ExecutionManager(scheduler),
+            ProjectService(project),
+        )
+    else:
+        context = ApplicationContext.create()
+    config = context.config
+    registry = context.registry
+    scheduler = context.scheduler
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        yield
+        if owned_context:
+            context.close()
+
+    app = FastAPI(title="QPhase Local GUI API", version="2.0.0", lifespan=lifespan)
+    app.state.context = context
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
@@ -53,17 +119,44 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/jobs")
-    def list_jobs() -> dict[str, list[str]]:
-        return {"jobs": scheduler.list_jobs()}
+    @app.get("/project")
+    def get_project() -> dict[str, Any]:
+        project = context.project
+        return {
+            "schema": project.manifest.schema_,
+            "project_id": project.project_id,
+            "name": project.manifest.name,
+            "root": str(project.root),
+            "paths": {
+                "workflows": str(project.workflow_root),
+                "defaults": str(project.defaults_path),
+                "plugins": [str(path) for path in project.plugin_dirs],
+                "sessions": str(project.session_root),
+            },
+        }
 
-    @app.get("/jobs/{name}")
-    def get_job(name: str) -> dict[str, Any]:
+    @app.get("/workflows")
+    def list_workflows(
+        collection: str | None = None,
+        tag: str | None = None,
+        query: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "workflows": [
+                item.__dict__
+                for item in scheduler.catalog.search(
+                    collection=collection, tag=tag, query=query
+                )
+            ]
+        }
+
+    @app.get("/workflows/{workflow_id}")
+    def get_workflow(workflow_id: str) -> dict[str, Any]:
         try:
-            job_list = scheduler.load_jobs([name])
+            workflow = scheduler.load_workflow(workflow_id)
         except Exception as exc:
             raise _http_error(exc, status_code=404) from exc
-        return job_list.model_dump(mode="json")
+        return workflow.model_dump(mode="json", by_alias=True)
 
     @app.post("/jobs/validate")
     def validate_job(request: JobValidationRequest) -> dict[str, Any]:
@@ -76,58 +169,78 @@ def create_app(
         }
 
     @app.post("/plans")
-    def build_plan(request: JobSelectionRequest) -> dict[str, Any]:
-        if not request.jobs:
-            raise HTTPException(status_code=400, detail="At least one job is required")
+    def build_plan(request: WorkflowSelectionRequest) -> dict[str, Any]:
         try:
-            job_list = scheduler.load_jobs(request.jobs)
-            plan = scheduler.build_plan(job_list)
+            workflow = scheduler.load_workflow(request.workflow)
+            plan = scheduler.build_plan(workflow)
         except Exception as exc:
             raise _http_error(exc) from exc
         return plan.model_dump(mode="json")
 
-    @app.post("/runs")
-    def start_run(request: RunRequest) -> dict[str, Any]:
-        if not request.jobs:
-            raise HTTPException(status_code=400, detail="At least one job is required")
-        events: list[dict[str, Any]] = []
+    @app.post("/executions", status_code=202)
+    def submit_execution(request: ExecutionRequest) -> dict[str, Any]:
         try:
-            job_list = scheduler.load_jobs(request.jobs)
-            results = scheduler.run(
-                job_list,
-                progress_callback=_record_progress(events),
-                resume_from=request.resume_from,
+            return context.executions.submit(
+                request.workflow, resume_from=request.resume_from
+            ).model_dump(mode="json")
+        except Exception as exc:
+            raise _http_error(exc, status_code=429) from exc
+
+    @app.get("/executions")
+    def list_executions() -> dict[str, Any]:
+        return {
+            "executions": [
+                item.model_dump(mode="json")
+                for item in context.executions.list_executions()
+            ]
+        }
+
+    @app.get("/executions/{execution_id}")
+    def get_execution(execution_id: str) -> dict[str, Any]:
+        try:
+            return context.executions.get(execution_id).model_dump(mode="json")
+        except Exception as exc:
+            raise _http_error(exc, status_code=404) from exc
+
+    @app.get("/executions/{execution_id}/events")
+    def get_execution_events(execution_id: str, after_seq: int = 0) -> dict[str, Any]:
+        try:
+            events = context.executions.events(execution_id, after=after_seq)
+        except Exception as exc:
+            raise _http_error(exc, status_code=404) from exc
+        return {"events": [event.model_dump(mode="json") for event in events]}
+
+    @app.post("/executions/{execution_id}/cancel")
+    def cancel_execution(execution_id: str) -> dict[str, Any]:
+        return _execution_action(context.executions.cancel, execution_id)
+
+    @app.post("/executions/{execution_id}/pause")
+    def pause_execution(execution_id: str) -> dict[str, Any]:
+        return _execution_action(context.executions.request_pause, execution_id)
+
+    @app.post("/executions/{execution_id}/resume")
+    def resume_execution(execution_id: str) -> dict[str, Any]:
+        return _execution_action(context.executions.resume, execution_id)
+
+    @app.post("/executions/{execution_id}/jobs/{job_name}/cancel")
+    def cancel_execution_job(execution_id: str, job_name: str) -> dict[str, Any]:
+        try:
+            return context.executions.cancel_job(execution_id, job_name).model_dump(
+                mode="json"
             )
         except Exception as exc:
             raise _http_error(exc) from exc
-        if scheduler.last_run_handle and scheduler.last_run_handle.session_id:
-            app.state.run_events[scheduler.last_run_handle.session_id] = events
-        return {
-            "run": (
-                scheduler.last_run_handle.model_dump(mode="json")
-                if scheduler.last_run_handle is not None
-                else None
-            ),
-            "results": [
-                {
-                    "job_index": result.job_index,
-                    "job_name": result.job_name,
-                    "run_dir": str(result.run_dir),
-                    "run_id": result.run_id,
-                    "success": result.success,
-                    "status": result.status,
-                    "error_summary": result.error_summary,
-                    "error_id": result.error_id,
-                    "error_code": result.error_code,
-                    "error_report_path": result.error_report_path,
-                }
-                for result in results
-            ],
-        }
 
-    @app.get("/runs/{session_id}/events")
-    def list_run_events(session_id: str) -> dict[str, Any]:
-        return {"events": app.state.run_events.get(session_id, [])}
+    @app.put("/executions/{execution_id}/jobs/{job_name}")
+    def revise_pending_job(
+        execution_id: str, job_name: str, request: PendingJobRevisionRequest
+    ) -> dict[str, Any]:
+        try:
+            return context.executions.revise_pending_job(
+                execution_id, job_name, request.job
+            ).model_dump(mode="json")
+        except Exception as exc:
+            raise _http_error(exc, status_code=409) from exc
 
     @app.get("/plugins")
     def list_plugins(namespace: str | None = None) -> dict[str, Any]:
@@ -141,53 +254,133 @@ def create_app(
             raise HTTPException(status_code=404, detail="Plugin schema not found")
         return schema
 
-    @app.get("/config/global")
-    def get_global_config() -> dict[str, Any]:
-        return config.load_global_config()
+    @app.get("/config/project-defaults")
+    def get_project_defaults() -> dict[str, Any]:
+        return config.load_project_defaults()
 
-    @app.put("/config/global")
-    def put_global_config(request: GlobalConfigRequest) -> dict[str, str]:
-        config.save_global_config(request.data)
+    @app.put("/config/project-defaults")
+    def put_project_defaults(request: ProjectDefaultsRequest) -> dict[str, str]:
+        config.save_project_defaults(request.data)
         return {"status": "saved"}
 
-    @app.get("/runs/{session_id}")
-    def get_run(session_id: str) -> dict[str, Any]:
-        session_dir = _managed_session_dir(scheduler, session_id)
-        try:
-            return scheduler.load_session_manifest(session_dir)
-        except Exception as exc:
-            raise _http_error(exc, status_code=404) from exc
-
-    @app.get("/runs/{session_id}/artifacts")
-    def list_run_artifacts(session_id: str) -> dict[str, Any]:
-        session_dir = _managed_session_dir(scheduler, session_id)
-        if not session_dir.exists():
-            raise HTTPException(status_code=404, detail="Run session not found")
-        artifacts = scheduler.list_artifacts(session_dir)
+    @app.get("/sessions")
+    def list_sessions() -> dict[str, Any]:
         return {
-            "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts]
+            "sessions": [
+                item.model_dump(mode="json")
+                for item in context.project_service.list_sessions()
+            ]
         }
 
-    @app.get("/runs/{session_id}/artifact")
-    def get_artifact(session_id: str, path: str) -> dict[str, Any]:
-        session_dir = _managed_session_dir(scheduler, session_id)
+    @app.get("/sessions/{session_id}")
+    def get_session(session_id: str) -> dict[str, Any]:
         try:
-            return scheduler.load_artifact(path, session_dir=session_dir)
-        except PermissionError as exc:
-            raise _http_error(exc, status_code=403) from exc
+            return context.project_service.get_session(session_id).model_dump(
+                mode="json"
+            )
         except Exception as exc:
             raise _http_error(exc, status_code=404) from exc
 
+    @app.get("/sessions/{session_id}/events")
+    def get_session_events(session_id: str, after_seq: int = 0) -> dict[str, Any]:
+        try:
+            return {
+                "events": context.project_service.session_events(
+                    session_id, after=after_seq
+                )
+            }
+        except Exception as exc:
+            raise _http_error(exc, status_code=404) from exc
+
+    @app.patch("/sessions/{session_id}")
+    def update_session(
+        session_id: str, request: SessionUpdateRequest
+    ) -> dict[str, Any]:
+        try:
+            fields = request.model_dump(exclude_unset=True)
+            return context.project_service.update_session(
+                session_id, **fields
+            ).model_dump(mode="json")
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @app.delete("/sessions/{session_id}", status_code=204)
+    def delete_session(session_id: str) -> Response:
+        try:
+            context.project_service.trash_session(session_id)
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return Response(status_code=204)
+
+    @app.post("/sessions/purge")
+    def purge_sessions() -> dict[str, int]:
+        return {"purged": context.project_service.purge_trash()}
+
+    @app.get("/sessions/{session_id}/artifacts")
+    def list_session_artifacts(session_id: str) -> dict[str, Any]:
+        root = context.project_service.session_dir(session_id)
+        return {
+            "artifacts": [
+                artifact.model_dump(mode="json")
+                for artifact in scheduler.list_artifacts(root)
+            ]
+        }
+
+    @app.get("/sessions/{session_id}/artifacts/{artifact_id}")
+    def get_session_artifact(session_id: str, artifact_id: str) -> dict[str, Any]:
+        root = context.project_service.session_dir(session_id)
+        try:
+            return scheduler.load_artifact_by_id(artifact_id, session_dir=root)
+        except Exception as exc:
+            raise _http_error(exc, status_code=404) from exc
+
+    @app.get("/workflow-docs")
+    def list_workflow_documents() -> dict[str, Any]:
+        return {
+            "documents": [
+                document.model_dump(mode="json")
+                for document in context.project_service.list_workflow_documents()
+            ]
+        }
+
+    @app.get("/workflow-docs/{doc_id:path}")
+    def get_workflow_document(doc_id: str) -> dict[str, Any]:
+        try:
+            return context.project_service.get_workflow_document(doc_id).model_dump(
+                mode="json"
+            )
+        except Exception as exc:
+            raise _http_error(exc, status_code=404) from exc
+
+    @app.put("/workflow-docs/{doc_id:path}")
+    def put_workflow_document(
+        doc_id: str,
+        request: WorkflowDocumentRequest,
+        if_match: str | None = Header(default=None, alias="If-Match"),
+    ) -> dict[str, Any]:
+        try:
+            return context.project_service.put_workflow_document(
+                doc_id, request.content, revision=if_match
+            ).model_dump(mode="json")
+        except RuntimeError as exc:
+            raise _http_error(exc, status_code=409) from exc
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @app.delete("/workflow-docs/{doc_id:path}", status_code=204)
+    def delete_workflow_document(
+        doc_id: str,
+        if_match: str = Header(alias="If-Match"),
+    ) -> Response:
+        try:
+            context.project_service.delete_workflow_document(doc_id, revision=if_match)
+        except RuntimeError as exc:
+            raise _http_error(exc, status_code=409) from exc
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return Response(status_code=204)
+
     return app
-
-
-def _managed_session_dir(scheduler: SchedulerService, session_id: str) -> Path:
-    """Resolve one direct child of the configured run-output directory."""
-    output_root = Path(scheduler.system_config.paths.output_dir).expanduser().resolve()
-    session_dir = (output_root / session_id).resolve()
-    if session_dir.parent != output_root:
-        raise HTTPException(status_code=403, detail="Invalid run session id")
-    return session_dir
 
 
 def _http_error(exc: Exception, status_code: int = 400) -> HTTPException:
@@ -196,11 +389,11 @@ def _http_error(exc: Exception, status_code: int = 400) -> HTTPException:
     return HTTPException(status_code=status_code, detail=str(exc))
 
 
-def _record_progress(events: list[dict[str, Any]]):
-    def _on_progress(update: ProgressSnapshot) -> None:
-        events.append(update.to_dict())
-
-    return _on_progress
+def _execution_action(action: Any, execution_id: str) -> dict[str, Any]:
+    try:
+        return action(execution_id).model_dump(mode="json")
+    except Exception as exc:
+        raise _http_error(exc, status_code=409) from exc
 
 
 def _dashboard_html() -> str:

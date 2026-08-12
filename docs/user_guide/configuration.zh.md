@@ -1,74 +1,92 @@
 ---
-description: 任务配置
+description: Project、Workflow、Job 与系统配置
 ---
 
-# 任务配置
+# Workflow 配置
 
-QPhase 使用经过校验的 YAML 配置描述可复现的逻辑任务。一个 job 选择一个
-engine，配置其插件，并可选声明参数扫描或读取上游结果。
+QPhase 将可迁移的研究意图与机器策略分开：
 
-## 配置层级
+1. 插件 schema 默认值由已安装插件定义；
+2. Project 插件默认值位于 `qphase.toml` 的 `paths.defaults`，通常为
+   `configs/defaults.yaml`；
+3. 版本化 Workflow 文档定义元数据与逻辑 Job；
+4. `job.system` 可以为单个 Job 覆盖同一套 `SystemConfig` schema。
 
-配置按以下顺序合并，后者优先级更高：
+后者优先级更高。Project 路径只允许出现在 `qphase.toml` 中。
 
-1. 核心与插件 schema 默认值。
-2. `configs/global.yaml` 中的项目默认值。
-3. job YAML。
-4. `job.system`，使用相同的 `SystemConfig` schema 覆盖当前 job 的运行策略。
+## Project Manifest
 
-框架运行策略只属于 `SystemConfig`，不会重复设计为 job 顶层快捷字段。
+```toml
+schema = "qphase.project/2"
+project_id = "my-research"
+name = "My Research"
 
-## Job 结构
+[paths]
+workflows = "configs/workflows"
+defaults = "configs/defaults.yaml"
+plugins = ["models"]
+sessions = "runs"
+```
+
+所有路径都是相对于 Project 根目录的可迁移路径，绝对路径和 `..` 会被拒绝。
+Project 发现顺序为 `--project`、`QPHASE_PROJECT`、从当前目录向上查找。
+
+## Workflow 文档
 
 ```yaml
-name: vdp_cam
-save: true
+schema: qphase.workflow/2
+id: vdp_cam
+title: VDP CAM scan
+description: Optional human-readable purpose
+collection: vdp_2mode
+tags: [cam, multistability]
 
-engine:
-  cam: {}
-
-plugins:
-  backend:
-    numpy: {float_dtype: float64}
-  model:
-    vdp_2mode:
-      omega_a: 0.0
-      omega_b: 0.0
-      gamma_a: 2.0
-      gamma_b: 0.5
-      Gamma: 0.0001
-      g: 0.5
-  cam_solver:
-    multistability: {n_guesses: 50, guess_bounds: auto}
+jobs:
+  - name: solve
+    save: true
+    engine:
+      cam: {}
+    backend:
+      numpy: {float_dtype: float64}
+    model:
+      vdp_2mode:
+        omega_a: 0.0
+        omega_b: 0.0
+        gamma_a: 2.0
+        gamma_b: 0.5
+        Gamma: 0.0001
+        g: 0.5
+    cam_solver:
+      multistability: {n_guesses: 50, guess_bounds: auto}
 ```
+
+`schema`、`id`、`title` 与非空 `jobs` 必填。Workflow ID 在 Project 内必须
+唯一，移动文件时不得改变。QPhase 2 明确拒绝没有 `qphase.workflow/2` 包装的旧
+顶层 Job 列表。
+
+Collection 与 Tag 是可版本控制的元数据。目录可以按 Collection 分类，但目录不是
+Workflow 身份。
+
+## 逻辑 Job
 
 | 字段 | 含义 |
 | --- | --- |
-| `name` | 唯一逻辑任务名称。 |
-| `engine` | 恰好一个 engine 配置。 |
-| `plugins` | engine 所需的命名空间插件配置。 |
-| `params` | 可选的 engine 专用参数。 |
-| `scan` | 可选的显式 `ScanSpec`。 |
-| `input` | 可选的结构化上游输入。 |
-| `save` | `true`、`false` 或输出基础名称。 |
-| `system` | 可选的 `SystemConfig` 同 schema 覆盖。 |
+| `name` | Workflow 内唯一的 Job 名称。 |
+| `engine` | 恰好一个 engine 及其配置。 |
+| 插件命名空间 | `backend`、`model`、`integrator`、`analyser` 等插件配置。 |
+| `params` | 可选 engine 参数。 |
+| `scan` | 可选显式 `ScanSpec`。 |
+| `input` | 可选结构化上游数据输入。 |
+| `depends_on` | 对其他 Job 的显式控制依赖。 |
+| `save` | `true`、`false` 或 Artifact 基础名称。 |
+| `system` | 可选的单 Job `SystemConfig` 覆盖。 |
 
-部分现有资源包仍兼容 job 顶层插件命名空间。新资源包应优先使用显式
-`plugins` 映射。
-
-项目范围的数值策略应写入 `configs/global.yaml`。例如，CAM multistability job
-从 `cam_solver.multistability` 继承随机种子、root 方法、容差、Jacobian 策略、
-worker 请求和 seed-discovery 默认值。job 通常只覆盖 `n_guesses`、模型相关的
-`guess_bounds`/`initial_guesses`、`distance_tolerance` 以及 retry/refinement 预算。
-已有可靠显式种子的局部扫描还可以关闭 `discover_seeds`。global 插件默认值按 registry
-namespace 合并，因此新增资源包不需要在 scheduler 中增加硬编码分支。
+项目范围数值默认值写入 `configs/defaults.yaml`。仅存在默认值不会激活可选插件；
+Workflow 必须显式选择对应命名空间。
 
 ## 参数扫描
 
-扫描必须显式声明。插件配置中的列表始终是插件本身的普通值，不再被解释为扫描。
-已知标量模型参数若使用旧的列表扫描语法，配置加载器会给出迁移错误。
-
-每条轴包含显示名称、插件目标路径和一种数值生成方式：
+插件配置中的列表始终是字面值。扫描必须使用 `ScanSpec`：
 
 ```yaml
 scan:
@@ -82,90 +100,31 @@ scan:
       linspace: {start: 0.2, stop: 1.1, num: 101}
 ```
 
-| 生成方式 | 含义 |
-| --- | --- |
-| `values: [...]` | 显式值列表。 |
-| `linspace: {start, stop, num, endpoint}` | 线性间隔；`endpoint` 默认 `true`。 |
-| `logspace: {start, stop, num, endpoint, base}` | `base` 的指数；`base` 默认 `10`。 |
+每个轴只能使用 `values`、`linspace` 或 `logspace` 之一。`cartesian` 按 YAML
+声明顺序生成维度；`zipped` 要求各轴等长并生成一个 `point` 维度。
 
-`combine: cartesian` 按 YAML 轴声明顺序产生结果维度，上例 shape 为
-`(31, 101)`。`combine: zipped` 要求所有轴长度相等，并只产生一个 `point`
-维度。
+扫描仍然是一个逻辑 Job。engine 接收 `ParameterGrid` 后自行选择逐点、tile、融合或
+GPU 策略；core 不为每个参数点创建 Job 或 Session。
 
-扫描不会产生 scheduler 子任务。engine 收到一个运行时 `ParameterGrid`，自行选择
-逐点、tile、融合或 GPU 执行策略。session manifest 和输出树中仍然只有一个逻辑
-job 条目与一个目录。
-
-## 上游输入
-
-完整数据集输入写为：
+## 数据流
 
 ```yaml
 input:
-  from: vdp_2mode_cayley_sim
+  from: simulate
   mode: dataset
 ```
 
-`mode: dataset` 只调用一次下游 engine，并传入完整结果。`mode: map` 在同一个逻辑
-下游 job 内惰性处理选中的 point/group view：
-
-```yaml
-input:
-  from: source_scan
-  mode: map
-  select: {omega_a: [0.01, 0.1]}
-  group_by: [gamma_b]
-```
-
-`select` 按命名轴值筛选；`group_by` 将指定轴上的 view 组合为
-`AggregateResult`。map 不建立参数点目录。字符串形式的 `input` 和旧
-`aggregate_input` 字段会产生明确迁移错误。
+`dataset` 一次传入完整上游结果；`map` 在一个下游 Job 内惰性产生 point/group
+view，并可使用 `select` 与 `group_by`。字符串 `input` 与 `aggregate_input` 已删除。
 
 ## SystemConfig
 
-内置默认值位于 `qphase.core/system.yaml`。用户级覆盖可位于
-`~/.qphase/config.yaml`；读取配置不会自动创建该文件。通过
-`qphase config set --system` 写入时，只持久化相对内置/机器默认值发生变化的字段。
-`QPHASE_SYSTEM_CONFIG` 或显式加载路径可提供更高优先级的文件。解析顺序为：包内
-默认值、可选机器策略、用户覆盖、环境变量指定文件、显式加载路径。
+`SystemConfig` 是与 Project 无关的机器策略，按以下顺序合并：包内默认值、可选站点
+策略、`~/.qphase/config.yaml` 稀疏用户覆盖、`QPHASE_SYSTEM_CONFIG`、显式加载
+路径。
 
-```yaml
-auto_save_results: true
+它只包含结果自动保存、扫描 Artifact 布局、chunk checkpoint、资源提示、进度与
+日志策略，不包含 Workflow、插件或 Project 路径。`qphase config show --system`
+显示机器策略；`qphase config show` 显示 Project 插件默认值。
 
-reporting:
-  progress:
-    refresh_interval: 0.5
-    non_tty_milestone_percent: 10.0
-    eta_warmup_seconds: 2.0
-    eta_min_samples: 3
-    eta_smoothing: 0.25
-  logging:
-    session_file: true
-    filename: qphase.log
-    file_level: DEBUG
-    console_level: WARNING
-    format: text
-    capture_warnings: true
-
-scan_runtime:
-  storage_layout: auto
-  auto_shard_threshold_mib: 512
-  shard_target_mib: 128
-  checkpoint:
-    enabled: false
-    interval_chunks: 1
-    keep_on_success: false
-  resources:
-    cpu_worker_limit: null
-    memory_limit_mib: null
-    gpu_device: null
-    gpu_memory_fraction: null
-```
-
-`storage_layout` 可取 `auto`、`single`、`sharded` 或 `per_point`。`auto` 默认在
-dataset 超过 512 MiB 时分片。资源字段由 core 采集并通过 `ExecutionContext`
-传给 engine；每个逻辑 job 还会单独采样 CPU、主机内存和可选 backend device 的
-动态事实。scheduler 不据此进行多 job 资源调度。
-
-checkpoint 只覆盖已完成的 scan chunk，不覆盖 SDE 单条轨迹内部的时间步。
-resume 会校验配置、插件、backend 与 dtype，只有兼容的 checkpoint 才会被接受。
+checkpoint 只覆盖已完成的 scan chunk，不覆盖 SDE 内部时间步。

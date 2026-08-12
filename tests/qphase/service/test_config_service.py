@@ -34,14 +34,14 @@ def test_config_service_reports_registry_validation_issue(temp_workspace):
     assert issues[0].path == "engine.missing"
 
 
-def test_config_service_previews_dynamic_global_plugin_defaults(temp_workspace):
+def test_config_service_previews_dynamic_project_plugin_defaults(temp_workspace):
     registry.register(
         namespace="research_solver",
         name="search",
         builder=DummyPlugin,
         overwrite=True,
     )
-    global_file = temp_workspace / "configs" / "global.yaml"
+    global_file = temp_workspace / "configs" / "defaults.yaml"
     global_file.write_text(
         "research_solver:\n  search:\n    seed: 42\n",
         encoding="utf-8",

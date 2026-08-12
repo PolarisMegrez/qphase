@@ -14,14 +14,14 @@ from .protocols import ResultProtocol
 class ArtifactStore:
     """Save logical results and describe their physical representation."""
 
-    def __init__(self, run_dir: Path, config: Any) -> None:
-        self.run_dir = run_dir
+    def __init__(self, job_dir: Path, config: Any) -> None:
+        self.job_dir = job_dir
         self.config = config
 
     def save_result(self, result: ResultProtocol, name: str) -> Path:
-        before = set(self.run_dir.rglob("*"))
+        before = set(self.job_dir.rglob("*"))
         layout = self._layout(result)
-        base = self.run_dir / name
+        base = self.job_dir / name
         if isinstance(result, DatasetResultProtocol):
             report = result.save_dataset(
                 base,
@@ -33,7 +33,7 @@ class ArtifactStore:
             files = tuple(
                 sorted(
                     path
-                    for path in self.run_dir.rglob("*")
+                    for path in self.job_dir.rglob("*")
                     if path.is_file() and path not in before
                 )
             )
@@ -41,7 +41,7 @@ class ArtifactStore:
         additional = tuple(
             sorted(
                 path
-                for path in self.run_dir.rglob("*")
+                for path in self.job_dir.rglob("*")
                 if path.is_file()
                 and path.name not in {"artifact_manifest.json", "config_snapshot.json"}
                 and path not in report.files
@@ -54,17 +54,17 @@ class ArtifactStore:
                 loader=report.loader,
                 schema_version=report.schema_version,
             )
-        manifest_path = self.run_dir / "artifact_manifest.json"
+        manifest_path = self.job_dir / "artifact_manifest.json"
         payload = {
-            "schema_version": "1.0",
+            "schema_version": "2.0",
             "result_type": f"{type(result).__module__}:{type(result).__qualname__}",
             "result_schema": getattr(result, "schema_version", "1.0"),
             "axes": _jsonable(getattr(result, "axes", {})),
             "shape": list(getattr(result, "shape", ())),
             "layout": report.layout,
             "files": [
-                str(path.relative_to(self.run_dir))
-                if path.is_relative_to(self.run_dir)
+                str(path.relative_to(self.job_dir))
+                if path.is_relative_to(self.job_dir)
                 else str(path)
                 for path in report.files
             ],

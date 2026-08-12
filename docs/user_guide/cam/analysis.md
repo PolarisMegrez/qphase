@@ -8,9 +8,10 @@ The workspace-only `qphase_cam` package solves the steady-state matrix equation
 
 Use `engine.cam` with one backend, one CAM-capable model, one `cam_solver`, and
 zero or more `cam_postprocessor` plugins. Complete examples are available in
-`configs/jobs/vdp_2mode_cam.yaml`, `kerr_2mode_cam.yaml`,
-`crosskerr_2mode_cam.yaml`, and `kerr_3mode_cam.yaml`. Higher-order equilibrium
-search is demonstrated by `configs/jobs/vdp_2mode_bifurcation.yaml`.
+`configs/workflows/vdp_2mode/vdp_2mode_cam.yaml`,
+`configs/workflows/kerr_2mode/kerr_2mode_cam.yaml`, and the corresponding model
+Collections. Higher-order equilibrium search is demonstrated by
+`configs/workflows/vdp_2mode/vdp_2mode_bifurcation.yaml`.
 
 ## Parameter Scans
 
@@ -304,7 +305,7 @@ An outer bifurcation scan returns `CAMBifurcationScanResult`. It stores named
 case axes, one flattened candidate table, and `candidate_offsets` so zero- and
 multi-candidate cases remain distinguishable. One NPZ and companion `cases`,
 `candidates`, and optional `branches` CSV files are written for the logical job;
-no per-case run directories are created.
+no per-case directories or Session manifest entries are created.
 
 Large bifurcation campaigns may isolate ordinary per-case numerical failures:
 

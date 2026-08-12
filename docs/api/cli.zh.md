@@ -1,243 +1,90 @@
 ---
-description: CLI 参考
+description: QPhase 2 命令行接口
 ---
 
 # CLI 参考
 
-`qphase` 命令行界面是与 QPhase 框架交互的主要工具。它用于项目初始化、任务执行、插件管理和配置生成。
-
-## 全局选项
-
-所有命令都支持以下全局标志：
-
-*   `--help`：显示帮助信息并退出。
-
----
-
-## 项目管理
-
-### `qphase init`
-
-在当前目录初始化一个新的 QPhase 项目。
+CLI 是 QPhase 最优先且完整的自动化接口。需要 Project 的命令可使用全局选项：
 
 ```bash
-qphase init
+qphase --project <project-root-or-qphase.toml> <command>
 ```
 
-**功能：**
+未指定时，QPhase 依次检查 `QPHASE_PROJECT` 并向上查找 `qphase.toml`。
 
-1.  创建标准目录结构：
-    *   `configs/`：配置文件。
-    *   `plugins/`：本地用户插件目录。
-    *   `runs/`：仿真结果输出目录。
-2.  生成默认的 `configs/global.yaml` 文件。
-
----
-
-## 仿真执行
-
-### `qphase run`
-
-执行在 `configs/jobs/` 目录中定义的仿真任务。
+## Project
 
 ```bash
-qphase run [JOB_NAME] [OPTIONS]
+qphase project init [PATH] [--name TEXT] [--force]
+qphase project show
 ```
 
-*   **参数**：
-    *   `JOB_NAME`：位于 `configs/jobs/` 中的任务配置文件名（不含扩展名）。
-*   **选项**：
-    *   `--list`：列出所有可用的任务配置并退出。
-    *   `--verbose` / `-v`：启用详细调试日志。
+`init` 写入 `qphase.toml`，建立 Workflow、插件和 Session 目录，并生成 Project
+插件默认值。`show` 显示已解析的 Project ID 与各路径。
 
-**示例**：
+## Workflow 目录
 
 ```bash
-# 执行单个任务
-qphase run vdp_sde
-
-# 列出可用任务
-qphase run --list
-
-# 使用详细日志运行
-qphase run --verbose vdp_sde
+qphase workflow list [--collection NAME] [--tag TAG] [--query TEXT] [--json]
+qphase workflow show WORKFLOW_ID
+qphase workflow path WORKFLOW_ID
 ```
 
----
+目录会递归扫描 Project Workflow 根目录，并可按 Collection、Tag 或 ID/标题/路径
+文本筛选。正常调用使用稳定 Workflow ID，而不是文件名；重复 ID 会被拒绝。
 
-## 结果后处理
-
-后处理不再通过独立 CLI 命令提供，而是表达为 scheduler 工作流。使用 `engine.sde` 的 `mode: analyze` 与 `analyser.lorentz_fitter` 插件。
-
-```yaml
-- name: sim
-  save: true
-  scan:
-    axes:
-      omega_a:
-        target: model.kerr_2mode.omega_a
-        values: [0.9, 1.1]
-  engine:
-    sde: { ... }
-  model:
-    kerr_2mode:
-      omega_a: 0.9
-      omega_b: 1.0
-      chi: 0.01
-      gamma_a: 0.1
-      gamma_b: 0.1
-      g: 0.1
-  analyser:
-    psd:
-      modes: [0]
-      kind: complex
-
-- name: fit
-  input:
-    from: sim
-    mode: dataset
-  engine:
-    sde:
-      mode: analyze
-  analyser:
-    lorentz_fitter:
-      scan_param: omega_a
-      mode: 0
-```
-
-执行方式：
+## 执行
 
 ```bash
-qphase run my_workflow
+qphase run WORKFLOW [OPTIONS]
 ```
 
-`fit` job 会在其 run 目录中生成 `fit_results.csv` 和 `psd_merged.csv`。NPZ/PKL distribution bundle 会通过 `qphase.core.aggregation` 写入 `__schema_version__` 元数据。
+`WORKFLOW` 是稳定 ID 或相对于 Workflow 根目录的 YAML 路径。
 
----
+| 选项 | 用途 |
+| --- | --- |
+| `--plan` | 校验并显示逻辑 Job、扫描摘要和依赖边，不创建 Session。 |
+| `--dry-run` | 与 plan 相同的预检行为。 |
+| `--resume-from PATH` | 从兼容的中断 Session 恢复。 |
+| `--verbose`, `-v` | 显示详细终端诊断。 |
+| `--log-file PATH` | 额外写入指定日志文件。 |
+| `--log-json` | 使用 JSON 文件日志。 |
+| `--suppress-warnings` | 抑制捕获的 warning。 |
+| `--json` | 输出机器可读的计划或完成摘要。 |
 
-## 插件管理
+成功执行会在 Project Session 根目录下创建一个 Session 并打印其路径。CLI 正常
+输出保持简洁，完整诊断写入 Session 日志。
 
-### `qphase list`
-
-列出当前环境中所有已注册的插件。
+## 插件
 
 ```bash
-qphase list [OPTIONS]
+qphase list [--category NAME] [--tree] [--parent PATH]
+qphase show model.vdp_2mode [backend.numpy ...]
+qphase template model.vdp_2mode [OPTIONS]
 ```
 
-*   **选项**：
-    *   `--category` / `-c`：按类别过滤插件（逗号分隔）。
-    *   `--tree`：展开插件声明的子插件 slot 与 child implementation。
-    *   `--parent`：只显示一个父插件及其 child tree。
+`list --tree` 会显示声明过的子插件类和实现。本地插件从当前 Project manifest
+指定的路径加载。
 
-**示例**：
+## 配置
 
 ```bash
-qphase list
-# 列出所有插件（backend, model, engine 等）
-
-qphase list -c backend
-# 仅列出 backend 插件
-
-qphase list --parent analyser.psd
-# 列出 estimator.periodogram、estimator.welch、estimator.multitaper
+qphase config show [--system]
+qphase config set KEY VALUE [--system]
+qphase config reset [--system] [--force]
+qphase config schema PLUGIN_PATH
+qphase config options PARENT/SLOT
 ```
 
-### `qphase show`
+不带 `--system` 时操作 Project 插件默认值（标准布局为
+`configs/defaults.yaml`）；带 `--system` 时操作 `~/.qphase/config.yaml` 中的
+稀疏用户机器策略。
 
-显示特定插件的详细信息，包括其描述、源代码位置和配置模式。
+## GUI
 
 ```bash
-qphase show [PLUGIN_ID]... [OPTIONS]
+qphase gui [--host 127.0.0.1] [--port 8000] [--reload]
 ```
 
-*   **参数**：
-    *   `PLUGIN_ID`：一个或多个 `namespace.name` 格式的插件标识符（例如 `model.vdp_2mode`）。
-*   **选项**：
-    *   `--verbose` / `-v`：显示额外的元数据（例如文件路径、包版本）。
-
-**示例**：
-
-```bash
-qphase show model.vdp_2mode
-qphase show backend.numpy --verbose
-qphase show analyser.psd/estimator.welch
-```
-
-### `qphase template`
-
-生成特定插件的配置模板。这对于复制粘贴到任务配置文件中非常有用。
-
-```bash
-qphase template [PLUGIN_ID]... [OPTIONS]
-```
-
-*   **参数**：
-    *   `PLUGIN_ID`：一个或多个 `namespace.name` 格式的插件标识符。
-*   **选项**：
-    *   `--output`：输出文件路径。默认为 `-`（标准输出）。
-    *   `--format`：输出格式，`yaml`（默认）或 `json`。
-    *   `--select SLOT=CHILD`：在模板中选择非默认 child。
-
-**示例**：
-
-```bash
-# 将 YAML 模板打印到控制台
-qphase template model.vdp_2mode
-
-# 保存到文件
-qphase template model.vdp_2mode --output my_config.yaml
-qphase template analyser.psd --select estimator=welch
-```
-
----
-
-## 配置管理
-
-`qphase config options analyser.psd/estimator` 列出可选 child；
-`qphase config schema analyser.psd/estimator.welch` 输出 child 的组合 schema。
-这两个命令只查询 registry，不修改配置文件。
-
-### `qphase config show`
-
-显示当前配置。
-
-```bash
-qphase config show [OPTIONS]
-```
-
-*   **选项**：
-    *   `--system` / `-s`：显示解析后的 `SystemConfig`，而不是项目插件默认值 (`global.yaml`)。
-
-### `qphase config set`
-
-设置 `global.yaml` 中的插件默认值；使用 `--system` 时写入
-`~/.qphase/config.yaml` 的稀疏用户 SystemConfig 覆盖。
-
-```bash
-qphase config set [KEY] [VALUE] [OPTIONS]
-```
-
-*   **参数**：
-    *   `KEY`：点分隔的配置键（例如 `paths.output_dir`）。
-    *   `VALUE`：要设置的值。
-*   **选项**：
-    *   `--system` / `-s`：更新系统配置而不是全局配置。
-
-**示例**：
-
-```bash
-qphase config set paths.output_dir ./my_runs
-```
-
-### `qphase config reset`
-
-将配置重置为默认值。
-
-```bash
-qphase config reset [OPTIONS]
-```
-
-*   **选项**：
-    *   `--system` / `-s`：重置系统配置。
-    *   `--force` / `-f`：强制重置而不确认。
+本地 API 没有远程认证，因此只接受 loopback 地址；服务器使用 SSH tunnel。GUI
+与 CLI 使用相同的 Project、Workflow、Execution 和 Session 服务。

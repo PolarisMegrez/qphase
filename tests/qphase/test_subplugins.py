@@ -67,9 +67,7 @@ def make_registry() -> RegistryCenter:
 
 
 def test_resolver_applies_default_and_constructs_parent_graph():
-    node = PluginGraphResolver(make_registry()).resolve(
-        "parent", "main", {"value": 4}
-    )
+    node = PluginGraphResolver(make_registry()).resolve("parent", "main", {"value": 4})
 
     assert node.instance.config.value == 4
     assert node.instance.worker.compute() == 1
@@ -79,9 +77,7 @@ def test_resolver_applies_default_and_constructs_parent_graph():
 def test_resolver_validates_cardinality_and_protocol():
     resolver = PluginGraphResolver(make_registry())
     with pytest.raises(QPhaseConfigError, match="expected exactly one child"):
-        resolver.resolve(
-            "parent", "main", {"worker": {"good": {}, "bad": {}}}
-        )
+        resolver.resolve("parent", "main", {"worker": {"good": {}, "bad": {}}})
     with pytest.raises(QPhaseConfigError, match="does not satisfy"):
         resolver.resolve("parent", "main", {"worker": {"bad": {}}})
 
@@ -126,9 +122,7 @@ def test_resolver_rejects_recursive_plugin_cycles():
     class Recursive:
         config_schema = EmptyConfig
         manifest = PluginManifest(
-            subplugins={
-                "next": SubpluginSlot(namespace="loop", default="recursive")
-            }
+            subplugins={"next": SubpluginSlot(namespace="loop", default="recursive")}
         )
 
         def __init__(self, config, *, subplugins):
@@ -159,7 +153,5 @@ def test_registry_service_projects_flat_children_as_parent_tree():
     )
     schema = service.get_composite_schema("parent.main")
     assert "good" in schema["subplugins"]["worker"]["options"]
-    template = service.build_template(
-        "parent.main", selections={"worker": "good"}
-    )
+    template = service.build_template("parent.main", selections={"worker": "good"})
     assert template["worker"]["good"]["value"] == 1

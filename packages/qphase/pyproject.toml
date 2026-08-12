@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qphase"
-version = "1.0.1"
-description = "Modular Quantum Phase-Space Simulation Framework (Core & CLI)"
+version = "2.0.0"
+description = "Project-oriented scientific workflow runtime (Core, CLI, and local GUI)"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"

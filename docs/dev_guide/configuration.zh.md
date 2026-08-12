@@ -1,84 +1,35 @@
 ---
-description: 配置系统
+description: 配置契约与所有权
 ---
 
 # 配置系统
 
-**配置系统**负责解析、验证和合并仿真参数。它采用分层加载策略，并利用 **Pydantic** 进行严格的模式验证。
+配置被拆成四个严格契约：
 
-## 配置层次结构
+1. `ProjectManifest` (`qphase.project/2`) 拥有身份与相对路径；
+2. `WorkflowSpec` (`qphase.workflow/2`) 拥有元数据和逻辑 Job；
+3. `JobConfig` 拥有一次 Engine 调用、插件、scan、input 和保存意图；
+4. `SystemConfig` 拥有与 Project 无关的机器/运行策略。
 
-系统通过从三个不同层合并配置数据来构建最终执行上下文，按优先级从低到高：
+Project 插件默认值位于 `ProjectContext.defaults_path`。它只补全已选择插件的缺失字段，
+不会自动激活可选插件命名空间。
 
-1.  **系统默认值**：包和插件定义中的硬编码默认值。
-2.  **全局配置** (`configs/global.yaml`)：用户定义的项目范围设置（例如默认后端、日志详细程度）。
-3.  **任务配置** (`configs/jobs/*.yaml`)：实验特定参数。
+## 加载流程
 
-## 加载管道
+1. `ProjectContext.discover()` 解析唯一 Project；
+2. `WorkflowCatalog` 递归索引元数据并保证 ID 唯一；
+3. `load_workflow()` 拒绝旧文档并校验严格 wrapper；
+4. 顶层插件命名空间被提取到 `JobConfig.plugins`；
+5. 合并 Project 默认值与显式 Job 配置；
+6. registry schema 校验每个已选择插件；
+7. scheduler 校验 Engine manifest 与 Job 图。
 
-配置加载过程遵循严格的管道：
+Workflow 禁止未知字段。Job 的 `extra="allow"` 只用于动态插件命名空间；未知的非插件
+字段不得被解释为新 core 行为。
 
-1.  **文件 I/O**：读取 YAML 文件并解析为原始 Python 字典。
-2.  **结构规范化**：规范化原始字典以确保结构一致（例如处理简写符号）。
-3.  **插件提取**：系统识别与已注册插件命名空间对应的键（例如 `backend`、`model`）。
-4.  **模式验证**：
-    *   根据 `JobConfig` 模型验证核心任务结构。
-    *   根据插件类定义的相应 `config_schema` 验证每个插件配置块。
-5.  **合并**：将全局默认值合并到任务配置中，填充缺失的可选字段。
+只有显式 `ScanSpec` 才产生 scan。插件 schema 中的列表始终是科学字面值。编译后得到
+轴顺序稳定的不可变 `ParameterGrid`；scheduler 只向 Engine 传递一次，不展开参数点。
 
-## 使用 Pydantic 进行模式验证
-
-QPhase 使用 Pydantic v2 来强制类型安全和数据完整性。
-
-### `JobConfig` 模型
-
-`JobConfig` 模型定义了仿真任务的结构骨架。
-
-```python
-class JobConfig(BaseModel):
-    name: str
-    engine: dict[str, Any]
-    plugins: dict[str, dict[str, Any]]
-    params: dict[str, Any]
-    scan: ScanSpec | None
-    input: InputSpec | None
-    system: SystemConfig | None
-    # ...
-```
-
-### 插件模式
-
-每个插件必须定义一个指向 Pydantic 模型的 `config_schema` 类变量。这允许注册表在插件实例化*之前*验证插件特定参数。
-
-**示例：**
-```python
-class KerrCavityConfig(BaseModel):
-    chi: float = Field(..., gt=0, description="Nonlinearity")
-    detuning: float = Field(0.0, description="Frequency detuning")
-```
-
-如果用户为 `chi` 提供字符串或负值，Pydantic 验证器将在加载阶段引发描述性错误，防止仿真循环深处的运行时失败。
-
-## 参数扫描 Schema
-
-参数扫描只使用 core 的 `ScanSpec` 表示。它包含按声明顺序排列的命名
-`ScanAxisSpec`；每条 axis 包含插件目标路径，以及 `values`、`linspace`、
-`logspace` 三者之一。schema 编译后得到不可变的运行时 `ParameterGrid`。
-
-插件 schema 继续描述标量或结构化插件值。core 不再使用 `scanable` 元数据或检查
-任意列表来建立 scan；旧 metadata 只能作为识别旧语法并报告迁移错误的标记。
-这样可以消除“物理向量”和“参数点集合”之间的歧义。
-
-加载器会对已删除的工作流语法给出可执行的迁移错误，包括：
-
-- 已知标量模型字段使用列表扫描；
-- 字符串形式的 `input`；
-- `aggregate_input`；
-- 本应属于 `SystemConfig` 的 job 顶层运行策略字段。
-
-## 系统运行 Schema
-
-core 的存储、checkpoint、资源提示、进度和 CLI 行为都属于 `SystemConfig`。
-`SystemConfigStore` 合并包内默认值与稀疏的机器/用户覆盖，读取时不会创建用户文件；
-job 可通过现有 `system` 字段覆盖同一 schema。动态硬件事实不进入持久化配置，而是
-在运行时采样为 `ResourceSnapshot`，通过 `ExecutionContext` 传给资源包。
+`SystemConfigStore` 合并包默认值、站点策略、稀疏用户覆盖、环境指定和显式策略。
+读取不创建文件，写入只保存相对包/站点默认值发生变化的字段。Project 路径属于 schema
+错误。测试或客户端若需要不同 Session 根目录，必须创建或注入不同 `ProjectContext`。

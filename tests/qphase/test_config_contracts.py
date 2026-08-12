@@ -7,14 +7,12 @@ from pathlib import Path
 import pytest
 import yaml
 from qphase.core.config import JobConfig
-from qphase.core.config_loader import (
-    load_jobs_from_files,
-    merge_plugin_config_sections,
-)
+from qphase.core.config_loader import merge_plugin_config_sections
 from qphase.core.errors import QPhaseConfigError
 from qphase.core.registry import registry
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import load_system_config
+from qphase.core.workflow import load_workflow
 
 from tests.plugins.dummy_plugin import DummyPlugin
 
@@ -55,7 +53,7 @@ def dummy_job_dict():
 
 def test_top_level_plugin_sections_extracted(register_sde_engine, dummy_job_file):
     """Top-level backend/integrator/model/analyser keys end up in JobConfig.plugins."""
-    job_list = load_jobs_from_files([dummy_job_file])
+    job_list = load_workflow(dummy_job_file)
     assert len(job_list.jobs) == 1
     job = job_list.jobs[0]
 
@@ -68,10 +66,10 @@ def test_top_level_plugin_sections_extracted(register_sde_engine, dummy_job_file
 @pytest.fixture
 def dummy_job_file(temp_workspace, dummy_job_dict):
     """Create a dummy job file with top-level plugin sections."""
-    job_file = temp_workspace / "configs" / "jobs" / "dummy_top_level.yaml"
+    job_file = temp_workspace / "configs" / "workflows" / "dummy_top_level.yaml"
     job_file.parent.mkdir(parents=True, exist_ok=True)
     with open(job_file, "w") as f:
-        yaml.dump(dummy_job_dict, f)
+        yaml.dump(_workflow_payload(dummy_job_dict), f)
     return job_file
 
 
@@ -86,7 +84,7 @@ def test_plugins_compatible_format_merged(dummy_job_dict):
         },
         "integrator": {"dummy": {"param": 3.0}},
     }
-    job_list = load_jobs_from_files([_write_job_file(data)])
+    job_list = load_workflow(_write_job_file(data))
     job = job_list.jobs[0]
 
     assert "model" in job.plugins
@@ -104,8 +102,17 @@ def _write_job_file(data: dict) -> Path:
     handle.close()
     path = Path(handle.name)
     with open(path, "w") as f:
-        yaml.dump(data, f)
+        yaml.dump(_workflow_payload(data), f)
     return path
+
+
+def _workflow_payload(job: dict) -> dict:
+    return {
+        "schema": "qphase.workflow/2",
+        "id": "test-workflow",
+        "title": "Test Workflow",
+        "jobs": [job],
+    }
 
 
 def test_scheduler_validation_uses_top_level_plugins(
@@ -119,18 +126,18 @@ def test_scheduler_validation_uses_top_level_plugins(
         "integrator": {"dummy": {"param": 1.0}},
         "model": {"dummy": {"param": 1.0}},
     }
-    job_list = load_jobs_from_files([_write_job_file(data)])
+    job_list = load_workflow(_write_job_file(data))
     scheduler = Scheduler()
 
     # Should not raise: backend/model/integrator are present as top-level keys.
     scheduler._validate_jobs(job_list)
 
 
-def test_scheduler_validation_respects_global_defaults(
+def test_scheduler_validation_respects_project_defaults(
     register_sde_engine, register_dummy_integrator, temp_workspace
 ):
-    """A required plugin supplied by global.yaml should not be reported missing."""
-    global_file = temp_workspace / "configs" / "global.yaml"
+    """A required plugin supplied by project defaults is inherited."""
+    global_file = temp_workspace / "configs" / "defaults.yaml"
     global_file.parent.mkdir(parents=True, exist_ok=True)
     with open(global_file, "w") as f:
         yaml.dump({"integrator": {"dummy": {"param": 1.0}}}, f)
@@ -142,15 +149,15 @@ def test_scheduler_validation_respects_global_defaults(
         "engine": {"sde": {"t1": 1.0, "dt": 0.01, "n_traj": 2}},
         "backend": {"dummy": {"param": 1.0}},
         "model": {"dummy": {"param": 1.0}},
-        # integrator is intentionally omitted; global.yaml provides it.
+        # integrator is intentionally omitted; project defaults provide it.
     }
-    job_list = load_jobs_from_files([_write_job_file(data)])
+    job_list = load_workflow(_write_job_file(data))
     scheduler = Scheduler(system_config=system_config)
 
     scheduler._validate_jobs(job_list)
 
 
-def test_dynamic_plugin_namespace_inherits_global_defaults(temp_workspace):
+def test_dynamic_plugin_namespace_inherits_project_defaults(temp_workspace):
     """New resource namespaces must not require scheduler hardcoding."""
     registry.register(
         namespace="research_solver",
@@ -158,7 +165,7 @@ def test_dynamic_plugin_namespace_inherits_global_defaults(temp_workspace):
         builder=DummyPlugin,
         overwrite=True,
     )
-    global_file = temp_workspace / "configs" / "global.yaml"
+    global_file = temp_workspace / "configs" / "defaults.yaml"
     global_file.write_text(
         "research_solver:\n  search:\n    seed: 42\n    n_guesses: 32\n",
         encoding="utf-8",
@@ -191,7 +198,7 @@ def test_scheduler_validation_still_reports_missing_required_plugin(
         "integrator": {"dummy": {"param": 1.0}},
         # model is missing
     }
-    job_list = load_jobs_from_files([_write_job_file(data)])
+    job_list = load_workflow(_write_job_file(data))
     scheduler = Scheduler()
 
     with pytest.raises(QPhaseConfigError, match="missing required plugins"):

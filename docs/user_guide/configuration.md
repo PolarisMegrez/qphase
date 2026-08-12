@@ -1,82 +1,96 @@
 ---
-description: Job Configuration
+description: Project, Workflow, Job, and system configuration
 ---
 
-# Job Configuration
+# Workflow Configuration
 
-QPhase uses validated YAML configuration for reproducible logical jobs. A job
-selects one engine, configures its plugins, optionally declares a parameter
-scan, and optionally consumes an upstream result.
+QPhase separates portable research intent from machine policy:
 
-## Configuration Hierarchy
+1. Plugin schema defaults are defined by installed plugins.
+2. Project plugin defaults live at the `qphase.toml` `paths.defaults` location,
+   normally `configs/defaults.yaml`.
+3. A versioned Workflow document defines metadata and logical Jobs.
+4. `job.system` may override the same `SystemConfig` schema for one Job.
 
-Configuration is merged in this order, from lowest to highest priority:
+Later layers have higher precedence. Project paths never belong to
+`SystemConfig`; they are defined only in `qphase.toml`.
 
-1. Core and plugin schema defaults.
-2. Project defaults from `configs/global.yaml`.
-3. The job YAML.
-4. `job.system`, which overrides the same `SystemConfig` fields for that job.
+## Project Manifest
 
-Framework runtime policy belongs to `SystemConfig`; it is not duplicated as
-top-level job fields.
+```toml
+schema = "qphase.project/2"
+project_id = "my-research"
+name = "My Research"
 
-## Job Structure
-
-```yaml
-name: vdp_cam
-save: true
-
-engine:
-  cam: {}
-
-plugins:
-  backend:
-    numpy: {float_dtype: float64}
-  model:
-    vdp_2mode:
-      omega_a: 0.0
-      omega_b: 0.0
-      gamma_a: 2.0
-      gamma_b: 0.5
-      Gamma: 0.0001
-      g: 0.5
-  cam_solver:
-    multistability: {n_guesses: 50, guess_bounds: auto}
+[paths]
+workflows = "configs/workflows"
+defaults = "configs/defaults.yaml"
+plugins = ["models"]
+sessions = "runs"
 ```
 
-| Field | Description |
+All paths are portable paths relative to the Project root. Absolute paths and
+`..` traversal are rejected. Project discovery uses `--project`, then
+`QPHASE_PROJECT`, then upward search from the current directory.
+
+## Workflow Document
+
+```yaml
+schema: qphase.workflow/2
+id: vdp_cam
+title: VDP CAM scan
+description: Optional human-readable purpose
+collection: vdp_2mode
+tags: [cam, multistability]
+
+jobs:
+  - name: solve
+    save: true
+    engine:
+      cam: {}
+    backend:
+      numpy: {float_dtype: float64}
+    model:
+      vdp_2mode:
+        omega_a: 0.0
+        omega_b: 0.0
+        gamma_a: 2.0
+        gamma_b: 0.5
+        Gamma: 0.0001
+        g: 0.5
+    cam_solver:
+      multistability: {n_guesses: 50, guess_bounds: auto}
+```
+
+`schema`, `id`, `title`, and a non-empty `jobs` list are required. Workflow IDs
+must be unique within a Project and remain stable when a file moves. A document
+without the `qphase.workflow/2` wrapper is rejected; QPhase 2 does not silently
+load legacy top-level Job lists.
+
+Collection and Tags are portable metadata. The directory hierarchy may mirror
+Collection for readability but does not define identity.
+
+## Logical Job
+
+| Field | Meaning |
 | --- | --- |
-| `name` | Unique logical job name. |
-| `engine` | Exactly one engine configuration. |
-| `plugins` | Namespaced plugin configurations required by the engine. |
+| `name` | Unique Job name inside the Workflow. |
+| `engine` | Exactly one engine and its configuration. |
+| plugin namespaces | `backend`, `model`, `integrator`, `analyser`, and other engine-specific plugin slots. |
 | `params` | Optional engine-specific values. |
 | `scan` | Optional explicit `ScanSpec`. |
-| `input` | Optional structured upstream input. |
-| `save` | `true`, `false`, or an output base name. |
-| `system` | Optional override of the normal `SystemConfig` schema. |
+| `input` | Optional structured upstream data input. |
+| `depends_on` | Explicit control dependency on other Jobs. |
+| `save` | `true`, `false`, or an Artifact base name. |
+| `system` | Optional per-Job override of `SystemConfig`. |
 
-Some resource packages also accept plugin namespaces at the job top level for
-compatibility with existing files. New resource packages should prefer the
-explicit `plugins` mapping.
-
-Project-wide numerical policy belongs in `configs/global.yaml`. For example,
-CAM multistability jobs inherit the random seed, root method, tolerances,
-Jacobian policy, worker request, and seed-discovery defaults from
-`cam_solver.multistability`. A job should normally override only experiment
-controls such as `n_guesses`, model-specific `guess_bounds` and
-`initial_guesses`, `distance_tolerance`, and retry/refinement budgets. Local
-targeted scans may also disable `discover_seeds` when validated explicit seeds
-are available. Global plugin defaults are merged by registry namespace, so new
-resource namespaces do not require scheduler-specific handling.
+Project-wide numerical defaults belong in `configs/defaults.yaml`. Optional
+plugins are not activated merely because defaults exist; the Workflow must
+select the plugin namespace.
 
 ## Parameter Scans
 
-Scans are explicit. A list inside a plugin configuration is always a literal
-plugin value; it is never interpreted as a scan. The removed list-as-scan
-syntax raises a migration error for known scalar model parameters.
-
-Each axis has a display name, a target plugin path, and exactly one value
-generator:
+A plugin list is always a literal value. Scans must use `ScanSpec`:
 
 ```yaml
 scan:
@@ -90,7 +104,7 @@ scan:
       linspace: {start: 0.2, stop: 1.1, num: 101}
 ```
 
-Supported generators are:
+Each axis uses exactly one generator:
 
 | Generator | Meaning |
 | --- | --- |
@@ -98,28 +112,21 @@ Supported generators are:
 | `linspace: {start, stop, num, endpoint}` | Linear spacing; `endpoint` defaults to `true`. |
 | `logspace: {start, stop, num, endpoint, base}` | Exponents of `base`; `base` defaults to `10`. |
 
-`combine: cartesian` creates one result dimension per axis in YAML declaration
-order. The example above has shape `(31, 101)`. `combine: zipped` requires equal
-axis lengths and creates one `point` dimension.
+`cartesian` produces dimensions in YAML axis order. `zipped` requires equal
+axis lengths and produces one `point` dimension. A scan remains one logical Job:
+the engine receives `ParameterGrid` and chooses pointwise, tiled, fused, or GPU
+execution. Core does not create one Job or Session per parameter point.
 
-A scan does not create scheduler sub-jobs. The engine receives one runtime
-`ParameterGrid` and chooses its own pointwise, tiled, fused, or GPU execution
-strategy. The session manifest and output tree still contain one entry and one
-directory for the logical job.
-
-## Upstream Input
-
-Inputs use a structured form:
+## Data Flow
 
 ```yaml
 input:
-  from: vdp_2mode_cayley_sim
+  from: simulate
   mode: dataset
 ```
 
-`mode: dataset` passes the complete result to the downstream engine once.
-`mode: map` lazily invokes the downstream engine on selected point or group
-views while retaining one logical downstream job:
+`dataset` passes the complete upstream result once. `map` lazily presents
+point/group views inside one downstream Job:
 
 ```yaml
 input:
@@ -129,39 +136,34 @@ input:
   group_by: [gamma_b]
 ```
 
-`select` filters named axis values. `group_by` collects views along the named
-axes into `AggregateResult` inputs. Mapping never creates point directories.
-String-valued `input` and the old `aggregate_input` field are rejected with a
-migration error.
+String-valued `input` and `aggregate_input` are removed.
 
-## System Configuration
+## SystemConfig
 
-The packaged defaults live in `qphase.core/system.yaml`. A user-wide override
-may live in `~/.qphase/config.yaml`; reading configuration does not create this
-file. When `qphase config set --system` writes it, only values that differ from
-the packaged/site defaults are persisted. `QPHASE_SYSTEM_CONFIG` or an explicit
-loader path can supply a higher-priority file. The resolution order is package
-defaults, optional machine policy, user override, environment-selected file,
-then an explicit loader path.
+`SystemConfig` is project-independent machine policy. Resolution order is:
+
+1. packaged `qphase.core/system.yaml`;
+2. optional site policy (`/etc/qphase/config.yaml` or `%PROGRAMDATA%`);
+3. sparse user override `~/.qphase/config.yaml`;
+4. `QPHASE_SYSTEM_CONFIG`;
+5. an explicit loader path.
+
+It contains result auto-save policy, scan Artifact layout/checkpoints/resource
+hints, progress rendering, and logging. It contains no Workflow, plugin, or
+Project paths. `qphase config show --system` displays the resolved policy;
+`qphase config show` displays Project plugin defaults.
 
 ```yaml
 auto_save_results: true
-
 reporting:
   progress:
     refresh_interval: 0.5
     non_tty_milestone_percent: 10.0
-    eta_warmup_seconds: 2.0
-    eta_min_samples: 3
-    eta_smoothing: 0.25
   logging:
     session_file: true
     filename: qphase.log
     file_level: DEBUG
     console_level: WARNING
-    format: text
-    capture_warnings: true
-
 scan_runtime:
   storage_layout: auto
   auto_shard_threshold_mib: 512
@@ -177,12 +179,4 @@ scan_runtime:
     gpu_memory_fraction: null
 ```
 
-`storage_layout` may be `auto`, `single`, `sharded`, or `per_point`. In `auto`
-mode, datasets larger than 512 MiB are sharded by default. Resource values are
-hints collected by core and forwarded through `ExecutionContext`; dynamic CPU,
-host-memory, and optional backend-device facts are sampled separately for each
-logical job. The scheduler does not use them for multi-job resource allocation.
-
-Checkpointing covers completed scan chunks only. It does not checkpoint the
-internal time step of an SDE trajectory. Resume validates the configuration,
-plugins, backend, and dtype before accepting compatible checkpoint data.
+Checkpointing covers completed scan chunks, not internal SDE time steps.

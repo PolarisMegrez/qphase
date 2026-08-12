@@ -1,104 +1,57 @@
 ---
-description: GUI 与本地 API
+description: 本地 GUI 与长时间 Execution 管理
 ---
 
 # GUI 与本地 API
 
-QPhase 的 GUI 工作从本地 API 后端开始。目标是暴露 CLI 已经使用的同一层 service layer，让未来的浏览器界面可以浏览 job、检查 plugin、预览 execution plan、管理配置，而不需要调用 Typer command 函数。
+QPhase Workbench 是 CLI 同一服务层的可视化客户端，用于管理 Workflow、排队或
+运行中的 Execution、Session 历史、日志与 Artifact。科学算法和插件内部并行仍由
+资源包 engine 负责。
 
-## 安装 GUI 依赖
-
-本地 API 是可选功能。需要运行或开发 GUI 时，安装 GUI extra：
+## 启动
 
 ```bash
 pip install "qphase[gui]"
-```
-
-如果使用源码 checkout，安装标准开发环境即可：
-
-```bash
-uv sync --dev
-```
-
-## 启动本地 API
-
-启动本地 GUI 最快的方式是：
-
-```bash
 qphase gui
 ```
 
-该命令会启动 FastAPI 后端，并在 `http://127.0.0.1:8000` 提供内置 Web Console。
+浏览器打开 `http://127.0.0.1:8000`。本地 API 没有认证，因此拒绝公开监听地址；
+远程工作站或服务器应使用 SSH tunnel。
 
-开发时，也可以直接使用 FastAPI app factory：
+## 长时间 Execution
 
-```bash
-uvicorn qphase.gui.api:create_app --factory --reload
-```
+提交 Workflow 会创建异步 Execution。当前 Workbench 同时运行一个 Execution，
+并维护有界 FIFO 队列。关闭浏览器不会停止服务端 worker。
 
-如需修改监听地址，可使用 `qphase gui --host 0.0.0.0 --port 8080`。
+- Execution 页面显示当前状态、活动 Job/engine stage、scan 进度和插件；
+- `events.jsonl` 保存采样后的进度与控制事件；
+- Session 日志按 `SystemConfig` 保存完整诊断；
+- `session.lock` 提供 owner 心跳，失去 owner 的 `running` Session 会显示为
+  `interrupted`，但不会篡改原 manifest。
 
-## Web Console
+取消是协作式的，QPhase 不会强行终止正在运行的 GPU kernel。
 
-内置 console 是轻量浏览器 UI，包含六个视图：
+## 暂停与修订
 
-| 视图 | 用途 |
-| :--- | :--- |
-| Jobs | 列出可用 job，打开 YAML 派生的 job 数据，执行 plan 和 run。 |
-| Config | 以 JSON 查看和编辑 global config。 |
-| Plugins | 浏览已注册 plugin namespace 和 schema 可用状态。 |
-| Plan | 为选中的 job 构建 execution plan。 |
-| Run | 启动同步本地 run，并捕获 progress events。 |
-| Results | 查看 session manifest、run events、artifacts 和 JSON/text payload。 |
+暂停只在逻辑 Job 边界生效。Execution 排队或暂停时，可以用保持同名的完整配置
+替换尚未开始的 Job；QPhase 会重新校验 Job 图和插件配置，并记录修订事件。
 
-## 可用端点
+因此，长时间 `SDE -> analysis` Workflow 可以在 SDE 完成后、分析开始前修改下游
+Job。但这不能恢复上游已经丢弃的数据，例如 `keep_traj: false` 后无法追加依赖原始
+轨迹的 analyser。
 
-第一版后端切片聚焦读取和预览 workflow：
+## Workflow 与 Session
 
-| 端点 | 用途 |
-| :--- | :--- |
-| `GET /health` | 检查本地 API 是否运行。 |
-| `GET /jobs` | 从配置目录列出可用 job 名称。 |
-| `GET /jobs/{name}` | 按名称加载 job 配置。 |
-| `POST /jobs/validate` | 按 registry schema 校验 raw job 对象。 |
-| `POST /plans` | 为选中的 job 构建 execution plan。 |
-| `POST /runs` | 同步执行选中的 job，并返回 run handle 与结果。 |
-| `GET /plugins` | 列出 plugin catalog，可按 namespace 过滤。 |
-| `GET /plugins/{namespace}/{name}/schema` | 返回 plugin JSON schema。 |
-| `GET /config/global` | 读取 global config。 |
-| `PUT /config/global` | 保存 global config。 |
-| `GET /runs/{session_id}` | 读取 session manifest。 |
-| `GET /runs/{session_id}/events` | 读取当前本地 API 进程记录的 run progress events。 |
-| `GET /runs/{session_id}/artifacts` | 列出 session 目录下的 artifacts。 |
-| `GET /runs/{session_id}/artifact?path=...` | 读取受管理 session 内的 artifact。 |
+Workflow catalog 支持文本搜索以及可点击的 Collection/Tag 筛选，大型 Project 不必
+浏览一个扁平长列表。
 
-plan 请求示例：
+Workflow 文档使用内容 revision，过期 GUI 写入会冲突而不是覆盖 IDE 修改。Session
+展示状态、别名、备注、逻辑 Job、事件、日志和 Artifact。删除非运行 Session 时先
+移动到 Project 本地回收站，永久清理需要显式操作。
 
-```bash
-curl -X POST http://127.0.0.1:8000/plans \
-  -H "Content-Type: application/json" \
-  -d '{"jobs": ["vdp_sde"]}'
-```
+未来 Archive 可以提供基于 Project/Workflow/Session ID 的虚拟目录、收藏与私人备注，
+但它始终是用户本地元数据，不影响执行与复现。
 
-run 请求示例：
-
-```bash
-curl -X POST http://127.0.0.1:8000/runs \
-  -H "Content-Type: application/json" \
-  -d '{"jobs": ["vdp_sde"]}'
-```
-
-run 完成后，可使用返回的 `session_id` 查看事件和 artifacts：
-
-```bash
-curl http://127.0.0.1:8000/runs/SESSION_ID/events
-curl http://127.0.0.1:8000/runs/SESSION_ID/artifacts
-curl "http://127.0.0.1:8000/runs/SESSION_ID/artifact?path=session_manifest.json"
-```
-
-artifact 路径始终在选定 run session 内解析；API 会拒绝 session 外部绝对路径和相对目录
-穿越。
-
-## MVP 范围
-
-这个 MVP 刻意保持轻量。它提供本地 Web Console 和 API，用于 job 浏览、plugin 浏览、config 编辑、plan preview、同步本地 run、progress events 和 result artifact 查看。当前不包含拖拽式 workflow 编辑、远程执行、用户账户或 notebook 替代功能。
+主要 API 为 `/workflows`、`/plans`、`/executions`、`/sessions` 与
+`/workflow-docs`。GUI 当前不提供多用户认证、公开网络服务、多 Execution 资源调度、
+插件热加载、SDE 时间步 checkpoint、在线 FFT 或 Archive 虚拟目录。

@@ -19,6 +19,7 @@ from .progress import ProgressEvent, ProgressReporter
 from .scan import ParameterGrid
 
 __all__ = [
+    "CancellationController",
     "CancellationToken",
     "CheckpointStore",
     "BackendRuntimeSnapshot",
@@ -35,12 +36,15 @@ __all__ = [
 class CancellationToken:
     """Thread-safe cooperative cancellation token."""
 
-    def __init__(self) -> None:
+    def __init__(self, parent: CancellationToken | None = None) -> None:
         self._event = threading.Event()
+        self._parent = parent
 
     @property
     def cancelled(self) -> bool:
-        return self._event.is_set()
+        return self._event.is_set() or (
+            self._parent is not None and self._parent.cancelled
+        )
 
     def cancel(self) -> None:
         self._event.set()
@@ -52,6 +56,27 @@ class CancellationToken:
                 code=ErrorCode.CANCELLATION,
                 hint="The job was cancelled by the user or the scheduler.",
             )
+
+
+class CancellationController:
+    """Own execution- and job-scoped cooperative cancellation tokens."""
+
+    def __init__(self) -> None:
+        self.execution = CancellationToken()
+        self._jobs: dict[str, CancellationToken] = {}
+        self._lock = threading.Lock()
+
+    def token_for(self, job_name: str) -> CancellationToken:
+        with self._lock:
+            return self._jobs.setdefault(
+                job_name, CancellationToken(parent=self.execution)
+            )
+
+    def cancel_execution(self) -> None:
+        self.execution.cancel()
+
+    def cancel_job(self, job_name: str) -> None:
+        self.token_for(job_name).cancel()
 
 
 @dataclass(frozen=True)
@@ -289,7 +314,7 @@ class ExecutionContext:
     cancellation: CancellationToken
     artifacts: Any
     checkpoints: CheckpointStore
-    run_dir: Path
+    job_dir: Path
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

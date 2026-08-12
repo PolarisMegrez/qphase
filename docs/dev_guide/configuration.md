@@ -1,88 +1,47 @@
 ---
-description: Configuration System
+description: Configuration contracts and ownership
 ---
 
 # Configuration System
 
-The **Configuration System** is responsible for parsing, validating, and merging simulation parameters. It employs a hierarchical loading strategy and leverages **Pydantic** for strict schema validation.
+Configuration is intentionally split into four strict contracts:
 
-## Configuration Hierarchy
+1. `ProjectManifest` (`qphase.project/2`) owns identity and relative paths.
+2. `WorkflowSpec` (`qphase.workflow/2`) owns metadata and logical Jobs.
+3. `JobConfig` owns one Engine invocation, plugins, scan, input, and save intent.
+4. `SystemConfig` owns project-independent machine/runtime policy.
 
-The system constructs the final execution context by merging configuration data from three distinct layers, in increasing order of precedence:
+Project plugin defaults are a plain validated mapping at
+`ProjectContext.defaults_path`. They fill missing selected plugin values but do
+not activate optional plugin namespaces.
 
-1.  **System Defaults**: Hardcoded defaults within the package and plugin definitions.
-2.  **Global Configuration** (`configs/global.yaml`): User-defined project-wide settings (e.g., default backend, logging verbosity).
-3.  **Job Configuration** (`configs/jobs/*.yaml`): Experiment-specific parameters.
+## Loading Pipeline
 
-## The Loading Pipeline
+1. `ProjectContext.discover()` resolves exactly one Project.
+2. `WorkflowCatalog` recursively indexes metadata and enforces unique IDs.
+3. `load_workflow()` rejects legacy documents and validates the strict wrapper.
+4. Top-level plugin namespace blocks are extracted into `JobConfig.plugins`.
+5. Project defaults are merged with explicit Job configuration.
+6. Registry schemas validate each selected plugin.
+7. Scheduler validates the Engine manifest and Job graph.
 
-The configuration loading process follows a strict pipeline:
+Unknown Workflow fields are forbidden. Job `extra="allow"` exists only because
+plugin namespaces are dynamic; unknown non-plugin fields must not be treated as
+new core behavior.
 
-1.  **File I/O**: The YAML file is read and parsed into a raw Python dictionary.
-2.  **Structure Normalization**: The raw dictionary is normalized to ensure consistent structure (e.g., handling shorthand notations).
-3.  **Plugin Extraction**: The system identifies keys that correspond to registered plugin namespaces (e.g., `backend`, `model`).
-4.  **Schema Validation**:
-    *   The core job structure is validated against the `JobConfig` model.
-    *   Each plugin configuration block is validated against its respective `config_schema` defined by the plugin class.
-5.  **Merging**: Global defaults are merged into the job configuration, filling in missing optional fields.
+## Scans
 
-## Schema Validation with Pydantic
+Only explicit `ScanSpec` creates a scan. Lists in plugin schemas remain literal
+scientific values. Compiling produces immutable `ParameterGrid` with stable
+axis order. Scheduler forwards it once to the Engine and never expands points
+into Jobs.
 
-QPhase uses Pydantic v2 to enforce type safety and data integrity.
+## System Policy Store
 
-### `JobConfig` Model
+`SystemConfigStore` merges package, site, sparse user, environment-selected,
+and explicit policies. Reads do not create files; writes persist only values
+different from package/site defaults. Project paths are schema errors.
 
-The `JobConfig` model defines the structural skeleton of a simulation job.
-
-```python
-class JobConfig(BaseModel):
-    name: str
-    engine: dict[str, Any]
-    plugins: dict[str, dict[str, Any]]
-    params: dict[str, Any]
-    scan: ScanSpec | None
-    input: InputSpec | None
-    system: SystemConfig | None
-    # ...
-```
-
-### Plugin Schemas
-
-Each plugin must define a `config_schema` class variable pointing to a Pydantic model. This allows the Registry to validate plugin-specific parameters *before* the plugin is instantiated.
-
-**Example:**
-```python
-class KerrCavityConfig(BaseModel):
-    chi: float = Field(..., gt=0, description="Nonlinearity")
-    detuning: float = Field(0.0, description="Frequency detuning")
-```
-
-If a user provides a string for `chi` or a negative value, the Pydantic validator will raise a descriptive error during the loading phase, preventing runtime failures deep in the simulation loop.
-
-## Parameter Scan Schema
-
-Parameter scanning is represented only by the core `ScanSpec`. It contains
-ordered named `ScanAxisSpec` values, each with a plugin target path and exactly
-one of `values`, `linspace`, or `logspace`. Compiling the schema produces an
-immutable runtime `ParameterGrid`.
-
-Plugin schemas continue to describe scalar and structured plugin values. Core
-does not use `scanable` metadata or inspect arbitrary lists to build scans;
-legacy metadata may remain only to identify old syntax for migration errors.
-This avoids ambiguity between a physical vector and a collection of points.
-
-The loader deliberately rejects removed workflow forms with actionable errors:
-
-- scalar model fields configured with list-as-scan syntax;
-- string-valued `input`;
-- `aggregate_input`;
-- job-level runtime policy fields that belong to `SystemConfig`.
-
-## System Runtime Schema
-
-Core storage, checkpoint, resource-hint, progress, and CLI behavior belongs to
-`SystemConfig`. `SystemConfigStore` merges packaged defaults with sparse
-machine/user overrides and never creates a user file during a read. A job may
-override the same schema through its existing `system` field. Dynamic hardware
-facts remain outside persisted configuration and are sampled into the
-`ResourceSnapshot` carried by `ExecutionContext`.
+Tests and clients that need another Session root must create or inject a
+different `ProjectContext`; they must not add output-path overrides to
+SystemConfig or Scheduler.

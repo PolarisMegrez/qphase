@@ -3,7 +3,7 @@
 Manages the creation and storage of configuration snapshots to ensure reproducibility.
 It captures the complete state of a job execution, including the merged configuration,
 system settings, plugin versions, and random seeds, serializing this metadata into
-the run directory for future reference.
+the Session Job directory for future reference.
 
 Public API
 ----------
@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .config import JobConfig
 from .system_config import SystemConfig
@@ -48,7 +48,7 @@ class ConfigSnapshot(BaseModel):
     """
 
     # Snapshot metadata
-    snapshot_version: str = "1.0"
+    snapshot_version: str = "2.0"
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     # Job configuration
@@ -70,19 +70,13 @@ class ConfigSnapshot(BaseModel):
     output_job: str | None = None
 
     # Execution metadata
-    run_id: str | None = None
-    run_dir: Path | None = None
+    session_id: str | None = None
+    job_dir: Path | None = None
 
     # Additional metadata
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    class Config:
-        """Pydantic configuration."""
-
-        arbitrary_types_allowed = True
-        json_encoders = {
-            Path: str,  # Convert Path objects to strings for JSON serialization
-        }
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class SnapshotManager:
@@ -111,8 +105,8 @@ class SnapshotManager:
         system_config: SystemConfig | None,
         validated_plugins: dict[str, Any],
         engine_config: dict[str, Any],
-        run_id: str | None = None,
-        run_dir: Path | None = None,
+        session_id: str | None = None,
+        job_dir: Path | None = None,
         input_job: str | None = None,
         output_job: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -131,10 +125,10 @@ class SnapshotManager:
             Validated plugin configurations
         engine_config : dict[str, Any]
             Engine configuration
-        run_id : str | None, optional
-            Run ID for this execution
-        run_dir : Path | None, optional
-            Run directory path
+        session_id : str | None, optional
+            Session identity for this Workflow Execution.
+        job_dir : Path | None, optional
+            Artifact directory for this logical Job.
         input_job : str | None, optional
             Input job name
         output_job : str | None, optional
@@ -164,8 +158,8 @@ class SnapshotManager:
             system_config=system_config_dict,
             plugin_configs=validated_plugins,
             engine_config=engine_config,
-            run_id=run_id,
-            run_dir=run_dir,
+            session_id=session_id,
+            job_dir=job_dir,
             input_job=input_job,
             output_job=output_job,
             metadata=metadata or {},
@@ -173,15 +167,15 @@ class SnapshotManager:
 
         return snapshot
 
-    def save_snapshot(self, snapshot: ConfigSnapshot, run_dir: Path) -> Path:
+    def save_snapshot(self, snapshot: ConfigSnapshot, job_dir: Path) -> Path:
         """Save snapshot to disk.
 
         Parameters
         ----------
         snapshot : ConfigSnapshot
             Snapshot to save
-        run_dir : Path
-            Run directory for this job execution
+        job_dir : Path
+            Session directory for this Job.
 
         Returns
         -------
@@ -189,12 +183,11 @@ class SnapshotManager:
             Path where snapshot was saved
 
         """
-        # Ensure run_dir exists
-        run_dir = Path(run_dir)
-        run_dir.mkdir(parents=True, exist_ok=True)
+        job_dir = Path(job_dir)
+        job_dir.mkdir(parents=True, exist_ok=True)
 
         # Save snapshot as JSON
-        snapshot_path = run_dir / "config_snapshot.json"
+        snapshot_path = job_dir / "config_snapshot.json"
 
         # Use custom JSON encoder for Path objects
         def json_encoder(obj):
@@ -352,8 +345,8 @@ class SnapshotManager:
         export_data = snapshot.model_dump()
 
         # Optionally include result data
-        if include_result and snapshot.run_dir is not None:
-            result_path = Path(snapshot.run_dir) / "result.json"
+        if include_result and snapshot.job_dir is not None:
+            result_path = Path(snapshot.job_dir) / "result.json"
             if result_path.exists():
                 with open(result_path, encoding="utf-8") as f:
                     result_data = json.load(f)

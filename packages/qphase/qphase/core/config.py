@@ -1,19 +1,19 @@
 """qphase: Job Configuration Models
 ---------------------------------------------------------
 Defines the Pydantic models that structure job configurations, including the
-``JobConfig`` for individual task specification and ``JobList`` for batch execution
-containers. These models provide built-in validation, default value handling, and
+``JobConfig`` for individual task specification and ``WorkflowSpec`` for an
+executable workflow. These models provide validation, default value handling, and
 support for parameter scanning specifications.
 
 Public API
 ----------
 JobConfig
     Configuration for a single job with engine, plugins, and parameters.
-JobList
-    Container for multiple JobConfig instances.
+WorkflowSpec
+    Versioned workflow containing one or more logical jobs.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -259,7 +259,7 @@ class JobConfig(BaseModel):
         """Validate all plugin configurations using registry schemas.
 
         Supports nested format: {plugin_type: {plugin_name: config}}
-        This is the standard format used in global.yaml.
+        This is the standard format used in project defaults.
 
         This method validates each plugin configuration against its registered
         schema and populates the _validated_plugins dict with strong-typed config
@@ -411,43 +411,15 @@ class JobConfig(BaseModel):
         return SystemConfig(**merged_dict)
 
 
-class JobList(BaseModel):
-    """Configuration for a list of jobs to be executed.
+class WorkflowSpec(BaseModel):
+    """A versioned workflow containing one or more logical jobs."""
 
-    This model represents a collection of jobs that can be executed
-    together as part of a session or workflow.
+    schema_: Literal["qphase.workflow/2"] = Field(alias="schema")
+    id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]+$")
+    title: str = Field(min_length=1)
+    description: str | None = None
+    collection: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    jobs: list[JobConfig] = Field(min_length=1)
 
-    Attributes
-    ----------
-    jobs : list[JobConfig]
-        List of job configurations.
-    system : SystemConfig | None
-        Global system configuration (applied to all jobs unless overridden).
-    name : str | None
-        Name of this job list/workflow.
-    description : str | None
-        Description of this job list/workflow.
-
-    """
-
-    # List of jobs
-    jobs: list[JobConfig] = Field(..., description="List of job configurations")
-
-    # Global system configuration (applied to all jobs unless overridden)
-    system: SystemConfig | None = Field(
-        default=None,
-        description="Global system configuration",
-    )
-
-    # Workflow metadata
-    name: str | None = Field(
-        default=None,
-        description="Name of this job list/workflow",
-    )
-
-    description: str | None = Field(
-        default=None,
-        description="Description of this job list/workflow",
-    )
-
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)

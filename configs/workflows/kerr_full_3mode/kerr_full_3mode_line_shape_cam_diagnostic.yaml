@@ -1,0 +1,49 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_line_shape_cam_diagnostic
+title: Kerr Full 3Mode Line Shape Cam Diagnostic
+collection: kerr_full_3mode
+tags:
+- kerr_full_3mode
+jobs:
+# Deterministic multistability gate for the retained Kerr-full candidate.
+- name: kerr_full_3mode_line_shape_cam_diagnostic
+  save: true
+
+  scan:
+    axes:
+      omega_c:
+        target: model.kerr_full_3mode.omega_c
+        values: [-0.985, -0.965371113531286, -0.939511886746409, -0.920056014795794,
+            -0.894342203342723, -0.860357599562311]
+
+  engine:
+    cam: {}
+
+  plugins:
+    backend:
+      numpy:
+        float_dtype: float64
+    model:
+      kerr_full_3mode:
+        omega_a: 0.0
+        omega_b: -0.854332923964663
+        omega_c: -1.0
+        chi: 0.05
+        gamma_a: 4.0
+        gamma_b: 1.0
+        gamma_c: 0.07502418826324694
+        g_ab: 1.0
+        g_ac: 0.2
+        g_bc: 0.2
+    cam_solver:
+      multistability:
+        n_guesses: 64
+        guess_bounds: auto
+        retry_guesses: 128
+        refine_guesses: 64
+        tile_workers: 1
+    cam_postprocessor:
+      rayleigh_frequency: {}
+      petermann_spectrum: {}
+      jacobian_spectrum: {}
+      physicality: {}

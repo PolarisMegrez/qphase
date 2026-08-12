@@ -1,0 +1,117 @@
+schema: qphase.workflow/2
+id: reservoir_kerr_3mode_nonlinear_direct_coupling_s0
+title: Reservoir Kerr 3Mode Nonlinear Direct Coupling S0
+collection: reservoir_kerr_3mode
+tags:
+- reservoir_kerr_3mode
+jobs:
+- name: reservoir_kerr_3mode_nonlinear_direct_coupling_s0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+  scan:
+    combine: zipped
+    axes:
+      delta:
+        target: model.reservoir_kerr_3mode.delta
+        values:
+        - 0.38691680779788457
+        - 0.7278102340267806
+        - 2.6550606956048446
+        - 0.14115909961082906
+      omega_r:
+        target: model.reservoir_kerr_3mode.omega_r
+        values:
+        - -0.38962626829743385
+        - 4.5594671461731195
+        - -4.503772463649511
+        - 0.548470439389348
+      g_r:
+        target: model.reservoir_kerr_3mode.g_r
+        values:
+        - 0.2008020368004169
+        - 1.1692126097907243
+        - 0.027048929454794046
+        - 0.3935125605170187
+      pump_r:
+        target: model.reservoir_kerr_3mode.pump_r
+        values:
+        - 0.06576963580213487
+        - 0.7395704025169835
+        - 0.27401971418876203
+        - 0.9622633979655802
+      kappa_local:
+        target: model.reservoir_kerr_3mode.kappa_local
+        values:
+        - 1.0525311171955232
+        - 0.0005994002447446867
+        - 0.0012020013347591525
+        - 0.01494056907117924
+  engine:
+    cam:
+      case_failure_policy: record
+  plugins:
+    backend:
+      numpy:
+        float_dtype: float64
+    model:
+      reservoir_kerr_3mode:
+        omega_r: 0.0
+        omega_0: 0.0
+        delta: 1.0
+        chi: 0.001
+        g: 0.2
+        g_r: 0.2
+        kappa_r: 1.0
+        pump_r: 0.5
+        kappa_local: 0.1
+    cam_solver:
+      bifurcation:
+        controls:
+          chi:
+            min: 1.0e-05
+            max: 0.1
+            scale: 0.01
+            domain: nonnegative
+            sampling: log
+          g:
+            min: 0.005
+            max: 5.0
+            scale: 0.2
+            domain: nonnegative
+            sampling: log
+        perturbation:
+          parameter: delta
+          scale: 1.0
+          side: both
+        target:
+          equilibrium_multiplicity:
+            order: 3
+        strategy:
+          auto:
+            retained_dimension: 1
+            max_candidates: 4
+            condition_limit: 100000000000.0
+        discovery:
+          seeds:
+            samples_per_control: 3
+            max_starts: 1024
+            order_parameter_samples: 31
+        classifier:
+          scaling_signature:
+            max_total_order: 8
+            coefficient_tolerance: 1.0e-14
+            max_exponent: 0.999
+        refinement:
+          tolerance: 1.0e-09
+          max_iterations: 60
+        verification:
+          initial_digits: 40
+          max_digits: 120
+        audit:
+          near_miss_per_reason: 8
+          near_miss_total: 64

@@ -59,7 +59,7 @@ The scheduler will:
 
 1. Compile the `sim` scan and let the SDE engine execute it as one logical dataset.
 2. Pass that complete dataset once to the `fit` job.
-3. Run `analyser.lorentz_fitter` in `analyze` mode, producing `fit_results.csv` and `psd_merged.csv` in the `fit` job's run directory.
+3. Run `analyser.lorentz_fitter` in `analyze` mode, producing `fit_results.csv` and `psd_merged.csv` in the `fit` Job directory.
 
 ## Output Files
 

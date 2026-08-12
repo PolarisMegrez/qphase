@@ -1,0 +1,47 @@
+schema: qphase.workflow/2
+id: crosskerr_2mode_cam
+title: Crosskerr 2Mode Cam
+collection: crosskerr_2mode
+tags:
+- crosskerr_2mode
+jobs:
+- name: crosskerr_2mode_cam
+  save: true
+
+  scan:
+    combine: cartesian
+    axes:
+      omega_b:
+        target: model.crosskerr_2mode.omega_b
+        linspace: {start: -0.05, stop: 0.05, num: 501}
+      gamma_b:
+        target: model.crosskerr_2mode.gamma_b
+        linspace: {start: 0.45, stop: 0.55, num: 501}
+
+  engine:
+    cam: {}
+
+  plugins:
+    backend:
+      numpy:
+        float_dtype: float64
+    model:
+      crosskerr_2mode:
+        omega_a: 0.0
+        omega_b: -0.05
+        chi: 0.01
+        gamma_a: 0.5
+        gamma_b: 0.4
+        g: 0.5
+    cam_solver:
+      multistability:
+        n_guesses: 50
+        guess_bounds: auto
+        distance_tolerance: 3.0
+        retry_guesses: 200
+        refine_guesses: 50
+    cam_postprocessor:
+      rayleigh_frequency: {}
+      petermann_spectrum: {}
+      jacobian_spectrum: {}
+      physicality: {}

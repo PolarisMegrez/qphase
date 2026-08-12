@@ -1,58 +1,49 @@
 ---
-description: Service Layer
+description: Service layer
 ---
 
 # Service Layer
 
-The service layer is the Python-first application API for QPhase clients. It sits between user interfaces and the core primitives so CLI, GUI, notebooks, and future local APIs can share the same orchestration logic.
+The service layer is the structured Python API shared by the CLI, local GUI,
+notebooks, and automation:
 
 ```text
-client UI -> qphase.service -> qphase.core -> resource packages -> plugins
+client -> qphase.service -> qphase.core -> resource engine -> plugins
 ```
 
-## Design Rules
+Clients render data; services own application use cases; core owns execution
+contracts. No client should shell out to another client or copy scheduler rules.
 
-CLI and GUI are peers. The CLI should parse command-line input and render terminal output; the GUI should manage visual interaction, configuration editing, execution plans, progress, and result browsing. Neither client should wrap the other.
+## Services
 
-Services return structured objects instead of printing Rich tables or Typer messages. This keeps the same API usable from tests, GUI code, and automation scripts.
+- `ConfigService`: load Project defaults, preview merged Job config, validate
+  plugins, and access SystemConfig separately.
+- `RegistryService`: discover plugins and expose schemas and manifests.
+- `SchedulerService`: load Workflows, build side-effect-light Execution plans,
+  execute through the core Scheduler, and inspect Session Artifacts.
+- `ExecutionManager`: queue asynchronous Executions, stream events, cancel,
+  pause at Job boundaries, and revise Jobs that have not started.
+- `ProjectService`: list Session history, classify stale Sessions, manage aliases
+  and trash, and edit Workflow documents with revision checks.
 
-The service layer should wrap existing core behavior before introducing new behavior. If a rule already lives in `qphase.core.scheduler`, `qphase.core.config_loader`, or `qphase.core.registry`, the service should delegate to it or extract a shared helper rather than copying the rule.
+Service return values in `qphase.service.models` are serializable DTOs. They use
+the canonical Project, Workflow, Job, Execution, Session, and Artifact terms.
 
-## Current Facades
+## Planning Boundary
 
-`ConfigService` loads system/global/job configuration, normalizes raw job dictionaries, previews merged configuration, and validates job plugin blocks against the registry.
-
-`RegistryService` discovers plugins, returns a catalog, exposes plugin JSON schemas, validates plugin configuration, and reads engine manifests.
-
-`SchedulerService` lists and loads jobs, builds a structured execution plan, runs jobs through the core scheduler, exposes dry-run planning, reads session manifests, and summarizes artifacts.
-
-## Structured Models
-
-Service return values live in `qphase.service.models`. The initial model set includes plugin catalog objects, config validation issues, merged config previews, execution plans, execution plan jobs and edges, artifact summaries, and run handles.
-
-These models are intentionally serializable. A GUI or local HTTP API should be able to convert them to JSON without depending on internal scheduler objects or plugin instances.
-
-## Execution Plans
-
-`SchedulerService.build_plan()` is the shared planning surface for dry-run and
-machine-readable clients. It validates logical jobs, compiles scan summaries,
-reports dependency edges, and returns validation issues without creating a real
-run session.
-
-Each planned job records its logical name, engine, plugin namespaces, manifest
-requirements, input/output fields, expected output, and optional scan summary
-with shape, size, axes, and targets. Dependency edges distinguish structured
-input flow, explicit `depends_on`, and output references. Plans do not enumerate
-parameter points.
-
-Planning should remain side-effect light. Creating run directories, writing manifests, and instantiating engines belong to execution, not preview.
+`SchedulerService.build_plan()` validates Jobs, plugin requirements, scans,
+dependencies, and expected Artifacts without creating a Session or importing
+runtime-only engine state. Parameter points are summarized, never enumerated as
+Jobs.
 
 ## Configuration Ownership
 
-System configuration owns runtime paths and core behavior. Global configuration owns user or machine defaults such as backend preferences. Job configuration owns the intent of one workflow. Plugin schemas own plugin-specific validation contracts. Engine manifests own required and optional plugin namespaces.
+- `qphase.toml`: Project identity and portable Project-relative paths.
+- Project defaults: reproducible plugin defaults.
+- Workflow: scientific intent and logical Job graph.
+- Plugin schema: plugin-specific validation and defaults.
+- Engine manifest: required and optional plugin namespaces.
+- SystemConfig: user/machine runtime policy with no Project paths.
 
-Global defaults may fill required runtime choices, but optional workflow steps should not run only because a global default exists. The engine manifest and explicit job configuration decide which namespaces participate in a job.
-
-## Implementation Guidance
-
-Keep service methods thin until a shared use case appears in more than one client. Prefer small DTOs over returning raw private scheduler state. If a service needs a private core method in multiple places, extract a core helper with tests before expanding the service API further.
+Keep service methods thin. When CLI and GUI require the same rule, implement it
+once in core or a service and return structured data to both clients.

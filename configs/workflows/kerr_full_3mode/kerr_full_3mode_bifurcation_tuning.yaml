@@ -1,0 +1,77 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_bifurcation_tuning
+title: Kerr Full 3Mode Bifurcation Tuning
+collection: kerr_full_3mode
+tags:
+- kerr_full_3mode
+jobs:
+- name: kerr_full_3mode_bifurcation_tuning
+  save: true
+
+  scan:
+    combine: cartesian
+    axes:
+      g_ab:
+        target: model.kerr_full_3mode.g_ab
+        values: [0.5, 0.75, 1.0, 1.25, 1.5]
+      g_bc:
+        target: model.kerr_full_3mode.g_bc
+        values: [2.5, 3.0, 3.5, 4.0, 5.0]
+
+  engine:
+    cam: {}
+
+  plugins:
+    backend:
+      numpy:
+        float_dtype: float64
+    model:
+      kerr_full_3mode:
+        omega_a: 0.0
+        omega_b: 0.0
+        omega_c: -1.0
+        chi: 0.01
+        gamma_a: 3.0
+        gamma_b: 1.0
+        gamma_c: 0.1
+        g_ab: 2.0
+        g_ac: 1.0
+        g_bc: 2.0
+    cam_solver:
+      bifurcation:
+        controls:
+          omega_b: {min: -5.0, max: 5.0, scale: 2.0, domain: real}
+          gamma_c: {min: 0.02, max: 2.0, scale: 0.5, domain: nonnegative}
+        perturbation:
+          parameter: omega_b
+          scale: 1.0
+          side: both
+        target:
+          equilibrium_multiplicity:
+            order: 3
+        strategy:
+          reduced:
+            retained_dimension: 1
+            order_parameter: r_diag_0
+            order_parameter_bounds: [0.0, 2.0e6]
+            max_candidates: 8
+            condition_limit: 1.0e11
+        discovery:
+          seeds:
+            samples_per_control: 4
+            max_starts: 2048
+            order_parameter_samples: 61
+        classifier:
+          scaling_signature:
+            max_total_order: 8
+            coefficient_tolerance: 1.0e-14
+            max_exponent: 0.999
+        refinement:
+          tolerance: 1.0e-11
+          max_iterations: 100
+        verification:
+          initial_digits: 60
+          max_digits: 240
+    cam_postprocessor:
+      stochastic_validity:
+        probe_epsilon: 1.0e-4

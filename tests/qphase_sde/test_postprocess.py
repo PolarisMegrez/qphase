@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.aggregation import QPHASE_BUNDLE_SCHEMA_VERSION
-from qphase.core.config import JobConfig, JobList
+from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.errors import QPhaseError
 from qphase.core.registry import discovery
 from qphase.core.scheduler import Scheduler
@@ -292,46 +292,40 @@ def test_lorentz_fitter_transfers_psd_sem_to_csv(tmp_path):
 def test_lorentz_fitter_can_require_psd_uncertainty(tmp_path):
     """Required propagation rejects legacy PSD payloads without a SEM field."""
     analyzer = LorentzFitter(
-        LorentzFitterConfig(
-            scan_param="epsilon", mode=0, uncertainty="required"
-        )
+        LorentzFitterConfig(scan_param="epsilon", mode=0, uncertainty="required")
     )
 
     with pytest.raises(QPhaseError, match="no usable PSD standard error"):
         analyzer.analyze(_make_run_dir(tmp_path), backend=NumpyBackend())
 
 
-def test_lorentz_fitter_engine_analyze_mode(tmp_path):
+def test_lorentz_fitter_engine_analyze_mode(tmp_path, temp_project):
     """The SDE engine can run in analyze mode via the scheduler."""
     run_dir = _make_run_dir(tmp_path)
-    system_config = SystemConfig(
-        paths={
-            "output_dir": str(tmp_path / "runs"),
-            "global_file": str(tmp_path / "global.yaml"),
-            "config_dirs": [str(tmp_path / "configs")],
-            "plugin_dirs": [str(tmp_path / "plugins")],
-        }
-    )
-    job_list = JobList(
+    system_config = SystemConfig()
+    job_list = WorkflowSpec(
+        schema="qphase.workflow/2",
+        id="test-workflow",
+        title="Test Workflow",
         jobs=[
             JobConfig(
                 name="fit",
-                    input={"from": str(run_dir), "mode": "dataset"},
+                input={"from": str(run_dir), "mode": "dataset"},
                 engine={"sde": {"mode": "analyze"}},
                 analyser={"lorentz_fitter": {"scan_param": "epsilon", "mode": 0}},
             )
-        ]
+        ],
     )
 
     discovery.discover_plugins()
     discovery.discover_local_plugins()
 
-    results = Scheduler(system_config=system_config).run(job_list)
+    results = Scheduler(system_config=system_config, project=temp_project).run(job_list)
 
     assert len(results) == 1
     assert results[0].success is True
-    assert (results[0].run_dir / "fit_results.csv").exists()
-    assert (results[0].run_dir / "psd_merged.csv").exists()
+    assert (results[0].job_dir / "fit_results.csv").exists()
+    assert (results[0].job_dir / "psd_merged.csv").exists()
 
 
 def test_export_dist_schema_version(tmp_path):

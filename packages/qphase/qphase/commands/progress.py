@@ -127,7 +127,7 @@ class CliProgressRenderer:
         prefix = self._job_prefix(snapshot)
         if snapshot.kind == "job_completed":
             text = f"{prefix} completed in {_format_duration(snapshot.duration or 0)}"
-            return f"{text} | {snapshot.run_dir}" if snapshot.run_dir else text
+            return f"{text} | {snapshot.job_dir}" if snapshot.job_dir else text
         if snapshot.kind == "job_skipped":
             return f"{prefix} skipped | {snapshot.message}"
         error = snapshot.error

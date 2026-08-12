@@ -1,6 +1,6 @@
 """qphase_sde: Lorentzian Fitter (cross-job analyzer)
 ---------------------------------------------------------
-Analyzer plugin that operates on aggregated SDE results (or a run directory)
+Analyzer plugin that operates on aggregated SDE results (or a result directory)
 to perform cross-job Lorentzian fitting, PSD merging, and distribution
 collection. It replaces the legacy root-level ``qphase_sde.postprocess`` module.
 
@@ -21,7 +21,7 @@ from qphase.backend.base import BackendBase
 from qphase.core.aggregation import (
     AggregateResult,
     DirectoryInputResult,
-    iter_directory_results,
+    iter_result_files,
     write_columns_csv,
     write_npz_bundle,
     write_pkl_bundle,
@@ -561,7 +561,7 @@ def _load_input(data: Any, pattern: str) -> list[LoadedResult]:
         data = data.path
 
     if isinstance(data, str | Path):
-        paths = iter_directory_results(data, pattern)
+        paths = iter_result_files(data, pattern)
         return [
             LoadedResult(
                 path=path,

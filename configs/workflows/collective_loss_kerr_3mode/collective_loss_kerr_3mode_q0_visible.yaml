@@ -1,0 +1,119 @@
+schema: qphase.workflow/2
+id: collective_loss_kerr_3mode_q0_visible
+title: Collective Loss Kerr 3Mode Q0 Visible
+collection: collective_loss_kerr_3mode
+tags:
+- collective_loss_kerr_3mode
+jobs:
+# Q0 closure for the highest-visibility positive-side branch from the
+# detuning/dark-loss control scheme.
+- name: collective_loss_kerr_3mode_q0_visible_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 1.0915605309158565
+        - 1.0955605309158565
+        - 1.1045605309158564
+        - 1.1285605309158564
+        - 1.1785605309158564
+  engine:
+    sde:
+      t0: 5000.0
+      t1: 25000.0
+      dt: 0.01
+      n_traj: 8
+      seed: 20260809
+      ic:
+      - - "4.08653188206063+0.0j"
+        - "2.2570746844787-0.771478345845302j"
+        - "-3.24091883061114-0.531447716868547j"
+      adaptive: false
+      save_stride: 10
+      record_modes: [0]
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 80.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 256, max_modes: 16}
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.672724163377703
+      omega_c: 1.0885605309158564
+      chi: 0.02799941227837968
+      g_ab: 0.005499563453643769
+      g_ac: 0.5353045266329879
+      g_bc: 0.0313493935637003
+      pump_a: 0.13375887293811664
+      kappa_bright: 1.0
+      kappa_dark: 0.06394385639739954
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 60.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 4.0
+      find_peaks: true
+      estimator: {periodogram: {fft_chunk_trajectories: 2}}
+    allan_variance:
+      modes: [0]
+      points: 36
+      min_windows: 8
+      min_independent_windows: 4
+
+- name: collective_loss_kerr_3mode_q0_visible_fit
+  input: {from: collective_loss_kerr_3mode_q0_visible_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -1.0
+      freq_max: -0.1
+      fit_window: 0.15
+      uncertainty: auto
+      clip_by_std: false
+      export: [fit_results.csv, psd_merged.csv]
+
+- name: collective_loss_kerr_3mode_q0_visible_allan
+  input: {from: collective_loss_kerr_3mode_q0_visible_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: 1.0885605309158564
+      side: positive
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.2
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 20.0
+      bootstrap_samples: 500
+      bootstrap_seed: 20260809
+      min_frequency_rss_improvement: 0.05
+      normal_form: {n: 3, k: 1, m: 0, observable_order: 1}

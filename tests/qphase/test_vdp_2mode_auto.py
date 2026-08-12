@@ -1,6 +1,6 @@
 """Automated VDP 2-mode peak-fitting regression test.
 
-This test runs the ``configs/jobs/vdp_2mode_auto.yaml`` workflow, which keeps the
+This test runs the ``vdp_2mode_auto`` workflow, which keeps the
 physical parameters of ``vdp_2mode.yaml`` but fixes:
 
 * ``t1 = 1000.0``
@@ -19,10 +19,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from qphase.core.config_loader import load_jobs_from_files
 from qphase.core.registry import discovery
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
+from qphase.core.workflow import load_workflow
 
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 
@@ -31,7 +31,11 @@ pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 def vdp_auto_workflow_path():
     """Return the path to the automated VDP workflow configuration."""
     path = (
-        Path(__file__).parent.parent.parent / "configs" / "jobs" / "vdp_2mode_auto.yaml"
+        Path(__file__).parent.parent.parent
+        / "configs"
+        / "workflows"
+        / "vdp_2mode"
+        / "vdp_2mode_auto.yaml"
     )
     if not path.exists():
         pytest.skip("Automated VDP workflow config not found")
@@ -44,31 +48,21 @@ def _discover_plugins():
     discovery.discover_local_plugins()
 
 
-def test_vdp_2mode_auto_peak_fit(vdp_auto_workflow_path, tmp_path):
+def test_vdp_2mode_auto_peak_fit(vdp_auto_workflow_path, temp_project):
     """Run the automated VDP workflow and verify the fitted peak parameters."""
     _discover_plugins()
 
-    job_list = load_jobs_from_files([vdp_auto_workflow_path])
+    job_list = load_workflow(vdp_auto_workflow_path)
     assert len(job_list.jobs) == 2, "Expected sim + fit jobs"
 
-    repo = Path(__file__).parent.parent.parent
-    system_config = SystemConfig(
-        paths={
-            "output_dir": str(tmp_path / "runs"),
-            "global_file": str(repo / "configs" / "global.yaml"),
-            "config_dirs": [str(repo / "configs")],
-            "plugin_dirs": [str(repo / "models")],
-        }
-    )
-
-    scheduler = Scheduler(system_config=system_config)
+    scheduler = Scheduler(system_config=SystemConfig(), project=temp_project)
     results = scheduler.run(job_list)
 
     assert len(results) == 2, results
     assert all(r.success for r in results), f"Job failed: {results}"
 
     fit_result = next(r for r in results if r.job_name == "vdp_2mode_auto_fit")
-    fit_csv = fit_result.run_dir / "fit_results.csv"
+    fit_csv = fit_result.job_dir / "fit_results.csv"
     assert fit_csv.exists(), "fit_results.csv was not produced"
 
     with fit_csv.open(newline="") as handle:
@@ -87,12 +81,12 @@ def test_vdp_2mode_auto_peak_fit(vdp_auto_workflow_path, tmp_path):
     expected_center = -0.08574307
     expected_linewidth = 3.54044345e-03
 
-    assert np.isclose(
-        center, expected_center, atol=1e-3
-    ), f"Fitted center {center} deviates too far from {expected_center}"
-    assert np.isclose(
-        linewidth, expected_linewidth, atol=3e-3
-    ), f"Fitted linewidth {linewidth} deviates too far from {expected_linewidth}"
+    assert np.isclose(center, expected_center, atol=1e-3), (
+        f"Fitted center {center} deviates too far from {expected_center}"
+    )
+    assert np.isclose(linewidth, expected_linewidth, atol=3e-3), (
+        f"Fitted linewidth {linewidth} deviates too far from {expected_linewidth}"
+    )
     assert r2 > 0.5, f"R2 {r2} is unexpectedly low"
 
     # The CSV should expose both the total peak height and the height above baseline.

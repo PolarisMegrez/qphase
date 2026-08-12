@@ -27,7 +27,6 @@ from .errors import (
     QPhasePluginError,
 )
 from .protocols import PluginManifest
-from .system_config import load_system_config
 from .utils import load_yaml
 
 Builder = Callable[..., Any]
@@ -503,10 +502,10 @@ class DiscoveryService:
                 package_version=package_version,
             )
 
-    def discover_local_plugins(self) -> int:
+    def discover_local_plugins(self, project: Any | None = None) -> int:
         """Discover and register plugins from .qphase_plugins.yaml files.
 
-        Scans plugin directories defined in system config for local plugin
+        Scans plugin directories defined in the project manifest for local plugin
         configuration files.
 
         Returns
@@ -518,8 +517,10 @@ class DiscoveryService:
         discovered_count = 0
 
         try:
-            system_config = load_system_config()
-            plugin_dirs = system_config.paths.get_plugin_dirs()
+            from .project import ProjectContext
+
+            project = project or ProjectContext.discover()
+            plugin_dirs = project.plugin_dirs
         except Exception:
             # If system config fails to load, skip local discovery
             return 0

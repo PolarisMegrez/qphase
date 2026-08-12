@@ -1,0 +1,61 @@
+schema: qphase.workflow/2
+id: vdp_2mode
+title: Vdp 2Mode
+collection: vdp_2mode
+tags:
+- vdp_2mode
+jobs:
+- name: vdp_2mode
+  save: true
+
+  scan:
+    axes:
+      omega_a:
+        target: model.vdp_2mode.omega_a
+        values: [0.001, 0.00125893, 0.00158489, 0.00199526, 0.00251189, 0.00316228, 0.00398107,
+            0.00501187, 0.00630957, 0.00794328, 0.01, 0.01258925, 0.01584893, 0.01995262, 0.02511886,
+          0.03162278, 0.03981072, 0.05011872, 0.06309573, 0.07943282, 0.1, 0.12589254]
+
+  engine:
+    sde:
+    # Time Domain
+      t0: 0.0
+      t1: 40000.0
+      dt: 0.1
+
+    # Ensemble
+      n_traj: 100
+      seed: 42
+      ic:
+      - ["800.0+0.0j", "0.0-800.0j"]
+
+    # Adaptive
+      adaptive: false
+      save_stride: 1
+
+    # Save Raw Trajectories
+      keep_traj: false
+
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      find_peaks: true
+
+  backend:
+    cupy:
+      float_dtype: float32
+      device: cuda
+
+  integrator:
+    srk:
+      method: heun
+
+  model:
+    vdp_2mode:
+      omega_a: 0.001
+      omega_b: 0.0
+      gamma_a: 2.0
+      gamma_b: 1.0
+      Gamma: 0.00001
+      g: 0.5

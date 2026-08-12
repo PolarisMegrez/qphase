@@ -5,8 +5,8 @@ description: Scheduler System
 # Scheduler System
 
 The scheduler is QPhase's logical workflow orchestrator. It resolves engines and
-plugins, validates the DAG, transfers results between jobs, creates reproducible
-run directories, reports progress, and delegates persistence to the artifact
+plugins, validates the DAG, transfers results between Jobs, creates reproducible
+Session/Job directories, reports progress, and delegates persistence to the Artifact
 store. It does not expand parameter points into jobs and it does not choose an
 engine's numerical parallelization strategy.
 
@@ -98,13 +98,16 @@ input:
 `dataset` passes the complete result once. `map` lazily iterates point or group
 views according to `select` and `group_by`, invokes the downstream engine for
 each view, and wraps the outputs in one `MappedDatasetResult`. Map iterations do
-not receive run directories or manifest entries.
+not receive Job directories or manifest entries.
 
 ## Session and Persistence
 
 ```text
-runs/<session-id>/
+runs/YYYY/MM/<session-id>/
   session_manifest.json
+  workflow_snapshot.yaml
+  events.jsonl
+  qphase.log
   scan_job/
     config_snapshot.json
     artifact_manifest.json

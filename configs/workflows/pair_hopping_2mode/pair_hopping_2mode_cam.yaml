@@ -1,0 +1,48 @@
+schema: qphase.workflow/2
+id: pair_hopping_2mode_cam
+title: Pair Hopping 2Mode Cam
+collection: pair_hopping_2mode
+tags:
+- pair_hopping_2mode
+jobs:
+- name: pair_hopping_2mode_cam
+  save: true
+
+  scan:
+    combine: cartesian
+    axes:
+      omega_b:
+        target: model.pair_hopping_2mode.omega_b
+        linspace: {start: 0.498, stop: 0.502, num: 201}
+      gamma_a:
+        target: model.pair_hopping_2mode.gamma_a
+        linspace: {start: 0.898, stop: 0.902, num: 201}
+
+  engine:
+    cam: {}
+
+  plugins:
+    backend:
+      numpy:
+        float_dtype: float64
+    model:
+      pair_hopping_2mode:
+        omega_a: 0.0
+        omega_b: 0.498
+        g: 1.0
+        k: 0.001
+        gamma_a: 0.898
+        gamma_b: 3.767911788762655
+    cam_solver:
+      multistability:
+        n_guesses: 8
+        guess_bounds:
+          diag_lower: [-50.0, -50.0]
+          diag_upper: [300.0, 300.0]
+          offdiag_scale: 150.0
+        distance_tolerance: 1.0e-3
+    cam_postprocessor:
+      rayleigh_frequency: {}
+      petermann_spectrum: {}
+      jacobian_spectrum: {}
+      physicality: {}

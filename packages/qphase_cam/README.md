@@ -16,7 +16,8 @@ The package is intentionally not published to PyPI and does not depend on
 `qphase_sde`. Project-local model plugins may expose both SDE and CAM capabilities
 while sharing one parameter schema and one physical definition.
 
-See `docs/user_guide/cam/analysis.md` and the jobs under `configs/jobs/*_cam.yaml`.
+See `docs/user_guide/cam/analysis.md` and the Workflows under
+`configs/workflows/<collection>/*_cam.yaml`.
 Higher-order searches require one physical perturbation parameter and classify
 the complete CAM state response with named `(n,k,m)` scaling signatures.
 

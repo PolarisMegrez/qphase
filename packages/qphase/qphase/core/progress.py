@@ -130,8 +130,9 @@ class ProgressSnapshot:
     importance: str = "detail"
     scan_summary: dict[str, Any] | None = None
     duration: float | None = None
-    run_dir: str | None = None
+    job_dir: str | None = None
     error: Any | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
     monotonic_time: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
@@ -157,8 +158,9 @@ class ProgressSnapshot:
             "importance": self.importance,
             "scan_summary": self.scan_summary,
             "duration": self.duration,
-            "run_dir": self.run_dir,
+            "job_dir": self.job_dir,
             "error": error,
+            "metadata": dict(self.metadata),
         }
 
 

@@ -1,0 +1,2941 @@
+schema: qphase.workflow/2
+id: collective_loss_kerr_3mode_interference_acn_bcp_t0
+title: Collective Loss Kerr 3Mode Interference Acn Bcp T0
+collection: collective_loss_kerr_3mode
+tags:
+- collective_loss_kerr_3mode
+jobs:
+- name: collective_loss_kerr_3mode_interference_acn_bcp_detuning_nonlinearity_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -4.734941152855754
+        - 4.951919997110963
+        - 0.29336152598261833
+        - -0.0171833299100399
+        - -1.3416570238769054
+        - 1.471348311752081
+        - 3.6298877093940973
+        - -3.5593957733362913
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 4.6914474630071945
+        - 0.020419092216016035
+        - 0.5013680647894005
+        - 0.0728167804339472
+        - 0.16153193946332345
+        - 0.03614050881943732
+        - 1.6844472078053125
+        - 0.011284449724987456
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -0.016924656056305488
+        - -1.9618015042993104
+        - -0.03381601398422756
+        - -0.6919528876280133
+        - -2.9012412209930942
+        - -0.010563059510745456
+        - -0.1589633392319135
+        - -0.10355722976448549
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.4116896078365988
+        - 0.008900398444918182
+        - 0.05394058905175708
+        - 0.001166966581834057
+        - 0.004329885272439979
+        - 0.19880971024838923
+        - 0.04190704572544061
+        - 1.9228553227981293
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.021647971681600958
+        - 0.28584153538765833
+        - 1.2718694036654714
+        - 0.003394120291926681
+        - 0.002396538115728418
+        - 0.34207042807916277
+        - 0.06062019909366101
+        - 0.01205287259535934
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 0.039129997329672234
+        - 7.96788741929026e-05
+        - 0.00024697557671620666
+        - 0.22183851918347364
+        - 0.009446592291815674
+        - 1.0750946436607945e-05
+        - 0.0011224500994615678
+        - 0.5149769591022291
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        omega_b:
+          min: -5.0
+          max: 5.0
+          scale: 1.0
+          domain: real
+        chi:
+          min: 1.0e-05
+          max: 0.1
+          scale: 0.001
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_detuning_input_coupling_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -1.2183620780706406
+        - 4.19918448664248
+        - 2.4267457146197557
+        - -2.902911566197872
+        - -3.984170462936163
+        - 0.6911886017769575
+        - 2.6882810797542334
+        - -1.8991887010633945
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 0.001279741214482676
+        - 0.00018299096175675413
+        - 0.03738832699256722
+        - 6.200417734759767e-05
+        - 0.015810457541990484
+        - 2.6103513240810786e-05
+        - 0.005381511143251408
+        - 0.0007729605324026462
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -0.09503257148446925
+        - -0.5126443188409591
+        - -0.02367038822774062
+        - -4.889080681176064
+        - -0.18938275383827757
+        - -0.028133562916027435
+        - -1.447070477714213
+        - -0.008746200627735769
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.044110822214519285
+        - 0.18758119162129122
+        - 0.0031703489384278735
+        - 1.014060316867425
+        - 0.553503454520369
+        - 0.0022607011762832154
+        - 0.06763190600442572
+        - 0.007133848410812578
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.008714413068809185
+        - 0.7575690965182525
+        - 0.06622497382957912
+        - 0.002204068783499189
+        - 0.0034357808537027537
+        - 0.2836255658081048
+        - 1.1129703262936326
+        - 0.03959131790979743
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 0.016081097258010244
+        - 0.0021878617993455634
+        - 0.00014727618375927503
+        - 0.3422311427550454
+        - 0.01181519894418832
+        - 0.0003438692435160156
+        - 1.1269298781029863e-05
+        - 0.1224768375710569
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        omega_b:
+          min: -5.0
+          max: 5.0
+          scale: 1.0
+          domain: real
+        g_ab:
+          min: 0.005
+          max: 5.0
+          scale: 0.2
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_detuning_mixing_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 2.176519250497222
+        - -1.2732491455972195
+        - -3.8974252063781023
+        - 4.566420745104551
+        - 3.496675956994295
+        - -3.0718255136162043
+        - -0.5465626157820225
+        - 1.049446566030383
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 1.3315507131160392e-05
+        - 0.031493909527272
+        - 0.00014841609806275728
+        - 0.001975952741581068
+        - 0.0004480926851071683
+        - 0.005968300015459485
+        - 3.750012541488000e-05
+        - 0.08870858041947037
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.3221153323905062
+        - 0.07017522992706716
+        - 1.749744242564635
+        - 0.012744579919609098
+        - 0.06315198415486588
+        - 0.4441314886501065
+        - 0.01145085062578725
+        - 2.4169078802065944
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.5800031325184847
+        - 0.007092621886927753
+        - 0.05096945613741444
+        - 0.0018013350624760795
+        - 0.0054625365505847874
+        - 0.17842203210173363
+        - 0.023992059529360114
+        - 1.8133053212678134
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.05985762450929889
+        - 0.002114252775838073
+        - 0.036227130992371334
+        - 0.9808824740750361
+        - 0.32517398961324767
+        - 0.011485515903603662
+        - 0.004669842155144517
+        - 0.1264407994151835
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 0.5033939032585707
+        - 0.003148624499946155
+        - 3.9762903333557834e-05
+        - 0.00707879681884948
+        - 0.15505850638295743
+        - 0.0005683579788116795
+        - 0.00012691667594892954
+        - 0.03899145264912494
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        omega_b:
+          min: -5.0
+          max: 5.0
+          scale: 1.0
+          domain: real
+        g_ac:
+          min: -5.0
+          max: -0.005
+          scale: 0.2
+          domain: real
+          sampling: log_abs
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_detuning_passive_coupling_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -1.1513261497020721
+        - 4.570949738845229
+        - 1.9004735723137856
+        - -3.4709979314357042
+        - -4.397110501304269
+        - 0.9737580269575119
+        - 3.644906533882022
+        - -2.0779775455594063
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 0.0017509763506669354
+        - 0.00034451505068616684
+        - 0.024692736686037324
+        - 6.716242158637138e-05
+        - 0.08111896762288037
+        - 2.3605544854883461e-05
+        - 0.004981252950550745
+        - 0.00010485446806803325
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.4524876402982721
+        - 0.05585181525570421
+        - 1.8533277491759788
+        - 0.013433266425224103
+        - 0.08185359243181944
+        - 0.3022027418170515
+        - 0.010177016516207543
+        - 2.466151807958
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -0.13031741243413134
+        - -1.2828998251602868
+        - -0.01591530827147649
+        - -0.3716083575268261
+        - -0.5202310596096367
+        - -0.00991703471652745
+        - -4.753121197980455
+        - -0.03820386503624541
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.04308549139555784
+        - 0.2540198592039798
+        - 0.4055858129761007
+        - 0.0015373730942288516
+        - 0.0030720217680219467
+        - 0.8193845911272482
+        - 0.07450251659708654
+        - 0.012496072427510644
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 5.6286116530436175e-05
+        - 0.018053402296900473
+        - 0.09608141946797384
+        - 0.0002948684412477906
+        - 1.672280866343993e-05
+        - 0.005357462793675568
+        - 0.3237440275148157
+        - 0.000992565352185916
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        omega_b:
+          min: -5.0
+          max: 5.0
+          scale: 1.0
+          domain: real
+        g_bc:
+          min: 0.001
+          max: 2.0
+          scale: 0.1
+          domain: real
+          sampling: log_abs
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_detuning_gain_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 2.845037756487727
+        - -1.6648268233984709
+        - -4.509543003514409
+        - 0.6729287374764681
+        - 1.3178904820233583
+        - -2.654921980574727
+        - -1.0193524789065123
+        - 4.700285820290446
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 2.3190716112422138e-05
+        - 0.03807647607887215
+        - 0.0006382248670102445
+        - 0.001066860975367134
+        - 0.00023624308566166485
+        - 0.0038787702051393423
+        - 6.26511859153365e-05
+        - 0.010472997949103047
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.816436046709919
+        - 0.07351677391119417
+        - 1.594554063319716
+        - 0.006714591795293611
+        - 0.055735861137022676
+        - 0.18628611858778973
+        - 0.018336765651359724
+        - 3.1927110116519724
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -0.07498270968529232
+        - -0.5446668853086344
+        - -0.01019984011255716
+        - -1.5208175897490477
+        - -2.52682555445452
+        - -0.017882940942725505
+        - -0.30648039990980636
+        - -0.044522601521370594
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.0011346246395191719
+        - 0.047823927482396486
+        - 0.7243678364711147
+        - 0.015261141516759684
+        - 0.01916656992305156
+        - 0.9093421677568889
+        - 0.2577260723469183
+        - 0.0061172115497928475
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 0.0011240158009420496
+        - 0.7831299472100958
+        - 0.025070785218197646
+        - 0.00015123723334098526
+        - 0.0002249380682248425
+        - 0.16062215723639223
+        - 0.0037535300026735716
+        - 2.2092741013070993e-05
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        omega_b:
+          min: -5.0
+          max: 5.0
+          scale: 1.0
+          domain: real
+        pump_a:
+          min: 0.001
+          max: 2.0
+          scale: 0.5
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_detuning_dark_loss_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -4.722427809610963
+        - 1.446382375434041
+        - 3.5749285854399204
+        - -0.25013163685798645
+        - -2.233755262568593
+        - 3.937496328726411
+        - 1.0277382843196392
+        - -2.7997633442282677
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 0.004478662322981558
+        - 0.00016246017961407482
+        - 0.04240834123255548
+        - 1.594688123415935e-05
+        - 0.015038966696967242
+        - 5.5285964131760813e-05
+        - 0.0014763061266022796
+        - 0.0005235393091535431
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.15898435437315467
+        - 0.13422081020592688
+        - 2.2400102235436474
+        - 0.010616576657764333
+        - 0.04109121932448652
+        - 0.7133421904214227
+        - 0.016400387675640345
+        - 1.6037507456944138
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -3.0805005334086086
+        - -0.005243463375082665
+        - -0.22765163016090506
+        - -0.07095372309787042
+        - -0.05939212556064991
+        - -0.6515043777353055
+        - -0.022793345491764216
+        - -1.6975409631762397
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.2766159507608724
+        - 0.010850921936654805
+        - 0.0013228448974050395
+        - 0.8837534625440395
+        - 0.45206234312446086
+        - 0.002661595531665967
+        - 0.03725659494254761
+        - 0.08291651853781423
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.008953969016223563
+        - 1.9014251136093552
+        - 0.183443381382241
+        - 0.0020433909872703336
+        - 0.021885473601478415
+        - 0.4876108327552706
+        - 0.04703645423442254
+        - 0.004994663019804046
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        omega_b:
+          min: -5.0
+          max: 5.0
+          scale: 1.0
+          domain: real
+        kappa_dark:
+          min: 1.0e-05
+          max: 1.0
+          scale: 0.05
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_nonlinearity_input_coupling_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - -3.8491581194102764
+        - 3.723126035183668
+        - 0.5750860273838043
+        - -2.0115405693650246
+        - -0.3248045686632395
+        - 2.0932894479483366
+        - 3.9211406279355288
+        - -3.5021407064050436
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -0.3396316710859537
+        - 1.8428069166839123
+        - -4.183219792321324
+        - 2.990101370960474
+        - -3.42901848256588
+        - 4.38791380263865
+        - -2.0481127873063087
+        - 0.7791570294648409
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -0.06639312458661575
+        - -1.8284072871203894
+        - -0.014155300524550092
+        - -0.41700139463524144
+        - -4.795414612743156
+        - -0.13844721146352262
+        - -0.19205528465757835
+        - -0.005324478593892285
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.009445122611523473
+        - 0.15016321117369436
+        - 0.0010618003946799674
+        - 0.806958763112051
+        - 0.45175288416830006
+        - 0.003984354483260975
+        - 0.050746057574176315
+        - 0.021394996798634342
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.13432820086759306
+        - 0.004715189731869482
+        - 0.00846079031249936
+        - 0.5896998164017743
+        - 0.8344700347962757
+        - 0.031080502393223
+        - 0.0010123289947774308
+        - 0.07484684828483959
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 2.7309124283562115e-05
+        - 0.2813487313220826
+        - 0.02385866492763039
+        - 0.0005586985222124607
+        - 7.840829985821325e-05
+        - 0.16786665484955168
+        - 0.009078318791857613
+        - 0.000854718090314237
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        chi:
+          min: 1.0e-05
+          max: 0.1
+          scale: 0.001
+          domain: nonnegative
+          sampling: log
+        g_ab:
+          min: 0.005
+          max: 5.0
+          scale: 0.2
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_nonlinearity_mixing_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - -2.9707194957882166
+        - 2.902826126664877
+        - 2.4690711311995983
+        - -2.244617724791169
+        - -0.8191102650016546
+        - 0.7316593080759048
+        - 4.052998572587967
+        - -3.8089973386377096
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -3.2447476405650377
+        - 2.5430247373878956
+        - -1.2104189023375511
+        - 0.5062349606305361
+        - -1.3466675486415625
+        - 1.8921980261802673
+        - -4.358804170042276
+        - 4.906756496056914
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.11981242032146126
+        - 2.870586703733755
+        - 0.011134542950160394
+        - 0.17371392237558358
+        - 1.0535052846181647
+        - 0.05463470523938574
+        - 0.5523147513336051
+        - 0.0185333185867676
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.30302323472885634
+        - 0.03504864327616465
+        - 0.06093842560611796
+        - 0.006267136140378268
+        - 0.00250253235741756
+        - 0.15274198488293808
+        - 0.012475012957210155
+        - 0.8521857707639632
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.1271192396343053
+        - 0.0030520207654375396
+        - 0.00964478722432518
+        - 0.4137484006828129
+        - 1.691922227046566
+        - 0.040788786367993025
+        - 0.001874064396487742
+        - 0.08005566202939186
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 0.0007204731956894392
+        - 0.3051030746621505
+        - 0.007850416053554118
+        - 8.165156503183903e-05
+        - 0.0017737288451990507
+        - 0.08672809509096017
+        - 0.039347861870118385
+        - 1.1209588913075066e-05
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        chi:
+          min: 1.0e-05
+          max: 0.1
+          scale: 0.001
+          domain: nonnegative
+          sampling: log
+        g_ac:
+          min: -5.0
+          max: -0.005
+          scale: 0.2
+          domain: real
+          sampling: log_abs
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_nonlinearity_passive_coupling_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - 1.8996201641857624
+        - -2.446106756106019
+        - -2.9107450135052204
+        - 2.6849819254130125
+        - 4.96422023512423
+        - -4.420483373105526
+        - -0.20370575599372387
+        - 0.430997833609581
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -0.6619648169726133
+        - 2.749886065721512
+        - -3.6125669721513987
+        - 0.42674439027905464
+        - -4.731293087825179
+        - 1.856827400624752
+        - -2.0932111609727144
+        - 3.867486994713545
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.05093691780389372
+        - 0.31432835752172383
+        - 0.021220990878276166
+        - 4.355092277123695
+        - 0.8336182881216799
+        - 0.11114317287316845
+        - 2.0000970805292226
+        - 0.008011608745510747
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -0.18082776657169952
+        - -0.033668761217808076
+        - -1.6339246261188942
+        - -0.00877476713125326
+        - -0.02040555854970291
+        - -3.8475699708061275
+        - -0.07928483731117734
+        - -0.42049751358642834
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.04961419831929896
+        - 0.0025967257721657725
+        - 0.008900838545442744
+        - 1.0718225556024061
+        - 0.7081501923583059
+        - 0.042558224485285
+        - 0.0020293644531887527
+        - 0.21282115271954066
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 0.004822814702176975
+        - 0.0010951496563845955
+        - 7.550539632054028e-05
+        - 0.10544437008672951
+        - 0.024295162288167298
+        - 0.0003102360430202083
+        - 1.4842442521591872e-05
+        - 0.36859651781047653
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        chi:
+          min: 1.0e-05
+          max: 0.1
+          scale: 0.001
+          domain: nonnegative
+          sampling: log
+        g_bc:
+          min: 0.001
+          max: 2.0
+          scale: 0.1
+          domain: real
+          sampling: log_abs
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_nonlinearity_gain_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - 2.1958369575440884
+        - -3.6451346147805452
+        - -1.7191864643245935
+        - 2.8669347055256367
+        - 4.961573425680399
+        - -1.0306220594793558
+        - -4.187062801793218
+        - 0.5600307695567608
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 1.14200328476727
+        - -0.1945067197084427
+        - 2.9309719894081354
+        - -3.2346967235207558
+        - 4.868527613580227
+        - -3.9607062842696905
+        - 1.6635426133871078
+        - -2.004501176998019
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.006745061777611306
+        - 4.727170375686051
+        - 0.04603975907220774
+        - 0.42576619489360074
+        - 1.1878138506568305
+        - 0.02543326148071727
+        - 0.27048878579322994
+        - 0.07648773103172572
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -2.7291699574488035
+        - -0.10519701557497788
+        - -0.8773933406426064
+        - -0.01430956041865326
+        - -0.007888401058297023
+        - -0.20474123803754155
+        - -0.033920118517587174
+        - -2.0806696753506086
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 1.644905689044317
+        - 0.025718748215646056
+        - 0.0026333856067741234
+        - 0.21364478027897607
+        - 0.045137230323975285
+        - 0.0018363994835074676
+        - 0.014354530051815693
+        - 0.44729240948601606
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 0.1735703134211458
+        - 1.518543687022362e-05
+        - 0.0004133694569686906
+        - 0.0035410900053061286
+        - 0.24710859542003244
+        - 8.931288216653467e-05
+        - 0.0012377314344442039
+        - 0.045688900113991376
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        chi:
+          min: 1.0e-05
+          max: 0.1
+          scale: 0.001
+          domain: nonnegative
+          sampling: log
+        pump_a:
+          min: 0.001
+          max: 2.0
+          scale: 0.5
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_nonlinearity_dark_loss_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - 2.181037236005068
+        - -3.5556468926370144
+        - -1.2948203831911087
+        - 3.045397251844406
+        - 4.405169105157256
+        - -1.0971614811569452
+        - -3.9925658982247114
+        - 0.4257600475102663
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -1.2822787929326296
+        - 0.2905667573213577
+        - -4.4000453222543
+        - 3.399646207690239
+        - -2.9924832563847303
+        - 4.1882712952792645
+        - -1.1297798436135054
+        - 2.31688080355525
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.0212870063198989
+        - 0.3467450575276976
+        - 0.02899018783880312
+        - 2.7314316939578696
+        - 0.7540735750569293
+        - 0.007978181666619514
+        - 1.2768150485184813
+        - 0.07810397645817722
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -0.10571195711063029
+        - -0.48673370224713336
+        - -0.005265768848561638
+        - -1.7612292871267412
+        - -3.7516571457342565
+        - -0.017250703037939723
+        - -0.18414410843533693
+        - -0.06166007264893107
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 1.0880230072032169
+        - 0.0011237020302056716
+        - 0.007113148356954628
+        - 0.15809002347608597
+        - 0.048901747119824944
+        - 0.024380049917536388
+        - 0.0035224576763266792
+        - 0.326772055586361
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.04219914356062869
+        - 1.9818814356811354
+        - 0.07378292215203155
+        - 0.0016762963125188622
+        - 0.012876644303523992
+        - 0.6039536414428965
+        - 0.24133809788398847
+        - 0.005511321661295143
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        chi:
+          min: 1.0e-05
+          max: 0.1
+          scale: 0.001
+          domain: nonnegative
+          sampling: log
+        kappa_dark:
+          min: 1.0e-05
+          max: 1.0
+          scale: 0.05
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_coupling_pair_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - -4.034594362601638
+        - 3.4151839278638363
+        - 0.9029584657400846
+        - -1.5321357175707817
+        - -1.2060953211039305
+        - 1.826919261366129
+        - 4.3244903441518545
+        - -3.6939019709825516
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 3.787828991189599
+        - -0.471789687871933
+        - 1.5444676671177149
+        - -2.946445941925049
+        - 0.4922290239483118
+        - -3.7692061066627502
+        - 2.965072998777032
+        - -1.5240325033664703
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 0.0003539471287079605
+        - 0.045122156069943464
+        - 4.1562990944834414e-05
+        - 0.005111376028951445
+        - 0.012087676527907222
+        - 0.00017478821526423758
+        - 0.001074032342029191
+        - 1.4981886604454631e-05
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.01119613382116765
+        - 0.8832788225600667
+        - 0.00241123214823794
+        - 0.1489625699085559
+        - 0.047907715748079734
+        - 0.005188145394435879
+        - 0.4624792833339854
+        - 0.03918587767275819
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.09529046145507414
+        - 0.01053318462320565
+        - 0.002039302371869565
+        - 0.45612517532715785
+        - 0.8070437962784782
+        - 0.005171951532126286
+        - 0.01733673102819747
+        - 0.2231221442616631
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 0.000782342632184306
+        - 0.33460854454091477
+        - 0.016798552466990864
+        - 4.714961266169938e-05
+        - 0.0004933188594624947
+        - 0.1258375930742979
+        - 0.007562527342060939
+        - 2.4835870166321897e-05
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        g_ab:
+          min: 0.005
+          max: 5.0
+          scale: 0.2
+          domain: nonnegative
+          sampling: log
+        g_ac:
+          min: -5.0
+          max: -0.005
+          scale: 0.2
+          domain: real
+          sampling: log_abs
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_input_passive_coupling_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - -2.5421165209263563
+        - 1.6740807425230742
+        - 4.719205796718597
+        - -0.7422704435884953
+        - -2.424563243985176
+        - 3.35431857034564
+        - 0.304310517385602
+        - -4.219526620581746
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 2.4151666834950447
+        - -4.917760947719216
+        - 4.5986925810575485
+        - -2.0912155229598284
+        - 3.0518448539078236
+        - -0.5495563801378012
+        - 0.24618549272418022
+        - -2.753356797620654
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 0.005981522661956838
+        - 0.00013944500499183057
+        - 0.02397228611092656
+        - 3.2522046185041384e-05
+        - 0.0005347556226497178
+        - 0.002211922404624805
+        - 1.3039566480147083e-05
+        - 0.09970300419192178
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -0.024188205598356115
+        - -2.6177817154481553
+        - -0.06851157273834277
+        - -0.6330426792736281
+        - -0.19894566394946983
+        - -0.05813670135745524
+        - -1.5225005866723735
+        - -0.005210057894957907
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 1.0247843948902378
+        - 0.0017676728721596272
+        - 0.015964351943540893
+        - 0.1428207953902622
+        - 0.08810502829500684
+        - 0.02507493108093995
+        - 0.0028173249172434712
+        - 0.6230102133060281
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 0.01862899163433581
+        - 8.343903796417084e-05
+        - 0.0027465285968933436
+        - 0.5993704555953397
+        - 0.00740928715755698
+        - 3.319138383343834e-05
+        - 0.00027089991895547477
+        - 0.05914756816812959
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        g_ab:
+          min: 0.005
+          max: 5.0
+          scale: 0.2
+          domain: nonnegative
+          sampling: log
+        g_bc:
+          min: 0.001
+          max: 2.0
+          scale: 0.1
+          domain: real
+          sampling: log_abs
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_input_coupling_gain_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - 2.7522514667361975
+        - -0.15216038562357426
+        - -3.2769030891358852
+        - 0.8770122565329075
+        - 1.548261847347021
+        - -3.835852835327387
+        - -1.9610720593482256
+        - 4.673462836071849
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -3.271548440679908
+        - 2.54322437569499
+        - -0.7432601507753134
+        - 0.07265722379088402
+        - -1.5646904148161411
+        - 2.2981976810842752
+        - -4.093202371150255
+        - 4.768387684598565
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 3.48490532377466e-05
+        - 0.034539159176907135
+        - 0.00017655088214665662
+        - 0.001718399026731011
+        - 0.02065306303780621
+        - 2.121665581941685e-05
+        - 0.007869566490699618
+        - 0.0007941151656449535
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -0.007588397684953723
+        - -0.15964762284825015
+        - -0.13139553740378862
+        - -3.8230551754447726
+        - -2.0057769682588242
+        - -0.04452172047322713
+        - -0.4708158418266784
+        - -0.014465214201989249
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.3025258972572524
+        - 0.002198934760324974
+        - 0.03715819988206568
+        - 0.12706342976457197
+        - 0.06929468089545088
+        - 0.012232749524917338
+        - 0.005137262462409005
+        - 1.1708247005204766
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 0.0010123382449106098
+        - 0.0068161792529925855
+        - 0.10599459081934134
+        - 0.00013368545977431156
+        - 0.0002820310833731523
+        - 0.051384855352735716
+        - 0.27088157551237524
+        - 2.6052768271263742e-05
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        g_ab:
+          min: 0.005
+          max: 5.0
+          scale: 0.2
+          domain: nonnegative
+          sampling: log
+        pump_a:
+          min: 0.001
+          max: 2.0
+          scale: 0.5
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_input_dark_loss_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - 2.6005571987479925
+        - -3.648268450051546
+        - -2.3355843499302864
+        - 1.4154365379363298
+        - 0.002080807462334633
+        - -1.249377280473709
+        - -4.739512037485838
+        - 4.0091833751648664
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 2.487947577610612
+        - -3.3147890400141478
+        - 3.1385900545865297
+        - -2.3126018699258566
+        - 4.990400727838278
+        - -0.807472076267004
+        - 0.6312585808336735
+        - -4.815031532198191
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 0.00015836521766007122
+        - 0.002438994723963824
+        - 9.329188417985854e-05
+        - 0.045512244525274664
+        - 0.009663470111617318
+        - 0.00046997407786632185
+        - 0.01646175151353359
+        - 2.533154330597761e-05
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -1.0998443879372815
+        - -0.010381892542434126
+        - -0.7213048911934791
+        - -0.07590030735809361
+        - -0.029211966708298134
+        - -0.35139160477057474
+        - -0.027151812546131276
+        - -2.2420171150976738
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.8171095866346038
+        - 0.006055806703327882
+        - 0.03834792963101901
+        - 0.14504681681902776
+        - 0.06388164098482638
+        - 0.01122420822730872
+        - 0.0019819459544503115
+        - 0.40813077573465
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.16331867399769892
+        - 0.0015332675276656976
+        - 0.03497328765658431
+        - 0.5143297212017166
+        - 0.09723033402037527
+        - 0.006652552300102827
+        - 0.008006247104055472
+        - 0.8698373128258778
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        g_ab:
+          min: 0.005
+          max: 5.0
+          scale: 0.2
+          domain: nonnegative
+          sampling: log
+        kappa_dark:
+          min: 1.0e-05
+          max: 1.0
+          scale: 0.05
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_mixing_passive_coupling_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - 3.3007961977273226
+        - -4.858703836798668
+        - -1.786675089970231
+        - 0.2098453976213932
+        - 1.6116675827652216
+        - -0.06349612027406693
+        - -3.14438340254128
+        - 4.711474608629942
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -0.15325668267905712
+        - 4.014180609956384
+        - -2.73537565022707
+        - 1.3735540211200714
+        - -4.414860960096121
+        - 0.7876658998429775
+        - -2.0678468514233828
+        - 3.193493401631713
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 0.000382195436642583
+        - 0.0026949541444494735
+        - 5.554521136639735e-05
+        - 0.018690608954635715
+        - 0.005238362451412374
+        - 0.00018303236306923022
+        - 0.037744526309061395
+        - 2.5601903217369871e-05
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.013006713280010638
+        - 1.074727687608259
+        - 0.1426344355190456
+        - 0.30441291150136524
+        - 0.8352342471877324
+        - 0.05636985077756969
+        - 2.2819314579938865
+        - 0.005962565981634099
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.02922886599853681
+        - 0.0474759195844354
+        - 0.5604702650346938
+        - 0.003140073380778762
+        - 0.001525534751934523
+        - 1.8620608421781197
+        - 0.15889363954300154
+        - 0.014096177360641572
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 1.1269057240031868e-05
+        - 0.9063042313098378
+        - 0.0055347318460319825
+        - 0.0017690864636520373
+        - 0.000152812769833897
+        - 0.06664518541630815
+        - 0.03061749917555421
+        - 0.0003206970019747168
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        g_ac:
+          min: -5.0
+          max: -0.005
+          scale: 0.2
+          domain: real
+          sampling: log_abs
+        g_bc:
+          min: 0.001
+          max: 2.0
+          scale: 0.1
+          domain: real
+          sampling: log_abs
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_mixing_gain_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - 2.7331012673676014
+        - -2.1351950243115425
+        - -3.408270850777626
+        - 1.4109613560140133
+        - 0.2752050291746855
+        - -4.544222755357623
+        - -0.8490395452827215
+        - 4.0189851727336645
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -1.1706006899476051
+        - 1.3122462760657072
+        - -4.1548666544258595
+        - 3.3686997834593058
+        - -3.2559385150671005
+        - 4.344839891418815
+        - -1.443012859672308
+        - 0.9595705289393663
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 0.02812020980447402
+        - 6.598024482959148e-05
+        - 0.004693836074644102
+        - 0.00010830506345778831
+        - 2.905398812957557e-05
+        - 0.06831621681979125
+        - 0.0004850384324979566
+        - 0.0011212374924840533
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.31603989137707117
+        - 0.013997752345655094
+        - 1.8946511089411668
+        - 0.07332448798190057
+        - 0.06519719331655296
+        - 2.146051646330017
+        - 0.01023041922569904
+        - 0.4293095890424977
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.6611370804905586
+        - 0.04095102051137043
+        - 0.005464627806418558
+        - 0.110788335772554
+        - 0.2051670828913042
+        - 0.0018624229910051853
+        - 0.011011005158594704
+        - 1.5518890189555095
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 0.004537564679012537
+        - 0.0030496731795378955
+        - 5.7876891908555244e-05
+        - 0.11670872071316647
+        - 0.02520388033587115
+        - 0.0005490731835332431
+        - 1.05383360409289e-05
+        - 0.6409927238790667
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        g_ac:
+          min: -5.0
+          max: -0.005
+          scale: 0.2
+          domain: real
+          sampling: log_abs
+        pump_a:
+          min: 0.001
+          max: 2.0
+          scale: 0.5
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_mixing_dark_loss_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - 1.20301004499197
+        - -3.234835686162114
+        - -0.083449212834239
+        - 3.051947820931673
+        - 3.8496330101042986
+        - -1.8187226168811321
+        - -4.936844743788242
+        - 1.9680412393063307
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 4.412864102050662
+        - -1.4203738514333963
+        - 0.6104727368801832
+        - -3.5553561244159937
+        - 2.111228574067354
+        - -3.8538451679050922
+        - 2.8645014204084873
+        - -1.1694916523993015
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 0.01504221310493736
+        - 0.0009304513570013358
+        - 0.0010934208757159513
+        - 6.699134058936095e-05
+        - 0.00012527132400624212
+        - 0.05807500486215429
+        - 1.7390721260947612e-05
+        - 0.007994536884781314
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.025533540403697146
+        - 3.7257353739081864
+        - 0.1506371080348135
+        - 0.7022199195213495
+        - 0.23504161150765526
+        - 0.034677756378750764
+        - 1.259656236014283
+        - 0.005817251870832782
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.010502321510568262
+        - 0.5719847916943556
+        - 0.18447812288698084
+        - 0.004877765313127499
+        - 0.0024735143804239185
+        - 0.050958327891126316
+        - 1.8866717401809465
+        - 0.020015213386875945
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.22925376686063964
+        - 0.01195071471418441
+        - 0.0033254794202851054
+        - 0.4398530147711466
+        - 0.08434263764056343
+        - 0.029375925025099517
+        - 0.0013528319150146657
+        - 1.195610242878246
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        g_ac:
+          min: -5.0
+          max: -0.005
+          scale: 0.2
+          domain: real
+          sampling: log_abs
+        kappa_dark:
+          min: 1.0e-05
+          max: 1.0
+          scale: 0.05
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_passive_coupling_gain_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - 1.230925563722849
+        - -4.511279594153166
+        - -1.5131509583443403
+        - 2.9009195137768984
+        - 3.9273062720894814
+        - -0.33052433282136917
+        - -3.6608260590583086
+        - 1.9251201581209898
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -2.5818046275526285
+        - 1.4693799894303083
+        - -0.14434010721743107
+        - 3.9142354857176542
+        - -1.9636669848114252
+        - 3.3497151266783476
+        - -4.528346890583634
+        - 0.797328082844615
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 0.0005098012714638212
+        - 0.029295705455533456
+        - 5.1810489118154216e-05
+        - 0.002851166802089511
+        - 0.09599040759986285
+        - 0.00016836139380568994
+        - 0.009352718899679346
+        - 1.686227486038168e-05
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 1.3495486919706496
+        - 0.050133183540784415
+        - 0.4508538956197722
+        - 0.025792386856193117
+        - 0.006155869242536302
+        - 0.35216757195324083
+        - 0.0975165851809112
+        - 3.6225212433115366
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -0.4948538528072224
+        - -0.01248966050629821
+        - -0.029786607330384813
+        - -1.1497845273501426
+        - -2.376254959286199
+        - -0.10211018983771382
+        - -0.006916218261298768
+        - -0.19423802669143428
+      kappa_dark:
+        target: model.collective_loss_kerr_3mode.kappa_dark
+        values:
+        - 0.1547759898742698
+        - 1.6191805537612587e-05
+        - 0.00048594660654314705
+        - 0.005055233504784779
+        - 0.5917194542544538
+        - 6.146945400973360e-05
+        - 0.0018893847727403173
+        - 0.019737774010085696
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        g_bc:
+          min: 0.001
+          max: 2.0
+          scale: 0.1
+          domain: real
+          sampling: log_abs
+        pump_a:
+          min: 0.001
+          max: 2.0
+          scale: 0.5
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_passive_coupling_dark_loss_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - 4.862578045576811
+        - -4.437927231192589
+        - -0.7447602972388268
+        - 1.2096965499222279
+        - 1.8002796825021505
+        - -1.404010346159339
+        - -2.558274446055293
+        - 2.9923881124705076
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - -3.4700988978147507
+        - 4.855209393426776
+        - -0.7246070727705956
+        - 2.112189894542098
+        - -2.3589684162288904
+        - 0.9761084243655205
+        - -4.618353517726064
+        - 3.228214383125305
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 0.0032083329203544293
+        - 0.000793341964851051
+        - 0.01892281494196204
+        - 1.3478423338445614e-05
+        - 0.0001543685352769658
+        - 0.002199143407456701
+        - 9.240048511230312e-05
+        - 0.03682520161320024
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.013741817366443431
+        - 4.426619420400235
+        - 0.13029536916700576
+        - 0.4513645304839197
+        - 0.2364208684329504
+        - 0.044348680174750986
+        - 1.4964564054953828
+        - 0.00714957257685005
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -1.6326594031901853
+        - -0.006442795536275223
+        - -0.11601637912443664
+        - -0.5099810261603615
+        - -0.20515317189220386
+        - -0.05128555323312884
+        - -0.016235056625771394
+        - -3.6434774893340305
+      pump_a:
+        target: model.collective_loss_kerr_3mode.pump_a
+        values:
+        - 0.03196308275822481
+        - 0.7664814322548669
+        - 0.07082110446384494
+        - 0.0029533155440084214
+        - 0.0132811873693342
+        - 1.7812647727341882
+        - 0.16919109636162083
+        - 0.0012614968281560001
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        g_bc:
+          min: 0.001
+          max: 2.0
+          scale: 0.1
+          domain: real
+          sampling: log_abs
+        kappa_dark:
+          min: 1.0e-05
+          max: 1.0
+          scale: 0.05
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64
+- name: collective_loss_kerr_3mode_interference_acn_bcp_gain_dark_loss_t0
+  save: true
+  system:
+    scan_runtime:
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+  scan:
+    combine: zipped
+    axes:
+      omega_b:
+        target: model.collective_loss_kerr_3mode.omega_b
+        values:
+        - 4.348985701799393
+        - -3.0792844481766224
+        - -2.0706448890268803
+        - 0.8013587445020676
+        - 1.3997761253267527
+        - -0.09101384319365025
+        - -4.746434846892953
+        - 3.4380871150642633
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 3.282086532562971
+        - -1.0409099515527487
+        - 1.5847743302583694
+        - -3.991882959380746
+        - 0.9877492487430573
+        - -3.434084737673402
+        - 3.97915905341506
+        - -1.6987797524780035
+      chi:
+        target: model.collective_loss_kerr_3mode.chi
+        values:
+        - 1.7701386716080967e-05
+        - 0.009243808146714683
+        - 0.00011267859495503894
+        - 0.05907374883557179
+        - 0.0021953468196007505
+        - 4.191535931963849e-05
+        - 0.02487841411765052
+        - 0.00047580133932712204
+      g_ab:
+        target: model.collective_loss_kerr_3mode.g_ab
+        values:
+        - 0.013843183949172303
+        - 0.3417522258293954
+        - 0.14875173597573985
+        - 1.0057423821751914
+        - 2.214143491984469
+        - 0.05502634522017959
+        - 0.7522986950630749
+        - 0.005121352509161227
+      g_ac:
+        target: model.collective_loss_kerr_3mode.g_ac
+        values:
+        - -0.048078085197779036
+        - -0.5448871792723671
+        - -1.3128153947153332
+        - -0.018405153290856745
+        - -0.009203630538264193
+        - -2.663235942444578
+        - -0.2130512600824893
+        - -0.11818367960018873
+      g_bc:
+        target: model.collective_loss_kerr_3mode.g_bc
+        values:
+        - 0.1983551407771715
+        - 0.002916564040978858
+        - 0.02753588632104748
+        - 1.651309445754284
+        - 0.09790220024075928
+        - 0.0014395292989944663
+        - 0.00845149780628792
+        - 0.5068309040638117
+  engine:
+    cam:
+      case_failure_policy: record
+  backend:
+    numpy:
+      float_dtype: float64
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 1.0
+      chi: 0.001
+      g_ab: 0.2
+      g_ac: -0.2
+      g_bc: 0.05
+      pump_a: 0.2
+      kappa_bright: 1.0
+      kappa_dark: 0.02
+  cam_solver:
+    bifurcation:
+      controls:
+        pump_a:
+          min: 0.001
+          max: 2.0
+          scale: 0.5
+          domain: nonnegative
+          sampling: log
+        kappa_dark:
+          min: 1.0e-05
+          max: 1.0
+          scale: 0.05
+          domain: nonnegative
+          sampling: log
+      perturbation:
+        parameter: omega_c
+        scale: 1.0
+        side: both
+      target:
+        equilibrium_multiplicity:
+          order: 3
+      strategy:
+        auto:
+          retained_dimension: 1
+          max_candidates: 4
+          condition_limit: 100000000000.0
+      discovery:
+        seeds:
+          samples_per_control: 3
+          max_starts: 1024
+          order_parameter_samples: 31
+      classifier:
+        scaling_signature:
+          max_total_order: 8
+          coefficient_tolerance: 1.0e-14
+          max_exponent: 0.999
+      refinement:
+        tolerance: 1.0e-09
+        max_iterations: 60
+      verification:
+        initial_digits: 40
+        max_digits: 120
+      audit:
+        near_miss_per_reason: 8
+        near_miss_total: 64

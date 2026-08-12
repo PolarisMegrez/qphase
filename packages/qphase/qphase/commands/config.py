@@ -1,30 +1,22 @@
-"""qphase: Configuration Management CLI Commands
----------------------------------------------------------
-Implements the ``qphase config`` command group, providing tools to inspect and modify
-the system (``system.yaml``) and global (``global.yaml``) configurations. It supports
-viewing configurations with syntax highlighting, setting values using dot-notation
-paths with automatic type inference, and resetting configurations to their default
-states.
+"""Manage machine policy and project plugin defaults."""
 
-Public API
-----------
-``show`` : Display system or global configuration with syntax highlighting
-``set`` : Set configuration values with type inference
-``reset`` : Reset configuration to defaults
-"""
+from __future__ import annotations
 
-from pathlib import Path
+import json
+from io import StringIO
 from typing import Any
 
 import typer
 from rich.console import Console
 from rich.syntax import Syntax
+from ruamel.yaml import YAML
 
 from qphase.core.config_loader import (
     construct_plugins_config,
-    load_global_config,
-    save_global_config,
+    load_project_defaults,
+    save_project_defaults,
 )
+from qphase.core.project import ProjectContext
 from qphase.core.registry import discovery, registry
 from qphase.core.system_config import (
     load_system_config,
@@ -33,23 +25,23 @@ from qphase.core.system_config import (
 )
 from qphase.service import RegistryService
 
-app = typer.Typer(help="Manage configuration")
+app = typer.Typer(help="Manage machine policy and project defaults")
 console = Console()
 
 
-@app.command("options")
-def subplugin_options(path: str = typer.Argument(...)) -> None:
-    """List child implementations accepted by a plugin slot."""
+def _discover() -> ProjectContext:
+    project = ProjectContext.discover()
     discovery.discover_plugins()
-    discovery.discover_local_plugins()
-    if "/" in path:
-        parent, slot = path.rsplit("/", 1)
-    else:
-        parts = path.rsplit(".", 1)
-        if len(parts) != 2:
-            raise typer.BadParameter("use parent.plugin/slot")
-        parent, slot = parts
-    summary = RegistryService().get_subplugin_options(parent, slot)
+    discovery.discover_local_plugins(project)
+    return project
+
+
+@app.command("options")
+def subplugin_options(path: str) -> None:
+    """List child implementations accepted by a plugin slot."""
+    project = _discover()
+    parent, slot = path.rsplit("/", 1) if "/" in path else path.rsplit(".", 1)
+    summary = RegistryService(project=project).get_subplugin_options(parent, slot)
     console.print(f"[bold cyan]{parent}/{slot}[/bold cyan]")
     for option in summary.options:
         marker = " [default]" if option.name == summary.default else ""
@@ -57,241 +49,89 @@ def subplugin_options(path: str = typer.Argument(...)) -> None:
 
 
 @app.command("schema")
-def plugin_schema(path: str = typer.Argument(...)) -> None:
+def plugin_schema(path: str) -> None:
     """Display the composite configuration schema for a plugin path."""
-    import json
-
-    discovery.discover_plugins()
-    discovery.discover_local_plugins()
-    payload = RegistryService().get_composite_schema(path)
+    project = _discover()
+    payload = RegistryService(project=project).get_composite_schema(path)
     console.print(Syntax(json.dumps(payload, indent=2), "json", theme="monokai"))
-
-
-def _get_global_config_path() -> tuple[Path, bool]:
-    """Get the path to global.yaml, following config_dirs from system config.
-
-    Returns
-    -------
-        tuple: (Path to global.yaml, whether it's in config_dirs)
-
-    """
-    system_config = load_system_config()
-    config_dirs = system_config.paths.get_config_dirs()
-
-    # First, try the first config directory
-    if config_dirs:
-        global_path = Path(config_dirs[0]) / "global.yaml"
-        if global_path.exists():
-            return global_path, True
-
-    # Fall back to current directory
-    return Path("global.yaml"), False
 
 
 @app.command("show")
 def show_config(
-    system: bool = typer.Option(
-        False, "--system", "-s", help="Show system configuration instead of global"
-    ),
-):
-    """Show current configuration.
-
-    By default, shows the global configuration (global.yaml).
-    Use --system to show the system configuration (system.yaml).
-    """
+    system: bool = typer.Option(False, "--system", "-s", help="Show machine policy"),
+) -> None:
+    """Show project defaults, or machine policy with ``--system``."""
     if system:
-        config = load_system_config()
-        title = "System Configuration (system.yaml)"
-        # Convert Pydantic model to dict
-        data = config.model_dump()
+        data = load_system_config().model_dump()
+        title = "System policy"
     else:
-        # Load global config from the correct path
-        global_path, from_config_dirs = _get_global_config_path()
-        if not global_path.exists():
-            if from_config_dirs:
-                console.print(
-                    f"[yellow]No global.yaml found at {global_path}.[/yellow]"
-                )
-            else:
-                console.print(
-                    "[yellow]No global.yaml found in current directory.[/yellow]"
-                )
-            return
-
-        data = load_global_config(global_path)
-        title = f"Global Configuration ({global_path})"
-
-    console.print(f"\n[bold cyan]{title}[/bold cyan]")
-
-    # Use rich Syntax to print YAML
-    from io import StringIO
-
-    from ruamel.yaml import YAML
-
-    yaml = YAML()
+        project = ProjectContext.discover()
+        data = load_project_defaults(project.defaults_path)
+        title = f"Project defaults ({project.defaults_path})"
     stream = StringIO()
-    yaml.dump(data, stream)
-    yaml_str = stream.getvalue()
-
-    syntax = Syntax(yaml_str, "yaml", theme="monokai", line_numbers=True)
-    console.print(syntax)
+    YAML().dump(data, stream)
+    console.print(f"\n[bold cyan]{title}[/bold cyan]")
+    console.print(Syntax(stream.getvalue(), "yaml", theme="monokai", line_numbers=True))
 
 
 @app.command("set")
 def set_config(
-    key: str = typer.Argument(
-        ..., help="Configuration key (dot-separated, e.g. paths.output_dir)"
-    ),
-    value: str = typer.Argument(..., help="Value to set"),
-    system: bool = typer.Option(
-        False, "--system", "-s", help="Set value in system configuration"
-    ),
-):
-    """Set a configuration value.
-
-    Modifies global.yaml by default, or system.yaml if --system is used.
-    """
+    key: str,
+    value: str,
+    system: bool = typer.Option(False, "--system", "-s", help="Update machine policy"),
+) -> None:
+    """Set a project-default or machine-policy value using dot notation."""
+    parsed = _parse_value(value)
     if system:
         config = load_system_config()
-        try:
-            _set_nested_attr(config, key, value)
-            save_user_config(config)
-            console.print(f"[green]Updated system config: {key} = {value}[/green]")
-        except Exception as e:
-            console.print(f"[red]Failed to update system config: {e}[/red]")
-            raise typer.Exit(code=1) from e
-
+        _set_nested_attr(config, key, parsed)
+        save_user_config(config)
     else:
-        global_path, from_config_dirs = _get_global_config_path()
-        if not global_path.exists():
-            if from_config_dirs:
-                console.print(
-                    f"[red]global.yaml not found at {global_path}. "
-                    "Run 'qphase template <plugin>' to generate one.[/red]"
-                )
-            else:
-                console.print(
-                    "[red]global.yaml not found in current directory. "
-                    "Run 'qphase template <plugin>' to generate one.[/red]"
-                )
-            raise typer.Exit(code=1)
-
-        config_dict = load_global_config(global_path)
-        try:
-            _set_nested_dict(config_dict, key, value)
-            save_global_config(config_dict, global_path)
-            console.print(f"[green]Updated global config: {key} = {value}[/green]")
-        except Exception as e:
-            console.print(f"[red]Failed to update global config: {e}[/red]")
-            raise typer.Exit(code=1) from e
+        project = ProjectContext.discover()
+        data = load_project_defaults(project.defaults_path)
+        _set_nested_dict(data, key, parsed)
+        save_project_defaults(data, project.defaults_path)
+    console.print(f"[green]Updated {key} = {parsed!r}[/green]")
 
 
 @app.command("reset")
 def reset_config(
-    system: bool = typer.Option(
-        False, "--system", "-s", help="Reset system configuration"
-    ),
-    force: bool = typer.Option(
-        False, "--force", "-f", help="Force reset without confirmation"
-    ),
-):
-    """Reset configuration to defaults.
-
-    If --system is used, resets system.yaml to factory defaults.
-    Otherwise, resets global.yaml by regenerating it from discovered plugins.
-    """
+    system: bool = typer.Option(False, "--system", "-s"),
+    force: bool = typer.Option(False, "--force", "-f"),
+) -> None:
+    """Reset machine overrides or regenerate project plugin defaults."""
+    if not force and not typer.confirm("Reset this configuration?"):
+        raise typer.Abort()
     if system:
-        if not force and not typer.confirm(
-            "Are you sure you want to reset system configuration?"
-        ):
-            raise typer.Abort()
+        reset_user_config()
+        console.print("[green]System policy reset.[/green]")
+        return
+    project = _discover()
+    save_project_defaults(construct_plugins_config(registry), project.defaults_path)
+    console.print(f"[green]Regenerated {project.defaults_path}.[/green]")
 
-        try:
-            reset_user_config()
 
-            console.print("[green]System configuration reset to defaults.[/green]")
-        except Exception as e:
-            console.print(f"[red]Failed to reset system config: {e}[/red]")
-            raise typer.Exit(code=1) from e
-    else:
-        if not force and not typer.confirm(
-            "Are you sure you want to reset global configuration?"
-        ):
-            raise typer.Abort()
-
-        try:
-            # Get the path where global.yaml should be saved
-            system_config = load_system_config()
-            config_dirs = system_config.paths.get_config_dirs()
-
-            if config_dirs:
-                global_path = Path(config_dirs[0]) / "global.yaml"
-            else:
-                global_path = Path("global.yaml")
-
-            # Regenerate global config from discovered plugins
-            global_config = construct_plugins_config(registry)
-            save_global_config(global_config, global_path)
-
-            console.print(
-                f"[green]Global configuration reset to defaults at "
-                f"{global_path}.[/green]"
-            )
-        except Exception as e:
-            console.print(f"[red]Failed to reset global config: {e}[/red]")
-            raise typer.Exit(code=1) from e
+def _parse_value(value: str) -> Any:
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
 
 
 def _set_nested_dict(data: dict[str, Any], key: str, value: Any) -> None:
-    """Set nested dictionary value using dot notation."""
-    keys = key.split(".")
+    segments = key.split(".")
     current = data
-    for k in keys[:-1]:
-        if k not in current:
-            current[k] = {}
-        current = current[k]
-        if not isinstance(current, dict):
-            raise ValueError(f"Key '{k}' is not a dictionary")
-
-    # Try to infer type
-    if value.lower() == "true":
-        value = True
-    elif value.lower() == "false":
-        value = False
-    elif value.isdigit():
-        value = int(value)
-    else:
-        try:
-            value = float(value)
-        except ValueError:
-            pass
-
-    current[keys[-1]] = value
+    for segment in segments[:-1]:
+        child = current.setdefault(segment, {})
+        if not isinstance(child, dict):
+            raise ValueError(f"{segment!r} is not a mapping")
+        current = child
+    current[segments[-1]] = value
 
 
 def _set_nested_attr(obj: Any, key: str, value: Any) -> None:
-    """Set nested attribute using dot notation."""
-    keys = key.split(".")
+    segments = key.split(".")
     current = obj
-    for k in keys[:-1]:
-        if not hasattr(current, k):
-            raise ValueError(f"Attribute '{k}' does not exist")
-        current = getattr(current, k)
-
-    if not hasattr(current, keys[-1]):
-        raise ValueError(f"Attribute '{keys[-1]}' does not exist")
-
-    # Try to infer type
-    if value.lower() == "true":
-        value = True
-    elif value.lower() == "false":
-        value = False
-    elif value.isdigit():
-        value = int(value)
-    else:
-        try:
-            value = float(value)
-        except ValueError:
-            pass
-
-    setattr(current, keys[-1], value)
+    for segment in segments[:-1]:
+        current = getattr(current, segment)
+    setattr(current, segments[-1], value)

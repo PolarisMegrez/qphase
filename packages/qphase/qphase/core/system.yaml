@@ -1,13 +1,5 @@
 # QPhase system configuration
 
-paths:
-  output_dir: "./runs"
-  global_file: "./configs/global.yaml"
-  plugin_dirs:
-    - "./models"
-  config_dirs:
-    - "./configs"
-
 auto_save_results: true
 
 reporting:

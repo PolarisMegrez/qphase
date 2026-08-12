@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from qphase.core.project import ProjectContext
 from qphase.core.registry import RegistryCenter, discovery, registry
+from qphase.core.system_config import SystemConfig
 
 from .models import (
     PluginCatalog,
@@ -18,13 +20,20 @@ from .models import (
 class RegistryService:
     """Structured API over the core plugin registry."""
 
-    def __init__(self, registry_center: RegistryCenter | None = None):
+    def __init__(
+        self,
+        registry_center: RegistryCenter | None = None,
+        system_config: SystemConfig | None = None,
+        project: ProjectContext | None = None,
+    ):
         self.registry = registry_center or registry
+        self.project = project or ProjectContext.discover()
+        self.system_config = system_config
 
     def discover(self, include_local: bool = True) -> PluginCatalog:
         discovery.discover_plugins()
         if include_local:
-            discovery.discover_local_plugins()
+            discovery.discover_local_plugins(self.project)
         return self.get_catalog()
 
     def list_plugins(self, namespace: str | None = None) -> list[PluginSummary]:

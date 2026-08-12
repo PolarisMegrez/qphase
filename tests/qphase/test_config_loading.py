@@ -1,9 +1,10 @@
 from pathlib import Path
 
-from qphase.core.config_loader import load_global_config, load_system_config
+from qphase.core.config_loader import load_project_defaults
 from qphase.core.system_config import (
     SystemConfig,
     SystemConfigStore,
+    load_system_config,
     save_user_config,
 )
 from qphase.core.utils import load_yaml
@@ -28,7 +29,7 @@ def test_missing_user_system_config_is_not_created_on_read(tmp_path, monkeypatch
 def test_system_config_store_persists_sparse_user_override(tmp_path):
     package_path = tmp_path / "defaults.yaml"
     package_path.write_text(
-        "auto_save_results: true\npaths:\n  output_dir: ./runs\n",
+        "auto_save_results: true\nreporting:\n  logging:\n    console_level: WARNING\n",
         encoding="utf-8",
     )
     user_path = tmp_path / "user" / "config.yaml"
@@ -39,12 +40,14 @@ def test_system_config_store_persists_sparse_user_override(tmp_path):
         environ={},
     )
     config = store.load()
-    config.paths.output_dir = "D:/results"
+    config.reporting.logging.console_level = "ERROR"
 
     store.save_user(config)
 
-    assert load_yaml(user_path) == {"paths": {"output_dir": "D:/results"}}
-    assert store.load().paths.output_dir == "D:/results"
+    assert load_yaml(user_path) == {
+        "reporting": {"logging": {"console_level": "ERROR"}}
+    }
+    assert store.load().reporting.logging.console_level == "ERROR"
 
 
 def test_system_config_override_precedence(tmp_path):
@@ -53,11 +56,17 @@ def test_system_config_override_precedence(tmp_path):
     site_path = tmp_path / "site.yaml"
     site_path.write_text("auto_save_results: false\n", encoding="utf-8")
     user_path = tmp_path / "user.yaml"
-    user_path.write_text("paths:\n  output_dir: user-runs\n", encoding="utf-8")
+    user_path.write_text(
+        "reporting:\n  logging:\n    console_level: INFO\n", encoding="utf-8"
+    )
     env_path = tmp_path / "environment.yaml"
-    env_path.write_text("paths:\n  output_dir: env-runs\n", encoding="utf-8")
+    env_path.write_text(
+        "reporting:\n  logging:\n    console_level: WARNING\n", encoding="utf-8"
+    )
     explicit_path = tmp_path / "explicit.yaml"
-    explicit_path.write_text("paths:\n  output_dir: explicit-runs\n", encoding="utf-8")
+    explicit_path.write_text(
+        "reporting:\n  logging:\n    console_level: ERROR\n", encoding="utf-8"
+    )
     store = SystemConfigStore(
         package_default_path=package_path,
         site_path=site_path,
@@ -68,19 +77,19 @@ def test_system_config_override_precedence(tmp_path):
     config = store.load(config_path=explicit_path)
 
     assert config.auto_save_results is False
-    assert config.paths.output_dir == "explicit-runs"
+    assert config.reporting.logging.console_level == "ERROR"
 
 
-def test_silent_generation_global_config(tmp_path):
-    """Test that global config is silently generated if missing."""
-    global_path = tmp_path / "global.yaml"
-    assert not global_path.exists()
+def test_silent_generation_project_defaults(tmp_path):
+    """Missing project defaults are initialized as an empty mapping."""
+    defaults_path = tmp_path / "defaults.yaml"
+    assert not defaults_path.exists()
 
     # Load global config (should trigger generation)
-    config = load_global_config(global_path)
+    config = load_project_defaults(defaults_path)
 
     assert isinstance(config, dict)
-    assert global_path.exists()
+    assert defaults_path.exists()
     assert config == {}
 
 

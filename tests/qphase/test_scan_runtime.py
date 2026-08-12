@@ -4,7 +4,7 @@ from typing import Any
 import numpy as np
 import pytest
 from pydantic import BaseModel
-from qphase.core.config import JobConfig, JobList
+from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.dataset import DatasetSaveReport
 from qphase.core.errors import QPhaseConfigError
 from qphase.core.execution import CheckpointStore, plugin_fingerprint
@@ -12,7 +12,7 @@ from qphase.core.protocols import EngineManifest
 from qphase.core.registry import registry
 from qphase.core.scan import ScanSpec
 from qphase.core.scheduler import Scheduler
-from qphase.core.system_config import PathsConfig, SystemConfig
+from qphase.core.system_config import SystemConfig
 from qphase.service.scheduler import SchedulerService
 
 from tests.plugins.dummy_plugin import DummyResult
@@ -207,11 +207,18 @@ def test_plugin_fingerprint_records_code_identity():
     assert fingerprint["source_sha256"] is not None
 
 
-def test_execution_plan_keeps_scan_as_one_logical_job(tmp_path: Path):
+def test_execution_plan_keeps_scan_as_one_logical_job(tmp_path: Path, temp_project):
     config = _system_config(tmp_path)
     job = _scan_job()
 
-    plan = SchedulerService(config).build_plan(JobList(jobs=[job]))
+    plan = SchedulerService(config, project=temp_project).build_plan(
+        WorkflowSpec(
+            schema="qphase.workflow/2",
+            id="test-workflow",
+            title="Test Workflow",
+            jobs=[job],
+        )
+    )
 
     assert len(plan.jobs) == 1
     assert plan.jobs[0].name == "scan"
@@ -219,11 +226,20 @@ def test_execution_plan_keeps_scan_as_one_logical_job(tmp_path: Path):
     assert plan.jobs[0].scan_summary["size"] == 3
 
 
-def test_scheduler_creates_one_manifest_entry_and_job_directory(tmp_path: Path):
+def test_scheduler_creates_one_manifest_entry_and_job_directory(
+    tmp_path: Path, temp_project
+):
     config = _system_config(tmp_path)
-    scheduler = Scheduler(system_config=config)
+    scheduler = Scheduler(system_config=config, project=temp_project)
 
-    results = scheduler.run(JobList(jobs=[_scan_job()]))
+    results = scheduler.run(
+        WorkflowSpec(
+            schema="qphase.workflow/2",
+            id="test-workflow",
+            title="Test Workflow",
+            jobs=[_scan_job()],
+        )
+    )
 
     assert len(results) == 1
     assert results[0].success
@@ -236,12 +252,15 @@ def test_scheduler_creates_one_manifest_entry_and_job_directory(tmp_path: Path):
     assert (scheduler.session_dir / "scan" / "artifact_manifest.json").exists()
 
 
-def test_map_input_runs_views_inside_one_logical_job(tmp_path: Path):
+def test_map_input_runs_views_inside_one_logical_job(tmp_path: Path, temp_project):
     registry.register("engine", "dataset_source", DatasetSourceEngine, overwrite=True)
     registry.register("engine", "counting_map", CountingMapEngine, overwrite=True)
     CountingMapEngine.calls = 0
-    scheduler = Scheduler(system_config=_system_config(tmp_path))
-    jobs = JobList(
+    scheduler = Scheduler(system_config=_system_config(tmp_path), project=temp_project)
+    jobs = WorkflowSpec(
+        schema="qphase.workflow/2",
+        id="test-workflow",
+        title="Test Workflow",
         jobs=[
             JobConfig(
                 name="source",
@@ -254,7 +273,7 @@ def test_map_input_runs_views_inside_one_logical_job(tmp_path: Path):
                 input={"from": "source", "mode": "map"},
                 save=False,
             ),
-        ]
+        ],
     )
 
     results = scheduler.run(jobs)
@@ -284,14 +303,4 @@ def _scan_job() -> JobConfig:
 
 
 def _system_config(tmp_path: Path) -> SystemConfig:
-    config_dir = tmp_path / "configs"
-    config_dir.mkdir()
-    (config_dir / "global.yaml").write_text("{}\n", encoding="utf-8")
-    return SystemConfig(
-        paths=PathsConfig(
-            output_dir=str(tmp_path / "runs"),
-            global_file=str(config_dir / "global.yaml"),
-            plugin_dirs=[str(tmp_path / "plugins")],
-            config_dirs=[str(config_dir)],
-        )
-    )
+    return SystemConfig()

@@ -1,0 +1,69 @@
+schema: qphase.workflow/2
+id: vdp_2mode_cayley
+title: Vdp 2Mode Cayley
+collection: vdp_2mode
+tags:
+- vdp_2mode
+jobs:
+- name: vdp_2mode_cayley_sim
+  save: true
+  scan:
+    axes:
+      omega_a:
+        target: model.vdp_2mode.omega_a
+        logspace: {start: -3, stop: -1, num: 31, base: 10}
+  engine:
+    sde:
+      t0: 0.0
+      t1: 400000.0
+      dt: 0.8
+      n_traj: 1000
+      seed: 42
+      ic:
+      - ["800.0+0.0j", "0.0-800.0j"]
+      adaptive: false
+      save_stride: 10
+      record_modes: [0]
+      keep_traj: false
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 128
+      max_modes: 16
+  model:
+    vdp_2mode:
+      omega_a: 0.001
+      omega_b: 0.0
+      gamma_a: 2.0
+      gamma_b: 1.0
+      Gamma: 0.00001
+      g: 0.5
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      expected_freq_max: 0.34
+      find_peaks: true
+
+- name: vdp_2mode_cayley_fit
+  input:
+    from: vdp_2mode_cayley_sim
+    mode: dataset
+  save: true
+  engine:
+    sde:
+      mode: analyze
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_a
+      mode: 0
+      uncertainty: auto
+      clip_by_std: true
+      clip_sigma: 10.0
+      export:
+      - fit_results.csv
+      - psd_merged.csv

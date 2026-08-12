@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 
 import pytest
 from pydantic import BaseModel, ConfigDict
-from qphase.core.config import JobConfig, JobList
+from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.error_report import build_error_report, save_error_report
 from qphase.core.errors import ErrorCode, QPhaseRuntimeError
 from qphase.core.protocols import EngineManifest
@@ -64,18 +64,19 @@ def test_error_report_preserves_cause_chain_and_traceback(tmp_path: Path) -> Non
 
 def test_scheduler_uses_one_error_id_across_result_manifest_and_report(
     tmp_path: Path,
+    temp_project,
 ) -> None:
     registry.register("engine", "failing", FailingEngine, overwrite=True)
     try:
         config = SystemConfig()
-        config.paths.output_dir = str(tmp_path / "runs")
-        scheduler = Scheduler(system_config=config)
+        scheduler = Scheduler(system_config=config, project=temp_project)
 
         results = scheduler.run(
-            JobList(
-                jobs=[
-                    JobConfig(name="broken", engine={"failing": {}}, save=False)
-                ]
+            WorkflowSpec(
+                schema="qphase.workflow/2",
+                id="test-workflow",
+                title="Test Workflow",
+                jobs=[JobConfig(name="broken", engine={"failing": {}}, save=False)],
             )
         )
     finally:
@@ -98,4 +99,6 @@ def test_scheduler_uses_one_error_id_across_result_manifest_and_report(
     assert entry["error_id"] == result.error_id
     assert entry["error_report"] == result.error_report_path
     assert manifest["status"] == "failed"
+    assert manifest["workflow_hash"]
+    assert (scheduler.session_dir / "workflow_snapshot.yaml").exists()
     assert (scheduler.session_dir / "qphase.log").exists()

@@ -10,27 +10,24 @@ exception hierarchy and logging infrastructure used throughout the framework.
 
 Public API
 ----------
-``JobConfig``, ``JobList`` : Job configuration and batch job definitions.
+``JobConfig``, ``WorkflowSpec`` : Logical job and workflow definitions.
 ``Scheduler``, ``JobResult``, ``ProgressSnapshot`` : Task scheduling and execution.
 ``RegistryCenter``, ``registry`` : Plugin discovery, registration, and instantiation.
 ``SystemConfig`` : System-level configuration model.
 ``load_system_config``, ``save_user_config``, ``get_system_param`` : System config I/O.
-``load_global_config``, ``save_global_config`` : Global plugin configuration I/O.
-``merge_configs``, ``get_config_for_job``, ``list_available_jobs`` : Config utilities.
+``ProjectContext`` : Explicit project identity and portable path boundary.
 ``QPhaseError`` : Unified exception hierarchy base class.
 ``get_logger``, ``configure_logging``
     Logging utilities.
 """
 
-from .config import InputSpec, JobConfig, JobList
+from .config import InputSpec, JobConfig, WorkflowSpec
 from .config_loader import (
     get_config_for_job,
     get_system_param,
-    list_available_jobs,
-    load_global_config,
-    load_jobs_from_files,
+    load_project_defaults,
     merge_configs,
-    save_global_config,
+    save_project_defaults,
 )
 from .dataset import DatasetResultProtocol, DatasetSaveReport
 from .error_report import ErrorReport, ErrorSummary
@@ -48,6 +45,7 @@ from .errors import (
 )
 from .execution import (
     BackendRuntimeSnapshot,
+    CancellationController,
     ExecutionContext,
     HardwareSnapshot,
     ResourceSnapshot,
@@ -59,6 +57,7 @@ from .progress import (
     ProgressSnapshot,
     ProgressTracker,
 )
+from .project import ProjectContext, ProjectManifest, ProjectPaths
 from .protocols import PluginManifest, SubpluginSlot
 from .registry import RegistryCenter, registry
 from .scan import ParameterGrid, ScanAxisSpec, ScanSpec
@@ -70,6 +69,7 @@ from .system_config import (
     reset_user_config,
     save_user_config,
 )
+from .workflow import WorkflowCatalog, WorkflowReference, load_workflow
 
 __all__ = [
     # Errors & Logging
@@ -103,17 +103,23 @@ __all__ = [
     "JobResult",
     # Config
     "JobConfig",
-    "JobList",
+    "WorkflowSpec",
     "InputSpec",
     "ScanSpec",
     "ScanAxisSpec",
     "ParameterGrid",
     "ExecutionContext",
+    "CancellationController",
     "HardwareSnapshot",
     "BackendRuntimeSnapshot",
     "ResourceSnapshot",
     "DatasetResultProtocol",
     "DatasetSaveReport",
+    "ProjectContext",
+    "ProjectManifest",
+    "ProjectPaths",
+    "WorkflowCatalog",
+    "WorkflowReference",
     # System config
     "SystemConfig",
     "SystemConfigStore",
@@ -122,10 +128,9 @@ __all__ = [
     "save_user_config",
     "get_system_param",
     # Config loader
-    "load_global_config",
-    "load_jobs_from_files",
-    "save_global_config",
+    "load_project_defaults",
+    "load_workflow",
+    "save_project_defaults",
     "merge_configs",
     "get_config_for_job",
-    "list_available_jobs",
 ]

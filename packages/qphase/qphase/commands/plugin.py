@@ -21,7 +21,8 @@ from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
 
-from qphase.core.config_loader import load_global_config
+from qphase.core.config_loader import load_project_defaults
+from qphase.core.project import ProjectContext
 from qphase.core.registry import discovery, registry
 from qphase.service import RegistryService
 
@@ -52,7 +53,7 @@ def list_command(
     try:
         # Ensure plugins are discovered
         discovery.discover_plugins()
-        discovery.discover_local_plugins()
+        discovery.discover_local_plugins(ProjectContext.discover())
 
         if parent is not None:
             tree = True
@@ -312,7 +313,7 @@ def show_command(
     try:
         # Ensure plugins are discovered (including local plugins)
         discovery.discover_plugins()
-        discovery.discover_local_plugins()
+        discovery.discover_local_plugins(ProjectContext.discover())
 
         # Process each plugin
         for i, plugin_spec in enumerate(plugins):
@@ -545,7 +546,7 @@ def template_command(
         qphase template model.vdp_2mode backend.numpy
 
     Generates configuration templates based on plugin schemas.
-    Merges values from global.yaml if available.
+    Merges values from project defaults if available.
 
     """
     console = Console()
@@ -553,7 +554,8 @@ def template_command(
     try:
         # Ensure plugins are discovered (including local plugins)
         discovery.discover_plugins()
-        discovery.discover_local_plugins()
+        project = ProjectContext.discover()
+        discovery.discover_local_plugins(project)
 
         # Collect all plugin configs organized by namespace
         all_configs: dict[str, dict[str, Any]] = {}
@@ -576,12 +578,12 @@ def template_command(
                 continue
 
             try:
-                # Load global config for merging
+                # Load project defaults for merging
                 global_config = {}
-                global_path = Path("global.yaml")
+                global_path = project.defaults_path
                 if global_path.exists():
                     try:
-                        global_config = load_global_config(global_path)
+                        global_config = load_project_defaults(global_path)
                     except Exception:
                         # Ignore if global config is broken,
                         # just generate default template
