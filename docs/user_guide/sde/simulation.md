@@ -78,7 +78,7 @@ The framework supports several integration schemes. Choosing the right one is a 
 | Integrator | Interpretation | Strong order | Drift/diffusion evaluations per step | Typical use case |
 | :-- | :-- | :-- | :-- | :-- |
 | `euler_maruyama` | Itô | 0.5 | 1 | Large ensembles, additive noise, or when speed dominates accuracy. |
-| `heun` (SRK) | Stratonovich | ~1.0 | 2 | Multiplicative noise, moderate accuracy, parameter scans. |
+| `heun` (SRK) | Stratonovich | ~1.0 under suitable assumptions | 2 | Stratonovich SDEs; additive-noise Ito SDEs. |
 | `milstein` | Itô | 1.0 | 1 + Jacobian | Diagonal/commutative multiplicative noise where strong-order-1.0 accuracy is needed. |
 
 #### Euler–Maruyama
@@ -89,6 +89,11 @@ The framework supports several integration schemes. Choosing the right one is a 
 *   **When to use**: Additive or weakly multiplicative noise; very long trajectories where you primarily need statistical moments; GPU batch jobs where minimizing kernel launches is important.
 
 #### Stochastic Heun (SRK method `heun`)
+
+This is a Stratonovich predictor-corrector. It can be applied directly to Ito
+SDEs only for additive noise, or after the state-dependent Ito diffusion has
+been converted with the appropriate drift correction. QPhase does not perform
+that conversion automatically.
 
 *   **Update rule**: predictor–corrector using drift and diffusion at `y` and at a predicted `y_bar`.
 *   **Pros**: Strong order ~1.0 under Stratonovich interpretation; more stable than Euler–Maruyama for state-dependent diffusion; no Jacobian required.
@@ -106,7 +111,7 @@ The framework supports several integration schemes. Choosing the right one is a 
 
 *   **Cost (low → high)**: `euler_maruyama` < `milstein` (with cheap Jacobian) ≈ `heun` < `milstein` (with expensive Jacobian).
 *   **Strong accuracy (low → high)**: `euler_maruyama` (0.5) < `heun` (~1.0) ≈ `milstein` (1.0).
-*   **Stability for multiplicative noise**: `euler_maruyama` is the most restrictive on `dt`; `heun` and `milstein` tolerate larger steps.
+*   **Multiplicative noise**: use `heun` for the Stratonovich form and `milstein` for supported Ito models; neither interpretation nor convergence order should be inferred from stability alone.
 *   **GPU batching**: `euler_maruyama` benefits most from fused kernels because it only needs one fused drift+diffusion evaluation per step. `heun` currently needs two fused evaluations; a fully fused Heun kernel would close this gap.
 
 ### Adaptive Stepping

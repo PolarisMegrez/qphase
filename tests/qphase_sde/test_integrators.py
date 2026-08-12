@@ -4,6 +4,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama, EulerMaruyamaConfig
 from qphase_sde.integrator.milstein import Milstein, MilsteinConfig
@@ -102,22 +103,7 @@ def test_srk_step(backend):
     assert dy.shape == y.shape
 
 
-@pytest.mark.xfail(
-    reason="custom SRK coefficient tables not implemented (TODO in srk.py)",
-    strict=True,
-)
-def test_srk_custom_method_placeholder(backend):
-    """Custom Butcher tableaus should be loadable via ``method="custom"``.
-
-    Currently ``GenericSRK.step`` raises ``ValueError`` for any method other
-    than ``euler``/``heun``. Remove this xfail once coefficient loading lands.
-    """
-    config = GenericSRKConfig(method="custom")
-    integrator = GenericSRK(config)
-
-    model = DummyModel()
-    y = np.array([[1.0]])
-    dW = np.array([[0.1]])
-
-    dy = integrator.step(y, 0.0, 0.01, model, dW, backend)
-    assert dy.shape == y.shape
+def test_srk_rejects_unsupported_method_during_config_validation():
+    """Unsupported schemes must fail before an integration run starts."""
+    with pytest.raises(ValidationError, match="Input should be 'euler' or 'heun'"):
+        GenericSRKConfig(method="custom")  # type: ignore[arg-type]

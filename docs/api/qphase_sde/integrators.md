@@ -19,13 +19,20 @@ All numerical solvers consumed by the SDE engine implement the
 
 ## `GenericSRK`
 
-The generic stochastic Runge-Kutta solver (`integrator.srk`) supports multiple
-schemes and adaptive stepping.
+The stochastic Runge-Kutta plugin (`integrator.srk`) provides two built-in
+schemes and adaptive stepping. Its schema accepts only `euler` and `heun`;
+arbitrary Butcher coefficient tables are intentionally not supported.
 
 | Method | Order | Interpretation | Evaluations per step | Typical use |
 | :-- | :-- | :-- | :-- | :-- |
-| `euler` | Strong 0.5, Weak 1.0 | Ito | 1 | Additive noise, speed over accuracy. |
-| `heun` | Strong 1.0 (approx), Weak 2.0 | Stratonovich | 2 | Multiplicative noise. |
+| `euler` | Strong 0.5, Weak 1.0 under standard assumptions | Ito | 1 | General Ito SDE baseline. |
+| `heun` | Strong 1.0 under suitable regularity and noise assumptions | Stratonovich | 2 | Stratonovich SDEs; additive-noise Ito SDEs. |
+
+The `heun` implementation is a Stratonovich predictor-corrector. For an Ito
+SDE with state-dependent diffusion, first apply the Ito-to-Stratonovich drift
+correction; selecting `heun` does not perform that conversion automatically.
+For additive noise the correction vanishes, so the Ito and Stratonovich forms
+coincide.
 
 The standalone `integrator.euler_maruyama` plugin provides the same `euler`
 scheme with identical numerical behavior; it is often used when you want a

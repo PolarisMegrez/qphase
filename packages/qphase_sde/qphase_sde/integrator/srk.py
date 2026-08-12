@@ -1,13 +1,9 @@
-"""qphase_sde: Generic SRK Integrator
----------------------------------------------------------
-Implements a generic SRK solver that can be configured to behave as
-Euler-Maruyama, Heun, or higher-order schemes. Supports adaptive stepping.
+"""Built-in Euler-Maruyama and stochastic Heun integration schemes.
 
-.. note::
-    UNFINISHED: only the built-in ``euler`` and ``heun`` update rules are
-    implemented. Loading custom Butcher tableaus via ``method="custom"`` is
-    not supported yet (see the TODO in ``GenericSRK.__init__``) and raises
-    ``ValueError`` at step time. Do not use custom methods in production jobs.
+The Heun update implemented here is a Stratonovich predictor-corrector. It can
+also be used for Ito SDEs with additive noise, where the Ito-Stratonovich drift
+correction vanishes. General Ito multiplicative-noise equations must be
+converted before using this scheme.
 
 Public API
 ----------
@@ -15,7 +11,7 @@ Public API
 ``GenericSRKConfig`` : Configuration for Generic SRK integrator.
 """
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -27,19 +23,19 @@ from qphase_sde.model import NoiseSpec, SDEModel
 
 
 class GenericSRKConfig(BaseModel):
-    """Configuration for Generic SRK integrator."""
+    """Configuration for the built-in SRK integration schemes."""
 
-    method: str = Field(
+    method: Literal["euler", "heun"] = Field(
         "heun",
-        description="Integration scheme (euler, heun, or custom)",
+        description="Built-in integration scheme",
     )
 
 
 class GenericSRK(Integrator):
-    """Generic Stochastic Runge-Kutta Integrator.
+    """Built-in stochastic Euler or Heun integrator.
 
-    Supports various Butcher tableaus for SDEs.
-    Default is Heun's method (weak order 2.0, strong order 1.0).
+    ``euler`` is Euler-Maruyama for Ito SDEs. ``heun`` is the stochastic Heun
+    predictor-corrector for Stratonovich SDEs and additive-noise Ito SDEs.
     """
 
     name: ClassVar[str] = "srk"
@@ -51,12 +47,9 @@ class GenericSRK(Integrator):
             config = GenericSRKConfig(**kwargs)
         self.config = config
         self.method = config.method
-        # self.tol removed, passed via step_adaptive
-        self.adaptive_factor = 0.9
         self.adaptive_factor = 0.9
         self.min_dt = 1e-9
         self.max_dt = 1.0
-        # TODO: Load coefficients based on method
 
     def step(
         self,
@@ -94,8 +87,8 @@ class GenericSRK(Integrator):
             dy = drift * dt + diff_term
             return dy
 
-        elif self.method == "heun":
-            # Stochastic Heun (Stratonovich, Strong Order 1.0 approx)
+        else:
+            # Stochastic Heun predictor-corrector in the Stratonovich sense.
             # Predictor
             diff_term = ops.contract_noise(diffusion, dW, backend)
             y_bar = y + drift * dt + diff_term
@@ -123,9 +116,6 @@ class GenericSRK(Integrator):
 
             dy = 0.5 * (drift + drift_bar) * dt + 0.5 * (diff_term + diff_term_bar)
             return dy
-
-        else:
-            raise ValueError(f"Unknown method: {self.method}")
 
     def step_adaptive(
         self,

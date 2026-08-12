@@ -54,7 +54,7 @@ engine:
 | 积分器 | 随机解释 | 强收敛阶 | 每步漂移/扩散求值次数 | 典型使用场景 |
 | :-- | :-- | :-- | :-- | :-- |
 | `euler_maruyama` | Itô | 0.5 | 1 | 大样本集合、加性噪声、速度优先于精度。 |
-| `heun` (SRK) | Stratonovich | ~1.0 | 2 | 乘性噪声、中等精度、参数扫描。 |
+| `heun` (SRK) | Stratonovich | 合适假设下约 1.0 | 2 | Stratonovich SDE；加性噪声 Itô SDE。 |
 | `milstein` | Itô | 1.0 | 1 + Jacobian | 需要对角/可交换乘性噪声且需要强一阶精度。 |
 
 #### Euler–Maruyama
@@ -65,6 +65,10 @@ engine:
 *   **适用场景**：加性或弱乘性噪声；主要关注统计矩的长时间轨迹；需要最小化 kernel 启动次数的 GPU 批量任务。
 
 #### 随机 Heun（SRK 方法 `heun`）
+
+这是 Stratonovich 预估-校正格式。只有在加性噪声情况下，或者已经对依赖状态的
+Itô 扩散项完成相应漂移修正后，才能直接用于 Itô SDE。QPhase 不会自动完成这一
+转换。
 
 *   **更新规则**：使用 `y` 和预测值 `y_bar` 处的漂移与扩散做预测–校正。
 *   **优点**：在 Stratonovich 解释下强收敛约 1.0 阶；对状态相关扩散比 Euler–Maruyama 更稳定；不需要 Jacobian。
@@ -82,7 +86,7 @@ engine:
 
 *   **计算开销（低 → 高）**：`euler_maruyama` < `milstein`（Jacobian 便宜）≈ `heun` < `milstein`（Jacobian 昂贵）。
 *   **强精度（低 → 高）**：`euler_maruyama` (0.5) < `heun` (~1.0) ≈ `milstein` (1.0)。
-*   **乘性噪声稳定性**：`euler_maruyama` 对 `dt` 最敏感；`heun` 和 `milstein` 可容忍更大的步长。
+*   **乘性噪声**：Stratonovich 形式使用 `heun`，受支持的 Itô 模型使用 `milstein`；不能仅凭稳定性推断随机解释或收敛阶。
 *   **GPU 批量化**：`euler_maruyama` 最受益于融合核函数，因为每步只需一次融合漂移+扩散求值。`heun` 目前需要两次融合求值；若实现完全融合的 Heun 核函数，可缩小这一差距。
 
 ### 自适应步进

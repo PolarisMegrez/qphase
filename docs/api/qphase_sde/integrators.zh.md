@@ -41,7 +41,8 @@ class Integrator(Protocol):
 
 ## `GenericSRK`
 
-`GenericSRK` 通过不同的 Butcher 表实现一族随机 Runge-Kutta 方法。
+`GenericSRK` 提供两个内置随机积分格式并支持自适应步进。配置 schema 仅接受
+`euler` 与 `heun`；该插件有意不支持任意 Butcher 系数表。
 
 ### 配置
 
@@ -55,8 +56,12 @@ integrator:
 
 | 方法 | 强收敛阶 | 随机解释 | 每步求值次数 | 适用场景 |
 | :-- | :-- | :-- | :-- | :-- |
-| `euler` | 0.5 | Itô | 1 | 加性噪声、速度优先。 |
-| `heun` | ~1.0 | Stratonovich | 2 | 乘性噪声、中等精度。 |
+| `euler` | 标准假设下为 0.5 | Itô | 1 | 通用 Itô SDE 基线。 |
+| `heun` | 合适的正则性与噪声假设下为 1.0 | Stratonovich | 2 | Stratonovich SDE；加性噪声 Itô SDE。 |
+
+当前 `heun` 实现是 Stratonovich 预估-校正格式。对于扩散项依赖状态的 Itô
+SDE，必须先完成 Itô 到 Stratonovich 的漂移修正；选择 `heun` 不会自动执行
+这一转换。加性噪声下修正项为零，因此两种解释一致。
 
 独立的 `integrator.euler_maruyama` 插件提供与 SRK `euler` 方法相同的数值行为，适用于希望使用专用积分器命名空间而不是通用 SRK 分派器的场景。
 
