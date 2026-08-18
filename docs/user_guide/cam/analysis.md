@@ -227,6 +227,135 @@ with its real part in `mode_frequencies`. Neither field proves that the
 underlying stochastic dynamics has a globally stationary distribution. The
 package does not emit an ambiguous `omega` field.
 
+The optional `coherence_pole_spectrum` postprocessor diagnoses poles of the
+closed CAM correlation
+
+```text
+G_W(tau) = Tr[W exp(-i H tau) R].
+```
+
+It supports bare-mode projectors, the incoherent trace (`W=I`), and named fixed
+coherent channels (`W=l l^dagger`). For each measurement it selects the
+minimum-decay pole whose residue exceeds `relative_residue_floor` relative to
+the strongest residue in that channel. The result contains the selected complex
+eigenvalue, frequency, decay rate, residue, relative residue, validity mask,
+and eigenvector condition number.
+
+```yaml
+cam_postprocessor:
+  coherence_pole_spectrum:
+    modes: [0, 1, 2]
+    include_trace: true
+    channels:
+      bright: ["0j", "1+0j", "1+0j"]
+      dark: ["0j", "1+0j", "-1+0j"]
+    relative_residue_floor: 0.001
+```
+
+This is an independent CAM diagnostic, not a replacement for
+`rayleigh_frequency`. The Rayleigh quotient is the closed correlation's
+weighted phase slope at `tau=0+`; the selected coherence pole describes its
+long-time component. They need not agree in a multi-pole channel. A workflow
+must select either quantity according to the declared measurement semantics;
+the package does not silently substitute one for the other.
+
+### Rayleigh Frequencies and Coherence Poles
+
+Let `W` be a fixed positive-semidefinite measurement matrix. `W=I` is an
+incoherent trace measurement, a bare-mode projector selects one mode, and
+`W=l l^dagger` describes the coherent readout `c=l^dagger alpha`. For a fixed
+CAM state and a diagonalizable Hamiltonian,
+
+\[
+H=\sum_j\lambda_j r_j l_j^\dagger,\qquad
+l_j^\dagger r_k=\delta_{jk},
+\]
+
+the closed correlation has the exact expansion
+
+\[
+G_{W,\mathrm{CAM}}^{(1)}(\tau)
+=\operatorname{Tr}\!\left[W e^{-iH\tau}R\right]
+=\sum_j A_j e^{-i\lambda_j\tau},\qquad
+A_j=l_j^\dagger R W r_j.
+\]
+
+With the `phase_decreasing` convention, its phase slope at `tau=0+` is
+
+\[
+\omega_W^{R}
+=\operatorname{Re}
+\frac{\operatorname{Tr}(W H R)}{\operatorname{Tr}(W R)}
+=\operatorname{Re}\frac{\sum_j A_j\lambda_j}{\sum_j A_j}.
+\]
+
+The trace case `W=I` is the value stored by `rayleigh_frequency`. If pole zero
+is the long-time pole selected by the visibility rule, the difference is
+exactly
+
+\[
+\omega_W^{R}-\operatorname{Re}\lambda_0
+=\operatorname{Re}
+\frac{\sum_{j\ne0}A_j(\lambda_j-\lambda_0)}{\sum_jA_j}.
+\]
+
+When `abs(A_0) > sum(abs(A_j), j != 0)`, a sufficient bound is
+
+\[
+\left|\omega_W^{R}-\operatorname{Re}\lambda_0\right|
+\le
+\frac{\sum_{j\ne0}|A_j|\,|\lambda_j-\lambda_0|}
+{|A_0|-\sum_{j\ne0}|A_j|}.
+\]
+
+This is a statement about the closed CAM propagator only. For a stationary Ito
+process with drift `-i H(R_t) alpha_t`, define
+
+\[
+G_{W,\mathrm{SDE}}^{(1)}(\tau)
+=\operatorname{Tr}\!\left[W\,\mathbb{E}
+\{\alpha(t+\tau)\alpha(t)^\dagger\}\right].
+\]
+
+Adapted mean-zero noise gives the exact short-time frequency
+
+\[
+\omega_{W,\mathrm{SDE}}(0^+)
+=\operatorname{Re}
+\frac{\mathbb{E}\,\operatorname{Tr}[W H(R_t)R_t]}
+{\mathbb{E}\,\operatorname{Tr}(W R_t)}.
+\]
+
+It is generally not obtained by replacing the expectations with
+`H(R_CAM) R_CAM`. Its long-time poles belong to the complete Markov generator,
+not to `H(R_CAM)`. A useful diagnostic decomposition is therefore
+
+\[
+\omega_{W,\mathrm{SDE}}^{\mathrm{long}}-\omega_W^{R}
+=\left(\omega_{W,\mathrm{SDE}}^{\mathrm{long}}
+-\operatorname{Re}\lambda_0\right)
++\left(\operatorname{Re}\lambda_0-\omega_W^{R}\right).
+\]
+
+The second term is the closed-CAM multi-pole correction. The first contains
+stochastic self-energy, closure, and finite-noise corrections and must be
+estimated from stochastic data. Exact agreement at all lags is sufficient if
+the stochastic correlation can be written as
+`exp(-i omega_R tau) F(tau)` with real positive `F`. Symmetric zero-mean
+Gaussian phase modulation can approximate this condition, but global phase
+symmetry alone does not guarantee it.
+
+Interpret a CAM/SDE frequency correspondence only within a stated domain. At a
+minimum, verify stationarity; an isolated visible pole; adequate decay-rate
+separation; a bounded eigenvector condition number; and robustness to the
+frequency band and lag interval. Multi-state switching, weak pole residue,
+nearly defective eigensystems, non-Gaussian frequency fluctuations, or an
+unresolved observation time can invalidate a single-pole interpretation.
+Statistical evidence should use a measurement and estimator fixed independently
+of the CAM target, independent trajectories or seeds, trajectory-level
+bootstrap uncertainties, and an explicit equivalence tolerance. A failure to
+reject unequal frequencies is not proof of an exact identity.
+
 The optional `petermann_spectrum` postprocessor stores aligned eigensystems for
 three distinct matrices. `hamiltonian_petermann_factors` belongs to `H(R)`;
 `bogoliubov_*` belongs to the doubled fluctuation block matrix; and

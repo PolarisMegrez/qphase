@@ -155,6 +155,121 @@ slot。每个参数点默认按 `real(R[0,0])` 排序；slot 不是跨参数点�
 的 shard；`artifact_manifest.json` 记录布局，`CAMResult.load_dataset` 会恢复相同
 的逻辑 shape。
 
+可选的 `coherence_pole_spectrum` 后处理器用于诊断闭合 CAM 关联
+
+```text
+G_W(tau) = Tr[W exp(-i H tau) R]
+```
+
+的极点。它支持裸 mode 投影、非相干 trace（`W=I`）和固定相干通道
+（`W=l l^dagger`）。每个测量通道选择 residue 不低于该通道最大 residue 的
+`relative_residue_floor`、且衰减率最小的极点，并输出复本征值、频率、衰减率、
+复 residue、相对 residue、有效 mask 和本征向量条件数。
+
+```yaml
+cam_postprocessor:
+  coherence_pole_spectrum:
+    modes: [0, 1, 2]
+    include_trace: true
+    channels:
+      bright: ["0j", "1+0j", "1+0j"]
+      dark: ["0j", "1+0j", "-1+0j"]
+    relative_residue_floor: 0.001
+```
+
+该插件是独立 CAM 诊断能力，不替代 `rayleigh_frequency`。Rayleigh 商对应闭合
+关联在 `tau=0+` 的加权相位斜率；所选 coherence pole 描述长时分量，多极点通道中
+二者不必相等。workflow 必须根据声明的测量语义显式选择，资源包不会在二者之间
+静默替换。
+
+### Rayleigh 频率与 coherence pole
+
+令 `W` 为固定的半正定测量矩阵。`W=I` 表示非相干 trace 测量，裸 mode 投影选择
+单个模式，`W=l l^dagger` 表示相干读出 `c=l^dagger alpha`。对于固定 CAM 状态和
+可对角化 Hamiltonian，
+
+\[
+H=\sum_j\lambda_j r_j l_j^\dagger,\qquad
+l_j^\dagger r_k=\delta_{jk},
+\]
+
+闭合关联严格展开为
+
+\[
+G_{W,\mathrm{CAM}}^{(1)}(\tau)
+=\operatorname{Tr}\!\left[W e^{-iH\tau}R\right]
+=\sum_j A_j e^{-i\lambda_j\tau},\qquad
+A_j=l_j^\dagger R W r_j.
+\]
+
+在 `phase_decreasing` 约定下，其 `tau=0+` 相位斜率为
+
+\[
+\omega_W^{R}
+=\operatorname{Re}
+\frac{\operatorname{Tr}(W H R)}{\operatorname{Tr}(W R)}
+=\operatorname{Re}\frac{\sum_j A_j\lambda_j}{\sum_j A_j}.
+\]
+
+trace 情形 `W=I` 即 `rayleigh_frequency` 保存的数值。若第零个 pole 是可见度规则
+选择的长时 pole，则二者差异严格为
+
+\[
+\omega_W^{R}-\operatorname{Re}\lambda_0
+=\operatorname{Re}
+\frac{\sum_{j\ne0}A_j(\lambda_j-\lambda_0)}{\sum_jA_j}.
+\]
+
+当 `abs(A_0) > sum(abs(A_j), j != 0)` 时，还有充分上界
+
+\[
+\left|\omega_W^{R}-\operatorname{Re}\lambda_0\right|
+\le
+\frac{\sum_{j\ne0}|A_j|\,|\lambda_j-\lambda_0|}
+{|A_0|-\sum_{j\ne0}|A_j|}.
+\]
+
+以上结论只属于闭合 CAM 传播子。对于漂移为 `-i H(R_t) alpha_t` 的平稳 Ito
+随机过程，定义
+
+\[
+G_{W,\mathrm{SDE}}^{(1)}(\tau)
+=\operatorname{Tr}\!\left[W\,\mathbb{E}
+\{\alpha(t+\tau)\alpha(t)^\dagger\}\right].
+\]
+
+适应的零均值噪声给出严格短时频率
+
+\[
+\omega_{W,\mathrm{SDE}}(0^+)
+=\operatorname{Re}
+\frac{\mathbb{E}\,\operatorname{Tr}[W H(R_t)R_t]}
+{\mathbb{E}\,\operatorname{Tr}(W R_t)}.
+\]
+
+通常不能把期望值直接替换为 `H(R_CAM) R_CAM`。SDE 长时 pole 属于完整 Markov
+生成元，而不属于 `H(R_CAM)`。因此可使用以下诊断分解：
+
+\[
+\omega_{W,\mathrm{SDE}}^{\mathrm{long}}-\omega_W^{R}
+=\left(\omega_{W,\mathrm{SDE}}^{\mathrm{long}}
+-\operatorname{Re}\lambda_0\right)
++\left(\operatorname{Re}\lambda_0-\omega_W^{R}\right).
+\]
+
+第二项是闭合 CAM 内部的多极点修正；第一项包含随机自能、矩闭合和有限噪声修正，
+必须由随机数据估计。如果随机关联可以写成
+`exp(-i omega_R tau) F(tau)` 且 `F` 为正实函数，则全部滞后上频率严格一致。
+对称、零均值的 Gaussian 相位调制可以近似满足该条件，但仅有全局相位对称性并不
+足以保证它。
+
+CAM/SDE 频率对应必须在明确的适用域内解释。至少应检查平稳性、孤立可见 pole、
+足够的衰减率间隙、有限的本征向量条件数，以及对频带和滞后窗口的稳健性。多稳态
+切换、弱 residue、近缺陷本征系统、非 Gaussian 频率涨落或观测时间不足均会破坏
+单 pole 解释。统计证据应使用不依赖 CAM 目标预先确定的测量与估计器、独立轨迹或
+seed、逐轨迹 bootstrap 不确定度和明确的等效性容差；“未能拒绝频率不同”不能作为
+严格恒等的证明。
+
 `CAMBifurcationResult` schema 3 包含 candidate table 和通过 `candidate_index`
 关联的 branch-response table。后者保存局部分支编号、`(n,k,m)`、指数分子/分母、
 扰动侧、幅度和完整状态矩阵领先系数。可通过 `to_candidate_table()`、
