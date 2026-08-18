@@ -40,6 +40,9 @@ The `psd` analyzer stores:
 *   `axis` — frequency or angular-frequency vector.
 *   `psd` — mean PSD values per mode.
 *   `psd_std` / `psd_sem` — cross-trajectory sample standard deviation and standard error.
+*   `orientation` and its defining formula fields — the sign convention of the
+    frequency axis. Missing metadata identifies a legacy forward-FFT result and
+    must be interpreted as `phase_increasing`.
 
 For a scan, PSD payloads remain attached to the named points of one logical SDE
 dataset. A downstream `mode: analyze` job consumes that dataset once with the

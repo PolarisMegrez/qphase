@@ -21,6 +21,7 @@ analyser:
   psd:
     modes: [0]
     kind: complex
+    orientation: phase_decreasing
     expected_freq_max: 0.34
     find_peaks: true
     estimator:
@@ -32,7 +33,8 @@ analyser:
 | :-- | :-- | :-- |
 | `modes` | `list[int]` | Mode indices to analyze. |
 | `kind` | `str` | PSD variant, e.g. `complex`, `real`, `imag`. |
-| `expected_freq_max` | `float \| None` | Optional largest expected physical frequency in output-axis units. Analysis fails when it reaches the Nyquist limit. |
+| `orientation` | `str` | Positive-frequency orientation. `phase_decreasing` maps `exp(-i*omega*t)` to `+omega`; `phase_increasing` preserves the forward-FFT axis. |
+| `expected_freq_max` | `float \| None` | Optional largest expected frequency magnitude in output-axis units. Analysis fails when it reaches the Nyquist limit. |
 | `find_peaks` | `bool` | Whether to report peak locations. |
 | `estimator` | child selection | Exactly one of `periodogram`, `welch`, or `multitaper`. |
 
@@ -51,11 +53,28 @@ estimator is a child plugin of `analyser.psd`, so it is discoverable with
 
 ### Frequency axis
 
-The frequency grid depends on the saved trajectory:
+The estimator first uses the standard NumPy/CuPy forward DFT. The reported
+frequency grid then applies the selected orientation:
 
 ```text
-f = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
+omega_fft = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
+phase_decreasing: omega = -omega_fft, reordered increasingly
+phase_increasing: omega = +omega_fft, reordered increasingly
 ```
+
+`phase_decreasing` is the default QPhase convention. It corresponds to the
+quantum-optical emission-spectrum definition
+`S(omega) = integral C(tau) exp(+i*omega*tau) d tau` for
+`C(tau) = <a^dagger(t) a(t+tau)>`, and therefore maps
+`a(t) ~ exp(-i*omega0*t)` to the positive carrier `+omega0`.
+`phase_increasing` is available for generic signal processing and exact
+reproduction of the raw forward-FFT axis. Orientation changes neither PSD
+normalization nor linewidth or integrated power.
+
+For concise input, `physical` is accepted as an alias of `phase_decreasing`,
+and `fft` as an alias of `phase_increasing`. These are config-only aliases:
+serialized configuration and result metadata always use the canonical names.
+Here `physical` means the QPhase default, not a claim of a universal convention.
 
 For a narrow peak, choose `save_stride` so the Nyquist frequency is well above the peak.
 For angular-frequency conventions, `omega_Nyquist = pi / (dt * save_stride)`.
@@ -72,6 +91,12 @@ The analyzer exports:
 *   `psd_std` — sample standard deviation across trajectories (`ddof=1`).
 *   `psd_sem` — standard error of the mean, `psd_std / sqrt(n_traj)`.
 *   `uncertainty` — metadata identifying `psd_sem`, the independent unit, and sample count.
+*   `orientation`, `positive_frequency_time_dependence`, and `spectrum_kernel`
+    — explicit frequency-sign metadata.
+
+`lorentz_fitter` propagates the same metadata to its result and adds an
+`orientation` column to `fit_results.csv`. It rejects inputs that mix the two
+orientations instead of silently fitting incompatible axes.
 
 For Welch and multitaper estimates, segments or tapers are averaged within each
 trajectory first. The uncertainty is then computed across trajectories, so
@@ -174,6 +199,7 @@ noise before interpreting a fitted PSD linewidth.
 analyser:
   trajectory_diagnostics:
     modes: [0]
+    orientation: phase_decreasing
     block_durations: [100.0, 1000.0]
     coherence: true
     coherence_max_lag: 500.0
@@ -183,6 +209,10 @@ analyser:
     allan_min_windows: 8
     amplitude_floor: 0.0
 ```
+
+The same `orientation` contract as `psd` applies to phase-increment means and
+complex block-spectrum peaks. Coherence arrays retain their complex time-domain
+phase. Allan variances are invariant under a global frequency-sign reversal.
 
 The payload contains `mode_results[mode]` with:
 
@@ -221,11 +251,18 @@ this analyser supports trajectory batching and can be used with
 analyser:
   allan_variance:
     modes: [0]
+    orientation: phase_decreasing
     points: 40
     min_windows: 8
     min_independent_windows: 4
     transfer_chunk_samples: 8192
 ```
+
+`orientation` controls the reported per-trajectory mean angular frequency.
+The Allan variance itself is unchanged because it is built from squared phase
+second differences.
+`allan_scaling` propagates the orientation to its rows, summary, and exports,
+and likewise rejects a scan assembled from mixed orientations.
 
 For each tau it reports both the established overlapping estimate and a
 non-overlapping phase-second-difference estimate. The payload includes the

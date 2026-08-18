@@ -40,6 +40,15 @@ from .base import (
     AnalyzerWorkspaceEstimate,
     AnalyzerWorkspaceRequest,
 )
+from .frequency_orientation import (
+    DEFAULT_FREQUENCY_ORIENTATION,
+    FrequencyOrientation,
+    OrientationInput,
+    orient_spectrum,
+    orientation_metadata,
+    orientation_schema_extra,
+    orientation_sign,
+)
 from .result import AnalysisResult
 from .trajectory_diagnostic import (
     TrajectoryDiagnosticChild,
@@ -80,6 +89,14 @@ class TrajectoryDiagnosticsConfig(PluginConfigBase):
     """Configuration for time-domain trajectory diagnostics."""
 
     modes: list[int] = Field(..., min_length=1, description="Physical mode indices")
+    orientation: OrientationInput = Field(
+        DEFAULT_FREQUENCY_ORIENTATION,
+        description=(
+            "Positive-frequency phase orientation: phase_decreasing maps "
+            "exp(-i*omega*t) to +omega. Input aliases: physical and fft"
+        ),
+        json_schema_extra=orientation_schema_extra(),
+    )
     block_durations: list[float] = Field(
         default_factory=list,
         description="Non-overlapping block durations used for stationarity summaries",
@@ -270,6 +287,7 @@ class TrajectoryDiagnostics(Analyzer):
             "dt": dt,
             "n_traj": int(values.shape[0]),
             "n_samples": int(values.shape[1]),
+            **orientation_metadata(config.orientation),
             "mode_results": {},
         }
         children: list[TrajectoryDiagnosticChild] = [_ModeSummaryChild()]
@@ -293,6 +311,7 @@ class TrajectoryDiagnostics(Analyzer):
                 "dt": dt,
                 "n_traj": int(values.shape[0]),
                 "n_samples": int(values.shape[1]),
+                **orientation_metadata(config.orientation),
             },
         )
 
@@ -312,13 +331,17 @@ class _ModeSummaryChild:
                 "mean_amplitude_per_trajectory": np.mean(np.abs(series), axis=1),
                 "mean_power_per_trajectory": np.mean(np.abs(series) ** 2, axis=1),
                 "phase_increment": _phase_increment_summary(
-                    series, context.dt, config.amplitude_floor
+                    series,
+                    context.dt,
+                    config.amplitude_floor,
+                    config.orientation,
                 ),
                 "block_statistics": _block_statistics(
                     series,
                     context.dt,
                     config.block_durations,
                     config.amplitude_floor,
+                    config.orientation,
                 ),
             }
 
@@ -352,7 +375,7 @@ class _AllanChild:
         config: TrajectoryDiagnosticsConfig,
     ) -> None:
         for mode in context.modes:
-            result["mode_results"][mode]["allan"] = calculate_allan_variance(
+            allan = calculate_allan_variance(
                 context.series(mode),
                 context.dt,
                 taus=config.allan_taus,
@@ -361,6 +384,8 @@ class _AllanChild:
                 min_independent_windows=config.allan_min_independent_windows,
                 amplitude_floor=config.amplitude_floor,
             )
+            allan.update(orientation_metadata(config.orientation))
+            result["mode_results"][mode]["allan"] = allan
 
 
 class _BlockSpectrumChild:
@@ -378,6 +403,7 @@ class _BlockSpectrumChild:
                 context.dt,
                 config.block_durations,
                 wing_factor=config.block_spectrum_wing_factor,
+                orientation=config.orientation,
             )
 
 
@@ -439,6 +465,7 @@ def _block_statistics(
     dt: float,
     durations: list[float],
     amplitude_floor: float,
+    orientation: FrequencyOrientation,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     n_traj, n_time = series.shape
@@ -458,7 +485,9 @@ def _block_statistics(
             valid = (amplitude[:, :, 1:] > amplitude_floor) & (
                 amplitude[:, :, :-1] > amplitude_floor
             )
-            frequency = _masked_mean(increments, valid, axis=2)
+            frequency = orientation_sign(orientation) * _masked_mean(
+                increments, valid, axis=2
+            )
         else:
             frequency = np.full((n_traj, n_blocks), np.nan)
         results.append(
@@ -471,6 +500,7 @@ def _block_statistics(
                 "mean_power": np.mean(amplitude**2, axis=2),
                 "mean_angular_frequency": frequency,
                 "frequency_unit": "angular",
+                **orientation_metadata(orientation),
             }
         )
     return results
@@ -480,6 +510,7 @@ def _phase_increment_summary(
     series: np.ndarray,
     dt: float,
     amplitude_floor: float,
+    orientation: FrequencyOrientation,
 ) -> dict[str, Any]:
     amplitude = np.abs(series)
     increments = np.angle(series[:, 1:] * np.conj(series[:, :-1]))
@@ -487,7 +518,7 @@ def _phase_increment_summary(
     absolute = np.abs(increments)
     return {
         "mean_angular_frequency_per_trajectory": _masked_mean(
-            increments / dt, valid, axis=1
+            orientation_sign(orientation) * increments / dt, valid, axis=1
         ),
         "max_abs_phase_step_per_trajectory": np.max(
             np.where(valid, absolute, np.nan), axis=1
@@ -496,6 +527,7 @@ def _phase_increment_summary(
             (absolute >= 0.9 * np.pi).astype(float), valid, axis=1
         ),
         "near_nyquist_threshold": 0.9 * np.pi,
+        **orientation_metadata(orientation),
     }
 
 
@@ -838,6 +870,7 @@ def _block_spectrum_features(
     blocks: np.ndarray,
     dt: float,
     wing_factor: float,
+    orientation: FrequencyOrientation,
 ) -> dict[str, Any]:
     """Compact rectangular-window periodogram features per trajectory/block.
 
@@ -851,6 +884,9 @@ def _block_spectrum_features(
     psd = np.abs(transformed) ** 2 * (dt / (2.0 * np.pi * n_samples))
     psd = np.fft.fftshift(psd, axes=-1)
     frequencies = 2.0 * np.pi * np.fft.fftshift(np.fft.fftfreq(n_samples, d=dt))
+    frequencies, psd = orient_spectrum(
+        frequencies, psd, orientation=orientation
+    )
     integrated = np.mean(np.abs(blocks) ** 2, axis=-1)
 
     shape = (n_traj, n_blocks)
@@ -893,6 +929,7 @@ def _block_spectrum_features(
         "sidedness": "two-sided",
         "window": "rectangular",
         "resolution_angular": resolution,
+        **orientation_metadata(orientation),
         "psd_normalization": "abs(fft(x))**2 * dt / (2*pi*n_samples)",
         "peak_interpolation": "parabolic",
         "wing_factor": float(wing_factor),
@@ -909,6 +946,7 @@ def _block_spectrum(
     durations: list[float],
     *,
     wing_factor: float,
+    orientation: FrequencyOrientation,
 ) -> dict[str, Any]:
     """Per-trajectory per-block spectral features for each requested duration."""
     if not durations:
@@ -933,7 +971,9 @@ def _block_spectrum(
         else:
             trimmed = series[:, : n_blocks * block_samples]
             blocks = trimmed.reshape(n_traj, n_blocks, block_samples)
-            entry.update(_block_spectrum_features(blocks, dt, wing_factor))
+            entry.update(
+                _block_spectrum_features(blocks, dt, wing_factor, orientation)
+            )
         entries.append(entry)
     return {"status": "ok", "entries": entries}
 
@@ -1003,6 +1043,7 @@ def _matrix_projection(
                 dt,
                 config.block_durations,
                 wing_factor=config.block_spectrum_wing_factor,
+                orientation=config.orientation,
             )
     if config.matrix_projection_keep_coordinates:
         result["coordinates_per_trajectory"] = coordinates

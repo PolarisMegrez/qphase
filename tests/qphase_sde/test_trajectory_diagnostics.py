@@ -12,7 +12,7 @@ from qphase_sde.state import TrajectorySet
 
 def _rotating_trajectory(omega=0.7, *, n_traj=3, n_time=512, dt=0.1):
     time = np.arange(n_time) * dt
-    data = np.exp(1j * omega * time)[None, :, None]
+    data = np.exp(-1j * omega * time)[None, :, None]
     data = np.repeat(data, n_traj, axis=0)
     return TrajectorySet(data=data, t0=20.0, dt=dt, meta={"mode_indices": [2]})
 
@@ -37,13 +37,15 @@ def test_trajectory_diagnostics_recovers_coherence_frequency_and_zero_allan():
         0.7,
         atol=1e-12,
     )
-    expected_g1 = np.exp(1j * 0.7 * mode["coherence"]["lag"])
+    expected_g1 = np.exp(-1j * 0.7 * mode["coherence"]["lag"])
     np.testing.assert_allclose(
         mode["coherence"]["g1_normalized"], expected_g1, atol=1e-12
     )
     np.testing.assert_allclose(
         mode["allan"]["angular_frequency_variance"], 0.0, atol=1e-24
     )
+    assert result["orientation"] == "phase_decreasing"
+    assert mode["phase_increment"]["orientation"] == "phase_decreasing"
 
 
 def test_trajectory_diagnostics_validates_time_scales_against_saved_dt():
@@ -167,7 +169,7 @@ def test_block_spectrum_recovers_tone_features():
     resolution = 2.0 * np.pi / 6.4
     omega0 = 10.2 * resolution  # deliberately off-bin by 0.2 bins
     time = np.arange(n_time) * dt
-    data = (amplitude * np.exp(1j * omega0 * time))[None, :, None]
+    data = (amplitude * np.exp(-1j * omega0 * time))[None, :, None]
     data = np.repeat(data, 2, axis=0)
     trajectory = TrajectorySet(data=data, dt=dt)
     analyser = TrajectoryDiagnostics(

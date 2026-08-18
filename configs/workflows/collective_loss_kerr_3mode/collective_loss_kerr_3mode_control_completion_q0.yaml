@@ -77,8 +77,8 @@ jobs:
     lorentz_fitter:
       scan_param: omega_c
       mode: 0
-      freq_min: 0.2
-      freq_max: 1.2
+      freq_min: -1.2
+      freq_max: -0.2
       fit_window: 0.2
       uncertainty: auto
       clip_by_std: false
@@ -166,8 +166,8 @@ jobs:
     lorentz_fitter:
       scan_param: omega_c
       mode: 0
-      freq_min: -0.35
-      freq_max: 0.15
+      freq_min: -0.15
+      freq_max: 0.35
       fit_window: 0.15
       uncertainty: auto
       clip_by_std: false
@@ -240,8 +240,8 @@ jobs:
     lorentz_fitter:
       scan_param: omega_c
       mode: 0
-      freq_min: -0.4
-      freq_max: 0.1
+      freq_min: -0.1
+      freq_max: 0.4
       fit_window: 0.15
       uncertainty: auto
       clip_by_std: false
@@ -314,8 +314,8 @@ jobs:
     lorentz_fitter:
       scan_param: omega_c
       mode: 0
-      freq_min: -0.3
-      freq_max: 0.1
+      freq_min: -0.1
+      freq_max: 0.3
       fit_window: 0.12
       uncertainty: auto
       clip_by_std: false

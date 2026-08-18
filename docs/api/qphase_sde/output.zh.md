@@ -39,6 +39,8 @@ psd = archive["analysis"].item().get("psd")
 *   `axis` — 频率或角频率向量。
 *   `psd` — 每个模式的 PSD 均值。
 *   `psd_std` / `psd_sem` — 跨轨迹样本标准差和均值标准误。
+*   `orientation` 及其公式字段 — 频率轴的符号约定。缺少该元数据的历史结果按
+    `phase_increasing`（原始前向 FFT 方向）解释。
 
 对于 scan，PSD payload 仍附属于一个逻辑 SDE dataset 的命名 point。下游
 `mode: analyze` job 将该 dataset 一次传给 `lorentz_fitter`。

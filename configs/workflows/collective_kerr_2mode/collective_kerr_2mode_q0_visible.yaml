@@ -79,8 +79,8 @@ jobs:
     lorentz_fitter:
       scan_param: delta
       mode: 0
-      freq_min: -8.0
-      freq_max: -5.0
+      freq_min: 5.0
+      freq_max: 8.0
       fit_window: 0.15
       uncertainty: auto
       clip_by_std: false

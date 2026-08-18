@@ -19,6 +19,14 @@ from .base import (
     AnalyzerWorkspaceEstimate,
     AnalyzerWorkspaceRequest,
 )
+from .frequency_orientation import (
+    DEFAULT_FREQUENCY_ORIENTATION,
+    FrequencyOrientation,
+    OrientationInput,
+    orientation_metadata,
+    orientation_schema_extra,
+    orientation_sign,
+)
 from .result import AnalysisResult
 
 __all__ = ["AllanVarianceAnalyzer", "AllanVarianceConfig"]
@@ -28,6 +36,14 @@ class AllanVarianceConfig(PluginConfigBase):
     """Configuration for focused angular-frequency Allan statistics."""
 
     modes: list[int] = Field(..., min_length=1)
+    orientation: OrientationInput = Field(
+        DEFAULT_FREQUENCY_ORIENTATION,
+        description=(
+            "Positive-frequency phase orientation: phase_decreasing maps "
+            "exp(-i*omega*t) to +omega. Input aliases: physical and fft"
+        ),
+        json_schema_extra=orientation_schema_extra(),
+    )
     taus: list[float] | None = Field(
         None, description="Requested averaging times; None selects a logarithmic grid"
     )
@@ -107,23 +123,29 @@ class AllanVarianceAnalyzer(Analyzer):
         if dt <= 0.0:
             raise ValueError("trajectory sample spacing must be positive")
         columns = resolve_mode_columns(data, config.modes)
+        frequency_meta = orientation_metadata(config.orientation)
         mode_results: dict[int, dict[str, Any]] = {}
         for mode, column in zip(config.modes, columns, strict=True):
             series = _copy_mode_to_host(
                 array, column, config.transfer_chunk_samples
             )
+            allan = calculate_allan_variance(
+                series,
+                dt,
+                taus=config.taus,
+                points=config.points,
+                min_windows=config.min_windows,
+                min_independent_windows=config.min_independent_windows,
+                amplitude_floor=config.amplitude_floor,
+            )
+            allan.update(frequency_meta)
             mode_results[mode] = {
-                "allan": calculate_allan_variance(
+                "allan": allan,
+                "phase_increment": _phase_increment_summary(
                     series,
                     dt,
-                    taus=config.taus,
-                    points=config.points,
-                    min_windows=config.min_windows,
-                    min_independent_windows=config.min_independent_windows,
-                    amplitude_floor=config.amplitude_floor,
-                ),
-                "phase_increment": _phase_increment_summary(
-                    series, dt, config.amplitude_floor
+                    config.amplitude_floor,
+                    config.orientation,
                 ),
             }
         payload = {
@@ -132,6 +154,7 @@ class AllanVarianceAnalyzer(Analyzer):
             "dt": dt,
             "n_traj": int(array.shape[0]),
             "n_samples": int(array.shape[1]),
+            **frequency_meta,
             "mode_results": mode_results,
         }
         return AnalysisResult(data_dict=payload, meta=dict(payload, mode_results=None))
@@ -173,7 +196,10 @@ def _masked_mean(values: np.ndarray, mask: np.ndarray, axis: int) -> np.ndarray:
 
 
 def _phase_increment_summary(
-    series: np.ndarray, dt: float, amplitude_floor: float
+    series: np.ndarray,
+    dt: float,
+    amplitude_floor: float,
+    orientation: FrequencyOrientation,
 ) -> dict[str, Any]:
     amplitude = np.abs(series)
     increments = np.angle(series[:, 1:] * np.conj(series[:, :-1]))
@@ -181,7 +207,7 @@ def _phase_increment_summary(
     absolute = np.abs(increments)
     return {
         "mean_angular_frequency_per_trajectory": _masked_mean(
-            increments / dt, valid, axis=1
+            orientation_sign(orientation) * increments / dt, valid, axis=1
         ),
         "max_abs_phase_step_per_trajectory": np.max(
             np.where(valid, absolute, np.nan), axis=1
@@ -190,6 +216,7 @@ def _phase_increment_summary(
             (absolute >= 0.9 * np.pi).astype(float), valid, axis=1
         ),
         "near_nyquist_threshold": 0.9 * np.pi,
+        **orientation_metadata(orientation),
     }
 
 
@@ -208,6 +235,10 @@ class AllanResultAccumulator:
                 first["dt"], payload["dt"]
             ):
                 raise ValueError("Allan trajectory batches use different time grids")
+            if first["orientation"] != payload["orientation"]:
+                raise ValueError(
+                    "Allan trajectory batches use different frequency orientations"
+                )
             for mode in first["modes"]:
                 first_tau = first["mode_results"][mode]["allan"]["tau"]
                 next_tau = payload["mode_results"][mode]["allan"]["tau"]
@@ -290,5 +321,6 @@ class AllanResultAccumulator:
             "dt": first["dt"],
             "n_traj": sum(int(item["n_traj"]) for item in self.payloads),
             "n_samples": first["n_samples"],
+            **orientation_metadata(first["orientation"]),
             "mode_results": mode_results,
         }

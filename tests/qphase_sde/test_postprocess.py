@@ -219,6 +219,11 @@ def test_lorentz_fitter_config_clip_by_std(tmp_path):
 
     assert isinstance(result, AnalysisResult)
     assert len(result.data_dict["fit_rows"]) == 2
+    assert result.data_dict["orientation"] == "phase_increasing"
+    assert all(
+        row["orientation"] == "phase_increasing"
+        for row in result.data_dict["fit_rows"]
+    )
     for row in result.data_dict["fit_rows"]:
         assert row["status"] in {"ok", "low_quality"}
 

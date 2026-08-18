@@ -18,7 +18,8 @@ import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.registry import discovery, registry
 from qphase.service import RegistryService
-from qphase_sde.analyser.psd import PsdAnalyzer
+from qphase_sde.analyser.frequency_orientation import resolve_frequency_orientation
+from qphase_sde.analyser.psd import PsdAnalyzer, PsdAnalyzerConfig
 from qphase_sde.state import TrajectorySet
 
 BACKEND = NumpyBackend()
@@ -101,6 +102,77 @@ def test_psd_method_unitary_convention(method):
     assert np.isclose(np.max(np.abs(axis)), np.pi / dt, rtol=1e-12)
 
 
+@pytest.mark.parametrize("method", ["periodogram", "welch", "multitaper"])
+def test_psd_default_maps_decreasing_phase_to_positive_frequency(method):
+    dt = 0.1
+    omega = 1.25
+    time = np.arange(2048) * dt
+    values = np.exp(-1j * omega * time)[None, :, None]
+    data = TrajectorySet(data=np.repeat(values, 3, axis=0), t0=0.0, dt=dt)
+    kwargs = {"nperseg": 1024} if method == "welch" else {}
+
+    payload = PsdAnalyzer(
+        kind="complex",
+        modes=[0],
+        convention="symmetric",
+        method=method,
+        **kwargs,
+    ).analyze(data, BACKEND).data_dict
+
+    peak = float(payload["axis"][np.argmax(payload["psd"][:, 0])])
+    assert peak == pytest.approx(omega, abs=0.04)
+    assert payload["orientation"] == "phase_decreasing"
+    assert payload["positive_frequency_time_dependence"] == "exp(-i * omega * t)"
+
+
+def test_psd_phase_increasing_preserves_forward_fft_axis():
+    dt = 0.1
+    omega = 0.75
+    time = np.arange(2048) * dt
+    values = np.exp(-1j * omega * time)[None, :, None]
+    data = TrajectorySet(data=np.repeat(values, 2, axis=0), t0=0.0, dt=dt)
+
+    payload = PsdAnalyzer(
+        kind="complex",
+        modes=[0],
+        convention="symmetric",
+        orientation="phase_increasing",
+    ).analyze(data, BACKEND).data_dict
+
+    peak = float(payload["axis"][np.argmax(payload["psd"][:, 0])])
+    assert peak == pytest.approx(-omega, abs=0.04)
+    assert payload["orientation"] == "phase_increasing"
+
+
+def test_frequency_orientation_resolver_marks_missing_metadata_as_legacy():
+    assert resolve_frequency_orientation(None) == "phase_increasing"
+    assert resolve_frequency_orientation({}) == "phase_increasing"
+    assert (
+        resolve_frequency_orientation({"orientation": "phase_decreasing"})
+        == "phase_decreasing"
+    )
+
+
+@pytest.mark.parametrize(
+    ("configured", "canonical"),
+    [("fft", "phase_increasing"), ("physical", "phase_decreasing")],
+)
+def test_psd_orientation_aliases_serialize_canonically(configured, canonical):
+    config = PsdAnalyzerConfig(kind="complex", modes=[0], orientation=configured)
+
+    assert config.orientation == canonical
+    assert config.model_dump()["orientation"] == canonical
+
+
+def test_psd_orientation_aliases_are_discoverable_in_schema():
+    orientation = PsdAnalyzerConfig.model_json_schema()["properties"]["orientation"]
+
+    assert orientation["value_aliases"] == {
+        "fft": "phase_increasing",
+        "physical": "phase_decreasing",
+    }
+
+
 def test_welch_nperseg_default_reduces_variance():
     """Welch with a segment length shorter than the series produces more segments."""
     dt = 0.1
@@ -157,7 +229,10 @@ def test_periodogram_reports_cross_trajectory_standard_error():
     data = TrajectorySet(data=values[:, :, None], t0=0.0, dt=dt)
 
     result = PsdAnalyzer(
-        kind="complex", modes=[0], convention="pragmatic"
+        kind="complex",
+        modes=[0],
+        convention="pragmatic",
+        orientation="phase_increasing",
     ).analyze(data, BACKEND)
     payload = result.data_dict
 
@@ -242,7 +317,7 @@ def test_psd_accumulator_matches_full_trajectory_analysis(method):
 
 
 def test_expected_freq_max_guards_against_aliasing():
-    """The optional physical-band hint rejects an undersampled PSD."""
+    """The optional frequency-band hint rejects an undersampled PSD."""
     values = _make_sine_data(n_traj=2, n_time=128)
     undersampled = TrajectorySet(data=values, t0=0.0, dt=50.0)
     analyzer = PsdAnalyzer(

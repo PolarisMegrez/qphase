@@ -50,6 +50,38 @@ def test_allan_variance_reports_nonoverlap_counts_and_frequency():
     )
 
 
+def test_allan_frequency_uses_configured_phase_orientation():
+    dt = 0.1
+    omega = 0.6
+    time = np.arange(257) * dt
+    values = np.exp(-1j * omega * time)[None, :, None]
+    trajectory = TrajectorySet(
+        np.repeat(values, 2, axis=0), dt=dt, meta={"mode_indices": [0]}
+    )
+
+    phase_decreasing = AllanVarianceAnalyzer(
+        AllanVarianceConfig(modes=[0], points=4, min_independent_windows=2)
+    ).analyze(trajectory, NumpyBackend()).data_dict
+    legacy = AllanVarianceAnalyzer(
+        AllanVarianceConfig(
+            modes=[0],
+            points=4,
+            min_independent_windows=2,
+            orientation="phase_increasing",
+        )
+    ).analyze(trajectory, NumpyBackend()).data_dict
+
+    decreasing_frequency = phase_decreasing["mode_results"][0]["phase_increment"][
+        "mean_angular_frequency_per_trajectory"
+    ]
+    increasing_frequency = legacy["mode_results"][0]["phase_increment"][
+        "mean_angular_frequency_per_trajectory"
+    ]
+    np.testing.assert_allclose(decreasing_frequency, omega, atol=1e-12)
+    np.testing.assert_allclose(increasing_frequency, -omega, atol=1e-12)
+    assert phase_decreasing["orientation"] == "phase_decreasing"
+
+
 def test_allan_accumulator_matches_full_trajectory_analysis():
     trajectory = _phase_diffusion_trajectory()
     analyzer = _analyzer()

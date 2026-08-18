@@ -21,6 +21,7 @@ analyser:
   psd:
     modes: [0]
     kind: complex
+    orientation: phase_decreasing
     expected_freq_max: 0.34
     find_peaks: true
     estimator:
@@ -32,7 +33,8 @@ analyser:
 | :-- | :-- | :-- |
 | `modes` | `list[int]` | 要分析的模式索引。 |
 | `kind` | `str` | PSD 变体，如 `complex`、`real`、`imag`。 |
-| `expected_freq_max` | `float \| None` | 输出频率轴单位下预期的最大物理频率；达到 Nyquist 上限时分析直接失败。 |
+| `orientation` | `str` | 正频率方向。`phase_decreasing` 将 `exp(-i*omega*t)` 映射到 `+omega`；`phase_increasing` 保留前向 FFT 频率轴。 |
+| `expected_freq_max` | `float \| None` | 输出频率轴单位下预期的最大频率幅值；达到 Nyquist 上限时分析直接失败。 |
 | `find_peaks` | `bool` | 是否报告峰值位置。 |
 | `estimator` | 子插件选择 | 必须且只能选择 `periodogram`、`welch`、`multitaper` 之一。 |
 
@@ -50,11 +52,24 @@ Estimator 对比：
 
 ### 频率轴
 
-频率网格取决于保存后的轨迹：
+Estimator 首先执行 NumPy/CuPy 标准前向 DFT，随后按配置重排输出频率轴：
 
 ```text
-f = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
+omega_fft = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
+phase_decreasing: omega = -omega_fft，并按升序重排
+phase_increasing: omega = +omega_fft，并按升序重排
 ```
+
+QPhase 默认采用 `phase_decreasing`。对于
+`C(tau) = <a^dagger(t) a(t+tau)>`，它对应量子光学发射谱
+`S(omega) = integral C(tau) exp(+i*omega*tau) d tau`，因此轨迹
+`a(t) ~ exp(-i*omega0*t)` 的峰位是正载频 `+omega0`。
+`phase_increasing` 用于一般信号处理或严格复现前向 FFT 轴。该选项只改变频率轴方向，
+不改变 PSD 归一化、线宽或积分功率。
+
+配置输入也接受俗名：`physical` 等价于 `phase_decreasing`，`fft` 等价于
+`phase_increasing`。它们只用于输入；序列化配置和结果元数据始终使用正式名称。
+此处 `physical` 仅表示 QPhase 默认约定，并不表示跨领域唯一的物理约定。
 
 对于窄峰，应选择 `save_stride` 使 Nyquist 频率远高于峰值。
 对于角频率约定，`omega_Nyquist = pi / (dt * save_stride)`。增大 `t1` 只能改善
@@ -70,6 +85,11 @@ f = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
 *   `psd_std` — 跨轨迹样本标准差（`ddof=1`）。
 *   `psd_sem` — 均值标准误，即 `psd_std / sqrt(n_traj)`。
 *   `uncertainty` — 标识 `psd_sem`、独立统计单元和样本数的元数据。
+*   `orientation`、`positive_frequency_time_dependence` 与 `spectrum_kernel`
+    — 明确记录频率符号定义的元数据。
+
+`lorentz_fitter` 会把相同元数据传递到结果，并在 `fit_results.csv` 中增加
+`orientation` 列；若输入混用了两种方向，则明确拒绝，而非静默拟合不兼容的频率轴。
 
 对于 Welch 和 multitaper，先在每条轨迹内部平均 segment 或 taper，再跨轨迹
 计算不确定度，因此不会把相关 segment 当成独立样本。只有一条轨迹时，
@@ -159,6 +179,7 @@ Wigner 到 normal ordering 的修正，输出明确遵循模型原始 c-number �
 analyser:
   trajectory_diagnostics:
     modes: [0]
+    orientation: phase_decreasing
     block_durations: [100.0, 1000.0]
     coherence: true
     coherence_max_lag: 500.0
@@ -168,6 +189,9 @@ analyser:
     allan_min_windows: 8
     amplitude_floor: 0.0
 ```
+
+相位增量均值和复数 block spectrum 峰值遵循与 `psd` 相同的 `orientation`。
+复数 coherence 保留原始时域相位；Allan 方差由相位二阶差分的平方构成，因而不受整体频率反号影响。
 
 输出的 `mode_results[mode]` 包含：
 
@@ -196,11 +220,15 @@ analyser:
 analyser:
   allan_variance:
     modes: [0]
+    orientation: phase_decreasing
     points: 40
     min_windows: 8
     min_independent_windows: 4
     transfer_chunk_samples: 8192
 ```
+
+`orientation` 控制逐轨迹平均角频率的符号。Allan 方差本身不随该配置改变。
+`allan_scaling` 会将方向信息传递到逐点结果、汇总与导出，并拒绝混合方向的 scan。
 
 每个 tau 同时输出既有的重叠估计和非重叠相位二阶差分估计，包括逐轨迹结果、跨轨迹
 SEM、实际有效非重叠窗口数以及每条轨迹的名义窗口数。此处“独立”只表示时间块不重叠；

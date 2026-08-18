@@ -31,6 +31,14 @@ from .base import (
 )
 from .coherence_matrix import CoherenceMatrixAnalyzer, CoherenceMatrixConfig
 from .dist import DistAnalyzer, DistAnalyzerConfig
+from .frequency_orientation import (
+    DEFAULT_FREQUENCY_ORIENTATION,
+    LEGACY_FREQUENCY_ORIENTATION,
+    ORIENTATION_ALIASES,
+    FrequencyOrientation,
+    OrientationInput,
+    resolve_frequency_orientation,
+)
 from .moment_statistics import MomentStatisticsAnalyzer, MomentStatisticsConfig
 from .polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
 from .psd import PsdAnalyzer, PsdAnalyzerConfig
@@ -58,8 +66,14 @@ __all__ = [
     "PsdAnalyzerConfig",
     "DistAnalyzer",
     "DistAnalyzerConfig",
+    "DEFAULT_FREQUENCY_ORIENTATION",
+    "LEGACY_FREQUENCY_ORIENTATION",
+    "ORIENTATION_ALIASES",
+    "OrientationInput",
+    "FrequencyOrientation",
     "PolarDistAnalyzer",
     "PolarDistAnalyzerConfig",
     "TrajectoryDiagnostics",
     "TrajectoryDiagnosticsConfig",
+    "resolve_frequency_orientation",
 ]

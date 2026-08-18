@@ -34,6 +34,11 @@ from scipy.optimize import curve_fit
 
 from ..result import SDEResult
 from .base import Analyzer
+from .frequency_orientation import (
+    FrequencyOrientation,
+    orientation_metadata,
+    resolve_frequency_orientation,
+)
 from .result import AnalysisResult
 
 __all__ = ["LorentzFitter", "LorentzFitterConfig"]
@@ -653,6 +658,7 @@ class LorentzFitter(Analyzer):
         dist_rows: list[dict[str, Any]] = []
         pdist_rows: list[dict[str, Any]] = []
         reference_axis: np.ndarray | None = None
+        reference_orientation: FrequencyOrientation | None = None
 
         for loaded in loaded_results:
             params = loaded.meta.get("params", {})
@@ -665,6 +671,14 @@ class LorentzFitter(Analyzer):
             axis, trace, payload = extract_psd_trace(
                 loaded, psd_key=config.psd_key, mode=config.mode
             )
+            orientation = resolve_frequency_orientation(payload)
+            if reference_orientation is None:
+                reference_orientation = orientation
+            elif reference_orientation != orientation:
+                raise QPhaseError(
+                    "PSD inputs use different frequency orientations: "
+                    f"{reference_orientation} and {orientation}"
+                )
             if reference_axis is None:
                 reference_axis = axis
             elif reference_axis.shape != axis.shape or not np.allclose(
@@ -704,6 +718,7 @@ class LorentzFitter(Analyzer):
             row = {
                 "job_name": loaded.job_name,
                 config.scan_param: scan_value,
+                "orientation": orientation,
                 **fit_result.as_dict(),
             }
             fit_rows.append(row)
@@ -752,6 +767,7 @@ class LorentzFitter(Analyzer):
                 fieldnames = [
                     "job_name",
                     config.scan_param,
+                    "orientation",
                     "center",
                     "center_std",
                     "linewidth",
@@ -798,12 +814,18 @@ class LorentzFitter(Analyzer):
                 "psd_columns": psd_columns,
                 "psd_sem_columns": psd_sem_columns,
                 "axis": reference_axis,
+                **orientation_metadata(
+                    reference_orientation or resolve_frequency_orientation(None)
+                ),
                 "written": {k: str(v) for k, v in written.items()},
             },
             meta={
                 "scan_param": config.scan_param,
                 "mode": config.mode,
                 "count": len(loaded_results),
+                **orientation_metadata(
+                    reference_orientation or resolve_frequency_orientation(None)
+                ),
             },
         )
 

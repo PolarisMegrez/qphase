@@ -19,6 +19,11 @@ from scipy.optimize import curve_fit
 
 from ..result import SDEResult
 from .base import Analyzer
+from .frequency_orientation import (
+    FrequencyOrientation,
+    orientation_metadata,
+    resolve_frequency_orientation,
+)
 from .result import AnalysisResult
 
 __all__ = [
@@ -115,6 +120,7 @@ class _Point:
     epsilon: float
     allan: dict[str, Any]
     phase: dict[str, Any]
+    orientation: FrequencyOrientation
 
 
 @dataclass
@@ -160,7 +166,7 @@ def _mode_payload(payload: dict[str, Any], mode: int) -> dict[str, Any]:
 
 def _extract_source(
     result: SDEResult, config: AllanScalingConfig
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], FrequencyOrientation]:
     payload = result.analysis.get(config.source_key)
     if not isinstance(payload, dict) and config.legacy_source_key is not None:
         payload = result.analysis.get(config.legacy_source_key)
@@ -177,7 +183,7 @@ def _extract_source(
     allan["sample_spacing"] = float(payload.get("dt", math.nan))
     if "total_independent_window_count" not in allan:
         _estimate_legacy_independent_counts(allan, payload)
-    return allan, phase
+    return allan, phase, resolve_frequency_orientation(payload)
 
 
 def _estimate_legacy_independent_counts(
@@ -247,13 +253,16 @@ def _collect_points(data: Any, config: AllanScalingConfig) -> list[_Point]:
         epsilon = _epsilon(scan_value, config)
         if epsilon is None or epsilon <= 0.0:
             continue
-        allan, phase = _extract_source(result, config)
-        points.append(_Point(scan_value, epsilon, allan, phase))
+        allan, phase, orientation = _extract_source(result, config)
+        points.append(_Point(scan_value, epsilon, allan, phase, orientation))
     points.sort(key=lambda point: point.epsilon)
     if not points:
         raise QPhaseError(
             "AllanScalingAnalyzer received no nonzero perturbation points"
         )
+    orientations = {point.orientation for point in points}
+    if len(orientations) != 1:
+        raise QPhaseError("Allan scan points use different frequency orientations")
     return points
 
 
@@ -770,6 +779,7 @@ class AllanScalingAnalyzer(Analyzer):
                     "intensity_tau_end": window.intensity_tau_end,
                     "mean_angular_frequency": frequency,
                     "mean_angular_frequency_sem": frequency_sem,
+                    "orientation": point.orientation,
                 }
             )
         gate_failures: list[str] = []
@@ -814,6 +824,7 @@ class AllanScalingAnalyzer(Analyzer):
             "noise_fit": noise_fit,
             "frequency_fit": frequency_fit,
             "normal_form": normal_form,
+            **orientation_metadata(points[0].orientation),
         }
         written = self._export(config, rows, summary)
         return AnalysisResult(
@@ -823,6 +834,7 @@ class AllanScalingAnalyzer(Analyzer):
                 "scan_param": config.scan_param,
                 "mode": config.mode,
                 "count": len(points),
+                **orientation_metadata(points[0].orientation),
             },
         )
 

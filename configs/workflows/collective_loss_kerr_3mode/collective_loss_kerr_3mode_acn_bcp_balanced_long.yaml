@@ -86,8 +86,8 @@ jobs:
     lorentz_fitter:
       scan_param: omega_c
       mode: 0
-      freq_min: -0.6
-      freq_max: 0.2
+      freq_min: -0.2
+      freq_max: 0.6
       fit_window: 0.15
       uncertainty: auto
       clip_by_std: false

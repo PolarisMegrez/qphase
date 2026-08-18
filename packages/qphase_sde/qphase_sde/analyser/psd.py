@@ -42,6 +42,14 @@ from .base import (
     AnalyzerWorkspaceEstimate,
     AnalyzerWorkspaceRequest,
 )
+from .frequency_orientation import (
+    DEFAULT_FREQUENCY_ORIENTATION,
+    FrequencyOrientation,
+    OrientationInput,
+    orient_spectrum,
+    orientation_metadata,
+    orientation_schema_extra,
+)
 from .peak_finding import (
     RationalPeakFinderConfig,
     ScipyPeakFinderConfig,
@@ -72,12 +80,21 @@ class PsdAnalyzerConfig(PluginConfigBase):
     convention: Literal["symmetric", "unitary", "pragmatic"] = Field(
         "symmetric", description="PSD convention"
     )
+    orientation: OrientationInput = Field(
+        DEFAULT_FREQUENCY_ORIENTATION,
+        description=(
+            "Positive-frequency phase orientation: phase_decreasing maps "
+            "exp(-i*omega*t) to +omega; phase_increasing preserves the "
+            "forward-FFT convention. Input aliases: physical and fft"
+        ),
+        json_schema_extra=orientation_schema_extra(),
+    )
     dt: float | None = Field(None, description="Sampling interval (override)")
     expected_freq_max: float | None = Field(
         None,
         gt=0.0,
         description=(
-            "Optional maximum physical frequency expected in the output-axis "
+            "Optional maximum frequency magnitude expected in the output-axis "
             "units; analysis fails if it reaches the Nyquist limit"
         ),
     )
@@ -349,6 +366,7 @@ class PsdAnalyzer(Analyzer):
             dt,
             kind=kind,
             convention=convention,
+            orientation=config.orientation,
             backend=backend,
         )
         axis0 = estimate0.axis
@@ -367,6 +385,7 @@ class PsdAnalyzer(Analyzer):
                 dt,
                 kind=kind,
                 convention=convention,
+                orientation=config.orientation,
                 backend=backend,
             )
             P_mat[:, index] = estimate.mean
@@ -384,6 +403,7 @@ class PsdAnalyzer(Analyzer):
             "modes": modes,
             "kind": kind,
             "convention": convention,
+            **orientation_metadata(config.orientation),
             "estimator": self.estimator.name,
             "sample_dt": dt,
             "nyquist": nyquist,
@@ -466,6 +486,7 @@ class PsdAnalyzer(Analyzer):
         *,
         kind: str = "complex",
         convention: str = "symmetric",
+        orientation: FrequencyOrientation = DEFAULT_FREQUENCY_ORIENTATION,
         window: str | None = None,
         method: str | None = None,
         nperseg: int | None = None,
@@ -481,6 +502,7 @@ class PsdAnalyzer(Analyzer):
             dt,
             kind=kind,
             convention=convention,
+            orientation=orientation,
             window=window,
             method=method,
             nperseg=nperseg,
@@ -499,6 +521,7 @@ class PsdAnalyzer(Analyzer):
         *,
         kind: str = "complex",
         convention: str = "symmetric",
+        orientation: FrequencyOrientation = DEFAULT_FREQUENCY_ORIENTATION,
         window: str | None = None,
         method: str | None = None,
         nperseg: int | None = None,
@@ -553,7 +576,21 @@ class PsdAnalyzer(Analyzer):
                     if value is not None
                 },
             )
-        return estimator.estimate(x_proc, dt, convention, backend)
+        estimate = estimator.estimate(x_proc, dt, convention, backend)
+        axis, mean, std, sem = orient_spectrum(
+            estimate.axis,
+            estimate.mean,
+            estimate.std,
+            estimate.sem,
+            orientation=orientation,
+        )
+        return _PsdEstimate(
+            axis=axis,
+            mean=mean,
+            std=std,
+            sem=sem,
+            n_independent=estimate.n_independent,
+        )
 
     @staticmethod
     def _trajectory_statistics(
