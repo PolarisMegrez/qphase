@@ -171,6 +171,48 @@ the saved sample spacing should be reduced. The result is an operational
 finite-bandwidth first-order-coherence carrier; it is not guaranteed to equal
 the center of every peak when several spectral components coexist.
 
+## `band_limited_carrier`
+
+Estimates the carrier of an experimentally filtered, long-time first-order
+coherence from an existing PSD dataset. It is a downstream `mode: analyze`
+plugin and leaves `coherence_carrier` unchanged:
+
+```yaml
+- name: carrier
+  input: {from: sim, mode: dataset}
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_a
+      readout: trace
+      freq_min: -0.75
+      freq_max: 0.2
+```
+
+`readout` accepts a recorded physical mode or `trace`, the incoherent sum of
+all recorded modal PSDs. The search interval is part of the measurement
+definition and must isolate the carrier family from remote bands.
+
+The estimator subtracts a robust baseline and uses the standard deviation of
+the squared excess spectrum as its concentration scale. This scale equals the
+HWHM for an ideal, untruncated Lorentzian. It generates nested cosine-tapered
+passbands, reconstructs each filtered `G^(1)`, and performs an
+amplitude-weighted phase regression on the contiguous interval above
+`coherence_floor`. A Lepski-style test selects the center of the flattest local
+bandwidth plateau that is internally consistent. No CAM or other
+theoretical frequency enters peak location or bandwidth selection.
+
+`carrier_results.csv` reports the selected frequency, peak and concentration
+widths, selected half-bandwidth, lag interval, and selection status.
+`carrier_candidates.csv` retains every nested estimate for auditing.
+`regression_std` is a HAC sandwich uncertainty conditional on the filtered
+phase-regression model. `bandwidth_std` is sensitivity across the accepted
+bandwidth family, not a trajectory SEM. `diagnostic_uncertainty` combines both
+for screening. Formal sampling uncertainty still requires independent
+trajectories, blocks, or repeated runs. `unstable_bandwidth` explicitly warns
+that no candidate family met the configured stability rule.
+
 ## `coherence_matrix`
 
 Computes the ensemble first-order coherence matrix

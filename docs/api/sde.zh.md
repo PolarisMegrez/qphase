@@ -204,3 +204,8 @@ PSD 分析器的寻峰只针对单个 job。跨 job 的 Lorentz 线型拟合通�
 `lorentz_fitter` 分析器读取逻辑 SDE scan dataset，对每个扫描值拟合一条
 Lorentz 曲线，并将 `fit_results.csv` 和 `psd_merged.csv` 写入该 job 的 run
 目录。Dataset view 与通用导出工具位于 core。
+### 自适应带限载频
+
+`analyser.band_limited_carrier` 是 `mode: analyze` 下的 PSD 后处理插件。它在不假设
+Lorentz 线型时，自适应估计经过频带筛选的长时 `G^(1)` 载频，并输出带宽敏感度
+与相位回归诊断。它不替代随积分执行的短延迟 `coherence_carrier`。

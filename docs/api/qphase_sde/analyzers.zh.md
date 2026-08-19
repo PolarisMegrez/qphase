@@ -150,6 +150,41 @@ Re Tr[W H(R) R] / Tr[W R].
 首延迟相干度很低时，应减小保存采样间隔。输出是有限探测带宽下可操作的一阶相干载频；
 多个谱分量共存时，它不保证等于每个谱峰的中心。
 
+## `band_limited_carrier`
+
+该插件从已有 PSD dataset 估计经过实验带宽筛选后的长时一阶相干载频。它作为
+`engine.sde.mode: analyze` 的下游 analyser 运行，不改变 `coherence_carrier`
+短延迟插件：
+
+```yaml
+- name: carrier
+  input: {from: sim, mode: dataset}
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_a
+      readout: trace
+      freq_min: -0.75
+      freq_max: 0.2
+```
+
+`readout` 可以是已记录的物理 mode，也可以是 `trace`，即所有已记录 mode 的
+非相干 PSD 之和。搜索频带属于测量定义的一部分，应排除无关的远端频带。
+
+估计器先扣除稳健基线，再以平方剩余谱的标准差定义谱集中宽度；对理想、未截断的
+Lorentz 线型，该宽度等于 HWHM。随后生成嵌套的余弦边缘通带，分别重建带限
+`G^(1)`，并在相干幅度连续高于 `coherence_floor` 的区间进行幅度加权相位回归。
+Lepski 型一致性检验选择内部相容且最平坦的局部带宽平台中心。峰位和带宽选择均不
+使用 CAM 或其他理论频率。
+
+`carrier_results.csv` 保存载频、峰宽与谱集中宽度、选定半带宽、延迟区间和选择
+状态，`carrier_candidates.csv` 保留全部嵌套估计以供审计。`regression_std` 是由
+HAC sandwich covariance 得到的条件相位回归误差；
+`bandwidth_std` 是可接受带宽族内的估计敏感度，并非 trajectory SEM。
+`diagnostic_uncertainty` 仅用于筛选诊断。正式采样不确定度仍需独立轨迹、时间块或
+重复运行。`unstable_bandwidth` 表示候选带宽未形成满足阈值的稳定平台。
+
 ## `coherence_matrix`
 
 计算系综一阶相干矩阵
