@@ -105,6 +105,72 @@ correlated segments are not counted as independent samples. With one trajectory,
 
 When `find_peaks: true`, metadata also includes detected peak positions and heights.
 
+## `coherence_carrier`
+
+Estimates the carrier of a fixed experimental readout from its short-delay
+first-order coherence. It runs with the simulation, supports trajectory
+batching, and does not save trajectories when `keep_traj: false`:
+
+```yaml
+analyser:
+  coherence_carrier:
+    modes: [0]
+    include_trace: true
+    channels:
+      bright: ["0+0j", "0.70710678+0j", "0.70710678+0j"]
+    polynomial_order: 2
+    minimum_lag_points: 4
+    maximum_lag_points: 12
+```
+
+For a positive-semidefinite readout matrix `W`, the estimator uses
+
+```text
+C_W(tau) = mean(alpha(t)^dagger W alpha(t + tau))
+omega_W = orientation_sign * Im[C_W'(0+) / C_W(0)].
+```
+
+`modes` creates bare-mode projectors, `include_trace` uses `W=I` on the
+recorded-mode subspace, and each
+fixed coherent channel `c=l^dagger alpha` uses `W=l l^dagger`. Channel vectors
+are indexed by physical mode and use the same convention as the CAM
+`coherence_pole_spectrum` postprocessor. All modes with nonzero channel weights
+must be listed in `engine.sde.record_modes`. Record every model mode when the
+SDE trace is intended to match the full CAM trace.
+
+This observable has a direct CAM correspondence. For the drift
+`d alpha/dt = -i H(R) alpha + noise`, stationarity and the CAM moment closure
+give
+
+```text
+C_W'(0+) = -i Tr[W H(R) R].
+```
+
+With the default `phase_decreasing` orientation, the reported value therefore
+reduces to the generalized Rayleigh quotient
+
+```text
+Re Tr[W H(R) R] / Tr[W R].
+```
+
+The implementation computes only a small number of short-lag correlations. It
+fits nested local phase polynomials constrained to pass through zero delay and
+selects the largest window consistent with shorter windows in trajectory
+jackknife uncertainty units. The point estimate is always formed from the
+ensemble correlation ratio; per-trajectory quantities are used only for the
+jackknife. Outputs include frequency and SEM, `recorded_modes`, the readout
+matrices in that basis, the selected lag, all nested
+candidate estimates, phase residuals, first-lag coherence, and a Nyquist
+fraction diagnostic.
+
+The estimator does **not** identify a long-time pole or a linewidth and does
+not assume a Lorentz profile. It requires stationary sampled trajectories,
+adequate short-delay resolution, and a readout with positive intensity. A high
+`nyquist_fraction`, unstable nested windows, or low first-lag coherence means
+the saved sample spacing should be reduced. The result is an operational
+finite-bandwidth first-order-coherence carrier; it is not guaranteed to equal
+the center of every peak when several spectral components coexist.
+
 ## `coherence_matrix`
 
 Computes the ensemble first-order coherence matrix

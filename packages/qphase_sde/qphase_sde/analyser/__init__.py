@@ -29,6 +29,7 @@ from .base import (
     AnalyzerWorkspaceEstimate,
     AnalyzerWorkspaceRequest,
 )
+from .coherence_carrier import CoherenceCarrierAnalyzer, CoherenceCarrierConfig
 from .coherence_matrix import CoherenceMatrixAnalyzer, CoherenceMatrixConfig
 from .dist import DistAnalyzer, DistAnalyzerConfig
 from .frequency_orientation import (
@@ -59,6 +60,8 @@ __all__ = [
     "AllanScalingConfig",
     "CoherenceMatrixAnalyzer",
     "CoherenceMatrixConfig",
+    "CoherenceCarrierAnalyzer",
+    "CoherenceCarrierConfig",
     "MomentStatisticsAnalyzer",
     "MomentStatisticsConfig",
     "NormalFormExpectation",

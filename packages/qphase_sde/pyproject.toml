@@ -51,6 +51,7 @@ dependencies = [
 "analyser.allan_variance" = "qphase_sde.analyser.allan_variance:AllanVarianceAnalyzer"
 "analyser.allan_scaling" = "qphase_sde.analyser.allan_scaling:AllanScalingAnalyzer"
 "analyser.coherence_matrix" = "qphase_sde.analyser.coherence_matrix:CoherenceMatrixAnalyzer"
+"analyser.coherence_carrier" = "qphase_sde.analyser.coherence_carrier:CoherenceCarrierAnalyzer"
 "analyser.moment_statistics" = "qphase_sde.analyser.moment_statistics:MomentStatisticsAnalyzer"
 # Observer plugin
 "observer.first_passage" = "qphase_sde.observer.first_passage:FirstPassageObserver"

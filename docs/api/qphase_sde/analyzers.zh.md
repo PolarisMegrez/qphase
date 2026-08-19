@@ -97,6 +97,59 @@ QPhase 默认采用 `phase_decreasing`。对于
 
 当 `find_peaks: true` 时，元数据还包含检测到的峰位与高度。
 
+## `coherence_carrier`
+
+从固定实验读出通道的短延迟一阶相干函数估计载频。插件随模拟运行，支持
+trajectory batching；设置 `keep_traj: false` 时不会向磁盘保存轨迹：
+
+```yaml
+analyser:
+  coherence_carrier:
+    modes: [0]
+    include_trace: true
+    channels:
+      bright: ["0+0j", "0.70710678+0j", "0.70710678+0j"]
+    polynomial_order: 2
+    minimum_lag_points: 4
+    maximum_lag_points: 12
+```
+
+对半正定读出矩阵 `W`，估计量定义为
+
+```text
+C_W(tau) = mean(alpha(t)^dagger W alpha(t + tau))
+omega_W = orientation_sign * Im[C_W'(0+) / C_W(0)].
+```
+
+`modes` 生成裸模式投影，`include_trace` 在已记录模式子空间使用 `W=I`；固定相干读出
+`c=l^dagger alpha` 使用 `W=l l^dagger`。通道向量按物理模式编号排列，约定与 CAM
+的 `coherence_pole_spectrum` 后处理器相同。权重非零的模式必须全部包含在
+`engine.sde.record_modes` 中。需要与 CAM 的完整 trace 对应时，必须记录模型的全部模式。
+
+该观测量与 CAM 具有直接对应。对漂移
+`d alpha/dt = -i H(R) alpha + noise`，平稳性与 CAM 矩闭合给出
+
+```text
+C_W'(0+) = -i Tr[W H(R) R].
+```
+
+因此，在默认 `phase_decreasing` 方向下，输出退化为广义 Rayleigh 商
+
+```text
+Re Tr[W H(R) R] / Tr[W R].
+```
+
+实现只计算少量短延迟相关函数，以约束通过零延迟的局部相位多项式拟合嵌套窗口，
+并在逐轨迹 jackknife 误差尺度内选择与较短窗口一致的最大窗口。点估计始终先对轨迹
+相关函数作系综平均再取比；逐轨迹量仅用于 jackknife。输出包括频率及其 SEM、
+`recorded_modes`、该基下的读出矩阵、选定延迟、全部嵌套候选、相位残差、首个延迟点
+相干度和 Nyquist 占比诊断。
+
+该估计器**不**分解长时极点、不计算线宽，也不假定 Lorentz 线型。它要求采样轨迹
+平稳、短延迟分辨率足够且读出强度为正。`nyquist_fraction` 较高、嵌套窗口不稳定或
+首延迟相干度很低时，应减小保存采样间隔。输出是有限探测带宽下可操作的一阶相干载频；
+多个谱分量共存时，它不保证等于每个谱峰的中心。
+
 ## `coherence_matrix`
 
 计算系综一阶相干矩阵
