@@ -23,6 +23,7 @@ pip-wheel-metadata/
 
 # Tool caches
 .claude/
+.qphase/
 .mypy_cache/
 .pytest_cache/
 .test-tmp/
