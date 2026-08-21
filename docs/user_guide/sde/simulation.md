@@ -162,10 +162,12 @@ non-overlapping window counts, and never writes the sampled trajectory when
 Device trajectories are transferred one mode at a time in bounded time chunks,
 so enabling several Allan modes does not require a simultaneous host copy of
 the complete multi-mode record.
-The `coherence_matrix` and `moment_statistics` analysers use the same merge
-contract for compact first-order matrices and c-number fourth-order moments.
-The latter reduces bounded time chunks and therefore does not allocate a full
-intensity trajectory in addition to the complex samples.
+The `coherence_matrix`, `moment_statistics`, and `quadratic_moments` analysers
+use the same merge contract for compact first-order matrices and c-number
+moments. `quadratic_moments` evaluates named Hermitian forms in bounded time
+chunks and retains trajectory-level moment summaries through fourth order.
+Both moment analysers reduce bounded time chunks and therefore do not allocate
+a full derived-observable trajectory in addition to the complex samples.
 Stable logical RNG groups make results independent of the selected scan tile
 and physical trajectory batch size for a fixed seed.
 

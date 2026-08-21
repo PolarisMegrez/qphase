@@ -40,7 +40,7 @@ SDE 引擎返回并保存为 `.npz` 的结果容器。
 
 *   `trajectory`：`TrajectorySet`；如果分析后丢弃了原始数据，则为 `None`。
 *   `analysis`：按分析器名称索引的结果载荷，例如 `psd`、`coherence_matrix`、
-    `moment_statistics` 或 `trajectory_diagnostics`。
+    `moment_statistics`、`quadratic_moments` 或 `trajectory_diagnostics`。
 *   `meta`：元数据，包括模型 `params`、`t0`、`dt`，以及可能存在的轨迹丢弃原因。
 
 保存的归档包含 `t0`、`dt`、`meta`、`analysis` 和可选的 `data`。存在 `data` 时，其形状为 `(n_traj, n_time, n_modes)`。

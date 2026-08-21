@@ -282,11 +282,7 @@ def _fit_candidate(
     edge = coordinate > 1.0 - taper_fraction
     taper[edge] = 0.5 * (
         1.0
-        + np.cos(
-            np.pi
-            * (coordinate[edge] - (1.0 - taper_fraction))
-            / taper_fraction
-        )
+        + np.cos(np.pi * (coordinate[edge] - (1.0 - taper_fraction)) / taper_fraction)
     )
     filtered = np.zeros(axis.shape, dtype=float)
     filtered[selected] = np.maximum(spectrum[selected] - baseline, 0.0) * taper
@@ -377,9 +373,7 @@ def _select_candidate(
         frequencies = np.asarray([item.frequency for item in group])
         regression = np.asarray(
             [
-                item.regression_std
-                if np.isfinite(item.regression_std)
-                else 0.0
+                item.regression_std if np.isfinite(item.regression_std) else 0.0
                 for item in group
             ]
         )
@@ -529,7 +523,7 @@ def _extract_readout(
         spectrum = matrix
     elif matrix.ndim == 2 and readout == "trace":
         spectrum = np.sum(matrix, axis=1)
-    elif matrix.ndim == 2:
+    elif matrix.ndim == 2 and isinstance(readout, int):
         modes = [int(mode) for mode in payload.get("modes", [])]
         if readout in modes:
             column = modes.index(readout)

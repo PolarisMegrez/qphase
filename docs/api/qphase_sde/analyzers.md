@@ -288,6 +288,52 @@ independent of the total observation length once that chunk size is reached.
 No Wigner-to-normal-order correction is applied; the payload explicitly uses
 the configured model's raw c-number convention.
 
+## `quadratic_moments`
+
+Computes moments of named real Hermitian quadratic observables
+
+```text
+x_o = alpha^dagger Q_o alpha - center_o
+    = Tr[Q_o (alpha alpha^dagger - R_ref,o)].
+```
+
+```yaml
+analyser:
+  quadratic_moments:
+    modes: [0, 1]
+    max_order: 4
+    time_blocks: 16
+    time_chunk_samples: 8192
+    observables:
+      population_difference:
+        matrix:
+          - ["1+0j", "0+0j"]
+          - ["0+0j", "-1+0j"]
+        center: 0.0
+      coherent_quadrature:
+        matrix:
+          - ["0+0j", "0.5+0.25j"]
+          - ["0.5-0.25j", "0+0j"]
+        reference_matrix:
+          - ["1+0j", "0+0j"]
+          - ["0+0j", "1+0j"]
+```
+
+Each matrix must be Hermitian and use the configured physical-mode order.
+`center` and `reference_matrix` are mutually exclusive; a reference matrix is
+converted to `center=Tr(Q R_ref)`. The result reports raw moments, central
+moments, cumulants, trajectory-level raw moments, and contiguous time-block
+summaries through `max_order` (at most four). Raw-moment SEM uses independent
+trajectory time averages. Cumulant uncertainty uses a leave-one-trajectory-out
+jackknife.
+
+The analyser supports trajectory batching and recomputes cumulants only after
+all batches have been merged. Its backend workspace is bounded by
+`time_chunk_samples`, so it can be used with `keep_traj: false` without
+materializing a quadratic-observable time series. Time blocks diagnose drift
+and are not treated as independent samples. No phase-space ordering correction
+is applied.
+
 ## `dist`
 
 Computes marginal distributions of selected modes.

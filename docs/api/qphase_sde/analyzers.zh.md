@@ -250,6 +250,48 @@ analyser:
 所以达到该分块长度后，其 workspace 不随总观测时间继续增长。插件不自动执行
 Wigner 到 normal ordering 的修正，输出明确遵循模型原始 c-number 约定。
 
+## `quadratic_moments`
+
+统计命名 Hermitian 二次型的一至四阶矩：
+
+```text
+x_o = alpha^dagger Q_o alpha - center_o
+    = Tr[Q_o (alpha alpha^dagger - R_ref,o)]。
+```
+
+```yaml
+analyser:
+  quadratic_moments:
+    modes: [0, 1]
+    max_order: 4
+    time_blocks: 16
+    time_chunk_samples: 8192
+    observables:
+      population_difference:
+        matrix:
+          - ["1+0j", "0+0j"]
+          - ["0+0j", "-1+0j"]
+        center: 0.0
+      coherent_quadrature:
+        matrix:
+          - ["0+0j", "0.5+0.25j"]
+          - ["0.5-0.25j", "0+0j"]
+        reference_matrix:
+          - ["1+0j", "0+0j"]
+          - ["0+0j", "1+0j"]
+```
+
+每个矩阵必须为 Hermitian，并使用 `modes` 声明的物理模式顺序。
+`center` 与 `reference_matrix` 互斥；参考矩阵会转换为
+`center=Tr(Q R_ref)`。结果包含 raw moments、central moments、cumulants、
+逐轨迹 raw moments 和连续时间块统计。raw moment SEM 以独立轨迹的时间均值
+为样本；累积量不确定度使用逐轨迹 leave-one-out jackknife。
+
+插件支持 trajectory batching，并在全部批次合并后重新计算非线性累积量。
+后端工作区受 `time_chunk_samples` 限制，因此可与 `keep_traj: false` 配合，
+不会物化完整二次型时序。时间块只用于平稳性诊断，不视为独立样本；插件也不
+自动进行相空间排序修正。
+
 ## `dist`
 
 计算所选模式的边缘分布。

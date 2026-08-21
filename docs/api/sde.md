@@ -40,7 +40,8 @@ Container returned by the SDE engine and saved as `.npz`.
 
 *   `trajectory`: A `TrajectorySet` or `None` if raw data was dropped after analysis.
 *   `analysis`: Analyzer payloads keyed by analyzer name, for example `psd`,
-    `coherence_matrix`, `moment_statistics`, or `trajectory_diagnostics`.
+    `coherence_matrix`, `moment_statistics`, `quadratic_moments`, or
+    `trajectory_diagnostics`.
 *   `meta`: Metadata, including model `params`, `t0`, `dt`, and drop reason when applicable.
 
 Saved archives contain `t0`, `dt`, `meta`, `analysis`, and optional `data`. When present, `data` has shape `(n_traj, n_time, n_modes)`.

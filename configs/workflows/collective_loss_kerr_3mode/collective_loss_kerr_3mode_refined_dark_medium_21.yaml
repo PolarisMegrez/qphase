@@ -1,0 +1,140 @@
+schema: qphase.workflow/2
+id: collective_loss_kerr_3mode_refined_dark_medium_21
+title: Collective Loss Kerr 3Mode Refined Dark Medium 21
+collection: collective_loss_kerr_3mode
+tags:
+- collective_loss_kerr_3mode
+- refined_dark
+- medium_sde
+jobs:
+- name: collective_loss_kerr_3mode_refined_dark_medium_21_sim
+  save: true
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        values:
+        - 1.0977468284070492
+        - 1.0980057538188434
+        - 1.0983317215995093
+        - 1.0987420907210428
+        - 1.0992587148385588
+        - 1.0999091060672177
+        - 1.1007279001125588
+        - 1.1017587007436813
+        - 1.103056401851041
+        - 1.1046901107548415
+        - 1.1067468284070492
+        - 1.1093360825249906
+        - 1.112595760331051
+        - 1.1166994517210168
+        - 1.1218656927187343
+        - 1.128369605008733
+        - 1.1365575454630776
+        - 1.1468655517705567
+        - 1.1598425628238475
+        - 1.1761796515052136
+        - 1.1967468284070493
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 250000.0
+      dt: 0.04
+      n_traj: 32
+      seed: 20260820
+      ic:
+      - - "32.5964406+0.0j"
+        - "7.82417847-3.70743770j"
+        - "-14.27722901-2.01412483j"
+      adaptive: false
+      save_stride: 20
+      record_modes: [0]
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 220.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 256, max_modes: 16}
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: -0.01808028668165207
+      omega_c: 1.0967468284070492
+      chi: 3.548688561976006e-05
+      g_ab: 0.006479437632129051
+      g_ac: 0.6035382548114513
+      g_bc: 0.0021544100365580555
+      pump_a: 0.07598771590146015
+      kappa_bright: 1.0
+      kappa_dark: 0.1775148709287836
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 150.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes: [0]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 1.0
+      find_peaks: true
+      estimator: {periodogram: {fft_chunk_trajectories: 2}}
+    allan_variance:
+      modes: [0]
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 8192
+
+- name: collective_loss_kerr_3mode_refined_dark_medium_21_fit
+  input:
+    from: collective_loss_kerr_3mode_refined_dark_medium_21_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    lorentz_fitter:
+      scan_param: omega_c
+      mode: 0
+      freq_min: -0.5
+      freq_max: 0.2
+      fit_window: 0.15
+      uncertainty: auto
+      clip_by_std: false
+      export: [fit_results.csv, psd_merged.csv]
+
+- name: collective_loss_kerr_3mode_refined_dark_medium_21_allan
+  input:
+    from: collective_loss_kerr_3mode_refined_dark_medium_21_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling:
+      scan_param: omega_c
+      critical_value: 1.0967468284070492
+      side: positive
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 5
+      target_scaling_decades: 2.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 2000
+      bootstrap_seed: 20260820
+      min_frequency_rss_improvement: 0.05
+      normal_form: {n: 3, k: 1, m: 0, observable_order: 1}

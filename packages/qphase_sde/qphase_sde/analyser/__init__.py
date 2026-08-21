@@ -47,6 +47,11 @@ from .frequency_orientation import (
 from .moment_statistics import MomentStatisticsAnalyzer, MomentStatisticsConfig
 from .polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
 from .psd import PsdAnalyzer, PsdAnalyzerConfig
+from .quadratic_moments import (
+    QuadraticMomentAnalyzer,
+    QuadraticMomentConfig,
+    QuadraticObservableSpec,
+)
 from .trajectory_diagnostics import (
     TrajectoryDiagnostics,
     TrajectoryDiagnosticsConfig,
@@ -73,6 +78,9 @@ __all__ = [
     "NormalFormExpectation",
     "PsdAnalyzer",
     "PsdAnalyzerConfig",
+    "QuadraticMomentAnalyzer",
+    "QuadraticMomentConfig",
+    "QuadraticObservableSpec",
     "DistAnalyzer",
     "DistAnalyzerConfig",
     "DEFAULT_FREQUENCY_ORIENTATION",
