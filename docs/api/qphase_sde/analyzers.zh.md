@@ -199,6 +199,34 @@ CAM、目标幂指数或理论频率；平台缺失会中断路径，过大曲�
 诊断量。正式采样不确定度仍需逐轨迹充分统计或独立重复运行；仅凭当前平均 PSD 无法
 事后重建。
 
+## `finite_delay_carrier`
+
+该插件从完整保存 PSD 重建一阶相干函数 `G(tau)`，并对探测器速率 `kappa` 计算
+
+```text
+Omega(kappa) = integral exp(-2*kappa*tau)
+                 Im[conj(G) dG/dtau] dtau
+               / integral exp(-2*kappa*tau) |G|^2 dtau。
+```
+
+```yaml
+analyser:
+  finite_delay_carrier:
+    scan_param: omega_c
+    readout: trace
+    detector_rates: [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0]
+    maximum_lag: 4096.0
+```
+
+即使多个 pole 相互干涉，该量仍是完整的有限带宽探测器载频，不要求选定某一 pole
+或假定 Lorentz 线型。增大 `kappa` 时，direct SDE 结果趋于真实 SDE instantaneous
+coherence carrier；矩闭合失效时，该极限一般不等于 CAM Rayleigh 商。
+
+对应 CAM postprocessor 使用相同速率和全部闭合 CAM pole residue，其零延迟极限
+严格等于 generalized Rayleigh quotient。`finite_delay_carrier.csv` 保存探测器速率、
+载频、瞬时极限、有限延迟修正、相干权重和数值延迟范围。仅凭系综平均 PSD 无法得到
+正式 sampling uncertainty。
+
 ## `coherence_matrix`
 
 计算系综一阶相干矩阵

@@ -229,6 +229,39 @@ trajectory SEM. `diagnostic_uncertainty` combines these two conditional terms.
 Formal sampling uncertainty still requires per-trajectory sufficient
 statistics or repeated runs; the current PSD mean cannot reconstruct it.
 
+## `finite_delay_carrier`
+
+Computes a finite-bandwidth detector carrier directly from the complete saved
+PSD. For the reconstructed first-order coherence `G(tau)` and detector rate
+`kappa`, it evaluates
+
+```text
+Omega(kappa) = integral exp(-2*kappa*tau)
+                 Im[conj(G) dG/dtau] dtau
+               / integral exp(-2*kappa*tau) |G|^2 dtau.
+```
+
+```yaml
+analyser:
+  finite_delay_carrier:
+    scan_param: omega_c
+    readout: trace
+    detector_rates: [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0]
+    maximum_lag: 4096.0
+```
+
+This remains one operational detector observable when several poles interfere;
+it does not select one pole or assume a Lorentzian. Increasing `kappa`
+concentrates the measurement near zero delay, where direct SDE data approach
+the exact SDE instantaneous coherence carrier. That limit need not equal the
+CAM Rayleigh quotient when moment closure fails.
+
+The corresponding CAM postprocessor uses the same rates and all closed-CAM
+pole residues. Its zero-delay limit is exactly the generalized Rayleigh
+quotient. `finite_delay_carrier.csv` stores the detector rate, carrier,
+instantaneous limit, finite-delay correction, coherent weight, and numerical
+lag range. Sampling uncertainty is unavailable from an ensemble-mean PSD alone.
+
 ## `coherence_matrix`
 
 Computes the ensemble first-order coherence matrix

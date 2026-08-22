@@ -259,6 +259,33 @@ long-time component. They need not agree in a multi-pole channel. A workflow
 must select either quantity according to the declared measurement semantics;
 the package does not silently substitute one for the other.
 
+The `finite_delay_carrier` postprocessor provides the continuous detector
+interpolation between these two descriptions. For every configured channel and
+rate `kappa`, it evaluates
+
+```text
+Omega(kappa) = integral exp(-2*kappa*tau)
+                 Im[conj(G) dG/dtau] dtau
+               / integral exp(-2*kappa*tau) |G|^2 dtau
+```
+
+analytically from all closed-CAM poles and residues. It also outputs the exact
+zero-delay value and the generalized Rayleigh quotient; their residual is a
+numerical consistency diagnostic.
+
+```yaml
+cam_postprocessor:
+  finite_delay_carrier:
+    modes: [0, 1, 2]
+    include_trace: true
+    detector_rates: [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0]
+```
+
+As `kappa` increases, the result approaches the Rayleigh quotient. At small
+`kappa`, long-lived visible poles receive more weight. The matching SDE
+analyser computes the same detector functional, but its zero-delay limit is the
+true SDE instantaneous carrier and may differ from CAM under closure failure.
+
 ### Rayleigh Frequencies and Coherence Poles
 
 Let `W` be a fixed positive-semidefinite measurement matrix. `W=I` is an

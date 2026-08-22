@@ -70,6 +70,9 @@ psd = archive["analysis"].item().get("psd")
 其中 diagnostic uncertainty 是条件于估计模型的敏感度，不是 trajectory SEM；输出
 metadata 会明确记录该边界。
 
+`finite_delay_carrier` 写出 `finite_delay_carrier.csv`，每个扫描点和探测器速率一行，
+包含 direct detector carrier、SDE 零延迟极限、有限延迟修正、相干权重和数值延迟范围。
+
 ## Allan 输出
 
 `allan_variance` 载荷保留在逻辑 SDE dataset 内，包含重叠与非重叠 Allan 方差、逐轨迹

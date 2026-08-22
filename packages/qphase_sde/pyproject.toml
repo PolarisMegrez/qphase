@@ -53,6 +53,7 @@ dependencies = [
 "analyser.coherence_matrix" = "qphase_sde.analyser.coherence_matrix:CoherenceMatrixAnalyzer"
 "analyser.coherence_carrier" = "qphase_sde.analyser.coherence_carrier:CoherenceCarrierAnalyzer"
 "analyser.band_limited_carrier" = "qphase_sde.analyser.band_limited_carrier:BandLimitedCarrierAnalyzer"
+"analyser.finite_delay_carrier" = "qphase_sde.analyser.finite_delay_carrier:FiniteDelayCarrierAnalyzer"
 "analyser.moment_statistics" = "qphase_sde.analyser.moment_statistics:MomentStatisticsAnalyzer"
 "analyser.quadratic_moments" = "qphase_sde.analyser.quadratic_moments:QuadraticMomentAnalyzer"
 # Observer plugin

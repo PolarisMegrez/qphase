@@ -210,3 +210,6 @@ Lorentz 曲线，并将 `fit_results.csv` 和 `psd_merged.csv` 写入该 job 的
 Lorentz 线型时，自适应估计经过频带筛选的长时 `G^(1)` 载频，并输出带宽敏感度
 与相位回归诊断。新版会拒绝不可辨识的单载频点，并将局部平台与跨扫描连续跟踪分开
 输出。它不替代随积分执行的短延迟 `coherence_carrier`。
+
+`finite_delay_carrier` 是互补的探测器定义量：它用指数探测器权重积分完整重建
+coherence，不选择单一 pole；高探测速率极限为 direct SDE instantaneous carrier。

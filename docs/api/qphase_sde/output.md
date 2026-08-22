@@ -76,6 +76,10 @@ the shape and loader, and `SDEScanResult.load_dataset` restores the full view.
 The reported diagnostic uncertainty is conditional estimator sensitivity, not
 a trajectory SEM. The output metadata states this explicitly.
 
+`finite_delay_carrier` writes `finite_delay_carrier.csv`, one row per scan point
+and detector rate. It contains the direct detector carrier, its zero-delay SDE
+limit, finite-delay correction, coherent weight, and numerical lag range.
+
 ## Allan output
 
 `allan_variance` remains inside the logical SDE dataset. It stores overlapping

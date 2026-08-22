@@ -209,3 +209,8 @@ analyzer for an adaptive, filtered long-time `G^(1)` carrier when a Lorentzian
 profile is not assumed. It refuses unresolved single-carrier points and exports
 local platforms separately from scan-continuous tracking. Dataset views and
 generic export utilities live in core.
+
+`finite_delay_carrier` is the complementary detector-defined observable. It
+integrates the complete reconstructed coherence with exponential detector
+weights and does not select one pole. Its high-rate limit is the direct SDE
+instantaneous carrier.

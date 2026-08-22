@@ -32,6 +32,7 @@ dependencies = [
 "cam_postprocessor.rayleigh_frequency" = "qphase_cam.postprocessor.frequency:RayleighFrequency"
 "cam_postprocessor.hamiltonian_spectrum" = "qphase_cam.postprocessor.frequency:HamiltonianSpectrum"
 "cam_postprocessor.coherence_pole_spectrum" = "qphase_cam.postprocessor.coherence_pole:CoherencePoleSpectrum"
+"cam_postprocessor.finite_delay_carrier" = "qphase_cam.postprocessor.finite_delay_carrier:CAMFiniteDelayCarrier"
 "cam_postprocessor.petermann_spectrum" = "qphase_cam.postprocessor.petermann:PetermannSpectrum"
 "cam_postprocessor.jacobian_spectrum" = "qphase_cam.postprocessor.jacobian:JacobianSpectrum"
 "cam_postprocessor.physicality" = "qphase_cam.postprocessor.physicality:Physicality"

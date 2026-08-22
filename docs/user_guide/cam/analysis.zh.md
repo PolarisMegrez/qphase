@@ -182,6 +182,30 @@ cam_postprocessor:
 二者不必相等。workflow 必须根据声明的测量语义显式选择，资源包不会在二者之间
 静默替换。
 
+`finite_delay_carrier` 后处理器在这两个描述之间提供连续的探测器插值。对每个固定
+通道和速率 `kappa`，它从全部闭合 CAM pole/residue 解析计算
+
+```text
+Omega(kappa) = integral exp(-2*kappa*tau)
+                 Im[conj(G) dG/dtau] dtau
+               / integral exp(-2*kappa*tau) |G|^2 dtau，
+```
+
+并同时输出严格零延迟值和 generalized Rayleigh quotient；二者残差用于数值一致性
+诊断。
+
+```yaml
+cam_postprocessor:
+  finite_delay_carrier:
+    modes: [0, 1, 2]
+    include_trace: true
+    detector_rates: [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0]
+```
+
+增大 `kappa` 时结果趋于 Rayleigh 商；较小 `kappa` 更强调长寿命可见 pole。对应 SDE
+analyser 计算同一个探测器泛函，但其零延迟极限是真实 SDE instantaneous carrier，
+矩闭合失效时可以与 CAM 不同。
+
 ### Rayleigh 频率与 coherence pole
 
 令 `W` 为固定的半正定测量矩阵。`W=I` 表示非相干 trace 测量，裸 mode 投影选择

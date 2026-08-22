@@ -60,5 +60,9 @@ jobs:
       tile_workers: 1
   cam_postprocessor:
     rayleigh_frequency: {}
+    finite_delay_carrier:
+      modes: [0, 1, 2]
+      include_trace: true
+      detector_rates: [0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
     jacobian_spectrum: {}
     physicality: {}

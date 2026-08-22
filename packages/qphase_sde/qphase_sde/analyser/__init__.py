@@ -36,6 +36,10 @@ from .base import (
 from .coherence_carrier import CoherenceCarrierAnalyzer, CoherenceCarrierConfig
 from .coherence_matrix import CoherenceMatrixAnalyzer, CoherenceMatrixConfig
 from .dist import DistAnalyzer, DistAnalyzerConfig
+from .finite_delay_carrier import (
+    FiniteDelayCarrierAnalyzer,
+    FiniteDelayCarrierConfig,
+)
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     LEGACY_FREQUENCY_ORIENTATION,
@@ -88,6 +92,8 @@ __all__ = [
     "ORIENTATION_ALIASES",
     "OrientationInput",
     "FrequencyOrientation",
+    "FiniteDelayCarrierAnalyzer",
+    "FiniteDelayCarrierConfig",
     "PolarDistAnalyzer",
     "PolarDistAnalyzerConfig",
     "TrajectoryDiagnostics",

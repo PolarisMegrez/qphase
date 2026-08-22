@@ -2,6 +2,10 @@
 
 from .base import CAMPostprocessor, CAMPostprocessorConfig
 from .coherence_pole import CoherencePoleConfig, CoherencePoleSpectrum
+from .finite_delay_carrier import (
+    CAMFiniteDelayCarrier,
+    CAMFiniteDelayCarrierConfig,
+)
 from .frequency import HamiltonianSpectrum, RayleighFrequency
 from .jacobian import JacobianSpectrum
 from .petermann import PetermannSpectrum
@@ -13,6 +17,8 @@ __all__ = [
     "CAMPostprocessorConfig",
     "CoherencePoleConfig",
     "CoherencePoleSpectrum",
+    "CAMFiniteDelayCarrier",
+    "CAMFiniteDelayCarrierConfig",
     "HamiltonianSpectrum",
     "JacobianSpectrum",
     "Physicality",
