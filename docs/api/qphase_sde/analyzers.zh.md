@@ -167,23 +167,37 @@ Re Tr[W H(R) R] / Tr[W R].
       readout: trace
       freq_min: -0.75
       freq_max: 0.2
+      bandwidth_multipliers: [0.5, 0.625, 0.75, 0.875, 1.0, 1.25, 1.5, 1.75, 2.0]
+      minimum_lag_span: 24.0
+      max_phase_fit_rms: 0.05
+      tracking_enabled: true
 ```
 
 `readout` 可以是已记录的物理 mode，也可以是 `trace`，即所有已记录 mode 的
 非相干 PSD 之和。搜索频带属于测量定义的一部分，应排除无关的远端频带。
 
 估计器先扣除稳健基线，再以平方剩余谱的标准差定义谱集中宽度；对理想、未截断的
-Lorentz 线型，该宽度等于 HWHM。随后生成嵌套的余弦边缘通带，分别重建带限
-`G^(1)`，并在相干幅度连续高于 `coherence_floor` 的区间进行幅度加权相位回归。
-Lepski 型一致性检验选择内部相容且最平坦的局部带宽平台中心。峰位和带宽选择均不
-使用 CAM 或其他理论频率。
+Lorentz 线型，该宽度等于 HWHM。随后生成嵌套余弦边缘通带并分别重建带限
+`G^(1)`。每个带宽内搜索连续延迟子区间，只接受加权相位残差和二次频率漂移均通过
+门限的线性相位窗口；之后要求频率在有限 `log(bandwidth)` 跨度内形成平台。
+算法不再在失败时回退到 `1x spectral_width`：不可辨识点返回 `NaN`，而不是任意
+候选值。
 
-`carrier_results.csv` 保存载频、峰宽与谱集中宽度、选定半带宽、延迟区间和选择
-状态，`carrier_candidates.csv` 保留全部嵌套估计以供审计。`regression_std` 是由
-HAC sandwich covariance 得到的条件相位回归误差；
-`bandwidth_std` 是可接受带宽族内的估计敏感度，并非 trajectory SEM。
-`diagnostic_uncertainty` 仅用于筛选诊断。正式采样不确定度仍需独立轨迹、时间块或
-重复运行。`unstable_bandwidth` 表示候选带宽未形成满足阈值的稳定平台。
+局部状态包括 `ok`、`ambiguous_multiband` 和 `no_bandwidth_plateau`；候选层还会
+记录 `nonlinear_phase` 等具体拒绝原因。只有唯一局部平台时才填写 `frequency`。
+`carrier_candidates.csv` 保存全部带宽/延迟估计，`carrier_platforms.csv` 保存所有
+竞争平台。
+
+启用 `tracking_enabled` 后，analyser 还会按扫描轴顺序，利用局部平台质量和
+divided-difference 曲率跟踪连续谱组分，输出 `tracked_frequency`、
+`tracked_platform_index` 与 `tracked_status`，但不覆盖局部结果。路径代价禁止使用
+CAM、目标幂指数或理论频率；平台缺失会中断路径，过大曲率标为
+`discontinuous_path`，不会强制连接。
+
+`regression_std` 是给定延迟窗口下的 HAC 条件回归误差，`bandwidth_std` 是同一平台
+内的带宽敏感度，均不是 trajectory SEM。`diagnostic_uncertainty` 仅组合这两个条件
+诊断量。正式采样不确定度仍需逐轨迹充分统计或独立重复运行；仅凭当前平均 PSD 无法
+事后重建。
 
 ## `coherence_matrix`
 

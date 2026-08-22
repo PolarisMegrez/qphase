@@ -60,6 +60,22 @@ the shape and loader, and `SDEScanResult.load_dataset` restores the full view.
 *   `psd_merged.csv` — merged PSD table plus `<scan_value>_sem` columns used for uncertainty propagation.
 *   `fit_results.npz` / `fit_results.pkl` — same data in alternative formats.
 
+## Band-limited carrier output
+
+`band_limited_carrier` writes three auditable tables when their names appear in
+`export`:
+
+*   `carrier_results.csv` — local resolution status plus the separately tracked
+    scan carrier. A local or tracked frequency may be `NaN` when the data do not
+    support a unique platform.
+*   `carrier_candidates.csv` — every bandwidth/lag fit, including phase
+    residual, frequency drift, decay rate, lag bounds, and rejection reason.
+*   `carrier_platforms.csv` — every frequency platform retained before
+    scan-level path tracking, including support and score.
+
+The reported diagnostic uncertainty is conditional estimator sensitivity, not
+a trajectory SEM. The output metadata states this explicitly.
+
 ## Allan output
 
 `allan_variance` remains inside the logical SDE dataset. It stores overlapping

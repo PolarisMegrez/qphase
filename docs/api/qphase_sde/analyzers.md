@@ -188,6 +188,10 @@ plugin and leaves `coherence_carrier` unchanged:
       readout: trace
       freq_min: -0.75
       freq_max: 0.2
+      bandwidth_multipliers: [0.5, 0.625, 0.75, 0.875, 1.0, 1.25, 1.5, 1.75, 2.0]
+      minimum_lag_span: 24.0
+      max_phase_fit_rms: 0.05
+      tracking_enabled: true
 ```
 
 `readout` accepts a recorded physical mode or `trace`, the incoherent sum of
@@ -197,21 +201,33 @@ definition and must isolate the carrier family from remote bands.
 The estimator subtracts a robust baseline and uses the standard deviation of
 the squared excess spectrum as its concentration scale. This scale equals the
 HWHM for an ideal, untruncated Lorentzian. It generates nested cosine-tapered
-passbands, reconstructs each filtered `G^(1)`, and performs an
-amplitude-weighted phase regression on the contiguous interval above
-`coherence_floor`. A Lepski-style test selects the center of the flattest local
-bandwidth plateau that is internally consistent. No CAM or other
-theoretical frequency enters peak location or bandwidth selection.
+passbands and reconstructs each filtered `G^(1)`. Within each bandwidth it
+searches contiguous lag windows and accepts only phase-linear intervals whose
+weighted residual and quadratic frequency drift pass configured gates. It then
+identifies frequency platforms supported across a finite logarithmic bandwidth
+span. No reference-width fallback is used: an unresolved point returns
+`NaN` rather than an arbitrary candidate.
 
-`carrier_results.csv` reports the selected frequency, peak and concentration
-widths, selected half-bandwidth, lag interval, and selection status.
-`carrier_candidates.csv` retains every nested estimate for auditing.
-`regression_std` is a HAC sandwich uncertainty conditional on the filtered
-phase-regression model. `bandwidth_std` is sensitivity across the accepted
-bandwidth family, not a trajectory SEM. `diagnostic_uncertainty` combines both
-for screening. Formal sampling uncertainty still requires independent
-trajectories, blocks, or repeated runs. `unstable_bandwidth` explicitly warns
-that no candidate family met the configured stability rule.
+The local status is `ok`, `ambiguous_multiband`, or
+`no_bandwidth_plateau`; individual candidates also record
+`nonlinear_phase` and other failure reasons. `frequency` is populated only for
+a unique local platform. `carrier_candidates.csv` retains every lag-filtered
+bandwidth estimate, while `carrier_platforms.csv` retains all competing local
+platforms.
+
+When `tracking_enabled` is true, the analyser additionally follows supported
+platforms through the ordered scan using local platform quality and
+divided-difference curvature. It writes `tracked_frequency`,
+`tracked_platform_index`, and `tracked_status` without replacing the local
+fields. The path cost never uses CAM, a target exponent, or a theoretical
+frequency. Missing platforms break the path; excessive curvature is reported
+as `discontinuous_path` rather than forcing a connection.
+
+`regression_std` is a HAC phase-regression uncertainty conditional on one lag
+window. `bandwidth_std` is sensitivity within one accepted platform, not a
+trajectory SEM. `diagnostic_uncertainty` combines these two conditional terms.
+Formal sampling uncertainty still requires per-trajectory sufficient
+statistics or repeated runs; the current PSD mean cannot reconstruct it.
 
 ## `coherence_matrix`
 

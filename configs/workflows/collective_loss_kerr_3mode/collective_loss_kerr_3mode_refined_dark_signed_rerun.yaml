@@ -136,3 +136,23 @@ jobs:
       uncertainty: auto
       clip_by_std: false
       export: [fit_results.csv]
+
+- name: collective_loss_kerr_3mode_refined_dark_signed_rerun_carrier
+  input:
+    from: collective_loss_kerr_3mode_refined_dark_signed_rerun_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_c
+      readout: trace
+      freq_min: -0.3
+      freq_max: -0.1
+      maximum_lag: 256.0
+      tracking_enabled: true
+      export:
+      - carrier_results.csv
+      - carrier_candidates.csv
+      - carrier_platforms.csv

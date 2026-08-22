@@ -206,4 +206,6 @@ The `lorentz_fitter` analyzer reads the logical SDE scan dataset, fits one
 Lorentzian per scan value, and writes `fit_results.csv` and `psd_merged.csv` to
 the Session Job directory. `band_limited_carrier` is an alternative downstream
 analyzer for an adaptive, filtered long-time `G^(1)` carrier when a Lorentzian
-profile is not assumed. Dataset views and generic export utilities live in core.
+profile is not assumed. It refuses unresolved single-carrier points and exports
+local platforms separately from scan-continuous tracking. Dataset views and
+generic export utilities live in core.

@@ -57,6 +57,19 @@ psd = archive["analysis"].item().get("psd")
 *   `psd_merged.csv` — 合并 PSD 以及不确定度传播使用的 `<scan_value>_sem` 列。
 *   `fit_results.npz` / `fit_results.pkl` — 相同数据的替代格式。
 
+## 带限载频输出
+
+当名称包含在 `export` 中时，`band_limited_carrier` 写出三张可审计表：
+
+*   `carrier_results.csv`：局部可辨识状态以及独立的 scan-tracked 载频；数据不足以
+    支持唯一平台时，局部或 tracked 频率允许为 `NaN`。
+*   `carrier_candidates.csv`：全部带宽/延迟拟合，包括相位残差、频率漂移、衰减率、
+    延迟边界和拒绝原因。
+*   `carrier_platforms.csv`：scan tracking 之前保留的全部频率平台，包括支持度和评分。
+
+其中 diagnostic uncertainty 是条件于估计模型的敏感度，不是 trajectory SEM；输出
+metadata 会明确记录该边界。
+
 ## Allan 输出
 
 `allan_variance` 载荷保留在逻辑 SDE dataset 内，包含重叠与非重叠 Allan 方差、逐轨迹
