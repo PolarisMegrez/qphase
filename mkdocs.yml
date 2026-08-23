@@ -71,6 +71,8 @@ plugins:
             Plugin Development: 插件开发
             Postprocess: 后处理
             Protocols: 协议
+            Resource Packages: 资源包
+            Data Products: 数据产品
             Registry: 注册表
             Scheduler: 调度器
             FAQ: 常见问题
@@ -123,6 +125,8 @@ nav:
     - Plugin Development: dev_guide/plugin_development.md
     - Postprocess: dev_guide/postprocess.md
     - Protocols: dev_guide/protocols.md
+    - Resource Packages: dev_guide/resource_packages.md
+    - Data Products: dev_guide/data_products.md
     - Registry: dev_guide/registry.md
     - Scheduler: dev_guide/scheduler.md
     - FAQ: dev_guide/faq.md
