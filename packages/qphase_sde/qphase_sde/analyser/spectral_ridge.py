@@ -120,6 +120,42 @@ class SpectralRidgeConfig(PluginConfigBase):
         ),
     )
     tracking_weight: float = Field(1.0, ge=0.0)
+    tracking_huber_delta: float = Field(
+        1.0,
+        gt=0.0,
+        description="Huber transition threshold in normalized frequency units",
+    )
+    tracking_path_count: int = Field(
+        2,
+        ge=1,
+        le=8,
+        description="Number of lowest-cost data-only ridge paths retained",
+    )
+    tracking_max_cost_delta: float = Field(
+        2.0,
+        ge=0.0,
+        description="Maximum path cost above the optimum used for continuity rescue",
+    )
+    retention_relative_height_fraction: float = Field(
+        0.95,
+        gt=0.0,
+        le=1.0,
+        description="Minimum height relative to the strongest point candidate",
+    )
+    retention_min_scale_support: int = Field(
+        3,
+        ge=1,
+        description="Scale support required for strict candidate retention",
+    )
+    retention_min_curvature_significance: float = Field(
+        3.0,
+        ge=0.0,
+        description="Curvature significance required for strict retention",
+    )
+    continuity_rescue: bool = Field(
+        True,
+        description="Retain high candidates belonging to accepted data-only paths",
+    )
     export: list[str] = Field(
         default_factory=lambda: [
             "spectral_ridge.csv",
@@ -200,6 +236,12 @@ class SpectralRidgeEstimate:
     score: float = math.nan
     status: str = "failed"
     error: str = ""
+
+
+@dataclass(frozen=True)
+class _TrackingPath:
+    indices: tuple[int, ...]
+    cost: float
 
 
 def _reduce_profile(
@@ -501,42 +543,144 @@ def estimate_spectral_ridges(
     return sorted(estimates, key=lambda item: item.score, reverse=True)
 
 
+def _huber_loss(value: float, delta: float) -> float:
+    magnitude = abs(value)
+    if magnitude <= delta:
+        return 0.5 * magnitude**2
+    return delta * (magnitude - 0.5 * delta)
+
+
+def _track_candidate_paths(
+    candidates: list[list[SpectralRidgeEstimate]],
+    *,
+    frequency_scale: float,
+    tracking_weight: float,
+    huber_delta: float,
+    path_count: int,
+) -> list[_TrackingPath]:
+    if not candidates or any(not point for point in candidates):
+        return [_TrackingPath(tuple(0 for _ in candidates), math.inf)]
+    states: list[list[_TrackingPath]] = [
+        [
+            _TrackingPath(
+                (candidate_index,),
+                -math.log(max(candidate.score, 1e-12)),
+            )
+        ]
+        for candidate_index, candidate in enumerate(candidates[0])
+    ]
+    for point in range(1, len(candidates)):
+        previous = candidates[point - 1]
+        current = candidates[point]
+        next_states: list[list[_TrackingPath]] = []
+        for current_index, target in enumerate(current):
+            options: list[_TrackingPath] = []
+            evidence = -math.log(max(target.score, 1e-12))
+            for previous_index, source in enumerate(previous):
+                transition = tracking_weight * _huber_loss(
+                    (target.frequency - source.frequency) / frequency_scale,
+                    huber_delta,
+                )
+                for path in states[previous_index]:
+                    options.append(
+                        _TrackingPath(
+                            (*path.indices, current_index),
+                            path.cost + transition + evidence,
+                        )
+                    )
+            options.sort(key=lambda path: path.cost)
+            unique: list[_TrackingPath] = []
+            seen: set[tuple[int, ...]] = set()
+            for path in options:
+                if path.indices in seen:
+                    continue
+                seen.add(path.indices)
+                unique.append(path)
+                if len(unique) >= path_count:
+                    break
+            next_states.append(unique)
+        states = next_states
+    complete = sorted(
+        (path for state in states for path in state),
+        key=lambda path: path.cost,
+    )
+    output: list[_TrackingPath] = []
+    seen = set()
+    for path in complete:
+        if path.indices in seen:
+            continue
+        seen.add(path.indices)
+        output.append(path)
+        if len(output) >= path_count:
+            break
+    return output
+
+
 def _track_candidates(
     candidates: list[list[SpectralRidgeEstimate]],
     *,
     frequency_scale: float,
     tracking_weight: float,
+    huber_delta: float = 1.0,
 ) -> list[int]:
-    if not candidates or any(not point for point in candidates):
-        return [0 for _ in candidates]
-    costs = -np.log(
-        np.maximum(
-            np.asarray([item.score for item in candidates[0]], dtype=float),
-            1e-12,
-        )
+    paths = _track_candidate_paths(
+        candidates,
+        frequency_scale=frequency_scale,
+        tracking_weight=tracking_weight,
+        huber_delta=huber_delta,
+        path_count=1,
     )
-    backpointers: list[np.ndarray] = []
-    for point in range(1, len(candidates)):
-        previous = candidates[point - 1]
-        current = candidates[point]
-        transition = np.empty((len(previous), len(current)))
-        for left, source in enumerate(previous):
-            for right, target in enumerate(current):
-                transition[left, right] = (
-                    tracking_weight
-                    * ((target.frequency - source.frequency) / frequency_scale) ** 2
-                )
-        total = costs[:, None] + transition
-        pointer = np.argmin(total, axis=0)
-        evidence = -np.log(
-            np.maximum(np.asarray([item.score for item in current]), 1e-12)
-        )
-        costs = total[pointer, np.arange(len(current))] + evidence
-        backpointers.append(pointer)
-    selected = [int(np.argmin(costs))]
-    for pointer in reversed(backpointers):
-        selected.append(int(pointer[selected[-1]]))
-    return list(reversed(selected))
+    if not paths:
+        return [0 for _ in candidates]
+    return list(paths[0].indices)
+
+
+def _candidate_retention_tiers(
+    estimates: list[SpectralRidgeEstimate],
+    accepted_path_indices: set[int],
+    *,
+    relative_height_fraction: float,
+    minimum_scale_support: int,
+    minimum_curvature_significance: float,
+    continuity_rescue: bool,
+) -> list[str]:
+    strongest = max(candidate.relative_height for candidate in estimates)
+    high = [
+        candidate.relative_height >= relative_height_fraction * strongest
+        for candidate in estimates
+    ]
+    strict = {
+        index
+        for index, candidate in enumerate(estimates)
+        if high[index]
+        and candidate.scale_support >= minimum_scale_support
+        and candidate.curvature_significance >= minimum_curvature_significance
+    }
+    rescued = (
+        {
+            index
+            for index in accepted_path_indices
+            if index < len(estimates) and high[index]
+        }
+        if continuity_rescue
+        else set()
+    )
+    retained = strict | rescued
+    fallback: int | None = None
+    if not retained:
+        fallback = int(np.argmax([candidate.score for candidate in estimates]))
+        retained.add(fallback)
+    tiers: list[str] = []
+    for index in range(len(estimates)):
+        if index in strict:
+            tiers.append("strict")
+        elif index in rescued:
+            tiers.append("continuity_rescued")
+        elif index == fallback:
+            tiers.append("fallback_low_confidence")
+        else:
+            tiers.append("excluded")
+    return tiers
 
 
 def _tracking_segments(
@@ -668,6 +812,9 @@ class SpectralRidgeAnalyzer(Analyzer):
             readout_key = str(readout)
             points = sorted(point_data[readout_key], key=lambda item: item[0])
             candidate_sets = [item[2] for item in points]
+            accepted_path_indices: list[set[int]] = [set() for _ in points]
+            path_ranks: list[dict[int, list[int]]] = [dict() for _ in points]
+            path_cost_deltas: list[dict[int, float]] = [dict() for _ in points]
             if config.tracking_enabled:
                 frequency_scale = config.tracking_frequency_scale
                 if frequency_scale is None:
@@ -681,38 +828,73 @@ class SpectralRidgeAnalyzer(Analyzer):
                     ]
                     # Plateau width is a full width; use its half-width as the
                     # natural transition scale for one ridge.
-                    frequency_scale = (
-                        0.5 * float(np.median(widths)) if widths else 1.0
-                    )
-                selected = []
+                    frequency_scale = 0.5 * float(np.median(widths)) if widths else 1.0
+                selected: list[int] = []
                 scan_values = np.asarray([item[0] for item in points], dtype=float)
                 for segment in _tracking_segments(
                     scan_values, config.tracking_gap_factor
                 ):
-                    selected.extend(
-                        _track_candidates(
-                            candidate_sets[segment],
-                            frequency_scale=max(
-                                frequency_scale, np.finfo(float).eps
-                            ),
-                            tracking_weight=config.tracking_weight,
-                        )
+                    paths = _track_candidate_paths(
+                        candidate_sets[segment],
+                        frequency_scale=max(frequency_scale, np.finfo(float).eps),
+                        tracking_weight=config.tracking_weight,
+                        huber_delta=config.tracking_huber_delta,
+                        path_count=config.tracking_path_count,
                     )
+                    best_cost = paths[0].cost
+                    accepted_paths = [
+                        path
+                        for path in paths
+                        if path.cost <= best_cost + config.tracking_max_cost_delta
+                    ]
+                    selected.extend(paths[0].indices)
+                    segment_start = int(segment.start or 0)
+                    for rank, path in enumerate(accepted_paths):
+                        cost_delta = path.cost - best_cost
+                        for local_index, candidate_index in enumerate(path.indices):
+                            global_index = segment_start + local_index
+                            accepted_path_indices[global_index].add(candidate_index)
+                            path_ranks[global_index].setdefault(
+                                candidate_index, []
+                            ).append(rank)
+                            current_delta = path_cost_deltas[global_index].get(
+                                candidate_index, math.inf
+                            )
+                            path_cost_deltas[global_index][candidate_index] = min(
+                                current_delta, cost_delta
+                            )
             else:
                 selected = [0 for _ in points]
+                for point_index in range(len(points)):
+                    accepted_path_indices[point_index].add(0)
+                    path_ranks[point_index][0] = [0]
+                    path_cost_deltas[point_index][0] = 0.0
             for point_index, ((scan_value, job_name, estimates), chosen) in enumerate(
                 zip(points, selected, strict=True)
             ):
                 chosen = min(chosen, len(estimates) - 1)
                 estimate = estimates[chosen]
-                strongest_height = max(
-                    candidate.relative_height for candidate in estimates
+                retention_tiers = _candidate_retention_tiers(
+                    estimates,
+                    accepted_path_indices[point_index],
+                    relative_height_fraction=(
+                        config.retention_relative_height_fraction
+                    ),
+                    minimum_scale_support=config.retention_min_scale_support,
+                    minimum_curvature_significance=(
+                        config.retention_min_curvature_significance
+                    ),
+                    continuity_rescue=config.continuity_rescue,
                 )
+                retained_indices = [
+                    index
+                    for index, tier in enumerate(retention_tiers)
+                    if tier != "excluded"
+                ]
                 competitive = [
                     candidate
-                    for candidate in estimates
-                    if candidate.relative_height
-                    >= config.plateau_fraction * strongest_height
+                    for index, candidate in enumerate(estimates)
+                    if index in retained_indices
                 ]
                 ambiguity_lower = min(
                     candidate.confidence_lower
@@ -755,12 +937,22 @@ class SpectralRidgeAnalyzer(Analyzer):
                     "ambiguity_upper": ambiguity_upper,
                     "ambiguity_width": ambiguity_upper - ambiguity_lower,
                     "ambiguity_candidate_count": len(competitive),
-                    "ambiguity_peak_fraction": config.plateau_fraction,
+                    "ambiguity_peak_fraction": (
+                        config.retention_relative_height_fraction
+                    ),
                     "plateau_lower": estimate.plateau_lower,
                     "plateau_upper": estimate.plateau_upper,
                     "plateau_width": estimate.plateau_upper - estimate.plateau_lower,
                     "selected_candidate": chosen,
                     "candidate_count": len(estimates),
+                    "retained_candidate_count": len(retained_indices),
+                    "accepted_tracking_path_count": len(
+                        {
+                            rank
+                            for ranks in path_ranks[point_index].values()
+                            for rank in ranks
+                        }
+                    ),
                     "status": estimate.status,
                     "error": estimate.error,
                 }
@@ -773,6 +965,19 @@ class SpectralRidgeAnalyzer(Analyzer):
                             "measurement_name": measurement_name,
                             "candidate_index": candidate_index,
                             "selected": candidate_index == chosen,
+                            "retained_for_association": (
+                                retention_tiers[candidate_index] != "excluded"
+                            ),
+                            "retention_tier": retention_tiers[candidate_index],
+                            "tracking_path_ranks": "|".join(
+                                str(rank)
+                                for rank in path_ranks[point_index].get(
+                                    candidate_index, []
+                                )
+                            ),
+                            "tracking_best_cost_delta": path_cost_deltas[
+                                point_index
+                            ].get(candidate_index, math.nan),
                             **asdict(candidate),
                         }
                     )
@@ -807,6 +1012,20 @@ class SpectralRidgeAnalyzer(Analyzer):
                 "selection": (
                     "peak evidence plus optional scan continuity; no model target"
                 ),
+                "tracking_path_count": config.tracking_path_count,
+                "tracking_max_cost_delta": config.tracking_max_cost_delta,
+                "tracking_transition": "Huber loss",
+                "retention": {
+                    "relative_height_fraction": (
+                        config.retention_relative_height_fraction
+                    ),
+                    "minimum_scale_support": config.retention_min_scale_support,
+                    "minimum_curvature_significance": (
+                        config.retention_min_curvature_significance
+                    ),
+                    "continuity_rescue": config.continuity_rescue,
+                    "fallback_guarantees_one_candidate": True,
+                },
                 "uncertainty_sources": sorted(uncertainty_sources),
                 "frequency_bin_covariance": config.frequency_bin_covariance,
                 **metadata,

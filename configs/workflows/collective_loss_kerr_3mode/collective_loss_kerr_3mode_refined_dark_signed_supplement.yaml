@@ -182,4 +182,7 @@ jobs:
       readouts: [0, 1, 2, trace]
       freq_min: -0.3
       freq_max: -0.1
+      minimum_prominence_fraction: 0.03
       tracking_gap_factor: 1.5
+      tracking_path_count: 2
+      tracking_max_cost_delta: 2.0

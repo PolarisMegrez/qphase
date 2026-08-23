@@ -6,6 +6,9 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.spectral_ridge import (
     SpectralRidgeAnalyzer,
     SpectralRidgeConfig,
+    SpectralRidgeEstimate,
+    _candidate_retention_tiers,
+    _track_candidate_paths,
     _tracking_segments,
     estimate_spectral_ridges,
 )
@@ -97,11 +100,7 @@ def test_tracking_segments_split_explicit_scan_gap():
 
 def test_spectral_ridge_reports_competing_peak_ambiguity():
     axis = np.linspace(-2.0, 2.0, 4001)
-    spectrum = (
-        0.01
-        + _gaussian(axis, -0.6, 0.08)
-        + 0.99 * _gaussian(axis, 0.7, 0.08)
-    )
+    spectrum = 0.01 + _gaussian(axis, -0.6, 0.08) + 0.99 * _gaussian(axis, 0.7, 0.08)
     result = SDEResult(
         analysis={
             "psd": {
@@ -122,11 +121,98 @@ def test_spectral_ridge_reports_competing_peak_ambiguity():
         )
     )
 
-    row = analyzer.analyze({"point": result}, NumpyBackend()).data_dict[
-        "ridge_rows"
-    ][0]
+    row = analyzer.analyze({"point": result}, NumpyBackend()).data_dict["ridge_rows"][0]
 
     assert row["ambiguity_candidate_count"] == 2
     assert row["ambiguity_lower"] < -0.5
     assert row["ambiguity_upper"] > 0.6
     assert row["ambiguity_width"] > 1.0
+
+
+def test_top_k_tracking_retains_distinct_data_only_paths():
+    candidates = [
+        [
+            SpectralRidgeEstimate(frequency=0.0, score=0.9),
+            SpectralRidgeEstimate(frequency=2.0, score=0.85),
+        ],
+        [
+            SpectralRidgeEstimate(frequency=0.1, score=0.9),
+            SpectralRidgeEstimate(frequency=2.1, score=0.85),
+        ],
+        [
+            SpectralRidgeEstimate(frequency=0.2, score=0.9),
+            SpectralRidgeEstimate(frequency=2.2, score=0.85),
+        ],
+    ]
+
+    paths = _track_candidate_paths(
+        candidates,
+        frequency_scale=0.5,
+        tracking_weight=1.0,
+        huber_delta=1.0,
+        path_count=2,
+    )
+
+    assert paths[0].indices == (0, 0, 0)
+    assert paths[1].indices == (1, 1, 1)
+    assert paths[0].cost < paths[1].cost
+
+
+def test_continuity_rescues_weak_local_candidate():
+    estimates = [
+        SpectralRidgeEstimate(
+            frequency=0.0,
+            relative_height=1.0,
+            scale_support=4,
+            curvature_significance=5.0,
+            score=0.8,
+        ),
+        SpectralRidgeEstimate(
+            frequency=0.2,
+            relative_height=0.98,
+            scale_support=2,
+            curvature_significance=1.0,
+            score=0.7,
+        ),
+    ]
+
+    tiers = _candidate_retention_tiers(
+        estimates,
+        {1},
+        relative_height_fraction=0.95,
+        minimum_scale_support=3,
+        minimum_curvature_significance=3.0,
+        continuity_rescue=True,
+    )
+
+    assert tiers == ["strict", "continuity_rescued"]
+
+
+def test_retention_fallback_guarantees_one_candidate():
+    estimates = [
+        SpectralRidgeEstimate(
+            frequency=0.0,
+            relative_height=1.0,
+            scale_support=1,
+            curvature_significance=0.5,
+            score=0.4,
+        ),
+        SpectralRidgeEstimate(
+            frequency=0.3,
+            relative_height=0.9,
+            scale_support=1,
+            curvature_significance=0.5,
+            score=0.7,
+        ),
+    ]
+
+    tiers = _candidate_retention_tiers(
+        estimates,
+        set(),
+        relative_height_fraction=0.95,
+        minimum_scale_support=3,
+        minimum_curvature_significance=3.0,
+        continuity_rescue=True,
+    )
+
+    assert tiers == ["excluded", "fallback_low_confidence"]

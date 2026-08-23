@@ -86,7 +86,8 @@ and readout, and `spectral_ridge_candidates.csv`, the complete scale-supported
 candidate set. The selected table includes peak frequency, local and scale
 uncertainty, curvature diagnostics, PSD-SEM confidence bounds, relative-height
 plateau bounds, competing-ridge ambiguity bounds, path-selection index, and
-status.
+status. Candidate rows additionally contain `retained_for_association`,
+`retention_tier`, `tracking_path_ranks`, and `tracking_best_cost_delta`.
 
 ## Allan output
 

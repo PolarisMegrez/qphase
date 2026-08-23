@@ -78,6 +78,8 @@ metadata 会明确记录该边界。
 `spectral_ridge_candidates.csv`（完整多尺度候选集）。选中表包含峰位、局部与尺度
 不确定度、曲率诊断、PSD SEM 峰位置信区间、相对峰高平台边界、竞争谱脊歧义边界、
 路径候选编号与状态。统计置信区间与候选选择歧义分别保存。
+候选行还包含 `retained_for_association`、`retention_tier`、
+`tracking_path_ranks` 与 `tracking_best_cost_delta`。
 
 ## Allan 输出
 

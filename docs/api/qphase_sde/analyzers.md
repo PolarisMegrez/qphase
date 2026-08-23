@@ -251,6 +251,16 @@ analyser:
 scan-axis gap, such as an omitted bifurcation point; leave it unset for general
 irregular or logarithmic scans. Ridge selection never uses a CAM frequency.
 
+Tracking retains the lowest-cost `tracking_path_count` data-only paths. A Huber
+transition loss limits the influence of real rapid frequency motion. Strict
+candidates satisfy the configured relative-height, scale-support, and curvature
+thresholds; a high candidate belonging to a path within
+`tracking_max_cost_delta` is marked `continuity_rescued`. If neither class is
+available, exactly one highest-evidence `fallback_low_confidence` candidate is
+retained. Candidate CSV fields expose the retention tier, path ranks, and best
+path-cost delta. These fields define candidates available to downstream
+association; they do not use or imply a model target.
+
 The output separates local peak-location uncertainty, smoothing-scale drift,
 curvature and curvature significance, a PSD-SEM confidence interval, and the
 descriptive relative-height plateau. A separate ambiguity envelope spans all
