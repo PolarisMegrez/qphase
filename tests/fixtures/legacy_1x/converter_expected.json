@@ -1,0 +1,47 @@
+{
+  "converted": {
+    "spectrum": {
+      "estimator": {
+        "welch": {
+          "segment_length": 512,
+          "overlap": 0.5
+        }
+      }
+    },
+    "spectral_peaks": {
+      "scan_param": "delta",
+      "psd_key": "psd",
+      "finder": {
+        "scale_space": {
+          "smoothing_scale_bins": [
+            2.0,
+            4.0,
+            8.0
+          ]
+        }
+      },
+      "tracker": {
+        "topk_huber": {
+          "enabled": true
+        }
+      }
+    },
+    "coherence_frequency": {
+      "estimator": {
+        "band_limited": {
+          "min_points": 8
+        }
+      }
+    }
+  },
+  "diff": [
+    "psd: method='welch' became estimator slot 'estimator.welch'",
+    "spectral_ridge: split into spectral_peaks with finder.scale_space and tracker.topk_huber",
+    "band_limited_carrier: became coherence_frequency with estimator.band_limited"
+  ],
+  "unmapped": [],
+  "needs_review": [
+    "spectrum: verify estimator-level parameter split for ['overlap', 'segment_length']",
+    "spectral_peaks.tracker: renamed 'tracking_' key 'tracking_enabled'"
+  ]
+}

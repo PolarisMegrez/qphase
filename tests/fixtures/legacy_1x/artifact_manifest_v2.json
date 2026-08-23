@@ -1,0 +1,22 @@
+{
+  "schema_version": "2.0",
+  "result_type": "qphase_sde.scan:SDEScanResult",
+  "result_schema": "1.0",
+  "axes": {
+    "delta": [
+      0.5,
+      1.0,
+      1.5
+    ]
+  },
+  "shape": [
+    3
+  ],
+  "layout": "per_point",
+  "files": [
+    "scan_per_point/scan/point_000000.npz",
+    "scan_per_point/scan/point_000001.npz",
+    "scan_per_point/scan/point_000002.npz"
+  ],
+  "loader": "qphase_sde.scan:SDEScanResult.load_dataset"
+}

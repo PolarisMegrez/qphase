@@ -1,0 +1,20 @@
+{
+  "psd": {
+    "method": "welch",
+    "segment_length": 512,
+    "overlap": 0.5
+  },
+  "spectral_ridge": {
+    "scan_param": "delta",
+    "psd_key": "psd",
+    "smoothing_scale_bins": [
+      2.0,
+      4.0,
+      8.0
+    ],
+    "tracking_enabled": true
+  },
+  "band_limited_carrier": {
+    "min_points": 8
+  }
+}

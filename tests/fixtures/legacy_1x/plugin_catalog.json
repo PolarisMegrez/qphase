@@ -1,0 +1,35 @@
+{
+  "qphase": {
+    "backend.cupy": "qphase.backend.cupy_backend:CuPyBackend",
+    "backend.numba": "qphase.backend.numba_backend:NumbaBackend",
+    "backend.numpy": "qphase.backend.numpy_backend:NumpyBackend",
+    "backend.torch": "qphase.backend.torch_backend:TorchBackend"
+  },
+  "qphase_sde": {
+    "analyser.allan_scaling": "qphase_sde.analyser.allan_scaling:AllanScalingAnalyzer",
+    "analyser.allan_variance": "qphase_sde.analyser.allan_variance:AllanVarianceAnalyzer",
+    "analyser.band_limited_carrier": "qphase_sde.analyser.band_limited_carrier:BandLimitedCarrierAnalyzer",
+    "analyser.coherence_carrier": "qphase_sde.analyser.coherence_carrier:CoherenceCarrierAnalyzer",
+    "analyser.coherence_matrix": "qphase_sde.analyser.coherence_matrix:CoherenceMatrixAnalyzer",
+    "analyser.dist": "qphase_sde.analyser.dist:DistAnalyzer",
+    "analyser.finite_delay_carrier": "qphase_sde.analyser.finite_delay_carrier:FiniteDelayCarrierAnalyzer",
+    "analyser.lorentz_fitter": "qphase_sde.analyser.lorentz_fitter:LorentzFitter",
+    "analyser.moment_statistics": "qphase_sde.analyser.moment_statistics:MomentStatisticsAnalyzer",
+    "analyser.pdist": "qphase_sde.analyser.polar_dist:PolarDistAnalyzer",
+    "analyser.psd": "qphase_sde.analyser.psd:PsdAnalyzer",
+    "analyser.quadratic_moments": "qphase_sde.analyser.quadratic_moments:QuadraticMomentAnalyzer",
+    "analyser.spectral_ridge": "qphase_sde.analyser.spectral_ridge:SpectralRidgeAnalyzer",
+    "analyser.trajectory_diagnostics": "qphase_sde.analyser.trajectory_diagnostics:TrajectoryDiagnostics",
+    "engine.sde": "qphase_sde.engine:Engine",
+    "integrator.cayley_maruyama": "qphase_sde.integrator.cayley_maruyama:CayleyMaruyama",
+    "integrator.euler_maruyama": "qphase_sde.integrator.euler_maruyama:EulerMaruyama",
+    "integrator.milstein": "qphase_sde.integrator.milstein:Milstein",
+    "integrator.srk": "qphase_sde.integrator.srk:GenericSRK",
+    "observer.first_passage": "qphase_sde.observer.first_passage:FirstPassageObserver",
+    "peak_finder.rational": "qphase_sde.analyser.peak_finding.rational:RationalPeakFinder",
+    "peak_finder.scipy": "qphase_sde.analyser.peak_finding.scipy:ScipyPeakFinder",
+    "spectral_estimator.multitaper": "qphase_sde.analyser.spectral_estimator:MultitaperEstimator",
+    "spectral_estimator.periodogram": "qphase_sde.analyser.spectral_estimator:PeriodogramEstimator",
+    "spectral_estimator.welch": "qphase_sde.analyser.spectral_estimator:WelchEstimator"
+  }
+}
