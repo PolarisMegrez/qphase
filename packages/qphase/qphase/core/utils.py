@@ -13,10 +13,13 @@ deep_merge_dicts, deep_copy
     Dictionary manipulation utilities.
 extract_defaults_from_schema
     Get default values from Pydantic model.
+canonical_json
+    Deterministic JSON serialization used for stable schema fingerprints.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +31,32 @@ from ruamel.yaml.comments import CommentedMap
 from .errors import QPhaseConfigError, QPhaseIOError
 
 _ruamel_yaml: Any = YAML(typ="safe")
+
+
+def canonical_json(data: Any) -> str:
+    """Serialize data to a deterministic JSON string for stable hashing.
+
+    Keys are sorted, whitespace is stripped and non-ASCII characters are kept
+    verbatim, so the same logical payload always produces the same string
+    regardless of dict insertion order or platform.
+
+    Parameters
+    ----------
+    data : Any
+        JSON-serializable payload (mappings, lists, scalars)
+
+    Returns
+    -------
+    str
+        Canonical JSON representation
+
+    """
+    return json.dumps(
+        data,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
 
 
 def load_yaml(path: Path) -> Any:

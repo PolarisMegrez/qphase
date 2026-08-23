@@ -1,0 +1,28 @@
+{
+  "schema_version": "qphase.resource/1",
+  "resource_id": "cam",
+  "package_version": "2.0.0",
+  "engine": {
+    "entry_point": "engine.cam",
+    "target": "qphase_cam.engine:Engine"
+  },
+  "profiles": ["base"],
+  "plugin_classes": [
+    {
+      "namespace": "solver",
+      "protocol": "qphase_cam.solver.base:CamSolverProtocol",
+      "description": "Coupled-mode algebraic solvers."
+    }
+  ],
+  "data_products": [
+    {
+      "name": "steady_states",
+      "kind": "statistics",
+      "schema_ref": "qphase_cam.result:STEADY_STATE_PRODUCT",
+      "description": "Steady-state solutions and bifurcation classifications."
+    }
+  ],
+  "compatibility": {
+    "qphase_core": ">=2.0a0,<3.0"
+  }
+}
