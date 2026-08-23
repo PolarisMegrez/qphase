@@ -85,18 +85,18 @@ class AxisSchema(BaseModel):
     start: float | None = None
     step: float | None = None
 
-    @model_validator(mode="after")
-    def _check_regular_coordinate(self) -> AxisSchema:
-        if self.coordinate == "regular" and self.step is None:
-            raise ValueError(
-                f"regular axis {self.name!r} must declare a step"
-            )
-        return self
-
     @property
     def is_closed(self) -> bool:
-        """Return True when the axis size is known."""
-        return self.size is not None
+        """Return True when the axis is ready for materialization.
+
+        An axis is closed once its size is known and — for regular
+        coordinates — its step is declared.
+        """
+        if self.size is None:
+            return False
+        if self.coordinate == "regular" and self.step is None:
+            return False
+        return True
 
 
 class VariableConstraints(BaseModel):

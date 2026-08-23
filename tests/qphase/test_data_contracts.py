@@ -200,10 +200,12 @@ def test_axis_shape_closure():
     assert closed.is_closed
 
 
-def test_regular_axis_requires_step():
-    """Regular coordinates must declare a step."""
-    with pytest.raises(ValidationError, match="step"):
-        AxisSchema(name="time", coordinate="regular")
+def test_regular_axis_requires_step_for_closure():
+    """Regular coordinates are open until they declare a step."""
+    axis = AxisSchema(name="time", coordinate="regular", size=8)
+    assert not axis.is_closed
+    closed = axis.model_copy(update={"step": 0.1})
+    assert closed.is_closed
 
 
 def test_spectral_products_require_spectral_attributes():
