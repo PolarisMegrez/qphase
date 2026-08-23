@@ -85,7 +85,8 @@ weight, and numerical lag range.
 and readout, and `spectral_ridge_candidates.csv`, the complete scale-supported
 candidate set. The selected table includes peak frequency, local and scale
 uncertainty, curvature diagnostics, PSD-SEM confidence bounds, relative-height
-plateau bounds, path-selection index, and status.
+plateau bounds, competing-ridge ambiguity bounds, path-selection index, and
+status.
 
 ## Allan output
 

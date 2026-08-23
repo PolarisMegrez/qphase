@@ -705,6 +705,27 @@ class SpectralRidgeAnalyzer(Analyzer):
             ):
                 chosen = min(chosen, len(estimates) - 1)
                 estimate = estimates[chosen]
+                strongest_height = max(
+                    candidate.relative_height for candidate in estimates
+                )
+                competitive = [
+                    candidate
+                    for candidate in estimates
+                    if candidate.relative_height
+                    >= config.plateau_fraction * strongest_height
+                ]
+                ambiguity_lower = min(
+                    candidate.confidence_lower
+                    if np.isfinite(candidate.confidence_lower)
+                    else candidate.frequency - candidate.frequency_std
+                    for candidate in competitive
+                )
+                ambiguity_upper = max(
+                    candidate.confidence_upper
+                    if np.isfinite(candidate.confidence_upper)
+                    else candidate.frequency + candidate.frequency_std
+                    for candidate in competitive
+                )
                 measurement_name = "trace" if readout == "trace" else f"mode_{readout}"
                 row = {
                     "point_index": point_index,
@@ -730,6 +751,11 @@ class SpectralRidgeAnalyzer(Analyzer):
                     "confidence_width": (
                         estimate.confidence_upper - estimate.confidence_lower
                     ),
+                    "ambiguity_lower": ambiguity_lower,
+                    "ambiguity_upper": ambiguity_upper,
+                    "ambiguity_width": ambiguity_upper - ambiguity_lower,
+                    "ambiguity_candidate_count": len(competitive),
+                    "ambiguity_peak_fraction": config.plateau_fraction,
                     "plateau_lower": estimate.plateau_lower,
                     "plateau_upper": estimate.plateau_upper,
                     "plateau_width": estimate.plateau_upper - estimate.plateau_lower,

@@ -253,7 +253,10 @@ irregular or logarithmic scans. Ridge selection never uses a CAM frequency.
 
 The output separates local peak-location uncertainty, smoothing-scale drift,
 curvature and curvature significance, a PSD-SEM confidence interval, and the
-descriptive relative-height plateau. `frequency_bin_covariance: diagonal` uses
+descriptive relative-height plateau. A separate ambiguity envelope spans all
+scale-supported candidates whose peak height reaches `plateau_fraction` of the
+strongest candidate; it is a model-selection diagnostic, not a confidence
+interval. `frequency_bin_covariance: diagonal` uses
 the usual asymptotic diagonal-bin approximation for an unwindowed periodogram;
 `conservative` treats all frequency-bin errors as fully correlated. Trace SEM
 always uses a conservative upper bound over recorded modes because cross-mode

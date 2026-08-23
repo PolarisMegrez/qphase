@@ -219,7 +219,9 @@ analyser:
 不规则或对数扫描应保持未设置。谱脊选择绝不读取 CAM 频率。
 
 输出分别记录局部峰位传播误差、跨平滑尺度漂移、曲率及其显著性、基于 PSD SEM 的
-峰位置信区间，以及描述性的相对峰高平台。`frequency_bin_covariance: diagonal` 对无窗
+峰位置信区间，以及描述性的相对峰高平台。另一个歧义包络覆盖峰高达到最强候选
+`plateau_fraction` 的全部多尺度候选；它是模型选择诊断而非置信区间。
+`frequency_bin_covariance: diagonal` 对无窗
 periodogram 使用常见的频率 bin 渐近对角近似；`conservative` 将所有频率 bin 误差视为
 完全相关。由于结果未保存跨 mode PSD 协方差，trace SEM 始终采用各 mode SEM 之和的
 保守上界。

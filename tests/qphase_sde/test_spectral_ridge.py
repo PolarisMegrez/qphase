@@ -93,3 +93,40 @@ def test_tracking_segments_split_explicit_scan_gap():
     segments = _tracking_segments(values, 1.5)
 
     assert [(item.start, item.stop) for item in segments] == [(0, 3), (3, 6)]
+
+
+def test_spectral_ridge_reports_competing_peak_ambiguity():
+    axis = np.linspace(-2.0, 2.0, 4001)
+    spectrum = (
+        0.01
+        + _gaussian(axis, -0.6, 0.08)
+        + 0.99 * _gaussian(axis, 0.7, 0.08)
+    )
+    result = SDEResult(
+        analysis={
+            "psd": {
+                "axis": axis,
+                "psd": spectrum[:, None],
+                "psd_sem": np.full((axis.size, 1), 0.001),
+                "modes": [0],
+                "orientation": "phase_decreasing",
+            }
+        },
+        meta={"params": {"epsilon": 0.0}},
+    )
+    analyzer = SpectralRidgeAnalyzer(
+        SpectralRidgeConfig(
+            scan_param="epsilon",
+            readouts=[0],
+            smoothing_scale_bins=[2.0, 4.0, 8.0],
+        )
+    )
+
+    row = analyzer.analyze({"point": result}, NumpyBackend()).data_dict[
+        "ridge_rows"
+    ][0]
+
+    assert row["ambiguity_candidate_count"] == 2
+    assert row["ambiguity_lower"] < -0.5
+    assert row["ambiguity_upper"] > 0.6
+    assert row["ambiguity_width"] > 1.0
