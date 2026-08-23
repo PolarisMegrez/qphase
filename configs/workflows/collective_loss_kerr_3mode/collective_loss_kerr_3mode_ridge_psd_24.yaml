@@ -1,0 +1,118 @@
+schema: qphase.workflow/2
+id: collective_loss_kerr_3mode_ridge_psd_24
+title: Collective Loss Kerr 3Mode 24-Point Ridge PSD Validation
+collection: collective_loss_kerr_3mode
+tags:
+- collective_loss_kerr_3mode
+- refined_dark
+- signed_window
+- spectral_ridge
+- psd_only
+
+jobs:
+- name: collective_loss_kerr_3mode_ridge_psd_24_sim
+  save: true
+  system:
+    scan_runtime:
+      checkpoint: {enabled: true, interval_chunks: 1, keep_on_success: false}
+  scan:
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        linspace:
+          start: 1.0965468284070492  # epsilon=-2.00e-4
+          stop: 1.0969468284070492   # epsilon=+2.00e-4
+          num: 24
+  engine:
+    sde:
+      t0: 300000.0
+      t1: 600000.0
+      dt: 0.04
+      n_traj: 256
+      seed: 20260824
+      ic:
+      - - "32.5964406+0.0j"
+        - "7.82417847-3.70743770j"
+        - "-14.27722901-2.01412483j"
+      adaptive: false
+      save_stride: 50
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: auto
+      max_state_norm: 220.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 256, max_modes: 16}
+  model:
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: -0.01808028668165207
+      omega_c: 1.0967468284070492
+      chi: 3.548688561976006e-05
+      g_ab: 0.006479437632129051
+      g_ac: 0.6035382548114513
+      g_bc: 0.0021544100365580555
+      pump_a: 0.07598771590146015
+      kappa_bright: 1.0
+      kappa_dark: 0.1775148709287836
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 150.0
+      direction: above
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes: [0, 1, 2]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 1.0
+      find_peaks: false
+      estimator: {periodogram: {fft_chunk_trajectories: 4}}
+
+- name: collective_loss_kerr_3mode_ridge_psd_24_ridge
+  input:
+    from: collective_loss_kerr_3mode_ridge_psd_24_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    spectral_ridge:
+      scan_param: omega_c
+      readouts: [trace]
+      freq_min: -0.3
+      freq_max: -0.1
+      minimum_prominence_fraction: 0.03
+      tracking_path_count: 2
+      tracking_max_cost_delta: 2.0
+
+- name: collective_loss_kerr_3mode_ridge_psd_24_carrier
+  input:
+    from: collective_loss_kerr_3mode_ridge_psd_24_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_c
+      readout: trace
+      freq_min: -0.3
+      freq_max: -0.1
+      maximum_lag: 256.0
+      tracking_enabled: false
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_c
+          readouts: [trace]
+          freq_min: -0.3
+          freq_max: -0.1
+          minimum_prominence_fraction: 0.03
+          tracking_path_count: 2
+          tracking_max_cost_delta: 2.0
