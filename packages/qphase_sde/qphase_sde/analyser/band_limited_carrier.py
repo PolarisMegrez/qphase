@@ -22,6 +22,10 @@ from .frequency_orientation import (
 )
 from .result import AnalysisResult
 from .result_input import load_sde_results
+from .spectral_ridge import (
+    SpectralRidgeAnalyzer,
+    SpectralRidgeConfig,
+)
 
 __all__ = [
     "BandLimitedCarrierAnalyzer",
@@ -29,9 +33,22 @@ __all__ = [
     "BandLimitedCarrierConfig",
     "BandLimitedCarrierEstimate",
     "BandLimitedCarrierPlatform",
+    "RidgeConditionedCenterConfig",
     "estimate_band_limited_carrier",
     "track_band_limited_carrier",
 ]
+
+
+class RidgeConditionedCenterConfig(PluginConfigBase):
+    """Use retained spectral ridges as coarse carrier centers."""
+
+    spectral_ridge: SpectralRidgeConfig
+    maximum_neighbor_fraction: float = Field(
+        0.45,
+        gt=0.0,
+        le=0.5,
+        description="Maximum half-band relative to the nearest retained ridge",
+    )
 
 
 class BandLimitedCarrierConfig(PluginConfigBase):
@@ -42,6 +59,10 @@ class BandLimitedCarrierConfig(PluginConfigBase):
     readout: int | Literal["trace"] = Field(
         "trace",
         description="Physical mode index or incoherent trace over recorded modes",
+    )
+    center: RidgeConditionedCenterConfig | None = Field(
+        None,
+        description="Optional spectral-ridge-conditioned center estimator",
     )
     freq_min: float | None = Field(None, description="Lower carrier search bound")
     freq_max: float | None = Field(None, description="Upper carrier search bound")
@@ -334,6 +355,31 @@ def _connected_peak(
     return center, hwhm
 
 
+def _ridge_local_width(
+    axis: np.ndarray,
+    spectrum: np.ndarray,
+    *,
+    center: float,
+    baseline: float,
+    smoothing_bins: int,
+    spacing: float,
+) -> float:
+    """Return the half-height component width containing a fixed ridge center."""
+    smoothed = _moving_average(spectrum, smoothing_bins)
+    index = int(np.argmin(np.abs(axis - center)))
+    height = float(smoothed[index] - baseline)
+    if not np.isfinite(height) or height <= 0.0:
+        return 16.0 * spacing
+    half_height = baseline + 0.5 * height
+    left = index
+    while left > 0 and smoothed[left - 1] >= half_height:
+        left -= 1
+    right = index
+    while right + 1 < axis.size and smoothed[right + 1] >= half_height:
+        right += 1
+    return max(0.5 * float(axis[right] - axis[left]), 16.0 * spacing)
+
+
 def _hac_slope_std(
     design: np.ndarray, weights: np.ndarray, residual: np.ndarray
 ) -> float:
@@ -397,6 +443,7 @@ def _fit_candidate(
     lag_step = 2.0 * np.pi / (axis.size * spacing)
     lag = np.arange(axis.size, dtype=float) * lag_step
     correlation = np.fft.ifft(filtered) * np.exp(1j * axis[0] * lag)
+    baseband_correlation = correlation * np.exp(-1j * center * lag)
     amplitude = np.abs(correlation) / max(
         abs(complex(correlation[0])), np.finfo(float).tiny
     )
@@ -422,11 +469,12 @@ def _fit_candidate(
         for indices in windows:
             candidate = _fit_phase_window(
                 lag,
-                correlation,
+                baseband_correlation,
                 amplitude,
                 indices,
                 half_bandwidth=half_bandwidth,
                 maximum_lag=maximum_lag,
+                frequency_offset=center,
             )
             duration = candidate.lag_end - candidate.lag_start
             diagnostics.append((duration, candidate))
@@ -497,6 +545,7 @@ def _fit_phase_window(
     *,
     half_bandwidth: float,
     maximum_lag: float,
+    frequency_offset: float,
 ) -> BandLimitedCarrierCandidate:
     time = lag[indices]
     phase = np.unwrap(np.angle(correlation[indices]))
@@ -521,7 +570,7 @@ def _fit_phase_window(
     lag_step = float(lag[1] - lag[0])
     return BandLimitedCarrierCandidate(
         half_bandwidth=half_bandwidth,
-        frequency=float(coefficient[1]),
+        frequency=frequency_offset + float(coefficient[1]),
         regression_std=_hac_slope_std(linear, weights, residual),
         phase_fit_rms=rms,
         frequency_drift=frequency_drift,
@@ -704,6 +753,8 @@ def estimate_band_limited_carrier(
     stability_fraction: float = 0.015,
     stability_sigma: float = 2.0,
     platform_ambiguity_delta: float = 0.5,
+    fixed_center: float | None = None,
+    fixed_bandwidth_max: float | None = None,
 ) -> tuple[BandLimitedCarrierEstimate, list[BandLimitedCarrierCandidate]]:
     """Estimate a filtered carrier from a resolved lag-bandwidth platform.
 
@@ -728,15 +779,41 @@ def estimate_band_limited_carrier(
             clip_sigma=concentration_clip_sigma,
             iterations=concentration_iterations,
         )
-        peak_center, peak_hwhm = _connected_peak(
-            target_axis,
-            target_power,
-            concentration_center=concentration_center,
-            concentration_width=spectral_width,
-            baseline=baseline,
-            smoothing_bins=peak_smoothing_bins,
-            spacing=spacing,
-        )
+        if fixed_center is None:
+            peak_center, peak_hwhm = _connected_peak(
+                target_axis,
+                target_power,
+                concentration_center=concentration_center,
+                concentration_width=spectral_width,
+                baseline=baseline,
+                smoothing_bins=peak_smoothing_bins,
+                spacing=spacing,
+            )
+        else:
+            if not float(target_axis[0]) < fixed_center < float(target_axis[-1]):
+                raise ValueError("fixed ridge center lies outside the search range")
+            peak_center = float(fixed_center)
+            peak_hwhm = _ridge_local_width(
+                target_axis,
+                target_power,
+                center=peak_center,
+                baseline=baseline,
+                smoothing_bins=peak_smoothing_bins,
+                spacing=spacing,
+            )
+            spectral_width = peak_hwhm
+            effective_max = (
+                fixed_bandwidth_max
+                if bandwidth_max is None
+                else min(fixed_bandwidth_max, bandwidth_max)
+                if fixed_bandwidth_max is not None
+                else bandwidth_max
+            )
+            if effective_max is not None:
+                spectral_width = min(
+                    spectral_width,
+                    effective_max / max(bandwidth_multipliers),
+                )
         bandwidths = _candidate_bandwidths(
             peak_center,
             spectral_width,
@@ -745,7 +822,13 @@ def estimate_band_limited_carrier(
             spacing,
             bandwidth_multipliers,
             bandwidth_min,
-            bandwidth_max,
+            (
+                fixed_bandwidth_max
+                if bandwidth_max is None
+                else min(fixed_bandwidth_max, bandwidth_max)
+                if fixed_bandwidth_max is not None
+                else bandwidth_max
+            ),
         )
         if len(bandwidths) < consensus_count:
             raise ValueError(
@@ -778,7 +861,15 @@ def estimate_band_limited_carrier(
             stability_sigma=stability_sigma,
             platform_ambiguity_delta=platform_ambiguity_delta,
         )
-        selected = platforms[0] if platforms else None
+        selected = (
+            min(platforms, key=lambda item: abs(item.frequency - fixed_center))
+            if fixed_center is not None and platforms
+            else platforms[0]
+            if platforms
+            else None
+        )
+        if fixed_center is not None and selected is not None:
+            status = "ok"
         group = (
             candidates[selected.first_candidate : selected.last_candidate + 1]
             if selected is not None
@@ -1018,6 +1109,45 @@ def _sort_key(value: Any) -> tuple[int, Any]:
         return 1, str(value)
 
 
+def _estimate_from_config(
+    axis: np.ndarray,
+    spectrum: np.ndarray,
+    config: BandLimitedCarrierConfig,
+    *,
+    fixed_center: float | None = None,
+    fixed_bandwidth_max: float | None = None,
+) -> tuple[BandLimitedCarrierEstimate, list[BandLimitedCarrierCandidate]]:
+    return estimate_band_limited_carrier(
+        axis,
+        spectrum,
+        freq_min=config.freq_min,
+        freq_max=config.freq_max,
+        bandwidth_multipliers=config.bandwidth_multipliers,
+        bandwidth_min=config.bandwidth_min,
+        bandwidth_max=config.bandwidth_max,
+        baseline_quantile=config.baseline_quantile,
+        concentration_clip_sigma=config.concentration_clip_sigma,
+        concentration_iterations=config.concentration_iterations,
+        peak_smoothing_bins=config.peak_smoothing_bins,
+        taper_fraction=config.taper_fraction,
+        maximum_lag=config.maximum_lag,
+        coherence_floor=config.coherence_floor,
+        minimum_lag_points=config.minimum_lag_points,
+        minimum_lag_span=config.minimum_lag_span,
+        lag_window_trials=config.lag_window_trials,
+        max_phase_fit_rms=config.max_phase_fit_rms,
+        max_frequency_drift_fraction=config.max_frequency_drift_fraction,
+        max_negative_decay_fraction=config.max_negative_decay_fraction,
+        consensus_count=config.consensus_count,
+        minimum_log_bandwidth_span=config.minimum_log_bandwidth_span,
+        stability_fraction=config.stability_fraction,
+        stability_sigma=config.stability_sigma,
+        platform_ambiguity_delta=config.platform_ambiguity_delta,
+        fixed_center=fixed_center,
+        fixed_bandwidth_max=fixed_bandwidth_max,
+    )
+
+
 class BandLimitedCarrierAnalyzer(Analyzer):
     """Cross-result adaptive carrier estimator for saved PSD datasets."""
 
@@ -1033,11 +1163,49 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         )
 
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
-        del backend
         config = cast(BandLimitedCarrierConfig, self.config)
+        center_config = config.center
         loaded_results = load_sde_results(data, config.pattern)
         if not loaded_results:
             raise QPhaseError("band_limited_carrier received no input results")
+
+        ridge_by_scan: dict[float, list[dict[str, Any]]] = {}
+        all_ridges_by_scan: dict[float, list[dict[str, Any]]] = {}
+        if center_config is not None:
+            requested = center_config.spectral_ridge
+            ridge_config = requested.model_copy(
+                update={
+                    "scan_param": config.scan_param,
+                    "psd_key": config.psd_key,
+                    "readouts": [config.readout],
+                    "freq_min": (
+                        config.freq_min
+                        if config.freq_min is not None
+                        else requested.freq_min
+                    ),
+                    "freq_max": (
+                        config.freq_max
+                        if config.freq_max is not None
+                        else requested.freq_max
+                    ),
+                    "export": [],
+                    "output_dir": None,
+                    "pattern": config.pattern,
+                }
+            )
+            ridge_payload = (
+                SpectralRidgeAnalyzer(ridge_config).analyze(data, backend).data_dict
+            )
+            measurement_name = (
+                "trace" if config.readout == "trace" else f"mode_{config.readout}"
+            )
+            for ridge_row in ridge_payload["candidate_rows"]:
+                if ridge_row["measurement_name"] != measurement_name:
+                    continue
+                scan_key = float(ridge_row[config.scan_param])
+                all_ridges_by_scan.setdefault(scan_key, []).append(ridge_row)
+                if ridge_row["retained_for_association"]:
+                    ridge_by_scan.setdefault(scan_key, []).append(ridge_row)
 
         rows: list[dict[str, Any]] = []
         candidate_rows: list[dict[str, Any]] = []
@@ -1059,62 +1227,107 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                 reference_orientation = orientation
             elif reference_orientation != orientation:
                 raise QPhaseError("PSD inputs use different frequency orientations")
-            estimate, candidates = estimate_band_limited_carrier(
-                axis,
-                spectrum,
-                freq_min=config.freq_min,
-                freq_max=config.freq_max,
-                bandwidth_multipliers=config.bandwidth_multipliers,
-                bandwidth_min=config.bandwidth_min,
-                bandwidth_max=config.bandwidth_max,
-                baseline_quantile=config.baseline_quantile,
-                concentration_clip_sigma=config.concentration_clip_sigma,
-                concentration_iterations=config.concentration_iterations,
-                peak_smoothing_bins=config.peak_smoothing_bins,
-                taper_fraction=config.taper_fraction,
-                maximum_lag=config.maximum_lag,
-                coherence_floor=config.coherence_floor,
-                minimum_lag_points=config.minimum_lag_points,
-                minimum_lag_span=config.minimum_lag_span,
-                lag_window_trials=config.lag_window_trials,
-                max_phase_fit_rms=config.max_phase_fit_rms,
-                max_frequency_drift_fraction=config.max_frequency_drift_fraction,
-                max_negative_decay_fraction=config.max_negative_decay_fraction,
-                consensus_count=config.consensus_count,
-                minimum_log_bandwidth_span=config.minimum_log_bandwidth_span,
-                stability_fraction=config.stability_fraction,
-                stability_sigma=config.stability_sigma,
-                platform_ambiguity_delta=config.platform_ambiguity_delta,
+            if config.center is None:
+                center_rows: list[dict[str, Any] | None] = [None]
+            else:
+                center_rows = []
+                center_rows.extend(ridge_by_scan.get(float(scan_value), []))
+                if not center_rows:
+                    raise QPhaseError(
+                        f"spectral ridge retained no center for {config.scan_param}="
+                        f"{scan_value!r}"
+                    )
+            neighbor_frequencies = np.asarray(
+                [
+                    float(item["frequency"])
+                    for item in all_ridges_by_scan.get(float(scan_value), [])
+                ]
             )
-            estimates.append(estimate)
-            rows.append(
-                {
-                    "job_name": loaded.job_name,
-                    config.scan_param: scan_value,
-                    "readout": config.readout,
-                    "orientation": orientation,
-                    **estimate.as_dict(),
-                }
-            )
-            for candidate in candidates:
-                candidate_rows.append(
+            for ridge_order, center_row in enumerate(center_rows):
+                fixed_center = (
+                    None if center_row is None else float(center_row["frequency"])
+                )
+                neighbor_distance = math.nan
+                fixed_bandwidth_max = None
+                if fixed_center is not None and neighbor_frequencies.size > 1:
+                    distances = np.abs(neighbor_frequencies - fixed_center)
+                    distances = distances[distances > np.finfo(float).eps]
+                    if distances.size:
+                        neighbor_distance = float(np.min(distances))
+                        assert center_config is not None
+                        fixed_bandwidth_max = (
+                            center_config.maximum_neighbor_fraction * neighbor_distance
+                        )
+                estimate, candidates = _estimate_from_config(
+                    axis,
+                    spectrum,
+                    config,
+                    fixed_center=fixed_center,
+                    fixed_bandwidth_max=fixed_bandwidth_max,
+                )
+                estimates.append(estimate)
+                ridge_fields: dict[str, Any] = {}
+                if center_row is not None:
+                    assert fixed_center is not None
+                    ridge_fields = {
+                        "ridge_candidate_index": int(center_row["candidate_index"]),
+                        "ridge_order": ridge_order,
+                        "ridge_center": fixed_center,
+                        "ridge_center_std": float(center_row["frequency_std"]),
+                        "ridge_confidence_lower": float(center_row["confidence_lower"]),
+                        "ridge_confidence_upper": float(center_row["confidence_upper"]),
+                        "ridge_retention_tier": center_row["retention_tier"],
+                        "ridge_tracking_path_ranks": center_row["tracking_path_ranks"],
+                        "ridge_neighbor_distance": neighbor_distance,
+                        "ridge_bandwidth_max": (
+                            fixed_bandwidth_max
+                            if fixed_bandwidth_max is not None
+                            else math.nan
+                        ),
+                        "ridge_carrier_correction": (
+                            estimate.frequency - fixed_center
+                            if np.isfinite(estimate.frequency)
+                            else math.nan
+                        ),
+                        "ridge_conditioned_uncertainty_upper": (
+                            estimate.diagnostic_uncertainty
+                            + float(center_row["frequency_std"])
+                            if np.isfinite(estimate.diagnostic_uncertainty)
+                            else math.nan
+                        ),
+                        "ridge_platform_selection": "nearest_ridge_center",
+                    }
+                rows.append(
                     {
                         "job_name": loaded.job_name,
                         config.scan_param: scan_value,
                         "readout": config.readout,
-                        **asdict(candidate),
+                        "orientation": orientation,
+                        **ridge_fields,
+                        **estimate.as_dict(),
                     }
                 )
-            for platform_index, platform in enumerate(estimate.platforms):
-                platform_rows.append(
-                    {
-                        "job_name": loaded.job_name,
-                        config.scan_param: scan_value,
-                        "readout": config.readout,
-                        "platform_index": platform_index,
-                        **asdict(platform),
-                    }
-                )
+                for candidate in candidates:
+                    candidate_rows.append(
+                        {
+                            "job_name": loaded.job_name,
+                            config.scan_param: scan_value,
+                            "readout": config.readout,
+                            **ridge_fields,
+                            **asdict(candidate),
+                        }
+                    )
+                for platform_index, platform in enumerate(estimate.platforms):
+                    platform_rows.append(
+                        {
+                            "job_name": loaded.job_name,
+                            config.scan_param: scan_value,
+                            "readout": config.readout,
+                            **ridge_fields,
+                            "platform_index": platform_index,
+                            **asdict(platform),
+                        }
+                    )
 
         records = sorted(
             zip(rows, estimates, strict=True),
@@ -1122,8 +1335,13 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         )
         rows = [item[0] for item in records]
         estimates = [item[1] for item in records]
-        if config.tracking_enabled and all(
-            isinstance(row[config.scan_param], (int, float, np.number)) for row in rows
+        if (
+            config.center is None
+            and config.tracking_enabled
+            and all(
+                isinstance(row[config.scan_param], (int, float, np.number))
+                for row in rows
+            )
         ):
             tracked = track_band_limited_carrier(
                 np.asarray([row[config.scan_param] for row in rows], dtype=float),
@@ -1142,19 +1360,25 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                         "tracked_frequency": math.nan,
                         "tracked_diagnostic_uncertainty": math.nan,
                         "tracked_platform_index": -1,
-                        "tracked_status": "disabled",
+                        "tracked_status": (
+                            "ridge_conditioned"
+                            if config.center is not None
+                            else "disabled"
+                        ),
                         "tracked_path_cost_gap": math.nan,
                     }
                 )
         candidate_rows.sort(
             key=lambda row: (
                 _sort_key(row[config.scan_param]),
+                int(row.get("ridge_order", -1)),
                 float(row["half_bandwidth"]),
             )
         )
         platform_rows.sort(
             key=lambda row: (
                 _sort_key(row[config.scan_param]),
+                int(row.get("ridge_order", -1)),
                 int(row["platform_index"]),
             )
         )
@@ -1191,6 +1415,9 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                 "scan_param": config.scan_param,
                 "readout": config.readout,
                 "count": len(rows),
+                "center_method": (
+                    "spectral_ridge" if config.center is not None else "adaptive_peak"
+                ),
                 "uncertainty_note": (
                     "regression_std is HAC phase-regression uncertainty; "
                     "bandwidth_std is within-platform estimator sensitivity; "

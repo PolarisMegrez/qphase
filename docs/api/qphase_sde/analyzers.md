@@ -229,6 +229,39 @@ trajectory SEM. `diagnostic_uncertainty` combines these two conditional terms.
 Formal sampling uncertainty still requires per-trajectory sufficient
 statistics or repeated runs; the current PSD mean cannot reconstruct it.
 
+The optional `center.spectral_ridge` mode applies the same lag-bandwidth tests
+independently around every retained data-only ridge:
+
+```yaml
+band_limited_carrier:
+  scan_param: omega_c
+  readout: trace
+  freq_min: -0.3
+  freq_max: -0.1
+  tracking_enabled: false
+  center:
+    maximum_neighbor_fraction: 0.45
+    spectral_ridge:
+      scan_param: omega_c
+      readouts: [trace]
+      minimum_prominence_fraction: 0.03
+      tracking_path_count: 2
+```
+
+The ridge center is used as a coarse local-oscillator frequency before phase
+unwrapping. Every retained ridge produces a separate result row. Passbands are
+capped at `maximum_neighbor_fraction` of the nearest scale-supported ridge,
+including candidates excluded from final association. When several
+lag-bandwidth platforms remain, the platform nearest the data-only ridge center
+is selected; no CAM or theoretical frequency is consulted.
+`ridge_carrier_correction` is the fine phase-frequency correction to the ridge
+center.
+
+`ridge_conditioned_uncertainty_upper` conservatively adds the conditional
+carrier diagnostic uncertainty and ridge-center standard deviation. It is an
+upper diagnostic bound, not a trajectory-bootstrap SEM, because both terms come
+from the same ensemble PSD.
+
 ## `spectral_ridge`
 
 Extracts local PSD maxima without assuming a Lorentzian or using a model target.

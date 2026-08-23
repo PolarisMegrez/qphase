@@ -70,6 +70,11 @@ psd = archive["analysis"].item().get("psd")
 其中 diagnostic uncertainty 是条件于估计模型的敏感度，不是 trajectory SEM；输出
 metadata 会明确记录该边界。
 
+ridge-conditioned 模式下，三张表还会保存 `ridge_candidate_index`、
+`ridge_retention_tier`、ridge 中心不确定度、最近 ridge 带宽上限、
+`ridge_carrier_correction` 与 `ridge_conditioned_uncertainty_upper`；每个扫描点允许有
+多行结果。
+
 `finite_delay_carrier` 写出 `finite_delay_carrier.csv`，每个扫描点、读出和探测器速率
 一行，包含读出名称与类型、direct detector carrier、SDE 零延迟极限、有限延迟修正、
 相干权重和数值延迟范围。

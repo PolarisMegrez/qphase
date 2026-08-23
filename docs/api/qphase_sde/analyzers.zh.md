@@ -199,6 +199,34 @@ CAM、目标幂指数或理论频率；平台缺失会中断路径，过大曲�
 诊断量。正式采样不确定度仍需逐轨迹充分统计或独立重复运行；仅凭当前平均 PSD 无法
 事后重建。
 
+可选的 `center.spectral_ridge` 模式会以每条数据驱动 retained ridge 为中心，分别执行
+相同的延迟—带宽平台检验：
+
+```yaml
+band_limited_carrier:
+  scan_param: omega_c
+  readout: trace
+  freq_min: -0.3
+  freq_max: -0.1
+  tracking_enabled: false
+  center:
+    maximum_neighbor_fraction: 0.45
+    spectral_ridge:
+      scan_param: omega_c
+      readouts: [trace]
+      minimum_prominence_fraction: 0.03
+      tracking_path_count: 2
+```
+
+算法先把 ridge 中心作为粗略本地振荡器频率，再执行相位解缠。每条 retained ridge
+输出一行。通带上限不超过最近多尺度 ridge 距离的 `maximum_neighbor_fraction`；该邻峰
+集合也包含最终关联时排除的候选。若仍有多个延迟—带宽平台，则选择最接近数据驱动
+ridge 中心者，全程不读取 CAM 或理论频率。`ridge_carrier_correction` 是相对 ridge
+中心的精细相位频率修正。
+
+`ridge_conditioned_uncertainty_upper` 保守相加条件载频诊断误差与 ridge 中心标准差。
+由于二者来自同一系综 PSD，该字段是诊断上界，不是 trajectory-bootstrap SEM。
+
 ## `spectral_ridge`
 
 该插件不假设 Lorentz 线型，也不使用模型目标频率。它构造一维 Gaussian scale

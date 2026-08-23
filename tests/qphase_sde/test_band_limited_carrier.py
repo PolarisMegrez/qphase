@@ -11,10 +11,12 @@ from qphase_sde.analyser.band_limited_carrier import (
     BandLimitedCarrierConfig,
     BandLimitedCarrierEstimate,
     BandLimitedCarrierPlatform,
+    RidgeConditionedCenterConfig,
     _select_platforms,
     estimate_band_limited_carrier,
     track_band_limited_carrier,
 )
+from qphase_sde.analyser.spectral_ridge import SpectralRidgeConfig
 from qphase_sde.result import SDEResult
 
 
@@ -73,6 +75,33 @@ def test_remote_peak_outside_search_band_does_not_bias_carrier():
     assert estimate.frequency == pytest.approx(-0.7, abs=2.0e-5)
 
 
+def test_fixed_ridge_center_recovers_selected_peak_in_multipeak_spectrum():
+    axis = np.linspace(-4.0, 4.0, 8192, endpoint=False)
+    spectrum = _lorentzian(axis, center=-0.7, hwhm=0.05, amplitude=2.0)
+    spectrum += _lorentzian(
+        axis,
+        center=0.8,
+        hwhm=0.06,
+        amplitude=6.0,
+        baseline=0.0,
+    )
+
+    estimate, _ = estimate_band_limited_carrier(
+        axis,
+        spectrum,
+        freq_min=-2.0,
+        freq_max=2.0,
+        fixed_center=-0.7,
+        fixed_bandwidth_max=0.25,
+        maximum_lag=100.0,
+    )
+
+    assert estimate.status == "ok"
+    assert estimate.peak_center == pytest.approx(-0.7)
+    assert estimate.frequency == pytest.approx(-0.7, abs=2e-5)
+    assert estimate.selected_half_bandwidth <= 0.25
+
+
 def test_analyzer_exports_trace_rows_and_bandwidth_audit(tmp_path):
     axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
     results: dict[str, SDEResult] = {}
@@ -111,6 +140,71 @@ def test_analyzer_exports_trace_rows_and_bandwidth_audit(tmp_path):
     assert (tmp_path / "carrier_candidates.csv").exists()
     assert (tmp_path / "carrier_platforms.csv").exists()
     assert payload["orientation"] == "phase_decreasing"
+
+
+def test_analyzer_outputs_each_retained_ridge_candidate(tmp_path):
+    axis = np.linspace(-3.0, 3.0, 8192, endpoint=False)
+    results: dict[str, SDEResult] = {}
+    for index, shift in enumerate((0.0, 0.04, 0.08)):
+        spectrum = _lorentzian(axis, center=-0.7 + shift, hwhm=0.045, amplitude=2.0)
+        spectrum += _lorentzian(
+            axis,
+            center=0.65 + shift,
+            hwhm=0.05,
+            amplitude=2.0,
+            baseline=0.0,
+        )
+        results[f"point_{index}"] = SDEResult(
+            analysis={
+                "psd": {
+                    "axis": axis,
+                    "psd": spectrum[:, None],
+                    "psd_sem": np.full((axis.size, 1), 0.001),
+                    "modes": [0],
+                    "orientation": "phase_decreasing",
+                }
+            },
+            meta={"params": {"epsilon": float(index)}},
+        )
+    ridge_config = SpectralRidgeConfig(
+        scan_param="epsilon",
+        readouts=[0],
+        freq_min=-1.2,
+        freq_max=1.2,
+        smoothing_scale_bins=[2.0, 4.0, 8.0],
+        minimum_prominence_fraction=0.01,
+        tracking_path_count=2,
+    )
+    analyzer = BandLimitedCarrierAnalyzer(
+        BandLimitedCarrierConfig(
+            scan_param="epsilon",
+            readout=0,
+            freq_min=-1.2,
+            freq_max=1.2,
+            maximum_lag=80.0,
+            center=RidgeConditionedCenterConfig(spectral_ridge=ridge_config),
+            output_dir=str(tmp_path),
+        )
+    )
+
+    payload = analyzer.analyze(results, NumpyBackend()).data_dict
+
+    rows = payload["carrier_rows"]
+    assert len(rows) >= 6
+    assert {row["epsilon"] for row in rows} == {0.0, 1.0, 2.0}
+    assert all("ridge_candidate_index" in row for row in rows)
+    assert all(row["tracked_status"] == "ridge_conditioned" for row in rows)
+    assert all(row["ridge_bandwidth_max"] > 0.0 for row in rows)
+    assert all(row["ridge_conditioned_uncertainty_upper"] > 0.0 for row in rows)
+    assert all(
+        abs(row["ridge_carrier_correction"]) < 2e-4
+        for row in rows
+        if row["status"] == "ok"
+    )
+    assert payload["carrier_rows"][0]["ridge_retention_tier"] in {
+        "strict",
+        "continuity_rescued",
+    }
 
 
 def test_config_requires_ordered_positive_bandwidth_family():

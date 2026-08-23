@@ -25,6 +25,7 @@ from .allan_variance import AllanVarianceAnalyzer, AllanVarianceConfig
 from .band_limited_carrier import (
     BandLimitedCarrierAnalyzer,
     BandLimitedCarrierConfig,
+    RidgeConditionedCenterConfig,
 )
 from .base import (
     Analyzer,
@@ -74,6 +75,7 @@ __all__ = [
     "AllanScalingConfig",
     "BandLimitedCarrierAnalyzer",
     "BandLimitedCarrierConfig",
+    "RidgeConditionedCenterConfig",
     "CoherenceMatrixAnalyzer",
     "CoherenceMatrixConfig",
     "CoherenceCarrierAnalyzer",

@@ -76,6 +76,11 @@ the shape and loader, and `SDEScanResult.load_dataset` restores the full view.
 The reported diagnostic uncertainty is conditional estimator sensitivity, not
 a trajectory SEM. The output metadata states this explicitly.
 
+In ridge-conditioned mode, all three tables additionally carry
+`ridge_candidate_index`, `ridge_retention_tier`, ridge-center uncertainty,
+nearest-ridge bandwidth limits, `ridge_carrier_correction`, and
+`ridge_conditioned_uncertainty_upper`. There can be several rows per scan point.
+
 `finite_delay_carrier` writes `finite_delay_carrier.csv`, one row per scan point,
 readout, and detector rate. It contains the measurement name and kind, direct
 detector carrier, its zero-delay SDE limit, finite-delay correction, coherent
