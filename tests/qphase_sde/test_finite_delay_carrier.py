@@ -62,3 +62,44 @@ def test_finite_delay_carrier_analyzer_exports_scan_rows(tmp_path: Path):
         atol=2e-5,
     )
     assert (tmp_path / "finite_delay_carrier.csv").exists()
+
+
+def test_finite_delay_carrier_analyzer_evaluates_multiple_readouts():
+    axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
+    spectrum = np.column_stack(
+        [
+            np.exp(-0.5 * ((axis + 0.4) / 0.06) ** 2),
+            np.exp(-0.5 * ((axis - 0.7) / 0.08) ** 2),
+        ]
+    )
+    result = SDEResult(
+        analysis={
+            "psd": {
+                "axis": axis,
+                "psd": spectrum,
+                "modes": [0, 1],
+                "orientation": "phase_decreasing",
+            }
+        },
+        meta={"params": {"epsilon": 0.0}},
+    )
+    analyzer = FiniteDelayCarrierAnalyzer(
+        FiniteDelayCarrierConfig(
+            scan_param="epsilon",
+            readouts=[0, 1],
+            detector_rates=[0.1],
+        )
+    )
+
+    payload = analyzer.analyze({"point": result}, NumpyBackend()).data_dict
+
+    assert [row["measurement_name"] for row in payload["carrier_rows"]] == [
+        "mode_0",
+        "mode_1",
+    ]
+    np.testing.assert_allclose(
+        [row["frequency"] for row in payload["carrier_rows"]],
+        [-0.4, 0.7],
+        atol=2e-5,
+    )
+    assert payload["carrier_rows"][0]["measurement_kind"] == "bare_mode"

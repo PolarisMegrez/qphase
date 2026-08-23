@@ -76,9 +76,16 @@ the shape and loader, and `SDEScanResult.load_dataset` restores the full view.
 The reported diagnostic uncertainty is conditional estimator sensitivity, not
 a trajectory SEM. The output metadata states this explicitly.
 
-`finite_delay_carrier` writes `finite_delay_carrier.csv`, one row per scan point
-and detector rate. It contains the direct detector carrier, its zero-delay SDE
-limit, finite-delay correction, coherent weight, and numerical lag range.
+`finite_delay_carrier` writes `finite_delay_carrier.csv`, one row per scan point,
+readout, and detector rate. It contains the measurement name and kind, direct
+detector carrier, its zero-delay SDE limit, finite-delay correction, coherent
+weight, and numerical lag range.
+
+`spectral_ridge` writes `spectral_ridge.csv`, one selected ridge per scan point
+and readout, and `spectral_ridge_candidates.csv`, the complete scale-supported
+candidate set. The selected table includes peak frequency, local and scale
+uncertainty, curvature diagnostics, PSD-SEM confidence bounds, relative-height
+plateau bounds, path-selection index, and status.
 
 ## Allan output
 

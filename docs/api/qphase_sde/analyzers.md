@@ -229,6 +229,36 @@ trajectory SEM. `diagnostic_uncertainty` combines these two conditional terms.
 Formal sampling uncertainty still requires per-trajectory sufficient
 statistics or repeated runs; the current PSD mean cannot reconstruct it.
 
+## `spectral_ridge`
+
+Extracts local PSD maxima without assuming a Lorentzian or using a model target.
+The analyser constructs a one-dimensional Gaussian scale space, refines maxima
+with local quadratic fits, groups maxima supported at multiple scales, and can
+track one ridge across a parameter scan using only peak evidence and frequency
+continuity.
+
+```yaml
+analyser:
+  spectral_ridge:
+    scan_param: omega_c
+    readouts: [0, 1, 2, trace]
+    freq_min: -0.3
+    freq_max: -0.1
+    tracking_gap_factor: 1.5
+```
+
+`tracking_gap_factor` is opt-in. It splits path tracking at an explicitly large
+scan-axis gap, such as an omitted bifurcation point; leave it unset for general
+irregular or logarithmic scans. Ridge selection never uses a CAM frequency.
+
+The output separates local peak-location uncertainty, smoothing-scale drift,
+curvature and curvature significance, a PSD-SEM confidence interval, and the
+descriptive relative-height plateau. `frequency_bin_covariance: diagonal` uses
+the usual asymptotic diagonal-bin approximation for an unwindowed periodogram;
+`conservative` treats all frequency-bin errors as fully correlated. Trace SEM
+always uses a conservative upper bound over recorded modes because cross-mode
+PSD covariance is not saved.
+
 ## `finite_delay_carrier`
 
 Computes a finite-bandwidth detector carrier directly from the complete saved
@@ -245,10 +275,16 @@ Omega(kappa) = integral exp(-2*kappa*tau)
 analyser:
   finite_delay_carrier:
     scan_param: omega_c
-    readout: trace
+    readouts: [0, 1, 2, trace]
     detector_rates: [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0]
     maximum_lag: 4096.0
 ```
+
+`readouts` evaluates several recorded bare modes and the incoherent trace in a
+single dataset traversal. The singular `readout` field remains available for a
+single selection. Coherent superpositions require cross-spectral information;
+use the integration-time `coherence_carrier.channels` interface when the raw
+trajectory is available.
 
 This remains one operational detector observable when several poles interfere;
 it does not select one pole or assume a Lorentzian. Increasing `kappa`
@@ -259,8 +295,9 @@ CAM Rayleigh quotient when moment closure fails.
 The corresponding CAM postprocessor uses the same rates and all closed-CAM
 pole residues. Its zero-delay limit is exactly the generalized Rayleigh
 quotient. `finite_delay_carrier.csv` stores the detector rate, carrier,
-instantaneous limit, finite-delay correction, coherent weight, and numerical
-lag range. Sampling uncertainty is unavailable from an ensemble-mean PSD alone.
+measurement name and kind, instantaneous limit, finite-delay correction,
+coherent weight, and numerical lag range. Sampling uncertainty is unavailable
+from an ensemble-mean PSD alone.
 
 ## `coherence_matrix`
 

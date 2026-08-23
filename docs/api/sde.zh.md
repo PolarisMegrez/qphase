@@ -213,3 +213,6 @@ Lorentz 线型时，自适应估计经过频带筛选的长时 `G^(1)` 载频，
 
 `finite_delay_carrier` 是互补的探测器定义量：它用指数探测器权重积分完整重建
 coherence，不选择单一 pole；高探测速率极限为 direct SDE instantaneous carrier。
+
+当实验可观测量定义为 PSD 最大值而非相干相位平均时，可使用不依赖模型的
+`spectral_ridge`。它不强加单峰线型，而是报告尺度稳定性、曲率和峰位区间。

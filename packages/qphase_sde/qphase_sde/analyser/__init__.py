@@ -56,6 +56,7 @@ from .quadratic_moments import (
     QuadraticMomentConfig,
     QuadraticObservableSpec,
 )
+from .spectral_ridge import SpectralRidgeAnalyzer, SpectralRidgeConfig
 from .trajectory_diagnostics import (
     TrajectoryDiagnostics,
     TrajectoryDiagnosticsConfig,
@@ -85,6 +86,8 @@ __all__ = [
     "QuadraticMomentAnalyzer",
     "QuadraticMomentConfig",
     "QuadraticObservableSpec",
+    "SpectralRidgeAnalyzer",
+    "SpectralRidgeConfig",
     "DistAnalyzer",
     "DistAnalyzerConfig",
     "DEFAULT_FREQUENCY_ORIENTATION",

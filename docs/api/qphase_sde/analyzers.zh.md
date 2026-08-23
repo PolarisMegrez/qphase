@@ -199,6 +199,31 @@ CAM、目标幂指数或理论频率；平台缺失会中断路径，过大曲�
 诊断量。正式采样不确定度仍需逐轨迹充分统计或独立重复运行；仅凭当前平均 PSD 无法
 事后重建。
 
+## `spectral_ridge`
+
+该插件不假设 Lorentz 线型，也不使用模型目标频率。它构造一维 Gaussian scale
+space，以局部二次拟合精化峰位，将多个平滑尺度共同支持的峰聚类为候选谱脊，并可仅
+依据峰证据和频率连续性在参数扫描中跟踪一条路径。
+
+```yaml
+analyser:
+  spectral_ridge:
+    scan_param: omega_c
+    readouts: [0, 1, 2, trace]
+    freq_min: -0.3
+    freq_max: -0.1
+    tracking_gap_factor: 1.5
+```
+
+`tracking_gap_factor` 必须显式启用，用于在遗漏分岔点等显著扫描轴缺口处分段；普通
+不规则或对数扫描应保持未设置。谱脊选择绝不读取 CAM 频率。
+
+输出分别记录局部峰位传播误差、跨平滑尺度漂移、曲率及其显著性、基于 PSD SEM 的
+峰位置信区间，以及描述性的相对峰高平台。`frequency_bin_covariance: diagonal` 对无窗
+periodogram 使用常见的频率 bin 渐近对角近似；`conservative` 将所有频率 bin 误差视为
+完全相关。由于结果未保存跨 mode PSD 协方差，trace SEM 始终采用各 mode SEM 之和的
+保守上界。
+
 ## `finite_delay_carrier`
 
 该插件从完整保存 PSD 重建一阶相干函数 `G(tau)`，并对探测器速率 `kappa` 计算
@@ -213,10 +238,14 @@ Omega(kappa) = integral exp(-2*kappa*tau)
 analyser:
   finite_delay_carrier:
     scan_param: omega_c
-    readout: trace
+    readouts: [0, 1, 2, trace]
     detector_rates: [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0]
     maximum_lag: 4096.0
 ```
+
+`readouts` 可在一次 dataset 遍历中同时计算多个已记录裸 mode 和非相干 trace；仅选择
+一个读出时仍可使用单数形式 `readout`。相干叠加通道需要交叉谱信息；若积分时仍有原始
+轨迹，应使用 `coherence_carrier.channels` 接口。
 
 即使多个 pole 相互干涉，该量仍是完整的有限带宽探测器载频，不要求选定某一 pole
 或假定 Lorentz 线型。增大 `kappa` 时，direct SDE 结果趋于真实 SDE instantaneous
@@ -224,8 +253,8 @@ coherence carrier；矩闭合失效时，该极限一般不等于 CAM Rayleigh �
 
 对应 CAM postprocessor 使用相同速率和全部闭合 CAM pole residue，其零延迟极限
 严格等于 generalized Rayleigh quotient。`finite_delay_carrier.csv` 保存探测器速率、
-载频、瞬时极限、有限延迟修正、相干权重和数值延迟范围。仅凭系综平均 PSD 无法得到
-正式 sampling uncertainty。
+载频、读出名称与类型、瞬时极限、有限延迟修正、相干权重和数值延迟范围。仅凭系综
+平均 PSD 无法得到正式 sampling uncertainty。
 
 ## `coherence_matrix`
 

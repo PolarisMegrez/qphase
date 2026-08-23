@@ -14,7 +14,7 @@ package for QPhase. It provides:
 *   Integrator plugins (`euler_maruyama`, `cayley_maruyama`, `milstein`, `srk`).
 *   SDE model implementations (`vdp_2mode`, `kerr_2mode`, `crosskerr_2mode`, `kerr_3mode`).
 *   Analyzer plugins (`psd`, `dist`, `pdist`, `coherence_matrix`,
-    `moment_statistics`, `quadratic_moments`, `finite_delay_carrier`,
+    `moment_statistics`, `quadratic_moments`, `spectral_ridge`, `finite_delay_carrier`,
     `trajectory_diagnostics`, `allan_variance`,
     `allan_scaling`, `lorentz_fitter`).
 

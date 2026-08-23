@@ -214,3 +214,8 @@ generic export utilities live in core.
 integrates the complete reconstructed coherence with exponential detector
 weights and does not select one pole. Its high-rate limit is the direct SDE
 instantaneous carrier.
+
+`spectral_ridge` is the model-independent alternative when the experimental
+observable is the PSD maximum rather than a coherence phase average. It reports
+scale stability, curvature, and peak-location intervals instead of imposing a
+single-peak line shape.

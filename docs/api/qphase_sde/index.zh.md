@@ -13,7 +13,7 @@ nav_order: 2
 *   积分器插件（`euler_maruyama`、`cayley_maruyama`、`milstein`、`srk`）。
 *   SDE 模型实现（`vdp_2mode`、`kerr_2mode`、`crosskerr_2mode`、`kerr_3mode`）。
 *   分析器插件（`psd`、`dist`、`pdist`、`coherence_matrix`、
-    `moment_statistics`、`quadratic_moments`、`finite_delay_carrier`、
+    `moment_statistics`、`quadratic_moments`、`spectral_ridge`、`finite_delay_carrier`、
     `trajectory_diagnostics`、`allan_variance`、
     `allan_scaling`、`lorentz_fitter`）。
 

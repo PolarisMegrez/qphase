@@ -36,7 +36,14 @@ class FiniteDelayCarrierConfig(PluginConfigBase):
     psd_key: str = Field("psd", description="Analysis key containing the PSD")
     readout: int | Literal["trace"] = Field(
         "trace",
-        description="Physical mode index or incoherent trace over recorded modes",
+        description="Legacy single physical mode or incoherent trace selection",
+    )
+    readouts: list[int | Literal["trace"]] | None = Field(
+        None,
+        description=(
+            "Physical mode indices and/or incoherent trace selections evaluated in "
+            "one dataset pass; overrides readout when provided"
+        ),
     )
     detector_rates: list[float] = Field(
         default_factory=lambda: [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0],
@@ -69,9 +76,19 @@ class FiniteDelayCarrierConfig(PluginConfigBase):
 
     @model_validator(mode="after")
     def validate_readout(self) -> FiniteDelayCarrierConfig:
-        if isinstance(self.readout, int) and self.readout < 0:
-            raise ValueError("readout mode must be non-negative")
+        selections = self.resolved_readouts()
+        if not selections:
+            raise ValueError("readouts must not be empty")
+        if any(isinstance(value, int) and value < 0 for value in selections):
+            raise ValueError("readout modes must be non-negative")
+        keys = [str(value) for value in selections]
+        if len(keys) != len(set(keys)):
+            raise ValueError("readouts must contain unique selections")
         return self
+
+    def resolved_readouts(self) -> list[int | Literal["trace"]]:
+        """Return the ordered readouts requested for one dataset traversal."""
+        return list(self.readouts) if self.readouts is not None else [self.readout]
 
 
 def finite_delay_carrier_from_spectrum(
@@ -188,52 +205,69 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
         rows: list[dict[str, Any]] = []
         reference_orientation: FrequencyOrientation | None = None
         rates = np.asarray(config.detector_rates, dtype=float)
+        readouts = config.resolved_readouts()
         for item in loaded:
             params = item.meta.get("params", {})
             if config.scan_param not in params:
                 raise QPhaseError(
                     f"input is missing scan parameter {config.scan_param!r}"
                 )
-            axis, spectrum, payload = _extract_spectrum(
-                item.analysis, config.psd_key, config.readout
-            )
-            orientation = resolve_frequency_orientation(payload)
-            if reference_orientation is None:
-                reference_orientation = orientation
-            elif orientation != reference_orientation:
-                raise QPhaseError("PSD inputs use different frequency orientations")
-            result = finite_delay_carrier_from_spectrum(
-                axis,
-                spectrum,
-                rates,
-                maximum_lag=config.maximum_lag,
-                tail_time_constants=config.tail_time_constants,
-            )
-            frequencies = np.asarray(result["frequency"], dtype=float)
-            coherent_weights = np.asarray(result["coherent_weight"], dtype=float)
-            lag_ends = np.asarray(result["lag_end"], dtype=float)
-            sample_counts = np.asarray(result["sample_count"], dtype=int)
-            instantaneous = float(result["instantaneous_frequency"])
-            for rate_index, rate in enumerate(rates):
-                rows.append(
-                    {
-                        "job_name": item.job_name,
-                        config.scan_param: params[config.scan_param],
-                        "readout": config.readout,
-                        "detector_rate": float(rate),
-                        "frequency": float(frequencies[rate_index]),
-                        "instantaneous_frequency": instantaneous,
-                        "finite_delay_correction": float(
-                            frequencies[rate_index] - instantaneous
-                        ),
-                        "coherent_weight": float(coherent_weights[rate_index]),
-                        "lag_end": float(lag_ends[rate_index]),
-                        "sample_count": int(sample_counts[rate_index]),
-                        "sample_lag": float(result["sample_lag"]),
-                        "orientation": orientation,
-                    }
+            for readout in readouts:
+                axis, spectrum, payload = _extract_spectrum(
+                    item.analysis, config.psd_key, readout
                 )
-        rows.sort(key=lambda row: (float(row[config.scan_param]), row["detector_rate"]))
+                orientation = resolve_frequency_orientation(payload)
+                if reference_orientation is None:
+                    reference_orientation = orientation
+                elif orientation != reference_orientation:
+                    raise QPhaseError("PSD inputs use different frequency orientations")
+                result = finite_delay_carrier_from_spectrum(
+                    axis,
+                    spectrum,
+                    rates,
+                    maximum_lag=config.maximum_lag,
+                    tail_time_constants=config.tail_time_constants,
+                )
+                frequencies = np.asarray(result["frequency"], dtype=float)
+                coherent_weights = np.asarray(result["coherent_weight"], dtype=float)
+                lag_ends = np.asarray(result["lag_end"], dtype=float)
+                sample_counts = np.asarray(result["sample_count"], dtype=int)
+                instantaneous = float(result["instantaneous_frequency"])
+                for rate_index, rate in enumerate(rates):
+                    rows.append(
+                        {
+                            "job_name": item.job_name,
+                            config.scan_param: params[config.scan_param],
+                            "readout": readout,
+                            "measurement_name": (
+                                "trace" if readout == "trace" else f"mode_{readout}"
+                            ),
+                            "measurement_kind": (
+                                "incoherent_trace"
+                                if readout == "trace"
+                                else "bare_mode"
+                            ),
+                            "detector_rate": float(rate),
+                            "frequency": float(frequencies[rate_index]),
+                            "instantaneous_frequency": instantaneous,
+                            "finite_delay_correction": float(
+                                frequencies[rate_index] - instantaneous
+                            ),
+                            "coherent_weight": float(coherent_weights[rate_index]),
+                            "lag_end": float(lag_ends[rate_index]),
+                            "sample_count": int(sample_counts[rate_index]),
+                            "sample_lag": float(result["sample_lag"]),
+                            "orientation": orientation,
+                        }
+                    )
+        readout_order = {str(readout): index for index, readout in enumerate(readouts)}
+        rows.sort(
+            key=lambda row: (
+                float(row[config.scan_param]),
+                readout_order[str(row["readout"])],
+                row["detector_rate"],
+            )
+        )
         written: dict[str, str] = {}
         output_dir = getattr(self, "output_dir", None) or config.output_dir
         if output_dir is not None and "finite_delay_carrier.csv" in config.export:
@@ -257,7 +291,8 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
             },
             meta={
                 "scan_param": config.scan_param,
-                "readout": config.readout,
+                "readout": readouts[0] if len(readouts) == 1 else None,
+                "readouts": readouts,
                 "definition": (
                     "integral w Im(conj(G) dG/dtau) / integral w |G|^2; "
                     "w=exp(-2*kappa*tau)"
