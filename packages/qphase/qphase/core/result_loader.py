@@ -74,6 +74,12 @@ class GenericResult:
 def load_result(job_name: str, job_dir: Path) -> ResultProtocol:
     """Attempt to load a result from a job directory.
 
+    v3 artifact manifests (``artifact_manifest.json`` with
+    ``schema_version="qphase.artifact/3"``) are the authoritative restore
+    entry: products are reopened as lazily-backed typed datasets, without
+    filename guessing and without ``allow_pickle``. Directories without a v3
+    manifest fall back to legacy filename-based loading.
+
     Parameters
     ----------
     job_name : str
@@ -94,6 +100,29 @@ def load_result(job_name: str, job_dir: Path) -> ResultProtocol:
     """
     if not job_dir.exists():
         raise QPhaseError(f"Job directory not found: {job_dir}")
+
+    manifest_path = job_dir / "artifact_manifest.json"
+    if manifest_path.exists():
+        try:
+            import json
+
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise QPhaseError(
+                f"failed to read artifact manifest {manifest_path}: {exc}"
+            ) from exc
+        if raw.get("schema_version") == "qphase.artifact/3":
+            from ..data.store import load_products
+
+            products = load_products(job_dir)
+            return GenericResult(
+                products,
+                {
+                    "artifact_id": raw.get("artifact_id"),
+                    "products": sorted(products),
+                    "provenance": raw.get("provenance", {}),
+                },
+            )
 
     # Potential filenames to check
     # 1. {job_name}.npz (Default for SDE)

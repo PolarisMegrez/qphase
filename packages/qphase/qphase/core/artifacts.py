@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .dataset import DatasetResultProtocol, DatasetSaveReport, estimate_result_nbytes
 from .errors import QPhaseRuntimeError
 from .protocols import ResultProtocol
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from ..data.datasets import Dataset
+    from ..data.store import ArtifactManifestV3
 
 
 class ArtifactStore:
@@ -17,6 +23,39 @@ class ArtifactStore:
     def __init__(self, job_dir: Path, config: Any) -> None:
         self.job_dir = job_dir
         self.config = config
+
+    def save_products(
+        self,
+        products: Mapping[str, Dataset],
+        *,
+        provenance: Mapping[str, Any] | None = None,
+        parents: Sequence[str] = (),
+        artifact_id: str | None = None,
+    ) -> ArtifactManifestV3:
+        """Persist typed data products and write the v3 artifact manifest.
+
+        This is the typed counterpart of :meth:`save_result`: products are
+        stored through the manifest v3 pipeline (native dtypes, per-chunk
+        checksums, lazy restore) using the store's shard configuration.
+        """
+        # Imported lazily: core must not depend on the data layer at module
+        # import time (the data layer already depends on core.utils).
+        from ..data.store import save_products
+
+        return save_products(
+            self.job_dir,
+            products,
+            provenance=provenance,
+            parents=parents,
+            artifact_id=artifact_id,
+            shard_target_bytes=int(self.config.shard_target_mib * (1 << 20)),
+        )
+
+    def load_products(self) -> dict[str, Dataset]:
+        """Reopen this job's artifact directory as lazily-backed datasets."""
+        from ..data.store import load_products
+
+        return load_products(self.job_dir)
 
     def save_result(self, result: ResultProtocol, name: str) -> Path:
         before = set(self.job_dir.rglob("*"))

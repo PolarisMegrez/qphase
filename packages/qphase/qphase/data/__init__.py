@@ -20,6 +20,10 @@ datasets
     Typed dataset containers for the three data kinds.
 artifact
     Artifact references and materializers.
+store
+    Artifact manifest v3 and the storage adapter contract.
+npz
+    NPZ 2.x storage adapter with lazy sharded handles.
 graph
     Typed product dependency graphs.
 """
@@ -64,13 +68,27 @@ from .schema import (
     VariableConstraints,
     VariableSchema,
 )
+from .store import (
+    ARTIFACT_SCHEMA_VERSION,
+    ArtifactManifestV3,
+    ChunkRecord,
+    ProductEntry,
+    ProductStorage,
+    StorageAdapterProtocol,
+    load_products,
+    register_adapter,
+    save_products,
+)
 
 __all__ = [
+    "ARTIFACT_SCHEMA_VERSION",
     "PRODUCT_SCHEMA_VERSION",
+    "ArtifactManifestV3",
     "ArtifactRef",
     "AxisRole",
     "AxisSchema",
     "BackendArrayHandle",
+    "ChunkRecord",
     "CopyPolicy",
     "DataBacking",
     "DataHandleProtocol",
@@ -85,10 +103,12 @@ __all__ = [
     "HostArrayHandle",
     "LeaseScope",
     "ProductDeclaration",
+    "ProductEntry",
     "ProductGraph",
     "ProductNode",
     "ProductRequirement",
     "ProductSchema",
+    "ProductStorage",
     "ReadOnlyArrayView",
     "RuntimeProductBacking",
     "SamplingBasisSchema",
@@ -96,9 +116,13 @@ __all__ = [
     "SpectralDataset",
     "SpectralQuantity",
     "StatisticsDataset",
+    "StorageAdapterProtocol",
     "TimeSeriesDataset",
     "UncertaintySchema",
     "VariableConstraints",
     "VariableSchema",
+    "load_products",
+    "register_adapter",
+    "save_products",
     "validate_backing",
 ]

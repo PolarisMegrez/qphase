@@ -375,10 +375,12 @@ class Dataset:
         Integer selection drops the axis from the schema (and from the dims
         of every variable spanning it); slices keep the axis with an updated
         size. Views share memory with the source buffers and stay on their
-        device. Sampling bases whose source axis is dropped are dropped as
-        well; uncertainties referencing a dropped basis raise instead of
-        being silently discarded. Artifact-backed datasets must be
-        materialized first.
+        device. Handles implementing ``materialize_selection(indexers)``
+        (e.g. lazy storage handles) are asked for a partial read instead of
+        a full materialization. Sampling bases whose source axis is dropped
+        are dropped as well; uncertainties referencing a dropped basis raise
+        instead of being silently discarded. Artifact-backed datasets must
+        be materialized first.
         """
         handles = self._runtime_handles()
         axes_by_name = {axis.name: axis for axis in self._schema.axes}
@@ -416,7 +418,13 @@ class Dataset:
                 selection[dim] if dim in selection else slice(None)
                 for dim in variable.dims
             )
-            sub = handle.materialize()[indexers]
+            selection_reader = getattr(handle, "materialize_selection", None)
+            if callable(selection_reader):
+                # Lazy handles (e.g. storage-backed) read only the chunks the
+                # selection touches instead of the full payload.
+                sub = selection_reader(indexers)
+            else:
+                sub = handle.materialize()[indexers]
             if isinstance(sub, np.generic):
                 # All-int selection on a host array yields a NumPy scalar;
                 # normalize to a 0-d array so handles can expose views.
