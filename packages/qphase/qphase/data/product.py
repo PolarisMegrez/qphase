@@ -103,6 +103,11 @@ def validate_backing(
 
     for variable in schema.variables:
         handle = handles[variable.name]
+        if handle.variable_schema != variable:
+            raise ValueError(
+                f"variable {variable.name!r}: handle variable_schema does not "
+                "match the product schema"
+            )
         if np.dtype(handle.dtype) != np.dtype(variable.dtype):
             raise ValueError(
                 f"variable {variable.name!r}: handle dtype {handle.dtype!r} "

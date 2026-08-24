@@ -24,6 +24,7 @@ from qphase.data import (
     AxisSchema,
     DataKind,
     ProductSchema,
+    SamplingBasisSchema,
     UncertaintySchema,
     VariableSchema,
 )
@@ -67,9 +68,9 @@ COHERENCE_FREQUENCY_PRODUCT = ProductSchema(
     kind=DataKind.STATISTICS,
     axes=[
         AxisSchema(name="scan", role=AxisRole.PARAMETER),
-        AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
         AxisSchema(name="channel", role=AxisRole.COMPONENT),
     ],
+    sampling_bases=[SamplingBasisSchema(name="trajectory")],
     variables=[
         VariableSchema(
             name="frequency",
@@ -83,7 +84,7 @@ COHERENCE_FREQUENCY_PRODUCT = ProductSchema(
         UncertaintySchema(
             target="frequency",
             kind="sample_std",
-            independent_unit="trajectory",
+            sampling_basis="trajectory",
             covariance="real",
             scope="sampling",
         )

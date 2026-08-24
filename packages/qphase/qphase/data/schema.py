@@ -2,7 +2,8 @@
 ---------------------------------------------------------
 Defines the machine-readable schema language of typed data products:
 ``AxisSchema``, ``VariableSchema``, ``UncertaintySchema`` and
-``ProductSchema``. Schemas are JSON-serializable, strictly extra-forbid, and
+``SamplingBasisSchema`` and ``ProductSchema``. Schemas are JSON-serializable,
+strictly extra-forbid, and
 carry a stable fingerprint. Shapes may be partially unknown at plan time
 (``AxisSchema.size is None``) but must be closed before materialization.
 
@@ -18,6 +19,8 @@ AxisRole
     Statistical role of an axis (parameter/realization/coordinate/...).
 AxisSchema
     Named axis with optional size and coordinate description.
+SamplingBasisSchema
+    Statistical source reduced out of the retained payload axes.
 VariableSchema
     Named variable with dtype, value domain, dims and constraints.
 VariableConstraints
@@ -47,14 +50,15 @@ __all__ = [
     "AxisRole",
     "AxisSchema",
     "ProductSchema",
+    "SamplingBasisSchema",
     "SpectralAttributes",
     "UncertaintySchema",
     "VariableConstraints",
     "VariableSchema",
 ]
 
-#: Schema identifier of the proposed (not yet approved) product contract.
-PRODUCT_SCHEMA_VERSION = "qphase.product/1"
+#: Schema identifier frozen by the approved qphase 2.0 Phase 0 contract.
+PRODUCT_SCHEMA_VERSION: Literal["qphase.product/1"] = "qphase.product/1"
 
 
 class AxisRole(str, Enum):
@@ -119,6 +123,42 @@ class AxisSchema(BaseModel):
         return True
 
 
+class SamplingBasisSchema(BaseModel):
+    """Statistical source used by an uncertainty estimator.
+
+    Product axes describe dimensions retained by at least one payload variable.
+    A sampling basis instead describes realizations that have already been
+    reduced away, such as trajectories contributing to a mean PSD. If the
+    realizations remain in the payload, ``source_axis`` references their
+    ``role=realization`` axis. Otherwise a concrete product closes the basis
+    with either a fixed ``count`` or an integer ``count_variable``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    source_axis: str | None = None
+    count: int | None = Field(default=None, gt=0)
+    count_variable: str | None = None
+
+    @model_validator(mode="after")
+    def _check_count_sources(self) -> SamplingBasisSchema:
+        if self.count is not None and self.count_variable is not None:
+            raise ValueError(
+                "sampling basis must use either count or count_variable, not both"
+            )
+        return self
+
+    @property
+    def is_closed(self) -> bool:
+        """Return whether the realized sample count can be determined."""
+        return (
+            self.source_axis is not None
+            or self.count is not None
+            or self.count_variable is not None
+        )
+
+
 class VariableConstraints(BaseModel):
     """Value and layout constraints of a variable."""
 
@@ -161,7 +201,7 @@ class VariableSchema(BaseModel):
     @classmethod
     def _check_dtype(cls, value: str) -> str:
         try:
-            dtype = np.dtype(value)
+            dtype: np.dtype[Any] = np.dtype(value)
         except TypeError as exc:
             raise ValueError(f"unparseable dtype {value!r}") from exc
         if dtype.hasobject:
@@ -177,7 +217,7 @@ class VariableSchema(BaseModel):
 
     @model_validator(mode="after")
     def _check_domain_dtype_consistency(self) -> VariableSchema:
-        dtype = np.dtype(self.dtype)
+        dtype: np.dtype[Any] = np.dtype(self.dtype)
         if self.value_domain == "real" and dtype.kind == "c":
             raise ValueError(
                 f"variable {self.name!r} declares value_domain 'real' with a "
@@ -202,8 +242,9 @@ class UncertaintySchema(BaseModel):
     """Uncertainty attached to one variable of the same product.
 
     Complex variables must declare an explicit covariance representation; a
-    bare complex "std" is not a valid uncertainty. ``independent_unit`` names
-    the *realization* axis the estimate counts over. Covariance payloads are
+    bare complex "std" is not a valid uncertainty. ``sampling_basis`` names
+    the retained or reduced realization source the estimate counts over.
+    Covariance payloads are
     themselves typed variables (or a separate covariance product) referenced
     by ``data_variable`` — never metadata dicts.
     """
@@ -214,9 +255,9 @@ class UncertaintySchema(BaseModel):
     kind: Literal[
         "sample_std", "sem", "confidence_interval", "covariance", "other"
     ]
-    independent_unit: str = Field(
+    sampling_basis: str = Field(
         default="",
-        description="Realization axis the uncertainty counts over.",
+        description="Sampling basis the uncertainty counts over.",
     )
     covariance: Literal["real", "real_imag", "magnitude_phase"] | None = None
     scope: str | None = Field(
@@ -283,6 +324,7 @@ class ProductSchema(BaseModel):
     schema_version: Literal["qphase.product/1"] = PRODUCT_SCHEMA_VERSION
     kind: DataKind
     axes: list[AxisSchema] = Field(default_factory=list)
+    sampling_bases: list[SamplingBasisSchema] = Field(default_factory=list)
     variables: list[VariableSchema] = Field(min_length=1)
     uncertainties: list[UncertaintySchema] = Field(default_factory=list)
     attributes: dict[str, Any] = Field(default_factory=dict)
@@ -304,6 +346,9 @@ class ProductSchema(BaseModel):
         if len(axis_names) != len(self.axes):
             raise ValueError("axis names must be unique")
         axis_roles = {axis.name: axis.role for axis in self.axes}
+        sampling_basis_names = {basis.name for basis in self.sampling_bases}
+        if len(sampling_basis_names) != len(self.sampling_bases):
+            raise ValueError("sampling basis names must be unique")
         variable_names = {variable.name for variable in self.variables}
         if len(variable_names) != len(self.variables):
             raise ValueError("variable names must be unique")
@@ -327,6 +372,45 @@ class ProductSchema(BaseModel):
                         f"variable {variable.name!r}: a Hermitian layout "
                         "requires at least two component/index dims"
                     )
+        variable_by_name = {variable.name: variable for variable in self.variables}
+        retained_dims = {dim for variable in self.variables for dim in variable.dims}
+        unused_realization_axes = {
+            name
+            for name, role in axis_roles.items()
+            if role == AxisRole.REALIZATION and name not in retained_dims
+        }
+        if unused_realization_axes:
+            raise ValueError(
+                "realization axes must be retained by at least one variable; "
+                f"reduced realizations belong in sampling_bases: "
+                f"{sorted(unused_realization_axes)}"
+            )
+
+        for basis in self.sampling_bases:
+            if basis.source_axis is not None:
+                role = axis_roles.get(basis.source_axis)
+                if role is None:
+                    raise ValueError(
+                        f"sampling basis {basis.name!r} references unknown source "
+                        f"axis {basis.source_axis!r}"
+                    )
+                if role != AxisRole.REALIZATION:
+                    raise ValueError(
+                        f"sampling basis {basis.name!r} source axis "
+                        f"{basis.source_axis!r} is not a realization axis"
+                    )
+            if basis.count_variable is not None:
+                count_variable = variable_by_name.get(basis.count_variable)
+                if count_variable is None:
+                    raise ValueError(
+                        f"sampling basis {basis.name!r} references unknown count "
+                        f"variable {basis.count_variable!r}"
+                    )
+                if np.dtype(count_variable.dtype).kind not in "iu":
+                    raise ValueError(
+                        f"sampling basis {basis.name!r} count variable must have "
+                        "an integer dtype"
+                    )
         domains = {v.name: v.value_domain for v in self.variables}
         for uncertainty in self.uncertainties:
             if uncertainty.target not in variable_names:
@@ -346,19 +430,17 @@ class ProductSchema(BaseModel):
                     f"uncertainty of real variable {uncertainty.target!r} "
                     "must use the 'real' covariance representation"
                 )
-            if uncertainty.independent_unit:
-                role = axis_roles.get(uncertainty.independent_unit)
-                if role is None:
+            if uncertainty.sampling_basis:
+                if uncertainty.sampling_basis not in sampling_basis_names:
                     raise ValueError(
-                        f"uncertainty of {uncertainty.target!r} counts over "
-                        f"unknown axis {uncertainty.independent_unit!r}"
+                        f"uncertainty of {uncertainty.target!r} references "
+                        f"unknown sampling basis {uncertainty.sampling_basis!r}"
                     )
-                if role != AxisRole.REALIZATION:
-                    raise ValueError(
-                        f"uncertainty of {uncertainty.target!r} counts over "
-                        f"{uncertainty.independent_unit!r}, which is not a "
-                        "realization axis"
-                    )
+            elif uncertainty.scope == "sampling":
+                raise ValueError(
+                    f"sampling uncertainty of {uncertainty.target!r} must "
+                    "reference a sampling basis"
+                )
             if (
                 uncertainty.data_variable is not None
                 and uncertainty.data_variable not in variable_names
@@ -390,7 +472,9 @@ class ProductSchema(BaseModel):
     @property
     def is_closed(self) -> bool:
         """Return True when every axis is closed (materializable)."""
-        return all(axis.is_closed for axis in self.axes)
+        return all(axis.is_closed for axis in self.axes) and all(
+            basis.is_closed for basis in self.sampling_bases
+        )
 
     def fingerprint(self) -> str:
         """Return the stable content hash of this schema."""

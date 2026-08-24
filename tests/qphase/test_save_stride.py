@@ -88,7 +88,8 @@ def test_save_stride_preserves_peak(vdp_auto_workflow_path, temp_project, save_s
     linewidth = float(row["linewidth"])
     r2 = float(row["R2"])
 
-    expected_center = -0.08574307
+    # The default phase_decreasing convention maps exp(-i*omega*t) to +omega.
+    expected_center = 0.08574307
     expected_linewidth = 3.54044345e-03
 
     assert np.isclose(center, expected_center, atol=1e-3), (

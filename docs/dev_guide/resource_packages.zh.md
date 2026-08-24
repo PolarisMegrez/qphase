@@ -4,10 +4,9 @@ description: 资源包契约
 
 # 资源包契约
 
-!!! warning "提案 —— qphase 2.0"
-    本页描述的契约是 **提案性、实验性**设计（schema `qphase.resource/1`），服务于
-    qphase/qphase_sde 2.0 升级。其实现位于 `qphase.resources`，**尚未**获批冻结：在
-    后续阶段修改生产执行路径之前需经人工审核。
+!!! info "Phase 0 契约 —— qphase 2.0"
+    本页 `qphase.resource/1` 契约已经获批，并冻结供 Phase 1 在 `qphase.resources` 中实现。
+    生产 discovery 与 execution 路径仍只通过 qphase 2.0 分阶段迁移修改。
 
 **资源包**是 QPhase 的可管理资产单元：一个 Python 发行包，恰好打包一个执行 engine、
 其插件类、数据产品与公开契约。`qphase_sde` 与 `qphase_cam` 都是资源包；`qphase_viz`

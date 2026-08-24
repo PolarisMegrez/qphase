@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
-
 from qphase.data import AxisRole, ProductSchema
 from qphase_sde.contracts import (
     analyser,
@@ -468,8 +467,8 @@ def test_moment_family_descriptor_is_sde_private_and_explicit():
     assert order_axis.role is AxisRole.INDEX
 
 
-def test_uncertainties_count_realizations_not_scan():
-    """Allan/spectrum/moment uncertainties count over the realization axis."""
+def test_uncertainties_use_reduced_sampling_bases_not_scan_axes():
+    """Aggregated products retain scan but describe trajectories as a basis."""
     for schema in (
         quantities.SPECTRUM_PRODUCT,
         quantities.ALLAN_PRODUCT,
@@ -478,10 +477,11 @@ def test_uncertainties_count_realizations_not_scan():
     ):
         scan_axis = schema.axis("scan")
         assert scan_axis.role is AxisRole.PARAMETER
+        assert "trajectory" not in {axis.name for axis in schema.axes}
+        assert {basis.name for basis in schema.sampling_bases} == {"trajectory"}
         for uncertainty in schema.uncertainties:
-            if uncertainty.independent_unit:
-                axis = schema.axis(uncertainty.independent_unit)
-                assert axis.role is AxisRole.REALIZATION
+            if uncertainty.scope == "sampling":
+                assert uncertainty.sampling_basis == "trajectory"
 
 
 def test_sde_task_profiles_are_frozen():

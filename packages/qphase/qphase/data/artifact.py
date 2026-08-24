@@ -33,6 +33,7 @@ __all__ = [
 ]
 
 _DOTTED_TARGET_PATTERN = re.compile(r"^[A-Za-z_][\w.]*:[A-Za-z_][\w.]*$")
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ArtifactRef(BaseModel):
@@ -50,12 +51,7 @@ class ArtifactRef(BaseModel):
         description="Stable loader reference in 'module:attr' syntax."
     )
     content_hash: str = Field(
-        description="Content hash of the persisted payload."
-    )
-    hash_algorithm: str = Field(
-        default="sha256",
-        description="Algorithm of ``content_hash``; fixed to sha256 unless a "
-        "future schema version declares otherwise.",
+        description="Lowercase SHA-256 digest of the persisted payload."
     )
 
     @field_validator("loader")
@@ -65,6 +61,13 @@ class ArtifactRef(BaseModel):
             raise ValueError(
                 f"loader must use stable 'module:attr' syntax, got {value!r}"
             )
+        return value
+
+    @field_validator("content_hash")
+    @classmethod
+    def _check_content_hash(cls, value: str) -> str:
+        if not _SHA256_PATTERN.match(value):
+            raise ValueError("content_hash must be a 64-character lowercase SHA-256")
         return value
 
 

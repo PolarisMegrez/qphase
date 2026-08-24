@@ -49,12 +49,13 @@ from enum import Enum
 from typing import Any, Literal
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from qphase.data import (
     AxisRole,
     AxisSchema,
     DataKind,
     ProductSchema,
+    SamplingBasisSchema,
     UncertaintySchema,
     VariableSchema,
 )
@@ -110,6 +111,26 @@ class PeakCandidate(BaseModel):
     quality: float | None = None
     status: Literal["ok", "ambiguous", "degenerate", "rejected"] = "ok"
 
+    @model_validator(mode="after")
+    def _check_candidate(self) -> PeakCandidate:
+        if (
+            self.confidence_lower is not None
+            and self.confidence_upper is not None
+            and self.confidence_lower > self.confidence_upper
+        ):
+            raise ValueError("confidence lower bound exceeds upper bound")
+        for name in (
+            "conditional_location_std",
+            "sampling_location_std",
+            "width",
+            "prominence",
+            "support",
+        ):
+            value = getattr(self, name)
+            if value is not None and value < 0:
+                raise ValueError(f"{name} must be nonnegative")
+        return self
+
 
 class PeakPathResult(BaseModel):
     """A scan-axis peak path referencing candidate rows of the peak table."""
@@ -127,6 +148,18 @@ class PeakPathResult(BaseModel):
     uncertainty_scope: UncertaintyScope = UncertaintyScope.PATH_MODEL_SELECTION
     quality: float | None = None
     status: Literal["ok", "ambiguous", "broken", "rejected"] = "ok"
+
+    @model_validator(mode="after")
+    def _check_path(self) -> PeakPathResult:
+        if len(self.candidate_rows) != len(self.scan_positions):
+            raise ValueError(
+                "candidate_rows and scan_positions must have equal length"
+            )
+        if any(row < 0 for row in self.candidate_rows):
+            raise ValueError("candidate_rows must be nonnegative")
+        if any(position < 0 for position in self.scan_positions):
+            raise ValueError("scan_positions must be nonnegative")
+        return self
 
 
 #: Optional typed candidate columns. Each present capability must be paired
@@ -178,6 +211,7 @@ PEAK_PRODUCT = ProductSchema(
         AxisSchema(name="scan_offset", role=AxisRole.INDEX),
         AxisSchema(name="candidate", role=AxisRole.INDEX),
     ],
+    sampling_bases=[SamplingBasisSchema(name="trajectory")],
     variables=[
         VariableSchema(
             name="candidate_offsets",
@@ -220,6 +254,7 @@ PEAK_PRODUCT = ProductSchema(
             kind="sample_std",
             covariance="real",
             scope=UncertaintyScope.SAMPLING.value,
+            sampling_basis="trajectory",
             data_variable="sampling_location_std",
         ),
     ],

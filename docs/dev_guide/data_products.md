@@ -4,12 +4,10 @@ description: Data Product Contract
 
 # Data Product Contract
 
-!!! warning "Proposed — qphase 2.0"
-    The contract described on this page is a **proposed, experimental** design for the
-    qphase/qphase_sde 2.0 upgrade, implemented under `qphase.data` and
-    `qphase.core.task_profile`. It has **not** been approved as frozen: field decisions
-    listed here are subject to human review before any production Result serialization
-    changes.
+!!! info "Phase 0 contract — qphase 2.0"
+    This contract is approved and frozen for Phase 1 implementation under
+    `qphase.data` and `qphase.core.task_profile`. Production Result serialization still
+    changes only through the staged qphase 2.0 migration.
 
 QPhase 2.0 replaces the untyped `trajectory + dict[str, Any]` result shape with
 **data products**: typed containers whose axes, variables, uncertainties and provenance
@@ -41,7 +39,14 @@ Shapes may be partially unknown at plan time (`AxisSchema.size is None`) but mus
 - `AxisSchema` — `name`, `role`, optional `size`, `coordinate` (`regular` or
   `explicit`), `units`, `monotonic`. The `AxisRole` is one of `parameter` (a swept
   scan axis — never a sample ensemble), `realization` (independent trajectories that
-  uncertainties count over), `coordinate`, `component` and `index`.
+  remain in the payload), `coordinate`, `component` and `index`. A realization axis
+  must be retained by at least one variable; parameter/grouping coordinates may be
+  represented by their coordinate payload or a resource-defined segmented layout.
+- `SamplingBasisSchema` — a realization source already reduced out of the payload,
+  such as trajectories contributing to a mean PSD. It declares a stable name and
+  closes through either a retained realization `source_axis`, a fixed `count`, or an
+  integer `count_variable`. This prevents a discarded trajectory dimension from
+  masquerading as a sliceable product axis.
 - `VariableSchema` — `name`, `dtype` (object dtype is forbidden), `value_domain`
   (`real` or `complex`; checked against the dtype in both directions), named `dims`
   referencing axes, `quantity`, `units`, and `constraints` (for example `nonnegative`
@@ -50,9 +55,9 @@ Shapes may be partially unknown at plan time (`AxisSchema.size is None`) but mus
   the dataset class, decides real vs. complex: spectral products are never split into
   incompatible real/complex result classes.
 - `UncertaintySchema` — `target` (the variable it describes), `kind` (`sample_std`,
-  `sem`, `confidence_interval`, `covariance`, `other`), `independent_unit` (the
-  *realization* axis the estimate counts over — parameter or coordinate axes are
-  rejected), an optional resource-defined `scope` identifier (for example
+  `sem`, `confidence_interval`, `covariance`, `other`), `sampling_basis` (the
+  retained or reduced realization source the estimate counts over), an optional
+  resource-defined `scope` identifier (for example
   `conditional`/`sampling`), `confidence` in `(0, 1)` and a positive integer `count`.
   Complex targets must declare `real_imag` or `magnitude_phase` covariance; real
   targets use `real`; there is no `custom` escape hatch. Covariance payloads are typed
@@ -62,7 +67,7 @@ Shapes may be partially unknown at plan time (`AxisSchema.size is None`) but mus
 
 ## Spectral quantities
 
-The proposed minimal `SpectralQuantity` set is `fourier_amplitude`,
+The frozen minimal `SpectralQuantity` set is `fourier_amplitude`,
 `power_spectral_density`, `cross_spectral_density` and `coherence`. Spectral products
 must carry the mandatory attribute set: frequency units, orientation, sidedness,
 normalization, window and estimator (all non-empty), plus optional effective degrees
@@ -95,11 +100,11 @@ In-process transfer, session caching and persistence are separate layers:
   or reclaims the buffer; consumers only release leases. Pinning/eviction policies are
   not part of the frozen surface.
 - `RuntimeProductBacking` — a product's runtime backing: one handle per schema
-  variable, checked by `validate_backing` (missing/extra variables, dtype and
-  closed-axis shape mismatches are rejected).
+  variable, checked by `validate_backing` (missing/extra variables, full variable
+  schema identity, dtype and closed-axis shape mismatches are rejected).
 - `ArtifactRef` — durable, cross-process reference carrying identity only: artifact
-  id, product schema, a `module:attr` loader, content hash and hash algorithm. No
-  provenance, no arrays, no extra fields.
+  id, product schema, a `module:attr` loader and a lowercase SHA-256 content hash. No
+  provenance, no arrays, no extra fields or cache state.
 - `DataMaterializerProtocol` — resource-registered conversion between runtime handles
   and artifact-backed products.
 
@@ -125,7 +130,8 @@ fingerprint) that engines compile from plugin declarations.
   declared outputs;
 - an optional profile resolver receiving a restricted
   `TaskProfileResolutionContext` (normalized job config and input product **schemas**
-  only — never handles, payloads, loaders or the scheduler) and returning a
+  only — never handles, payloads, loaders or the scheduler); normalized config must be
+  JSON-serializable. The resolver returns a
   **complete** `PluginRequirementSet` that replaces the profile defaults and is
   re-validated with the same invariants.
 

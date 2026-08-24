@@ -78,7 +78,8 @@ def test_vdp_2mode_auto_peak_fit(vdp_auto_workflow_path, temp_project):
     # Reference values from previous long-run characterizations.
     # With t1=1000 the frequency grid is coarser, so the linewidth is allowed
     # a somewhat larger absolute tolerance than the peak position.
-    expected_center = -0.08574307
+    # The default phase_decreasing convention maps exp(-i*omega*t) to +omega.
+    expected_center = 0.08574307
     expected_linewidth = 3.54044345e-03
 
     assert np.isclose(center, expected_center, atol=1e-3), (

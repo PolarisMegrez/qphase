@@ -2,7 +2,6 @@
 
 import pytest
 from pydantic import ValidationError
-
 from qphase.core.task_profile import (
     EngineTaskProfile,
     PluginRequirementSet,
@@ -49,6 +48,10 @@ def test_resolution_context_is_extra_forbid_and_carries_schemas():
     """The resolver context rejects extras and carries input schemas only."""
     with pytest.raises(ValidationError):
         TaskProfileResolutionContext(normalized_job_config={}, bogus=1)
+    with pytest.raises(ValidationError, match="JSON-serializable"):
+        TaskProfileResolutionContext(
+            normalized_job_config={"runtime_handle": object()}
+        )
 
     schema = ProductSchema(
         kind=DataKind.SPECTRAL,

@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from ..data.graph import ProductDeclaration, ProductRequirement
 from ..data.schema import ProductSchema
+from .utils import canonical_json
 
 __all__ = [
     "EngineTaskProfile",
@@ -128,6 +129,17 @@ class TaskProfileResolutionContext(BaseModel):
     named_input_product_schemas: dict[str, ProductSchema] = Field(
         default_factory=dict
     )
+
+    @field_validator("normalized_job_config")
+    @classmethod
+    def _check_config_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        try:
+            canonical_json(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "normalized job config must be JSON-serializable"
+            ) from exc
+        return value
 
 
 class InputProductRequirement(BaseModel):

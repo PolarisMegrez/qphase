@@ -1,11 +1,10 @@
-"""Contract tests for the proposed data product schema protocols."""
+"""Contract tests for the approved Phase 0 data product schema protocols."""
 
 import json
 import math
 
 import pytest
 from pydantic import ValidationError
-
 from qphase.core.task_profile import (
     EngineTaskProfile,
     InputProductRequirement,
@@ -26,6 +25,7 @@ from qphase.data import (
     ProductRequirement,
     ProductSchema,
     RuntimeProductBacking,
+    SamplingBasisSchema,
     SpectralQuantity,
     UncertaintySchema,
     VariableConstraints,
@@ -54,11 +54,14 @@ def _time_series_schema() -> ProductSchema:
                 quantity="field_amplitude",
             )
         ],
+        sampling_bases=[
+            SamplingBasisSchema(name="trajectory", source_axis="trajectory")
+        ],
         uncertainties=[
             UncertaintySchema(
                 target="alpha",
                 kind="sample_std",
-                independent_unit="trajectory",
+                sampling_basis="trajectory",
                 covariance="real_imag",
                 count=64,
             )
@@ -71,13 +74,13 @@ def _spectral_schema() -> ProductSchema:
         kind=DataKind.SPECTRAL,
         axes=[
             AxisSchema(name="scan", role=AxisRole.PARAMETER),
-            AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
             AxisSchema(
                 name="frequency", role=AxisRole.COORDINATE, size=513,
                 units="Hz",
             ),
             AxisSchema(name="channel", role=AxisRole.COMPONENT, size=2),
         ],
+        sampling_bases=[SamplingBasisSchema(name="trajectory", count=64)],
         variables=[
             VariableSchema(
                 name="power",
@@ -92,7 +95,7 @@ def _spectral_schema() -> ProductSchema:
             UncertaintySchema(
                 target="power",
                 kind="sample_std",
-                independent_unit="trajectory",
+                sampling_basis="trajectory",
                 covariance="real",
             )
         ],
@@ -158,7 +161,7 @@ def test_variable_domain_dtype_bidirectional():
 
 
 def test_nonnegative_requires_real_numeric():
-    """nonnegative constraints only apply to real numeric variables."""
+    """Nonnegative constraints only apply to real numeric variables."""
     with pytest.raises(ValidationError, match="nonnegative"):
         VariableSchema(
             name="z",
@@ -259,7 +262,6 @@ def test_complex_uncertainty_requires_covariance_representation():
         kind=DataKind.TIME_SERIES,
         axes=[
             AxisSchema(name="time", role=AxisRole.COORDINATE, size=8),
-            AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
         ],
         variables=[
             VariableSchema(
@@ -308,48 +310,103 @@ def test_custom_covariance_representation_not_frozen():
         UncertaintySchema(target="x", kind="covariance", covariance="custom")
 
 
-def test_uncertainty_independent_unit_must_be_realization_axis():
-    """Uncertainties may only count over realization axes — never scan axes."""
-    axes = [
-        AxisSchema(name="scan", role=AxisRole.PARAMETER),
-        AxisSchema(name="time", role=AxisRole.COORDINATE),
-        AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
-    ]
+def test_uncertainty_sampling_basis_separates_retained_and_reduced_axes():
+    """Sampling uncertainty references a basis, not a discarded payload axis."""
+    axes = [AxisSchema(name="time", role=AxisRole.COORDINATE)]
     variable = VariableSchema(
         name="x", dtype="float64", value_domain="real", dims=("time",)
     )
-    for bad_axis in ("scan", "time"):
-        with pytest.raises(ValidationError, match="realization axis"):
-            ProductSchema(
-                kind=DataKind.TIME_SERIES,
-                axes=axes,
-                variables=[variable],
-                uncertainties=[
-                    UncertaintySchema(
-                        target="x",
-                        kind="sample_std",
-                        independent_unit=bad_axis,
-                    )
-                ],
-            )
+    with pytest.raises(ValidationError, match="unknown sampling basis"):
+        ProductSchema(
+            kind=DataKind.TIME_SERIES,
+            axes=axes,
+            variables=[variable],
+            uncertainties=[
+                UncertaintySchema(
+                    target="x", kind="sem", sampling_basis="trajectory"
+                )
+            ],
+        )
+    with pytest.raises(ValidationError, match="must reference a sampling basis"):
+        ProductSchema(
+            kind=DataKind.TIME_SERIES,
+            axes=axes,
+            variables=[variable],
+            uncertainties=[UncertaintySchema(target="x", kind="sem", scope="sampling")],
+        )
     ok = ProductSchema(
         kind=DataKind.TIME_SERIES,
         axes=axes,
         variables=[variable],
+        sampling_bases=[SamplingBasisSchema(name="trajectory", count=32)],
         uncertainties=[
             UncertaintySchema(
                 target="x",
                 kind="sem",
-                independent_unit="trajectory",
+                sampling_basis="trajectory",
+                scope="sampling",
                 count=32,
             )
         ],
     )
-    assert ok.uncertainties[0].independent_unit == "trajectory"
+    assert ok.uncertainties[0].sampling_basis == "trajectory"
+
+
+def test_sampling_basis_source_and_count_contracts():
+    """Sampling bases use a retained realization or a concrete sample count."""
+    with pytest.raises(ValidationError, match="either count or count_variable"):
+        SamplingBasisSchema(name="trajectory", count=4, count_variable="n")
+
+    with pytest.raises(ValidationError, match="reduced realizations"):
+        ProductSchema(
+            kind=DataKind.TIME_SERIES,
+            axes=[AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=4)],
+            variables=[
+                VariableSchema(
+                    name="mean", dtype="float64", value_domain="real", dims=()
+                )
+            ],
+        )
+
+    with pytest.raises(ValidationError, match="not a realization axis"):
+        ProductSchema(
+            kind=DataKind.STATISTICS,
+            axes=[AxisSchema(name="scan", role=AxisRole.PARAMETER, size=2)],
+            sampling_bases=[
+                SamplingBasisSchema(name="trajectory", source_axis="scan")
+            ],
+            variables=[
+                VariableSchema(
+                    name="mean", dtype="float64", value_domain="real", dims=("scan",)
+                )
+            ],
+        )
+
+    reduced = ProductSchema(
+        kind=DataKind.STATISTICS,
+        axes=[AxisSchema(name="scan", role=AxisRole.PARAMETER, size=2)],
+        sampling_bases=[
+            SamplingBasisSchema(
+                name="trajectory", count_variable="independent_count"
+            )
+        ],
+        variables=[
+            VariableSchema(
+                name="mean", dtype="float64", value_domain="real", dims=("scan",)
+            ),
+            VariableSchema(
+                name="independent_count",
+                dtype="int64",
+                value_domain="real",
+                dims=("scan",),
+            ),
+        ],
+    )
+    assert reduced.is_closed
 
 
 def test_uncertainty_confidence_and_count_bounds():
-    """confidence must lie in (0, 1); count must be a positive integer."""
+    """Confidence must lie in (0, 1); count must be a positive integer."""
     with pytest.raises(ValidationError, match="confidence"):
         UncertaintySchema(target="x", kind="confidence_interval", confidence=1.5)
     with pytest.raises(ValidationError, match="confidence"):
@@ -492,9 +549,8 @@ def test_artifact_ref_is_minimal_and_typed():
         artifact_id="art-123",
         product_schema=schema,
         loader="qphase_sde.serialization.npz:load",
-        content_hash="abc",
+        content_hash="a" * 64,
     )
-    assert ref.hash_algorithm == "sha256"
     payload = json.loads(json.dumps(ref.model_dump(mode="json")))
     assert ArtifactRef.model_validate(payload) == ref
 
@@ -503,7 +559,7 @@ def test_artifact_ref_is_minimal_and_typed():
             artifact_id="a",
             product_schema=schema,
             loader="qphase_sde.serialization.npz:load",
-            content_hash="abc",
+            content_hash="a" * 64,
             provenance={"engine": "sde"},
         )
     with pytest.raises(ValidationError, match="loader"):
@@ -511,6 +567,13 @@ def test_artifact_ref_is_minimal_and_typed():
             artifact_id="a",
             product_schema=schema,
             loader="not a loader!",
+            content_hash="a" * 64,
+        )
+    with pytest.raises(ValidationError, match="SHA-256"):
+        ArtifactRef(
+            artifact_id="a",
+            product_schema=schema,
+            loader="qphase_sde.serialization.npz:load",
             content_hash="abc",
         )
 
@@ -593,13 +656,13 @@ def test_task_profile_roundtrip_and_resolver_validation():
 
 
 def test_product_schema_version_is_frozen():
-    """The product schema version is part of the proposed contract."""
+    """The product schema version is frozen for Phase 1 implementation."""
     assert PRODUCT_SCHEMA_VERSION == "qphase.product/1"
     assert _time_series_schema().schema_version == "qphase.product/1"
 
 
 GOLDEN_SPECTRAL_FINGERPRINT = (
-    "00e917d4c6d16aee763ded06a071f1df84ac59d6f9f45cf64440818a779366c1"
+    "629f9605f4eda5a60ecfdc1bd0f8f5639edc83deb82d1a16cfeee448b7b298c6"
 )
 
 
@@ -777,6 +840,14 @@ def test_validate_backing_rejects_mismatches():
             schema,
             _FakeBacking({"alpha": _FakeHandle(alpha, "complex128", (8, 1))}),
         )
+    wrong_schema = alpha.model_copy(update={"quantity": "wrong_quantity"})
+    with pytest.raises(ValueError, match="variable_schema"):
+        validate_backing(
+            schema,
+            _FakeBacking(
+                {"alpha": _FakeHandle(wrong_schema, "complex128", (8,))}
+            ),
+        )
 
 
 def test_runtime_and_artifact_backings_are_distinct_types():
@@ -785,7 +856,7 @@ def test_runtime_and_artifact_backings_are_distinct_types():
         artifact_id="art-1",
         product_schema=_spectral_schema(),
         loader="qphase_sde.serialization.npz:load",
-        content_hash="abc",
+        content_hash="a" * 64,
     )
     assert isinstance(ref, ArtifactRef)
     assert not isinstance(ref, RuntimeProductBacking)

@@ -44,6 +44,7 @@ from qphase.data import (
     AxisSchema,
     DataKind,
     ProductSchema,
+    SamplingBasisSchema,
     SpectralQuantity,
     UncertaintySchema,
     VariableConstraints,
@@ -130,12 +131,12 @@ SPECTRUM_PRODUCT = ProductSchema(
     kind=DataKind.SPECTRAL,
     axes=[
         AxisSchema(name="scan", role=AxisRole.PARAMETER),
-        AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
         AxisSchema(
             name="frequency", role=AxisRole.COORDINATE, units="inverse_time"
         ),
         AxisSchema(name="channel", role=AxisRole.COMPONENT),
     ],
+    sampling_bases=[SamplingBasisSchema(name="trajectory")],
     variables=[
         VariableSchema(
             name="amplitude",
@@ -157,7 +158,7 @@ SPECTRUM_PRODUCT = ProductSchema(
         UncertaintySchema(
             target="power",
             kind="sample_std",
-            independent_unit="trajectory",
+            sampling_basis="trajectory",
             covariance="real",
             scope="sampling",
         )
@@ -179,10 +180,10 @@ ALLAN_PRODUCT = ProductSchema(
     kind=DataKind.STATISTICS,
     axes=[
         AxisSchema(name="scan", role=AxisRole.PARAMETER),
-        AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
         AxisSchema(name="tau", role=AxisRole.COORDINATE, units="inverse_time"),
         AxisSchema(name="channel", role=AxisRole.COMPONENT),
     ],
+    sampling_bases=[SamplingBasisSchema(name="trajectory")],
     variables=[
         VariableSchema(
             name="allan_variance",
@@ -197,7 +198,7 @@ ALLAN_PRODUCT = ProductSchema(
         UncertaintySchema(
             target="allan_variance",
             kind="sample_std",
-            independent_unit="trajectory",
+            sampling_basis="trajectory",
             covariance="real",
             scope="sampling",
         )
@@ -220,10 +221,10 @@ MOMENT_FAMILY_PRODUCT = ProductSchema(
     kind=DataKind.STATISTICS,
     axes=[
         AxisSchema(name="scan", role=AxisRole.PARAMETER),
-        AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
         AxisSchema(name="order", role=AxisRole.INDEX),
         AxisSchema(name="channel", role=AxisRole.COMPONENT),
     ],
+    sampling_bases=[SamplingBasisSchema(name="trajectory")],
     variables=[
         VariableSchema(
             name="moment",
@@ -237,7 +238,7 @@ MOMENT_FAMILY_PRODUCT = ProductSchema(
         UncertaintySchema(
             target="moment",
             kind="sample_std",
-            independent_unit="trajectory",
+            sampling_basis="trajectory",
             covariance="real_imag",
             scope="sampling",
         )
