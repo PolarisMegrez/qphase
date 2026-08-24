@@ -14,6 +14,8 @@ pinning or cross-job caching.
   handle.
 - :class:`DataLease` is the default idempotent lease (execution/session
   scope).
+- :class:`DictProductBacking` is the minimal in-memory
+  :class:`~qphase.data.product.RuntimeProductBacking`.
 
 Ownership rules follow the frozen contract: only the owner closes a handle;
 closing invalidates outstanding leases, whose consumers then observe an error
@@ -29,10 +31,13 @@ ReadOnlyArrayView
     Read-only delegating view of another handle.
 DataLease
     Default idempotent lease implementation.
+DictProductBacking
+    In-memory name-to-handle runtime product backing.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -44,6 +49,7 @@ from .schema import VariableSchema
 __all__ = [
     "BackendArrayHandle",
     "DataLease",
+    "DictProductBacking",
     "HostArrayHandle",
     "ReadOnlyArrayView",
 ]
@@ -234,7 +240,7 @@ class HostArrayHandle(_ArrayHandleBase):
         self._check_live()
         if target_device in (None, "cpu"):
             if self._read_only:
-                view = self._array[:]
+                view = self._array.view()
                 view.flags.writeable = False
                 return view
             return self._array
@@ -381,7 +387,7 @@ class ReadOnlyArrayView:
         self._check_live()
         result = self._inner.materialize(target_device, copy_policy)
         if isinstance(result, np.ndarray):
-            view = result[:]
+            view = result.view()
             view.flags.writeable = False
             return view
         return result
@@ -397,3 +403,19 @@ class ReadOnlyArrayView:
                 f"the owner handle of this read-only view (variable "
                 f"{self._inner.variable_schema.name!r}) has been closed"
             )
+
+
+class DictProductBacking:
+    """In-memory :class:`RuntimeProductBacking` over a name→handle mapping.
+
+    The mapping is copied at construction and on every access, so callers
+    cannot mutate the backing behind the product's back.
+    """
+
+    def __init__(self, variables: Mapping[str, Any]) -> None:
+        self._variables = dict(variables)
+
+    @property
+    def variables(self) -> Mapping[str, Any]:
+        """Mapping from variable name to its runtime handle."""
+        return dict(self._variables)

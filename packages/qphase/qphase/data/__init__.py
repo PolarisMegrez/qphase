@@ -14,6 +14,10 @@ product
     The data product protocol.
 handles
     Runtime handle and lease protocols.
+runtime
+    Concrete runtime handles, leases and backing containers.
+datasets
+    Typed dataset containers for the three data kinds.
 artifact
     Artifact references and materializers.
 graph
@@ -21,6 +25,12 @@ graph
 """
 
 from .artifact import ArtifactRef, DataMaterializerProtocol
+from .datasets import (
+    Dataset,
+    SpectralDataset,
+    StatisticsDataset,
+    TimeSeriesDataset,
+)
 from .graph import (
     GraphEdge,
     ProductDeclaration,
@@ -39,6 +49,7 @@ from .product import (
 from .runtime import (
     BackendArrayHandle,
     DataLease,
+    DictProductBacking,
     HostArrayHandle,
     ReadOnlyArrayView,
 )
@@ -68,6 +79,8 @@ __all__ = [
     "DataLeaseProtocol",
     "DataMaterializerProtocol",
     "DataProduct",
+    "Dataset",
+    "DictProductBacking",
     "GraphEdge",
     "HostArrayHandle",
     "LeaseScope",
@@ -80,7 +93,10 @@ __all__ = [
     "RuntimeProductBacking",
     "SamplingBasisSchema",
     "SpectralAttributes",
+    "SpectralDataset",
     "SpectralQuantity",
+    "StatisticsDataset",
+    "TimeSeriesDataset",
     "UncertaintySchema",
     "VariableConstraints",
     "VariableSchema",
