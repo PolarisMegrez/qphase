@@ -4,10 +4,12 @@ description: Resource Package Contract
 
 # Resource Package Contract
 
-!!! warning "Experimental — qphase 2.0"
-    The contract described on this page is frozen as **schema `qphase.resource/1`** for
-    the qphase/qphase_sde 2.0 upgrade. It is implemented under `qphase.resources` and is
-    subject to human review before the dependent phases modify production execution paths.
+!!! warning "Proposed — qphase 2.0"
+    The contract described on this page is a **proposed, experimental** design
+    (schema `qphase.resource/1`) for the qphase/qphase_sde 2.0 upgrade. It is
+    implemented under `qphase.resources` and has **not** been approved as frozen:
+    it is subject to human review before the dependent phases modify production
+    execution paths.
 
 A **resource package** is the managed asset unit of QPhase: a Python distribution that
 bundles exactly one execution engine, its plugin classes, data products and public
@@ -73,7 +75,7 @@ Every plugin class occupies one root-level namespace directory (for example
 
 ## The resource manifest
 
-`ResourcePackageManifest` (schema `qphase.resource/1`) freezes at least:
+`ResourcePackageManifest` (schema `qphase.resource/1`) declares at least:
 
 - `resource_id`, `schema_version`, `package_version`;
 - the unique engine reference and the declared resource profiles;
@@ -119,7 +121,16 @@ checks:
 - source-layout validation: required profile modules exist, concrete plugins sit in
   their declared class directory, optional asset directories are declared;
 - manifest validation: schema conformance, unique engine, fingerprint stability;
-- entry-point consistency: the installed `qphase` group entries match the manifest.
+- entry-point validation, scoped by ownership: `partition_entry_points` first splits
+  the global `qphase` group into package-owned, project-overlay and third-party
+  descriptors by distribution; `validate_package_entry_points` then checks only the
+  descriptors owned by the package's own distribution (exactly one `engine.*`, exactly
+  one `resource.<id>`, declared namespaces only), so co-installed SDE/CAM packages and
+  backend plugins never trigger false engine-count or unknown-namespace findings;
+  `validate_overlay_entry_points` applies a separate, narrower policy to project
+  overlays — attributed to packages by namespace, they must never occupy the reserved
+  `resource.*`/`engine.*` namespaces. Third-party descriptors are provenance-labeled
+  via `classify_origin` and validated against their own distribution's manifest.
 
 Runtime and wheel installations treat the manifest and entry points as the only source
 of truth; source-tree walking is never used at runtime.

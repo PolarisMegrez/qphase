@@ -4,9 +4,10 @@ description: 资源包契约
 
 # 资源包契约
 
-!!! warning "实验性 —— qphase 2.0"
-    本页描述的契约已冻结为 **schema `qphase.resource/1`**，服务于 qphase/qphase_sde 2.0
-    升级。其实现位于 `qphase.resources`，在后续阶段修改生产执行路径之前需经人工审核。
+!!! warning "提案 —— qphase 2.0"
+    本页描述的契约是 **提案性、实验性**设计（schema `qphase.resource/1`），服务于
+    qphase/qphase_sde 2.0 升级。其实现位于 `qphase.resources`，**尚未**获批冻结：在
+    后续阶段修改生产执行路径之前需经人工审核。
 
 **资源包**是 QPhase 的可管理资产单元：一个 Python 发行包，恰好打包一个执行 engine、
 其插件类、数据产品与公开契约。`qphase_sde` 与 `qphase_cam` 都是资源包；`qphase_viz`
@@ -59,7 +60,7 @@ profile 可组合：`qphase_sde` 声明 `base + compute + simulation`；可视�
 
 ## 资源 manifest
 
-`ResourcePackageManifest`（schema `qphase.resource/1`）至少冻结：
+`ResourcePackageManifest`（schema `qphase.resource/1`）至少声明：
 
 - `resource_id`、`schema_version`、`package_version`；
 - 唯一 engine 引用与声明的 resource profiles；
@@ -98,6 +99,14 @@ fingerprint。
 - 源码布局校验：profile 必备模块存在、concrete plugin 位于其声明的插件类目录、可选
   资产目录已声明；
 - manifest 校验：schema 合规、唯一 engine、fingerprint 稳定；
-- entry-point 一致性：已安装 `qphase` group 条目与 manifest 一致。
+- entry-point 校验按 ownership 划分作用域：`partition_entry_points` 先按 distribution
+  把全局 `qphase` group 划分为 package-owned、project-overlay 与 third-party 描述符；
+  `validate_package_entry_points` 随后只校验本包 distribution 自有的描述符（恰好一个
+  `engine.*`、恰好一个 `resource.<id>`、仅限已声明 namespace），因此共存安装的
+  SDE/CAM 与 backend 插件不会触发误报的 engine-count 或 unknown-namespace；
+  `validate_overlay_entry_points` 对 project overlay 施加独立、更窄的策略——overlay 按
+  namespace 归属到各资源包，且绝不得占用保留的 `resource.*`/`engine.*` namespace。
+  third-party 描述符经 `classify_origin` 标注 provenance，并只对各自发行包的 manifest
+  校验。
 
 运行期与 wheel 安装只以 manifest 和 entry points 为事实来源；运行期绝不遍历源码树。
