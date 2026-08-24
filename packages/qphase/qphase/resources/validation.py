@@ -6,6 +6,16 @@ installations treat the manifest and entry points as the only source of truth;
 these validators exist for contract tests and release checks, never as a runtime
 discovery mechanism.
 
+Entry-point validation is ownership-scoped: the global ``qphase`` entry-point
+group may mix many resource packages, backend plugins and project overlays, so
+descriptors are partitioned by distribution ownership first
+(:func:`partition_entry_points`). :func:`validate_package_entry_points` then
+checks only the descriptors owned by one package's distribution, while
+:func:`validate_overlay_entry_points` applies a separate, narrower policy to
+project overlays. Third-party descriptors are provenance-labeled
+(:func:`classify_origin`) but never namespace-checked against this package's
+manifest — each distribution is validated against its own manifest.
+
 Public API
 ----------
 ValidationIssue
@@ -14,16 +24,26 @@ validate_manifest
     Check structural invariants of a manifest.
 validate_source_layout
     Check a source tree against the manifest and profiles.
-validate_entry_points
-    Check installed entry-point descriptors against the manifest.
+EntryPointPartition
+    Installed entry points split by ownership.
+partition_entry_points
+    Partition descriptors by distribution ownership.
+classify_origin
+    Classify one descriptor's provenance.
+validate_package_entry_points
+    Check only the package-owned descriptors against the manifest.
+validate_overlay_entry_points
+    Check project-overlay descriptors against the overlay policy.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .assets import AssetOrigin
 from .manifest import (
     RESOURCE_ENTRY_POINT_PREFIX,
     EntryPointDescriptor,
@@ -39,9 +59,13 @@ if TYPE_CHECKING:
     from .manifest import ResourcePackageManifest
 
 __all__ = [
+    "EntryPointPartition",
     "ValidationIssue",
-    "validate_entry_points",
+    "classify_origin",
+    "partition_entry_points",
     "validate_manifest",
+    "validate_overlay_entry_points",
+    "validate_package_entry_points",
     "validate_source_layout",
 ]
 
@@ -266,17 +290,82 @@ def validate_source_layout(
     return issues
 
 
-def validate_entry_points(
+@dataclass(frozen=True)
+class EntryPointPartition:
+    """Installed entry-point descriptors split by ownership.
+
+    ``package_owned`` ships with the resource package's own distribution;
+    ``project_overlay`` has no distribution (project-local overlays);
+    ``third_party`` belongs to any other installed distribution (peer resource
+    packages, backend plugins or community extensions).
+    """
+
+    package_owned: tuple[EntryPointDescriptor, ...] = field(default=())
+    project_overlay: tuple[EntryPointDescriptor, ...] = field(default=())
+    third_party: tuple[EntryPointDescriptor, ...] = field(default=())
+
+
+def classify_origin(
+    descriptor: EntryPointDescriptor, package_distribution: str | None
+) -> AssetOrigin:
+    """Classify one descriptor's provenance relative to a distribution.
+
+    A descriptor is package-owned only when its distribution name matches
+    ``package_distribution`` (and that name is not ``None``); descriptors
+    without a distribution are project overlays; anything else is third-party.
+    """
+    if (
+        package_distribution is not None
+        and descriptor.distribution == package_distribution
+    ):
+        return AssetOrigin.PACKAGE
+    if descriptor.distribution is None:
+        return AssetOrigin.PROJECT_OVERLAY
+    return AssetOrigin.THIRD_PARTY
+
+
+def partition_entry_points(
+    descriptors: Iterable[EntryPointDescriptor],
+    package_distribution: str | None,
+) -> EntryPointPartition:
+    """Partition descriptors by ownership relative to one distribution.
+
+    Callers must pass the *unfiltered* global group listing; the returned
+    partition is the explicit input of both entry-point validators, so no
+    validator ever relies on callers pre-filtering descriptors.
+    """
+    owned: list[EntryPointDescriptor] = []
+    overlay: list[EntryPointDescriptor] = []
+    third_party: list[EntryPointDescriptor] = []
+    for descriptor in descriptors:
+        origin = classify_origin(descriptor, package_distribution)
+        if origin is AssetOrigin.PACKAGE:
+            owned.append(descriptor)
+        elif origin is AssetOrigin.PROJECT_OVERLAY:
+            overlay.append(descriptor)
+        else:
+            third_party.append(descriptor)
+    return EntryPointPartition(
+        package_owned=tuple(owned),
+        project_overlay=tuple(overlay),
+        third_party=tuple(third_party),
+    )
+
+
+def validate_package_entry_points(
     manifest: ResourcePackageManifest,
-    descriptors: list[EntryPointDescriptor],
+    partition: EntryPointPartition,
 ) -> list[ValidationIssue]:
-    """Check installed entry-point descriptors against the manifest.
+    """Check only the package-owned descriptors against the manifest.
 
     Verifies that exactly one ``resource.<id>`` and exactly one ``engine.*``
-    entry point exist, that the engine entry point matches the manifest
-    declaration, and that no descriptor drifts into an undeclared namespace.
+    entry point are owned by the package's distribution, that the engine
+    entry point matches the manifest declaration, and that no owned
+    descriptor drifts into an undeclared namespace. Peer resource packages
+    and overlays in the same global group are never counted here.
     """
     issues: list[ValidationIssue] = []
+    descriptors = partition.package_owned
 
     resource_name = resource_entry_point_name(manifest.resource_id)
     resource_eps = [d for d in descriptors if d.name == resource_name]
@@ -285,8 +374,8 @@ def validate_entry_points(
             ValidationIssue(
                 code="missing-resource-entry-point",
                 message=(
-                    f"no {resource_name!r} entry point found in the 'qphase' "
-                    "group"
+                    f"no {resource_name!r} entry point owned by this "
+                    "package's distribution found in the 'qphase' group"
                 ),
                 location=resource_name,
             )
@@ -306,8 +395,9 @@ def validate_entry_points(
             ValidationIssue(
                 code="engine-count",
                 message=(
-                    f"expected exactly one engine entry point, found "
-                    f"{len(engine_eps)}; a resource package declares one engine"
+                    f"expected exactly one package-owned engine entry point, "
+                    f"found {len(engine_eps)}; a resource package declares "
+                    "one engine"
                 ),
                 location="engine",
             )
@@ -349,8 +439,49 @@ def validate_entry_points(
                 ValidationIssue(
                     code="unknown-namespace",
                     message=(
-                        f"entry point {descriptor.name!r} uses a namespace not "
-                        "declared by the resource manifest"
+                        f"package-owned entry point {descriptor.name!r} uses "
+                        "a namespace not declared by the resource manifest"
+                    ),
+                    location=descriptor.name,
+                )
+            )
+    return issues
+
+
+def validate_overlay_entry_points(
+    manifest: ResourcePackageManifest,
+    partition: EntryPointPartition,
+) -> list[ValidationIssue]:
+    """Check project-overlay descriptors against the overlay policy.
+
+    Project overlays (descriptors without a distribution) extend an installed
+    resource package from the local project. Overlays are attributed to
+    packages **by namespace**: an overlay whose namespace is declared by this
+    manifest extends this package; an overlay in any other non-reserved
+    namespace is attributed to another installed package and skipped here, so
+    co-installed packages never flag each other's overlays. The reserved
+    ``resource.*``/``engine.*`` namespaces are owned by distributions only —
+    any project overlay found there is always rogue, regardless of which
+    manifest is being validated. Third-party descriptors are deliberately out
+    of scope: they are provenance-labeled via :func:`classify_origin` and
+    validated against their own distribution's manifest.
+
+    Detecting overlays in namespaces declared by *no* installed package (for
+    example a typo'd namespace) is a catalog-level union check and left to the
+    Phase 1 catalog implementation.
+    """
+    issues: list[ValidationIssue] = []
+    reserved = (RESOURCE_ENTRY_POINT_PREFIX.rstrip("."), "engine")
+    for descriptor in partition.project_overlay:
+        namespace = descriptor.name.split(".", 1)[0]
+        if namespace in reserved:
+            issues.append(
+                ValidationIssue(
+                    code="overlay-reserved-namespace",
+                    message=(
+                        f"project overlay {descriptor.name!r} must not occupy "
+                        f"the reserved {namespace!r} namespace; overlays may "
+                        "only contribute plugin-class implementations"
                     ),
                     location=descriptor.name,
                 )

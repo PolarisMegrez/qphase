@@ -12,10 +12,13 @@ from qphase.resources import (
     EntryPointDescriptor,
     ResourcePackageManifest,
     ResourceProfile,
+    classify_origin,
     load_manifest_object,
     manifest_fingerprint,
-    validate_entry_points,
+    partition_entry_points,
     validate_manifest,
+    validate_overlay_entry_points,
+    validate_package_entry_points,
     validate_source_layout,
 )
 
@@ -58,6 +61,22 @@ def _sde_entry_points() -> list[EntryPointDescriptor]:
             )
         )
     return descriptors
+
+
+def _cam_owned_entry_points() -> list[EntryPointDescriptor]:
+    return [
+        EntryPointDescriptor(
+            "resource.cam", "qphase_cam.manifest:RESOURCE_MANIFEST",
+            "qphase-cam", "2.0.0",
+        ),
+        EntryPointDescriptor(
+            "engine.cam", "qphase_cam.engine:Engine", "qphase-cam", "2.0.0"
+        ),
+        EntryPointDescriptor(
+            "solver.homotopy", "qphase_cam.solver.homotopy:Homotopy",
+            "qphase-cam", "2.0.0",
+        ),
+    ]
 
 
 def _build_tree(root: Path, manifest: ResourcePackageManifest) -> None:
@@ -208,37 +227,137 @@ def test_resource_entry_point_uses_existing_qphase_group(monkeypatch):
     assert "cam" in listing["engine"]
 
 
-def test_validate_entry_points_detects_drift():
-    """Entry-point validation catches missing resources, extra engines, drift."""
+def test_classify_origin_and_partition_by_distribution():
+    """Descriptors are classified and partitioned by distribution ownership."""
+    sde = _sde_entry_points()
+    cam = _cam_owned_entry_points()
+    backend = EntryPointDescriptor(
+        "backend.cuda", "qphase_backend_cuda:Cuda", "qphase-backend-cuda", "0.3"
+    )
+    overlay = EntryPointDescriptor("analyser.local", "local_plugins:Local")
+    third_party = EntryPointDescriptor(
+        "analyser.exotic", "community:Exotic", "community-pkg", "1.0"
+    )
+    mixed = [*sde, *cam, backend, overlay, third_party]
+
+    assert classify_origin(sde[0], "qphase-sde") is AssetOrigin.PACKAGE
+    assert classify_origin(overlay, "qphase-sde") is AssetOrigin.PROJECT_OVERLAY
+    assert classify_origin(cam[0], "qphase-sde") is AssetOrigin.THIRD_PARTY
+    # Without a distribution name, nothing is package-owned.
+    assert classify_origin(overlay, None) is AssetOrigin.PROJECT_OVERLAY
+    assert classify_origin(sde[0], None) is AssetOrigin.THIRD_PARTY
+
+    partition = partition_entry_points(mixed, "qphase-sde")
+    assert set(partition.package_owned) == set(sde)
+    assert partition.project_overlay == (overlay,)
+    assert set(partition.third_party) == {*cam, backend, third_party}
+
+
+def test_validate_package_entry_points_detects_drift():
+    """Package-owned validation catches missing resources, extra engines, drift."""
     manifest = _load_fixture("cam_minimal.json")
-    good = [
-        EntryPointDescriptor("resource.cam", "qphase_cam.manifest:RESOURCE_MANIFEST"),
-        EntryPointDescriptor("engine.cam", "qphase_cam.engine:Engine"),
-        EntryPointDescriptor("solver.homotopy", "qphase_cam.solver.homotopy:Homotopy"),
-    ]
-    assert validate_entry_points(manifest, good) == []
+    good = _cam_owned_entry_points()
+    partition = partition_entry_points(good, "qphase-cam")
+    assert validate_package_entry_points(manifest, partition) == []
 
-    missing_resource = validate_entry_points(manifest, good[1:])
-    assert {i.code for i in missing_resource} == {"missing-resource-entry-point"}
+    missing = validate_package_entry_points(
+        manifest, partition_entry_points(good[1:], "qphase-cam")
+    )
+    assert {i.code for i in missing} == {"missing-resource-entry-point"}
 
-    two_engines = validate_entry_points(
-        manifest, [*good, EntryPointDescriptor("engine.other", "x:Y")]
+    two_engines = validate_package_entry_points(
+        manifest,
+        partition_entry_points(
+            [
+                *good,
+                EntryPointDescriptor("engine.other", "x:Y", "qphase-cam", "2.0.0"),
+            ],
+            "qphase-cam",
+        ),
     )
     assert "engine-count" in {i.code for i in two_engines}
 
-    drifted = validate_entry_points(
-        manifest, [*good, EntryPointDescriptor("analyser.psd", "x:Y")]
+    drifted = validate_package_entry_points(
+        manifest,
+        partition_entry_points(
+            [
+                *good,
+                EntryPointDescriptor("analyser.psd", "x:Y", "qphase-cam", "2.0.0"),
+            ],
+            "qphase-cam",
+        ),
     )
     assert "unknown-namespace" in {i.code for i in drifted}
 
-    wrong_target = validate_entry_points(
+    wrong_target = validate_package_entry_points(
         manifest,
-        [
-            good[0],
-            EntryPointDescriptor("engine.cam", "qphase_cam.other:Engine"),
-        ],
+        partition_entry_points(
+            [
+                good[0],
+                EntryPointDescriptor(
+                    "engine.cam", "qphase_cam.other:Engine", "qphase-cam", "2.0.0"
+                ),
+            ],
+            "qphase-cam",
+        ),
     )
     assert "engine-target-mismatch" in {i.code for i in wrong_target}
+
+
+def test_mixed_global_group_validates_each_package_independently():
+    """SDE+CAM+backend+overlay in one group cause no cross-talk.
+
+    Each package recognizes only its own engine; backend and third-party
+    descriptors never trigger engine-count or unknown-namespace issues, and
+    overlay provenance stays separate from package-owned descriptors.
+    """
+    sde_manifest = _load_fixture("sde.json")
+    cam_manifest = _load_fixture("cam_minimal.json")
+    mixed = [
+        *_sde_entry_points(),
+        *_cam_owned_entry_points(),
+        EntryPointDescriptor(
+            "backend.cuda", "qphase_backend_cuda:Cuda", "qphase-backend-cuda", "0.3"
+        ),
+        # Project overlay extending SDE's declared analyser namespace.
+        EntryPointDescriptor("analyser.local", "local_plugins:Local"),
+    ]
+
+    sde_partition = partition_entry_points(mixed, "qphase-sde")
+    cam_partition = partition_entry_points(mixed, "qphase-cam")
+
+    assert validate_package_entry_points(sde_manifest, sde_partition) == []
+    assert validate_package_entry_points(cam_manifest, cam_partition) == []
+    assert validate_overlay_entry_points(sde_manifest, sde_partition) == []
+    # The SDE overlay is attributed to SDE by namespace; CAM's overlay
+    # validation skips it instead of cross-flagging it.
+    assert validate_overlay_entry_points(cam_manifest, cam_partition) == []
+
+
+def test_validate_overlay_entry_points_enforces_overlay_policy():
+    """Project overlays must not occupy reserved namespaces.
+
+    Overlays in namespaces declared by the manifest are valid extensions;
+    overlays in other non-reserved namespaces are attributed to other
+    installed packages by namespace and skipped by this validator.
+    """
+    manifest = _load_fixture("sde.json")
+    partition = partition_entry_points(
+        [
+            *_sde_entry_points(),
+            EntryPointDescriptor("engine.rogue", "local_plugins:Rogue"),
+            EntryPointDescriptor("resource.sde", "local_plugins:Fake"),
+            # Declared SDE namespace: valid overlay.
+            EntryPointDescriptor("analyser.local", "local_plugins:Local"),
+            # Undeclared namespace: attributed to another package, skipped.
+            EntryPointDescriptor("solver.local", "local_plugins:Solver"),
+        ],
+        "qphase-sde",
+    )
+    issues = validate_overlay_entry_points(manifest, partition)
+    codes = [i.code for i in issues]
+    assert codes.count("overlay-reserved-namespace") == 2
+    assert "unknown-namespace" not in codes
 
 
 def test_validate_source_layout_accepts_complete_tree(tmp_path):

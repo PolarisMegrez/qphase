@@ -40,9 +40,13 @@ from .profiles import (
     profile_required_modules,
 )
 from .validation import (
+    EntryPointPartition,
     ValidationIssue,
-    validate_entry_points,
+    classify_origin,
+    partition_entry_points,
     validate_manifest,
+    validate_overlay_entry_points,
+    validate_package_entry_points,
     validate_source_layout,
 )
 
@@ -56,6 +60,7 @@ __all__ = [
     "DataProductDeclaration",
     "EngineDeclaration",
     "EntryPointDescriptor",
+    "EntryPointPartition",
     "OptionalDependencyDeclaration",
     "PluginClassDeclaration",
     "ResourceAssetDeclaration",
@@ -63,12 +68,15 @@ __all__ = [
     "ResourcePackageProtocol",
     "ResourceProfile",
     "ValidationIssue",
+    "classify_origin",
     "load_manifest_object",
     "manifest_fingerprint",
+    "partition_entry_points",
     "profile_required_directories",
     "profile_required_modules",
     "resource_entry_point_name",
-    "validate_entry_points",
     "validate_manifest",
+    "validate_overlay_entry_points",
+    "validate_package_entry_points",
     "validate_source_layout",
 ]
