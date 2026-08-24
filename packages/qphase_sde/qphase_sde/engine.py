@@ -25,7 +25,6 @@ from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy, get_xp
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 
-from qphase_sde.buffers import SDEBufferCache
 from qphase_sde.integrator.base import Integrator
 from qphase_sde.model import NoiseSpec, SDEModel
 from qphase_sde.observer.base import (
@@ -39,6 +38,7 @@ from qphase_sde.planning import (
     resolve_time_grid,
 )
 from qphase_sde.result import SDEResult
+from qphase_sde.runtime.buffers import SDEBufferCache
 from qphase_sde.state import TrajectorySet
 
 __all__ = ["Engine", "EngineConfig", "TrajectoryDivergenceError"]
@@ -390,7 +390,7 @@ class Engine(EngineBase):
                 importance="normal",
             )
         if grid is not None:
-            from qphase_sde.scan import SDEParameterGridAdapter, SDEScanResult
+            from qphase_sde.runtime.scan import SDEParameterGridAdapter, SDEScanResult
 
             adapter = SDEParameterGridAdapter(self, grid)
             if plan.stream_analysis and (

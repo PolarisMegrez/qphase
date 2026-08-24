@@ -74,7 +74,7 @@ def test_cupy_backend_primitives():
 
 def test_cupy_contract_noise_matches_numpy():
     """SDE noise contraction on cupy matches numpy reference."""
-    from qphase_sde import ops
+    from qphase_sde.math import ops
 
     np_be = NumpyBackend()
     cp_be = CuPyBackend()

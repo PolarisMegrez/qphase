@@ -26,19 +26,19 @@ from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
 from scipy.optimize import least_squares
 
-from ..coordinates import (
+from ..math.coordinates import (
     CANONICAL_COORDINATE_LAYOUT,
     R_CONVENTION,
     canonical_r_coordinates,
     canonical_vector,
 )
-from ..utils import resolve_mode_columns
 from .allan_statistics import calculate_allan_variance
 from .base import (
     Analyzer,
     AnalyzerExecutionCapabilities,
     AnalyzerWorkspaceEstimate,
     AnalyzerWorkspaceRequest,
+    resolve_mode_columns,
 )
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
@@ -75,7 +75,7 @@ _BLOCK_SPECTRUM_MIN_SAMPLES = 8
 _BLOCK_SPECTRUM_MIN_BLOCKS = 2
 
 # Canonical R = alpha alpha^dagger coordinates (real, length n_modes**2) are
-# shared with the observer subpackage via ``qphase_sde.coordinates``.
+# shared with the observer subpackage via ``qphase_sde.math.coordinates``.
 
 # Fewer blocks than this cannot support a meaningful covariance across blocks.
 _STATIONARITY_MIN_BLOCKS = 4

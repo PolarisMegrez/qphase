@@ -12,8 +12,8 @@ from qphase.backend.xputil import convert_to_numpy
 from qphase.core.dataset import DatasetSaveReport
 from qphase.core.scan import ParameterGrid
 
-from qphase_sde.batch import SDEResultSplitter
 from qphase_sde.result import SDEResult
+from qphase_sde.runtime.batch import SDEResultSplitter
 from qphase_sde.state import TrajectorySet
 
 
@@ -218,7 +218,7 @@ class SDEScanResult:
             return DatasetSaveReport(
                 "single",
                 (output,) if output.exists() else (),
-                loader="qphase_sde.scan:SDEScanResult.load",
+                loader="qphase_sde.runtime.scan:SDEScanResult.load",
             )
         root = base
         root.mkdir(parents=True, exist_ok=True)
@@ -238,7 +238,7 @@ class SDEScanResult:
         return DatasetSaveReport(
             layout,
             tuple(path for path in files if path.exists()),
-            loader="qphase_sde.scan:SDEScanResult.load_dataset",
+            loader="qphase_sde.runtime.scan:SDEScanResult.load_dataset",
         )
 
     def _flat_slice(self, start: int, stop: int) -> SDEScanResult:

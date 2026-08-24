@@ -35,12 +35,12 @@ from qphase.core.protocols import (
     SubpluginSlot,
 )
 
-from ..utils import resolve_mode_columns
 from .base import (
     Analyzer,
     AnalyzerExecutionCapabilities,
     AnalyzerWorkspaceEstimate,
     AnalyzerWorkspaceRequest,
+    resolve_mode_columns,
 )
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,

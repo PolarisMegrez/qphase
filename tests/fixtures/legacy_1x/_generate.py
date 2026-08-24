@@ -30,7 +30,7 @@ sys.path.insert(0, str(REPO_ROOT / "packages" / "qphase_sde"))
 
 from qphase.core.scan import ParameterGrid  # noqa: E402
 from qphase_sde.result import SDEResult  # noqa: E402
-from qphase_sde.scan import SDEScanResult  # noqa: E402
+from qphase_sde.runtime.scan import SDEScanResult  # noqa: E402
 from qphase_sde.state import TrajectorySet  # noqa: E402
 
 OUT = Path(__file__).resolve().parent

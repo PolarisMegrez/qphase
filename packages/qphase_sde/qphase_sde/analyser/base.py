@@ -1,10 +1,12 @@
 """qphase_sde: Analyzer Base Class
 ---------------------------------------------------------
-Base class for all analyzers in the qphase_sde package.
+Base class for all analyzers in the qphase_sde package, plus the shared
+analyser helpers (physical-to-recorded mode-column mapping).
 
 Public API
 ----------
 ``AnalyzerProtocol`` : Protocol for analyzers.
+``resolve_mode_columns`` : Map physical mode indices to stored columns.
 """
 
 from abc import ABC, abstractmethod
@@ -20,7 +22,25 @@ __all__ = [
     "AnalyzerProtocol",
     "AnalyzerWorkspaceEstimate",
     "AnalyzerWorkspaceRequest",
+    "resolve_mode_columns",
 ]
+
+
+def resolve_mode_columns(data: Any, modes: list[int]) -> list[int]:
+    """Map physical mode indices to stored trajectory columns."""
+    meta = getattr(data, "meta", None)
+    mode_indices = meta.get("mode_indices") if isinstance(meta, dict) else None
+    if mode_indices is None:
+        return list(modes)
+
+    mapping = {int(mode): index for index, mode in enumerate(mode_indices)}
+    missing = [mode for mode in modes if mode not in mapping]
+    if missing:
+        raise ValueError(
+            f"requested modes {missing} were not recorded; available modes are "
+            f"{list(mapping)}"
+        )
+    return [mapping[mode] for mode in modes]
 
 
 @dataclass(frozen=True)

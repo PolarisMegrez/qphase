@@ -129,7 +129,7 @@ class Milstein(Integrator):
         >>> # dy = milstein.step(y, t, dt, model, dW, backend)  # doctest: +SKIP
 
         """
-        from qphase_sde import ops
+        from qphase_sde.math import ops
 
         dW = noise
         a = model.drift(y, t, model.params)  # (T, N)

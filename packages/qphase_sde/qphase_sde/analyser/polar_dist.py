@@ -17,8 +17,7 @@ from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
 
-from ..utils import resolve_mode_columns
-from .base import Analyzer
+from .base import Analyzer, resolve_mode_columns
 from .result import AnalysisResult
 
 __all__ = [

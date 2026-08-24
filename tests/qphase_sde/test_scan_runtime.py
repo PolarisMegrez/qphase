@@ -14,7 +14,7 @@ from qphase_sde.analyser.result import AnalysisResult
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 from qphase_sde.result import SDEResult
-from qphase_sde.scan import SDEScanResult
+from qphase_sde.runtime.scan import SDEScanResult
 
 
 class ScannedDummyModel:

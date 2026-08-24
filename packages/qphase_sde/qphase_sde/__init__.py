@@ -10,17 +10,12 @@ License : MIT
 Version : 1.0.1 (Jan 2026)
 """
 
-# Import protocols from CLI
-# Trigger self-registration for built-in modules.
-# Keep imports lightweight and avoid importing heavy submodules here; rely on
-# per-package __init__ to perform lazy registration as needed.
-from . import integrator as _qphase_integrators  # noqa: F401
-from . import observer as _qphase_observers  # noqa: F401
+from typing import TYPE_CHECKING, Any
 
-# Import Engine class (v0.2 OO interface)
-from .engine import Engine  # noqa: F401
-from .model import MatrixDriftSDEModel, NoiseSpec, SDEModel  # noqa: F401
-from .state import State, TrajectorySet  # noqa: F401
+if TYPE_CHECKING:
+    from .engine import Engine
+    from .model import MatrixDriftSDEModel, NoiseSpec, SDEModel
+    from .state import State, TrajectorySet
 
 # Public version string
 __version__ = "1.0.1"
@@ -34,3 +29,28 @@ __all__ = [
     "TrajectorySet",
     "__version__",
 ]
+
+# Root-level re-exports are resolved lazily (PEP 562) so that importing
+# declaration-only modules such as ``qphase_sde.manifest`` or
+# ``qphase_sde.contracts`` never pulls the engine, concrete plugins or
+# backends. Plugin registration is entry-point based; no eager submodule
+# import is required here.
+_LAZY_EXPORTS = {
+    "Engine": ".engine",
+    "MatrixDriftSDEModel": ".model",
+    "NoiseSpec": ".model",
+    "SDEModel": ".model",
+    "State": ".state",
+    "TrajectorySet": ".state",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve public root re-exports on first access."""
+    module_suffix = _LAZY_EXPORTS.get(name)
+    if module_suffix is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    module = importlib.import_module(f"{__name__}{module_suffix}")
+    return getattr(module, name)

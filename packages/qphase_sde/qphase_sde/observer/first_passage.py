@@ -30,7 +30,7 @@ from pydantic import Field, model_validator
 from qphase.backend.xputil import convert_to_numpy, get_xp
 from qphase.core.protocols import PluginConfigBase
 
-from qphase_sde.coordinates import (
+from qphase_sde.math.coordinates import (
     CANONICAL_COORDINATE_LAYOUT,
     R_CONVENTION,
     canonical_r_coordinates,

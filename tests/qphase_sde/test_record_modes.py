@@ -10,7 +10,7 @@ from qphase_sde.analyser.polar_dist import PolarDistAnalyzer
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.result import SDEResult
 from qphase_sde.state import TrajectorySet
-from qphase_sde.utils import resolve_mode_columns
+from qphase_sde.analyser.base import resolve_mode_columns
 
 pytestmark = pytest.mark.integration
 

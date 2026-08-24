@@ -7,8 +7,8 @@ from pydantic import Field
 from qphase.backend.base import BackendBase
 from qphase.core.protocols import PluginConfigBase
 
-from qphase_sde import ops
 from qphase_sde.integrator.base import ChunkStepResult, Integrator
+from qphase_sde.math import ops
 from qphase_sde.model import SDEModel
 
 __all__ = ["CayleyMaruyama", "CayleyMaruyamaConfig"]

@@ -35,6 +35,8 @@ dependencies = [
 ]
 
 [project.entry-points.qphase]
+# Resource package manifest
+"resource.sde" = "qphase_sde.manifest:MANIFEST"
 # Engine
 "engine.sde" = "qphase_sde.engine:Engine"
 # Integrator plugin
