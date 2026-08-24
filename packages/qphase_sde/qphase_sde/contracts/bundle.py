@@ -25,7 +25,13 @@ from collections.abc import Mapping
 from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
-from qphase.data import AxisSchema, DataKind, ProductSchema, VariableSchema
+from qphase.data import (
+    AxisRole,
+    AxisSchema,
+    DataKind,
+    ProductSchema,
+    VariableSchema,
+)
 
 from .quantities import DEFAULT_FREQUENCY_ORIENTATION, SDEQuantity
 
@@ -71,14 +77,21 @@ class SDEProvenance(BaseModel):
     scan_grid: dict[str, list[float]] = Field(default_factory=dict)
 
 
-#: Open schema template of the SDE trajectory product.
+#: Open schema template of the SDE trajectory product. ``scan`` is a swept
+#: parameter axis; ``trajectory`` is the independent-realization axis every
+#: sampling uncertainty counts over.
 TRAJECTORY_PRODUCT = ProductSchema(
     kind=DataKind.TIME_SERIES,
     axes=[
-        AxisSchema(name="scan", independent=True),
-        AxisSchema(name="trajectory", independent=True),
-        AxisSchema(name="time", coordinate="regular", units="inverse_rate"),
-        AxisSchema(name="channel"),
+        AxisSchema(name="scan", role=AxisRole.PARAMETER),
+        AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
+        AxisSchema(
+            name="time",
+            role=AxisRole.COORDINATE,
+            coordinate="regular",
+            units="inverse_rate",
+        ),
+        AxisSchema(name="channel", role=AxisRole.COMPONENT),
     ],
     variables=[
         VariableSchema(

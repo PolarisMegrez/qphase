@@ -20,6 +20,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from qphase.data import (
+    AxisRole,
     AxisSchema,
     DataKind,
     ProductSchema,
@@ -60,12 +61,14 @@ class CoherenceFrequencyEstimate(BaseModel):
     )
 
 
-#: Open schema template of the coherence-frequency product.
+#: Open schema template of the coherence-frequency product. The sampling
+#: uncertainty counts over independent trajectories, never over the scan axis.
 COHERENCE_FREQUENCY_PRODUCT = ProductSchema(
     kind=DataKind.STATISTICS,
     axes=[
-        AxisSchema(name="scan", independent=True),
-        AxisSchema(name="channel"),
+        AxisSchema(name="scan", role=AxisRole.PARAMETER),
+        AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
+        AxisSchema(name="channel", role=AxisRole.COMPONENT),
     ],
     variables=[
         VariableSchema(
@@ -80,8 +83,9 @@ COHERENCE_FREQUENCY_PRODUCT = ProductSchema(
         UncertaintySchema(
             target="frequency",
             kind="sample_std",
-            independent_unit="scan",
+            independent_unit="trajectory",
             covariance="real",
+            scope="sampling",
         )
     ],
     attributes={"estimator": ""},

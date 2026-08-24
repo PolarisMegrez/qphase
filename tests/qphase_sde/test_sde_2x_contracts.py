@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from qphase.data import ProductSchema
+from qphase.data import AxisRole, ProductSchema
 from qphase_sde.contracts import (
     analyser,
     bundle,
@@ -22,6 +22,7 @@ from qphase_sde.contracts import (
     migration,
     peaks,
     quantities,
+    tasks,
 )
 
 SDE_ROOT = Path(__file__).resolve().parents[2] / "packages" / "qphase_sde"
@@ -172,6 +173,7 @@ def test_peak_candidate_and_path_roundtrip():
         location=1.25,
         intensity=42.0,
         conditional_location_std=0.01,
+        sampling_location_std=0.02,
         confidence_lower=1.2,
         confidence_upper=1.3,
         width=0.05,
@@ -179,9 +181,10 @@ def test_peak_candidate_and_path_roundtrip():
         curvature=-3.0,
         support=16.0,
         quality=0.98,
-        fit_payload={"model": "lorentz", "gamma": 0.02},
     )
-    assert "path" not in candidate.model_dump()
+    dumped = candidate.model_dump()
+    assert "path" not in dumped
+    assert "fit_payload" not in dumped  # fit payloads are not frozen
     payload = json.loads(json.dumps(candidate.model_dump(mode="json")))
     assert peaks.PeakCandidate.model_validate(payload) == candidate
 
@@ -195,6 +198,12 @@ def test_peak_candidate_and_path_roundtrip():
 
     with pytest.raises(ValidationError):
         peaks.PeakCandidate(location=1.0, intensity=2.0, bogus_field=True)
+    with pytest.raises(ValidationError):
+        peaks.PeakCandidate(
+            location=1.0,
+            intensity=2.0,
+            fit_payload={"model": "lorentz"},
+        )
 
 
 def test_coherence_frequency_estimate_roundtrip():
@@ -302,3 +311,213 @@ def test_convert_unknown_analyser_is_unmapped_not_copied():
     report = migration.convert_analyser_config({"mystery": {"x": 1}})
     assert report.unmapped == ["mystery"]
     assert "mystery" not in report.converted
+
+
+def test_peak_candidate_offsets_contract():
+    """Candidate offsets: start 0, monotone, terminal count, scan+1 length."""
+    import numpy as np
+
+    scan_count = 3
+    columns = {
+        "location": np.zeros(4),
+        "intensity": np.zeros(4),
+        "status_code": np.zeros(4, dtype=np.int64),
+    }
+    peaks.validate_candidate_table([0, 2, 2, 4], scan_count, columns)
+
+    with pytest.raises(ValueError, match="start at 0"):
+        peaks.validate_candidate_table([1, 2, 2, 4], scan_count, columns)
+    with pytest.raises(ValueError, match="non-decreasing"):
+        peaks.validate_candidate_table([0, 3, 2, 4], scan_count, columns)
+    with pytest.raises(ValueError, match=r"scan_count \+ 1"):
+        peaks.validate_candidate_table([0, 2, 4], scan_count, columns)
+    with pytest.raises(ValueError, match="one entry per candidate"):
+        # Terminal offset (4) disagrees with the column length (3).
+        peaks.validate_candidate_table(
+            [0, 2, 2, 4],
+            scan_count,
+            {"location": np.zeros(3), "intensity": np.zeros(3),
+             "status_code": np.zeros(3, dtype=np.int64)},
+        )
+    with pytest.raises(ValueError, match="required column"):
+        peaks.validate_candidate_table([0, 2, 2, 4], scan_count, {})
+
+
+def test_optional_capability_requires_valid_mask():
+    """Optional columns need an explicit 0/1 '<name>_valid' mask column."""
+    import numpy as np
+
+    columns = {
+        "location": np.zeros(2),
+        "intensity": np.zeros(2),
+        "status_code": np.zeros(2, dtype=np.int64),
+        "width": np.array([0.1, 0.2]),
+        "width_valid": np.array([1, 0], dtype=np.int8),
+    }
+    peaks.validate_candidate_table([0, 2], 1, columns)
+
+    with pytest.raises(ValueError, match="mask column"):
+        peaks.validate_candidate_table(
+            [0, 2], 1, {k: v for k, v in columns.items() if k != "width_valid"}
+        )
+    with pytest.raises(ValueError, match="0/1"):
+        peaks.validate_candidate_table(
+            [0, 2],
+            1,
+            {**columns, "width_valid": np.array([1, 7], dtype=np.int8)},
+        )
+
+
+def test_confidence_bounds_ordering():
+    """Confidence lower bounds must never exceed upper bounds."""
+    import numpy as np
+
+    peaks.validate_confidence_bounds([1.0, 2.0], [1.5, 2.5])
+    with pytest.raises(ValueError, match="lower bound exceeds upper"):
+        peaks.validate_confidence_bounds([1.0, 3.0], [1.5, 2.5])
+    # Masked-out entries are not checked.
+    peaks.validate_confidence_bounds(
+        np.array([1.0, 3.0]),
+        np.array([1.5, 2.5]),
+        valid_mask=np.array([1, 0], dtype=np.int8),
+    )
+
+
+def test_path_table_validation():
+    """Path offsets, candidate rows and scan positions stay consistent."""
+    peaks.validate_path_table(
+        path_offsets=[0, 2, 5],
+        candidate_row=[0, 3, 1, 2, 4],
+        scan_position=[0, 1, 0, 1, 2],
+        candidate_count=5,
+    )
+    with pytest.raises(ValueError, match="equal length"):
+        peaks.validate_path_table([0, 2], [0, 3], [0], 5)
+    with pytest.raises(ValueError, match="terminal path offset"):
+        peaks.validate_path_table([0, 3], [0, 3], [0, 1], 5)
+    with pytest.raises(ValueError, match="outside"):
+        peaks.validate_path_table([0, 2], [0, 9], [0, 1], 5)
+
+
+def test_fit_parameter_table_has_no_object_payload():
+    """Fit parameters are typed numeric rows; names live in attributes."""
+    import numpy as np
+
+    fit = peaks.PEAK_FIT_PRODUCT
+    for variable in fit.variables:
+        dtype = np.dtype(variable.dtype)
+        assert dtype != np.dtype(object)
+        assert dtype.kind in "if", variable.name
+    # code → name mapping is an attribute list, not a string column.
+    assert "parameter_names" in fit.attributes
+    assert fit.attributes["foreign_key"] == "candidate_row"
+
+
+def test_uncertainty_scopes_are_typed_and_roundtrip():
+    """conditional/sampling/path_model_selection scopes are typed entries."""
+    peak_scopes = {u.scope for u in peaks.PEAK_PRODUCT.uncertainties}
+    assert peak_scopes == {"conditional", "sampling"}
+    # Scope references resolve to typed variables, not metadata dicts.
+    data_vars = {u.data_variable for u in peaks.PEAK_PRODUCT.uncertainties}
+    variable_names = {v.name for v in peaks.PEAK_PRODUCT.variables}
+    assert data_vars <= variable_names
+
+    for scope in peaks.UncertaintyScope:
+        assert scope.value in {
+            "conditional",
+            "sampling",
+            "path_model_selection",
+        }
+    assert peaks.PEAK_PATH_PRODUCT.attributes["uncertainty_scope"] == (
+        "path_model_selection"
+    )
+
+    payload = json.loads(json.dumps(peaks.PEAK_PRODUCT.model_dump(mode="json")))
+    assert ProductSchema.model_validate(payload) == peaks.PEAK_PRODUCT
+
+
+def test_moment_family_descriptor_is_sde_private_and_explicit():
+    """Moment descriptors are SDE-private with explicit positive orders."""
+    descriptor = quantities.SDEMomentFamilySchema(
+        family_id="f", moment_kind="central", ordering="normal", orders=[2, 1]
+    )
+    assert descriptor.orders == [1, 2]  # stored deterministically
+    assert descriptor.order_axis == "order"
+    with pytest.raises(ValidationError, match="positive"):
+        quantities.SDEMomentFamilySchema(
+            family_id="f", moment_kind="raw", ordering="c_number", orders=[0]
+        )
+    with pytest.raises(ValidationError, match="unique"):
+        quantities.SDEMomentFamilySchema(
+            family_id="f", moment_kind="raw", ordering="c_number",
+            orders=[1, 1],
+        )
+
+    # The core schema has no moment_family field; the descriptor is embedded
+    # as JSON attributes of the SDE product.
+    assert "moment_family" not in ProductSchema.model_fields
+    embedded = quantities.MOMENT_FAMILY_PRODUCT.attributes["moment_family"]
+    reparsed = quantities.SDEMomentFamilySchema.model_validate(embedded)
+    assert reparsed == quantities.DEFAULT_MOMENT_FAMILY
+
+    # Only a single explicit 'order' index axis is frozen — no mixed-rank
+    # tensors disguised as one dense variable.
+    moment = quantities.MOMENT_FAMILY_PRODUCT.variable("moment")
+    assert moment.dims == ("scan", "order", "channel")
+    order_axis = quantities.MOMENT_FAMILY_PRODUCT.axis("order")
+    assert order_axis.role is AxisRole.INDEX
+
+
+def test_uncertainties_count_realizations_not_scan():
+    """Allan/spectrum/moment uncertainties count over the realization axis."""
+    for schema in (
+        quantities.SPECTRUM_PRODUCT,
+        quantities.ALLAN_PRODUCT,
+        quantities.MOMENT_FAMILY_PRODUCT,
+        coherence.COHERENCE_FREQUENCY_PRODUCT,
+    ):
+        scan_axis = schema.axis("scan")
+        assert scan_axis.role is AxisRole.PARAMETER
+        for uncertainty in schema.uncertainties:
+            if uncertainty.independent_unit:
+                axis = schema.axis(uncertainty.independent_unit)
+                assert axis.role is AxisRole.REALIZATION
+
+
+def test_sde_task_profiles_are_frozen():
+    """The three SDE task profiles match the frozen design."""
+    assert {p.id for p in tasks.SDE_TASK_PROFILES} == {
+        "simulate",
+        "analyze",
+        "simulate_analyze",
+    }
+
+    simulate = tasks.sde_task_profile("simulate")
+    assert simulate.requirements.required == ["backend", "integrator", "model"]
+    assert simulate.requirements.optional == ["analyser", "observer"]
+
+    analyze = tasks.sde_task_profile("analyze")
+    assert analyze.requirements.required == ["analyser", "backend"]
+    assert analyze.requirements.forbidden == [
+        "integrator",
+        "model",
+        "observer",
+    ]
+
+    both = tasks.sde_task_profile("simulate_analyze")
+    assert both.requirements.required == [
+        "analyser",
+        "backend",
+        "integrator",
+        "model",
+    ]
+    assert both.requirements.optional == ["observer"]
+
+    with pytest.raises(KeyError):
+        tasks.sde_task_profile("unknown-task")
+
+    # Profiles stay JSON-serializable and round-trip losslessly.
+    payload = json.loads(json.dumps(analyze.model_dump(mode="json")))
+    from qphase.core.task_profile import EngineTaskProfile
+
+    assert EngineTaskProfile.model_validate(payload) == analyze

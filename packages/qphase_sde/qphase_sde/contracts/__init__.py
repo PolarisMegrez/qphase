@@ -15,9 +15,11 @@ analyser
 reducer
     The unified reducer lifecycle.
 peaks
-    Peak candidate and path contracts.
+    Peak candidate, fit-parameter and path contracts.
 coherence
     Coherence-frequency estimate contracts.
+tasks
+    Frozen SDE engine task profiles (approved design, Phase 2 enforcement).
 migration
     1.x → 2.x migration tables and the one-shot config converter.
 """
@@ -30,6 +32,7 @@ from . import (
     peaks,
     quantities,
     reducer,
+    tasks,
 )
 
 __all__ = [
@@ -40,4 +43,5 @@ __all__ = [
     "peaks",
     "quantities",
     "reducer",
+    "tasks",
 ]
