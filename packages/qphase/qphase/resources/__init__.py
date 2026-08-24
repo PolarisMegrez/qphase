@@ -1,8 +1,9 @@
 """qphase: Resource Package Contracts
 ---------------------------------------------------------
-Experimental contracts (schema ``qphase.resource/1``) describing resource
-packages as managed asset units: composable profiles, the resource package
-manifest, asset declarations and development-time validators.
+Contracts (schema ``qphase.resource/1``) describing resource packages as
+managed asset units: composable profiles, the resource package manifest,
+asset declarations, the read-only resource package catalog and
+development-time validators.
 
 Public API
 ----------
@@ -12,11 +13,20 @@ manifest
     Resource package manifest models and fingerprinting.
 assets
     Asset declarations and provenance.
+catalog
+    Read-only discovery/aggregation of installed resource packages.
 validation
     Development-time manifest/source-layout/entry-point validators.
 """
 
 from .assets import AssetOrigin, ResourceAssetDeclaration
+from .catalog import (
+    CATALOG_SCHEMA,
+    CatalogAsset,
+    ResourcePackageCatalog,
+    ResourcePackageView,
+    read_project_overlays,
+)
 from .manifest import (
     RESOURCE_ENTRY_POINT_PREFIX,
     RESOURCE_MANIFEST_SCHEMA,
@@ -51,10 +61,12 @@ from .validation import (
 )
 
 __all__ = [
+    "CATALOG_SCHEMA",
     "RESOURCE_ENTRY_POINT_PREFIX",
     "RESOURCE_MANIFEST_SCHEMA",
     "AssetOrigin",
     "BackendCapabilities",
+    "CatalogAsset",
     "CompatibilityRange",
     "DataMaterializerDeclaration",
     "DataProductDeclaration",
@@ -64,8 +76,10 @@ __all__ = [
     "OptionalDependencyDeclaration",
     "PluginClassDeclaration",
     "ResourceAssetDeclaration",
+    "ResourcePackageCatalog",
     "ResourcePackageManifest",
     "ResourcePackageProtocol",
+    "ResourcePackageView",
     "ResourceProfile",
     "ValidationIssue",
     "classify_origin",
@@ -74,6 +88,7 @@ __all__ = [
     "partition_entry_points",
     "profile_required_directories",
     "profile_required_modules",
+    "read_project_overlays",
     "resource_entry_point_name",
     "validate_manifest",
     "validate_overlay_entry_points",
