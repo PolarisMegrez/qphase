@@ -1,4 +1,4 @@
-"""Contract tests for the experimental data product schema protocols."""
+"""Contract tests for the proposed data product schema protocols."""
 
 import json
 
@@ -14,9 +14,9 @@ from qphase.core.task_profile import (
 from qphase.data import (
     PRODUCT_SCHEMA_VERSION,
     ArtifactRef,
+    AxisRole,
     AxisSchema,
     DataKind,
-    MomentFamilySchema,
     ProductDeclaration,
     ProductGraph,
     ProductNode,
@@ -34,11 +34,11 @@ def _time_series_schema() -> ProductSchema:
         kind=DataKind.TIME_SERIES,
         axes=[
             AxisSchema(
-                name="time", size=1024, coordinate="regular", start=0.0,
-                step=0.01, units="s",
+                name="time", role=AxisRole.COORDINATE, size=1024,
+                coordinate="regular", start=0.0, step=0.01, units="s",
             ),
-            AxisSchema(name="trajectory", size=64, independent=True),
-            AxisSchema(name="channel", size=2),
+            AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=64),
+            AxisSchema(name="channel", role=AxisRole.COMPONENT, size=2),
         ],
         variables=[
             VariableSchema(
@@ -65,17 +65,30 @@ def _spectral_schema() -> ProductSchema:
     return ProductSchema(
         kind=DataKind.SPECTRAL,
         axes=[
-            AxisSchema(name="frequency", size=513, units="Hz"),
-            AxisSchema(name="channel", size=2),
+            AxisSchema(name="scan", role=AxisRole.PARAMETER),
+            AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
+            AxisSchema(
+                name="frequency", role=AxisRole.COORDINATE, size=513,
+                units="Hz",
+            ),
+            AxisSchema(name="channel", role=AxisRole.COMPONENT, size=2),
         ],
         variables=[
             VariableSchema(
                 name="power",
                 dtype="float64",
                 value_domain="real",
-                dims=("frequency", "channel"),
+                dims=("scan", "frequency", "channel"),
                 quantity=SpectralQuantity.POWER_SPECTRAL_DENSITY.value,
                 constraints=VariableConstraints(nonnegative=True),
+            )
+        ],
+        uncertainties=[
+            UncertaintySchema(
+                target="power",
+                kind="sample_std",
+                independent_unit="trajectory",
+                covariance="real",
             )
         ],
         attributes={
@@ -127,16 +140,40 @@ def test_variable_dtype_validation():
     assert variable.dtype == "<f8"
 
 
-def test_variable_domain_must_match_dtype():
-    """A real-valued variable cannot declare a complex dtype."""
+def test_variable_domain_dtype_bidirectional():
+    """Real forbids complex dtypes; complex requires complex dtypes."""
     with pytest.raises(ValidationError, match="value_domain"):
         VariableSchema(
             name="x", dtype="complex128", value_domain="real", dims=()
         )
+    with pytest.raises(ValidationError, match="value_domain"):
+        VariableSchema(
+            name="x", dtype="float64", value_domain="complex", dims=()
+        )
 
 
-def test_variable_dims_must_reference_axes():
-    """Variables may only span declared axes."""
+def test_nonnegative_requires_real_numeric():
+    """nonnegative constraints only apply to real numeric variables."""
+    with pytest.raises(ValidationError, match="nonnegative"):
+        VariableSchema(
+            name="z",
+            dtype="complex128",
+            value_domain="complex",
+            dims=(),
+            constraints=VariableConstraints(nonnegative=True),
+        )
+    ok = VariableSchema(
+        name="n",
+        dtype="int64",
+        value_domain="real",
+        dims=(),
+        constraints=VariableConstraints(nonnegative=True),
+    )
+    assert ok.constraints.nonnegative
+
+
+def test_variable_dims_unique_and_known():
+    """Variables reference declared axes exactly once each."""
     with pytest.raises(ValidationError, match="unknown axes"):
         ProductSchema(
             kind=DataKind.TIME_SERIES,
@@ -150,28 +187,195 @@ def test_variable_dims_must_reference_axes():
                 )
             ],
         )
+    with pytest.raises(ValidationError, match="repeat"):
+        VariableSchema(
+            name="x",
+            dtype="float64",
+            value_domain="real",
+            dims=("time", "time"),
+        )
+
+
+def test_hermitian_requires_two_tensor_dims():
+    """A Hermitian layout needs at least two component/index dims."""
+    with pytest.raises(ValidationError, match="Hermitian"):
+        ProductSchema(
+            kind=DataKind.SPECTRAL,
+            axes=[AxisSchema(name="frequency", role=AxisRole.COORDINATE)],
+            variables=[
+                VariableSchema(
+                    name="cross",
+                    dtype="complex128",
+                    value_domain="complex",
+                    dims=("frequency",),
+                    constraints=VariableConstraints(symmetry="hermitian"),
+                )
+            ],
+            attributes={
+                "frequency_units": "Hz",
+                "orientation": "phase_decreasing",
+                "sidedness": "two_sided",
+                "normalization": "density",
+                "window": "rectangular",
+                "estimator": "periodogram",
+            },
+        )
+    ok = ProductSchema(
+        kind=DataKind.SPECTRAL,
+        axes=[
+            AxisSchema(name="frequency", role=AxisRole.COORDINATE),
+            AxisSchema(name="channel_i", role=AxisRole.COMPONENT),
+            AxisSchema(name="channel_j", role=AxisRole.COMPONENT),
+        ],
+        variables=[
+            VariableSchema(
+                name="cross",
+                dtype="complex128",
+                value_domain="complex",
+                dims=("frequency", "channel_i", "channel_j"),
+                constraints=VariableConstraints(symmetry="hermitian"),
+            )
+        ],
+        attributes={
+            "frequency_units": "Hz",
+            "orientation": "phase_decreasing",
+            "sidedness": "two_sided",
+            "normalization": "density",
+            "window": "rectangular",
+            "estimator": "periodogram",
+        },
+    )
+    assert ok.variable("cross").constraints.symmetry == "hermitian"
 
 
 def test_complex_uncertainty_requires_covariance_representation():
-    """Complex variables must not carry a bare complex std."""
+    """Complex targets must use real_imag or magnitude_phase, never a bare std."""
+    base = dict(
+        kind=DataKind.TIME_SERIES,
+        axes=[
+            AxisSchema(name="time", role=AxisRole.COORDINATE, size=8),
+            AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
+        ],
+        variables=[
+            VariableSchema(
+                name="a",
+                dtype="complex128",
+                value_domain="complex",
+                dims=("time",),
+            )
+        ],
+    )
     with pytest.raises(ValidationError, match="covariance representation"):
         ProductSchema(
-            kind=DataKind.TIME_SERIES,
-            axes=[AxisSchema(name="time", size=8)],
+            **base,
+            uncertainties=[UncertaintySchema(target="a", kind="sample_std")],
+        )
+    with pytest.raises(ValidationError, match="covariance representation"):
+        ProductSchema(
+            **base,
+            uncertainties=[
+                UncertaintySchema(target="a", kind="sample_std", covariance="real")
+            ],
+        )
+
+
+def test_real_uncertainty_uses_real_covariance():
+    """Real targets may only use the 'real' covariance representation."""
+    with pytest.raises(ValidationError, match="'real' covariance"):
+        ProductSchema(
+            kind=DataKind.STATISTICS,
             variables=[
                 VariableSchema(
-                    name="a",
-                    dtype="complex128",
-                    value_domain="complex",
-                    dims=("time",),
+                    name="m1", dtype="float64", value_domain="real", dims=()
                 )
             ],
-            uncertainties=[UncertaintySchema(target="a", kind="sample_std")],
+            uncertainties=[
+                UncertaintySchema(
+                    target="m1", kind="covariance", covariance="real_imag"
+                )
+            ],
+        )
+
+
+def test_custom_covariance_representation_not_frozen():
+    """The 'custom' covariance representation is not part of the contract."""
+    with pytest.raises(ValidationError):
+        UncertaintySchema(target="x", kind="covariance", covariance="custom")
+
+
+def test_uncertainty_independent_unit_must_be_realization_axis():
+    """Uncertainties may only count over realization axes — never scan axes."""
+    axes = [
+        AxisSchema(name="scan", role=AxisRole.PARAMETER),
+        AxisSchema(name="time", role=AxisRole.COORDINATE),
+        AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
+    ]
+    variable = VariableSchema(
+        name="x", dtype="float64", value_domain="real", dims=("time",)
+    )
+    for bad_axis in ("scan", "time"):
+        with pytest.raises(ValidationError, match="realization axis"):
+            ProductSchema(
+                kind=DataKind.TIME_SERIES,
+                axes=axes,
+                variables=[variable],
+                uncertainties=[
+                    UncertaintySchema(
+                        target="x",
+                        kind="sample_std",
+                        independent_unit=bad_axis,
+                    )
+                ],
+            )
+    ok = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=axes,
+        variables=[variable],
+        uncertainties=[
+            UncertaintySchema(
+                target="x",
+                kind="sem",
+                independent_unit="trajectory",
+                count=32,
+            )
+        ],
+    )
+    assert ok.uncertainties[0].independent_unit == "trajectory"
+
+
+def test_uncertainty_confidence_and_count_bounds():
+    """confidence must lie in (0, 1); count must be a positive integer."""
+    with pytest.raises(ValidationError, match="confidence"):
+        UncertaintySchema(target="x", kind="confidence_interval", confidence=1.5)
+    with pytest.raises(ValidationError, match="confidence"):
+        UncertaintySchema(target="x", kind="confidence_interval", confidence=0.0)
+    with pytest.raises(ValidationError, match="positive"):
+        UncertaintySchema(target="x", kind="sem", count=0)
+
+
+def test_uncertainty_data_variable_must_be_typed_variable():
+    """Covariance payloads reference typed variables, not metadata dicts."""
+    with pytest.raises(ValidationError, match="data variable"):
+        ProductSchema(
+            kind=DataKind.STATISTICS,
+            variables=[
+                VariableSchema(
+                    name="m1", dtype="float64", value_domain="real", dims=()
+                )
+            ],
+            uncertainties=[
+                UncertaintySchema(
+                    target="m1",
+                    kind="covariance",
+                    covariance="real",
+                    data_variable="ghost",
+                )
+            ],
         )
 
 
 def test_uncertainty_target_must_exist():
-    """Uncertainties must reference declared variables and axes."""
+    """Uncertainties must reference declared variables."""
     with pytest.raises(ValidationError, match="unknown variable"):
         ProductSchema(
             kind=DataKind.STATISTICS,
@@ -200,12 +404,19 @@ def test_axis_shape_closure():
     assert closed.is_closed
 
 
-def test_regular_axis_requires_step_for_closure():
-    """Regular coordinates are open until they declare a step."""
+def test_regular_axis_closure_requires_finite_nonzero_step():
+    """Regular coordinates are closed only with a finite, non-zero step."""
     axis = AxisSchema(name="time", coordinate="regular", size=8)
     assert not axis.is_closed
-    closed = axis.model_copy(update={"step": 0.1})
-    assert closed.is_closed
+    assert not axis.model_copy(update={"step": 0.0}).is_closed
+    assert not axis.model_copy(update={"step": float("inf")}).is_closed
+    assert axis.model_copy(update={"step": 0.1}).is_closed
+
+
+def test_axis_size_must_be_nonnegative():
+    """Axis sizes are non-negative integers."""
+    with pytest.raises(ValidationError):
+        AxisSchema(name="time", size=-1)
 
 
 def test_spectral_products_require_spectral_attributes():
@@ -226,114 +437,77 @@ def test_spectral_products_require_spectral_attributes():
         )
 
 
-def test_moment_family_roundtrip_and_kind_restriction():
-    """Moment families belong to statistics products only."""
-    family = MomentFamilySchema(
-        family_id="alpha-moments",
-        moment_kind="raw",
-        ordering="c_number",
-        maximum_order=4,
-        symmetry="symmetric",
-    )
-    schema = ProductSchema(
-        kind=DataKind.STATISTICS,
-        axes=[AxisSchema(name="order", size=4)],
-        variables=[
-            VariableSchema(
-                name="moment",
-                dtype="complex128",
-                value_domain="complex",
-                dims=("order",),
-                quantity="moments",
-            )
-        ],
-        moment_family=family,
-    )
-    payload = json.loads(json.dumps(schema.model_dump(mode="json")))
-    assert ProductSchema.model_validate(payload).moment_family == family
-
-    with pytest.raises(ValidationError, match="statistics"):
+def test_spectral_attributes_reject_empty_required_fields():
+    """Mandatory spectral attributes must not bypass validation via ''."""
+    with pytest.raises(ValidationError):
         ProductSchema(
-            kind=DataKind.TIME_SERIES,
-            axes=[AxisSchema(name="time", size=4)],
+            kind=DataKind.SPECTRAL,
+            axes=[AxisSchema(name="frequency", size=4)],
             variables=[
                 VariableSchema(
-                    name="x",
+                    name="power",
                     dtype="float64",
                     value_domain="real",
-                    dims=("time",),
+                    dims=("frequency",),
                 )
             ],
-            moment_family=family,
+            attributes={
+                "frequency_units": "",
+                "orientation": "phase_decreasing",
+                "sidedness": "one_sided",
+                "normalization": "density",
+                "window": "rectangular",
+                "estimator": "periodogram",
+            },
         )
 
 
-def test_protocol_runtime_conformance():
-    """Minimal structural implementations satisfy the frozen protocols."""
-    from qphase.data import DataHandleProtocol, DataLeaseProtocol, DataProduct
+def test_moment_family_removed_from_core():
+    """Moment families are SDE-private; the core schema has no such field."""
+    import qphase.data
 
-    product_schema = _time_series_schema()
-
-    class FakeHandle:
-        schema = product_schema
-        device = "cpu"
-        dtype = "<c16"
-        shape = (64, 1024, 2)
-        nbytes = 64 * 1024 * 2 * 16
-        read_only = True
-        owner = "engine.sde"
-
-        def acquire(self, consumer, scope="execution"):
-            return FakeLease(self, consumer, scope)
-
-        def release(self):
-            return None
-
-        def materialize(self, *, device=None, copy=True):
-            return None
-
-        def export_interface(self):
-            return {"type": "host", "copied": False}
-
-    class FakeLease:
-        def __init__(self, handle, consumer, scope):
-            self.handle = handle
-            self.consumer = consumer
-            self.scope = scope
-            self.pinned = False
-
-        def pin(self):
-            self.pinned = True
-
-        def release(self):
-            return None
-
-    class FakeProduct:
-        schema = product_schema
-        provenance = {"engine": "sde"}
-
-        @property
-        def backing(self):
-            return FakeHandle()
-
-    handle = FakeHandle()
-    lease = handle.acquire("analyser.psd")
-    assert isinstance(handle, DataHandleProtocol)
-    assert isinstance(lease, DataLeaseProtocol)
-    assert isinstance(FakeProduct(), DataProduct)
+    assert not hasattr(qphase.data, "MomentFamilySchema")
+    assert "moment_family" not in ProductSchema.model_fields
+    with pytest.raises(ValidationError):
+        ProductSchema(
+            kind=DataKind.STATISTICS,
+            variables=[
+                VariableSchema(
+                    name="m", dtype="float64", value_domain="real", dims=()
+                )
+            ],
+            moment_family={"family_id": "x"},
+        )
 
 
-def test_artifact_ref_is_json_serializable():
-    """Artifact references carry identity only, no arrays."""
+def test_artifact_ref_is_minimal_and_typed():
+    """Artifact refs carry identity only: no provenance, arrays or extras."""
+    schema = _spectral_schema()
     ref = ArtifactRef(
         artifact_id="art-123",
-        product_schema=_spectral_schema(),
+        product_schema=schema,
         loader="qphase_sde.serialization.npz:load",
         content_hash="abc",
-        provenance={"engine": "sde"},
     )
+    assert ref.hash_algorithm == "sha256"
     payload = json.loads(json.dumps(ref.model_dump(mode="json")))
     assert ArtifactRef.model_validate(payload) == ref
+
+    with pytest.raises(ValidationError):
+        ArtifactRef(
+            artifact_id="a",
+            product_schema=schema,
+            loader="qphase_sde.serialization.npz:load",
+            content_hash="abc",
+            provenance={"engine": "sde"},
+        )
+    with pytest.raises(ValidationError, match="loader"):
+        ArtifactRef(
+            artifact_id="a",
+            product_schema=schema,
+            loader="not a loader!",
+            content_hash="abc",
+        )
 
 
 def _node(producer: str, product: str, requires=()) -> ProductNode:
@@ -414,11 +588,11 @@ def test_task_profile_roundtrip_and_resolver_validation():
 
 
 def test_product_schema_version_is_frozen():
-    """The product schema version is part of the frozen contract."""
+    """The product schema version is part of the proposed contract."""
     assert PRODUCT_SCHEMA_VERSION == "qphase.product/1"
     assert _time_series_schema().schema_version == "qphase.product/1"
 
 
 GOLDEN_SPECTRAL_FINGERPRINT = (
-    "874979d31eb20d2690cc5025d75b701a344bf7ee802a22aa882519846c8c37d1"
+    "00e917d4c6d16aee763ded06a071f1df84ac59d6f9f45cf64440818a779366c1"
 )

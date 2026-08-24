@@ -1,11 +1,10 @@
 """qphase: Data Product Schemas
 ---------------------------------------------------------
 Defines the machine-readable schema language of typed data products:
-``AxisSchema``, ``VariableSchema``, ``UncertaintySchema``, ``ProductSchema``
-and ``MomentFamilySchema``. Schemas are JSON-serializable, strictly
-extra-forbid, and carry a stable fingerprint. Shapes may be partially unknown
-at plan time (``AxisSchema.size is None``) but must be closed before
-materialization.
+``AxisSchema``, ``VariableSchema``, ``UncertaintySchema`` and
+``ProductSchema``. Schemas are JSON-serializable, strictly extra-forbid, and
+carry a stable fingerprint. Shapes may be partially unknown at plan time
+(``AxisSchema.size is None``) but must be closed before materialization.
 
 The *variable* — not the dataset class — decides real vs. complex; spectral
 products are never split into incompatible real/complex result classes.
@@ -15,6 +14,8 @@ symmetry/layout descriptor; object dtypes are forbidden.
 
 Public API
 ----------
+AxisRole
+    Statistical role of an axis (parameter/realization/coordinate/...).
 AxisSchema
     Named axis with optional size and coordinate description.
 VariableSchema
@@ -25,8 +26,6 @@ UncertaintySchema
     Uncertainty attached to a variable.
 SpectralAttributes
     Mandatory attribute set of spectral products.
-MomentFamilySchema
-    Grouping of related moments in one statistics product.
 ProductSchema
     Complete product schema with cross-validation and fingerprint.
 """
@@ -34,6 +33,7 @@ ProductSchema
 from __future__ import annotations
 
 import hashlib
+from enum import Enum
 from typing import Any, Literal
 
 import numpy as np
@@ -44,8 +44,8 @@ from .kinds import DataKind
 
 __all__ = [
     "PRODUCT_SCHEMA_VERSION",
+    "AxisRole",
     "AxisSchema",
-    "MomentFamilySchema",
     "ProductSchema",
     "SpectralAttributes",
     "UncertaintySchema",
@@ -53,23 +53,46 @@ __all__ = [
     "VariableSchema",
 ]
 
-#: Schema identifier frozen for the qphase 2.0 product schema contract.
+#: Schema identifier of the proposed (not yet approved) product contract.
 PRODUCT_SCHEMA_VERSION = "qphase.product/1"
+
+
+class AxisRole(str, Enum):
+    """Statistical role of an axis.
+
+    ``parameter`` axes are scan/control coordinates: distinct points never
+    merge into one estimator's SEM. ``realization`` axes are independent
+    stochastic realizations (trajectory, seed, trajectory group, time block)
+    that uncertainty merging counts over. ``coordinate`` axes are sampling
+    coordinates (time, frequency, tau). ``component`` axes index channels,
+    modes or tensor components. ``index`` axes enumerate discrete rows such as
+    candidates, paths or moment orders.
+    """
+
+    PARAMETER = "parameter"
+    REALIZATION = "realization"
+    COORDINATE = "coordinate"
+    COMPONENT = "component"
+    INDEX = "index"
 
 
 class AxisSchema(BaseModel):
     """One named axis of a data product.
 
-    ``size`` may be unknown at plan time; the axis is *closed* once its size is
-    known. ``independent`` marks realization axes (scan points, trajectories)
-    that uncertainty merging counts over.
+    ``size`` may be unknown at plan time; the axis is *closed* once its size
+    is known and — for regular coordinates — a finite, non-zero step is set.
+    Explicit coordinate arrays never enter the schema; their length and
+    monotonicity are validated at materialization time.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
+    role: AxisRole = AxisRole.COORDINATE
     size: int | None = Field(
-        default=None, description="Axis length; None while unknown at plan time."
+        default=None,
+        ge=0,
+        description="Axis length; None while unknown at plan time.",
     )
     coordinate: Literal["regular", "explicit"] = Field(
         default="explicit",
@@ -78,10 +101,6 @@ class AxisSchema(BaseModel):
     )
     units: str = ""
     monotonic: bool = True
-    independent: bool = Field(
-        default=False,
-        description="True for realization axes (scan/trajectory).",
-    )
     start: float | None = None
     step: float | None = None
 
@@ -90,12 +109,13 @@ class AxisSchema(BaseModel):
         """Return True when the axis is ready for materialization.
 
         An axis is closed once its size is known and — for regular
-        coordinates — its step is declared.
+        coordinates — its step is finite and non-zero.
         """
         if self.size is None:
             return False
-        if self.coordinate == "regular" and self.step is None:
-            return False
+        if self.coordinate == "regular":
+            if self.step is None or not np.isfinite(self.step) or self.step == 0:
+                return False
         return True
 
 
@@ -117,7 +137,8 @@ class VariableSchema(BaseModel):
     The variable decides the real/complex value domain; matrices and tensors
     use named ``dims`` plus a symmetry/layout constraint. Object dtypes are
     forbidden — structured tables belong to statistics products with typed
-    columns.
+    columns. ``real`` covers any non-complex numeric dtype, including integer
+    counts and status codes.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -147,6 +168,13 @@ class VariableSchema(BaseModel):
             raise ValueError("object dtype is not allowed in data products")
         return dtype.str if dtype.metadata is None else value
 
+    @field_validator("dims")
+    @classmethod
+    def _check_dims_unique(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("a variable must not repeat an axis name")
+        return value
+
     @model_validator(mode="after")
     def _check_domain_dtype_consistency(self) -> VariableSchema:
         dtype = np.dtype(self.dtype)
@@ -154,6 +182,18 @@ class VariableSchema(BaseModel):
             raise ValueError(
                 f"variable {self.name!r} declares value_domain 'real' with a "
                 "complex dtype"
+            )
+        if self.value_domain == "complex" and dtype.kind != "c":
+            raise ValueError(
+                f"variable {self.name!r} declares value_domain 'complex' with "
+                "a non-complex dtype"
+            )
+        if self.constraints.nonnegative and (
+            self.value_domain != "real" or dtype.kind not in "fiu"
+        ):
+            raise ValueError(
+                f"variable {self.name!r}: nonnegative constraints only apply "
+                "to real numeric variables"
             )
         return self
 
@@ -163,7 +203,9 @@ class UncertaintySchema(BaseModel):
 
     Complex variables must declare an explicit covariance representation; a
     bare complex "std" is not a valid uncertainty. ``independent_unit`` names
-    the realization axis the estimate counts over.
+    the *realization* axis the estimate counts over. Covariance payloads are
+    themselves typed variables (or a separate covariance product) referenced
+    by ``data_variable`` — never metadata dicts.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -176,56 +218,61 @@ class UncertaintySchema(BaseModel):
         default="",
         description="Realization axis the uncertainty counts over.",
     )
-    covariance: Literal["real", "real_imag", "magnitude_phase", "custom"] | None = (
-        None
+    covariance: Literal["real", "real_imag", "magnitude_phase"] | None = None
+    scope: str | None = Field(
+        default=None,
+        description="Resource-defined uncertainty scope identifier, e.g. "
+        "'conditional' or 'sampling'.",
+    )
+    data_variable: str | None = Field(
+        default=None,
+        description="Typed variable carrying the covariance/interval payload.",
     )
     confidence: float | None = None
     count: int | None = Field(
         default=None, description="Number of independent realizations."
     )
 
+    @field_validator("confidence")
+    @classmethod
+    def _check_confidence(cls, value: float | None) -> float | None:
+        if value is not None and not 0.0 < value < 1.0:
+            raise ValueError("confidence must satisfy 0 < confidence < 1")
+        return value
+
+    @field_validator("count")
+    @classmethod
+    def _check_count(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("count must be a positive integer")
+        return value
+
 
 class SpectralAttributes(BaseModel):
     """Mandatory attribute set of spectral products.
 
-    Extra keys are allowed so resource packages can extend the set, but the
-    fields declared here must always be present for ``spectral`` products.
+    All declared fields are required and must be non-empty; empty-string
+    defaults must not bypass validation. Resource packages may add extra keys
+    (JSON-serializable); attributes participate in the product fingerprint.
     """
 
     model_config = ConfigDict(extra="allow")
 
-    frequency_units: str = ""
+    frequency_units: str = Field(min_length=1)
     orientation: str = Field(
-        default="",
+        min_length=1,
         description="Frequency orientation convention identifier; values are "
         "defined by the owning resource package.",
     )
     sidedness: Literal["one_sided", "two_sided"]
-    normalization: str
-    window: str = ""
-    estimator: str
-    effective_degrees_of_freedom: float | None = None
-
-
-class MomentFamilySchema(BaseModel):
-    """Grouping of related moments stored as one statistics product.
-
-    Moments of one family share independent counts and joint covariance; they
-    split into separate products only when orders come from different
-    populations, estimators or provenance. Moment order is an axis/variable
-    attribute, never a new dataset class.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    family_id: str
-    moment_kind: Literal["raw", "central", "cumulant", "factorial"]
-    ordering: Literal["c_number", "normal", "symmetric"]
-    maximum_order: int = Field(ge=1)
-    symmetry: Literal["symmetric", "hermitian"] | None = None
-    layout: Literal["dense", "upper_triangular", "lower_triangular", "diagonal"] = (
-        "dense"
+    normalization: str = Field(min_length=1)
+    window: str = Field(
+        min_length=1,
+        description="Window identifier; use 'rectangular' when no window is "
+        "applied.",
     )
+    estimator: str = Field(min_length=1)
+    effective_degrees_of_freedom: float | None = None
 
 
 class ProductSchema(BaseModel):
@@ -239,7 +286,6 @@ class ProductSchema(BaseModel):
     variables: list[VariableSchema] = Field(min_length=1)
     uncertainties: list[UncertaintySchema] = Field(default_factory=list)
     attributes: dict[str, Any] = Field(default_factory=dict)
-    moment_family: MomentFamilySchema | None = None
 
     @field_validator("attributes")
     @classmethod
@@ -257,6 +303,7 @@ class ProductSchema(BaseModel):
         axis_names = {axis.name for axis in self.axes}
         if len(axis_names) != len(self.axes):
             raise ValueError("axis names must be unique")
+        axis_roles = {axis.name: axis.role for axis in self.axes}
         variable_names = {variable.name for variable in self.variables}
         if len(variable_names) != len(self.variables):
             raise ValueError("variable names must be unique")
@@ -268,6 +315,18 @@ class ProductSchema(BaseModel):
                     f"variable {variable.name!r} references unknown axes "
                     f"{sorted(unknown_dims)}"
                 )
+            if variable.constraints.symmetry == "hermitian":
+                tensor_dims = [
+                    dim
+                    for dim in variable.dims
+                    if axis_roles[dim]
+                    in {AxisRole.COMPONENT, AxisRole.INDEX}
+                ]
+                if len(tensor_dims) < 2:
+                    raise ValueError(
+                        f"variable {variable.name!r}: a Hermitian layout "
+                        "requires at least two component/index dims"
+                    )
         domains = {v.name: v.value_domain for v in self.variables}
         for uncertainty in self.uncertainties:
             if uncertainty.target not in variable_names:
@@ -275,30 +334,43 @@ class ProductSchema(BaseModel):
                     f"uncertainty targets unknown variable "
                     f"{uncertainty.target!r}"
                 )
-            if (
-                domains[uncertainty.target] == "complex"
-                and uncertainty.covariance is None
-            ):
+            if domains[uncertainty.target] == "complex":
+                if uncertainty.covariance not in {"real_imag", "magnitude_phase"}:
+                    raise ValueError(
+                        f"uncertainty of complex variable "
+                        f"{uncertainty.target!r} must use the 'real_imag' or "
+                        "'magnitude_phase' covariance representation"
+                    )
+            elif uncertainty.covariance not in {None, "real"}:
                 raise ValueError(
-                    f"uncertainty of complex variable {uncertainty.target!r} "
-                    "must declare a covariance representation"
+                    f"uncertainty of real variable {uncertainty.target!r} "
+                    "must use the 'real' covariance representation"
                 )
+            if uncertainty.independent_unit:
+                role = axis_roles.get(uncertainty.independent_unit)
+                if role is None:
+                    raise ValueError(
+                        f"uncertainty of {uncertainty.target!r} counts over "
+                        f"unknown axis {uncertainty.independent_unit!r}"
+                    )
+                if role != AxisRole.REALIZATION:
+                    raise ValueError(
+                        f"uncertainty of {uncertainty.target!r} counts over "
+                        f"{uncertainty.independent_unit!r}, which is not a "
+                        "realization axis"
+                    )
             if (
-                uncertainty.independent_unit
-                and uncertainty.independent_unit not in axis_names
+                uncertainty.data_variable is not None
+                and uncertainty.data_variable not in variable_names
             ):
                 raise ValueError(
-                    f"uncertainty of {uncertainty.target!r} counts over "
-                    f"unknown axis {uncertainty.independent_unit!r}"
+                    f"uncertainty of {uncertainty.target!r} references "
+                    f"unknown data variable {uncertainty.data_variable!r}"
                 )
 
         if self.kind == DataKind.SPECTRAL:
             # Raises if the mandatory spectral attributes are absent.
             SpectralAttributes.model_validate(self.attributes)
-        if self.moment_family is not None and self.kind != DataKind.STATISTICS:
-            raise ValueError(
-                "moment families are only valid for statistics products"
-            )
         return self
 
     def axis(self, name: str) -> AxisSchema:
@@ -317,7 +389,7 @@ class ProductSchema(BaseModel):
 
     @property
     def is_closed(self) -> bool:
-        """Return True when every axis size is known (materializable)."""
+        """Return True when every axis is closed (materializable)."""
         return all(axis.is_closed for axis in self.axes)
 
     def fingerprint(self) -> str:

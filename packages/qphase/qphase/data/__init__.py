@@ -33,8 +33,8 @@ from .kinds import DataKind, SpectralQuantity
 from .product import DataBacking, DataProduct
 from .schema import (
     PRODUCT_SCHEMA_VERSION,
+    AxisRole,
     AxisSchema,
-    MomentFamilySchema,
     ProductSchema,
     SpectralAttributes,
     UncertaintySchema,
@@ -45,6 +45,7 @@ from .schema import (
 __all__ = [
     "PRODUCT_SCHEMA_VERSION",
     "ArtifactRef",
+    "AxisRole",
     "AxisSchema",
     "DataBacking",
     "DataHandleProtocol",
@@ -53,7 +54,6 @@ __all__ = [
     "DataMaterializerProtocol",
     "DataProduct",
     "GraphEdge",
-    "MomentFamilySchema",
     "ProductDeclaration",
     "ProductGraph",
     "ProductNode",
