@@ -7,6 +7,15 @@ Run manually from the repository root when the frozen 1.x formats change:
 The fixtures are intentionally small and free of model-specific semantics; the
 22/26/30-point CSV summaries used for migration reports are *not* committed
 (see reports/sde_phase0_contracts_plan.md).
+
+Two files are deliberately NOT regenerated here:
+
+- ``converter_expected.json`` is the manually reviewed converter golden. It
+  must never be produced by running the tested converter itself; update it
+  only with an explicit human review note in the commit message.
+- ``plugin_catalog.json`` is a historical snapshot of the 1.x plugin catalog.
+  Regenerating it from the current 2.x pyprojects would silently shift the
+  frozen baseline, so it is edited by hand if ever needed.
 """
 
 import json
@@ -130,24 +139,8 @@ def write_artifact_manifest_fixture() -> None:
     )
 
 
-def write_plugin_catalog_fixture() -> None:
-    import tomllib
-
-    catalog: dict[str, dict[str, str]] = {}
-    for package in ("qphase", "qphase_sde"):
-        pyproject = REPO_ROOT / "packages" / package / "pyproject.toml"
-        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        catalog[package] = dict(
-            sorted(data["project"]["entry-points"]["qphase"].items())
-        )
-    (OUT / "plugin_catalog.json").write_text(
-        json.dumps(catalog, indent=2), encoding="utf-8"
-    )
-
-
-def write_converter_golden() -> None:
-    from qphase_sde.contracts.migration import convert_analyser_config
-
+def write_converter_input() -> None:
+    """Write the hand-authored legacy converter input (not the golden)."""
     legacy = {
         "psd": {"method": "welch", "segment_length": 512, "overlap": 0.5},
         "spectral_ridge": {
@@ -161,16 +154,6 @@ def write_converter_golden() -> None:
     (OUT / "converter_legacy_input.json").write_text(
         json.dumps(legacy, indent=2), encoding="utf-8"
     )
-    report = convert_analyser_config(legacy)
-    expected = {
-        "converted": report.converted,
-        "diff": report.diff,
-        "unmapped": report.unmapped,
-        "needs_review": report.needs_review,
-    }
-    (OUT / "converter_expected.json").write_text(
-        json.dumps(expected, indent=2), encoding="utf-8"
-    )
 
 
 if __name__ == "__main__":
@@ -179,6 +162,5 @@ if __name__ == "__main__":
     write_legacy_result_fixture()
     write_sharded_scan_fixture()
     write_artifact_manifest_fixture()
-    write_plugin_catalog_fixture()
-    write_converter_golden()
+    write_converter_input()
     print(f"fixtures regenerated under {OUT}")
