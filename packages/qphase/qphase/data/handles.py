@@ -1,55 +1,68 @@
 """qphase: Runtime Data Handle Contracts
 ---------------------------------------------------------
-Freezes the interface (not the implementation) of in-process data handles and
-leases. Handles may be device-resident; leases carry reference-counted
-lifetime so a buffer is reclaimed only after its last consumer releases.
+Freezes the minimal interface (not the implementation) of in-process data
+handles and leases. A handle backs exactly one *variable* of a data product
+and may be device-resident; leases carry the consumer-facing lifetime.
 
 Ownership and failure semantics:
 
-- Every handle has exactly one *owner* (the component that created it and is
-  responsible for its eventual disposal). Consumers never dispose buffers.
-- Handles obtained by consumers are read-only views; mutation requires the
+- Every handle has exactly one *owner* (the component that created it). Only
+  the owner closes or invalidates the buffer; consumers only ever release
+  their leases. When the last lease is released, the owner may reclaim the
+  buffer; the concrete reference-counting implementation is a Phase 1/3
+  concern and is not part of this contract.
+- Handles handed to consumers are read-only views; mutation requires the
   owner's explicit writable handle.
-- ``export_interface()`` returns a descriptor (DLPack/Array API/host) that
-  records whether a copy occurred and which stream must be synchronized.
-- ``release()`` is idempotent; using a released handle raises. If the owner
-  fails, outstanding leases are invalidated and consumers observe an error on
-  next access rather than silently reading freed memory.
+- ``release()`` on a lease is idempotent; using a released lease raises. If
+  the owner fails, outstanding leases are invalidated and consumers observe an
+  error on next access rather than silently reading freed memory.
 - Lease scopes are ``execution`` (one engine invocation) or ``session`` (one
   workflow session). Artifact persistence never depends on a lease.
+- ``materialize()`` is the only frozen exchange operation: callers choose the
+  target device and copy policy explicitly, and implementations must never
+  perform an implicit device-to-host copy. Zero-copy exchange descriptors
+  (DLPack/Array API, stream synchronization) are a Phase 3 design and are
+  deliberately absent from this frozen protocol.
 
 Public API
 ----------
 DataHandleProtocol
-    In-process, possibly device-resident buffer contract.
+    In-process, possibly device-resident variable buffer contract.
 DataLeaseProtocol
-    Reference-counted lifetime contract.
+    Consumer-facing lifetime contract.
+CopyPolicy
+    Copy policy of explicit materialization.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from .schema import ProductSchema
+    from .schema import VariableSchema
 
 __all__ = [
+    "CopyPolicy",
     "DataHandleProtocol",
     "DataLeaseProtocol",
+    "LeaseScope",
 ]
 
 #: Lifetime scopes understood by the lease protocol.
 LeaseScope = Literal["execution", "session"]
 
+#: Copy policy of explicit materialization: "allow" permits a copy,
+#: "never" requires the payload to already reside on the target device.
+CopyPolicy = Literal["allow", "never"]
+
 
 @runtime_checkable
 class DataHandleProtocol(Protocol):
-    """Contract of an in-process, possibly device-resident data buffer."""
+    """Contract of an in-process buffer backing one product variable."""
 
     @property
-    def schema(self) -> ProductSchema:
-        """Product schema describing the buffer's semantics."""
+    def variable_schema(self) -> VariableSchema:
+        """Schema of the single variable this handle backs."""
         ...
 
     @property
@@ -59,17 +72,17 @@ class DataHandleProtocol(Protocol):
 
     @property
     def dtype(self) -> str:
-        """Element dtype name of the primary payload."""
+        """Element dtype name of the payload."""
         ...
 
     @property
     def shape(self) -> tuple[int, ...]:
-        """Shape of the primary payload."""
+        """Shape of the payload, matching the variable's dims."""
         ...
 
     @property
     def nbytes(self) -> int:
-        """Total payload size in bytes (without triggering synchronization)."""
+        """Payload size in bytes (without triggering synchronization)."""
         ...
 
     @property
@@ -82,35 +95,29 @@ class DataHandleProtocol(Protocol):
         """Identifier of the component owning the buffer's lifetime."""
         ...
 
-    def acquire(self, consumer: str, scope: LeaseScope = "execution") -> Any:
+    def acquire(
+        self, consumer: str, scope: LeaseScope = "execution"
+    ) -> DataLeaseProtocol:
         """Acquire a lease on this handle for one consumer."""
         ...
 
-    def release(self) -> None:
-        """Release this handle; idempotent. Further access raises."""
-        ...
-
-    def materialize(self, *, device: str | None = None, copy: bool = True) -> Any:
+    def materialize(
+        self,
+        target_device: str | None = None,
+        copy_policy: CopyPolicy = "allow",
+    ) -> Any:
         """Materialize the payload on the requested device.
 
-        Implementations must never perform an implicit device-to-host copy:
-        callers choose the target device and copy policy explicitly.
-        """
-        ...
-
-    def export_interface(self) -> Mapping[str, Any]:
-        """Return an exchange descriptor (DLPack/Array API/host).
-
-        The descriptor records whether a copy occurred and which stream must
-        be synchronized before use. Private buffers that cannot be shared
-        safely must raise instead of exporting an unsafe pointer.
+        With ``copy_policy="never"``, raise if the payload is not already on
+        the target device. Implementations must never perform an implicit
+        device-to-host copy.
         """
         ...
 
 
 @runtime_checkable
 class DataLeaseProtocol(Protocol):
-    """Reference-counted lifetime contract over a data handle."""
+    """Consumer-facing lifetime contract over a data handle."""
 
     @property
     def handle(self) -> DataHandleProtocol:
@@ -127,15 +134,10 @@ class DataLeaseProtocol(Protocol):
         """Lifetime scope of the lease."""
         ...
 
-    @property
-    def pinned(self) -> bool:
-        """Whether the underlying buffer is pinned against eviction."""
-        ...
-
-    def pin(self) -> None:
-        """Pin the buffer against session-cache eviction."""
-        ...
-
     def release(self) -> None:
-        """Release the lease; the buffer is reclaimable after the last one."""
+        """Release the lease; idempotent.
+
+        The buffer is reclaimable by its owner once the last lease is
+        released.
+        """
         ...

@@ -28,9 +28,14 @@ from .graph import (
     ProductNode,
     ProductRequirement,
 )
-from .handles import DataHandleProtocol, DataLeaseProtocol
+from .handles import CopyPolicy, DataHandleProtocol, DataLeaseProtocol, LeaseScope
 from .kinds import DataKind, SpectralQuantity
-from .product import DataBacking, DataProduct
+from .product import (
+    DataBacking,
+    DataProduct,
+    RuntimeProductBacking,
+    validate_backing,
+)
 from .schema import (
     PRODUCT_SCHEMA_VERSION,
     AxisRole,
@@ -47,6 +52,7 @@ __all__ = [
     "ArtifactRef",
     "AxisRole",
     "AxisSchema",
+    "CopyPolicy",
     "DataBacking",
     "DataHandleProtocol",
     "DataKind",
@@ -54,14 +60,17 @@ __all__ = [
     "DataMaterializerProtocol",
     "DataProduct",
     "GraphEdge",
+    "LeaseScope",
     "ProductDeclaration",
     "ProductGraph",
     "ProductNode",
     "ProductRequirement",
     "ProductSchema",
+    "RuntimeProductBacking",
     "SpectralAttributes",
     "SpectralQuantity",
     "UncertaintySchema",
     "VariableConstraints",
     "VariableSchema",
+    "validate_backing",
 ]

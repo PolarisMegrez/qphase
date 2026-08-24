@@ -1,6 +1,7 @@
 """Contract tests for the proposed data product schema protocols."""
 
 import json
+import math
 
 import pytest
 from pydantic import ValidationError
@@ -16,16 +17,20 @@ from qphase.data import (
     ArtifactRef,
     AxisRole,
     AxisSchema,
+    DataHandleProtocol,
     DataKind,
+    DataLeaseProtocol,
     ProductDeclaration,
     ProductGraph,
     ProductNode,
     ProductRequirement,
     ProductSchema,
+    RuntimeProductBacking,
     SpectralQuantity,
     UncertaintySchema,
     VariableConstraints,
     VariableSchema,
+    validate_backing,
 )
 
 
@@ -596,3 +601,191 @@ def test_product_schema_version_is_frozen():
 GOLDEN_SPECTRAL_FINGERPRINT = (
     "00e917d4c6d16aee763ded06a071f1df84ac59d6f9f45cf64440818a779366c1"
 )
+
+
+class _FakeHandle:
+    """Minimal runtime-conformant data handle."""
+
+    def __init__(self, variable_schema, dtype, shape, device="cpu"):
+        self._variable_schema = variable_schema
+        self._dtype = dtype
+        self._shape = tuple(shape)
+        self._device = device
+
+    @property
+    def variable_schema(self):
+        return self._variable_schema
+
+    @property
+    def device(self):
+        return self._device
+
+    @property
+    def dtype(self):
+        return self._dtype
+
+    @property
+    def shape(self):
+        return self._shape
+
+    @property
+    def nbytes(self):
+        return 8 * math.prod(self._shape or (1,))
+
+    @property
+    def read_only(self):
+        return True
+
+    @property
+    def owner(self):
+        return "engine.fake"
+
+    def acquire(self, consumer, scope="execution"):
+        return _FakeLease(self, consumer, scope)
+
+    def materialize(self, target_device=None, copy_policy="allow"):
+        if copy_policy == "never" and target_device not in (None, self._device):
+            raise RuntimeError("payload not on target device")
+        return None
+
+
+class _FakeLease:
+    """Minimal runtime-conformant lease with idempotent release."""
+
+    def __init__(self, handle, consumer, scope):
+        self._handle = handle
+        self._consumer = consumer
+        self._scope = scope
+        self.released = False
+
+    @property
+    def handle(self):
+        return self._handle
+
+    @property
+    def consumer(self):
+        return self._consumer
+
+    @property
+    def scope(self):
+        return self._scope
+
+    def release(self):
+        self.released = True
+
+
+class _FakeBacking:
+    """Runtime product backing over a fixed variable mapping."""
+
+    def __init__(self, variables):
+        self._variables = dict(variables)
+
+    @property
+    def variables(self):
+        return self._variables
+
+
+def _alpha_variable() -> VariableSchema:
+    return VariableSchema(
+        name="alpha",
+        dtype="complex128",
+        value_domain="complex",
+        dims=("time",),
+    )
+
+
+def _handle_for(variable: VariableSchema, size: int = 8) -> _FakeHandle:
+    return _FakeHandle(variable, variable.dtype, (size,))
+
+
+def test_handle_and_lease_protocol_runtime_conformance():
+    """Fake handles satisfy the frozen protocols; deferred APIs are absent."""
+    handle = _handle_for(_alpha_variable())
+    assert isinstance(handle, DataHandleProtocol)
+
+    lease = handle.acquire("analyser.spectrum", scope="session")
+    assert isinstance(lease, DataLeaseProtocol)
+    assert lease.handle is handle
+    assert lease.consumer == "analyser.spectrum"
+    assert lease.scope == "session"
+    lease.release()
+    lease.release()  # idempotent
+    assert lease.released
+
+    # Deferred capabilities are deliberately absent from the frozen contract.
+    assert not hasattr(DataHandleProtocol, "export_interface")
+    assert not hasattr(DataHandleProtocol, "release")
+    assert not hasattr(DataLeaseProtocol, "pin")
+    assert not hasattr(DataLeaseProtocol, "pinned")
+
+
+def test_materialize_never_copy_policy():
+    """copy_policy='never' raises instead of copying across devices."""
+    handle = _handle_for(_alpha_variable())
+    handle.materialize(target_device="cpu", copy_policy="never")
+    handle.materialize(copy_policy="never")  # no target: already resident
+    with pytest.raises(RuntimeError, match="target device"):
+        handle.materialize(target_device="cuda:0", copy_policy="never")
+
+
+def test_validate_backing_accepts_exact_match():
+    """A backing with one matching handle per variable validates."""
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[AxisSchema(name="time", role=AxisRole.COORDINATE, size=8)],
+        variables=[
+            _alpha_variable(),
+            VariableSchema(
+                name="count", dtype="int64", value_domain="real", dims=("time",)
+            ),
+        ],
+    )
+    backing = _FakeBacking(
+        {
+            "alpha": _handle_for(schema.variable("alpha")),
+            "count": _handle_for(schema.variable("count")),
+        }
+    )
+    assert isinstance(backing, RuntimeProductBacking)
+    validate_backing(schema, backing)
+
+
+def test_validate_backing_rejects_mismatches():
+    """Missing/extra variables, dtype and shape mismatches raise."""
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[AxisSchema(name="time", role=AxisRole.COORDINATE, size=8)],
+        variables=[_alpha_variable()],
+    )
+    alpha = schema.variable("alpha")
+
+    with pytest.raises(ValueError, match="misses variables"):
+        validate_backing(schema, _FakeBacking({}))
+    with pytest.raises(ValueError, match="unknown variables"):
+        validate_backing(
+            schema,
+            _FakeBacking({"alpha": _handle_for(alpha), "ghost": _handle_for(alpha)}),
+        )
+    with pytest.raises(ValueError, match="dtype"):
+        validate_backing(
+            schema, _FakeBacking({"alpha": _FakeHandle(alpha, "float64", (8,))})
+        )
+    with pytest.raises(ValueError, match="closed axis size"):
+        validate_backing(schema, _FakeBacking({"alpha": _handle_for(alpha, 4)}))
+    with pytest.raises(ValueError, match="dims"):
+        validate_backing(
+            schema,
+            _FakeBacking({"alpha": _FakeHandle(alpha, "complex128", (8, 1))}),
+        )
+
+
+def test_runtime_and_artifact_backings_are_distinct_types():
+    """Artifact refs are not runtime backings; the two are never conflated."""
+    ref = ArtifactRef(
+        artifact_id="art-1",
+        product_schema=_spectral_schema(),
+        loader="qphase_sde.serialization.npz:load",
+        content_hash="abc",
+    )
+    assert isinstance(ref, ArtifactRef)
+    assert not isinstance(ref, RuntimeProductBacking)
