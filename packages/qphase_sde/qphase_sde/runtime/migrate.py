@@ -56,16 +56,18 @@ from qphase.data import (
     ArtifactManifestV3,
     AxisRole,
     AxisSchema,
-    ChunkRecord,
     DataKind,
     Dataset,
     ProductEntry,
     ProductSchema,
-    ProductStorage,
     VariableSchema,
     save_products,
 )
-from qphase.data.npz import NpzStorageAdapter
+from qphase.data.npz import (
+    NpzChunkRecord,
+    NpzVariableDescriptor,
+    build_product_storage,
+)
 from qphase.data.store import (
     GENERIC_BUNDLE_ADAPTER_ID,
     GENERIC_BUNDLE_TYPE_ID,
@@ -435,18 +437,18 @@ def _write_chunk(
     variable: str,
     index: int,
     array: np.ndarray,
-) -> ChunkRecord:
+) -> NpzChunkRecord:
     """Write one point chunk file following the ``npz/2`` conventions."""
     chunk = np.ascontiguousarray(array)
     filename = f"{stem}__{variable}__{index:04d}.npz"
     np.savez(directory / filename, data=chunk)
-    return ChunkRecord(
+    return NpzChunkRecord(
         file=filename,
         key=_CHUNK_KEY,
+        logical_range=(index, index + 1),
         shape=tuple(chunk.shape),
         dtype=np.dtype(chunk.dtype).str,
         sha256=chunk_content_hash(chunk, (index, index + 1)),
-        axis0_range=(index, index + 1),
     )
 
 
@@ -670,7 +672,7 @@ def migrate_scan_artifact(
     ) + sorted(analysis_schemas)
     for product_index, product_name in enumerate(product_names):
         stem = f"{product_index:02d}_{product_name}"
-        records: dict[str, list[ChunkRecord]] = {}
+        records: dict[str, list[NpzChunkRecord]] = {}
         for point_index, shard in enumerate(shards):
             result = SDEResult.load(shard)
             if adapter is not None:
@@ -717,10 +719,18 @@ def migrate_scan_artifact(
             else analysis_schemas[product_name]
         )
         assert schema is not None  # None-schema products are never listed
-        storage = ProductStorage(
-            adapter=NpzStorageAdapter.ADAPTER_ID,
-            variables=records,
-        )
+        n_points = len(shards)
+        variables: dict[str, NpzVariableDescriptor] = {}
+        for variable in schema.variables:
+            chunks = records[variable.name]
+            full_shape = (n_points, *chunks[0].shape[1:])
+            variables[variable.name] = NpzVariableDescriptor(
+                full_shape=full_shape,
+                dtype=chunks[0].dtype,
+                chunk_axis=variable.dims[0],
+                chunks=chunks,
+            )
+        storage = build_product_storage(schema, variables)
         entries.append(
             ProductEntry(
                 name=product_name,

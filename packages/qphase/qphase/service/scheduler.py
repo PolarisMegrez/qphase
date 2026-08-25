@@ -209,7 +209,8 @@ class SchedulerService:
                     materializable=True,
                     nbytes=summary["nbytes"],
                     chunk_count=sum(
-                        len(chunks) for chunks in entry.storage.variables.values()
+                        variable.chunk_count
+                        for variable in entry.storage.summary.values()
                     ),
                     sha256=entry.sha256,
                     attributes=datasets[entry.name].attributes,

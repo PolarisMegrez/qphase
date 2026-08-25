@@ -24,6 +24,8 @@ from qphase.data import (
     DataKind,
     GenericDataBundle,
     ProductSchema,
+    ProductStorage,
+    StorageVariableSummary,
     TimeSeriesDataset,
     VariableSchema,
     default_artifact_resolver,
@@ -130,13 +132,20 @@ def test_save_load_roundtrip_single_product(tmp_path):
     raw = json.loads((tmp_path / "artifact_manifest.json").read_text())
     assert raw["schema_version"] == "qphase.artifact/3"
     assert "loader" not in raw  # manifests name adapter ids, never code paths
+    assert {entry["storage"]["adapter"] for entry in raw["products"]} == {"npz/2"}
+    assert {
+        entry["storage"]["descriptor_schema"] for entry in raw["products"]
+    } == {"npz.product/2"}
     files = {
         chunk["file"]
         for entry in raw["products"]
-        for chunks in entry["storage"]["variables"].values()
-        for chunk in chunks
+        for variable in entry["storage"]["descriptor"]["variables"].values()
+        for chunk in variable["chunks"]
     }
     assert files == {"00_trajectories__x.npz", "00_trajectories__count.npz"}
+    summary = raw["products"][0]["storage"]["summary"]
+    assert summary["x"]["full_shape"] == [5, 8]
+    assert summary["x"]["chunk_count"] == 1
     for name in files:  # native dtypes only: no pickle needed to open
         with np.load(tmp_path / name) as npz_file:
             assert set(npz_file.files) == {"data"}
@@ -309,7 +318,10 @@ def test_manifest_rejects_unsafe_paths(tmp_path):
     save_products(tmp_path, {"trajectories": dataset})
 
     def set_chunk_file(raw, value):
-        raw["products"][0]["storage"]["variables"]["x"][0]["file"] = value
+        chunks = raw["products"][0]["storage"]["descriptor"]["variables"]["x"][
+            "chunks"
+        ]
+        chunks[0]["file"] = value
 
     for bad in (
         "../outside.npz",
@@ -320,8 +332,11 @@ def test_manifest_rejects_unsafe_paths(tmp_path):
         "./00_trajectories__x.npz",
     ):
         _mutate_manifest(tmp_path, lambda raw, v=bad: set_chunk_file(raw, v))
+        _recompute_hashes(tmp_path)
+        # Payload paths live in the adapter descriptor: they are validated
+        # when the adapter parses the descriptor at load time.
         with pytest.raises(ArtifactCorruptError):
-            ArtifactManifestV3.read(tmp_path)
+            load_products(tmp_path)
 
 
 def test_manifest_rejects_duplicate_products_and_parents(tmp_path):
@@ -358,12 +373,15 @@ def test_manifest_rejects_shared_chunk_files(tmp_path):
     save_products(tmp_path, {"trajectories": dataset})
 
     def share_file(raw):
-        variables = raw["products"][0]["storage"]["variables"]
-        variables["count"][0]["file"] = variables["x"][0]["file"]
+        variables = raw["products"][0]["storage"]["descriptor"]["variables"]
+        variables["count"]["chunks"][0]["file"] = variables["x"]["chunks"][0][
+            "file"
+        ]
 
     _mutate_manifest(tmp_path, share_file)
+    _recompute_hashes(tmp_path)
     with pytest.raises(ArtifactCorruptError, match="referenced by both"):
-        ArtifactManifestV3.read(tmp_path)
+        load_products(tmp_path)
 
 
 def test_manifest_rejects_storage_variable_mismatch(tmp_path):
@@ -371,7 +389,7 @@ def test_manifest_rejects_storage_variable_mismatch(tmp_path):
     save_products(tmp_path, {"trajectories": dataset})
 
     def drop_variable(raw):
-        del raw["products"][0]["storage"]["variables"]["count"]
+        del raw["products"][0]["storage"]["summary"]["count"]
 
     _mutate_manifest(tmp_path, drop_variable)
     with pytest.raises(ArtifactCorruptError, match="missing"):
@@ -380,8 +398,8 @@ def test_manifest_rejects_storage_variable_mismatch(tmp_path):
     save_products(tmp_path / "second", {"trajectories": dataset})
 
     def add_variable(raw):
-        storage = raw["products"][0]["storage"]["variables"]
-        storage["ghost"] = [storage["count"][0]]
+        summary = raw["products"][0]["storage"]["summary"]
+        summary["ghost"] = summary["count"]
 
     _mutate_manifest(tmp_path / "second", add_variable)
     with pytest.raises(ArtifactCorruptError, match="extra"):
@@ -393,7 +411,10 @@ def test_manifest_rejects_stale_hashes(tmp_path):
     save_products(tmp_path, {"trajectories": dataset})
 
     def flip_chunk_hash(raw):
-        raw["products"][0]["storage"]["variables"]["x"][0]["sha256"] = "0" * 64
+        chunks = raw["products"][0]["storage"]["descriptor"]["variables"]["x"][
+            "chunks"
+        ]
+        chunks[0]["sha256"] = "0" * 64
 
     _mutate_manifest(tmp_path, flip_chunk_hash)
     with pytest.raises(ArtifactCorruptError, match="content hash mismatch"):
@@ -417,9 +438,11 @@ def test_manifest_rejects_bad_chunk_ranges(tmp_path):
     save_products(tmp_path, {"trajectories": dataset}, shard_target_bytes=640)
 
     def mutate_ranges(raw, ranges):
-        chunks = raw["products"][0]["storage"]["variables"]["x"]
-        for chunk, axis0_range in zip(chunks, ranges, strict=True):
-            chunk["axis0_range"] = axis0_range
+        chunks = raw["products"][0]["storage"]["descriptor"]["variables"]["x"][
+            "chunks"
+        ]
+        for chunk, logical_range in zip(chunks, ranges, strict=True):
+            chunk["logical_range"] = logical_range
 
     original = [(i * 5, (i + 1) * 5) for i in range(8)]
     cases = {
@@ -435,7 +458,7 @@ def test_manifest_rejects_bad_chunk_ranges(tmp_path):
         _mutate_manifest(target, lambda raw, r=ranges: mutate_ranges(raw, r))
         _recompute_hashes(target)
         with pytest.raises(ArtifactCorruptError, match=label):
-            ArtifactManifestV3.read(target)
+            load_products(target)
 
 
 def test_artifact_store_integration(tmp_path):
@@ -526,3 +549,100 @@ def test_register_adapter_forbids_silent_overwrite():
 
     with pytest.raises(ArtifactAdapterError, match="already registered"):
         register_adapter(_FakeAdapter())
+
+
+# -- storage descriptor versioning (C3) ------------------------------------------
+
+
+def _storage(raw):
+    return raw["products"][0]["storage"]
+
+
+def test_load_rejects_unsupported_descriptor_schema(tmp_path):
+    dataset = _dataset()
+    save_products(tmp_path, {"trajectories": dataset})
+    _mutate_manifest(
+        tmp_path,
+        lambda raw: _storage(raw).update(descriptor_schema="npz.product/99"),
+    )
+    _recompute_hashes(tmp_path)
+
+    # Listing still works; materialization refuses the unknown schema.
+    ArtifactManifestV3.read(tmp_path)
+    with pytest.raises(ArtifactUnsupportedError, match="descriptor schema"):
+        load_products(tmp_path)
+
+
+def test_manifest_rejects_summary_mismatch(tmp_path):
+    dataset = _dataset()
+    cases = {
+        "dtype": lambda summary: summary["x"].update(dtype="<f4"),
+        "rank": lambda summary: summary["x"].update(full_shape=[5, 8, 1]),
+        "closed axis": lambda summary: summary["x"].update(full_shape=[6, 8]),
+        "bytes": lambda summary: summary["count"].update(nbytes=1),
+    }
+    for index, (label, mutate) in enumerate(cases.items()):
+        target = tmp_path / f"case_{index}"
+        save_products(target, {"trajectories": dataset})
+
+        def apply(raw, m=mutate):
+            m(raw["products"][0]["storage"]["summary"])
+
+        _mutate_manifest(target, apply)
+        _recompute_hashes(target)
+        with pytest.raises(ArtifactCorruptError, match=label):
+            ArtifactManifestV3.read(target)
+
+
+
+def test_storage_descriptor_must_be_json():
+    with pytest.raises(ValidationError, match="JSON-serializable"):
+        ProductStorage(
+            adapter="npz/2",
+            descriptor_schema="npz.product/2",
+            summary={
+                "x": StorageVariableSummary(
+                    full_shape=(5, 8), dtype="<c16", nbytes=640, chunk_count=1
+                )
+            },
+            descriptor={"bad": object()},
+        )
+
+
+def test_load_rejects_descriptor_schema_inconsistencies(tmp_path):
+    """Descriptor details are adapter-validated even when the summary passes."""
+    rng = np.random.default_rng(3)
+    x = rng.normal(size=(40, 8)) + 1j * rng.normal(size=(40, 8))
+    dataset = TimeSeriesDataset.from_arrays(
+        _schema(40), {"x": x, "count": np.arange(40)}, owner="engine.fake"
+    )
+    save_products(tmp_path, {"trajectories": dataset}, shard_target_bytes=640)
+
+    def descriptor_variables(raw):
+        return raw["products"][0]["storage"]["descriptor"]["variables"]
+
+    cases = {
+        "dtype": lambda raw: descriptor_variables(raw)["x"].update(dtype="<f4"),
+        "chunk_axis": lambda raw: descriptor_variables(raw)["count"].update(
+            chunk_axis="trajectory"
+        ),
+        "no chunk_axis": lambda raw: descriptor_variables(raw)["x"].update(
+            chunk_axis=None
+        ),
+        "unknown chunk axis": lambda raw: descriptor_variables(raw)["x"].update(
+            chunk_axis="ghost"
+        ),
+        "logical_range": lambda raw: descriptor_variables(raw)["count"][
+            "chunks"
+        ][0].update(logical_range=[0, 5]),
+        "full shape": lambda raw: descriptor_variables(raw)["x"]["chunks"][
+            0
+        ].update(shape=[5, 1]),
+    }
+    for index, (label, mutate) in enumerate(cases.items()):
+        target = tmp_path / f"case_{index}"
+        shutil.copytree(tmp_path, target, ignore=shutil.ignore_patterns("case_*"))
+        _mutate_manifest(target, mutate)
+        _recompute_hashes(target)
+        with pytest.raises(ArtifactCorruptError, match=label):
+            load_products(target)

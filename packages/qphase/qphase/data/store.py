@@ -33,10 +33,10 @@ restoring never requires ``allow_pickle``.
 
 Public API
 ----------
-ChunkRecord
-    One persisted array chunk of a variable.
+StorageVariableSummary
+    Adapter-independent per-variable storage summary.
 ProductStorage
-    Adapter id plus the variable→chunk mapping of one product.
+    Adapter id, common summary and adapter-specific descriptor.
 ProductEntry
     One named product inside an artifact manifest.
 BundleDescriptor
@@ -92,10 +92,10 @@ __all__ = [
     "MANIFEST_FILENAME",
     "ArtifactManifestV3",
     "BundleDescriptor",
-    "ChunkRecord",
     "ProductEntry",
     "ProductStorage",
     "StorageAdapterProtocol",
+    "StorageVariableSummary",
     "artifact_content_hash",
     "chunk_content_hash",
     "load_bundle",
@@ -213,23 +213,18 @@ def product_content_hash(
     """Hash a product over its canonical storage descriptor."""
     listing = {
         "adapter": storage.adapter,
+        "descriptor_schema": storage.descriptor_schema,
+        "descriptor": storage.descriptor,
         "name": name,
         "schema": product_schema.fingerprint(),
-        "variables": {
-            variable: [
-                {
-                    "axis0_range": list(chunk.axis0_range)
-                    if chunk.axis0_range is not None
-                    else None,
-                    "dtype": chunk.dtype,
-                    "file": chunk.file,
-                    "key": chunk.key,
-                    "sha256": chunk.sha256,
-                    "shape": list(chunk.shape),
-                }
-                for chunk in chunks
-            ]
-            for variable, chunks in sorted(storage.variables.items())
+        "summary": {
+            variable: {
+                "chunk_count": summary.chunk_count,
+                "dtype": summary.dtype,
+                "full_shape": list(summary.full_shape),
+                "nbytes": summary.nbytes,
+            }
+            for variable, summary in sorted(storage.summary.items())
         },
     }
     return hashlib.sha256(canonical_json(listing).encode("utf-8")).hexdigest()
@@ -257,42 +252,49 @@ def artifact_content_hash(
 # -- manifest models ------------------------------------------------------------
 
 
-class ChunkRecord(BaseModel):
-    """One persisted array chunk of a variable.
+class StorageVariableSummary(BaseModel):
+    """Adapter-independent per-variable storage summary.
 
-    Chunks split a variable contiguously along its first dimension;
-    ``axis0_range`` records the [start, stop) window the chunk covers in the
-    full variable (None when the chunk holds the whole variable). ``file`` is
-    relative to the artifact directory so artifacts can be relocated.
+    The common summary lets core cross-check storage against the product
+    schema (and lets service/GUI list sizes) without understanding the
+    adapter-specific descriptor.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    file: str
-    key: str
-    shape: tuple[int, ...]
+    full_shape: tuple[int, ...]
     dtype: str
-    sha256: str
-    axis0_range: tuple[int, int] | None = None
-
-    @field_validator("file")
-    @classmethod
-    def _check_file(cls, value: str) -> str:
-        return validate_artifact_relative_path(value)
-
-    @field_validator("sha256")
-    @classmethod
-    def _check_sha256(cls, value: str) -> str:
-        return _validate_sha256_digest(value)
+    nbytes: int = Field(ge=0)
+    chunk_count: int = Field(ge=1)
 
 
 class ProductStorage(BaseModel):
-    """Storage description of one product: adapter id and chunk mapping."""
+    """Storage description of one product.
+
+    ``adapter`` names the registered storage adapter id; ``summary`` is the
+    generic per-variable shape/dtype/nbytes/chunk_count listing core
+    validates against the product schema; ``descriptor`` is adapter-specific
+    strict JSON (chunk mapping, keys, ranges) parsed and validated by the
+    registered adapter under ``descriptor_schema``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     adapter: str = Field(min_length=1)
-    variables: dict[str, list[ChunkRecord]]
+    descriptor_schema: str = Field(min_length=1)
+    summary: dict[str, StorageVariableSummary]
+    descriptor: dict[str, Any]
+
+    @field_validator("descriptor")
+    @classmethod
+    def _check_descriptor_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "storage descriptor must be JSON-serializable"
+            ) from exc
+        return value
 
 
 class ProductEntry(BaseModel):
@@ -465,11 +467,16 @@ class ArtifactManifestV3(BaseModel):
             raise ArtifactCorruptError(
                 f"artifact manifest {path} is invalid: {exc}"
             ) from exc
-        manifest._cross_validate(Path(directory))
+        manifest._cross_validate()
         return manifest
 
-    def _cross_validate(self, directory: Path) -> None:
-        """Cross-field, path-safety and content-hash validation layer."""
+    def _cross_validate(self) -> None:
+        """Cross-field and content-hash validation layer.
+
+        Validates the generic storage summary against the product schema;
+        adapter-specific descriptor details (chunk ranges, file uniqueness,
+        payload paths) are validated by the registered adapter at load time.
+        """
         product_names = {entry.name for entry in self.products}
         unknown_roles = sorted(
             target
@@ -480,19 +487,8 @@ class ArtifactManifestV3(BaseModel):
             raise ArtifactCorruptError(
                 f"bundle product_roles reference unknown products {unknown_roles}"
             )
-        files: dict[str, str] = {}
         for entry in self.products:
             _validate_product_entry(entry)
-            for variable, chunks in entry.storage.variables.items():
-                owner = f"{entry.name}.{variable}"
-                for chunk in chunks:
-                    previous = files.setdefault(chunk.file, owner)
-                    if previous != owner:
-                        raise ArtifactCorruptError(
-                            f"chunk file {chunk.file!r} is referenced by both "
-                            f"{previous} and {owner}"
-                        )
-                    resolve_artifact_path(directory, chunk.file)
             expected = product_content_hash(
                 entry.name, entry.product_schema, entry.storage
             )
@@ -518,101 +514,57 @@ class ArtifactManifestV3(BaseModel):
 
 
 def _validate_product_entry(entry: ProductEntry) -> None:
-    """Validate storage/schema consistency of one product entry."""
+    """Validate the storage summary against the product schema."""
     schema_vars = {
         variable.name: variable for variable in entry.product_schema.variables
     }
-    storage_vars = entry.storage.variables
-    missing = sorted(set(schema_vars) - set(storage_vars))
-    extra = sorted(set(storage_vars) - set(schema_vars))
+    summary_vars = entry.storage.summary
+    missing = sorted(set(schema_vars) - set(summary_vars))
+    extra = sorted(set(summary_vars) - set(schema_vars))
     if missing or extra:
         raise ArtifactCorruptError(
             f"storage variables of product {entry.name!r} do not match the "
             f"product schema (missing: {missing}, extra: {extra})"
         )
     for name, variable in schema_vars.items():
-        _validate_variable_chunks(
-            entry.name, variable, entry.product_schema, storage_vars[name]
-        )
+        _validate_variable_summary(entry, variable, summary_vars[name])
 
 
-def _validate_variable_chunks(
-    product: str,
+def _validate_variable_summary(
+    entry: ProductEntry,
     variable: VariableSchema,
-    schema: ProductSchema,
-    chunks: list[ChunkRecord],
+    summary: StorageVariableSummary,
 ) -> None:
-    """Validate chunk dtype/shape/coverage against the variable schema."""
-    label = f"variable {variable.name!r} of product {product!r}"
-    if not chunks:
-        raise ArtifactCorruptError(f"{label} has no storage chunks")
+    """Validate one variable's generic summary against its schema."""
+    label = f"variable {variable.name!r} of product {entry.name!r}"
     expected_dtype = np.dtype(variable.dtype)
-    axes = [schema.axis(dim) for dim in variable.dims]
-    for chunk in chunks:
-        if np.dtype(chunk.dtype) != expected_dtype:
-            raise ArtifactCorruptError(
-                f"{label} chunk {chunk.file!r} has dtype {chunk.dtype!r}, "
-                f"expected {expected_dtype.str!r}"
-            )
-        if len(chunk.shape) != len(variable.dims):
-            raise ArtifactCorruptError(
-                f"{label} chunk {chunk.file!r} has rank {len(chunk.shape)}, "
-                f"expected {len(variable.dims)}"
-            )
-    if len(chunks) == 1:
-        chunk = chunks[0]
-        if chunk.axis0_range is not None:
-            raise ArtifactCorruptError(
-                f"{label} is unsharded but declares an axis0_range"
-            )
-        for axis, size in zip(axes, chunk.shape, strict=True):
-            if axis.size is not None and axis.size != size:
-                raise ArtifactCorruptError(
-                    f"{label} chunk shape {chunk.shape} does not match the "
-                    f"closed axis {axis.name!r} of size {axis.size}"
-                )
-        return
-    if not variable.dims:
-        raise ArtifactCorruptError(f"{label} is scalar but has multiple chunks")
-    expected_start = 0
-    for chunk in chunks:
-        if chunk.axis0_range is None:
-            raise ArtifactCorruptError(
-                f"{label} chunk {chunk.file!r} misses its axis0_range"
-            )
-        start, stop = chunk.axis0_range
-        if not 0 <= start < stop:
-            raise ArtifactCorruptError(
-                f"{label} chunk {chunk.file!r} has out-of-bounds range "
-                f"[{start}, {stop})"
-            )
-        if chunk.shape[0] != stop - start:
-            raise ArtifactCorruptError(
-                f"{label} chunk {chunk.file!r} shape {chunk.shape} does not "
-                f"match its range [{start}, {stop})"
-            )
-        if start != expected_start:
-            raise ArtifactCorruptError(
-                f"{label} chunks overlap, gap or are out of order at "
-                f"[{start}, {stop}); expected start {expected_start}"
-            )
-        expected_start = stop
-    tail = chunks[0].shape[1:]
-    for chunk in chunks[1:]:
-        if chunk.shape[1:] != tail:
-            raise ArtifactCorruptError(
-                f"{label} chunks have inconsistent trailing dimensions"
-            )
-    for axis, size in zip(axes[1:], tail, strict=True):
+    if np.dtype(summary.dtype) != expected_dtype:
+        raise ArtifactCorruptError(
+            f"{label} summary has dtype {summary.dtype!r}, expected "
+            f"{expected_dtype.str!r}"
+        )
+    if len(summary.full_shape) != len(variable.dims):
+        raise ArtifactCorruptError(
+            f"{label} summary has rank {len(summary.full_shape)}, expected "
+            f"{len(variable.dims)}"
+        )
+    for dim, size in zip(variable.dims, summary.full_shape, strict=True):
+        axis = entry.product_schema.axis(dim)
         if axis.size is not None and axis.size != size:
             raise ArtifactCorruptError(
-                f"{label} chunk shape does not match the closed axis "
-                f"{axis.name!r} of size {axis.size}"
+                f"{label} summary shape {summary.full_shape} does not match "
+                f"the closed axis {axis.name!r} of size {axis.size}"
             )
-    if axes[0].size is not None and expected_start != axes[0].size:
+    expected_nbytes = (
+        int(np.prod(summary.full_shape)) * expected_dtype.itemsize
+        if summary.full_shape
+        else expected_dtype.itemsize
+    )
+    if summary.nbytes != expected_nbytes:
         raise ArtifactCorruptError(
-            f"{label} chunks cover [0, {expected_start}) but the closed axis "
-            f"{axes[0].name!r} has size {axes[0].size}"
+            f"{label} summary declares {summary.nbytes} bytes, expected "
+            f"{expected_nbytes} for shape {summary.full_shape} and dtype "
+            f"{expected_dtype.str!r}"
         )
 
 
@@ -645,6 +597,29 @@ class StorageAdapterProtocol(Protocol):
         file_stem: str,
     ) -> ProductStorage:
         """Persist one product and return its storage record."""
+        ...
+
+    @property
+    def descriptor_schema(self) -> str:
+        """Schema id of the adapter-specific storage descriptor."""
+        ...
+
+    def parse_storage(self, entry: ProductEntry) -> Any:
+        """Strictly parse and validate the adapter-specific descriptor.
+
+        Implementations verify the descriptor schema id, the chunk mapping
+        (dtype/shape/coverage/ranges) against the product schema and payload
+        path safety, returning an adapter-owned validated representation.
+        """
+        ...
+
+    def referenced_files(self, entry: ProductEntry) -> dict[str, str]:
+        """Report payload files referenced by one product entry.
+
+        Returns a mapping of artifact-relative file path to an owner label
+        (e.g. ``product.variable``); core aggregates these across products
+        to reject payload files shared between variables.
+        """
         ...
 
     def open_product(
@@ -766,21 +741,19 @@ def save_products(
             shard_target_bytes=shard_target_bytes,
             file_stem=f"{index:02d}_{_sanitize(name)}",
         )
-        for chunks in storage.variables.values():
-            for chunk in chunks:
-                if chunk.file in used_files:
-                    raise ArtifactError(
-                        f"writer produced a duplicate chunk file name {chunk.file!r}"
-                    )
-                used_files.add(chunk.file)
-        entries.append(
-            ProductEntry(
-                name=name,
-                product_schema=dataset.schema,
-                storage=storage,
-                sha256=product_content_hash(name, dataset.schema, storage),
-            )
+        entry = ProductEntry(
+            name=name,
+            product_schema=dataset.schema,
+            storage=storage,
+            sha256=product_content_hash(name, dataset.schema, storage),
         )
+        for file in adapter.referenced_files(entry):
+            if file in used_files:
+                raise ArtifactError(
+                    f"writer produced a duplicate chunk file name {file!r}"
+                )
+            used_files.add(file)
+        entries.append(entry)
 
     if bundle is None:
         bundle = BundleDescriptor(
@@ -824,12 +797,25 @@ def load_products(directory: Path | str) -> dict[str, Dataset]:
 
 
 def _load_products(manifest: ArtifactManifestV3, directory: Path) -> dict[str, Dataset]:
-    """Open the products of an already-validated manifest."""
+    """Open the products of an already-validated manifest.
+
+    Every entry's adapter-specific descriptor is strictly parsed by its
+    registered adapter; payload files shared between variables (within or
+    across products) are rejected before any handle is created.
+    """
     from .resolver import register_artifact_location
 
     result: dict[str, Dataset] = {}
+    files: dict[str, str] = {}
     for entry in manifest.products:
         adapter = _resolve_adapter(entry.storage.adapter)
+        for file, owner in adapter.referenced_files(entry).items():
+            previous = files.setdefault(file, owner)
+            if previous != owner:
+                raise ArtifactCorruptError(
+                    f"chunk file {file!r} is referenced by both {previous} "
+                    f"and {owner}"
+                )
         backing = adapter.open_product(entry, directory)
         dataset_class = _DATASET_BY_KIND[entry.product_schema.kind]
         result[entry.name] = dataset_class(
