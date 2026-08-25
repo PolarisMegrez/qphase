@@ -467,12 +467,28 @@ class Dataset:
             if axis.name in dropped:
                 continue
             if axis.name in selection:
+                selector = selection[axis.name]
                 if axis.size is not None:
-                    selector = selection[axis.name]
                     size = len(range(*selector.indices(axis.size)))
                 else:
                     size = axis_sizes.get(axis.name)
-                axis = axis.model_copy(update={"size": size})
+                updates: dict[str, Any] = {"size": size}
+                # Regular coordinates shift/stretches with the slice:
+                # start advances to the first retained sample and the step
+                # picks up the slice stride (negative for reversed views).
+                if (
+                    axis.coordinate == "regular"
+                    and isinstance(selector, slice)
+                    and axis.size is not None
+                    and axis.start is not None
+                    and axis.step is not None
+                ):
+                    start_index, _stop_index, slice_step = selector.indices(
+                        axis.size
+                    )
+                    updates["start"] = axis.start + start_index * axis.step
+                    updates["step"] = axis.step * slice_step
+                axis = axis.model_copy(update=updates)
             new_axes.append(axis)
 
         dropped_basis_names = {
@@ -491,6 +507,22 @@ class Dataset:
                 f"{orphaned}; slice the axis or drop the uncertainties "
                 "explicitly instead"
             )
+        # Coordinates follow the same indexers as data variables; integer
+        # selection drops their dims, demoting sub-/super-dimensional
+        # coordinates to scalar auxiliary labels.
+        new_coordinates = []
+        for coordinate in self._schema.coordinates:
+            new_coordinate_dims = tuple(
+                dim for dim in coordinate.dims if dim not in dropped
+            )
+            role = coordinate.role
+            if role == "dimension" and len(new_coordinate_dims) != 1:
+                role = "auxiliary"
+            new_coordinates.append(
+                coordinate.model_copy(
+                    update={"dims": new_coordinate_dims, "role": role}
+                )
+            )
         new_schema = ProductSchema(
             kind=self._schema.kind,
             axes=new_axes,
@@ -501,6 +533,7 @@ class Dataset:
             ],
             variables=new_variables,
             uncertainties=self._schema.uncertainties,
+            coordinates=new_coordinates,
             attributes=self._schema.attributes,
         )
         return type(self)(

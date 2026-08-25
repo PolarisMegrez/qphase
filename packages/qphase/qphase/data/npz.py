@@ -481,7 +481,10 @@ class NpzStorageAdapter:
     ) -> dict[str, NpzVariableDescriptor]:
         """Write all variables as keys of one payload file (``single``)."""
         filename = f"{stem}.npz"
-        np.savez(directory / filename, **dict(arrays))
+        # Typed as Any so the **-expansion matches savez's mixed signature
+        # (allow_pickle: bool plus ArrayLike kwds).
+        payload: dict[str, Any] = dict(arrays)
+        np.savez(directory / filename, **payload)
         variables: dict[str, NpzVariableDescriptor] = {}
         for variable in schema.variables:
             array = arrays[variable.name]

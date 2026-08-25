@@ -464,3 +464,133 @@ def test_device_backed_materialize_is_explicit():
     # Host handles never perform host-to-device transfers.
     with pytest.raises(RuntimeError, match="cannot materialize"):
         host.materialize("cuda:0")
+
+
+# -- coordinate preservation in dataset views (C5) ---------------------------------
+
+from qphase.data import CoordinateSchema  # noqa: E402
+
+
+def _coordinate_view_schema() -> ProductSchema:
+    return ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[
+            AxisSchema(name="scan", role=AxisRole.PARAMETER, size=4),
+            AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=3),
+            AxisSchema(
+                name="time",
+                role=AxisRole.COORDINATE,
+                size=8,
+                coordinate="regular",
+                start=1.0,
+                step=0.5,
+                units="s",
+            ),
+        ],
+        variables=[
+            VariableSchema(
+                name="x",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan", "trajectory", "time"),
+            ),
+            VariableSchema(
+                name="omega_b",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan",),
+                units="rad/s",
+            ),
+        ],
+        coordinates=[
+            CoordinateSchema(
+                name="omega_b",
+                variable="omega_b",
+                dims=("scan",),
+                role="parameter",
+                units="rad/s",
+            ),
+        ],
+    )
+
+
+def _coordinate_view_dataset() -> TimeSeriesDataset:
+    rng = np.random.default_rng(21)
+    return TimeSeriesDataset.from_arrays(
+        _coordinate_view_schema(),
+        {
+            "x": rng.normal(size=(4, 3, 8)),
+            "omega_b": np.array([10.0, 20.0, 30.0, 40.0]),
+        },
+        owner="engine.fake",
+    )
+
+
+def test_slice_view_updates_regular_axis_start_step_and_size():
+    dataset = _coordinate_view_dataset()
+    view = dataset.slice_view(time=slice(1, 7, 2))
+    axis = view.axis("time")
+    assert axis.size == 3
+    assert axis.start == 1.0 + 1 * 0.5
+    assert axis.step == 0.5 * 2
+    assert view.shape["x"] == (4, 3, 3)
+    np.testing.assert_array_equal(
+        view.handle("x").materialize(),
+        dataset.handle("x").materialize()[:, :, 1:7:2],
+    )
+
+
+def test_slice_view_reverse_slice_keeps_coordinate_semantics():
+    dataset = _coordinate_view_dataset()
+    view = dataset.slice_view(time=slice(None, None, -1))
+    axis = view.axis("time")
+    assert axis.size == 8
+    # Reversed regular coordinate: first sample is the old last one and the
+    # step picks up the negative stride.
+    assert axis.start == 1.0 + 7 * 0.5
+    assert axis.step == -0.5
+    np.testing.assert_array_equal(
+        view.handle("x").materialize(),
+        dataset.handle("x").materialize()[:, :, ::-1],
+    )
+
+
+def test_slice_view_empty_slice_keeps_axis_with_zero_size():
+    dataset = _coordinate_view_dataset()
+    view = dataset.slice_view(time=slice(2, 2))
+    axis = view.axis("time")
+    assert axis.size == 0
+    assert view.shape["x"] == (4, 3, 0)
+
+
+def test_slice_view_slices_coordinate_variables_with_data():
+    dataset = _coordinate_view_dataset()
+    view = dataset.slice_view(scan=slice(1, 3))
+    assert view.shape["x"] == (2, 3, 8)
+    np.testing.assert_array_equal(view.coordinate("omega_b"), [20.0, 30.0])
+    coordinate = view.coordinates()[0]
+    assert coordinate.role == "parameter"
+    assert coordinate.dims == ("scan",)
+
+
+def test_point_view_keeps_scalar_parameter_coordinate():
+    dataset = _coordinate_view_dataset()
+    view = dataset.point_view(scan=2)
+    assert "scan" not in {axis.name for axis in view.axes}
+    # The selected scan coordinate survives as a scalar parameter label.
+    coordinate = view.coordinates()[0]
+    assert coordinate.dims == ()
+    assert coordinate.role == "parameter"
+    np.testing.assert_array_equal(view.coordinate("omega_b"), np.asarray(30.0))
+
+
+def test_slice_view_preserves_coordinates_through_roundtrip(tmp_path):
+    from qphase.data import load_products, save_products
+
+    dataset = _coordinate_view_dataset()
+    view = dataset.slice_view(scan=slice(1, 3), time=slice(0, 8, 2))
+    save_products(tmp_path, {"trajectories": view})
+    restored = load_products(tmp_path)["trajectories"]
+    np.testing.assert_array_equal(restored.coordinate("omega_b"), [20.0, 30.0])
+    axis = restored.axis("time")
+    assert (axis.size, axis.start, axis.step) == (4, 1.0, 1.0)
