@@ -238,6 +238,30 @@ class VariableSchema(BaseModel):
         return self
 
 
+class CoordinateSchema(BaseModel):
+    """One named coordinate backed by a typed variable payload.
+
+    Coordinates are ordinary typed variables, so they automatically enter the
+    backing, storage and checksum layers. A regular axis may rely on
+    ``start``/``step`` alone; explicit coordinate values are persisted as
+    coordinate variables (e.g. ``omega_b[scan]``), never as object arrays.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    variable: str = Field(
+        min_length=1, description="Variable holding the coordinate payload."
+    )
+    dims: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Dims of the backing variable this coordinate spans.",
+    )
+    role: Literal["dimension", "auxiliary", "parameter"] = "dimension"
+    units: str = ""
+    monotonic: bool = True
+
+
 class UncertaintySchema(BaseModel):
     """Uncertainty attached to one variable of the same product.
 
@@ -327,6 +351,7 @@ class ProductSchema(BaseModel):
     sampling_bases: list[SamplingBasisSchema] = Field(default_factory=list)
     variables: list[VariableSchema] = Field(min_length=1)
     uncertainties: list[UncertaintySchema] = Field(default_factory=list)
+    coordinates: list[CoordinateSchema] = Field(default_factory=list)
     attributes: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("attributes")
@@ -412,11 +437,40 @@ class ProductSchema(BaseModel):
                         "an integer dtype"
                     )
         domains = {v.name: v.value_domain for v in self.variables}
+        coordinate_names = {coordinate.name for coordinate in self.coordinates}
+        if len(coordinate_names) != len(self.coordinates):
+            raise ValueError("coordinate names must be unique")
+        for coordinate in self.coordinates:
+            backing = variable_by_name.get(coordinate.variable)
+            if backing is None:
+                raise ValueError(
+                    f"coordinate {coordinate.name!r} references unknown "
+                    f"variable {coordinate.variable!r}"
+                )
+            if tuple(coordinate.dims) != tuple(backing.dims):
+                raise ValueError(
+                    f"coordinate {coordinate.name!r} dims {coordinate.dims} do "
+                    f"not match the backing variable dims {backing.dims}"
+                )
+            if coordinate.role == "dimension" and len(coordinate.dims) != 1:
+                raise ValueError(
+                    f"dimension coordinate {coordinate.name!r} must be one-dimensional"
+                )
+            if coordinate.role == "parameter":
+                non_parameter = [
+                    dim
+                    for dim in coordinate.dims
+                    if axis_roles.get(dim) != AxisRole.PARAMETER
+                ]
+                if non_parameter:
+                    raise ValueError(
+                        f"parameter coordinate {coordinate.name!r} references "
+                        f"non-parameter axes {sorted(non_parameter)}"
+                    )
         for uncertainty in self.uncertainties:
             if uncertainty.target not in variable_names:
                 raise ValueError(
-                    f"uncertainty targets unknown variable "
-                    f"{uncertainty.target!r}"
+                    f"uncertainty targets unknown variable {uncertainty.target!r}"
                 )
             if domains[uncertainty.target] == "complex":
                 if uncertainty.covariance not in {"real_imag", "magnitude_phase"}:

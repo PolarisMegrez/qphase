@@ -20,6 +20,10 @@ datasets
     Typed dataset containers for the three data kinds.
 artifact
     Artifact references and materializers.
+resolver
+    Artifact location resolution contracts.
+bundle
+    The resource-independent generic data bundle.
 store
     Artifact manifest v3 and the storage adapter contract.
 npz
@@ -29,6 +33,7 @@ graph
 """
 
 from .artifact import ArtifactRef, DataMaterializerProtocol
+from .bundle import GenericDataBundle
 from .datasets import (
     Dataset,
     SpectralDataset,
@@ -58,6 +63,12 @@ from .product import (
     RuntimeProductBacking,
     validate_backing,
 )
+from .resolver import (
+    ArtifactResolverProtocol,
+    DirectoryArtifactResolver,
+    default_artifact_resolver,
+    register_artifact_location,
+)
 from .runtime import (
     BackendArrayHandle,
     DataLease,
@@ -69,6 +80,7 @@ from .schema import (
     PRODUCT_SCHEMA_VERSION,
     AxisRole,
     AxisSchema,
+    CoordinateSchema,
     ProductSchema,
     SamplingBasisSchema,
     SpectralAttributes,
@@ -79,12 +91,15 @@ from .schema import (
 from .store import (
     ARTIFACT_SCHEMA_VERSION,
     ArtifactManifestV3,
+    BundleDescriptor,
     ChunkRecord,
     ProductEntry,
     ProductStorage,
     StorageAdapterProtocol,
+    load_bundle,
     load_products,
     register_adapter,
+    register_bundle_adapter,
     save_products,
 )
 
@@ -98,11 +113,14 @@ __all__ = [
     "ArtifactManifestV3",
     "ArtifactNotFoundError",
     "ArtifactRef",
+    "ArtifactResolverProtocol",
     "ArtifactUnsupportedError",
     "AxisRole",
     "AxisSchema",
     "BackendArrayHandle",
+    "BundleDescriptor",
     "ChunkRecord",
+    "CoordinateSchema",
     "CopyPolicy",
     "DataBacking",
     "DataHandleProtocol",
@@ -113,6 +131,8 @@ __all__ = [
     "DataProduct",
     "Dataset",
     "DictProductBacking",
+    "DirectoryArtifactResolver",
+    "GenericDataBundle",
     "GraphEdge",
     "HostArrayHandle",
     "LeaseScope",
@@ -135,8 +155,12 @@ __all__ = [
     "UncertaintySchema",
     "VariableConstraints",
     "VariableSchema",
+    "default_artifact_resolver",
+    "load_bundle",
     "load_products",
     "register_adapter",
+    "register_artifact_location",
+    "register_bundle_adapter",
     "save_products",
     "validate_backing",
 ]

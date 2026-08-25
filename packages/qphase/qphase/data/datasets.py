@@ -50,6 +50,7 @@ from .runtime import (
 from .schema import (
     AxisRole,
     AxisSchema,
+    CoordinateSchema,
     ProductSchema,
     SpectralAttributes,
     VariableSchema,
@@ -198,6 +199,20 @@ class Dataset:
         """Return the variable with the given name."""
         return self._schema.variable(name)
 
+    def coordinates(self) -> tuple[CoordinateSchema, ...]:
+        """Return the product's declared coordinate labels."""
+        return tuple(self._schema.coordinates)
+
+    def coordinate(self, name: str) -> np.ndarray:
+        """Materialize the values of one declared coordinate.
+
+        Raises ``KeyError`` when no coordinate with that name is declared.
+        """
+        for coordinate in self._schema.coordinates:
+            if coordinate.name == name:
+                return np.asarray(self.handle(coordinate.variable).materialize())
+        raise KeyError(f"unknown coordinate {name!r}")
+
     # -- backing introspection ----------------------------------------------
 
     @property
@@ -292,6 +307,17 @@ class Dataset:
                     "units": variable.units,
                 }
                 for variable in self._schema.variables
+            ],
+            "coordinates": [
+                {
+                    "name": coordinate.name,
+                    "variable": coordinate.variable,
+                    "dims": list(coordinate.dims),
+                    "role": coordinate.role,
+                    "units": coordinate.units,
+                    "monotonic": coordinate.monotonic,
+                }
+                for coordinate in self._schema.coordinates
             ],
         }
         backing = self._backing
@@ -397,8 +423,7 @@ class Dataset:
         unspanned = set(selection) - spanned
         if unspanned:
             raise ValueError(
-                "selection axes are not spanned by any variable: "
-                f"{sorted(unspanned)}"
+                f"selection axes are not spanned by any variable: {sorted(unspanned)}"
             )
 
         dropped = {
@@ -509,20 +534,14 @@ class Dataset:
         if missing:
             raise ValueError(f"missing arrays for variables: {sorted(missing)}")
         if extra:
-            raise ValueError(
-                f"arrays without schema variables: {sorted(extra)}"
-            )
+            raise ValueError(f"arrays without schema variables: {sorted(extra)}")
         handles = {}
         for variable in schema.variables:
             array = arrays[variable.name]
             if device == "cpu":
-                handle: Any = HostArrayHandle(
-                    np.asarray(array), variable, owner=owner
-                )
+                handle: Any = HostArrayHandle(np.asarray(array), variable, owner=owner)
             else:
-                handle = BackendArrayHandle(
-                    array, variable, owner=owner, device=device
-                )
+                handle = BackendArrayHandle(array, variable, owner=owner, device=device)
             handles[variable.name] = handle
         return cls(schema, DictProductBacking(handles), provenance=provenance)
 

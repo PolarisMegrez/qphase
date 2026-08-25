@@ -39,6 +39,8 @@ ProductStorage
     Adapter id plus the variable→chunk mapping of one product.
 ProductEntry
     One named product inside an artifact manifest.
+BundleDescriptor
+    Persisted bundle type/adapter plus product roles.
 ArtifactManifestV3
     The v3 artifact manifest.
 StorageAdapterProtocol
@@ -47,8 +49,12 @@ save_products
     Persist typed datasets and write the v3 manifest.
 load_products
     Reopen an artifact directory as lazily-backed datasets.
+load_bundle
+    Restore an artifact directory as a (generic or adapted) bundle object.
 register_adapter
     Register a storage adapter implementation.
+register_bundle_adapter
+    Register a bundle adapter restoring concrete bundle types.
 """
 
 from __future__ import annotations
@@ -76,21 +82,27 @@ from .errors import (
 )
 from .kinds import DataKind
 from .product import RuntimeProductBacking
+from .resolver import ArtifactResolverProtocol
 from .schema import ProductSchema, VariableSchema
 
 __all__ = [
     "ARTIFACT_SCHEMA_VERSION",
+    "GENERIC_BUNDLE_ADAPTER_ID",
+    "GENERIC_BUNDLE_TYPE_ID",
     "MANIFEST_FILENAME",
     "ArtifactManifestV3",
+    "BundleDescriptor",
     "ChunkRecord",
     "ProductEntry",
     "ProductStorage",
     "StorageAdapterProtocol",
     "artifact_content_hash",
     "chunk_content_hash",
+    "load_bundle",
     "load_products",
     "product_content_hash",
     "register_adapter",
+    "register_bundle_adapter",
     "resolve_artifact_path",
     "save_products",
     "validate_artifact_relative_path",
@@ -301,6 +313,42 @@ class ProductEntry(BaseModel):
         return _validate_sha256_digest(value)
 
 
+#: Bundle type of a plain product collection (no resource-specific semantics).
+GENERIC_BUNDLE_TYPE_ID = "generic.dataset_bundle/1"
+
+#: Adapter id of the built-in generic bundle builder.
+GENERIC_BUNDLE_ADAPTER_ID = "generic/1"
+
+
+class BundleDescriptor(BaseModel):
+    """Descriptor restoring how a product collection forms one result.
+
+    ``type_id`` names the bundle type (``generic.dataset_bundle/1``,
+    ``sde.bundle/1``, ...); ``adapter_id`` selects the *registered* bundle
+    adapter used to rebuild a concrete bundle (a trusted registry id, never
+    a code path); ``descriptor`` holds adapter-validated JSON (scan layout,
+    bundle metadata); ``product_roles`` maps stable semantic roles to
+    job-local product names.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type_id: str = Field(min_length=1)
+    adapter_id: str = Field(min_length=1)
+    descriptor_schema: str = Field(min_length=1)
+    descriptor: dict[str, Any] = Field(default_factory=dict)
+    product_roles: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("descriptor")
+    @classmethod
+    def _check_descriptor_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        try:
+            canonical_json(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("bundle descriptor must be JSON-serializable") from exc
+        return value
+
+
 class ArtifactManifestV3(BaseModel):
     """The v3 artifact manifest: the public restore entry of an artifact."""
 
@@ -309,6 +357,7 @@ class ArtifactManifestV3(BaseModel):
     schema_version: Literal["qphase.artifact/3"] = ARTIFACT_SCHEMA_VERSION
     artifact_id: str = Field(min_length=1)
     created_at: str
+    bundle: BundleDescriptor
     products: list[ProductEntry] = Field(default_factory=list)
     provenance: dict[str, Any] = Field(default_factory=dict)
     parents: list[str] = Field(default_factory=list)
@@ -337,9 +386,7 @@ class ArtifactManifestV3(BaseModel):
 
     @field_validator("products")
     @classmethod
-    def _check_unique_products(
-        cls, value: list[ProductEntry]
-    ) -> list[ProductEntry]:
+    def _check_unique_products(cls, value: list[ProductEntry]) -> list[ProductEntry]:
         names = [entry.name for entry in value]
         if len(set(names)) != len(names):
             raise ValueError("artifact product names must be unique")
@@ -358,9 +405,7 @@ class ArtifactManifestV3(BaseModel):
         try:
             canonical_json(value)
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "manifest provenance must be JSON-serializable"
-            ) from exc
+            raise ValueError("manifest provenance must be JSON-serializable") from exc
         return value
 
     def product_entry(self, name: str) -> ProductEntry:
@@ -425,6 +470,16 @@ class ArtifactManifestV3(BaseModel):
 
     def _cross_validate(self, directory: Path) -> None:
         """Cross-field, path-safety and content-hash validation layer."""
+        product_names = {entry.name for entry in self.products}
+        unknown_roles = sorted(
+            target
+            for target in self.bundle.product_roles.values()
+            if target not in product_names
+        )
+        if unknown_roles:
+            raise ArtifactCorruptError(
+                f"bundle product_roles reference unknown products {unknown_roles}"
+            )
         files: dict[str, str] = {}
         for entry in self.products:
             _validate_product_entry(entry)
@@ -447,7 +502,10 @@ class ArtifactManifestV3(BaseModel):
                     "manifest was modified after writing"
                 )
         expected_content = artifact_content_hash(
-            None, self.products, self.provenance, self.parents
+            self.bundle.model_dump(mode="json"),
+            self.products,
+            self.provenance,
+            self.parents,
         )
         if self.content_hash != expected_content:
             raise ArtifactCorruptError(
@@ -595,8 +653,17 @@ class StorageAdapterProtocol(Protocol):
         """Open a stored product as a lazily-reading runtime backing."""
         ...
 
-    def open_ref(self, ref: ArtifactRef) -> RuntimeProductBacking:
-        """Open the product referenced by an artifact ref."""
+    def open_ref(
+        self,
+        ref: ArtifactRef,
+        *,
+        resolver: ArtifactResolverProtocol | None = None,
+    ) -> RuntimeProductBacking:
+        """Open the product referenced by an artifact ref.
+
+        ``resolver`` turns the ref's artifact id into an on-disk location;
+        adapters fall back to the process-default resolver when omitted.
+        """
         ...
 
 
@@ -630,8 +697,7 @@ def _resolve_adapter(adapter_id: str) -> StorageAdapterProtocol:
         return _ADAPTERS[adapter_id]
     except KeyError:
         raise ArtifactAdapterError(
-            f"unknown storage adapter {adapter_id!r}; registered: "
-            f"{sorted(_ADAPTERS)}"
+            f"unknown storage adapter {adapter_id!r}; registered: {sorted(_ADAPTERS)}"
         ) from None
 
 
@@ -657,6 +723,7 @@ def save_products(
     parents: Sequence[str] = (),
     artifact_id: str | None = None,
     shard_target_bytes: int = DEFAULT_SHARD_TARGET_BYTES,
+    bundle: BundleDescriptor | None = None,
 ) -> ArtifactManifestV3:
     """Persist typed datasets and write the v3 artifact manifest.
 
@@ -665,7 +732,9 @@ def save_products(
     with an explicit ``copy_policy="allow"`` at save time. Every variable is
     stored as one or more chunks split along its first dimension. An empty
     mapping is allowed and produces a manifest with no products (e.g. a
-    simulation that only yields scalar metadata).
+    simulation that only yields scalar metadata). Without an explicit
+    ``bundle`` descriptor a generic bundle is recorded, restoring the
+    products as a :class:`~qphase.data.bundle.GenericDataBundle`.
     """
     if not isinstance(products, Mapping):
         raise TypeError(
@@ -675,10 +744,8 @@ def save_products(
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
 
-    from .npz import (  # local import: npz depends on this module's models
-        NpzStorageAdapter,
-        register_product_location,
-    )
+    from .npz import NpzStorageAdapter  # local: npz depends on this module
+    from .resolver import register_artifact_location
 
     adapter = _resolve_adapter(NpzStorageAdapter.ADAPTER_ID)
     provenance_dict = dict(provenance or {})
@@ -688,8 +755,7 @@ def save_products(
     for index, (name, dataset) in enumerate(products.items()):
         if not isinstance(dataset, Dataset):
             raise TypeError(
-                f"product {name!r} must be a Dataset, got "
-                f"{type(dataset).__name__}"
+                f"product {name!r} must be a Dataset, got {type(dataset).__name__}"
             )
         if dataset.is_artifact_backed:
             dataset = dataset.materialize()
@@ -704,8 +770,7 @@ def save_products(
             for chunk in chunks:
                 if chunk.file in used_files:
                     raise ArtifactError(
-                        f"writer produced a duplicate chunk file name "
-                        f"{chunk.file!r}"
+                        f"writer produced a duplicate chunk file name {chunk.file!r}"
                     )
                 used_files.add(chunk.file)
         entries.append(
@@ -717,23 +782,31 @@ def save_products(
             )
         )
 
+    if bundle is None:
+        bundle = BundleDescriptor(
+            type_id=GENERIC_BUNDLE_TYPE_ID,
+            adapter_id=GENERIC_BUNDLE_ADAPTER_ID,
+            descriptor_schema=GENERIC_BUNDLE_TYPE_ID,
+            descriptor={},
+            product_roles={name: name for name in products},
+        )
     if artifact_id is None:
         artifact_id = hashlib.sha256(
-            f"{datetime.now(UTC).isoformat()}-"
-            f"{sorted(products)}".encode()
+            f"{datetime.now(UTC).isoformat()}-{sorted(products)}".encode()
         ).hexdigest()[:16]
     manifest = ArtifactManifestV3(
         artifact_id=artifact_id,
         created_at=datetime.now(UTC).isoformat(),
+        bundle=bundle,
         products=entries,
         provenance=provenance_dict,
         parents=parent_list,
         content_hash=artifact_content_hash(
-            None, entries, provenance_dict, parent_list
+            bundle.model_dump(mode="json"), entries, provenance_dict, parent_list
         ),
     )
     manifest.write(directory)
-    register_product_location(manifest.artifact_id, directory)
+    register_artifact_location(manifest.artifact_id, directory)
     return manifest
 
 
@@ -745,10 +818,15 @@ def load_products(directory: Path | str) -> dict[str, Dataset]:
     The manifest is fully validated first; unknown storage adapters raise
     :class:`ArtifactAdapterError`.
     """
-    from .npz import register_product_location
-
     directory = Path(directory)
     manifest = ArtifactManifestV3.read(directory)
+    return _load_products(manifest, directory)
+
+
+def _load_products(manifest: ArtifactManifestV3, directory: Path) -> dict[str, Dataset]:
+    """Open the products of an already-validated manifest."""
+    from .resolver import register_artifact_location
+
     result: dict[str, Dataset] = {}
     for entry in manifest.products:
         adapter = _resolve_adapter(entry.storage.adapter)
@@ -763,5 +841,63 @@ def load_products(directory: Path | str) -> dict[str, Dataset]:
                 "product": entry.name,
             },
         )
-    register_product_location(manifest.artifact_id, directory)
+    register_artifact_location(manifest.artifact_id, directory)
     return result
+
+
+# -- bundle restore -------------------------------------------------------------
+
+
+def _generic_bundle_builder(
+    manifest: ArtifactManifestV3, products: dict[str, Dataset]
+) -> Any:
+    from .bundle import GenericDataBundle
+
+    return GenericDataBundle(
+        products,
+        manifest.bundle,
+        provenance=manifest.provenance,
+        metadata={"artifact_id": manifest.artifact_id},
+    )
+
+
+_BUNDLE_ADAPTERS: dict[str, Any] = {GENERIC_BUNDLE_ADAPTER_ID: _generic_bundle_builder}
+
+
+def register_bundle_adapter(adapter_id: str, builder: Any) -> None:
+    """Register a bundle adapter restoring concrete bundles by adapter id.
+
+    ``builder`` receives ``(manifest, products)`` and returns the restored
+    bundle object. Registration never silently overwrites an existing id.
+    """
+    existing = _BUNDLE_ADAPTERS.get(adapter_id)
+    if existing is not None and existing is not builder:
+        raise ArtifactAdapterError(
+            f"bundle adapter {adapter_id!r} is already registered; refusing "
+            "to overwrite it"
+        )
+    _BUNDLE_ADAPTERS[adapter_id] = builder
+
+
+def load_bundle(directory: Path | str) -> Any:
+    """Restore a v3 artifact directory as a bundle object.
+
+    The manifest's bundle adapter id selects the registered builder; without
+    a registered builder a :class:`~qphase.data.bundle.GenericDataBundle` is
+    returned, so core can always restore any artifact even when the owning
+    resource package is not installed.
+    """
+    from .bundle import GenericDataBundle
+
+    directory = Path(directory)
+    manifest = ArtifactManifestV3.read(directory)
+    products = _load_products(manifest, directory)
+    builder = _BUNDLE_ADAPTERS.get(manifest.bundle.adapter_id)
+    if builder is None:
+        return GenericDataBundle(
+            products,
+            manifest.bundle,
+            provenance=manifest.provenance,
+            metadata={"artifact_id": manifest.artifact_id},
+        )
+    return builder(manifest, products)

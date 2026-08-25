@@ -33,8 +33,6 @@ ShardedNpzArrayHandle
     Lazy sharded array handle with chunk-pruning selection reads.
 load_product_backing
     Registry-backed restore entry point for NPZ artifact refs.
-register_product_location
-    Register the on-disk location of one artifact.
 """
 
 from __future__ import annotations
@@ -55,6 +53,7 @@ from .errors import (
 )
 from .handles import CopyPolicy
 from .product import RuntimeProductBacking
+from .resolver import ArtifactResolverProtocol, default_artifact_resolver
 from .runtime import DictProductBacking, _ArrayHandleBase
 from .schema import VariableSchema
 from .store import (
@@ -70,18 +69,9 @@ __all__ = [
     "NpzStorageAdapter",
     "ShardedNpzArrayHandle",
     "load_product_backing",
-    "register_product_location",
 ]
 
 _KEY = "data"
-
-# Process-local artifact location registry: artifact_id -> directory.
-_LOCATIONS: dict[str, Path] = {}
-
-
-def register_product_location(artifact_id: str, directory: Path) -> None:
-    """Register the on-disk location of one artifact."""
-    _LOCATIONS[artifact_id] = Path(directory)
 
 
 def _read_chunk(path: Path, record: ChunkRecord) -> np.ndarray:
@@ -326,9 +316,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
                         if not parts:
                             base = c0
                         parts.append(_read_chunk(path, record))
-                data = (
-                    parts[0] if len(parts) == 1 else np.concatenate(parts, axis=0)
-                )
+                data = parts[0] if len(parts) == 1 else np.concatenate(parts, axis=0)
                 return data[slice(start - base, stop - base), *rest]
         return self.materialize()[indexers]
 
@@ -412,21 +400,20 @@ class NpzStorageAdapter:
                 )
         return DictProductBacking(handles)
 
-    def open_ref(self, ref: ArtifactRef) -> RuntimeProductBacking:
+    def open_ref(
+        self,
+        ref: ArtifactRef,
+        *,
+        resolver: ArtifactResolverProtocol | None = None,
+    ) -> RuntimeProductBacking:
         """Open the product referenced by an NPZ artifact ref."""
         if ref.storage_adapter != self.ADAPTER_ID:
             raise ArtifactAdapterError(
                 f"artifact ref requires adapter {ref.storage_adapter!r}, "
                 f"not {self.ADAPTER_ID!r}"
             )
-        try:
-            directory = _LOCATIONS[ref.artifact_id]
-        except KeyError:
-            raise ArtifactNotFoundError(
-                f"artifact {ref.artifact_id!r} is not registered in this "
-                "process; open the artifact directory through "
-                "qphase.data.store.load_products first"
-            ) from None
+        active = resolver if resolver is not None else default_artifact_resolver()
+        directory = active.resolve(ref)
         from .store import ArtifactManifestV3  # local: avoid an import cycle
 
         manifest = ArtifactManifestV3.read(directory)
@@ -434,8 +421,7 @@ class NpzStorageAdapter:
             entry = manifest.product_entry(ref.product_name)
         except KeyError:
             raise ArtifactNotFoundError(
-                f"artifact {ref.artifact_id!r} has no product "
-                f"{ref.product_name!r}"
+                f"artifact {ref.artifact_id!r} has no product {ref.product_name!r}"
             ) from None
         if entry.product_schema != ref.product_schema:
             raise ArtifactChecksumError(
@@ -461,11 +447,7 @@ class NpzStorageAdapter:
     ) -> list[ChunkRecord]:
         safe_variable = _sanitize_stem(variable_name)
         rows = array.shape[0] if array.ndim >= 1 else 0
-        if (
-            array.ndim >= 1
-            and rows > 1
-            and array.nbytes > shard_target_bytes > 0
-        ):
+        if array.ndim >= 1 and rows > 1 and array.nbytes > shard_target_bytes > 0:
             chunk_count = math.ceil(array.nbytes / shard_target_bytes)
             rows_per_chunk = math.ceil(rows / chunk_count)
             records = []

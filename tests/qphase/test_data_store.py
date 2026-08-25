@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 from qphase.core.artifacts import ArtifactStore
-from qphase.core.result_loader import GenericResult, load_result
+from qphase.core.result_loader import load_result
 from qphase.data import (
     ARTIFACT_SCHEMA_VERSION,
     ArtifactAdapterError,
@@ -22,9 +22,11 @@ from qphase.data import (
     AxisRole,
     AxisSchema,
     DataKind,
+    GenericDataBundle,
     ProductSchema,
     TimeSeriesDataset,
     VariableSchema,
+    default_artifact_resolver,
     load_products,
     register_adapter,
     save_products,
@@ -92,7 +94,10 @@ def _recompute_hashes(directory: Path) -> None:
             entry.name, entry.product_schema, entry.storage
         )
     manifest.content_hash = artifact_content_hash(
-        None, manifest.products, manifest.provenance, manifest.parents
+        manifest.bundle.model_dump(mode="json"),
+        manifest.products,
+        manifest.provenance,
+        manifest.parents,
     )
     path.write_text(
         json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n",
@@ -165,8 +170,8 @@ def test_unknown_artifact_ref_requires_store_open(tmp_path):
     dataset = _dataset()
     manifest = save_products(tmp_path, {"trajectories": dataset})
     ref = manifest.product_ref("trajectories")
-    npz_module._LOCATIONS.clear()
-    with pytest.raises(ArtifactNotFoundError, match="not registered"):
+    default_artifact_resolver().clear()
+    with pytest.raises(ArtifactNotFoundError, match="not bound"):
         TimeSeriesDataset(dataset.schema, ref).materialize()
     # Opening through the store re-registers the location.
     load_products(tmp_path)
@@ -444,9 +449,10 @@ def test_artifact_store_integration(tmp_path):
     assert sorted(loaded) == ["trajectories"]
 
     result = load_result("whatever", tmp_path)
-    assert isinstance(result, GenericResult)
+    assert isinstance(result, GenericDataBundle)
     assert sorted(result.data) == ["trajectories"]
     assert result.metadata["artifact_id"] == manifest.artifact_id
+    assert result.metadata["bundle_type"] == "generic.dataset_bundle/1"
     np.testing.assert_array_equal(
         result.data["trajectories"].handle("count").materialize(), np.arange(5)
     )

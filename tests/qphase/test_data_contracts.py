@@ -666,7 +666,7 @@ def test_product_schema_version_is_frozen():
 
 
 GOLDEN_SPECTRAL_FINGERPRINT = (
-    "629f9605f4eda5a60ecfdc1bd0f8f5639edc83deb82d1a16cfeee448b7b298c6"
+    "b0a12c58d8c92491a84a1cfd577c07f2d88189cec47ebb487deda696a3df6bb0"
 )
 
 

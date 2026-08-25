@@ -67,6 +67,9 @@ from qphase.data import (
 )
 from qphase.data.npz import NpzStorageAdapter
 from qphase.data.store import (
+    GENERIC_BUNDLE_ADAPTER_ID,
+    GENERIC_BUNDLE_TYPE_ID,
+    BundleDescriptor,
     artifact_content_hash,
     chunk_content_hash,
     product_content_hash,
@@ -750,14 +753,25 @@ def migrate_scan_artifact(
     artifact_id = hashlib.sha256(
         f"{datetime.now(UTC).isoformat()}-{manifest_path.name}".encode()
     ).hexdigest()[:16]
+    bundle = BundleDescriptor(
+        type_id=GENERIC_BUNDLE_TYPE_ID,
+        adapter_id=GENERIC_BUNDLE_ADAPTER_ID,
+        descriptor_schema=GENERIC_BUNDLE_TYPE_ID,
+        descriptor={},
+        product_roles={entry.name: entry.name for entry in entries},
+    )
     manifest = ArtifactManifestV3(
         artifact_id=artifact_id,
         created_at=datetime.now(UTC).isoformat(),
+        bundle=bundle,
         products=entries,
         provenance=provenance,
         parents=[sources[manifest_path.name]],
         content_hash=artifact_content_hash(
-            None, entries, provenance, [sources[manifest_path.name]]
+            bundle.model_dump(mode="json"),
+            entries,
+            provenance,
+            [sources[manifest_path.name]],
         ),
     )
     manifest.write(output_dir)

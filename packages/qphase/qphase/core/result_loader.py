@@ -112,17 +112,9 @@ def load_result(job_name: str, job_dir: Path) -> ResultProtocol:
                 f"failed to read artifact manifest {manifest_path}: {exc}"
             ) from exc
         if raw.get("schema_version") == "qphase.artifact/3":
-            from ..data.store import load_products
+            from ..data.store import load_bundle
 
-            products = load_products(job_dir)
-            return GenericResult(
-                products,
-                {
-                    "artifact_id": raw.get("artifact_id"),
-                    "products": sorted(products),
-                    "provenance": raw.get("provenance", {}),
-                },
-            )
+            return load_bundle(job_dir)
 
     # Potential filenames to check
     # 1. {job_name}.npz (Default for SDE)
