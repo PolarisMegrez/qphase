@@ -319,10 +319,15 @@ def save_products(
     Artifact-backed datasets are fully materialized first (an explicit load,
     never an implicit one); device-resident payloads are copied to the host
     with an explicit ``copy_policy="allow"`` at save time. Every variable is
-    stored as one or more chunks split along its first dimension.
+    stored as one or more chunks split along its first dimension. An empty
+    mapping is allowed and produces a manifest with no products (e.g. a
+    simulation that only yields scalar metadata).
     """
-    if not products:
-        raise ValueError("cannot save an artifact without products")
+    if not isinstance(products, Mapping):
+        raise TypeError(
+            f"products must be a mapping of name to Dataset, got "
+            f"{type(products).__name__}"
+        )
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
 

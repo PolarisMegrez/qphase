@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-
 from qphase.core.artifacts import ArtifactStore
 from qphase.core.result_loader import GenericResult, load_result
 from qphase.data import (
@@ -16,7 +15,6 @@ from qphase.data import (
     AxisRole,
     AxisSchema,
     DataKind,
-    Dataset,
     ProductSchema,
     TimeSeriesDataset,
     VariableSchema,
@@ -245,7 +243,13 @@ def test_artifact_store_integration(tmp_path):
 
 
 def test_save_products_validates_inputs(tmp_path):
-    with pytest.raises(ValueError, match="without products"):
-        save_products(tmp_path, {})
+    with pytest.raises(TypeError, match="must be a mapping"):
+        save_products(tmp_path, [("x", object())])
     with pytest.raises(TypeError, match="must be a Dataset"):
-        save_products(tmp_path, {"x": object()})
+        save_products(tmp_path / "bad", {"x": object()})
+
+
+def test_save_products_allows_empty_products(tmp_path):
+    manifest = save_products(tmp_path, {}, provenance={"engine": "test"})
+    assert manifest.products == []
+    assert load_products(tmp_path) == {}

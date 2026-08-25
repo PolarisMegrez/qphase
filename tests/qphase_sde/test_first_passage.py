@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
-from qphase.backend.xputil import get_xp
+from qphase.backend.xputil import convert_to_numpy, get_xp
 from qphase.core.scan import ScanSpec
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.engine import Engine, EngineConfig
@@ -186,10 +186,27 @@ def _engine(model, observer, *, integrator=None, n_traj=2, ic=None, **config):
     )
 
 
+def _alpha(bundle):
+    """(n_traj, n_time, n_channel) host array of the trajectory product."""
+    dataset = bundle.products["trajectories"]
+    return convert_to_numpy(dataset.handle("alpha").materialize())[0]
+
+
+def _payload(bundle, name="first_passage"):
+    """Observer payload dict: variables plus string leaves from payload_meta."""
+    dataset = bundle.products[name]
+    payload = {
+        variable.name: convert_to_numpy(dataset.handle(variable.name).materialize())
+        for variable in dataset.variables
+    }
+    payload.update(dataset.attributes.get("payload_meta", {}))
+    return payload
+
+
 def _growth_payload(observer=None, **kwargs):
     observer = observer if observer is not None else _observer()
     result = _engine(LinearGrowthModel(), observer, ic=[[0.0]], **kwargs).run()
-    return result.analysis["first_passage"], result
+    return _payload(result), result
 
 
 def test_state_norm_hit_records_first_passage():
@@ -209,7 +226,7 @@ def test_state_norm_hit_records_first_passage():
     assert payload["observable"] == "state_norm"
     assert payload["time_unit"] == "seconds"
     # record-only observers keep the full trajectory.
-    assert result.trajectory.data.shape == (2, 21, 1)
+    assert _alpha(result).shape == (2, 21, 1)
 
 
 def test_state_norm_censored_when_threshold_never_crossed():
@@ -247,7 +264,7 @@ def test_direction_below_with_negative_rate():
 def _growth_payload_with_model(model, observer, **kwargs):
     kwargs.setdefault("ic", [[1.0]])
     result = _engine(model, observer, **kwargs).run()
-    return result.analysis["first_passage"], result
+    return _payload(result), result
 
 
 def test_mode_magnitude_outside_and_inside():
@@ -420,10 +437,10 @@ def test_multiple_observers_compose_mixed_cadences():
 
     # Each observer fires exactly on its own cadence multiples.
     np.testing.assert_array_equal(
-        result.analysis["fast"]["first_hit_step"], [4, 4]
+        _payload(result, "fast")["first_hit_step"], [4, 4]
     )
     np.testing.assert_array_equal(
-        result.analysis["slow"]["first_hit_step"], [6, 6]
+        _payload(result, "slow")["first_hit_step"], [6, 6]
     )
 
 
@@ -441,13 +458,9 @@ def test_record_observer_preserves_trajectories_bitwise():
         **config,
     ).run()
 
-    np.testing.assert_array_equal(
-        reference.trajectory.data, no_hit.trajectory.data
-    )
-    np.testing.assert_array_equal(
-        reference.trajectory.data, immediate_hit.trajectory.data
-    )
-    payload = immediate_hit.analysis["first_passage"]
+    np.testing.assert_array_equal(_alpha(reference), _alpha(no_hit))
+    np.testing.assert_array_equal(_alpha(reference), _alpha(immediate_hit))
+    payload = _payload(immediate_hit)
     np.testing.assert_array_equal(payload["first_hit_step"], [0, 0, 0, 0])
 
 
@@ -478,8 +491,8 @@ def test_chunked_and_stepwise_hits_match():
 def test_stop_batch_truncates_output():
     payload, result = _growth_payload(_observer(action="stop_batch"))
 
-    assert result.trajectory.data.shape == (2, 7, 1)
-    meta = result.trajectory.meta
+    assert _alpha(result).shape == (2, 7, 1)
+    meta = result.products["trajectories"].attributes
     assert meta["stopped_early"] is True
     assert meta["stop_reason"] == "observer:first_passage"
     assert meta["effective_steps"] == 6
@@ -532,7 +545,7 @@ def test_cupy_matches_numpy_hits():
                 "observer": {"first_passage": observer},
             },
         )
-        return engine.run().analysis["first_passage"]
+        return _payload(engine.run())
 
     numpy_payload = run(NumpyBackend())
     cupy_payload = run(CuPyBackend())
@@ -569,10 +582,8 @@ def test_trajectory_batching_merges_observer_payloads():
         }
         return engine.run()
 
-    reference = run(keep_traj=False).analysis["first_passage"]
-    merged = run(keep_traj=False, trajectory_batch_size=3).analysis[
-        "first_passage"
-    ]
+    reference = _payload(run(keep_traj=False))
+    merged = _payload(run(keep_traj=False, trajectory_batch_size=3))
 
     # Global trajectory ids are the row index: 8 rows, no renumbering.
     assert merged["hit"].shape == (8,)
@@ -622,7 +633,10 @@ def test_scan_fused_payload_exposes_per_point_observer_views():
 
     result = engine.run(context=SimpleNamespace(parameter_grid=grid, progress=None))
 
-    payloads = result.combined.analysis["first_passage"]
+    payloads = [
+        _payload(result.point_view((index,)))
+        for index in range(result.scan_size)
+    ]
     assert [payload["n_traj"] for payload in payloads] == [2, 2]
     assert all(payload["hit"].shape == (2,) for payload in payloads)
     # rate=1 crosses 0.9 at k=11 (0.99^k), rate=2 at k=6 (0.98^k).
@@ -630,7 +644,7 @@ def test_scan_fused_payload_exposes_per_point_observer_views():
         payloads[0]["first_hit_step"], [11, 11]
     )
     np.testing.assert_array_equal(payloads[1]["first_hit_step"], [6, 6])
-    assert result.point_view((0,)).analysis["first_passage"]["n_traj"] == 2
+    assert _payload(result.point_view((0,)))["n_traj"] == 2
 
 
 def test_planner_reports_observer_cadence_cost():

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .engine import Engine
     from .model import MatrixDriftSDEModel, NoiseSpec, SDEModel
+    from .result import SDEDataBundle
     from .state import State, TrajectorySet
 
 # Public version string
@@ -25,6 +26,7 @@ __all__ = [
     "SDEModel",
     "MatrixDriftSDEModel",
     "NoiseSpec",
+    "SDEDataBundle",
     "State",
     "TrajectorySet",
     "__version__",
@@ -39,6 +41,7 @@ _LAZY_EXPORTS = {
     "Engine": ".engine",
     "MatrixDriftSDEModel": ".model",
     "NoiseSpec": ".model",
+    "SDEDataBundle": ".result",
     "SDEModel": ".model",
     "State": ".state",
     "TrajectorySet": ".state",

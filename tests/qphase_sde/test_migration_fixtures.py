@@ -21,7 +21,6 @@ import zipfile
 from pathlib import Path
 
 import numpy as np
-
 from qphase_sde.contracts.migration import convert_analyser_config
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "legacy_1x"

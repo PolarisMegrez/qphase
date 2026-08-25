@@ -129,11 +129,13 @@ def test_cupy_engine_honours_explicit_trajectory_retention():
         },
     )
 
-    result = engine.run()
-    assert result.trajectory is not None
-    assert isinstance(result.trajectory.data, np.ndarray)
-    assert result.meta["trajectory_storage"] == "host"
-    assert result.analysis["psd"]["ok"] is True
+    bundle = engine.run()
+    assert "trajectories" in bundle.products
+    alpha = bundle.products["trajectories"].handle("alpha").materialize()
+    assert isinstance(alpha, np.ndarray)
+    assert bundle.metadata["trajectory_storage"] == "host"
+    ok = bundle.products["psd"].handle("ok").materialize()
+    assert bool(ok) is True
 
 
 def test_cupy_vs_numpy_psd_periodogram():
@@ -260,14 +262,17 @@ def test_cupy_vdp_end_to_end_smoke():
         },
     )
 
-    result = engine.run()
-    assert result.trajectory is not None
-    assert isinstance(result.trajectory.data, np.ndarray)
-    assert "psd" in result.analysis
-    psd_data = result.analysis["psd"]
-    assert "axis" in psd_data
-    assert "psd" in psd_data
-    assert psd_data["psd"].shape[1] == 1  # one mode requested
+    bundle = engine.run()
+    assert "trajectories" in bundle.products
+    alpha = bundle.products["trajectories"].handle("alpha").materialize()
+    assert isinstance(alpha, np.ndarray)
+    assert "psd" in bundle.products
+    psd_data = bundle.products["psd"]
+    variables = {variable.name for variable in psd_data.variables}
+    assert "axis" in variables
+    assert "psd" in variables
+    psd_values = psd_data.handle("psd").materialize()
+    assert psd_values.shape[1] == 1  # one mode requested
 
 
 def test_cupy_scheduler_vdp_smoke(tmp_path, temp_project):
@@ -343,11 +348,17 @@ jobs:
     assert results[0].success
     assert captured_job_dir is not None
 
-    from qphase_sde.result import SDEResult
+    # Typed bundles persist as a v3 artifact directory, not an npz result.
+    from qphase.data import load_products
+    from qphase_sde.result import legacy_view_from_products
 
-    result_path = captured_job_dir / "cupy_vdp_smoke.npz"
-    assert result_path.exists()
-    result = SDEResult.load(result_path)
+    manifest_path = captured_job_dir / "artifact_manifest.json"
+    assert manifest_path.exists()
+    products = {
+        name: dataset.materialize()
+        for name, dataset in load_products(captured_job_dir).items()
+    }
+    result = legacy_view_from_products(products)
     assert result.trajectory is not None
     assert isinstance(result.trajectory.data, np.ndarray)
     assert "psd" in result.analysis

@@ -58,6 +58,25 @@ class ArtifactStore:
         return load_products(self.job_dir)
 
     def save_result(self, result: ResultProtocol, name: str) -> Path:
+        from collections.abc import Mapping as _Mapping
+
+        from ..data.datasets import Dataset as _Dataset
+
+        products = getattr(result, "products", None)
+        if isinstance(products, _Mapping) and all(
+            isinstance(product, _Dataset) for product in products.values()
+        ):
+            # 2.0 typed bundles persist through the v3 manifest pipeline;
+            # no legacy manifest is written for them.
+            provenance = getattr(result, "provenance", None)
+            if provenance is not None and hasattr(provenance, "model_dump"):
+                provenance = provenance.model_dump(mode="json")
+            self.save_products(
+                products,
+                provenance={"job_name": name, **(provenance or {})},
+            )
+            return self.job_dir / "artifact_manifest.json"
+
         before = set(self.job_dir.rglob("*"))
         layout = self._layout(result)
         base = self.job_dir / name

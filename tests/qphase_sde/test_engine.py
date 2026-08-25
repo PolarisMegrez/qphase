@@ -15,6 +15,18 @@ from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 pytestmark = pytest.mark.integration
 
 
+def _trajectory_alpha(bundle):
+    """(n_traj, n_time, n_channel) array of the trajectory product."""
+    dataset = bundle.products["trajectories"]
+    return dataset.handle("alpha").materialize()[0]
+
+
+def _trajectory_times(bundle):
+    """Observation-window sample times of the trajectory product."""
+    axis = bundle.products["trajectories"].axis("time")
+    return axis.start + axis.step * np.arange(axis.size)
+
+
 class DummySDEModel:
     """Dummy SDE model for engine tests."""
 
@@ -84,16 +96,16 @@ def test_engine_run():
     engine = Engine(config=config, plugins=plugins)
 
     # Run simulation
-    result = engine.run()
+    bundle = engine.run()
 
-    assert result is not None
-    # assert result.success  # SDEResult doesn't have success attribute
-    assert hasattr(result, "trajectory")
+    assert bundle is not None
+    assert "trajectories" in bundle.products
     # t=0 to t=0.05 with dt=0.01 -> 0, 0.01, 0.02, 0.03, 0.04, 0.05 -> 6 points
     # Shape: (n_traj, n_steps, n_modes) or similar.
     # Check actual shape from result
-    assert result.trajectory.data.shape[0] == 2  # n_traj
-    assert result.trajectory.data.shape[1] >= 5  # n_steps
+    alpha = _trajectory_alpha(bundle)
+    assert alpha.shape[0] == 2  # n_traj
+    assert alpha.shape[1] >= 5  # n_steps
 
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
@@ -235,15 +247,16 @@ def test_engine_integrates_warmup_but_only_returns_observation_window():
         },
     )
 
-    result = engine.run()
-    trajectory = result.trajectory
+    bundle = engine.run()
+    trajectory = bundle.products["trajectories"]
+    axis = trajectory.axis("time")
 
-    assert trajectory.t0 == pytest.approx(0.2)
-    assert trajectory.dt == pytest.approx(0.3)
-    assert trajectory.meta["integration_t0"] == pytest.approx(0.0)
-    assert trajectory.meta["warmup_steps"] == 2
-    np.testing.assert_allclose(trajectory.times, [0.2, 0.5, 0.8])
-    np.testing.assert_allclose(trajectory.data[0, :, 0], [0.2, 0.5, 0.8])
+    assert axis.start == pytest.approx(0.2)
+    assert axis.step == pytest.approx(0.3)
+    assert trajectory.attributes["integration_t0"] == pytest.approx(0.0)
+    assert trajectory.attributes["warmup_steps"] == 2
+    np.testing.assert_allclose(_trajectory_times(bundle), [0.2, 0.5, 0.8])
+    np.testing.assert_allclose(_trajectory_alpha(bundle)[0, :, 0], [0.2, 0.5, 0.8])
 
 
 def test_engine_non_chunk_path_samples_from_observation_start():
@@ -265,10 +278,10 @@ def test_engine_non_chunk_path_samples_from_observation_start():
         },
     )
 
-    trajectory = engine.run().trajectory
+    bundle = engine.run()
 
-    np.testing.assert_allclose(trajectory.times, [0.2, 0.5, 0.8])
-    np.testing.assert_allclose(trajectory.data[0, :, 0], [0.2, 0.5, 0.8])
+    np.testing.assert_allclose(_trajectory_times(bundle), [0.2, 0.5, 0.8])
+    np.testing.assert_allclose(_trajectory_alpha(bundle)[0, :, 0], [0.2, 0.5, 0.8])
 
 
 def test_engine_state_norm_guard_rejects_escaped_chunk_trajectory():

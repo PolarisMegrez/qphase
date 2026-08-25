@@ -17,6 +17,7 @@ from qphase.core.registry import discovery
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
 from qphase.core.workflow import load_workflow
+from qphase.data import load_products
 
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 
@@ -69,10 +70,8 @@ def test_save_stride_preserves_peak(vdp_auto_workflow_path, temp_project, save_s
     fit_result = next(r for r in results if r.job_name == "vdp_2mode_auto_fit")
 
     # Saved dt must reflect the stride.
-    npz_path = sim_result.job_dir / "vdp_2mode_auto_sim.npz"
-    assert npz_path.exists()
-    with np.load(npz_path, allow_pickle=True) as npz:
-        saved_dt = float(npz["dt"])
+    products = load_products(sim_result.job_dir)
+    saved_dt = float(np.asarray(products["psd"].handle("sample_dt").materialize()))
     assert np.isclose(saved_dt, 0.1 * save_stride, rtol=1e-12)
 
     # The fitted peak should be stable across strides.

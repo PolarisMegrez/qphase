@@ -322,9 +322,13 @@ class NpzStorageAdapter:
         for variable in dataset.schema.variables:
             handle = dataset.handle(variable.name)
             # Persistence is a host operation: the copy policy is explicit.
-            array = np.ascontiguousarray(
-                handle.materialize("cpu", copy_policy="allow")
-            )
+            # np.ascontiguousarray promotes 0-d arrays to 1-d, so keep
+            # scalars as-is (0-d arrays are trivially C-contiguous).
+            array = handle.materialize("cpu", copy_policy="allow")
+            if array.ndim:
+                array = np.ascontiguousarray(array)
+            else:
+                array = np.asarray(array)
             records[variable.name] = self._write_variable(
                 file_stem, variable.name, array, directory, shard_target_bytes
             )

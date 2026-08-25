@@ -54,6 +54,14 @@ class StochasticScannedModel(ScannedDummyModel):
         return np.ones(y.shape + (1,))
 
 
+def _product_arrays(dataset):
+    """Materialize every variable of a bundle product as a name→array dict."""
+    return {
+        variable.name: dataset.handle(variable.name).materialize()
+        for variable in dataset.variables
+    }
+
+
 def _grid():
     return ScanSpec.model_validate(
         {
@@ -104,9 +112,13 @@ def test_sde_engine_adapts_parameter_grid_to_existing_fused_path():
 
     assert isinstance(result, DatasetResultProtocol)
     assert result.shape == (2,)
-    assert result.combined.trajectory.data.shape[0] == 4
-    assert result.point_view((0,)).trajectory.data.shape[0] == 2
-    assert result.point_view((1,)).meta["params"]["rate"] == 2.0
+    # The fused (scan*n_traj) leading dimension is now (scan, trajectory).
+    alpha = result.products["trajectories"].handle("alpha").materialize()
+    assert alpha.shape[0] * alpha.shape[1] == 4
+    point = result.point_view((0,))
+    point_alpha = point.products["trajectories"].handle("alpha").materialize()
+    assert point_alpha.shape[0] == 2
+    assert result.point_view((1,)).metadata["scan_point"]["rate"] == 2.0
     assert engine.config.n_traj == 2
     assert model.params == {"rate": 1.0}
 
@@ -142,10 +154,11 @@ def test_sde_engine_analyzes_resource_limited_scan_tiles():
 
     result = engine.run(context=context)
 
-    assert result.combined.trajectory is None
-    assert len(result.combined.analysis["mean"]) == 2
-    assert result.combined.meta["execution_plan"]["scan_tile_size"] == 1
-    assert result.combined.meta["rng_strategy"] == "scan_point_seedsequence_v1"
+    assert "trajectories" not in result.products
+    mean = result.products["mean"].handle("mean").materialize()
+    assert len(mean) == 2
+    assert result.metadata["execution_plan"]["scan_tile_size"] == 1
+    assert result.metadata["rng_strategy"] == "scan_point_seedsequence_v1"
     assert engine.config.n_traj == 1000
     assert model.params == {"rate": 1.0}
 
@@ -180,8 +193,8 @@ def test_sde_scan_rng_is_independent_of_tile_size():
             cancellation=None,
         )
         result = engine.run(context=context)
-        means = [item["mean"] for item in result.combined.analysis["mean"]]
-        return result.combined.meta["execution_plan"]["scan_tile_size"], means
+        means = list(result.products["mean"].handle("mean").materialize())
+        return result.metadata["execution_plan"]["scan_tile_size"], means
 
     tile_one, means_one = run(3)
     tile_two, means_two = run(4)
@@ -264,7 +277,8 @@ def test_trajectory_batch_size_does_not_change_psd_random_streams():
             },
         )
         result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
-        return result.analysis["psd"], result.meta["execution_plan"]
+        psd = _product_arrays(result.products["psd"])
+        return psd, result.metadata["execution_plan"]
 
     batch_64, plan_64 = run(64)
     batch_128, plan_128 = run(128)
@@ -307,13 +321,14 @@ def test_scan_runs_trajectory_batches_inside_each_parameter_point():
         )
     )
 
-    assert result.combined.trajectory is None
-    assert len(result.combined.analysis["psd"]) == 2
-    assert all(
-        item["uncertainty"]["n_independent"] == 128
-        for item in result.combined.analysis["psd"]
-    )
-    assert result.combined.meta["execution_plan"]["trajectory_batch_count"] == 2
+    assert "trajectories" not in result.products
+    psd = _product_arrays(result.products["psd"])
+    assert psd["psd"].shape[0] == 2
+    # The bridge flattens the nested "uncertainty" mapping into dotted
+    # variables; the per-point independent trajectory count is pinned
+    # directly, exactly as the 1.x per-point payload asserted.
+    np.testing.assert_array_equal(psd["uncertainty.n_independent"], [128, 128])
+    assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
     assert engine.config.n_traj == 128
     assert model.params == {"rate": 1.0}
 
@@ -355,11 +370,13 @@ def test_allan_variance_runs_through_engine_trajectory_batches():
         )
     )
 
-    payload = result.analysis["allan_variance"]
-    assert result.trajectory is None
+    payload = _product_arrays(result.products["allan_variance"])
+    assert "trajectories" not in result.products
     assert payload["n_traj"] == 128
-    assert payload["mode_results"][0]["allan"]["per_trajectory"].shape[0] == 128
-    assert result.meta["execution_plan"]["trajectory_batch_count"] == 2
+    # The bridge flattens the nested "mode_results" mapping into dotted
+    # variables; the merged per-trajectory Allan rows number n_traj.
+    assert payload["mode_results.0.allan.per_trajectory"].shape[0] == 128
+    assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
 
 
 def test_coherence_matrix_runs_through_engine_trajectory_batches():
@@ -398,12 +415,12 @@ def test_coherence_matrix_runs_through_engine_trajectory_batches():
         )
     )
 
-    payload = result.analysis["coherence_matrix"]
-    assert result.trajectory is None
+    payload = _product_arrays(result.products["coherence_matrix"])
+    assert "trajectories" not in result.products
     assert payload["n_traj"] == 128
     assert payload["per_trajectory_matrix"].shape == (128, 1, 1)
     assert payload["purity"] == 1.0
-    assert result.meta["execution_plan"]["trajectory_batch_count"] == 2
+    assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
 
 
 def test_quadratic_moments_run_through_engine_trajectory_batches():
@@ -442,11 +459,11 @@ def test_quadratic_moments_run_through_engine_trajectory_batches():
         )
     )
 
-    payload = result.analysis["quadratic_moments"]
-    assert result.trajectory is None
+    payload = _product_arrays(result.products["quadratic_moments"])
+    assert "trajectories" not in result.products
     assert payload["n_traj"] == 128
     assert payload["per_trajectory_raw_moments"].shape == (128, 1, 4)
-    assert result.meta["execution_plan"]["trajectory_batch_count"] == 2
+    assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
 
 
 def test_sde_progress_uses_stable_trajectory_step_units():

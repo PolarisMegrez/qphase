@@ -25,6 +25,7 @@ from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy, get_xp
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 
+from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.integrator.base import Integrator
 from qphase_sde.model import NoiseSpec, SDEModel
 from qphase_sde.observer.base import (
@@ -37,7 +38,12 @@ from qphase_sde.planning import (
     build_execution_plan,
     resolve_time_grid,
 )
-from qphase_sde.result import SDEResult
+from qphase_sde.result import (
+    SDEDataBundle,
+    SDEResult,
+    _fingerprint_text,
+    bundle_from_result,
+)
 from qphase_sde.runtime.buffers import SDEBufferCache
 from qphase_sde.state import TrajectorySet
 
@@ -251,6 +257,55 @@ def get_integrator() -> Integrator:
     return _context.get_integrator()
 
 
+def _coerce_analysis_input(data: Any | None) -> Any | None:
+    """Coerce 2.0 trajectory products back to a TrajectorySet for analysers.
+
+    Accepts an SDEDataBundle (in-workflow hand-off) or a products mapping
+    (v3 artifact restored through the manifest loader). Inputs carrying a
+    ``trajectories`` product are coerced to a TrajectorySet for
+    trajectory-consuming analysers (single-point only: scan products must be
+    mapped per point by the scheduler, not flattened here). Inputs without
+    trajectories (e.g. spectral products feeding cross-job fitters) pass
+    through unchanged; those analysers normalize them via
+    ``load_sde_results``.
+    """
+    products: Any | None = None
+    if isinstance(data, SDEDataBundle):
+        products = data.products
+    elif isinstance(data, dict) and data and all(
+        hasattr(value, "schema") and hasattr(value, "handle")
+        for value in data.values()
+    ):
+        products = data
+    if products is None:
+        return data
+    product = products.get("trajectories")
+    if product is None:
+        return data
+    axis_names = {axis.name for axis in product.axes}
+    scan_axis = product.axis("scan") if "scan" in axis_names else None
+    if scan_axis is not None and scan_axis.size not in (None, 1):
+        raise RuntimeError(
+            "SDE analyze mode cannot flatten a scan trajectory product; map "
+            "over scan points (input.mode=map) instead"
+        )
+    alpha = product.handle("alpha").materialize()
+    if alpha.ndim == 4:
+        alpha = alpha[0]
+    time_axis = product.axis("time") if "time" in axis_names else None
+    t0 = (
+        float(time_axis.start)
+        if time_axis is not None and time_axis.start is not None
+        else 0.0
+    )
+    dt = (
+        float(time_axis.step)
+        if time_axis is not None and time_axis.step is not None
+        else 1.0
+    )
+    return TrajectorySet(data=alpha, t0=t0, dt=dt, meta={})
+
+
 # -----------------------------------------------------------------------------
 # Engine Class
 # -----------------------------------------------------------------------------
@@ -359,7 +414,10 @@ class Engine(EngineBase):
             reporter = ProgressReporter.wrap_legacy(progress_cb)
 
         if getattr(self.config, "mode", "simulate") == "analyze":
-            return self._run_analyze(data)
+            return bundle_from_result(
+                self._run_analyze(data),
+                provenance=self._job_provenance(),
+            )
         grid = context.parameter_grid if context is not None else None
         model = self._required_model()
         analysers = self._normalised_analysers()
@@ -417,11 +475,15 @@ class Engine(EngineBase):
                     "execution_plan": plan.to_dict(),
                 }
             )
-            return SDEScanResult(
+            scan_result = SDEScanResult(
                 combined,
                 grid,
                 adapter.base_params,
                 adapter.base_n_traj,
+            )
+            return bundle_from_result(
+                scan_result,
+                provenance=self._job_provenance(grid=grid),
             )
         if plan.trajectory_batch_count > 1:
             result: ResultProtocol = self._run_trajectory_batched(
@@ -439,7 +501,41 @@ class Engine(EngineBase):
             )
         if isinstance(result, SDEResult):
             result.meta.setdefault("execution_plan", plan.to_dict())
-        return result
+        if not isinstance(result, SDEResult):
+            raise TypeError("SDE simulation did not return an SDEResult")
+        return bundle_from_result(
+            result,
+            provenance=self._job_provenance(),
+        )
+
+    def _job_provenance(self, *, grid: Any | None = None) -> SDEProvenance:
+        """Build the job-level provenance record from config and plugins."""
+        config = self.config
+        scan_grid: dict[str, list[float]] = {}
+        if grid is not None:
+            for name, values in grid.axes.items():
+                try:
+                    scan_grid[str(name)] = [float(value) for value in values]
+                except (TypeError, ValueError):
+                    continue
+        warmup_samples = 0
+        if config is not None:
+            try:
+                time_grid = resolve_time_grid(
+                    t0=config.t0, t1=config.t1, dt=config.dt
+                )
+                warmup_samples = int(time_grid.warmup_steps)
+            except Exception:  # noqa: BLE001 - provenance must not break runs
+                warmup_samples = 0
+        return SDEProvenance(
+            t0=float(getattr(config, "t0", 0.0)),
+            dt=getattr(config, "dt", None),
+            warmup_samples=warmup_samples,
+            master_seed=getattr(config, "seed", None),
+            model_fingerprint=_fingerprint_text(self.plugins.get("model")),
+            integrator_fingerprint=_fingerprint_text(self._default_integrator),
+            scan_grid=scan_grid,
+        )
 
     @staticmethod
     def _execution_plan_summary(plan: SDEExecutionPlan) -> str:
@@ -807,12 +903,17 @@ class Engine(EngineBase):
         """Run analysers on upstream input data without performing a simulation.
 
         This mode is used for cross-job postprocessing: the scheduler passes an
-        ``AggregateResult``, a directory ``Path``, or a single ``SDEResult`` as
-        ``data``, and the configured analysers produce derived outputs.
+        ``AggregateResult``, a directory ``Path``, a single ``SDEResult`` or a
+        2.0 :class:`SDEDataBundle` as ``data``, and the configured analysers
+        produce derived outputs. Bundle inputs are coerced back to a
+        TrajectorySet from their ``trajectories`` product (single-point only)
+        until analysers consume typed products natively (Phase 2).
         """
         assert self.config is not None
 
         from qphase.backend.numpy_backend import NumpyBackend
+
+        data = _coerce_analysis_input(data)
 
         analysis_results: dict[str, Any] = {}
         meta: dict[str, Any] = {"mode": "analyze"}

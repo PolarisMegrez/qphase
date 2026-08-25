@@ -14,8 +14,9 @@ from qphase.core.aggregation import (
 )
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.errors import QPhaseError
+from qphase.data import Dataset
 
-from ..result import SDEResult
+from ..result import SDEResult, legacy_view_from_products
 
 __all__ = ["LoadedResult", "load_sde_results"]
 
@@ -37,20 +38,35 @@ class LoadedResult:
         return self.result.analysis
 
 
+def _is_products_mapping(data: Any) -> bool:
+    """Check whether ``data`` is a mapping of product labels to datasets."""
+    return (
+        isinstance(data, dict)
+        and bool(data)
+        and all(isinstance(value, Dataset) for value in data.values())
+    )
+
+
 def load_sde_results(data: Any, pattern: str) -> list[LoadedResult]:
     """Normalize analyser input into point-level SDE results."""
-    if isinstance(data, DatasetResultProtocol):
+    from ..result import SDEDataBundle
+
+    if isinstance(data, SDEDataBundle) or isinstance(data, DatasetResultProtocol):
         dataset_loaded = []
-        for flat_index, index in enumerate(np.ndindex(data.shape)):
-            result = data.point_view(index)
-            if isinstance(result, SDEResult):
+        shape = tuple(data.shape)
+        indices = list(np.ndindex(shape)) if shape else [()]
+        for flat_index, index in enumerate(indices):
+            view = data.point_view(index)
+            if isinstance(view, SDEDataBundle):
+                view = view.legacy_result()
+            if isinstance(view, SDEResult):
                 dataset_loaded.append(
                     LoadedResult(
                         path=Path("."),
-                        job_name=result.meta.get(
+                        job_name=view.meta.get(
                             "job_name", f"point_{flat_index:06d}"
                         ),
-                        result=result,
+                        result=view,
                     )
                 )
         if dataset_loaded:
@@ -72,9 +88,30 @@ def load_sde_results(data: Any, pattern: str) -> list[LoadedResult]:
     if isinstance(data, AggregateResult):
         data = data.results
 
+    if _is_products_mapping(data):
+        # One v3 artifact restored through the manifest loader: the mapping
+        # itself is a single logical result with one product per analyser.
+        result = legacy_view_from_products(data)
+        return [
+            LoadedResult(
+                path=Path("."),
+                job_name=result.meta.get("job_name", "artifact"),
+                result=result,
+            )
+        ]
+
     if isinstance(data, dict):
         loaded: list[LoadedResult] = []
         for name, result in data.items():
+            if isinstance(result, SDEDataBundle):
+                loaded.append(
+                    LoadedResult(
+                        path=Path("."),
+                        job_name=name,
+                        result=result.legacy_result(),
+                    )
+                )
+                continue
             if isinstance(result, SDEResult):
                 loaded.append(
                     LoadedResult(path=Path("."), job_name=name, result=result)

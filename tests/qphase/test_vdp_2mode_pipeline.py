@@ -26,6 +26,7 @@ from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
 from qphase.core.utils import save_yaml
 from qphase.core.workflow import load_workflow
+from qphase.data import load_products
 from qphase.main import app
 from typer.testing import CliRunner
 
@@ -100,10 +101,10 @@ def test_vdp_2mode_smoke_workflow_scheduler(vdp_workflow_path, temp_project):
     assert all(r.success for r in results), f"Job failed: {results}"
 
     sim = next(r for r in results if r.job_name == "vdp_2mode_sim")
-    npz_files = list(sim.job_dir.glob("*.npz"))
-    assert len(npz_files) == 1, "Expected one logical scan dataset"
     assert (sim.job_dir / "config_snapshot.json").exists()
     assert (sim.job_dir / "artifact_manifest.json").exists()
+    products = load_products(sim.job_dir)
+    assert "psd" in products, "Expected the scan dataset to carry a psd product"
 
     for mode in (0, 1):
         fit = next(r for r in results if r.job_name == f"vdp_2mode_fit_mode{mode}")

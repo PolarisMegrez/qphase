@@ -2,18 +2,44 @@
 ---------------------------------------------------------
 Container for SDE simulation results, supporting serialization and deserialization.
 
+``SDEResult`` is the legacy 1.x container, kept for 1.x reproduction and the
+one-way migration tool; the 2.x engine returns :class:`SDEDataBundle`, a
+catalog of typed data products plus provenance that satisfies the core
+``ResultProtocol``/``DatasetResultProtocol`` and the frozen
+:class:`~qphase_sde.contracts.bundle.SDEDataBundleProtocol`.
+
 Public API
 ----------
-``SDEResult`` : Container for SDE simulation results.
+``SDEResult`` : Legacy container for SDE simulation results.
+``SDEDataBundle`` : 2.0 bundle of typed data products plus provenance.
+``bundle_from_result`` : Boundary adapter from legacy results to bundles.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from qphase.backend.xputil import convert_to_numpy
+from qphase.core.dataset import DatasetSaveReport
 from qphase.core.errors import QPhaseError
+from qphase.core.utils import canonical_json
+from qphase.data import (
+    AxisRole,
+    AxisSchema,
+    DataKind,
+    Dataset,
+    ProductSchema,
+    StatisticsDataset,
+    TimeSeriesDataset,
+    VariableSchema,
+    save_products,
+)
+from qphase.data.store import ARTIFACT_SCHEMA_VERSION, DEFAULT_SHARD_TARGET_BYTES
+
+from qphase_sde.contracts.bundle import TRAJECTORY_PRODUCT, SDEProvenance
+from qphase_sde.contracts.quantities import SDEQuantity
 
 
 @dataclass
@@ -165,3 +191,716 @@ class SDEResult:
 
 # Alias for backward compatibility if needed
 SimulationResult = SDEResult
+
+
+# ---------------------------------------------------------------------------
+# 2.0 typed data bundle
+# ---------------------------------------------------------------------------
+
+_SCAN_AXIS = "scan"
+
+
+def _json_safe_meta(meta: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Split a metadata mapping into JSON-serializable items and dropped keys.
+
+    numpy scalars and arrays are coerced to Python natives first; values that
+    still fail canonical JSON serialization are reported as dropped.
+    """
+
+    def _coerce(value: Any) -> Any:
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        return value
+
+    safe: dict[str, Any] = {}
+    dropped: list[str] = []
+    for key, value in meta.items():
+        candidate = _coerce(value)
+        try:
+            canonical_json(candidate)
+        except (TypeError, ValueError):
+            dropped.append(str(key))
+            continue
+        safe[str(key)] = candidate
+    return safe, dropped
+
+
+class SDEDataBundle:
+    """Logical 2.0 result of an SDE job: named typed products plus provenance.
+
+    The bundle is a catalog — it never copies arrays into itself; products
+    hold their own runtime or artifact backings. It satisfies three contracts
+    at once:
+
+    - :class:`~qphase_sde.contracts.bundle.SDEDataBundleProtocol`
+      (``products``/``provenance``/``require``);
+    - the core ``ResultProtocol`` (``data``/``metadata``/``label``/``save``),
+      so the unmodified scheduler accepts it;
+    - the core ``DatasetResultProtocol``
+      (``axes``/``shape``/``point_view``/``save_dataset``), so scan jobs stay
+      persistable and downstream ``input.mode=map`` jobs keep working.
+
+    Product names are job-local labels; dependency selection goes through
+    :meth:`require` by kind/quantity/fields, never by label alone.
+    """
+
+    def __init__(
+        self,
+        products: dict[str, Dataset],
+        provenance: SDEProvenance,
+        *,
+        scan_axes: dict[str, Any] | None = None,
+        scan_shape: tuple[int, ...] = (),
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        self._products = dict(products)
+        self._provenance = provenance
+        self._scan_axes = dict(scan_axes or {})
+        self._scan_shape = tuple(scan_shape)
+        self._meta = dict(meta or {})
+
+    # -- SDEDataBundleProtocol --------------------------------------------
+
+    @property
+    def products(self) -> dict[str, Dataset]:
+        """Named data products of the bundle (job-local labels)."""
+        return dict(self._products)
+
+    @property
+    def provenance(self) -> SDEProvenance:
+        """Job-level provenance shared by all products."""
+        return self._provenance
+
+    def require(
+        self,
+        *,
+        kind: DataKind | None = None,
+        quantity: str | None = None,
+        fields: tuple[str, ...] = (),
+    ) -> dict[str, Dataset]:
+        """Select products by kind/quantity/fields, never by label alone."""
+        selected: dict[str, Dataset] = {}
+        for name, product in self._products.items():
+            if kind is not None and product.kind is not kind:
+                continue
+            if quantity is not None and not any(
+                variable.quantity == quantity for variable in product.variables
+            ):
+                continue
+            if fields and not set(fields) <= {
+                variable.name for variable in product.variables
+            }:
+                continue
+            selected[name] = product
+        return selected
+
+    # -- ResultProtocol ------------------------------------------------------
+
+    @property
+    def data(self) -> dict[str, Dataset]:
+        """The product mapping (ResultProtocol surface)."""
+        return dict(self._products)
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Job metadata plus the JSON provenance record."""
+        return {
+            **self._meta,
+            "provenance": self._provenance.model_dump(mode="json"),
+        }
+
+    @property
+    def label(self) -> Any:
+        """Get the label (e.g. parameter value) from metadata."""
+        return self._meta.get("label")
+
+    @label.setter
+    def label(self, value: Any) -> None:
+        """Set the label in metadata."""
+        self._meta["label"] = value
+
+    # -- DatasetResultProtocol ----------------------------------------------
+
+    @property
+    def axes(self) -> dict[str, Any]:
+        """Scan axis coordinates (empty for single-point jobs)."""
+        return dict(self._scan_axes)
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Scan grid shape (empty for single-point jobs)."""
+        return self._scan_shape
+
+    @property
+    def scan_size(self) -> int:
+        """Number of flat scan points (1 for single-point jobs)."""
+        size = 1
+        for extent in self._scan_shape:
+            size *= extent
+        return size
+
+    @property
+    def nbytes(self) -> int:
+        """Total payload bytes across products (0 where unknown)."""
+        return sum(
+            product.nbytes or 0 for product in self._products.values()
+        )
+
+    def point_view(self, index: tuple[int, ...]) -> "SDEDataBundle":
+        """Per-scan-point view: products lose their scan axis.
+
+        Products without a scan axis pass through unchanged. The per-point
+        metadata records the flat scan index and the axis coordinates.
+        """
+        if not self._scan_shape:
+            if tuple(index) == ():
+                return self
+            raise IndexError("bundle has no scan axes")
+        flat = int(np.ravel_multi_index(tuple(index), self._scan_shape))
+        meta = dict(self._meta)
+        meta["scan_index"] = flat
+        meta["scan_point"] = {
+            name: values[position]
+            for (name, values), position in zip(
+                self._scan_axes.items(), index, strict=True
+            )
+        }
+        params = meta.get("params")
+        if isinstance(params, dict):
+            # Mirror the 1.x SDEScanResult.point_view contract: the per-point
+            # view reports this point's swept parameter values, not the fused
+            # whole-scan arrays.
+            params = dict(params)
+            params.update(meta["scan_point"])
+            meta["params"] = params
+        products: dict[str, Dataset] = {}
+        for name, product in self._products.items():
+            axis_names = {axis.name for axis in product.axes}
+            if _SCAN_AXIS in axis_names:
+                products[name] = product.point_view(**{_SCAN_AXIS: flat})
+            else:
+                products[name] = product
+        return SDEDataBundle(products, self._provenance, meta=meta)
+
+    # -- persistence ---------------------------------------------------------
+
+    def save(self, path: str | Path) -> None:
+        """Persist all products as a v3 artifact directory at ``path``."""
+        save_products(
+            Path(path),
+            self._products,
+            provenance=self._manifest_provenance(),
+        )
+
+    def save_dataset(
+        self,
+        path: str | Path,
+        *,
+        layout: str,
+        shard_target_bytes: int,
+    ) -> DatasetSaveReport:
+        """Persist through the v3 manifest pipeline (DatasetResultProtocol).
+
+        ``layout="single"`` disables sharding; ``"sharded"`` and the legacy
+        ``"per_point"`` both map to byte-targeted chunk sharding.
+        """
+        target = (
+            shard_target_bytes if layout != "single" else DEFAULT_SHARD_TARGET_BYTES
+        )
+        manifest = save_products(
+            Path(path),
+            self._products,
+            provenance=self._manifest_provenance(),
+            shard_target_bytes=target,
+        )
+        files = tuple(
+            sorted(item for item in Path(path).rglob("*") if item.is_file())
+        )
+        return DatasetSaveReport(
+            "single" if layout == "single" else "sharded",
+            files,
+            loader=manifest.loader,
+            schema_version=ARTIFACT_SCHEMA_VERSION,
+        )
+
+    def legacy_result(self) -> "SDEResult":
+        """Legacy SDEResult view of a single-point bundle (Phase 1 bridge).
+
+        Cross-job analysers written against the 1.x containers consume this
+        view through ``load_sde_results``; scan bundles must be mapped per
+        point via :meth:`point_view` first.
+        """
+        if self._scan_shape:
+            raise ValueError(
+                "scan bundle has no single legacy view; use point_view first"
+            )
+        return legacy_view_from_products(self._products, meta=dict(self._meta))
+
+    def _manifest_provenance(self) -> dict[str, Any]:
+        safe_meta, dropped = _json_safe_meta(self._meta)
+        provenance: dict[str, Any] = {
+            "engine": "sde",
+            "sde": self._provenance.model_dump(mode="json"),
+            "meta": safe_meta,
+        }
+        if dropped:
+            provenance["meta_dropped"] = dropped
+        return provenance
+
+    def __repr__(self) -> str:
+        """Compact debug representation."""
+        return (
+            f"SDEDataBundle(products={sorted(self._products)!r}, "
+            f"scan_shape={self._scan_shape!r})"
+        )
+
+
+def _fingerprint_text(instance: Any) -> str:
+    """Short stable fingerprint string of a plugin instance."""
+    if instance is None:
+        return ""
+    import hashlib
+
+    from qphase.core.execution import plugin_fingerprint
+
+    try:
+        payload = plugin_fingerprint(instance)
+    except Exception:  # noqa: BLE001 - fingerprinting must not break runs
+        return ""
+    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()[:16]
+
+
+def _trajectory_product(
+    trajectory: Any,
+    *,
+    scan_size: int,
+    n_traj_per_point: int | None,
+) -> TimeSeriesDataset:
+    """Build the trajectory time-series product from a TrajectorySet.
+
+    Device-resident payloads (e.g. CuPy arrays from a GPU run) are wrapped
+    without copying: they stay on their device until an explicit copy policy
+    allows a move (persistence, host analysis).
+    """
+    data = getattr(trajectory, "data", trajectory)
+    t0 = float(getattr(trajectory, "t0", 0.0))
+    dt = float(getattr(trajectory, "dt", 1.0))
+    # Do NOT np.asarray here: device arrays must survive the boundary.
+    array = data
+    if array.ndim != 3:
+        raise ValueError(
+            f"trajectory product expects (trajectory, time, channel) data, "
+            f"got shape {array.shape}"
+        )
+    fused, n_time, n_channel = array.shape
+    if scan_size > 1:
+        if n_traj_per_point is None:
+            if fused % scan_size:
+                raise ValueError(
+                    f"fused trajectory count {fused} is not divisible by "
+                    f"scan size {scan_size}"
+                )
+            n_traj_per_point = fused // scan_size
+        if fused != scan_size * n_traj_per_point:
+            raise ValueError(
+                f"fused trajectory count {fused} does not match scan size "
+                f"{scan_size} x {n_traj_per_point} trajectories per point"
+            )
+        n_traj = n_traj_per_point
+    else:
+        n_traj = fused
+    alpha = array.reshape(scan_size, n_traj, n_time, n_channel)
+
+    valid = np.full((scan_size, n_traj), n_time, dtype=np.int64)
+    attributes = dict(TRAJECTORY_PRODUCT.attributes)
+    trajectory_meta = getattr(trajectory, "meta", None)
+    if isinstance(trajectory_meta, dict):
+        recorded = trajectory_meta.get("valid_length") or trajectory_meta.get(
+            "valid_lengths"
+        )
+        if recorded is not None:
+            recorded_array = np.asarray(recorded, dtype=np.int64)
+            if recorded_array.shape == (fused,):
+                valid = recorded_array.reshape(scan_size, n_traj)
+        safe_meta, dropped_meta = _json_safe_meta(
+            {key: value for key, value in trajectory_meta.items()
+             if key not in ("valid_length", "valid_lengths")}
+        )
+        attributes.update(safe_meta)
+        if dropped_meta:
+            attributes["dropped_meta_keys"] = dropped_meta
+
+    dtype = np.dtype(array.dtype)
+    domain = "complex" if dtype.kind == "c" else "real"
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[
+            AxisSchema(name="scan", role=AxisRole.PARAMETER, size=scan_size),
+            AxisSchema(
+                name="trajectory", role=AxisRole.REALIZATION, size=n_traj
+            ),
+            AxisSchema(
+                name="time",
+                role=AxisRole.COORDINATE,
+                size=n_time,
+                coordinate="regular",
+                start=t0,
+                step=dt,
+                units="inverse_rate",
+            ),
+            AxisSchema(name="channel", role=AxisRole.COMPONENT, size=n_channel),
+        ],
+        variables=[
+            VariableSchema(
+                name="alpha",
+                dtype=dtype.str,
+                value_domain=domain,
+                dims=("scan", "trajectory", "time", "channel"),
+                quantity=SDEQuantity.FIELD_AMPLITUDE.value,
+            ),
+            VariableSchema(
+                name="valid_length",
+                dtype="<i8",
+                value_domain="real",
+                dims=("scan", "trajectory"),
+                quantity="valid_length",
+            ),
+        ],
+        attributes=attributes,
+    )
+    if isinstance(alpha, np.ndarray):
+        return cast(
+            TimeSeriesDataset,
+            TimeSeriesDataset.from_arrays(
+                schema,
+                {"alpha": alpha, "valid_length": valid},
+                owner="engine.sde",
+            ),
+        )
+    from qphase.data.runtime import (
+        BackendArrayHandle,
+        DictProductBacking,
+        HostArrayHandle,
+    )
+
+    raw_device = getattr(alpha, "device", None)
+    device_id = getattr(raw_device, "id", None)
+    device = f"cuda:{device_id}" if device_id is not None else str(
+        raw_device or "unknown"
+    )
+    handles = {
+        "alpha": BackendArrayHandle(
+            alpha, schema.variable("alpha"), owner="engine.sde", device=device
+        ),
+        "valid_length": HostArrayHandle(
+            valid, schema.variable("valid_length"), owner="engine.sde"
+        ),
+    }
+    return TimeSeriesDataset(schema, DictProductBacking(handles))
+
+
+def _split_payload_leaves(
+    raw: Any,
+    *,
+    _prefix: str = "",
+) -> tuple[dict[str, np.ndarray], dict[str, Any], list[str]]:
+    """Split one raw analyser payload into arrays, JSON-safe meta, and drops.
+
+    Nested dicts (e.g. per-mode result tables) are flattened recursively with
+    dotted key paths so their numeric leaves stay typed variables; legacy
+    views re-nest them on reconstruction.
+    """
+    items = raw.items() if isinstance(raw, dict) else [("value", raw)]
+    arrays: dict[str, np.ndarray] = {}
+    meta: dict[str, Any] = {}
+    dropped: list[str] = []
+    for key, value in items:
+        key = f"{_prefix}{key}"
+        if not key:
+            dropped.append("<empty>")
+            continue
+        array = np.asarray(value)
+        if array.dtype.hasobject and isinstance(value, dict):
+            sub_arrays, sub_meta, sub_dropped = _split_payload_leaves(
+                value, _prefix=f"{key}."
+            )
+            arrays.update(sub_arrays)
+            meta.update(sub_meta)
+            dropped.extend(sub_dropped)
+            continue
+        if array.dtype.hasobject or array.dtype.kind in "US":
+            # Non-numeric leaves (orientation strings, small config values)
+            # are payload metadata, not variables: keep the JSON-safe ones so
+            # legacy views can rebuild the original analyser payload.
+            safe, _ = _json_safe_meta({key: value})
+            if key in safe:
+                meta[key] = safe[key]
+            else:
+                dropped.append(key)
+            continue
+        arrays[key] = array
+    return arrays, meta, dropped
+
+
+def _analysis_product(
+    name: str,
+    payload: Any,
+    *,
+    scan_size: int,
+) -> StatisticsDataset | None:
+    """Bridge one legacy analyser payload into a typed statistics product.
+
+    Transitional Phase 1 bridge (``bridge="legacy_analysis/1"``): numeric
+    payload leaves become variables over a parameter scan axis plus open
+    positional index axes until Phase 2 gives each analyser its contract
+    product schema. Non-numeric JSON-safe leaves and ragged per-point arrays
+    (e.g. variable-length peak lists) are kept as ``payload_meta`` attributes
+    — scan payloads store them as per-point lists indexed by the flat scan
+    index and listed in ``per_point_meta``. Missing per-point payloads and
+    inconsistent per-point keys are rejected; nothing is ever pickled.
+    """
+    if payload is None:
+        return None
+    leading: tuple[str, ...] = ()
+    axes: list[AxisSchema] = []
+    per_point_meta: list[str] = []
+    if scan_size > 1:
+        if not (isinstance(payload, list) and len(payload) == scan_size):
+            raise TypeError(
+                f"analysis product {name!r}: expected a list of {scan_size} "
+                f"per-point payloads, got {type(payload).__name__}"
+            )
+        missing = [i for i, point in enumerate(payload) if point is None]
+        if missing:
+            raise TypeError(
+                f"analysis product {name!r}: missing payloads for scan "
+                f"points {missing}"
+            )
+        splits = [_split_payload_leaves(point) for point in payload]
+        key_sets = [set(split[0]) for split in splits]
+        if any(keys != key_sets[0] for keys in key_sets[1:]):
+            raise TypeError(
+                f"analysis product {name!r}: per-point payload keys differ "
+                f"across the scan ({key_sets})"
+            )
+        arrays = {}
+        payload_meta: dict[str, Any] = {}
+        for key in sorted(key_sets[0]):
+            try:
+                arrays[key] = np.stack([split[0][key] for split in splits])
+            except (TypeError, ValueError) as exc:
+                # Ragged leaf (e.g. a variable-length peak list): demote to
+                # per-point metadata instead of rejecting the whole payload.
+                demoted = [split[0][key].tolist() for split in splits]
+                safe, _ = _json_safe_meta({key: demoted})
+                if key not in safe:
+                    raise TypeError(
+                        f"analysis product {name!r}: cannot stack variable "
+                        f"{key!r} over scan points and it is not JSON-safe"
+                    ) from exc
+                payload_meta[key] = safe[key]
+                per_point_meta.append(key)
+        meta_keys = {key for split in splits for key in split[1]}
+        for key in sorted(meta_keys):
+            payload_meta[key] = [split[1].get(key) for split in splits]
+            per_point_meta.append(key)
+        dropped = sorted({key for split in splits for key in split[2]})
+        leading = (_SCAN_AXIS,)
+        axes.append(
+            AxisSchema(name=_SCAN_AXIS, role=AxisRole.PARAMETER, size=scan_size)
+        )
+    else:
+        arrays, payload_meta, dropped = _split_payload_leaves(payload)
+
+    positional: dict[str, AxisSchema] = {}
+    variables: list[VariableSchema] = []
+    clean_arrays: dict[str, np.ndarray] = {}
+    for key, array in arrays.items():
+        dims = list(leading)
+        for position in range(array.ndim - len(leading)):
+            axis_name = f"dim{position}"
+            if axis_name not in positional:
+                positional[axis_name] = AxisSchema(
+                    name=axis_name, role=AxisRole.INDEX
+                )
+            dims.append(axis_name)
+        dtype = np.dtype(array.dtype)
+        variables.append(
+            VariableSchema(
+                name=key,
+                dtype=dtype.str,
+                value_domain="complex" if dtype.kind == "c" else "real",
+                dims=tuple(dims),
+            )
+        )
+        clean_arrays[key] = array
+    if not variables:
+        # ProductSchema requires at least one variable; payloads without any
+        # numeric leaf cannot form a product (their meta is reported through
+        # the bundle's ``dropped_products`` metadata by the caller).
+        return None
+
+    schema = ProductSchema(
+        kind=DataKind.STATISTICS,
+        axes=[*axes, *positional.values()],
+        variables=variables,
+        attributes={
+            "bridge": "legacy_analysis/1",
+            "source_analyser": str(name),
+            "dropped_keys": dropped,
+            "payload_meta": payload_meta,
+            "per_point_meta": per_point_meta,
+        },
+    )
+    return cast(
+        StatisticsDataset,
+        StatisticsDataset.from_arrays(
+            schema,
+            clean_arrays,
+            owner="engine.sde",
+            provenance={"source_analyser": str(name)},
+        ),
+    )
+
+
+def _assign_nested(payload: dict[Any, Any], dotted_key: str, value: Any) -> None:
+    """Assign ``value`` into ``payload`` following a dotted key path.
+
+    Digit-only path segments become integer keys: legacy analyser payloads
+    index per-mode tables by mode number.
+    """
+    parts = dotted_key.split(".")
+    target = payload
+    for part in parts[:-1]:
+        key: Any = int(part) if part.isdigit() else part
+        child = target.get(key)
+        if not isinstance(child, dict):
+            child = {}
+            target[key] = child
+        target = child
+    leaf = parts[-1]
+    target[int(leaf) if leaf.isdigit() else leaf] = value
+
+
+def legacy_view_from_products(
+    products: Mapping[str, Dataset],
+    *,
+    meta: dict[str, Any] | None = None,
+) -> SDEResult:
+    """Rebuild a legacy SDEResult view from typed products (Phase 1 bridge).
+
+    Inverse of the bundle bridges: the ``trajectories`` product becomes a
+    TrajectorySet, and each ``legacy_analysis/1`` statistics product becomes
+    its original analyser payload (variables plus ``payload_meta`` leaves).
+    Single-point semantics: callers must map scan products per point first
+    (e.g. through :meth:`SDEDataBundle.point_view`).
+    """
+    from qphase_sde.state import TrajectorySet
+
+    trajectory = None
+    analysis: dict[str, Any] = {}
+    for name, product in products.items():
+        axis_names = {axis.name for axis in product.axes}
+        if _SCAN_AXIS in axis_names:
+            scan_axis = product.axis(_SCAN_AXIS)
+            if scan_axis.size not in (None, 1):
+                raise ValueError(
+                    f"product {name!r} still has a scan axis of size "
+                    f"{scan_axis.size}; map per scan point first"
+                )
+        if name == "trajectories":
+            alpha = product.handle("alpha").materialize()
+            if alpha.ndim == 4:
+                alpha = alpha[0]
+            time_axis = product.axis("time") if "time" in axis_names else None
+            t0 = (
+                float(time_axis.start)
+                if time_axis is not None and time_axis.start is not None
+                else 0.0
+            )
+            dt = (
+                float(time_axis.step)
+                if time_axis is not None and time_axis.step is not None
+                else 1.0
+            )
+            traj_meta = {
+                key: value
+                for key, value in product.attributes.items()
+                if key not in TRAJECTORY_PRODUCT.attributes
+            }
+            trajectory = TrajectorySet(data=alpha, t0=t0, dt=dt, meta=traj_meta)
+            continue
+        payload: dict[Any, Any] = {}
+        for variable in product.variables:
+            _assign_nested(
+                payload, variable.name, product.handle(variable.name).materialize()
+            )
+        per_point = set(product.attributes.get("per_point_meta", ()))
+        scan_index = (meta or {}).get("scan_index")
+        for meta_key, meta_value in product.attributes.get(
+            "payload_meta", {}
+        ).items():
+            if meta_key in per_point and scan_index is not None:
+                meta_value = list(meta_value)[int(scan_index)]
+            _assign_nested(payload, meta_key, meta_value)
+        analysis[name] = payload
+    return SDEResult(trajectory=trajectory, analysis=analysis, meta=dict(meta or {}))
+
+
+def bundle_from_result(
+    result: Any,
+    *,
+    provenance: SDEProvenance,
+    n_traj_per_point: int | None = None,
+) -> SDEDataBundle:
+    """Adapt a legacy SDEResult/SDEScanResult into an SDEDataBundle.
+
+    Transitional Phase 1 adapter applied at the engine's public boundary:
+    private execution paths still assemble legacy results (they migrate fully
+    in Phase 2), while the engine's return value is always a bundle.
+    """
+    grid = getattr(result, "grid", None)
+    combined = getattr(result, "combined", result)
+    if not isinstance(combined, SDEResult):
+        raise TypeError(
+            f"cannot build an SDEDataBundle from {type(result).__name__}"
+        )
+    if grid is not None:
+        scan_size = int(grid.size)
+        scan_shape = tuple(grid.shape)
+        scan_axes = dict(grid.axes)
+        if n_traj_per_point is None:
+            n_traj_per_point = getattr(result, "n_traj_per_point", None)
+    else:
+        scan_size, scan_shape, scan_axes = 1, (), {}
+
+    products: dict[str, Dataset] = {}
+    if combined.trajectory is not None:
+        products["trajectories"] = _trajectory_product(
+            combined.trajectory,
+            scan_size=scan_size,
+            n_traj_per_point=n_traj_per_point,
+        )
+    dropped_products: list[str] = []
+    for name, payload in combined.analysis.items():
+        product = _analysis_product(str(name), payload, scan_size=scan_size)
+        if product is not None:
+            products[str(name)] = product
+        elif payload is not None:
+            dropped_products.append(str(name))
+
+    meta = dict(combined.meta)
+    extra_meta = getattr(result, "meta", None)
+    if isinstance(extra_meta, dict):
+        meta.update(extra_meta)
+    if dropped_products:
+        meta["dropped_products"] = dropped_products
+    return SDEDataBundle(
+        products,
+        provenance,
+        scan_axes=scan_axes,
+        scan_shape=scan_shape,
+        meta=meta,
+    )
