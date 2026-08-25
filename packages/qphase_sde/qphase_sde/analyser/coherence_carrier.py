@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
@@ -11,7 +12,17 @@ from pydantic import Field, field_serializer, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
+from qphase.data import (
+    AxisRole,
+    CoordinateSchema,
+    DataKind,
+    Dataset,
+    SamplingBasisSchema,
+    UncertaintySchema,
+)
 
+from ..contracts.quantities import SDEQuantity
+from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
     Analyzer,
     AnalyzerExecutionCapabilities,
@@ -469,6 +480,18 @@ class CoherenceCarrierAnalyzer(Analyzer):
     def create_result_accumulator(self) -> CoherenceCarrierResultAccumulator:
         return CoherenceCarrierResultAccumulator(self)
 
+    def build_products(
+        self,
+        payload: Any,
+        *,
+        scan_size: int,
+        label: str,
+    ) -> Mapping[str, Dataset] | None:
+        """Build the graph-ready typed product of one ``analyze()`` payload."""
+        return _build_coherence_carrier_products(
+            payload, scan_size=scan_size, label=label
+        )
+
     def _summarize(
         self,
         *,
@@ -577,6 +600,88 @@ class CoherenceCarrierAnalyzer(Analyzer):
             },
             **metadata,
         }
+
+
+def _build_coherence_carrier_products(
+    payload: Any,
+    *,
+    scan_size: int,
+    label: str,
+) -> dict[str, Dataset] | None:
+    """Assemble the typed coherence-carrier product of one analyser payload."""
+    leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
+    if leaves is None:
+        return None
+    method = leaves.payload_meta.get("method", "short_delay")
+    if isinstance(method, list):
+        # Scan payloads keep per-point strings; the estimator is job-wide.
+        method = method[0] if method else "short_delay"
+    coordinates: list[CoordinateSchema] = []
+    if scan_size == 1 and "lag" in leaves.arrays:
+        coordinates.append(
+            CoordinateSchema(
+                name="lag",
+                variable="lag",
+                dims=("lag",),
+                units="time",
+            )
+        )
+    dataset = assemble_typed_product(
+        label,
+        leaves,
+        scan_size=scan_size,
+        kind=DataKind.STATISTICS,
+        declared_dims={
+            "frequency": ("measurement",),
+            "frequency_sem": ("measurement",),
+            "selected_lag_points": ("measurement",),
+            "selected_lag_time": ("measurement",),
+            "phase_fit_rms": ("measurement",),
+            "first_lag_coherence": ("measurement",),
+            "first_lag_phase": ("measurement",),
+            "nyquist_fraction": ("measurement",),
+            "candidate_lag_points": ("candidate",),
+            "candidate_frequency": ("measurement", "candidate"),
+            "candidate_frequency_sem": ("measurement", "candidate"),
+            "candidate_phase_fit_rms": ("measurement", "candidate"),
+            "lag": ("lag",),
+            "correlation": ("measurement", "lag"),
+            "correlation_sem_real": ("measurement", "lag"),
+            "correlation_sem_imag": ("measurement", "lag"),
+            "per_trajectory_correlation": ("trajectory", "measurement", "lag"),
+            "measurement_matrices": ("measurement", "mode", "mode_2"),
+        },
+        axis_specs={
+            "measurement": TypedAxisSpec("measurement", AxisRole.COMPONENT),
+            "candidate": TypedAxisSpec("candidate", AxisRole.INDEX),
+            "lag": TypedAxisSpec("lag", AxisRole.COORDINATE, units="time"),
+            "mode": TypedAxisSpec("mode", AxisRole.COMPONENT),
+            "mode_2": TypedAxisSpec("mode_2", AxisRole.COMPONENT),
+            "trajectory": TypedAxisSpec("trajectory", AxisRole.REALIZATION),
+        },
+        quantities={"frequency": SDEQuantity.COHERENCE_FREQUENCY.value},
+        uncertainties=[
+            UncertaintySchema(
+                target="frequency",
+                kind="sem",
+                sampling_basis="trajectory",
+                covariance="real",
+                scope="sampling",
+                data_variable="frequency_sem",
+            )
+        ],
+        sampling_bases=[
+            SamplingBasisSchema(name="trajectory", source_axis="trajectory")
+        ],
+        coordinates=coordinates,
+        attributes={
+            "graph_ready": True,
+            "estimator": str(method) if method else "short_delay",
+        },
+    )
+    if dataset is None:
+        return None
+    return {label: dataset}
 
 
 class CoherenceCarrierResultAccumulator:

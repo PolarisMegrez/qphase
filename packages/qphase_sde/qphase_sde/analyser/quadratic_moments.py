@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import math
-from typing import Any, ClassVar, cast
+from collections.abc import Mapping
+from typing import Any, ClassVar, Literal, cast
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
+from qphase.data import (
+    AxisRole,
+    DataKind,
+    Dataset,
+    SamplingBasisSchema,
+    UncertaintySchema,
+)
 
+from ..contracts.quantities import SDEMomentFamilySchema, SDEQuantity
+from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
     Analyzer,
     AnalyzerExecutionCapabilities,
@@ -257,6 +267,18 @@ class QuadraticMomentAnalyzer(Analyzer):
     def create_result_accumulator(self) -> QuadraticMomentResultAccumulator:
         return QuadraticMomentResultAccumulator(self)
 
+    def build_products(
+        self,
+        payload: Any,
+        *,
+        scan_size: int,
+        label: str,
+    ) -> Mapping[str, Dataset] | None:
+        """Build the graph-ready typed product of one ``analyze()`` payload."""
+        return _build_quadratic_moments_products(
+            payload, scan_size=scan_size, label=label
+        )
+
     def _summarize(
         self,
         *,
@@ -343,6 +365,98 @@ class QuadraticMomentAnalyzer(Analyzer):
                 "time_blocks_are_independent": False,
             },
         }
+
+
+def _moment_orders(leaves_arrays: dict[str, np.ndarray]) -> list[int]:
+    """Resolve the explicit moment-order coordinates of one stacked payload."""
+    raw = leaves_arrays.get("raw_moments")
+    if raw is not None and raw.ndim >= 1:
+        return list(range(1, int(raw.shape[-1]) + 1))
+    scalar = int(np.ravel(np.asarray(leaves_arrays["max_order"]))[0])
+    return list(range(1, scalar + 1))
+
+
+def _build_quadratic_moments_products(
+    payload: Any,
+    *,
+    scan_size: int,
+    label: str,
+) -> dict[str, Dataset] | None:
+    """Assemble the typed quadratic-moments product of one analyser payload."""
+    leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
+    if leaves is None:
+        return None
+    moments = SDEQuantity.MOMENTS.value
+    orders = _moment_orders(leaves.arrays)
+    kinds: tuple[tuple[str, Literal["raw", "central", "cumulant"]], ...] = (
+        ("raw_moments", "raw"),
+        ("central_moments", "central"),
+        ("cumulants", "cumulant"),
+    )
+    moment_families = {
+        name: SDEMomentFamilySchema(
+            family_id="sde-quadratic-moments",
+            moment_kind=kind,
+            ordering="c_number",
+            orders=orders,
+        ).model_dump(mode="json")
+        for name, kind in kinds
+    }
+    dataset = assemble_typed_product(
+        label,
+        leaves,
+        scan_size=scan_size,
+        kind=DataKind.STATISTICS,
+        declared_dims={
+            "raw_moments": ("channel", "order"),
+            "raw_moment_sem": ("channel", "order"),
+            "central_moments": ("channel", "order"),
+            "cumulants": ("channel", "order"),
+            "cumulant_sem": ("channel", "order"),
+            "per_trajectory_raw_moments": ("trajectory", "channel", "order"),
+        },
+        axis_specs={
+            "channel": TypedAxisSpec("channel", AxisRole.COMPONENT),
+            "order": TypedAxisSpec(
+                "order",
+                AxisRole.INDEX,
+                coordinate="regular",
+                start=1.0,
+                step=1.0,
+            ),
+            "trajectory": TypedAxisSpec("trajectory", AxisRole.REALIZATION),
+        },
+        quantities={
+            "raw_moments": moments,
+            "central_moments": moments,
+            "cumulants": moments,
+        },
+        uncertainties=[
+            UncertaintySchema(
+                target="raw_moments",
+                kind="sem",
+                sampling_basis="trajectory",
+                covariance="real",
+                scope="sampling",
+                data_variable="raw_moment_sem",
+            ),
+            UncertaintySchema(
+                target="cumulants",
+                kind="sem",
+                sampling_basis="trajectory",
+                covariance="real",
+                scope="sampling",
+                data_variable="cumulant_sem",
+            ),
+        ],
+        sampling_bases=[
+            SamplingBasisSchema(name="trajectory", source_axis="trajectory")
+        ],
+        attributes={"graph_ready": True, "moment_families": moment_families},
+    )
+    if dataset is None:
+        return None
+    return {label: dataset}
 
 
 class QuadraticMomentResultAccumulator:

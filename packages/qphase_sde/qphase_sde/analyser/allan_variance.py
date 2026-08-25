@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
+from fnmatch import fnmatchcase
 from typing import Any, ClassVar, cast
 
 import numpy as np
@@ -10,7 +12,18 @@ from pydantic import Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
+from qphase.data import (
+    AxisRole,
+    CoordinateSchema,
+    DataKind,
+    Dataset,
+    SamplingBasisSchema,
+    UncertaintySchema,
+    VariableConstraints,
+)
 
+from ..contracts.quantities import SDEQuantity
+from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .allan_statistics import calculate_allan_variance, summarize_trajectories
 from .base import (
     Analyzer,
@@ -161,6 +174,131 @@ class AllanVarianceAnalyzer(Analyzer):
 
     def create_result_accumulator(self) -> AllanResultAccumulator:
         return AllanResultAccumulator()
+
+    def build_products(
+        self,
+        payload: Any,
+        *,
+        scan_size: int,
+        label: str,
+    ) -> Mapping[str, Dataset] | None:
+        """Build the graph-ready typed statistics product of one payload."""
+        return _build_allan_products(payload, scan_size=scan_size, label=label)
+
+
+#: Trailing-axis declarations of the per-mode Allan payload leaves. The glob
+#: patterns match the dotted ``mode_results.<mode>.<table>.<leaf>`` keys.
+_ALLAN_DECLARED_DIMS: dict[str, tuple[str, ...]] = {
+    "mode_results.*.allan.tau": ("tau",),
+    "mode_results.*.allan.angular_frequency_variance": ("tau",),
+    "mode_results.*.allan.angular_frequency_variance_sem": ("tau",),
+    "mode_results.*.allan.trajectory_sample_count": ("tau",),
+    "mode_results.*.allan.nonoverlap_angular_frequency_variance": ("tau",),
+    "mode_results.*.allan.nonoverlap_angular_frequency_variance_sem": ("tau",),
+    "mode_results.*.allan.nonoverlap_trajectory_sample_count": ("tau",),
+    "mode_results.*.allan.nominal_independent_windows_per_trajectory": ("tau",),
+    "mode_results.*.allan.total_independent_window_count": ("tau",),
+    "mode_results.*.allan.per_trajectory": ("trajectory", "tau"),
+    "mode_results.*.allan.valid_second_differences": ("trajectory", "tau"),
+    "mode_results.*.allan.nonoverlap_per_trajectory": ("trajectory", "tau"),
+    "mode_results.*.allan.nonoverlap_valid_second_differences": (
+        "trajectory",
+        "tau",
+    ),
+    "mode_results.*.phase_increment.mean_angular_frequency_per_trajectory": (
+        "trajectory",
+    ),
+    "mode_results.*.phase_increment.max_abs_phase_step_per_trajectory": ("trajectory",),
+    "mode_results.*.phase_increment.near_nyquist_fraction_per_trajectory": (
+        "trajectory",
+    ),
+}
+
+#: Glob patterns of the Allan variance leaves carrying the quantity and an SEM
+#: uncertainty payload (``<key>_sem``). Quantities, constraints and
+#: uncertainties need concrete keys, so the globs are resolved per payload.
+_VARIANCE_LEAF_GLOBS = (
+    "mode_results.*.allan.angular_frequency_variance",
+    "mode_results.*.allan.nonoverlap_angular_frequency_variance",
+)
+
+
+def _variance_leaf_keys(arrays: Mapping[str, np.ndarray]) -> list[str]:
+    """Enumerate the concrete Allan variance leaf keys of one stacked payload."""
+    return sorted(
+        key
+        for key in arrays
+        if any(fnmatchcase(key, pattern) for pattern in _VARIANCE_LEAF_GLOBS)
+    )
+
+
+def _build_allan_products(
+    payload: Any,
+    *,
+    scan_size: int,
+    label: str,
+) -> dict[str, Dataset] | None:
+    """Assemble the typed statistics product of one Allan analyser payload.
+
+    Variable names keep the original dotted leaf keys (and string leaves stay
+    in ``payload_meta``) so the legacy view rebuilds the exact ``analyze()``
+    payload; typed ``tau``/``trajectory`` axes, the Allan quantity and the
+    trajectory-sampling SEM uncertainties are layered on top.
+    """
+    leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
+    if leaves is None:
+        return None
+    variance_keys = _variance_leaf_keys(leaves.arrays)
+    coordinates: list[CoordinateSchema] = []
+    if scan_size == 1:
+        # Coordinate backing variables must match their declared dims exactly,
+        # so scan products (leading scan axis) carry no coordinates.
+        tau_keys = sorted(
+            key for key in leaves.arrays if fnmatchcase(key, "mode_results.*.allan.tau")
+        )
+        if tau_keys:
+            coordinates = [
+                CoordinateSchema(
+                    name="tau",
+                    variable=tau_keys[0],
+                    dims=("tau",),
+                    units="time",
+                )
+            ]
+    dataset = assemble_typed_product(
+        label,
+        leaves,
+        scan_size=scan_size,
+        kind=DataKind.STATISTICS,
+        declared_dims=_ALLAN_DECLARED_DIMS,
+        axis_specs={
+            "tau": TypedAxisSpec("tau", AxisRole.COORDINATE, units="time"),
+            "trajectory": TypedAxisSpec("trajectory", AxisRole.REALIZATION),
+        },
+        quantities={key: SDEQuantity.ALLAN_VARIANCE.value for key in variance_keys},
+        constraints={
+            key: VariableConstraints(nonnegative=True) for key in variance_keys
+        },
+        uncertainties=[
+            UncertaintySchema(
+                target=key,
+                kind="sem",
+                sampling_basis="trajectory",
+                covariance="real",
+                scope="sampling",
+                data_variable=f"{key}_sem",
+            )
+            for key in variance_keys
+        ],
+        sampling_bases=[
+            SamplingBasisSchema(name="trajectory", source_axis="trajectory")
+        ],
+        coordinates=coordinates,
+        attributes={"estimator": "non_overlapping_windows", "graph_ready": True},
+    )
+    if dataset is None:
+        return None
+    return {label: dataset}
 
 
 def _copy_mode_to_host(

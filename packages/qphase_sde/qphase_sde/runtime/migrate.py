@@ -78,9 +78,9 @@ from qphase.data.store import (
 )
 
 from qphase_sde.contracts.bundle import SDEProvenance
+from qphase_sde.products import split_payload_leaves as _split_payload_leaves
 from qphase_sde.result import (
     SDEResult,
-    _split_payload_leaves,
     _trajectory_product,
     bundle_from_result,
 )

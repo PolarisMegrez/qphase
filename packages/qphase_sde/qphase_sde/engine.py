@@ -417,6 +417,7 @@ class Engine(EngineBase):
             return bundle_from_result(
                 self._run_analyze(data),
                 provenance=self._job_provenance(),
+                analysers=self._normalised_analysers(),
             )
         grid = context.parameter_grid if context is not None else None
         model = self._required_model()
@@ -484,6 +485,7 @@ class Engine(EngineBase):
             return bundle_from_result(
                 scan_result,
                 provenance=self._job_provenance(grid=grid),
+                analysers=analysers,
             )
         if plan.trajectory_batch_count > 1:
             result: ResultProtocol = self._run_trajectory_batched(
@@ -506,6 +508,7 @@ class Engine(EngineBase):
         return bundle_from_result(
             result,
             provenance=self._job_provenance(),
+            analysers=analysers,
         )
 
     def _job_provenance(self, *, grid: Any | None = None) -> SDEProvenance:

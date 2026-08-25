@@ -32,7 +32,6 @@ from qphase.data import (
     DataKind,
     Dataset,
     ProductSchema,
-    StatisticsDataset,
     TimeSeriesDataset,
     VariableSchema,
     save_products,
@@ -46,6 +45,11 @@ from qphase_sde.contracts.bundle import (
     SDEProvenance,
 )
 from qphase_sde.contracts.quantities import SDEQuantity
+from qphase_sde.products import (
+    assemble_typed_product,
+    json_safe_meta,
+    stack_payload_leaves,
+)
 
 
 @dataclass
@@ -205,37 +209,9 @@ SimulationResult = SDEResult
 
 _SCAN_AXIS = "scan"
 
-
-def _json_safe_meta(meta: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """Split a metadata mapping into JSON-serializable items and dropped keys.
-
-    numpy scalars and arrays are coerced to Python natives first, recursing
-    into nested mappings and sequences; values that still fail canonical
-    JSON serialization are reported as dropped.
-    """
-
-    def _coerce(value: Any) -> Any:
-        if isinstance(value, np.generic):
-            return value.item()
-        if isinstance(value, np.ndarray):
-            return value.tolist()
-        if isinstance(value, dict):
-            return {str(key): _coerce(item) for key, item in value.items()}
-        if isinstance(value, list | tuple):
-            return [_coerce(item) for item in value]
-        return value
-
-    safe: dict[str, Any] = {}
-    dropped: list[str] = []
-    for key, value in meta.items():
-        candidate = _coerce(value)
-        try:
-            canonical_json(candidate)
-        except (TypeError, ValueError):
-            dropped.append(str(key))
-            continue
-        safe[str(key)] = candidate
-    return safe, dropped
+# ``_json_safe_meta`` lives in ``qphase_sde.products`` (shared with the
+# analyser-owned product builders); keep the historical private alias.
+_json_safe_meta = json_safe_meta
 
 
 class SDEDataBundle:
@@ -679,167 +655,34 @@ def _trajectory_product(
     return TimeSeriesDataset(schema, DictProductBacking(handles))
 
 
-def _split_payload_leaves(
-    raw: Any,
-    *,
-    _prefix: str = "",
-) -> tuple[dict[str, np.ndarray], dict[str, Any], list[str]]:
-    """Split one raw analyser payload into arrays, JSON-safe meta, and drops.
-
-    Nested dicts (e.g. per-mode result tables) are flattened recursively with
-    dotted key paths so their numeric leaves stay typed variables; legacy
-    views re-nest them on reconstruction.
-    """
-    items = raw.items() if isinstance(raw, dict) else [("value", raw)]
-    arrays: dict[str, np.ndarray] = {}
-    meta: dict[str, Any] = {}
-    dropped: list[str] = []
-    for key, value in items:
-        key = f"{_prefix}{key}"
-        if not key:
-            dropped.append("<empty>")
-            continue
-        array = np.asarray(value)
-        if array.dtype.hasobject and isinstance(value, dict):
-            sub_arrays, sub_meta, sub_dropped = _split_payload_leaves(
-                value, _prefix=f"{key}."
-            )
-            arrays.update(sub_arrays)
-            meta.update(sub_meta)
-            dropped.extend(sub_dropped)
-            continue
-        if array.dtype.hasobject or array.dtype.kind in "US":
-            # Non-numeric leaves (orientation strings, small config values)
-            # are payload metadata, not variables: keep the JSON-safe ones so
-            # legacy views can rebuild the original analyser payload.
-            safe, _ = _json_safe_meta({key: value})
-            if key in safe:
-                meta[key] = safe[key]
-            else:
-                dropped.append(key)
-            continue
-        arrays[key] = array
-    return arrays, meta, dropped
-
-
 def _analysis_product(
     name: str,
     payload: Any,
     *,
     scan_size: int,
-) -> StatisticsDataset | None:
-    """Bridge one legacy analyser payload into a typed statistics product.
+) -> Dataset | None:
+    """Bridge one legacy analyser payload into a statistics product.
 
-    Transitional Phase 1 bridge (``bridge="legacy_analysis/1"``): numeric
-    payload leaves become variables over a parameter scan axis plus open
-    positional index axes until Phase 2 gives each analyser its contract
-    product schema. Non-numeric JSON-safe leaves and ragged per-point arrays
-    (e.g. variable-length peak lists) are kept as ``payload_meta`` attributes
-    — scan payloads store them as per-point lists indexed by the flat scan
-    index and listed in ``per_point_meta``. Missing per-point payloads and
-    inconsistent per-point keys are rejected; nothing is ever pickled.
+    Migration-only path (``bridge="legacy_analysis/1"``,
+    ``graph_ready=False``): numeric payload leaves become variables over a
+    parameter scan axis plus open positional index axes. Analysers with a
+    typed product builder never take this path in new 2.x runs; the bridge
+    remains for 1.x artifact migration and as a one-shot diagnostic for
+    analysers not yet migrated. Missing per-point payloads and inconsistent
+    per-point keys are rejected; nothing is ever pickled.
     """
-    if payload is None:
+    leaves = stack_payload_leaves(name, payload, scan_size=scan_size)
+    if leaves is None:
         return None
-    leading: tuple[str, ...] = ()
-    axes: list[AxisSchema] = []
-    per_point_meta: list[str] = []
-    if scan_size > 1:
-        if not (isinstance(payload, list) and len(payload) == scan_size):
-            raise TypeError(
-                f"analysis product {name!r}: expected a list of {scan_size} "
-                f"per-point payloads, got {type(payload).__name__}"
-            )
-        missing = [i for i, point in enumerate(payload) if point is None]
-        if missing:
-            raise TypeError(
-                f"analysis product {name!r}: missing payloads for scan "
-                f"points {missing}"
-            )
-        splits = [_split_payload_leaves(point) for point in payload]
-        key_sets = [set(split[0]) for split in splits]
-        if any(keys != key_sets[0] for keys in key_sets[1:]):
-            raise TypeError(
-                f"analysis product {name!r}: per-point payload keys differ "
-                f"across the scan ({key_sets})"
-            )
-        arrays = {}
-        payload_meta: dict[str, Any] = {}
-        for key in sorted(key_sets[0]):
-            try:
-                arrays[key] = np.stack([split[0][key] for split in splits])
-            except (TypeError, ValueError) as exc:
-                # Ragged leaf (e.g. a variable-length peak list): demote to
-                # per-point metadata instead of rejecting the whole payload.
-                demoted = [split[0][key].tolist() for split in splits]
-                safe, _ = _json_safe_meta({key: demoted})
-                if key not in safe:
-                    raise TypeError(
-                        f"analysis product {name!r}: cannot stack variable "
-                        f"{key!r} over scan points and it is not JSON-safe"
-                    ) from exc
-                payload_meta[key] = safe[key]
-                per_point_meta.append(key)
-        meta_keys = {key for split in splits for key in split[1]}
-        for key in sorted(meta_keys):
-            payload_meta[key] = [split[1].get(key) for split in splits]
-            per_point_meta.append(key)
-        dropped = sorted({key for split in splits for key in split[2]})
-        leading = (_SCAN_AXIS,)
-        axes.append(
-            AxisSchema(name=_SCAN_AXIS, role=AxisRole.PARAMETER, size=scan_size)
-        )
-    else:
-        arrays, payload_meta, dropped = _split_payload_leaves(payload)
-
-    positional: dict[str, AxisSchema] = {}
-    variables: list[VariableSchema] = []
-    clean_arrays: dict[str, np.ndarray] = {}
-    for key, array in arrays.items():
-        dims = list(leading)
-        for position in range(array.ndim - len(leading)):
-            axis_name = f"dim{position}"
-            if axis_name not in positional:
-                positional[axis_name] = AxisSchema(
-                    name=axis_name, role=AxisRole.INDEX
-                )
-            dims.append(axis_name)
-        dtype = np.dtype(array.dtype)
-        variables.append(
-            VariableSchema(
-                name=key,
-                dtype=dtype.str,
-                value_domain="complex" if dtype.kind == "c" else "real",
-                dims=tuple(dims),
-            )
-        )
-        clean_arrays[key] = array
-    if not variables:
-        # ProductSchema requires at least one variable; payloads without any
-        # numeric leaf cannot form a product (their meta is reported through
-        # the bundle's ``dropped_products`` metadata by the caller).
-        return None
-
-    schema = ProductSchema(
+    return assemble_typed_product(
+        name,
+        leaves,
+        scan_size=scan_size,
         kind=DataKind.STATISTICS,
-        axes=[*axes, *positional.values()],
-        variables=variables,
         attributes={
             "bridge": "legacy_analysis/1",
-            "source_analyser": str(name),
-            "dropped_keys": dropped,
-            "payload_meta": payload_meta,
-            "per_point_meta": per_point_meta,
+            "graph_ready": False,
         },
-    )
-    return cast(
-        StatisticsDataset,
-        StatisticsDataset.from_arrays(
-            schema,
-            clean_arrays,
-            owner="engine.sde",
-            provenance={"source_analyser": str(name)},
-        ),
     )
 
 
@@ -932,12 +775,20 @@ def bundle_from_result(
     *,
     provenance: SDEProvenance,
     n_traj_per_point: int | None = None,
+    analysers: Mapping[str, Any] | None = None,
 ) -> SDEDataBundle:
     """Adapt a legacy SDEResult/SDEScanResult into an SDEDataBundle.
 
     Transitional Phase 1 adapter applied at the engine's public boundary:
     private execution paths still assemble legacy results (they migrate fully
     in Phase 2), while the engine's return value is always a bundle.
+
+    ``analysers`` maps job-local analyser labels to the analyser instances
+    that produced the payloads. An analyser implementing
+    :class:`~qphase_sde.contracts.analyser.AnalyserProductBuilderProtocol`
+    converts its own payload into graph-ready typed products; payloads of
+    analysers without the hook fall back to the migration-only
+    ``legacy_analysis/1`` bridge (``graph_ready=False``).
     """
     grid = getattr(result, "grid", None)
     combined = getattr(result, "combined", result)
@@ -963,6 +814,22 @@ def bundle_from_result(
         )
     dropped_products: list[str] = []
     for name, payload in combined.analysis.items():
+        builder = None
+        if analysers is not None:
+            builder = getattr(analysers.get(str(name)), "build_products", None)
+        if builder is not None:
+            # The analyser's own builder is authoritative for its payload:
+            # an empty result means "no products", never a bridge fallback.
+            built = (
+                builder(payload, scan_size=scan_size, label=str(name))
+                if payload is not None
+                else None
+            )
+            if built:
+                products.update(built)
+            elif payload is not None:
+                dropped_products.append(str(name))
+            continue
         product = _analysis_product(str(name), payload, scan_size=scan_size)
         if product is not None:
             products[str(name)] = product

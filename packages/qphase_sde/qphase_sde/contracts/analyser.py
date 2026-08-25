@@ -25,17 +25,19 @@ AnalyserContract
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from qphase.data import ProductDeclaration, ProductRequirement
+    from qphase.data import Dataset, ProductDeclaration, ProductRequirement
 
     from .reducer import ReducerProtocol
 
 __all__ = [
     "AnalyserContract",
     "AnalyserExecutionCapabilities",
+    "AnalyserProductBuilderProtocol",
     "AnalyserWorkspaceEstimate",
     "AnalyserWorkspaceRequest",
     "WorkEstimate",
@@ -130,4 +132,36 @@ class AnalyserContract(Protocol):
 
     def reducer(self) -> ReducerProtocol | None:
         """Return the reducer for batched/streaming execution, if supported."""
+        ...
+
+
+@runtime_checkable
+class AnalyserProductBuilderProtocol(Protocol):
+    """Optional analyser hook converting ``analyze()`` payloads into products.
+
+    The bundle adapter discovers this hook by duck-typing — the engine never
+    branches on analyser names. An analyser implementing it is authoritative
+    for its payload: the returned mapping (usually one product under the
+    job-local ``label``) replaces the migration-only ``legacy_analysis/1``
+    bridge entirely, so builders must keep the legacy payload rebuildable
+    (original leaf names as variables, strings and ragged leaves in
+    ``payload_meta``) and must mark products ``graph_ready=True``.
+    """
+
+    def build_products(
+        self,
+        payload: Any,
+        *,
+        scan_size: int,
+        label: str,
+    ) -> Mapping[str, Dataset] | None:
+        """Build typed products from one ``analyze()`` payload.
+
+        ``payload`` is a single per-point mapping (``scan_size == 1``) or the
+        list of ``scan_size`` per-point payloads of a scan job; ``label`` is
+        the job-local analyser label used as the default product name.
+        Returning ``None`` or an empty mapping means "no products" (the
+        payload's meta is reported through the bundle's ``dropped_products``
+        metadata); invalid payloads raise, never silently degrade.
+        """
         ...

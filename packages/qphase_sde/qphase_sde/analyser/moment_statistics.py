@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from typing import Any, ClassVar, cast
 
 import numpy as np
@@ -10,7 +11,16 @@ from pydantic import Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
+from qphase.data import (
+    AxisRole,
+    DataKind,
+    Dataset,
+    SamplingBasisSchema,
+    UncertaintySchema,
+)
 
+from ..contracts.quantities import SDEMomentFamilySchema, SDEQuantity
+from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
     Analyzer,
     AnalyzerExecutionCapabilities,
@@ -203,6 +213,18 @@ class MomentStatisticsAnalyzer(Analyzer):
     def create_result_accumulator(self) -> MomentStatisticsResultAccumulator:
         return MomentStatisticsResultAccumulator(self)
 
+    def build_products(
+        self,
+        payload: Any,
+        *,
+        scan_size: int,
+        label: str,
+    ) -> Mapping[str, Dataset] | None:
+        """Build the graph-ready typed product of one ``analyze()`` payload."""
+        return _build_moment_statistics_products(
+            payload, scan_size=scan_size, label=label
+        )
+
     def _summarize(
         self,
         *,
@@ -313,6 +335,86 @@ class MomentStatisticsAnalyzer(Analyzer):
                 "time_blocks_are_independent": False,
             },
         }
+
+
+def _build_moment_statistics_products(
+    payload: Any,
+    *,
+    scan_size: int,
+    label: str,
+) -> dict[str, Dataset] | None:
+    """Assemble the typed moment-statistics product of one analyser payload."""
+    leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
+    if leaves is None:
+        return None
+    moments = SDEQuantity.MOMENTS.value
+    dataset = assemble_typed_product(
+        label,
+        leaves,
+        scan_size=scan_size,
+        kind=DataKind.STATISTICS,
+        declared_dims={
+            "occupation": ("channel",),
+            "occupation_sem": ("channel",),
+            "fourth_moment": ("channel",),
+            "fourth_moment_sem": ("channel",),
+            "occupation_product": ("channel", "channel_2"),
+            "occupation_product_sem": ("channel", "channel_2"),
+            "occupation_covariance": ("channel", "channel_2"),
+            "g2": ("channel", "channel_2"),
+            "g2_sem": ("channel", "channel_2"),
+            "per_trajectory_occupation": ("trajectory", "channel"),
+            "per_trajectory_occupation_product": (
+                "trajectory",
+                "channel",
+                "channel_2",
+            ),
+        },
+        axis_specs={
+            "channel": TypedAxisSpec("channel", AxisRole.COMPONENT),
+            "channel_2": TypedAxisSpec("channel_2", AxisRole.COMPONENT),
+            "trajectory": TypedAxisSpec("trajectory", AxisRole.REALIZATION),
+        },
+        quantities={
+            "occupation": moments,
+            "fourth_moment": moments,
+            "occupation_product": moments,
+            "g2": moments,
+        },
+        uncertainties=[
+            UncertaintySchema(
+                target=target,
+                kind="sem",
+                sampling_basis="trajectory",
+                covariance="real",
+                scope="sampling",
+                data_variable=data_variable,
+            )
+            for target, data_variable in (
+                ("occupation", "occupation_sem"),
+                ("fourth_moment", "fourth_moment_sem"),
+                ("occupation_product", "occupation_product_sem"),
+                ("g2", "g2_sem"),
+            )
+        ],
+        sampling_bases=[
+            SamplingBasisSchema(name="trajectory", source_axis="trajectory")
+        ],
+        attributes={
+            "graph_ready": True,
+            "moment_family": SDEMomentFamilySchema(
+                family_id="sde-occupation-moments",
+                moment_kind="raw",
+                ordering="normal",
+                orders=[1, 2, 4],
+            ).model_dump(mode="json"),
+            # g2 is a normalized ratio of the order-2 family, not a raw moment.
+            "normalized_variables": ["g2"],
+        },
+    )
+    if dataset is None:
+        return None
+    return {label: dataset}
 
 
 class MomentStatisticsResultAccumulator:

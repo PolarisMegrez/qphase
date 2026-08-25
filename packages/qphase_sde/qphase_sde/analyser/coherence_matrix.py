@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from statistics import NormalDist
 from typing import Any, ClassVar, cast
 
@@ -11,7 +12,16 @@ from pydantic import Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
+from qphase.data import (
+    AxisRole,
+    DataKind,
+    Dataset,
+    SamplingBasisSchema,
+    UncertaintySchema,
+    VariableConstraints,
+)
 
+from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
     Analyzer,
     AnalyzerExecutionCapabilities,
@@ -188,6 +198,18 @@ class CoherenceMatrixAnalyzer(Analyzer):
     def create_result_accumulator(self) -> CoherenceMatrixResultAccumulator:
         return CoherenceMatrixResultAccumulator(self)
 
+    def build_products(
+        self,
+        payload: Any,
+        *,
+        scan_size: int,
+        label: str,
+    ) -> Mapping[str, Dataset] | None:
+        """Build the graph-ready typed product of one ``analyze()`` payload."""
+        return _build_coherence_matrix_products(
+            payload, scan_size=scan_size, label=label
+        )
+
     def _summarize(
         self,
         *,
@@ -335,6 +357,64 @@ class CoherenceMatrixAnalyzer(Analyzer):
                 "time_blocks_are_independent": False,
             },
         }
+
+
+def _build_coherence_matrix_products(
+    payload: Any,
+    *,
+    scan_size: int,
+    label: str,
+) -> dict[str, Dataset] | None:
+    """Assemble the typed coherence-matrix product of one analyser payload."""
+    leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
+    if leaves is None:
+        return None
+    matrix_dims = ("channel", "channel_2")
+    dataset = assemble_typed_product(
+        label,
+        leaves,
+        scan_size=scan_size,
+        kind=DataKind.STATISTICS,
+        declared_dims={
+            "matrix": matrix_dims,
+            "matrix_sem": matrix_dims,
+            "matrix_sem_real": matrix_dims,
+            "matrix_sem_imag": matrix_dims,
+            "normalized_matrix": matrix_dims,
+            "connected_matrix": matrix_dims,
+            "first_order_coherence": matrix_dims,
+            "eigenvalues": ("channel",),
+            "normalized_eigenvalues": ("channel",),
+            "mean_amplitude": ("channel",),
+            "per_trajectory_matrix": ("trajectory", "channel", "channel_2"),
+            "per_trajectory_mean_amplitude": ("trajectory", "channel"),
+            "per_trajectory_purity": ("trajectory",),
+        },
+        axis_specs={
+            "channel": TypedAxisSpec("channel", AxisRole.COMPONENT),
+            "channel_2": TypedAxisSpec("channel_2", AxisRole.COMPONENT),
+            "trajectory": TypedAxisSpec("trajectory", AxisRole.REALIZATION),
+        },
+        quantities={"matrix": "coherence_matrix"},
+        constraints={"matrix": VariableConstraints(symmetry="hermitian")},
+        uncertainties=[
+            UncertaintySchema(
+                target="matrix",
+                kind="sample_std",
+                sampling_basis="trajectory",
+                covariance="real_imag",
+                scope="sampling",
+                data_variable="matrix_sem",
+            )
+        ],
+        sampling_bases=[
+            SamplingBasisSchema(name="trajectory", source_axis="trajectory")
+        ],
+        attributes={"graph_ready": True},
+    )
+    if dataset is None:
+        return None
+    return {label: dataset}
 
 
 class CoherenceMatrixResultAccumulator:

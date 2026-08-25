@@ -23,6 +23,7 @@ Notes
 
 """
 
+from collections.abc import Mapping
 from typing import Any, ClassVar, Literal, cast
 
 import numpy as _np
@@ -34,7 +35,18 @@ from qphase.core.protocols import (
     PluginManifest,
     SubpluginSlot,
 )
+from qphase.data import (
+    AxisRole,
+    CoordinateSchema,
+    DataKind,
+    Dataset,
+    SamplingBasisSchema,
+    SpectralQuantity,
+    UncertaintySchema,
+    VariableConstraints,
+)
 
+from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
     Analyzer,
     AnalyzerExecutionCapabilities,
@@ -424,6 +436,18 @@ class PsdAnalyzer(Analyzer):
     def create_result_accumulator(self) -> "PsdResultAccumulator":
         """Create an exact cross-trajectory PSD statistics accumulator."""
         return PsdResultAccumulator(self)
+
+    def build_products(
+        self,
+        payload: Any,
+        *,
+        scan_size: int,
+        label: str,
+    ) -> Mapping[str, Dataset] | None:
+        """Build the graph-ready typed spectral product of one payload."""
+        return _build_psd_products(
+            payload, scan_size=scan_size, label=label, analyser=self
+        )
 
     def _find_peaks(self, axis: Any, psd: Any) -> dict[Any, Any]:
         """Run the configured peak finder once on a finalized PSD."""
@@ -844,6 +868,135 @@ class PsdAnalyzer(Analyzer):
             energy,
             n_traj,
         )
+
+
+def _meta_scalar(meta: Mapping[str, Any], key: str, default: str) -> str:
+    """Return one job-homogeneous metadata value as a scalar string.
+
+    Scan jobs store per-point metadata lists; the attribute is homogeneous
+    across the job, so the first point is authoritative.
+    """
+    value = meta.get(key, default)
+    if isinstance(value, list):
+        value = value[0] if value else default
+    return default if value is None else str(value)
+
+
+#: Default window identifiers of the built-in estimators, consulted only when
+#: the estimator child does not expose an explicit ``window`` configuration.
+_ESTIMATOR_DEFAULT_WINDOWS = {
+    "periodogram": "rectangular",
+    "welch": "hann",
+    "multitaper": "dpss",
+}
+
+
+def _estimator_window(analyser: PsdAnalyzer) -> str:
+    """Return the true window identifier of the analyser's estimator child."""
+    estimator = analyser.estimator
+    configured = getattr(getattr(estimator, "config", None), "window", None)
+    if configured:
+        return str(configured)
+    # Fallback: report the built-in default window of the selected estimator
+    # (welch -> hann, multitaper -> dpss, everything else -> rectangular).
+    return _ESTIMATOR_DEFAULT_WINDOWS.get(estimator.name, "rectangular")
+
+
+def _build_psd_products(
+    payload: Any,
+    *,
+    scan_size: int,
+    label: str,
+    analyser: PsdAnalyzer,
+) -> dict[str, Dataset] | None:
+    """Assemble the typed spectral product of one PSD analyser payload.
+
+    Variable names keep the original dotted leaf keys (and string or ragged
+    leaves stay in ``payload_meta``) so the legacy view rebuilds the exact
+    ``analyze()`` payload; typed axes, the PSD quantity and the
+    trajectory-sampling uncertainties are layered on top.
+    """
+    leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
+    if leaves is None:
+        return None
+    sampling_bases = (
+        [
+            SamplingBasisSchema(
+                name="trajectory", count_variable="uncertainty.n_independent"
+            )
+        ]
+        if "uncertainty.n_independent" in leaves.arrays
+        else [SamplingBasisSchema(name="trajectory")]
+    )
+    coordinates: list[CoordinateSchema] = []
+    if scan_size == 1:
+        # Coordinate backing variables must match their declared dims exactly,
+        # so scan products (leading scan axis) carry no coordinates.
+        coordinates = [
+            CoordinateSchema(
+                name="frequency",
+                variable="axis",
+                dims=("frequency",),
+                units="inverse_time",
+            ),
+            CoordinateSchema(name="mode", variable="modes", dims=("channel",)),
+        ]
+    dataset = assemble_typed_product(
+        label,
+        leaves,
+        scan_size=scan_size,
+        kind=DataKind.SPECTRAL,
+        declared_dims={
+            "axis": ("frequency",),
+            "psd": ("frequency", "channel"),
+            "psd_std": ("frequency", "channel"),
+            "psd_sem": ("frequency", "channel"),
+            "modes": ("channel",),
+            "peaks.*.properties.fitted_curve": ("frequency",),
+        },
+        axis_specs={
+            "frequency": TypedAxisSpec(
+                "frequency", AxisRole.COORDINATE, units="inverse_time"
+            ),
+            "channel": TypedAxisSpec("channel", AxisRole.COMPONENT),
+        },
+        quantities={"psd": SpectralQuantity.POWER_SPECTRAL_DENSITY.value},
+        constraints={"psd": VariableConstraints(nonnegative=True)},
+        uncertainties=[
+            UncertaintySchema(
+                target="psd",
+                kind="sample_std",
+                sampling_basis="trajectory",
+                covariance="real",
+                scope="sampling",
+                data_variable="psd_std",
+            ),
+            UncertaintySchema(
+                target="psd",
+                kind="sem",
+                sampling_basis="trajectory",
+                covariance="real",
+                scope="sampling",
+                data_variable="psd_sem",
+            ),
+        ],
+        sampling_bases=sampling_bases,
+        coordinates=coordinates,
+        attributes={
+            "frequency_units": "inverse_time",
+            "orientation": _meta_scalar(
+                leaves.payload_meta, "orientation", "phase_decreasing"
+            ),
+            "sidedness": "two_sided",
+            "normalization": "density",
+            "window": _estimator_window(analyser),
+            "estimator": _meta_scalar(leaves.payload_meta, "estimator", "periodogram"),
+            "graph_ready": True,
+        },
+    )
+    if dataset is None:
+        return None
+    return {label: dataset}
 
 
 class PsdResultAccumulator:
