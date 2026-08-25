@@ -14,6 +14,8 @@ batch
     In-memory point views over fused SDE scan results.
 buffers
     Backend-agnostic integration buffer cache.
+migrate
+    One-way offline 1.x result migration to 2.0 typed products.
 scan
     ParameterGrid adapter and logical scan dataset container.
 """
@@ -21,5 +23,6 @@ scan
 __all__ = [
     "batch",
     "buffers",
+    "migrate",
     "scan",
 ]

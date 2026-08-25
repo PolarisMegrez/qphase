@@ -517,9 +517,9 @@ def _trajectory_product(
     attributes = dict(TRAJECTORY_PRODUCT.attributes)
     trajectory_meta = getattr(trajectory, "meta", None)
     if isinstance(trajectory_meta, dict):
-        recorded = trajectory_meta.get("valid_length") or trajectory_meta.get(
-            "valid_lengths"
-        )
+        recorded = trajectory_meta.get("valid_length")
+        if recorded is None:
+            recorded = trajectory_meta.get("valid_lengths")
         if recorded is not None:
             recorded_array = np.asarray(recorded, dtype=np.int64)
             if recorded_array.shape == (fused,):
