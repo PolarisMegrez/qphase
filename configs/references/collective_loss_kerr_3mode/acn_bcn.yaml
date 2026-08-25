@@ -1,0 +1,33 @@
+schema: qphase.reference-parameters/1
+id: collective_loss_kerr_3mode_acn_bcn
+model: collective_loss_kerr_3mode
+role: supplementary_example
+perturbation:
+  parameter: omega_c
+  critical_value: -1.4203550107777119
+parameters:
+  omega_a: 0.0
+  omega_b: 3.1215805501915015
+  omega_c: -1.4203550107777119
+  chi: 5.837569923409236e-05
+  g_ab: 0.4369267192725563
+  g_ac: -0.10576211228805123
+  g_bc: -0.021076429998524326
+  pump_a: 0.022386488186053245
+  kappa_bright: 1.0
+  kappa_dark: 2.5057901369710232e-05
+source_workflows:
+  - collective_loss_kerr_3mode_acn_bcn_figure1_dt_audit.yaml
+  - collective_loss_kerr_3mode_acn_bcn_wmax_extended.yaml
+  - collective_loss_kerr_3mode_figure1_cam.yaml
+  - collective_loss_kerr_3mode_figure1_coherence.yaml
+  - collective_loss_kerr_3mode_figure1_full.yaml
+  - collective_loss_kerr_3mode_figure1b_cam.yaml
+retained_sessions:
+  - 2026-08-10T11-49-59_49e039
+  - 2026-08-10T13-53-39_d8591b
+  - 2026-08-12T08-28-54_f91ba9
+reports:
+  - reports/models/collective_loss_kerr_3mode/collective_loss_kerr_3mode_bifurcation_search_2026-08-09.md
+  - reports/models/collective_loss_kerr_3mode/collective_loss_kerr_3mode_figure1_configuration.md
+  - reports/models/collective_loss_kerr_3mode/collective_loss_kerr_3mode_frequency_observable_audit_20260818.md

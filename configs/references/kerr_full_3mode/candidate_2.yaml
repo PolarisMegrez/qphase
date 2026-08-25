@@ -1,0 +1,28 @@
+schema: qphase.reference-parameters/1
+id: kerr_full_3mode_candidate_2
+model: kerr_full_3mode
+role: supplementary_reserve
+perturbation:
+  parameter: omega_c
+  critical_value: 1.0
+parameters:
+  omega_a: 0.0
+  omega_b: 4.67630426072065
+  omega_c: 1.0
+  chi: 0.0001
+  gamma_a: 0.9637901114446895
+  gamma_b: 0.20833426831502472
+  gamma_c: 0.8185718144699015
+  g_ab: 0.029464248258859665
+  g_ac: 4.208110780283891
+  g_bc: 0.03624253539123171
+source_workflows:
+  - kerr_full_3mode_candidate2_long_allan_2decade.yaml
+  - kerr_full_3mode_candidate2_q3_seed1.yaml
+  - kerr_full_3mode_candidate2_q3_seed2.yaml
+retained_sessions:
+  - 2026-08-08T17-39-34_5b5685
+  - 2026-08-08T17-44-31_30dd56
+  - 2026-08-08T22-37-02_f32025
+reports:
+  - reports/models/kerr_full_3mode/kerr_full_3mode_bifurcation_search_2026-08-07.md

@@ -55,6 +55,7 @@ desktop.ini
 scripts/
 reports/
 skills/
+.qphase_cleanup/
 *.temp
 ~$*
 
