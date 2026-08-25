@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from .state import State, TrajectorySet
 
 # Public version string
-__version__ = "1.0.1"
+__version__ = "2.0.0.dev0"
 
 __all__ = [
     "Engine",

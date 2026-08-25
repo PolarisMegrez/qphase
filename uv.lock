@@ -1719,6 +1719,7 @@ version = "2.0.0"
 source = { editable = "packages/qphase" }
 dependencies = [
     { name = "numpy" },
+    { name = "packaging" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "rich" },
@@ -1752,6 +1753,7 @@ requires-dist = [
     { name = "numba", marker = "extra == 'numba'", specifier = ">=0.57" },
     { name = "numba", marker = "extra == 'standard'", specifier = ">=0.57" },
     { name = "numpy", specifier = ">=1.23" },
+    { name = "packaging", specifier = ">=23" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0" },
@@ -1786,7 +1788,7 @@ requires-dist = [
 
 [[package]]
 name = "qphase-sde"
-version = "1.0.1"
+version = "2.0.0.dev0"
 source = { editable = "packages/qphase_sde" }
 dependencies = [
     { name = "numpy" },

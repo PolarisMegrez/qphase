@@ -318,6 +318,9 @@ class ResourcePackageCatalog:
             issues += validate_package_entry_points(manifest, partition)
             issues += validate_overlay_entry_points(manifest, partition)
             issues += _check_compatibility(manifest, version, resource_ep.name)
+            issues += _check_package_version(
+                manifest, resource_ep.version, resource_ep.name
+            )
 
             owned = tuple(
                 _asset_from_descriptor(d, AssetOrigin.PACKAGE)
@@ -501,6 +504,35 @@ def _check_compatibility(
             message=(
                 f"package {manifest.resource_id!r} requires qphase core "
                 f"{specifier!r}, installed {core_version!r}"
+            ),
+            location=location,
+        )
+    ]
+
+
+def _check_package_version(
+    manifest: ResourcePackageManifest,
+    distribution_version: str | None,
+    location: str,
+) -> list[ValidationIssue]:
+    """Flag a manifest whose ``package_version`` drifts from its distribution.
+
+    The manifest declaration and the installed distribution metadata are two
+    views of the same release; a drift means one side was edited without
+    re-releasing the other. Descriptors without distribution metadata
+    (overlays) carry no version to compare against.
+    """
+    if distribution_version is None:
+        return []
+    if manifest.package_version == distribution_version:
+        return []
+    return [
+        ValidationIssue(
+            code="package-version-mismatch",
+            message=(
+                f"package {manifest.resource_id!r} declares package_version "
+                f"{manifest.package_version!r} but the installed "
+                f"distribution is {distribution_version!r}"
             ),
             location=location,
         )

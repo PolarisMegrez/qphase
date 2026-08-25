@@ -83,6 +83,7 @@ from qphase_sde.result import (
     SDEResult,
     _trajectory_product,
     bundle_from_result,
+    recorded_distribution_versions,
 )
 
 __all__ = [
@@ -270,6 +271,7 @@ def _migration_provenance(
             "legacy_format": legacy_format,
             "sources": dict(sources),
             "warnings": [warning.to_dict() for warning in warnings],
+            "versions": recorded_distribution_versions(),
             **dict(extra or {}),
         }
     }

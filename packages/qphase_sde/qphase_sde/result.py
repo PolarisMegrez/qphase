@@ -13,8 +13,11 @@ Public API
 ``SDEResult`` : Legacy container for SDE simulation results.
 ``SDEDataBundle`` : 2.0 bundle of typed data products plus provenance.
 ``bundle_from_result`` : Boundary adapter from legacy results to bundles.
+``recorded_distribution_versions`` : Real installed distribution versions
+recorded in artifact provenance.
 """
 
+import importlib.metadata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,6 +53,24 @@ from qphase_sde.products import (
     json_safe_meta,
     stack_payload_leaves,
 )
+
+
+def recorded_distribution_versions() -> dict[str, str]:
+    """Real installed distribution versions for artifact provenance.
+
+    Versions come from the installed distribution metadata — never a
+    hand-written constant; when a package is not installed as a
+    distribution (plain source checkout) the module ``__version__`` is the
+    fallback so provenance stays populated.
+    """
+    versions: dict[str, str] = {}
+    distributions = (("qphase", "qphase"), ("qphase-sde", "qphase_sde"))
+    for distribution, module in distributions:
+        try:
+            versions[module] = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            versions[module] = importlib.import_module(module).__version__
+    return versions
 
 
 @dataclass
@@ -498,6 +519,7 @@ class SDEDataBundle:
             "engine": "sde",
             "sde": self._provenance.model_dump(mode="json"),
             "meta": safe_meta,
+            "versions": recorded_distribution_versions(),
         }
         if dropped:
             provenance["meta_dropped"] = dropped

@@ -1,5 +1,6 @@
 """Restore SDE scan bundles from v3 artifacts (clean-process chain)."""
 
+import importlib.metadata
 import json
 import subprocess
 import sys
@@ -106,6 +107,10 @@ def test_scan_bundle_restores_from_v3_artifact(tmp_path):
     provenance = manifest.provenance
     assert provenance["engine"] == "sde"
     assert provenance["job_name"] == "scan"
+    # Provenance records the real installed distribution versions.
+    versions = provenance["versions"]
+    assert versions["qphase"] == importlib.metadata.version("qphase")
+    assert versions["qphase_sde"] == importlib.metadata.version("qphase-sde")
     # The engine records the fused per-trajectory parameter broadcast; the
     # manifest provenance keeps it as plain JSON (no keys dropped).
     assert provenance["meta"]["params"] == {"rate": [1.0] * 8 + [2.0] * 8}

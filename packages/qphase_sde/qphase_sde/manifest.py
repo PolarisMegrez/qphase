@@ -37,7 +37,7 @@ __all__ = ["MANIFEST"]
 #: Phase 2 point at the protocols hosted under ``analyser/`` until then.
 MANIFEST = ResourcePackageManifest(
     resource_id="sde",
-    package_version="2.0.0",
+    package_version="2.0.0.dev0",
     engine=EngineDeclaration(
         entry_point="engine.sde",
         target="qphase_sde.engine:Engine",

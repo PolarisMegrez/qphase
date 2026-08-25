@@ -138,6 +138,26 @@ def test_compatibility_range_is_checked():
     assert "incompatible-core" in codes
 
 
+def test_package_version_mismatch_is_an_issue():
+    """A manifest version drifting from its distribution is reported."""
+    descriptors = [
+        EntryPointDescriptor(
+            "resource.sde", "qphase_sde.manifest:RESOURCE_MANIFEST",
+            "qphase-sde", "9.9.9",
+        ),
+        EntryPointDescriptor(
+            "engine.sde", "qphase_sde.engine:Engine", "qphase-sde", "9.9.9"
+        ),
+    ]
+    catalog = ResourcePackageCatalog.from_descriptors(
+        descriptors,
+        manifest_loaders={"sde": _load_manifest("sde.json")},
+        core_version="2.0.0",
+    )
+    codes = {issue.code for issue in catalog.issues}
+    assert "package-version-mismatch" in codes
+
+
 def test_manifest_load_failure_and_id_mismatch_are_issues():
     """Broken resource entry points degrade to issues, not exceptions."""
     descriptors = [
