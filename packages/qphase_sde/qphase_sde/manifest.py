@@ -30,9 +30,11 @@ from qphase.resources import (
 __all__ = ["MANIFEST"]
 
 #: The SDE resource package manifest. Plugin-class namespaces mirror the
-#: entry-point namespaces declared in ``pyproject.toml``; child-plugin
-#: namespaces whose root-level directories only land in Phase 2 point at the
-#: protocols hosted under ``analyser/`` until then.
+#: entry-point namespaces declared in ``pyproject.toml``, plus overlay-only
+#: namespaces (``model``: concrete models ship as project-local or
+#: third-party overlay plugins, never as package-owned entry points).
+#: Child-plugin namespaces whose root-level directories only land in
+#: Phase 2 point at the protocols hosted under ``analyser/`` until then.
 MANIFEST = ResourcePackageManifest(
     resource_id="sde",
     package_version="2.0.0",
@@ -46,6 +48,12 @@ MANIFEST = ResourcePackageManifest(
         ResourceProfile.SIMULATION,
     ],
     plugin_classes=[
+        PluginClassDeclaration(
+            namespace="model",
+            protocol="qphase_sde.model:SDEModel",
+            description="Ito SDE model protocol, noise specification and "
+            "initial state; concrete models are project overlays.",
+        ),
         PluginClassDeclaration(
             namespace="integrator",
             protocol="qphase_sde.integrator.base:Integrator",

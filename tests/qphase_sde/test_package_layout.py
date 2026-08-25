@@ -125,12 +125,19 @@ def test_manifest_is_valid_and_declares_one_engine():
 
 
 def test_manifest_plugin_namespaces_match_entry_points():
-    """Declared plugin-class namespaces equal the pyproject EP namespaces."""
+    """Every pyproject EP namespace is declared; models are overlay-only."""
     entry_points = _pyproject_entry_points()
     ep_namespaces = {
         name.split(".", 1)[0] for name in entry_points
     } - _RESERVED_NAMESPACES
-    assert set(MANIFEST.plugin_class_namespaces) == ep_namespaces
+    declared = set(MANIFEST.plugin_class_namespaces)
+    assert ep_namespaces <= declared
+    # Concrete models never ship as package-owned entry points: they are
+    # project-local/third-party overlays, so 'model' is declared without a
+    # package entry point to keep overlay attribution working.
+    assert "model" in declared
+    assert "model" not in ep_namespaces
+    assert declared - ep_namespaces == {"model"}
 
 
 def test_manifest_declared_targets_resolve():
