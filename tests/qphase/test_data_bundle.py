@@ -382,3 +382,32 @@ def test_directory_resolver_rejects_unbound_refs():
     resolver.clear()
     with pytest.raises(ArtifactNotFoundError):
         resolver.resolve(ref)
+
+
+def test_coordinates_roundtrip_in_clean_subprocess(tmp_path):
+    """Explicit coordinates survive a clean-process artifact reopen."""
+    import subprocess
+    import sys
+
+    save_products(tmp_path, {"trajectories": _scan_dataset()})
+
+    script = (
+        "import json, sys;"
+        "from qphase.data import load_products;"
+        "products = load_products(sys.argv[1]);"
+        "dataset = products['trajectories'];"
+        "print(json.dumps({"
+        "'coordinates': [c.name for c in dataset.coordinates()],"
+        "'omega_b': dataset.coordinate('omega_b').tolist(),"
+        "}))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout.strip())
+    assert payload == {"coordinates": ["omega_b"], "omega_b": [1.0, 2.0, 3.0]}
