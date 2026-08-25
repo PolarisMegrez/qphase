@@ -6,8 +6,9 @@ description: 数据产品契约
 
 !!! info "Phase 0 契约 —— qphase 2.0"
     本页契约已经获批，并冻结供 Phase 1 在 `qphase.data` 与
-    `qphase.core.task_profile` 中实现。生产 Result 序列化仍只通过 qphase 2.0 分阶段迁移修改。
-    已落地的磁盘格式见[工件格式](artifact_formats.md)。
+    `qphase.core.task_profile` 中实现；Phase 1 审计后的同步（坐标作为带类型变量、
+    注册表 id 形式的 artifact 引用）为复审中的草案。生产 Result 序列化仍只通过
+    qphase 2.0 分阶段迁移修改。已落地的磁盘格式见[工件格式](artifact_formats.md)。
 
 QPhase 2.0 用**数据产品**取代无类型的 `trajectory + dict[str, Any]` 结果形态：数据产品
 是带类型的容器，其轴、变量、不确定度与 provenance 由机器可读 schema 描述。core 定义

@@ -6,8 +6,10 @@ description: Data Product Contract
 
 !!! info "Phase 0 contract — qphase 2.0"
     This contract is approved and frozen for Phase 1 implementation under
-    `qphase.data` and `qphase.core.task_profile`. Production Result serialization still
-    changes only through the staged qphase 2.0 migration. The implemented on-disk
+    `qphase.data` and `qphase.core.task_profile`; the Phase 1 audit sync
+    (coordinates as typed variables, registry-id artifact references) is a
+    draft under review. Production Result serialization still changes only
+    through the staged qphase 2.0 migration. The implemented on-disk
     formats are documented in [Artifact Formats](artifact_formats.md).
 
 QPhase 2.0 replaces the untyped `trajectory + dict[str, Any]` result shape with
@@ -43,6 +45,12 @@ Shapes may be partially unknown at plan time (`AxisSchema.size is None`) but mus
   remain in the payload), `coordinate`, `component` and `index`. A realization axis
   must be retained by at least one variable; parameter/grouping coordinates may be
   represented by their coordinate payload or a resource-defined segmented layout.
+- `CoordinateSchema` — a named coordinate backed by a typed variable payload
+  (`name`, `variable`, `dims`, `role` of `dimension`/`auxiliary`/`parameter`,
+  `units`, `monotonic`). Coordinates are ordinary typed variables, so they enter
+  the backing, storage and checksum layers automatically; a regular axis may rely
+  on `start`/`step` alone, while explicit values are persisted as coordinate
+  variables (for example `omega_b[scan]`), never as object arrays.
 - `SamplingBasisSchema` — a realization source already reduced out of the payload,
   such as trajectories contributing to a mean PSD. It declares a stable name and
   closes through either a retained realization `source_axis`, a fixed `count`, or an
@@ -104,7 +112,8 @@ In-process transfer, session caching and persistence are separate layers:
   variable, checked by `validate_backing` (missing/extra variables, full variable
   schema identity, dtype and closed-axis shape mismatches are rejected).
 - `ArtifactRef` — durable, cross-process reference carrying identity only: artifact
-  id, product schema, a `module:attr` loader and a lowercase SHA-256 content hash. No
+  id, product name, product schema, the registered storage adapter id and a
+  lowercase SHA-256 content hash. It names no code and no filesystem location; no
   provenance, no arrays, no extra fields or cache state.
 - `DataMaterializerProtocol` — resource-registered conversion between runtime handles
   and artifact-backed products.
