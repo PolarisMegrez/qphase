@@ -1,6 +1,7 @@
 """Tests for the artifact manifest v3 store and the NPZ 2.x adapter."""
 
 import json
+import os
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from qphase.data import (
     ArtifactAdapterError,
     ArtifactChecksumError,
     ArtifactCorruptError,
+    ArtifactError,
     ArtifactManifestV3,
     ArtifactNotFoundError,
     ArtifactRef,
@@ -34,7 +36,7 @@ from qphase.data import (
     save_products,
 )
 from qphase.data import npz as npz_module
-from qphase.data.npz import ShardedNpzArrayHandle
+from qphase.data.npz import NpzStorageAdapter, ShardedNpzArrayHandle
 from qphase.data.store import artifact_content_hash, product_content_hash
 
 
@@ -646,3 +648,274 @@ def test_load_rejects_descriptor_schema_inconsistencies(tmp_path):
         _recompute_hashes(target)
         with pytest.raises(ArtifactCorruptError, match=label):
             load_products(target)
+
+
+# -- transactional writes and axis-aware sharding (C4) ----------------------------
+
+
+def test_single_layout_writes_one_multikey_file_per_product(tmp_path):
+    dataset = _dataset()
+    save_products(tmp_path, {"trajectories": dataset}, layout="single")
+
+    raw = json.loads((tmp_path / "artifact_manifest.json").read_text())
+    variables = raw["products"][0]["storage"]["descriptor"]["variables"]
+    files = {chunk["file"] for variable in variables.values() for chunk in variable["chunks"]}
+    assert files == {"00_trajectories.npz"}
+    keys = {
+        chunk["key"] for variable in variables.values() for chunk in variable["chunks"]
+    }
+    assert keys == {"x", "count"}
+    with np.load(tmp_path / "00_trajectories.npz") as npz_file:
+        assert set(npz_file.files) == {"x", "count"}
+
+    restored = load_products(tmp_path)["trajectories"]
+    np.testing.assert_array_equal(
+        restored.handle("x").materialize(), dataset.handle("x").materialize()
+    )
+    np.testing.assert_array_equal(
+        restored.handle("count").materialize(), np.arange(5)
+    )
+
+
+def test_single_layout_ignores_shard_target(tmp_path):
+    rng = np.random.default_rng(3)
+    x = rng.normal(size=(40, 8)) + 1j * rng.normal(size=(40, 8))
+    dataset = TimeSeriesDataset.from_arrays(
+        _schema(40), {"x": x, "count": np.arange(40)}, owner="engine.fake"
+    )
+    save_products(
+        tmp_path, {"trajectories": dataset}, layout="single",
+        shard_target_bytes=64,
+    )
+    summary = json.loads((tmp_path / "artifact_manifest.json").read_text())[
+        "products"
+    ][0]["storage"]["summary"]
+    assert summary["x"]["chunk_count"] == 1
+
+
+def _scan_trajectory_schema() -> ProductSchema:
+    return ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[
+            AxisSchema(name="scan", role=AxisRole.PARAMETER, size=1),
+            AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=40),
+            AxisSchema(
+                name="time",
+                role=AxisRole.COORDINATE,
+                size=8,
+                coordinate="regular",
+                start=0.0,
+                step=0.1,
+                units="s",
+            ),
+        ],
+        variables=[
+            VariableSchema(
+                name="x",
+                dtype="complex128",
+                value_domain="complex",
+                dims=("scan", "trajectory", "time"),
+            ),
+        ],
+    )
+
+
+def test_writer_shards_along_trajectory_when_scan_is_singleton(tmp_path):
+    """The old axis0-only writer could not shard a scan=1 payload at all."""
+    rng = np.random.default_rng(5)
+    x = rng.normal(size=(1, 40, 8)) + 1j * rng.normal(size=(1, 40, 8))
+    dataset = TimeSeriesDataset.from_arrays(
+        _scan_trajectory_schema(), {"x": x}, owner="engine.fake"
+    )
+    # 1*40*8*16 = 5120 bytes -> 8 chunks of 5 trajectories along axis 1.
+    save_products(tmp_path, {"trajectories": dataset}, shard_target_bytes=640)
+
+    raw = json.loads((tmp_path / "artifact_manifest.json").read_text())
+    variable = raw["products"][0]["storage"]["descriptor"]["variables"]["x"]
+    assert variable["chunk_axis"] == "trajectory"
+    assert len(variable["chunks"]) == 8
+
+    restored = load_products(tmp_path)["trajectories"]
+    handle = restored.handle("x")
+    assert isinstance(handle, ShardedNpzArrayHandle)
+    np.testing.assert_array_equal(handle.materialize(), x)
+    # Point/slice selection prunes chunks along the trajectory axis.
+    np.testing.assert_array_equal(
+        handle.materialize_selection((0, 7, slice(None))), x[0, 7, :]
+    )
+    np.testing.assert_array_equal(
+        handle.materialize_selection((0, slice(3, 12), slice(None))),
+        x[0, 3:12, :],
+    )
+
+
+def test_writer_prefers_scan_axis_for_point_pruning(tmp_path, monkeypatch):
+    rng = np.random.default_rng(9)
+    x = rng.normal(size=(8, 2, 4)) + 1j * rng.normal(size=(8, 2, 4))
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[
+            AxisSchema(name="scan", role=AxisRole.PARAMETER, size=8),
+            AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=2),
+            AxisSchema(
+                name="time",
+                role=AxisRole.COORDINATE,
+                size=4,
+                coordinate="regular",
+                start=0.0,
+                step=0.1,
+            ),
+        ],
+        variables=[
+            VariableSchema(
+                name="x",
+                dtype="complex128",
+                value_domain="complex",
+                dims=("scan", "trajectory", "time"),
+            ),
+        ],
+    )
+    dataset = TimeSeriesDataset.from_arrays(schema, {"x": x}, owner="engine.fake")
+    # 8*2*4*16 = 1024 bytes -> 4 chunks of 2 scan rows along axis 0.
+    save_products(tmp_path, {"trajectories": dataset}, shard_target_bytes=256)
+
+    raw = json.loads((tmp_path / "artifact_manifest.json").read_text())
+    variable = raw["products"][0]["storage"]["descriptor"]["variables"]["x"]
+    assert variable["chunk_axis"] == "scan"
+    assert len(variable["chunks"]) == 4
+
+    loaded = load_products(tmp_path)["trajectories"]
+    handle = loaded.handle("x")
+    real_load = np.load
+    calls = 0
+
+    def counting_load(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr(npz_module.np, "load", counting_load)
+    # One scan point touches exactly one of the four chunks.
+    np.testing.assert_array_equal(
+        handle.materialize_selection((5, slice(None), slice(None))), x[5]
+    )
+    assert calls == 1
+
+
+def test_save_products_refuses_overwrite_by_default(tmp_path):
+    dataset = _dataset()
+    save_products(tmp_path, {"trajectories": dataset})
+    with pytest.raises(ArtifactError, match="replace=True"):
+        save_products(tmp_path, {"trajectories": dataset})
+
+    replaced = save_products(tmp_path, {"trajectories": dataset}, replace=True)
+    restored = load_products(tmp_path)["trajectories"]
+    np.testing.assert_array_equal(
+        restored.handle("count").materialize(), np.arange(5)
+    )
+    # Replacement wrote fresh file names and removed the old payload.
+    files = {path.name for path in tmp_path.glob("*.npz")}
+    assert files and all("__r" in name for name in files)
+    assert replaced.artifact_id != ""
+
+
+def test_failed_replace_keeps_old_artifact_readable(tmp_path, monkeypatch):
+    dataset = _dataset()
+    save_products(tmp_path, {"trajectories": dataset})
+    old_files = {path.name for path in tmp_path.glob("*.npz")}
+
+    adapter = NpzStorageAdapter()
+    real_write = adapter.write_product
+
+    def failing_write(self, *args, **kwargs):
+        real_write(*args, **kwargs)
+        raise RuntimeError("injected write failure")
+
+    monkeypatch.setattr(
+        NpzStorageAdapter, "write_product", failing_write
+    )
+    with pytest.raises(RuntimeError, match="injected"):
+        save_products(tmp_path, {"trajectories": _dataset()}, replace=True)
+
+    # The old manifest and payload are untouched; staging is cleaned up.
+    restored = load_products(tmp_path)["trajectories"]
+    np.testing.assert_array_equal(
+        restored.handle("count").materialize(), np.arange(5)
+    )
+    assert {path.name for path in tmp_path.glob("*.npz")} == old_files
+    assert not list(tmp_path.glob(".staging-*"))
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_replace_removes_stale_payload_files(tmp_path):
+    dataset = _dataset()
+    save_products(tmp_path, {"trajectories": dataset}, shard_target_bytes=64)
+    old_files = {path.name for path in tmp_path.glob("*.npz")}
+    assert len(old_files) > 2  # sharded payload
+
+    save_products(tmp_path, {"trajectories": dataset}, replace=True, layout="single")
+    files = {path.name for path in tmp_path.glob("*.npz")}
+    assert len(files) == 1  # single payload file replaces the shard set
+    assert not files & old_files
+    restored = load_products(tmp_path)["trajectories"]
+    np.testing.assert_array_equal(
+        restored.handle("count").materialize(), np.arange(5)
+    )
+
+
+def test_interrupted_chunk_rename_keeps_old_artifact(tmp_path, monkeypatch):
+    dataset = _dataset()
+    save_products(tmp_path, {"trajectories": dataset})
+    old_files = {path.name for path in tmp_path.glob("*.npz")}
+
+    import qphase.data.store as store_module
+
+    real_replace = os.replace
+    calls = 0
+
+    def failing_replace(src, dst):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("simulated crash during chunk publish")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(store_module.os, "replace", failing_replace)
+    with pytest.raises(OSError, match="simulated crash"):
+        save_products(tmp_path, {"trajectories": _dataset()}, replace=True)
+
+    # The old artifact is still fully readable; no half-published chunk or
+    # staging/tmp file survives.
+    restored = load_products(tmp_path)["trajectories"]
+    np.testing.assert_array_equal(
+        restored.handle("count").materialize(), np.arange(5)
+    )
+    assert {path.name for path in tmp_path.glob("*.npz")} == old_files
+    assert not list(tmp_path.glob(".staging-*"))
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_interrupted_manifest_publish_keeps_old_artifact(tmp_path, monkeypatch):
+    dataset = _dataset()
+    save_products(tmp_path, {"trajectories": dataset})
+
+    import qphase.data.store as store_module
+
+    real_replace = os.replace
+
+    def failing_replace(src, dst):
+        if str(dst).endswith(store_module.MANIFEST_FILENAME):
+            raise OSError("simulated crash at manifest publish")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(store_module.os, "replace", failing_replace)
+    with pytest.raises(OSError, match="manifest publish"):
+        save_products(tmp_path, {"trajectories": _dataset()}, replace=True)
+
+    restored = load_products(tmp_path)["trajectories"]
+    np.testing.assert_array_equal(
+        restored.handle("count").materialize(), np.arange(5)
+    )
+    # New chunks published before the crash are rolled back as well.
+    assert not [name for name in (p.name for p in tmp_path.glob("*.npz")) if "__r" in name]
+    assert not list(tmp_path.glob("*.tmp"))

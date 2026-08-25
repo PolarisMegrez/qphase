@@ -36,7 +36,7 @@ from qphase.data import (
     VariableSchema,
     save_products,
 )
-from qphase.data.store import ARTIFACT_SCHEMA_VERSION, DEFAULT_SHARD_TARGET_BYTES
+from qphase.data.store import ARTIFACT_SCHEMA_VERSION
 
 from qphase_sde.contracts.bundle import TRAJECTORY_PRODUCT, SDEProvenance
 from qphase_sde.contracts.quantities import SDEQuantity
@@ -403,23 +403,23 @@ class SDEDataBundle:
     ) -> DatasetSaveReport:
         """Persist through the v3 manifest pipeline (DatasetResultProtocol).
 
-        ``layout="single"`` disables sharding; ``"sharded"`` and the legacy
-        ``"per_point"`` both map to byte-targeted chunk sharding.
+        ``layout="single"`` truly disables sharding (one payload file per
+        product); ``"sharded"`` and the legacy ``"per_point"`` both map to
+        byte-targeted chunk sharding.
         """
-        target = (
-            shard_target_bytes if layout != "single" else DEFAULT_SHARD_TARGET_BYTES
-        )
+        resolved = "single" if layout == "single" else "sharded"
         manifest = save_products(
             Path(path),
             self._products,
             provenance=self._manifest_provenance(),
-            shard_target_bytes=target,
+            shard_target_bytes=shard_target_bytes,
+            layout=resolved,
         )
         files = tuple(
             sorted(item for item in Path(path).rglob("*") if item.is_file())
         )
         return DatasetSaveReport(
-            "single" if layout == "single" else "sharded",
+            resolved,
             files,
             loader="+".join(
                 sorted({entry.storage.adapter for entry in manifest.products})

@@ -36,7 +36,11 @@ class ArtifactStore:
 
         This is the typed counterpart of :meth:`save_result`: products are
         stored through the manifest v3 pipeline (native dtypes, per-chunk
-        checksums, lazy restore) using the store's shard configuration.
+        checksums, lazy restore). The storage layout honors the system
+        configuration exactly like :meth:`save_result` does: ``single``
+        disables external sharding, ``auto`` compares the estimated payload
+        size against ``auto_shard_threshold_mib`` and the legacy
+        ``per_point`` maps to byte-targeted sharding.
         """
         # Imported lazily: core must not depend on the data layer at module
         # import time (the data layer already depends on core.utils).
@@ -49,7 +53,31 @@ class ArtifactStore:
             parents=parents,
             artifact_id=artifact_id,
             shard_target_bytes=int(self.config.shard_target_mib * (1 << 20)),
+            layout=self._products_layout(products),
         )
+
+    def _products_layout(self, products: Mapping[str, Dataset]) -> str:
+        """Resolve the configured layout for a typed product mapping."""
+        requested = getattr(self.config, "storage_layout", "auto")
+        if requested == "per_point":
+            # Legacy export-only layout; the v3 pipeline stores per-point
+            # chunks through byte-targeted sharding instead.
+            return "sharded"
+        if requested != "auto":
+            return requested
+        total = 0
+        size: int | None = total
+        for dataset in products.values():
+            if dataset.nbytes is None:
+                size = None
+                break
+            total += dataset.nbytes
+        else:
+            size = total
+        threshold = int(
+            getattr(self.config, "auto_shard_threshold_mib", 512) * (1 << 20)
+        )
+        return "sharded" if size is not None and size > threshold else "single"
 
     def load_products(self) -> dict[str, Dataset]:
         """Reopen this job's artifact directory as lazily-backed datasets."""

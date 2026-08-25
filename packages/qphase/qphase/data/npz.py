@@ -154,10 +154,10 @@ def _read_chunk(path: Path, record: NpzChunkRecord) -> np.ndarray:
     try:
         with np.load(path) as npz:
             keys = set(npz.files)
-            if keys != {record.key}:
+            if record.key not in keys:
                 raise ArtifactCorruptError(
                     f"artifact chunk {path} holds keys {sorted(keys)}, "
-                    f"expected exactly {record.key!r}"
+                    f"missing the declared key {record.key!r}"
                 )
             array = np.asarray(npz[record.key])
     except FileNotFoundError:
@@ -245,7 +245,7 @@ class NpzArrayHandle(_ArrayHandleBase):
 
 
 class ShardedNpzArrayHandle(_ArrayHandleBase):
-    """Lazy handle over a variable split into chunks along its first dim.
+    """Lazy handle over a variable split into chunks along one named dim.
 
     ``materialize()`` concatenates all chunks (an explicit full read);
     ``materialize_selection(indexers)`` reads only the chunks the selection
@@ -259,6 +259,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         variable_schema: VariableSchema,
         *,
         shape: tuple[int, ...],
+        axis: int = 0,
         owner: str,
     ) -> None:
         super().__init__(variable_schema, owner=owner, read_only=True)
@@ -266,6 +267,11 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
             raise ValueError(
                 f"sharded handle for variable {variable_schema.name!r} needs "
                 "a full shape matching the variable dims"
+            )
+        if not 0 <= axis < len(shape):
+            raise ValueError(
+                f"sharded handle for variable {variable_schema.name!r} got "
+                f"invalid shard axis {axis}"
             )
         expected = 0
         ranges: list[tuple[int, int]] = []
@@ -283,14 +289,15 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
                 )
             ranges.append((start, stop))
             expected = stop
-        if expected != shape[0]:
+        if expected != shape[axis]:
             raise ValueError(
                 f"sharded chunks cover [0, {expected}) but the variable shape "
-                f"declares {shape[0]} rows"
+                f"declares {shape[axis]} rows along axis {axis}"
             )
         self._chunks = chunks
         self._ranges = ranges
         self._shape = tuple(shape)
+        self._axis = axis
 
     @property
     def device(self) -> str:
@@ -339,7 +346,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         parts = [self.read_chunk(i) for i in range(len(self._chunks))]
         if len(parts) == 1:
             return parts[0]
-        return np.concatenate(parts, axis=0)
+        return np.concatenate(parts, axis=self._axis)
 
     def materialize_selection(self, indexers: tuple[Any, ...]) -> np.ndarray:
         """Read only the chunks the selection touches.
@@ -351,42 +358,56 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         self._check_live()
         if not indexers:
             return self.materialize()
-        selector = indexers[0]
-        rest = indexers[1:]
+        axis = self._axis
+        axis_size = self._shape[axis]
+        selector = indexers[axis]
+        prefix = indexers[:axis]
+        suffix = indexers[axis + 1 :]
         if isinstance(selector, (int, np.integer)) and not isinstance(
             selector, bool
         ):
             row = int(selector)
             if row < 0:
-                row += self._shape[0]
+                row += axis_size
             for (path, record), (start, stop) in zip(
                 self._chunks, self._ranges, strict=True
             ):
                 if start <= row < stop:
-                    return _read_chunk(path, record)[row - start, *rest]
+                    return _read_chunk(path, record)[
+                        (*prefix, row - start, *suffix)
+                    ]
             raise IndexError(
-                f"index {selector} out of bounds for axis of size "
-                f"{self._shape[0]}"
+                f"index {selector} out of bounds for axis of size {axis_size}"
             )
         if isinstance(selector, slice):
-            start, stop, step = selector.indices(self._shape[0])
+            start, stop, step = selector.indices(axis_size)
             if step == 1:
+                reduced = sum(
+                    1
+                    for item in prefix
+                    if isinstance(item, (int, np.integer))
+                    and not isinstance(item, bool)
+                )
+                concat_axis = axis - reduced
                 if start >= stop:
+                    full_shape = list(self._shape)
+                    full_shape[axis] = 0
                     empty = np.empty(
-                        (0, *self._shape[1:]), dtype=self._variable_schema.dtype
+                        tuple(full_shape), dtype=self._variable_schema.dtype
                     )
-                    return empty[(slice(None), *rest)]
-                base = 0
+                    return empty[(*prefix, slice(None), *suffix)]
                 parts: list[np.ndarray] = []
                 for (path, record), (c0, c1) in zip(
                     self._chunks, self._ranges, strict=True
                 ):
                     if c0 < stop and c1 > start:
-                        if not parts:
-                            base = c0
-                        parts.append(_read_chunk(path, record))
-                data = parts[0] if len(parts) == 1 else np.concatenate(parts, axis=0)
-                return data[slice(start - base, stop - base), *rest]
+                        local = slice(max(start, c0) - c0, min(stop, c1) - c0)
+                        parts.append(
+                            _read_chunk(path, record)[(*prefix, local, *suffix)]
+                        )
+                if len(parts) == 1:
+                    return parts[0]
+                return np.concatenate(parts, axis=concat_axis)
         return self.materialize()[indexers]
 
 
@@ -414,10 +435,17 @@ class NpzStorageAdapter:
         *,
         shard_target_bytes: int,
         file_stem: str,
+        layout: str = "sharded",
     ) -> ProductStorage:
-        """Persist one runtime-backed dataset as per-variable chunk files."""
+        """Persist one runtime-backed dataset as per-variable chunk files.
+
+        ``layout="single"`` writes one payload file holding every variable
+        under its own key (no external sharding); ``layout="sharded"``
+        splits variables along a planned named axis into byte-targeted
+        chunk files.
+        """
         directory = Path(directory)
-        variables: dict[str, NpzVariableDescriptor] = {}
+        arrays: dict[str, np.ndarray] = {}
         for variable in dataset.schema.variables:
             handle = dataset.handle(variable.name)
             # Persistence is a host operation: the copy policy is explicit.
@@ -428,10 +456,49 @@ class NpzStorageAdapter:
                 array = np.ascontiguousarray(array)
             else:
                 array = np.asarray(array)
-            variables[variable.name] = self._write_variable(
-                file_stem, variable, array, directory, shard_target_bytes
-            )
+            arrays[variable.name] = array
+        if layout == "single":
+            variables = self._write_single(file_stem, dataset.schema, arrays, directory)
+        else:
+            variables = {
+                variable.name: self._write_variable(
+                    file_stem,
+                    variable,
+                    arrays[variable.name],
+                    directory,
+                    shard_target_bytes,
+                )
+                for variable in dataset.schema.variables
+            }
         return build_product_storage(dataset.schema, variables)
+
+    @staticmethod
+    def _write_single(
+        stem: str,
+        schema: ProductSchema,
+        arrays: dict[str, np.ndarray],
+        directory: Path,
+    ) -> dict[str, NpzVariableDescriptor]:
+        """Write all variables as keys of one payload file (``single``)."""
+        filename = f"{stem}.npz"
+        np.savez(directory / filename, **dict(arrays))
+        variables: dict[str, NpzVariableDescriptor] = {}
+        for variable in schema.variables:
+            array = arrays[variable.name]
+            variables[variable.name] = NpzVariableDescriptor(
+                full_shape=tuple(array.shape),
+                dtype=np.dtype(array.dtype).str,
+                chunks=[
+                    NpzChunkRecord(
+                        file=filename,
+                        key=variable.name,
+                        shape=tuple(array.shape),
+                        dtype=np.dtype(array.dtype).str,
+                        sha256=chunk_content_hash(array),
+                    )
+                ],
+            )
+        return variables
 
     def parse_storage(self, entry: ProductEntry) -> NpzProductDescriptor:
         """Strictly parse and validate the NPZ descriptor of one entry."""
@@ -514,19 +581,27 @@ class NpzStorageAdapter:
                 )
                 continue
             axis_index = variable.dims.index(variable_descriptor.chunk_axis)
-            if axis_index != 0:
-                raise ArtifactUnsupportedError(
-                    f"variable {variable.name!r} is sharded along "
-                    f"{variable_descriptor.chunk_axis!r}; only first-dim "
-                    "sharding is supported by this reader"
-                )
             handles[variable.name] = ShardedNpzArrayHandle(
                 list(zip(paths, variable_descriptor.chunks, strict=True)),
                 variable,
                 shape=tuple(variable_descriptor.full_shape),
+                axis=axis_index,
                 owner=owner,
             )
         return DictProductBacking(handles)
+
+    def verify_product(self, entry: ProductEntry, directory: Path) -> None:
+        """Re-read every chunk of a freshly written product (with hashing).
+
+        Called by the transactional writer before chunks are published:
+        each chunk file is reopened, and its key set, dtype, shape and
+        content hash are verified against the descriptor.
+        """
+        directory = Path(directory)
+        descriptor = self.parse_storage(entry)
+        for variable_descriptor in descriptor.variables.values():
+            for chunk in variable_descriptor.chunks:
+                _read_chunk(resolve_artifact_path(directory, chunk.file), chunk)
 
     def open_ref(
         self,
@@ -566,6 +641,32 @@ class NpzStorageAdapter:
     # -- internals -----------------------------------------------------------
 
     @staticmethod
+    def _plan_chunk_axis(
+        array: np.ndarray, shard_target_bytes: int
+    ) -> tuple[int, int] | None:
+        """Choose (axis index, rows per chunk) for sharding, or None.
+
+        The first axis whose per-row payload fits the target wins, so scan
+        axes (kept whole per point for point-view pruning) are preferred
+        over trajectory axes, which are preferred over time; scalar and
+        small variables stay unsharded.
+        """
+        if (
+            array.ndim == 0
+            or shard_target_bytes <= 0
+            or array.nbytes <= shard_target_bytes
+        ):
+            return None
+        for axis, size in enumerate(array.shape):
+            if size > 1 and array.nbytes // size <= shard_target_bytes:
+                chunk_count = math.ceil(array.nbytes / shard_target_bytes)
+                return axis, max(1, math.ceil(size / chunk_count))
+        for axis, size in enumerate(array.shape):
+            if size > 1:
+                return axis, 1
+        return None
+
+    @staticmethod
     def _write_variable(
         stem: str,
         variable: VariableSchema,
@@ -574,14 +675,15 @@ class NpzStorageAdapter:
         shard_target_bytes: int,
     ) -> NpzVariableDescriptor:
         safe_variable = _sanitize_stem(variable.name)
-        rows = array.shape[0] if array.ndim >= 1 else 0
-        if array.ndim >= 1 and rows > 1 and array.nbytes > shard_target_bytes > 0:
-            chunk_count = math.ceil(array.nbytes / shard_target_bytes)
-            rows_per_chunk = math.ceil(rows / chunk_count)
+        plan = NpzStorageAdapter._plan_chunk_axis(array, shard_target_bytes)
+        if plan is not None:
+            axis, rows_per_chunk = plan
+            size = array.shape[axis]
             records = []
-            for index, start in enumerate(range(0, rows, rows_per_chunk)):
-                stop = min(start + rows_per_chunk, rows)
-                chunk = np.ascontiguousarray(array[start:stop])
+            for index, start in enumerate(range(0, size, rows_per_chunk)):
+                stop = min(start + rows_per_chunk, size)
+                selector = (slice(None),) * axis + (slice(start, stop),)
+                chunk = np.ascontiguousarray(array[selector])
                 filename = f"{stem}__{safe_variable}__{index:04d}.npz"
                 np.savez(directory / filename, data=chunk)
                 records.append(
@@ -597,7 +699,7 @@ class NpzStorageAdapter:
             return NpzVariableDescriptor(
                 full_shape=tuple(array.shape),
                 dtype=np.dtype(array.dtype).str,
-                chunk_axis=variable.dims[0],
+                chunk_axis=variable.dims[axis],
                 chunks=records,
             )
         filename = f"{stem}__{safe_variable}.npz"
@@ -629,14 +731,17 @@ class NpzStorageAdapter:
                 f"NPZ descriptor of product {entry.name!r} does not match "
                 f"the product schema (missing: {missing}, extra: {extra})"
             )
-        files: dict[str, str] = {}
+        files: dict[tuple[str, str], str] = {}
         for name, variable_descriptor in descriptor.variables.items():
             for chunk in variable_descriptor.chunks:
-                previous = files.setdefault(chunk.file, name)
+                # One payload file may hold several variables under distinct
+                # keys (``single`` layout); a (file, key) pair is unique.
+                location = (chunk.file, chunk.key)
+                previous = files.setdefault(location, name)
                 if previous != name:
                     raise ArtifactCorruptError(
-                        f"chunk file {chunk.file!r} is referenced by both "
-                        f"{entry.name}.{previous} and {entry.name}.{name}"
+                        f"chunk {chunk.file!r} key {chunk.key!r} is referenced "
+                        f"by both {entry.name}.{previous} and {entry.name}.{name}"
                     )
         for variable in entry.product_schema.variables:
             _validate_variable_descriptor(

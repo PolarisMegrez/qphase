@@ -61,11 +61,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
+from uuid import uuid4
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -595,8 +598,14 @@ class StorageAdapterProtocol(Protocol):
         *,
         shard_target_bytes: int,
         file_stem: str,
+        layout: str = "sharded",
     ) -> ProductStorage:
-        """Persist one product and return its storage record."""
+        """Persist one product and return its storage record.
+
+        ``layout="single"`` writes one payload file per product (variables
+        addressed by adapter-specific keys, no external sharding);
+        ``layout="sharded"`` splits variables into byte-targeted chunks.
+        """
         ...
 
     @property
@@ -626,6 +635,14 @@ class StorageAdapterProtocol(Protocol):
         self, entry: ProductEntry, directory: Path
     ) -> RuntimeProductBacking:
         """Open a stored product as a lazily-reading runtime backing."""
+        ...
+
+    def verify_product(self, entry: ProductEntry, directory: Path) -> None:
+        """Re-read and verify every chunk of a freshly written product.
+
+        The transactional writer calls this before publishing chunks, so a
+        torn or corrupt write never reaches the final artifact layout.
+        """
         ...
 
     def open_ref(
@@ -699,23 +716,39 @@ def save_products(
     artifact_id: str | None = None,
     shard_target_bytes: int = DEFAULT_SHARD_TARGET_BYTES,
     bundle: BundleDescriptor | None = None,
+    layout: str = "sharded",
+    replace: bool = False,
 ) -> ArtifactManifestV3:
     """Persist typed datasets and write the v3 artifact manifest.
 
-    Artifact-backed datasets are fully materialized first (an explicit load,
-    never an implicit one); device-resident payloads are copied to the host
-    with an explicit ``copy_policy="allow"`` at save time. Every variable is
-    stored as one or more chunks split along its first dimension. An empty
-    mapping is allowed and produces a manifest with no products (e.g. a
-    simulation that only yields scalar metadata). Without an explicit
-    ``bundle`` descriptor a generic bundle is recorded, restoring the
-    products as a :class:`~qphase.data.bundle.GenericDataBundle`.
+    The write is transactional: chunks are staged in a unique on-disk
+    staging directory, re-read and verified (dtype/shape/hash) after the
+    flush, atomically moved to their final names, and the manifest is
+    published last through an atomic ``os.replace`` — a failure before
+    publication leaves any pre-existing artifact fully readable.
+
+    ``layout="single"`` stores every variable of a product as a key of one
+    payload file (no external sharding, ``shard_target_bytes`` is ignored);
+    ``layout="sharded"`` splits variables along a planned named axis into
+    byte-targeted chunk files. An existing manifest is never overwritten
+    unless ``replace=True``; replacement writes new file names and only
+    removes the old payload after the new manifest is published.
+
+    Artifact-backed datasets are fully materialized first (an explicit
+    load, never an implicit one); device-resident payloads are copied to
+    the host with an explicit ``copy_policy="allow"`` at save time. An
+    empty mapping is allowed and produces a manifest with no products.
+    Without an explicit ``bundle`` descriptor a generic bundle is recorded,
+    restoring the products as a
+    :class:`~qphase.data.bundle.GenericDataBundle`.
     """
     if not isinstance(products, Mapping):
         raise TypeError(
             f"products must be a mapping of name to Dataset, got "
             f"{type(products).__name__}"
         )
+    if layout not in {"single", "sharded"}:
+        raise ValueError(f"unsupported storage layout {layout!r}")
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
 
@@ -723,62 +756,112 @@ def save_products(
     from .resolver import register_artifact_location
 
     adapter = _resolve_adapter(NpzStorageAdapter.ADAPTER_ID)
-    provenance_dict = dict(provenance or {})
-    parent_list = [str(parent) for parent in parents]
-    entries: list[ProductEntry] = []
-    used_files: set[str] = set()
-    for index, (name, dataset) in enumerate(products.items()):
-        if not isinstance(dataset, Dataset):
-            raise TypeError(
-                f"product {name!r} must be a Dataset, got {type(dataset).__name__}"
+    manifest_path = directory / MANIFEST_FILENAME
+    old_files: set[str] = set()
+    if manifest_path.exists():
+        if not replace:
+            raise ArtifactError(
+                f"an artifact manifest already exists at {directory}; pass "
+                "replace=True to overwrite it"
             )
-        if dataset.is_artifact_backed:
-            dataset = dataset.materialize()
-        storage = adapter.write_product(
-            name,
-            dataset,
-            directory,
-            shard_target_bytes=shard_target_bytes,
-            file_stem=f"{index:02d}_{_sanitize(name)}",
-        )
-        entry = ProductEntry(
-            name=name,
-            product_schema=dataset.schema,
-            storage=storage,
-            sha256=product_content_hash(name, dataset.schema, storage),
-        )
-        for file in adapter.referenced_files(entry):
-            if file in used_files:
-                raise ArtifactError(
-                    f"writer produced a duplicate chunk file name {file!r}"
-                )
-            used_files.add(file)
-        entries.append(entry)
+        old_manifest = ArtifactManifestV3.read(directory)
+        for old_entry in old_manifest.products:
+            old_adapter = _resolve_adapter(old_entry.storage.adapter)
+            old_files.update(old_adapter.referenced_files(old_entry))
 
-    if bundle is None:
-        bundle = BundleDescriptor(
-            type_id=GENERIC_BUNDLE_TYPE_ID,
-            adapter_id=GENERIC_BUNDLE_ADAPTER_ID,
-            descriptor_schema=GENERIC_BUNDLE_TYPE_ID,
-            descriptor={},
-            product_roles={name: name for name in products},
+    token = uuid4().hex[:8]
+    staging = directory / f".staging-{token}"
+    staging.mkdir()
+    tmp_manifest = directory / f".{MANIFEST_FILENAME}.{token}.tmp"
+    moved: list[str] = []
+    new_files: set[str] = set()
+    try:
+        provenance_dict = dict(provenance or {})
+        parent_list = [str(parent) for parent in parents]
+        entries: list[ProductEntry] = []
+        for index, (name, dataset) in enumerate(products.items()):
+            if not isinstance(dataset, Dataset):
+                raise TypeError(
+                    f"product {name!r} must be a Dataset, got "
+                    f"{type(dataset).__name__}"
+                )
+            if dataset.is_artifact_backed:
+                dataset = dataset.materialize()
+            # Replacement writes fresh file names, so publishing can never
+            # clobber payload the old manifest still references.
+            stem = f"{index:02d}_{_sanitize(name)}"
+            if old_files:
+                stem = f"{stem}__r{token}"
+            storage = adapter.write_product(
+                name,
+                dataset,
+                staging,
+                shard_target_bytes=shard_target_bytes,
+                file_stem=stem,
+                layout=layout,
+            )
+            entry = ProductEntry(
+                name=name,
+                product_schema=dataset.schema,
+                storage=storage,
+                sha256=product_content_hash(name, dataset.schema, storage),
+            )
+            # Flush-time verification: re-read and hash every staged chunk
+            # before anything is published.
+            adapter.verify_product(entry, staging)
+            for file in adapter.referenced_files(entry):
+                if file in new_files:
+                    raise ArtifactError(
+                        f"writer produced a duplicate chunk file name {file!r}"
+                    )
+                new_files.add(file)
+            entries.append(entry)
+
+        if bundle is None:
+            bundle = BundleDescriptor(
+                type_id=GENERIC_BUNDLE_TYPE_ID,
+                adapter_id=GENERIC_BUNDLE_ADAPTER_ID,
+                descriptor_schema=GENERIC_BUNDLE_TYPE_ID,
+                descriptor={},
+                product_roles={name: name for name in products},
+            )
+        if artifact_id is None:
+            artifact_id = hashlib.sha256(
+                f"{datetime.now(UTC).isoformat()}-{sorted(products)}".encode()
+            ).hexdigest()[:16]
+        manifest = ArtifactManifestV3(
+            artifact_id=artifact_id,
+            created_at=datetime.now(UTC).isoformat(),
+            bundle=bundle,
+            products=entries,
+            provenance=provenance_dict,
+            parents=parent_list,
+            content_hash=artifact_content_hash(
+                bundle.model_dump(mode="json"), entries, provenance_dict, parent_list
+            ),
         )
-    if artifact_id is None:
-        artifact_id = hashlib.sha256(
-            f"{datetime.now(UTC).isoformat()}-{sorted(products)}".encode()
-        ).hexdigest()[:16]
-    manifest = ArtifactManifestV3(
-        artifact_id=artifact_id,
-        created_at=datetime.now(UTC).isoformat(),
-        bundle=bundle,
-        products=entries,
-        provenance=provenance_dict,
-        parents=parent_list,
-        content_hash=artifact_content_hash(
-            bundle.model_dump(mode="json"), entries, provenance_dict, parent_list
-        ),
-    )
-    manifest.write(directory)
+
+        # Publish chunks, then the manifest (atomic replace); the manifest
+        # is the commit point of the transaction.
+        for file in sorted(new_files):
+            os.replace(staging / file, directory / file)
+            moved.append(file)
+        tmp_manifest.write_text(
+            json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(tmp_manifest, manifest_path)
+    except BaseException:
+        tmp_manifest.unlink(missing_ok=True)
+        for file in moved:
+            (directory / file).unlink(missing_ok=True)
+        raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+    # The new manifest is live: only now may the replaced payload go away.
+    for file in old_files - new_files:
+        (directory / file).unlink(missing_ok=True)
     register_artifact_location(manifest.artifact_id, directory)
     return manifest
 

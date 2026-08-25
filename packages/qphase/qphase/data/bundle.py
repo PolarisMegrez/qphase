@@ -183,16 +183,18 @@ class GenericDataBundle:
     ) -> DatasetSaveReport:
         """Persist through the v3 manifest pipeline (DatasetResultProtocol)."""
         root = Path(path)
+        resolved = "single" if layout == "single" else "sharded"
         manifest = save_products(
             root,
             self._products,
             provenance=self._provenance,
             shard_target_bytes=shard_target_bytes,
             bundle=self._descriptor,
+            layout=resolved,
         )
         files = tuple(sorted(item for item in root.rglob("*") if item.is_file()))
         return DatasetSaveReport(
-            layout,
+            resolved,
             files,
             loader="+".join(
                 sorted({entry.storage.adapter for entry in manifest.products})
