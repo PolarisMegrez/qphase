@@ -7,13 +7,26 @@ persisted data products. It records, per artifact:
 - product names with their full :class:`ProductSchema`;
 - the storage adapter id and the per-variable chunk/shard mapping;
 - JSON provenance (plugin/config/backend fingerprints, conventions);
-- parent artifact ids and the public loader entry point
-  (``module:attr`` syntax, see :class:`~qphase.data.artifact.ArtifactRef`).
+- parent artifact ids.
+
+Trust model:
+
+- manifests and refs name *registered adapter ids* (``name/version``), never
+  Python code — restoring an artifact cannot import arbitrary modules;
+- all payload paths are validated as artifact-relative POSIX paths and
+  re-resolved under the artifact root at open time (no ``..``, absolute,
+  drive, UNC or symlink escapes);
+- integrity is verified in three layers: the manifest/product layer is
+  re-validated (cross-field and content hashes) at parse time, and each
+  payload chunk is hash/dtype/shape-verified on first read. ``content_hash``
+  is an integrity check against accidental corruption, not a digital
+  signature.
 
 Storage adapters implement :class:`StorageAdapterProtocol`; the NPZ 2.x
 adapter (:mod:`qphase.data.npz`) is the reference implementation. Other
 adapters (e.g. Zarr) can register through :func:`register_adapter` without
-changing the manifest format.
+changing the manifest format; registration never silently overwrites an
+existing adapter id.
 
 All manifest data is plain JSON; payload files use native dtypes only —
 restoring never requires ``allow_pickle``.
@@ -48,14 +61,22 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+import numpy as np
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..core.utils import canonical_json
 from .artifact import ArtifactRef
 from .datasets import Dataset, SpectralDataset, StatisticsDataset, TimeSeriesDataset
+from .errors import (
+    ArtifactAdapterError,
+    ArtifactCorruptError,
+    ArtifactError,
+    ArtifactNotFoundError,
+    ArtifactUnsupportedError,
+)
 from .kinds import DataKind
 from .product import RuntimeProductBacking
-from .schema import ProductSchema
+from .schema import ProductSchema, VariableSchema
 
 __all__ = [
     "ARTIFACT_SCHEMA_VERSION",
@@ -65,22 +86,25 @@ __all__ = [
     "ProductEntry",
     "ProductStorage",
     "StorageAdapterProtocol",
+    "artifact_content_hash",
+    "chunk_content_hash",
     "load_products",
+    "product_content_hash",
     "register_adapter",
+    "resolve_artifact_path",
     "save_products",
+    "validate_artifact_relative_path",
 ]
 
-#: Manifest schema identifier frozen for qphase 2.0 Phase 1.
+#: Manifest schema identifier for the qphase 2.x artifact format.
 ARTIFACT_SCHEMA_VERSION: Literal["qphase.artifact/3"] = "qphase.artifact/3"
 
 #: Manifest file name inside every artifact directory.
 MANIFEST_FILENAME = "artifact_manifest.json"
 
-#: Default public restore entry point (NPZ 2.x adapter).
-DEFAULT_LOADER = "qphase.data.npz:load_product_backing"
-
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_STEM_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
+_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:$")
 
 #: Default shard target: 64 MiB of payload per chunk.
 DEFAULT_SHARD_TARGET_BYTES = 64 * (1 << 20)
@@ -90,6 +114,135 @@ def _validate_sha256_digest(value: str) -> str:
     if not _SHA256_PATTERN.match(value):
         raise ValueError("expected a 64-character lowercase SHA-256 digest")
     return value
+
+
+# -- path safety --------------------------------------------------------------
+
+
+def validate_artifact_relative_path(value: str) -> str:
+    """Validate one manifest-relative POSIX payload path.
+
+    Payload paths must be non-empty relative POSIX paths: no absolute paths,
+    drive letters, UNC prefixes, empty/``.``/``..`` parts, backslashes or
+    NUL bytes. This is part of the loader's trusted path, not only of
+    development-time validators.
+    """
+    if not value or "\x00" in value:
+        raise ValueError("artifact paths must be non-empty and NUL-free")
+    if "\\" in value:
+        raise ValueError(
+            f"artifact paths must use POSIX separators, got {value!r}"
+        )
+    if value.startswith("/"):
+        raise ValueError(f"absolute artifact paths are not allowed: {value!r}")
+    parts = value.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(
+            f"artifact paths must not contain empty/'.'/'..' parts: {value!r}"
+        )
+    if ":" in parts[0] or _DRIVE_PATTERN.match(parts[0]):
+        raise ValueError(
+            f"drive/UNC artifact paths are not allowed: {value!r}"
+        )
+    return value
+
+
+def resolve_artifact_path(root: Path | str, relative: str) -> Path:
+    """Resolve a manifest-relative path, refusing escapes.
+
+    Re-validates the relative path and checks the fully resolved path stays
+    under the resolved artifact root, so symlink/junction escapes are
+    rejected at open time as well.
+    """
+    validate_artifact_relative_path(relative)
+    root_resolved = Path(root).resolve()
+    resolved = (root_resolved / relative).resolve()
+    if not resolved.is_relative_to(root_resolved):
+        raise ArtifactCorruptError(
+            f"artifact path escapes the artifact root: {relative!r}"
+        )
+    return resolved
+
+
+# -- layered content hashes -----------------------------------------------------
+
+
+def chunk_content_hash(
+    array: np.ndarray, logical_range: tuple[int, int] | None = None
+) -> str:
+    """Hash one chunk: canonical header + NUL + C-order payload bytes.
+
+    The header pins dtype (including byte order), shape, memory order and
+    the logical selection, so the same payload bytes reinterpreted as a
+    different dtype or shape never match. NaN payloads hash like any other
+    bit pattern; 0-d arrays are trivially C-contiguous.
+    """
+    contiguous = (
+        np.ascontiguousarray(array) if array.ndim else np.asarray(array)
+    )
+    header = canonical_json(
+        {
+            "dtype": np.dtype(contiguous.dtype).str,
+            "shape": list(contiguous.shape),
+            "order": "C",
+            "logical_range": list(logical_range)
+            if logical_range is not None
+            else None,
+        }
+    )
+    return hashlib.sha256(
+        header.encode("utf-8") + b"\x00" + contiguous.tobytes()
+    ).hexdigest()
+
+
+def product_content_hash(
+    name: str, product_schema: ProductSchema, storage: ProductStorage
+) -> str:
+    """Hash a product over its canonical storage descriptor."""
+    listing = {
+        "adapter": storage.adapter,
+        "name": name,
+        "schema": product_schema.fingerprint(),
+        "variables": {
+            variable: [
+                {
+                    "axis0_range": list(chunk.axis0_range)
+                    if chunk.axis0_range is not None
+                    else None,
+                    "dtype": chunk.dtype,
+                    "file": chunk.file,
+                    "key": chunk.key,
+                    "sha256": chunk.sha256,
+                    "shape": list(chunk.shape),
+                }
+                for chunk in chunks
+            ]
+            for variable, chunks in sorted(storage.variables.items())
+        },
+    }
+    return hashlib.sha256(canonical_json(listing).encode("utf-8")).hexdigest()
+
+
+def artifact_content_hash(
+    bundle: Mapping[str, Any] | None,
+    products: Sequence[ProductEntry],
+    provenance: Mapping[str, Any],
+    parents: Sequence[str],
+) -> str:
+    """Hash an artifact over bundle, products, provenance and parents."""
+    listing = {
+        "bundle": bundle,
+        "parents": sorted(parents),
+        "products": [
+            {"name": entry.name, "sha256": entry.sha256}
+            for entry in sorted(products, key=lambda entry: entry.name)
+        ],
+        "provenance": provenance,
+    }
+    return hashlib.sha256(canonical_json(listing).encode("utf-8")).hexdigest()
+
+
+# -- manifest models ------------------------------------------------------------
 
 
 class ChunkRecord(BaseModel):
@@ -109,6 +262,11 @@ class ChunkRecord(BaseModel):
     dtype: str
     sha256: str
     axis0_range: tuple[int, int] | None = None
+
+    @field_validator("file")
+    @classmethod
+    def _check_file(cls, value: str) -> str:
+        return validate_artifact_relative_path(value)
 
     @field_validator("sha256")
     @classmethod
@@ -134,7 +292,7 @@ class ProductEntry(BaseModel):
     product_schema: ProductSchema
     storage: ProductStorage
     sha256: str = Field(
-        description="Content hash over the product's chunk hashes."
+        description="Content hash over the canonical storage descriptor."
     )
 
     @field_validator("sha256")
@@ -151,21 +309,48 @@ class ArtifactManifestV3(BaseModel):
     schema_version: Literal["qphase.artifact/3"] = ARTIFACT_SCHEMA_VERSION
     artifact_id: str = Field(min_length=1)
     created_at: str
-    loader: str = Field(
-        default=DEFAULT_LOADER,
-        description="Public restore entry point in 'module:attr' syntax.",
-    )
     products: list[ProductEntry] = Field(default_factory=list)
     provenance: dict[str, Any] = Field(default_factory=dict)
     parents: list[str] = Field(default_factory=list)
     content_hash: str = Field(
-        description="SHA-256 over the canonical product/parent listing."
+        description="SHA-256 over the canonical bundle/product/provenance/"
+        "parent listing. An integrity check, not a digital signature."
     )
 
     @field_validator("content_hash")
     @classmethod
     def _check_content_hash(cls, value: str) -> str:
         return _validate_sha256_digest(value)
+
+    @field_validator("created_at")
+    @classmethod
+    def _check_created_at(cls, value: str) -> str:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"created_at must be an ISO 8601 timestamp, got {value!r}"
+            ) from exc
+        if parsed.tzinfo is None:
+            raise ValueError("created_at must carry timezone information")
+        return value
+
+    @field_validator("products")
+    @classmethod
+    def _check_unique_products(
+        cls, value: list[ProductEntry]
+    ) -> list[ProductEntry]:
+        names = [entry.name for entry in value]
+        if len(set(names)) != len(names):
+            raise ValueError("artifact product names must be unique")
+        return value
+
+    @field_validator("parents")
+    @classmethod
+    def _check_unique_parents(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("artifact parents must be unique")
+        return value
 
     @field_validator("provenance")
     @classmethod
@@ -189,9 +374,10 @@ class ArtifactManifestV3(BaseModel):
         """Build the durable reference of one product."""
         entry = self.product_entry(name)
         return ArtifactRef(
-            artifact_id=f"{self.artifact_id}:{name}",
+            artifact_id=self.artifact_id,
+            product_name=name,
             product_schema=entry.product_schema,
-            loader=self.loader,
+            storage_adapter=entry.storage.adapter,
             content_hash=entry.sha256,
         )
 
@@ -206,18 +392,173 @@ class ArtifactManifestV3(BaseModel):
 
     @classmethod
     def read(cls, directory: Path | str) -> ArtifactManifestV3:
-        """Read and validate the v3 manifest of an artifact directory."""
+        """Read and fully validate the v3 manifest of an artifact directory.
+
+        Raises typed errors: :class:`ArtifactNotFoundError` when no manifest
+        exists, :class:`ArtifactUnsupportedError` for other schema versions
+        and :class:`ArtifactCorruptError` for parse, cross-field or hash
+        failures.
+        """
         path = Path(directory) / MANIFEST_FILENAME
         if not path.exists():
-            raise FileNotFoundError(f"no artifact manifest at {path}")
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        version = raw.get("schema_version")
+            raise ArtifactNotFoundError(f"no artifact manifest at {path}")
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ArtifactCorruptError(
+                f"failed to parse artifact manifest {path}: {exc}"
+            ) from exc
+        version = raw.get("schema_version") if isinstance(raw, dict) else None
         if version != ARTIFACT_SCHEMA_VERSION:
-            raise ValueError(
+            raise ArtifactUnsupportedError(
                 f"unsupported artifact schema version {version!r}; expected "
                 f"{ARTIFACT_SCHEMA_VERSION!r}"
             )
-        return cls.model_validate(raw)
+        try:
+            manifest = cls.model_validate(raw)
+        except ValidationError as exc:
+            raise ArtifactCorruptError(
+                f"artifact manifest {path} is invalid: {exc}"
+            ) from exc
+        manifest._cross_validate(Path(directory))
+        return manifest
+
+    def _cross_validate(self, directory: Path) -> None:
+        """Cross-field, path-safety and content-hash validation layer."""
+        files: dict[str, str] = {}
+        for entry in self.products:
+            _validate_product_entry(entry)
+            for variable, chunks in entry.storage.variables.items():
+                owner = f"{entry.name}.{variable}"
+                for chunk in chunks:
+                    previous = files.setdefault(chunk.file, owner)
+                    if previous != owner:
+                        raise ArtifactCorruptError(
+                            f"chunk file {chunk.file!r} is referenced by both "
+                            f"{previous} and {owner}"
+                        )
+                    resolve_artifact_path(directory, chunk.file)
+            expected = product_content_hash(
+                entry.name, entry.product_schema, entry.storage
+            )
+            if entry.sha256 != expected:
+                raise ArtifactCorruptError(
+                    f"product {entry.name!r} content hash mismatch: the "
+                    "manifest was modified after writing"
+                )
+        expected_content = artifact_content_hash(
+            None, self.products, self.provenance, self.parents
+        )
+        if self.content_hash != expected_content:
+            raise ArtifactCorruptError(
+                "artifact content hash mismatch: the manifest was modified "
+                "after writing"
+            )
+
+
+# -- cross-field validation -----------------------------------------------------
+
+
+def _validate_product_entry(entry: ProductEntry) -> None:
+    """Validate storage/schema consistency of one product entry."""
+    schema_vars = {
+        variable.name: variable for variable in entry.product_schema.variables
+    }
+    storage_vars = entry.storage.variables
+    missing = sorted(set(schema_vars) - set(storage_vars))
+    extra = sorted(set(storage_vars) - set(schema_vars))
+    if missing or extra:
+        raise ArtifactCorruptError(
+            f"storage variables of product {entry.name!r} do not match the "
+            f"product schema (missing: {missing}, extra: {extra})"
+        )
+    for name, variable in schema_vars.items():
+        _validate_variable_chunks(
+            entry.name, variable, entry.product_schema, storage_vars[name]
+        )
+
+
+def _validate_variable_chunks(
+    product: str,
+    variable: VariableSchema,
+    schema: ProductSchema,
+    chunks: list[ChunkRecord],
+) -> None:
+    """Validate chunk dtype/shape/coverage against the variable schema."""
+    label = f"variable {variable.name!r} of product {product!r}"
+    if not chunks:
+        raise ArtifactCorruptError(f"{label} has no storage chunks")
+    expected_dtype = np.dtype(variable.dtype)
+    axes = [schema.axis(dim) for dim in variable.dims]
+    for chunk in chunks:
+        if np.dtype(chunk.dtype) != expected_dtype:
+            raise ArtifactCorruptError(
+                f"{label} chunk {chunk.file!r} has dtype {chunk.dtype!r}, "
+                f"expected {expected_dtype.str!r}"
+            )
+        if len(chunk.shape) != len(variable.dims):
+            raise ArtifactCorruptError(
+                f"{label} chunk {chunk.file!r} has rank {len(chunk.shape)}, "
+                f"expected {len(variable.dims)}"
+            )
+    if len(chunks) == 1:
+        chunk = chunks[0]
+        if chunk.axis0_range is not None:
+            raise ArtifactCorruptError(
+                f"{label} is unsharded but declares an axis0_range"
+            )
+        for axis, size in zip(axes, chunk.shape, strict=True):
+            if axis.size is not None and axis.size != size:
+                raise ArtifactCorruptError(
+                    f"{label} chunk shape {chunk.shape} does not match the "
+                    f"closed axis {axis.name!r} of size {axis.size}"
+                )
+        return
+    if not variable.dims:
+        raise ArtifactCorruptError(f"{label} is scalar but has multiple chunks")
+    expected_start = 0
+    for chunk in chunks:
+        if chunk.axis0_range is None:
+            raise ArtifactCorruptError(
+                f"{label} chunk {chunk.file!r} misses its axis0_range"
+            )
+        start, stop = chunk.axis0_range
+        if not 0 <= start < stop:
+            raise ArtifactCorruptError(
+                f"{label} chunk {chunk.file!r} has out-of-bounds range "
+                f"[{start}, {stop})"
+            )
+        if chunk.shape[0] != stop - start:
+            raise ArtifactCorruptError(
+                f"{label} chunk {chunk.file!r} shape {chunk.shape} does not "
+                f"match its range [{start}, {stop})"
+            )
+        if start != expected_start:
+            raise ArtifactCorruptError(
+                f"{label} chunks overlap, gap or are out of order at "
+                f"[{start}, {stop}); expected start {expected_start}"
+            )
+        expected_start = stop
+    tail = chunks[0].shape[1:]
+    for chunk in chunks[1:]:
+        if chunk.shape[1:] != tail:
+            raise ArtifactCorruptError(
+                f"{label} chunks have inconsistent trailing dimensions"
+            )
+    for axis, size in zip(axes[1:], tail, strict=True):
+        if axis.size is not None and axis.size != size:
+            raise ArtifactCorruptError(
+                f"{label} chunk shape does not match the closed axis "
+                f"{axis.name!r} of size {axis.size}"
+            )
+    if axes[0].size is not None and expected_start != axes[0].size:
+        raise ArtifactCorruptError(
+            f"{label} chunks cover [0, {expected_start}) but the closed axis "
+            f"{axes[0].name!r} has size {axes[0].size}"
+        )
+
+
+# -- storage adapter registry ---------------------------------------------------
 
 
 @runtime_checkable
@@ -225,9 +566,10 @@ class StorageAdapterProtocol(Protocol):
     """Persistence adapter contract for typed data products.
 
     Adapters write a runtime-backed dataset as chunk files plus a storage
-    record, and reopen a storage record as a lazily-reading runtime backing.
-    The NPZ 2.x adapter is the reference implementation; further adapters
-    (e.g. Zarr) plug in without manifest changes.
+    record, reopen a storage record as a lazily-reading runtime backing and
+    restore artifact refs. The NPZ 2.x adapter is the reference
+    implementation; further adapters (e.g. Zarr) plug in without manifest
+    changes.
     """
 
     @property
@@ -253,25 +595,41 @@ class StorageAdapterProtocol(Protocol):
         """Open a stored product as a lazily-reading runtime backing."""
         ...
 
+    def open_ref(self, ref: ArtifactRef) -> RuntimeProductBacking:
+        """Open the product referenced by an artifact ref."""
+        ...
 
-_ADAPTERS: dict[str, Any] = {}
+
+_ADAPTERS: dict[str, StorageAdapterProtocol] = {}
 
 
 def register_adapter(adapter: StorageAdapterProtocol) -> None:
-    """Register a storage adapter under its adapter id."""
+    """Register a storage adapter under its adapter id.
+
+    Registration never silently overwrites an existing id: upgrades must use
+    a new adapter id (and descriptor schema), so persisted artifacts keep
+    their original semantics.
+    """
+    existing = _ADAPTERS.get(adapter.adapter_id)
+    if existing is not None and existing is not adapter:
+        raise ArtifactAdapterError(
+            f"storage adapter {adapter.adapter_id!r} is already registered; "
+            "refusing to overwrite it"
+        )
     _ADAPTERS[adapter.adapter_id] = adapter
 
 
 def _resolve_adapter(adapter_id: str) -> StorageAdapterProtocol:
     if adapter_id not in _ADAPTERS:
-        # Ensure the built-in NPZ adapter is registered.
+        # Ensure the built-in NPZ adapter is registered (exactly once).
         from .npz import NpzStorageAdapter
 
-        register_adapter(NpzStorageAdapter())
+        if NpzStorageAdapter.ADAPTER_ID not in _ADAPTERS:
+            register_adapter(NpzStorageAdapter())
     try:
         return _ADAPTERS[adapter_id]
     except KeyError:
-        raise ValueError(
+        raise ArtifactAdapterError(
             f"unknown storage adapter {adapter_id!r}; registered: "
             f"{sorted(_ADAPTERS)}"
         ) from None
@@ -288,21 +646,7 @@ def _sanitize(name: str) -> str:
     return _SAFE_STEM_PATTERN.sub("_", name) or "product"
 
 
-def _content_hash(
-    products: Sequence[ProductEntry], parents: Sequence[str]
-) -> str:
-    listing = {
-        "parents": sorted(parents),
-        "products": [
-            {
-                "name": entry.name,
-                "schema": entry.product_schema.fingerprint(),
-                "sha256": entry.sha256,
-            }
-            for entry in sorted(products, key=lambda entry: entry.name)
-        ],
-    }
-    return hashlib.sha256(canonical_json(listing).encode("utf-8")).hexdigest()
+# -- write/read entry points ----------------------------------------------------
 
 
 def save_products(
@@ -337,7 +681,10 @@ def save_products(
     )
 
     adapter = _resolve_adapter(NpzStorageAdapter.ADAPTER_ID)
+    provenance_dict = dict(provenance or {})
+    parent_list = [str(parent) for parent in parents]
     entries: list[ProductEntry] = []
+    used_files: set[str] = set()
     for index, (name, dataset) in enumerate(products.items()):
         if not isinstance(dataset, Dataset):
             raise TypeError(
@@ -353,19 +700,20 @@ def save_products(
             shard_target_bytes=shard_target_bytes,
             file_stem=f"{index:02d}_{_sanitize(name)}",
         )
-        product_hash = hashlib.sha256(
-            "\n".join(
-                chunk.sha256
-                for chunks in storage.variables.values()
-                for chunk in chunks
-            ).encode("utf-8")
-        ).hexdigest()
+        for chunks in storage.variables.values():
+            for chunk in chunks:
+                if chunk.file in used_files:
+                    raise ArtifactError(
+                        f"writer produced a duplicate chunk file name "
+                        f"{chunk.file!r}"
+                    )
+                used_files.add(chunk.file)
         entries.append(
             ProductEntry(
                 name=name,
                 product_schema=dataset.schema,
                 storage=storage,
-                sha256=product_hash,
+                sha256=product_content_hash(name, dataset.schema, storage),
             )
         )
 
@@ -378,13 +726,14 @@ def save_products(
         artifact_id=artifact_id,
         created_at=datetime.now(UTC).isoformat(),
         products=entries,
-        provenance=dict(provenance or {}),
-        parents=[str(parent) for parent in parents],
-        content_hash=_content_hash(entries, parents),
+        provenance=provenance_dict,
+        parents=parent_list,
+        content_hash=artifact_content_hash(
+            None, entries, provenance_dict, parent_list
+        ),
     )
     manifest.write(directory)
-    for entry in entries:
-        register_product_location(manifest.artifact_id, entry.name, directory)
+    register_product_location(manifest.artifact_id, directory)
     return manifest
 
 
@@ -393,6 +742,8 @@ def load_products(directory: Path | str) -> dict[str, Dataset]:
 
     Payloads are not read: the returned datasets are backed by lazy handles
     that load chunks on demand (and only the chunks a selection touches).
+    The manifest is fully validated first; unknown storage adapters raise
+    :class:`ArtifactAdapterError`.
     """
     from .npz import register_product_location
 
@@ -412,5 +763,5 @@ def load_products(directory: Path | str) -> dict[str, Dataset]:
                 "product": entry.name,
             },
         )
-        register_product_location(manifest.artifact_id, entry.name, directory)
+    register_product_location(manifest.artifact_id, directory)
     return result

@@ -205,7 +205,7 @@ def test_scheduler_service_describes_products_without_materializing(tmp_path):
 
     assert catalog.artifact_id == manifest.artifact_id
     assert catalog.content_hash == manifest.content_hash
-    assert catalog.loader == manifest.loader
+    assert catalog.loader == "npz/2"
     assert catalog.size > 0
     assert len(catalog.products) == 1
     product = catalog.products[0]

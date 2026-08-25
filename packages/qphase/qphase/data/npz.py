@@ -10,17 +10,16 @@ Layout rules:
   included) — never object arrays, so restoring never needs
   ``allow_pickle``;
 - metadata lives only in the manifest JSON, never inside the NPZ;
-- every chunk carries a SHA-256 over its C-contiguous payload bytes,
-  verified on each read;
+- every chunk carries a content hash over its dtype/shape/order/selection
+  header plus its C-contiguous payload bytes, verified on each read together
+  with the actual dtype, shape and key set;
 - reopening a product is lazy: handles expose shape/dtype/nbytes from the
-  manifest without reading, and selections read only the chunks they touch
-  (no full concatenation for point/chunk access).
+  validated manifest without reading, and selections read only the chunks
+  they touch (no full concatenation for point/chunk access).
 
-The module keeps a process-local registry mapping product-scoped artifact
-ids (``"{artifact_id}:{product}"``) to artifact directories, so that
-:class:`~qphase.data.artifact.ArtifactRef`-backed datasets can resolve their
-storage context through the public loader entry point
-:func:`load_product_backing`. The registry is populated by
+The module keeps a process-local registry mapping artifact ids to artifact
+directories, so that :class:`~qphase.data.artifact.ArtifactRef`-backed
+datasets can resolve their storage context. The registry is populated by
 ``save_products``/``load_products``; cross-process restores must open the
 artifact directory once before dereferencing refs.
 
@@ -33,14 +32,13 @@ NpzArrayHandle
 ShardedNpzArrayHandle
     Lazy sharded array handle with chunk-pruning selection reads.
 load_product_backing
-    Public artifact loader entry point recorded in manifests.
+    Registry-backed restore entry point for NPZ artifact refs.
 register_product_location
-    Register the on-disk location of one product.
+    Register the on-disk location of one artifact.
 """
 
 from __future__ import annotations
 
-import hashlib
 import math
 from pathlib import Path
 from typing import Any, ClassVar
@@ -49,11 +47,23 @@ import numpy as np
 
 from .artifact import ArtifactRef
 from .datasets import Dataset
+from .errors import (
+    ArtifactAdapterError,
+    ArtifactChecksumError,
+    ArtifactCorruptError,
+    ArtifactNotFoundError,
+)
 from .handles import CopyPolicy
 from .product import RuntimeProductBacking
 from .runtime import DictProductBacking, _ArrayHandleBase
 from .schema import VariableSchema
-from .store import ChunkRecord, ProductEntry, ProductStorage
+from .store import (
+    ChunkRecord,
+    ProductEntry,
+    ProductStorage,
+    chunk_content_hash,
+    resolve_artifact_path,
+)
 
 __all__ = [
     "NpzArrayHandle",
@@ -65,39 +75,57 @@ __all__ = [
 
 _KEY = "data"
 
-# Process-local product location registry: "{artifact_id}:{product}" -> dir.
+# Process-local artifact location registry: artifact_id -> directory.
 _LOCATIONS: dict[str, Path] = {}
 
 
-def register_product_location(
-    artifact_id: str, product: str, directory: Path
-) -> None:
-    """Register the on-disk location of one product of an artifact."""
-    _LOCATIONS[f"{artifact_id}:{product}"] = Path(directory)
+def register_product_location(artifact_id: str, directory: Path) -> None:
+    """Register the on-disk location of one artifact."""
+    _LOCATIONS[artifact_id] = Path(directory)
 
 
-def _hash_array(array: np.ndarray) -> str:
-    return hashlib.sha256(np.ascontiguousarray(array).tobytes()).hexdigest()
-
-
-def _read_chunk(path: Path, key: str, sha256: str) -> np.ndarray:
-    """Read one chunk file and verify its content hash.
+def _read_chunk(path: Path, record: ChunkRecord) -> np.ndarray:
+    """Read one chunk file and verify key set, dtype, shape and hash.
 
     ``allow_pickle`` is never enabled: chunk files hold native-dtype arrays
-    only, so a payload that would require pickle is rejected by NumPy.
+    only, so a payload that would require pickle is rejected by NumPy. The
+    content hash covers the dtype/shape/order/selection header plus the
+    C-order payload bytes, so reinterpreted payloads never verify.
     """
     try:
         with np.load(path) as npz:
-            array = np.asarray(npz[key])
+            keys = set(npz.files)
+            if keys != {record.key}:
+                raise ArtifactCorruptError(
+                    f"artifact chunk {path} holds keys {sorted(keys)}, "
+                    f"expected exactly {record.key!r}"
+                )
+            array = np.asarray(npz[record.key])
     except FileNotFoundError:
-        raise RuntimeError(f"artifact chunk file is missing: {path}") from None
+        raise ArtifactNotFoundError(
+            f"artifact chunk file is missing: {path}"
+        ) from None
+    except (ArtifactCorruptError, ArtifactNotFoundError):
+        raise
     except Exception as exc:
-        raise RuntimeError(f"failed to read artifact chunk {path}: {exc}") from exc
-    actual = _hash_array(array)
-    if actual != sha256:
-        raise RuntimeError(
-            f"checksum mismatch for artifact chunk {path}: expected {sha256}, "
-            f"got {actual}"
+        raise ArtifactCorruptError(
+            f"failed to read artifact chunk {path}: {exc}"
+        ) from exc
+    if np.dtype(array.dtype) != np.dtype(record.dtype):
+        raise ArtifactChecksumError(
+            f"artifact chunk {path} has dtype {array.dtype.str!r}, expected "
+            f"{np.dtype(record.dtype).str!r}"
+        )
+    if tuple(array.shape) != tuple(record.shape):
+        raise ArtifactChecksumError(
+            f"artifact chunk {path} has shape {tuple(array.shape)}, expected "
+            f"{tuple(record.shape)}"
+        )
+    actual = chunk_content_hash(array, record.axis0_range)
+    if actual != record.sha256:
+        raise ArtifactChecksumError(
+            f"checksum mismatch for artifact chunk {path}: expected "
+            f"{record.sha256}, got {actual}"
         )
     return array
 
@@ -108,18 +136,14 @@ class NpzArrayHandle(_ArrayHandleBase):
     def __init__(
         self,
         path: Path,
-        key: str,
+        record: ChunkRecord,
         variable_schema: VariableSchema,
         *,
-        shape: tuple[int, ...],
-        sha256: str,
         owner: str,
     ) -> None:
         super().__init__(variable_schema, owner=owner, read_only=True)
         self._path = path
-        self._key = key
-        self._shape = tuple(shape)
-        self._sha256 = sha256
+        self._record = record
 
     @property
     def device(self) -> str:
@@ -134,12 +158,12 @@ class NpzArrayHandle(_ArrayHandleBase):
     @property
     def shape(self) -> tuple[int, ...]:
         """Shape of the payload (manifest metadata, never reads the file)."""
-        return self._shape
+        return tuple(self._record.shape)
 
     @property
     def nbytes(self) -> int:
         """Payload size in bytes (manifest metadata, never reads the file)."""
-        size = int(np.prod(self._shape, dtype=np.int64)) if self._shape else 1
+        size = int(np.prod(self.shape, dtype=np.int64)) if self.shape else 1
         return size * np.dtype(self._variable_schema.dtype).itemsize
 
     def materialize(
@@ -154,7 +178,7 @@ class NpzArrayHandle(_ArrayHandleBase):
                 f"npz handle cannot materialize on {target_device!r}; device "
                 "transfers are performed by backends creating backend handles"
             )
-        return _read_chunk(self._path, self._key, self._sha256)
+        return _read_chunk(self._path, self._record)
 
     def materialize_selection(self, indexers: tuple[Any, ...]) -> np.ndarray:
         """Read the chunk and apply the selection (single-chunk fast path)."""
@@ -172,7 +196,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
 
     def __init__(
         self,
-        chunks: list[tuple[Path, str, tuple[int, int], str]],
+        chunks: list[tuple[Path, ChunkRecord]],
         variable_schema: VariableSchema,
         *,
         shape: tuple[int, ...],
@@ -185,13 +209,20 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
                 "a full shape matching the variable dims"
             )
         expected = 0
-        for path, _key, axis0_range, _sha256 in chunks:
-            start, stop = axis0_range
+        ranges: list[tuple[int, int]] = []
+        for _path, record in chunks:
+            if record.axis0_range is None:
+                raise ValueError(
+                    f"sharded handle chunk {record.file!r} misses its "
+                    "axis0_range"
+                )
+            start, stop = record.axis0_range
             if start != expected:
                 raise ValueError(
                     f"sharded handle chunks must be contiguous: expected start "
-                    f"{expected}, got {start} ({path})"
+                    f"{expected}, got {start} ({record.file})"
                 )
+            ranges.append((start, stop))
             expected = stop
         if expected != shape[0]:
             raise ValueError(
@@ -199,6 +230,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
                 f"declares {shape[0]} rows"
             )
         self._chunks = chunks
+        self._ranges = ranges
         self._shape = tuple(shape)
 
     @property
@@ -228,10 +260,10 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         return len(self._chunks)
 
     def read_chunk(self, index: int) -> np.ndarray:
-        """Read one chunk file (with checksum verification)."""
+        """Read one chunk file (with full content verification)."""
         self._check_live()
-        path, key, _axis0_range, sha256 = self._chunks[index]
-        return _read_chunk(path, key, sha256)
+        path, record = self._chunks[index]
+        return _read_chunk(path, record)
 
     def materialize(
         self,
@@ -268,9 +300,11 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
             row = int(selector)
             if row < 0:
                 row += self._shape[0]
-            for path, key, (start, stop), sha256 in self._chunks:
+            for (path, record), (start, stop) in zip(
+                self._chunks, self._ranges, strict=True
+            ):
                 if start <= row < stop:
-                    return _read_chunk(path, key, sha256)[row - start, *rest]
+                    return _read_chunk(path, record)[row - start, *rest]
             raise IndexError(
                 f"index {selector} out of bounds for axis of size "
                 f"{self._shape[0]}"
@@ -285,11 +319,13 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
                     return empty[(slice(None), *rest)]
                 base = 0
                 parts: list[np.ndarray] = []
-                for path, key, (c0, c1), sha256 in self._chunks:
+                for (path, record), (c0, c1) in zip(
+                    self._chunks, self._ranges, strict=True
+                ):
                     if c0 < stop and c1 > start:
                         if not parts:
                             base = c0
-                        parts.append(_read_chunk(path, key, sha256))
+                        parts.append(_read_chunk(path, record))
                 data = (
                     parts[0] if len(parts) == 1 else np.concatenate(parts, axis=0)
                 )
@@ -298,7 +334,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
 
 
 class NpzStorageAdapter:
-    """NPZ 2.x storage adapter: native dtypes, per-chunk checksums."""
+    """NPZ 2.x storage adapter: native dtypes, per-chunk content hashes."""
 
     ADAPTER_ID: ClassVar[str] = "npz/2"
 
@@ -337,27 +373,31 @@ class NpzStorageAdapter:
     def open_product(
         self, entry: ProductEntry, directory: Path
     ) -> RuntimeProductBacking:
-        """Open a stored product as lazily-reading runtime handles."""
+        """Open a stored product as lazily-reading runtime handles.
+
+        Every chunk path is re-resolved under the artifact root and checked
+        for existence; payloads themselves are only read on demand.
+        """
         directory = Path(directory)
         handles: dict[str, Any] = {}
         for variable in entry.product_schema.variables:
             try:
                 chunks = entry.storage.variables[variable.name]
             except KeyError:
-                raise ValueError(
+                raise ArtifactCorruptError(
                     f"storage of product {entry.name!r} misses variable "
                     f"{variable.name!r}"
                 ) from None
             owner = f"npz:{entry.name}"
+            paths = [resolve_artifact_path(directory, chunk.file) for chunk in chunks]
+            for path in paths:
+                if not path.is_file():
+                    raise ArtifactNotFoundError(
+                        f"artifact chunk file is missing: {path}"
+                    )
             if len(chunks) == 1:
-                chunk = chunks[0]
                 handles[variable.name] = NpzArrayHandle(
-                    directory / chunk.file,
-                    chunk.key,
-                    variable,
-                    shape=chunk.shape,
-                    sha256=chunk.sha256,
-                    owner=owner,
+                    paths[0], chunks[0], variable, owner=owner
                 )
             else:
                 full_shape = (
@@ -365,22 +405,49 @@ class NpzStorageAdapter:
                     *chunks[0].shape[1:],
                 )
                 handles[variable.name] = ShardedNpzArrayHandle(
-                    [
-                        (
-                            directory / chunk.file,
-                            chunk.key,
-                            (chunk.axis0_range[0], chunk.axis0_range[1])
-                            if chunk.axis0_range is not None
-                            else (0, chunk.shape[0]),
-                            chunk.sha256,
-                        )
-                        for chunk in chunks
-                    ],
+                    list(zip(paths, chunks, strict=True)),
                     variable,
                     shape=full_shape,
                     owner=owner,
                 )
         return DictProductBacking(handles)
+
+    def open_ref(self, ref: ArtifactRef) -> RuntimeProductBacking:
+        """Open the product referenced by an NPZ artifact ref."""
+        if ref.storage_adapter != self.ADAPTER_ID:
+            raise ArtifactAdapterError(
+                f"artifact ref requires adapter {ref.storage_adapter!r}, "
+                f"not {self.ADAPTER_ID!r}"
+            )
+        try:
+            directory = _LOCATIONS[ref.artifact_id]
+        except KeyError:
+            raise ArtifactNotFoundError(
+                f"artifact {ref.artifact_id!r} is not registered in this "
+                "process; open the artifact directory through "
+                "qphase.data.store.load_products first"
+            ) from None
+        from .store import ArtifactManifestV3  # local: avoid an import cycle
+
+        manifest = ArtifactManifestV3.read(directory)
+        try:
+            entry = manifest.product_entry(ref.product_name)
+        except KeyError:
+            raise ArtifactNotFoundError(
+                f"artifact {ref.artifact_id!r} has no product "
+                f"{ref.product_name!r}"
+            ) from None
+        if entry.product_schema != ref.product_schema:
+            raise ArtifactChecksumError(
+                f"artifact {ref.artifact_id!r} product schema does not match "
+                "the reference"
+            )
+        if entry.sha256 != ref.content_hash:
+            raise ArtifactChecksumError(
+                f"artifact {ref.artifact_id!r} content hash does not match "
+                "the reference"
+            )
+        return self.open_product(entry, directory)
 
     # -- internals -----------------------------------------------------------
 
@@ -413,7 +480,7 @@ class NpzStorageAdapter:
                         key=_KEY,
                         shape=tuple(chunk.shape),
                         dtype=np.dtype(chunk.dtype).str,
-                        sha256=_hash_array(chunk),
+                        sha256=chunk_content_hash(chunk, (start, stop)),
                         axis0_range=(start, stop),
                     )
                 )
@@ -426,7 +493,7 @@ class NpzStorageAdapter:
                 key=_KEY,
                 shape=tuple(array.shape),
                 dtype=np.dtype(array.dtype).str,
-                sha256=_hash_array(array),
+                sha256=chunk_content_hash(array),
             )
         ]
 
@@ -436,33 +503,11 @@ def _sanitize_stem(name: str) -> str:
 
 
 def load_product_backing(ref: ArtifactRef) -> RuntimeProductBacking:
-    """Public restore entry point recorded in v3 manifests.
+    """Restore entry point for NPZ-backed artifact refs.
 
     Resolves the artifact's on-disk location through the process-local
     registry populated by ``save_products``/``load_products`` and opens the
-    product as a lazily-reading runtime backing.
+    product as a lazily-reading runtime backing. Datasets reach this through
+    the storage adapter registry, never through a persisted code path.
     """
-    from .store import ArtifactManifestV3  # local: avoid an import cycle
-
-    try:
-        directory = _LOCATIONS[ref.artifact_id]
-    except KeyError:
-        raise RuntimeError(
-            f"artifact {ref.artifact_id!r} is not registered in this process; "
-            "open the artifact directory through "
-            "qphase.data.store.load_products first"
-        ) from None
-    product = ref.artifact_id.rsplit(":", 1)[-1]
-    manifest = ArtifactManifestV3.read(directory)
-    entry = manifest.product_entry(product)
-    if entry.product_schema != ref.product_schema:
-        raise RuntimeError(
-            f"artifact {ref.artifact_id!r} product schema does not match the "
-            "reference"
-        )
-    if entry.sha256 != ref.content_hash:
-        raise RuntimeError(
-            f"artifact {ref.artifact_id!r} content hash does not match the "
-            "reference"
-        )
-    return NpzStorageAdapter().open_product(entry, directory)
+    return NpzStorageAdapter().open_ref(ref)

@@ -421,7 +421,9 @@ class SDEDataBundle:
         return DatasetSaveReport(
             "single" if layout == "single" else "sharded",
             files,
-            loader=manifest.loader,
+            loader="+".join(
+                sorted({entry.storage.adapter for entry in manifest.products})
+            ),
             schema_version=ARTIFACT_SCHEMA_VERSION,
         )
 

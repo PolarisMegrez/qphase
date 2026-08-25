@@ -65,8 +65,12 @@ from qphase.data import (
     VariableSchema,
     save_products,
 )
-from qphase.data.npz import NpzStorageAdapter, _hash_array
-from qphase.data.store import _content_hash
+from qphase.data.npz import NpzStorageAdapter
+from qphase.data.store import (
+    artifact_content_hash,
+    chunk_content_hash,
+    product_content_hash,
+)
 
 from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.result import (
@@ -438,15 +442,9 @@ def _write_chunk(
         key=_CHUNK_KEY,
         shape=tuple(chunk.shape),
         dtype=np.dtype(chunk.dtype).str,
-        sha256=_hash_array(chunk),
+        sha256=chunk_content_hash(chunk, (index, index + 1)),
         axis0_range=(index, index + 1),
     )
-
-
-def _product_hash(entries: list[ChunkRecord]) -> str:
-    return hashlib.sha256(
-        "\n".join(chunk.sha256 for chunk in entries).encode("utf-8")
-    ).hexdigest()
 
 
 def _fused_trajectory_schema(
@@ -715,16 +713,17 @@ def migrate_scan_artifact(
             if product_name == "trajectories"
             else analysis_schemas[product_name]
         )
-        all_chunks = [chunk for chunks in records.values() for chunk in chunks]
+        assert schema is not None  # None-schema products are never listed
+        storage = ProductStorage(
+            adapter=NpzStorageAdapter.ADAPTER_ID,
+            variables=records,
+        )
         entries.append(
             ProductEntry(
                 name=product_name,
                 product_schema=schema,
-                storage=ProductStorage(
-                    adapter=NpzStorageAdapter.ADAPTER_ID,
-                    variables=records,
-                ),
-                sha256=_product_hash(all_chunks),
+                storage=storage,
+                sha256=product_content_hash(product_name, schema, storage),
             )
         )
 
@@ -757,8 +756,8 @@ def migrate_scan_artifact(
         products=entries,
         provenance=provenance,
         parents=[sources[manifest_path.name]],
-        content_hash=_content_hash(
-            entries, [sources[manifest_path.name]]
+        content_hash=artifact_content_hash(
+            None, entries, provenance, [sources[manifest_path.name]]
         ),
     )
     manifest.write(output_dir)

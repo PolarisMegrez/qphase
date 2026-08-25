@@ -4,7 +4,6 @@ import json
 
 import numpy as np
 import pytest
-
 from qphase.data import (
     ArtifactRef,
     AxisRole,
@@ -25,17 +24,34 @@ from qphase.data import (
 )
 
 
-def _fake_loader(ref: ArtifactRef) -> DictProductBacking:
-    """Test loader: opens zero-filled host arrays for the ref's schema."""
-    handles = {}
-    for variable in ref.product_schema.variables:
-        shape = tuple(
-            ref.product_schema.axis(dim).size or 0 for dim in variable.dims
-        )
-        handles[variable.name] = HostArrayHandle(
-            np.zeros(shape, dtype=variable.dtype), variable, owner="test.loader"
-        )
-    return DictProductBacking(handles)
+class _FakeAdapter:
+    """Test adapter: opens zero-filled host arrays for the ref's schema."""
+
+    @property
+    def adapter_id(self) -> str:
+        return "fake/1"
+
+    def write_product(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def open_product(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def open_ref(self, ref: ArtifactRef) -> DictProductBacking:
+        handles = {}
+        for variable in ref.product_schema.variables:
+            shape = tuple(
+                ref.product_schema.axis(dim).size or 0 for dim in variable.dims
+            )
+            handles[variable.name] = HostArrayHandle(
+                np.zeros(shape, dtype=variable.dtype),
+                variable,
+                owner="test.loader",
+            )
+        return DictProductBacking(handles)
+
+
+_FAKE_ADAPTER = _FakeAdapter()
 
 
 def _time_series_schema() -> ProductSchema:
@@ -345,11 +361,15 @@ def test_point_view_sampling_basis_rules():
 
 
 def test_artifact_backed_dataset_materializes_through_loader():
+    from qphase.data import ArtifactAdapterError, register_adapter
+
+    register_adapter(_FAKE_ADAPTER)  # idempotent for the same instance
     schema = _time_series_schema()
     ref = ArtifactRef(
         artifact_id="art-1",
+        product_name="trajectories",
         product_schema=schema,
-        loader="tests.qphase.test_data_datasets:_fake_loader",
+        storage_adapter="fake/1",
         content_hash="ab" * 32,
     )
     dataset = TimeSeriesDataset(schema, ref, provenance={"origin": "test"})
@@ -377,11 +397,12 @@ def test_artifact_backed_dataset_materializes_through_loader():
 
     bad_ref = ArtifactRef(
         artifact_id="art-2",
+        product_name="trajectories",
         product_schema=schema,
-        loader="tests.qphase.test_data_datasets:_missing_loader",
+        storage_adapter="missing/1",
         content_hash="ab" * 32,
     )
-    with pytest.raises(RuntimeError, match="cannot resolve artifact loader"):
+    with pytest.raises(ArtifactAdapterError, match="unknown storage adapter"):
         TimeSeriesDataset(schema, bad_ref).materialize()
 
     mismatched = schema.model_copy(
@@ -389,8 +410,9 @@ def test_artifact_backed_dataset_materializes_through_loader():
     )
     other_ref = ArtifactRef(
         artifact_id="art-3",
+        product_name="trajectories",
         product_schema=mismatched,
-        loader="tests.qphase.test_data_datasets:_fake_loader",
+        storage_adapter="fake/1",
         content_hash="ab" * 32,
     )
     with pytest.raises(ValueError, match="does not match"):

@@ -35,6 +35,14 @@ from .datasets import (
     StatisticsDataset,
     TimeSeriesDataset,
 )
+from .errors import (
+    ArtifactAdapterError,
+    ArtifactChecksumError,
+    ArtifactCorruptError,
+    ArtifactError,
+    ArtifactNotFoundError,
+    ArtifactUnsupportedError,
+)
 from .graph import (
     GraphEdge,
     ProductDeclaration,
@@ -83,8 +91,14 @@ from .store import (
 __all__ = [
     "ARTIFACT_SCHEMA_VERSION",
     "PRODUCT_SCHEMA_VERSION",
+    "ArtifactAdapterError",
+    "ArtifactChecksumError",
+    "ArtifactCorruptError",
+    "ArtifactError",
     "ArtifactManifestV3",
+    "ArtifactNotFoundError",
     "ArtifactRef",
+    "ArtifactUnsupportedError",
     "AxisRole",
     "AxisSchema",
     "BackendArrayHandle",

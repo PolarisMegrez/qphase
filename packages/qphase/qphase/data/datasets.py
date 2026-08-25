@@ -12,9 +12,10 @@ arrays implicitly: payload access is explicit through handles, views and
 always deliberate. All metadata (schema, attributes, provenance) is plain
 JSON — pickle and object arrays are forbidden by the schema layer.
 
-Artifact-backed datasets resolve their payload lazily through the loader
-recorded in the artifact reference (``module:attr`` syntax); the concrete
-artifact store and NPZ loaders arrive with the v3 artifact manifest.
+Artifact-backed datasets resolve their payload lazily through the registered
+storage adapter named in the artifact reference (a trusted registry id, never
+a Python code path); the concrete artifact store and NPZ adapters ship with
+the v3 artifact manifest.
 
 Public API
 ----------
@@ -30,7 +31,6 @@ StatisticsDataset
 
 from __future__ import annotations
 
-import importlib
 from collections.abc import Mapping
 from typing import Any, ClassVar, NoReturn
 
@@ -84,19 +84,14 @@ def _wrap_array(
 
 
 def _load_artifact_backing(ref: ArtifactRef) -> RuntimeProductBacking:
-    """Resolve ``ref.loader`` and open the artifact as a runtime backing."""
-    module_name, _, attribute = ref.loader.partition(":")
-    try:
-        module = importlib.import_module(module_name)
-        loader = getattr(module, attribute)
-    except (ImportError, AttributeError) as exc:
-        raise RuntimeError(
-            f"cannot resolve artifact loader {ref.loader!r}"
-        ) from exc
-    backing = loader(ref)
+    """Resolve the registered storage adapter and open the ref's backing."""
+    from .store import _resolve_adapter  # local import: store imports datasets
+
+    adapter = _resolve_adapter(ref.storage_adapter)
+    backing = adapter.open_ref(ref)
     if not isinstance(backing, RuntimeProductBacking):
         raise TypeError(
-            f"artifact loader {ref.loader!r} returned "
+            f"storage adapter {ref.storage_adapter!r} returned "
             f"{type(backing).__name__}, expected a RuntimeProductBacking"
         )
     return backing
@@ -326,7 +321,7 @@ class Dataset:
 
         ``target_device=None`` keeps the payload where it is: runtime-backed
         datasets are returned unchanged, artifact-backed datasets are loaded
-        onto the host through the loader recorded in the reference. Explicit
+        onto the host through the storage adapter named in the reference. Explicit
         device placement goes through the per-variable handles with the given
         copy policy; host handles never perform host-to-device transfers, so
         moving a host payload to a device raises. No implicit device-to-host

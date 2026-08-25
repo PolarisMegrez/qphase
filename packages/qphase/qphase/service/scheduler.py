@@ -218,7 +218,9 @@ class SchedulerService:
         return ArtifactProductCatalog(
             artifact_id=manifest.artifact_id,
             path=artifact,
-            loader=manifest.loader,
+            loader="+".join(
+                sorted({entry.storage.adapter for entry in manifest.products})
+            ),
             products=products,
             size=size,
             content_hash=manifest.content_hash,

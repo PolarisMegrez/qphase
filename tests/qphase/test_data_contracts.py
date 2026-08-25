@@ -547,8 +547,9 @@ def test_artifact_ref_is_minimal_and_typed():
     schema = _spectral_schema()
     ref = ArtifactRef(
         artifact_id="art-123",
+        product_name="psd",
         product_schema=schema,
-        loader="qphase_sde.serialization.npz:load",
+        storage_adapter="npz/2",
         content_hash="a" * 64,
     )
     payload = json.loads(json.dumps(ref.model_dump(mode="json")))
@@ -557,23 +558,26 @@ def test_artifact_ref_is_minimal_and_typed():
     with pytest.raises(ValidationError):
         ArtifactRef(
             artifact_id="a",
+            product_name="psd",
             product_schema=schema,
-            loader="qphase_sde.serialization.npz:load",
+            storage_adapter="npz/2",
             content_hash="a" * 64,
             provenance={"engine": "sde"},
         )
-    with pytest.raises(ValidationError, match="loader"):
+    with pytest.raises(ValidationError, match="storage_adapter"):
         ArtifactRef(
             artifact_id="a",
+            product_name="psd",
             product_schema=schema,
-            loader="not a loader!",
+            storage_adapter="qphase_sde.serialization.npz:load",
             content_hash="a" * 64,
         )
     with pytest.raises(ValidationError, match="SHA-256"):
         ArtifactRef(
             artifact_id="a",
+            product_name="psd",
             product_schema=schema,
-            loader="qphase_sde.serialization.npz:load",
+            storage_adapter="npz/2",
             content_hash="abc",
         )
 
@@ -854,8 +858,9 @@ def test_runtime_and_artifact_backings_are_distinct_types():
     """Artifact refs are not runtime backings; the two are never conflated."""
     ref = ArtifactRef(
         artifact_id="art-1",
+        product_name="psd",
         product_schema=_spectral_schema(),
-        loader="qphase_sde.serialization.npz:load",
+        storage_adapter="npz/2",
         content_hash="a" * 64,
     )
     assert isinstance(ref, ArtifactRef)
