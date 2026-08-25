@@ -334,6 +334,15 @@ def create_app(
         except Exception as exc:
             raise _http_error(exc, status_code=404) from exc
 
+    @app.get("/sessions/{session_id}/jobs/{job_name}/products")
+    def get_job_products(session_id: str, job_name: str) -> dict[str, Any]:
+        root = context.project_service.session_dir(session_id)
+        try:
+            catalog = scheduler.describe_products(job_name, session_dir=root)
+        except Exception as exc:
+            raise _http_error(exc, status_code=404) from exc
+        return catalog.model_dump(mode="json")
+
     @app.get("/workflow-docs")
     def list_workflow_documents() -> dict[str, Any]:
         return {

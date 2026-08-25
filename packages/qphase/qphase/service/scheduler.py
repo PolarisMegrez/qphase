@@ -21,12 +21,16 @@ from qphase.core.system_config import SystemConfig, load_system_config
 from qphase.core.workflow import WorkflowCatalog
 
 from .models import (
+    ArtifactProductCatalog,
     ArtifactSummary,
+    AxisSummary,
     ConfigValidationIssue,
     ExecutionPlan,
     ExecutionPlanEdge,
     ExecutionPlanJob,
+    ProductSummary,
     SessionHandle,
+    VariableSummary,
 )
 
 
@@ -158,6 +162,67 @@ class SchedulerService:
         else:
             payload.update(content=None, content_type="application/octet-stream")
         return payload
+
+    def describe_products(
+        self, path: str | Path, *, session_dir: str | Path
+    ) -> ArtifactProductCatalog:
+        """Build the metadata-only product catalog of a v3 artifact directory.
+
+        Never materializes payloads: all fields come from the manifest and
+        the dataset schemas, so this is safe for GUI listings.
+        """
+        root = Path(session_dir).expanduser().resolve()
+        requested = Path(path).expanduser()
+        artifact = (
+            requested.resolve()
+            if requested.is_absolute()
+            else (root / requested).resolve()
+        )
+        if not artifact.is_relative_to(root) or not artifact.is_dir():
+            raise FileNotFoundError(f"Artifact directory not found: {path}")
+        from ..data.store import ArtifactManifestV3, load_products
+
+        try:
+            manifest = ArtifactManifestV3.read(artifact)
+        except ValueError as exc:
+            raise FileNotFoundError(
+                f"Not a qphase 2.x artifact directory: {path} ({exc})"
+            ) from exc
+        datasets = load_products(artifact)
+        size = sum(
+            item.stat().st_size for item in artifact.rglob("*") if item.is_file()
+        )
+        products: list[ProductSummary] = []
+        for entry in manifest.products:
+            summary = datasets[entry.name].summary()
+            products.append(
+                ProductSummary(
+                    name=entry.name,
+                    kind=summary["kind"],
+                    axes=[AxisSummary(**axis) for axis in summary["axes"]],
+                    variables=[
+                        VariableSummary(**variable)
+                        for variable in summary["variables"]
+                    ],
+                    backing="artifact",
+                    devices=summary["devices"],
+                    materializable=True,
+                    nbytes=summary["nbytes"],
+                    chunk_count=sum(
+                        len(chunks) for chunks in entry.storage.variables.values()
+                    ),
+                    sha256=entry.sha256,
+                    attributes=datasets[entry.name].attributes,
+                )
+            )
+        return ArtifactProductCatalog(
+            artifact_id=manifest.artifact_id,
+            path=artifact,
+            loader=manifest.loader,
+            products=products,
+            size=size,
+            content_hash=manifest.content_hash,
+        )
 
     def load_session_manifest(self, session_dir: str | Path) -> dict[str, Any]:
         return json.loads(

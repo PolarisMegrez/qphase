@@ -304,3 +304,74 @@ def test_gui_api_preserves_live_running_session_status(temp_workspace):
 
     assert response.status_code == 200
     assert response.json()["status"] == "running"
+
+
+def test_gui_api_lists_job_products(temp_workspace):
+    import numpy as np
+    from qphase.data import (
+        AxisRole,
+        AxisSchema,
+        DataKind,
+        ProductSchema,
+        TimeSeriesDataset,
+        VariableSchema,
+        save_products,
+    )
+
+    run_dir = temp_workspace / "runs" / "products-session"
+    job_dir = run_dir / "job1"
+    job_dir.mkdir(parents=True)
+    (run_dir / "session_manifest.json").write_text(
+        '{"session_id":"products-session","start_time":"2026-01-01T00:00:00",'
+        '"status":"completed","jobs":{}}',
+        encoding="utf-8",
+    )
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[
+            AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=2),
+            AxisSchema(
+                name="time",
+                role=AxisRole.COORDINATE,
+                size=4,
+                coordinate="regular",
+                start=0.0,
+                step=0.1,
+                units="s",
+            ),
+        ],
+        variables=[
+            VariableSchema(
+                name="x",
+                dtype="complex128",
+                value_domain="complex",
+                dims=("trajectory", "time"),
+            ),
+        ],
+    )
+    dataset = TimeSeriesDataset.from_arrays(
+        schema,
+        {"x": np.zeros((2, 4), dtype=np.complex128)},
+        owner="engine.fake",
+    )
+    save_products(job_dir, {"trajectories": dataset})
+
+    with TestClient(create_app()) as client:
+        response = client.get("/sessions/products-session/jobs/job1/products")
+        missing = client.get("/sessions/products-session/jobs/nope/products")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["artifact_id"]
+    assert payload["content_hash"]
+    assert payload["size"] > 0
+    product = payload["products"][0]
+    assert product["name"] == "trajectories"
+    assert product["kind"] == "time_series"
+    assert product["backing"] == "artifact"
+    assert product["chunk_count"] == 1
+    assert product["sha256"]
+    axes = {axis["name"]: axis for axis in product["axes"]}
+    assert axes["time"]["start"] == 0.0
+    assert axes["time"]["step"] == 0.1
+    assert missing.status_code == 404

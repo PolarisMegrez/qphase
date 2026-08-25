@@ -279,7 +279,11 @@ class Dataset:
                     "name": axis.name,
                     "role": axis.role.value,
                     "size": axis.size,
+                    "coordinate": axis.coordinate,
+                    "start": axis.start,
+                    "step": axis.step,
                     "units": axis.units,
+                    "monotonic": axis.monotonic,
                 }
                 for axis in self._schema.axes
             ],

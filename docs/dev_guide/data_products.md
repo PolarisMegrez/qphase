@@ -7,7 +7,8 @@ description: Data Product Contract
 !!! info "Phase 0 contract — qphase 2.0"
     This contract is approved and frozen for Phase 1 implementation under
     `qphase.data` and `qphase.core.task_profile`. Production Result serialization still
-    changes only through the staged qphase 2.0 migration.
+    changes only through the staged qphase 2.0 migration. The implemented on-disk
+    formats are documented in [Artifact Formats](artifact_formats.md).
 
 QPhase 2.0 replaces the untyped `trajectory + dict[str, Any]` result shape with
 **data products**: typed containers whose axes, variables, uncertainties and provenance

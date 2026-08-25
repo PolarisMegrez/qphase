@@ -109,6 +109,61 @@ class ArtifactSummary(ServiceModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class AxisSummary(ServiceModel):
+    """Read-only summary of one product axis (metadata only)."""
+
+    name: str
+    role: str
+    size: int | None = None
+    coordinate: str | None = None
+    start: float | None = None
+    step: float | None = None
+    units: str = ""
+    monotonic: bool = True
+
+
+class VariableSummary(ServiceModel):
+    """Read-only summary of one product variable (metadata only)."""
+
+    name: str
+    dtype: str
+    value_domain: str
+    dims: list[str] = Field(default_factory=list)
+    quantity: str = ""
+    units: str = ""
+
+
+class ProductSummary(ServiceModel):
+    """Read-only summary of one typed data product (metadata only).
+
+    Building this DTO never materializes payloads: sizes, devices and hashes
+    come from the schema and the artifact manifest.
+    """
+
+    name: str
+    kind: str
+    axes: list[AxisSummary] = Field(default_factory=list)
+    variables: list[VariableSummary] = Field(default_factory=list)
+    backing: Literal["runtime", "artifact"] = "artifact"
+    devices: list[str] = Field(default_factory=list)
+    materializable: bool = True
+    nbytes: int | None = None
+    chunk_count: int | None = None
+    sha256: str | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArtifactProductCatalog(ServiceModel):
+    """Read-only catalog of the typed products of a v3 artifact directory."""
+
+    artifact_id: str
+    path: Path
+    loader: str
+    products: list[ProductSummary] = Field(default_factory=list)
+    size: int = 0
+    content_hash: str
+
+
 class ExecutionPlan(ServiceModel):
     session_preview_id: str | None = None
     jobs: list[ExecutionPlanJob] = Field(default_factory=list)

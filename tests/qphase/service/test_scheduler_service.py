@@ -1,10 +1,21 @@
 from unittest.mock import MagicMock, patch
 
+import numpy as np
+import pytest
 from pydantic import BaseModel
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.protocols import EngineManifest
 from qphase.core.registry import registry
 from qphase.core.system_config import SystemConfig
+from qphase.data import (
+    AxisRole,
+    AxisSchema,
+    DataKind,
+    ProductSchema,
+    TimeSeriesDataset,
+    VariableSchema,
+    save_products,
+)
 from qphase.service import SchedulerService
 
 
@@ -148,3 +159,85 @@ def test_scheduler_service_does_not_enable_optional_global_default(tmp_path):
     assert plan.jobs[0].optional_plugins == ["analyser"]
     assert plan.jobs[0].optional_plugins_enabled == []
     assert plan.jobs[0].inherited_project_defaults == {}
+
+
+def _products_dataset(rows: int = 4) -> TimeSeriesDataset:
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[
+            AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=rows),
+            AxisSchema(
+                name="time",
+                role=AxisRole.COORDINATE,
+                size=8,
+                coordinate="regular",
+                start=0.0,
+                step=0.1,
+                units="s",
+            ),
+        ],
+        variables=[
+            VariableSchema(
+                name="x",
+                dtype="complex128",
+                value_domain="complex",
+                dims=("trajectory", "time"),
+                quantity="amplitude",
+            ),
+        ],
+    )
+    rng = np.random.default_rng(3)
+    x = rng.normal(size=(rows, 8)) + 1j * rng.normal(size=(rows, 8))
+    return TimeSeriesDataset.from_arrays(schema, {"x": x}, owner="engine.fake")
+
+
+def test_scheduler_service_describes_products_without_materializing(tmp_path):
+    session_root = tmp_path / "session"
+    manifest = save_products(
+        session_root / "job1",
+        {"trajectories": _products_dataset()},
+        provenance={"engine": "test"},
+    )
+
+    catalog = SchedulerService(_system_config(tmp_path)).describe_products(
+        "job1", session_dir=session_root
+    )
+
+    assert catalog.artifact_id == manifest.artifact_id
+    assert catalog.content_hash == manifest.content_hash
+    assert catalog.loader == manifest.loader
+    assert catalog.size > 0
+    assert len(catalog.products) == 1
+    product = catalog.products[0]
+    assert product.name == "trajectories"
+    assert product.kind == "time_series"
+    assert product.backing == "artifact"
+    assert product.devices == ["cpu"]
+    assert product.materializable is True
+    assert product.nbytes == 4 * 8 * 16
+    assert product.chunk_count == 1
+    assert product.sha256 == manifest.products[0].sha256
+    axes = {axis.name: axis for axis in product.axes}
+    assert axes["time"].coordinate == "regular"
+    assert axes["time"].start == 0.0
+    assert axes["time"].step == 0.1
+    assert axes["time"].units == "s"
+    assert axes["trajectory"].role == "realization"
+    variable = product.variables[0]
+    assert variable.name == "x"
+    assert np.dtype(variable.dtype) == np.dtype("complex128")
+    assert variable.dims == ["trajectory", "time"]
+    # JSON round-trip: the DTO must be serializable for the GUI route.
+    payload = catalog.model_dump(mode="json")
+    assert payload["products"][0]["axes"][1]["step"] == 0.1
+
+
+def test_scheduler_service_describe_products_rejects_non_artifact(tmp_path):
+    session_root = tmp_path / "session"
+    (session_root / "job1").mkdir(parents=True)
+    service = SchedulerService(_system_config(tmp_path))
+
+    with pytest.raises(FileNotFoundError):
+        service.describe_products("job1", session_dir=session_root)
+    with pytest.raises(FileNotFoundError):
+        service.describe_products("missing", session_dir=session_root)

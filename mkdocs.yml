@@ -127,6 +127,7 @@ nav:
     - Protocols: dev_guide/protocols.md
     - Resource Packages: dev_guide/resource_packages.md
     - Data Products: dev_guide/data_products.md
+    - Artifact Formats: dev_guide/artifact_formats.md
     - Registry: dev_guide/registry.md
     - Scheduler: dev_guide/scheduler.md
     - FAQ: dev_guide/faq.md
