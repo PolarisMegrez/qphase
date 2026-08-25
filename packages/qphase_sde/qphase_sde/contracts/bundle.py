@@ -36,10 +36,19 @@ from qphase.data import (
 from .quantities import DEFAULT_FREQUENCY_ORIENTATION, SDEQuantity
 
 __all__ = [
+    "SDE_BUNDLE_ADAPTER_ID",
+    "SDE_BUNDLE_TYPE_ID",
     "TRAJECTORY_PRODUCT",
     "SDEDataBundleProtocol",
     "SDEProvenance",
 ]
+
+#: Bundle type id recorded in the v3 artifact manifests the SDE engine writes.
+SDE_BUNDLE_TYPE_ID = "sde.bundle/1"
+
+#: Registered bundle adapter id restoring :class:`SDEDataBundle` from a v3
+#: artifact manifest (a trusted registry id, never a code path).
+SDE_BUNDLE_ADAPTER_ID = "sde/1"
 
 #: Canonical product catalog labels of an SDE data bundle. Labels are
 #: job-local conveniences; dependency selection never treats them as contract.

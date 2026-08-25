@@ -28,6 +28,7 @@ from qphase.core.utils import canonical_json
 from qphase.data import (
     AxisRole,
     AxisSchema,
+    BundleDescriptor,
     DataKind,
     Dataset,
     ProductSchema,
@@ -36,9 +37,14 @@ from qphase.data import (
     VariableSchema,
     save_products,
 )
-from qphase.data.store import ARTIFACT_SCHEMA_VERSION
+from qphase.data.store import ARTIFACT_SCHEMA_VERSION, register_bundle_adapter
 
-from qphase_sde.contracts.bundle import TRAJECTORY_PRODUCT, SDEProvenance
+from qphase_sde.contracts.bundle import (
+    SDE_BUNDLE_ADAPTER_ID,
+    SDE_BUNDLE_TYPE_ID,
+    TRAJECTORY_PRODUCT,
+    SDEProvenance,
+)
 from qphase_sde.contracts.quantities import SDEQuantity
 
 
@@ -203,8 +209,9 @@ _SCAN_AXIS = "scan"
 def _json_safe_meta(meta: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """Split a metadata mapping into JSON-serializable items and dropped keys.
 
-    numpy scalars and arrays are coerced to Python natives first; values that
-    still fail canonical JSON serialization are reported as dropped.
+    numpy scalars and arrays are coerced to Python natives first, recursing
+    into nested mappings and sequences; values that still fail canonical
+    JSON serialization are reported as dropped.
     """
 
     def _coerce(value: Any) -> Any:
@@ -212,6 +219,10 @@ def _json_safe_meta(meta: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             return value.item()
         if isinstance(value, np.ndarray):
             return value.tolist()
+        if isinstance(value, dict):
+            return {str(key): _coerce(item) for key, item in value.items()}
+        if isinstance(value, list | tuple):
+            return [_coerce(item) for item in value]
         return value
 
     safe: dict[str, Any] = {}
@@ -254,12 +265,14 @@ class SDEDataBundle:
         scan_axes: dict[str, Any] | None = None,
         scan_shape: tuple[int, ...] = (),
         meta: dict[str, Any] | None = None,
+        n_traj_per_point: int | None = None,
     ) -> None:
         self._products = dict(products)
         self._provenance = provenance
         self._scan_axes = dict(scan_axes or {})
         self._scan_shape = tuple(scan_shape)
         self._meta = dict(meta or {})
+        self._n_traj_per_point = n_traj_per_point
 
     # -- SDEDataBundleProtocol --------------------------------------------
 
@@ -342,6 +355,22 @@ class SDEDataBundle:
         return size
 
     @property
+    def n_traj_per_point(self) -> int | None:
+        """Independent realizations per scan point (None when unknown).
+
+        Falls back to the trajectory axis of the ``trajectories`` product
+        when no explicit value was recorded (e.g. single-point jobs).
+        """
+        if self._n_traj_per_point is not None:
+            return self._n_traj_per_point
+        trajectories = self._products.get("trajectories")
+        if trajectories is not None and "trajectory" in {
+            axis.name for axis in trajectories.axes
+        }:
+            return trajectories.axis("trajectory").size
+        return None
+
+    @property
     def nbytes(self) -> int:
         """Total payload bytes across products (0 where unknown)."""
         return sum(
@@ -382,9 +411,54 @@ class SDEDataBundle:
                 products[name] = product.point_view(**{_SCAN_AXIS: flat})
             else:
                 products[name] = product
-        return SDEDataBundle(products, self._provenance, meta=meta)
+        return SDEDataBundle(
+            products,
+            self._provenance,
+            meta=meta,
+            n_traj_per_point=self._n_traj_per_point,
+        )
 
     # -- persistence ---------------------------------------------------------
+
+    @property
+    def bundle_descriptor(self) -> BundleDescriptor:
+        """v3 bundle descriptor restoring this bundle as an SDEDataBundle.
+
+        The descriptor records the scan grid (shape, named dimension order,
+        coordinate values, combine flag) and the trajectories-per-point
+        count so a clean process can rebuild the scan semantics without
+        any in-process state.
+        """
+        scan_axes, dropped = _json_safe_meta(self._scan_axes)
+        if dropped:
+            raise ValueError(
+                f"scan axes {dropped} are not JSON-serializable; the bundle "
+                f"cannot be described as {SDE_BUNDLE_TYPE_ID!r}"
+            )
+        scan: dict[str, Any] = {
+            "shape": list(self._scan_shape),
+            "dimension_order": list(self._scan_axes),
+            "axes": scan_axes,
+            "n_traj_per_point": self.n_traj_per_point,
+        }
+        if "scan_combine" in self._meta:
+            combine, dropped_combine = _json_safe_meta(
+                {"combine": self._meta["scan_combine"]}
+            )
+            if not dropped_combine:
+                scan["combine"] = combine["combine"]
+        return BundleDescriptor(
+            type_id=SDE_BUNDLE_TYPE_ID,
+            adapter_id=SDE_BUNDLE_ADAPTER_ID,
+            descriptor_schema=SDE_BUNDLE_TYPE_ID,
+            descriptor={"scan": scan},
+            product_roles={name: name for name in self._products},
+        )
+
+    @property
+    def manifest_provenance(self) -> dict[str, Any]:
+        """JSON provenance record persisted into the v3 artifact manifest."""
+        return self._manifest_provenance()
 
     def save(self, path: str | Path) -> None:
         """Persist all products as a v3 artifact directory at ``path``."""
@@ -392,6 +466,7 @@ class SDEDataBundle:
             Path(path),
             self._products,
             provenance=self._manifest_provenance(),
+            bundle=self.bundle_descriptor,
         )
 
     def save_dataset(
@@ -414,6 +489,7 @@ class SDEDataBundle:
             provenance=self._manifest_provenance(),
             shard_target_bytes=shard_target_bytes,
             layout=resolved,
+            bundle=self.bundle_descriptor,
         )
         files = tuple(
             sorted(item for item in Path(path).rglob("*") if item.is_file())
@@ -905,4 +981,66 @@ def bundle_from_result(
         scan_axes=scan_axes,
         scan_shape=scan_shape,
         meta=meta,
+        n_traj_per_point=n_traj_per_point,
     )
+
+
+# ---------------------------------------------------------------------------
+# v3 artifact restore
+# ---------------------------------------------------------------------------
+
+
+def restore_sde_bundle(manifest: Any, products: dict[str, Dataset]) -> SDEDataBundle:
+    """Rebuild an SDEDataBundle from a v3 artifact manifest.
+
+    Registered as the ``sde/1`` bundle adapter: the manifest's bundle
+    descriptor supplies the scan grid and its provenance record supplies
+    the SDE provenance and job metadata, so a clean process restores the
+    concrete bundle without any in-process registry state.
+    """
+    descriptor = manifest.bundle.descriptor
+    scan = descriptor.get("scan")
+    if not isinstance(scan, dict):
+        raise ValueError(
+            f"{SDE_BUNDLE_TYPE_ID!r} artifact is missing its scan descriptor"
+        )
+    shape = tuple(int(extent) for extent in scan.get("shape", ()))
+    axes = {str(name): values for name, values in scan.get("axes", {}).items()}
+    order = scan.get("dimension_order")
+    if order is not None:
+        axes = {str(name): axes[str(name)] for name in order}
+    if len(axes) != len(shape):
+        raise ValueError(
+            f"{SDE_BUNDLE_TYPE_ID!r} scan descriptor is inconsistent: "
+            f"{len(axes)} axes for shape {shape}"
+        )
+    raw_provenance = dict(manifest.provenance)
+    sde_record = raw_provenance.get("sde")
+    if not isinstance(sde_record, dict):
+        # Tolerate the flattened layout written before the manifest
+        # provenance contract (SDEProvenance fields at the top level).
+        sde_record = {
+            key: value
+            for key, value in raw_provenance.items()
+            if key in SDEProvenance.model_fields
+        }
+    provenance = SDEProvenance.model_validate(sde_record)
+    raw_meta = raw_provenance.get("meta")
+    meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+    if "scan_combine" not in meta and "combine" in scan:
+        meta["scan_combine"] = scan["combine"]
+    job_name = raw_provenance.get("job_name")
+    if job_name is not None:
+        meta.setdefault("job_name", job_name)
+    n_traj = scan.get("n_traj_per_point")
+    return SDEDataBundle(
+        products,
+        provenance,
+        scan_axes=axes,
+        scan_shape=shape,
+        meta=meta,
+        n_traj_per_point=int(n_traj) if n_traj is not None else None,
+    )
+
+
+register_bundle_adapter(SDE_BUNDLE_ADAPTER_ID, restore_sde_bundle)

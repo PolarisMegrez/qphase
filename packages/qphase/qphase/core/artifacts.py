@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from ..data.datasets import Dataset
-    from ..data.store import ArtifactManifestV3
+    from ..data.store import ArtifactManifestV3, BundleDescriptor
 
 
 class ArtifactStore:
@@ -31,6 +31,7 @@ class ArtifactStore:
         provenance: Mapping[str, Any] | None = None,
         parents: Sequence[str] = (),
         artifact_id: str | None = None,
+        bundle: BundleDescriptor | None = None,
     ) -> ArtifactManifestV3:
         """Persist typed data products and write the v3 artifact manifest.
 
@@ -40,7 +41,9 @@ class ArtifactStore:
         configuration exactly like :meth:`save_result` does: ``single``
         disables external sharding, ``auto`` compares the estimated payload
         size against ``auto_shard_threshold_mib`` and the legacy
-        ``per_point`` maps to byte-targeted sharding.
+        ``per_point`` maps to byte-targeted sharding. ``bundle`` records how
+        the product collection forms one logical result; without it a
+        generic bundle descriptor is written.
         """
         # Imported lazily: core must not depend on the data layer at module
         # import time (the data layer already depends on core.utils).
@@ -54,6 +57,7 @@ class ArtifactStore:
             artifact_id=artifact_id,
             shard_target_bytes=int(self.config.shard_target_mib * (1 << 20)),
             layout=self._products_layout(products),
+            bundle=bundle,
         )
 
     def _products_layout(self, products: Mapping[str, Dataset]) -> str:
@@ -96,12 +100,23 @@ class ArtifactStore:
         ):
             # 2.0 typed bundles persist through the v3 manifest pipeline;
             # no legacy manifest is written for them.
-            provenance = getattr(result, "provenance", None)
+            from ..data.store import BundleDescriptor as _BundleDescriptor
+
+            # Results carrying the full manifest contract (e.g. SDE data
+            # bundles) declare their provenance record and bundle descriptor
+            # explicitly; others fall back to their ``provenance`` attribute.
+            provenance = getattr(result, "manifest_provenance", None)
+            if provenance is None:
+                provenance = getattr(result, "provenance", None)
             if provenance is not None and hasattr(provenance, "model_dump"):
                 provenance = provenance.model_dump(mode="json")
+            bundle = getattr(result, "bundle_descriptor", None)
+            if not isinstance(bundle, _BundleDescriptor):
+                bundle = None
             self.save_products(
                 products,
                 provenance={"job_name": name, **(provenance or {})},
+                bundle=bundle,
             )
             return self.job_dir / "artifact_manifest.json"
 
