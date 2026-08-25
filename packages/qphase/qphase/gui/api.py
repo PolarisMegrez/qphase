@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from qphase.core.errors import QPhaseError
 from qphase.core.system_config import load_system_config
+from qphase.data.errors import ArtifactError
 from qphase.service import (
     ConfigService,
     ExecutionManager,
@@ -339,8 +340,12 @@ def create_app(
         root = context.project_service.session_dir(session_id)
         try:
             catalog = scheduler.describe_products(job_name, session_dir=root)
-        except Exception as exc:
+        except FileNotFoundError as exc:
             raise _http_error(exc, status_code=404) from exc
+        except ArtifactError as exc:
+            # Unsupported/corrupt manifests and descriptor failures are
+            # unprocessable, not missing.
+            raise _http_error(exc, status_code=422) from exc
         return catalog.model_dump(mode="json")
 
     @app.get("/workflow-docs")

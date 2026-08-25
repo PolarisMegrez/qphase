@@ -228,3 +228,38 @@ def test_single_point_bundle_restores_from_v3_artifact(tmp_path):
     assert restored.axes == {}
     assert restored.point_view(()) is restored
     assert sorted(restored.products) == ["trajectories"]
+
+
+def test_describe_products_summarizes_sde_scan_artifact(tmp_path):
+    from qphase.core.system_config import SystemConfig
+    from qphase.service import SchedulerService
+
+    job_dir = tmp_path / "scan"
+    _save_scan_bundle(job_dir)
+
+    catalog = SchedulerService(SystemConfig()).describe_products(
+        "scan", session_dir=tmp_path
+    )
+
+    bundle = catalog.bundle
+    assert bundle is not None
+    assert bundle.type_id == SDE_BUNDLE_TYPE_ID
+    assert bundle.adapter_id == SDE_BUNDLE_ADAPTER_ID
+    assert bundle.scan_shape == [2]
+    assert bundle.scan_combine == "cartesian"
+    assert bundle.scan_axes == {"rate": [1.0, 2.0]}
+    assert bundle.n_traj_per_point == 8
+
+    products = {product.name: product for product in catalog.products}
+    assert set(products) == {"trajectories", "psd"}
+    psd = products["psd"]
+    assert psd.kind == "spectral"
+    assert psd.materializable is True
+    assert psd.attributes["graph_ready"] is True
+    assert psd.schema_version == "qphase.product/1"
+    assert psd.schema_fingerprint
+    assert psd.storage_adapter == "npz/2"
+    assert psd.physical_nbytes > 0
+    assert psd.sampling_bases
+    assert psd.uncertainties
+    json.dumps(catalog.model_dump(mode="json"))

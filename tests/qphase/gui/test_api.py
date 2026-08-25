@@ -375,3 +375,54 @@ def test_gui_api_lists_job_products(temp_workspace):
     assert axes["time"]["start"] == 0.0
     assert axes["time"]["step"] == 0.1
     assert missing.status_code == 404
+
+
+def test_gui_api_job_products_maps_corrupt_manifest_to_422(temp_workspace):
+    import numpy as np
+    from qphase.data import (
+        AxisRole,
+        AxisSchema,
+        DataKind,
+        ProductSchema,
+        TimeSeriesDataset,
+        VariableSchema,
+        save_products,
+    )
+
+    run_dir = temp_workspace / "runs" / "corrupt-session"
+    job_dir = run_dir / "job1"
+    job_dir.mkdir(parents=True)
+    (run_dir / "session_manifest.json").write_text(
+        '{"session_id":"corrupt-session","start_time":"2026-01-01T00:00:00",'
+        '"status":"completed","jobs":{}}',
+        encoding="utf-8",
+    )
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[AxisSchema(name="time", role=AxisRole.COORDINATE, size=2)],
+        variables=[
+            VariableSchema(
+                name="x",
+                dtype="float64",
+                value_domain="real",
+                dims=("time",),
+            ),
+        ],
+    )
+    dataset = TimeSeriesDataset.from_arrays(
+        schema,
+        {"x": np.zeros(2)},
+        owner="engine.fake",
+    )
+    save_products(job_dir, {"trajectories": dataset})
+    manifest_path = job_dir / "artifact_manifest.json"
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    raw["content_hash"] = "0" * 64
+    manifest_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with TestClient(create_app()) as client:
+        response = client.get("/sessions/corrupt-session/jobs/job1/products")
+        missing = client.get("/sessions/corrupt-session/jobs/nope/products")
+
+    assert response.status_code == 422
+    assert missing.status_code == 404

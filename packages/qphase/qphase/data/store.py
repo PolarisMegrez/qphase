@@ -693,6 +693,25 @@ def _resolve_adapter(adapter_id: str) -> StorageAdapterProtocol:
         ) from None
 
 
+def storage_adapter_available(adapter_id: str) -> bool:
+    """Return whether a storage adapter id is registered in this process."""
+    try:
+        _resolve_adapter(adapter_id)
+    except ArtifactAdapterError:
+        return False
+    return True
+
+
+def storage_referenced_files(entry: ProductEntry) -> dict[str, str]:
+    """Map payload files referenced by one manifest entry to their owners.
+
+    Pure descriptor parsing — payload bytes are never read. Raises
+    :class:`ArtifactAdapterError` when the entry's storage adapter is not
+    registered in this process.
+    """
+    return _resolve_adapter(entry.storage.adapter).referenced_files(entry)
+
+
 _DATASET_BY_KIND: dict[DataKind, type[Dataset]] = {
     DataKind.TIME_SERIES: TimeSeriesDataset,
     DataKind.SPECTRAL: SpectralDataset,

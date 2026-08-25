@@ -101,6 +101,8 @@ from .store import (
     register_adapter,
     register_bundle_adapter,
     save_products,
+    storage_adapter_available,
+    storage_referenced_files,
 )
 
 __all__ = [
@@ -162,5 +164,7 @@ __all__ = [
     "register_artifact_location",
     "register_bundle_adapter",
     "save_products",
+    "storage_adapter_available",
+    "storage_referenced_files",
     "validate_backing",
 ]

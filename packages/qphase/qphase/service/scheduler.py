@@ -5,7 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from ..data.store import BundleDescriptor
 
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.config_loader import (
@@ -24,12 +27,16 @@ from .models import (
     ArtifactProductCatalog,
     ArtifactSummary,
     AxisSummary,
+    BundleSummary,
     ConfigValidationIssue,
+    CoordinateSummary,
     ExecutionPlan,
     ExecutionPlanEdge,
     ExecutionPlanJob,
     ProductSummary,
+    SamplingBasisSummary,
     SessionHandle,
+    UncertaintySummary,
     VariableSummary,
 )
 
@@ -168,8 +175,15 @@ class SchedulerService:
     ) -> ArtifactProductCatalog:
         """Build the metadata-only product catalog of a v3 artifact directory.
 
-        Never materializes payloads: all fields come from the manifest and
-        the dataset schemas, so this is safe for GUI listings.
+        Never materializes payloads, never opens storage adapters and never
+        registers artifact locations: every field comes from the manifest
+        (product schemas, storage summaries, bundle descriptor) plus
+        ``stat`` of the manifest-referenced payload files, so this is safe
+        for GUI listings. Error states stay typed: ``FileNotFoundError``
+        when the directory or manifest does not exist,
+        :class:`~qphase.data.errors.ArtifactUnsupportedError` for other
+        schema versions and :class:`~qphase.data.errors.ArtifactCorruptError`
+        for parse/cross-field/hash failures.
         """
         root = Path(session_dir).expanduser().resolve()
         requested = Path(path).expanduser()
@@ -180,40 +194,122 @@ class SchedulerService:
         )
         if not artifact.is_relative_to(root) or not artifact.is_dir():
             raise FileNotFoundError(f"Artifact directory not found: {path}")
-        from ..data.store import ArtifactManifestV3, load_products
+        from ..data.errors import ArtifactNotFoundError
+        from ..data.store import (
+            ArtifactManifestV3,
+            storage_adapter_available,
+            storage_referenced_files,
+        )
 
         try:
             manifest = ArtifactManifestV3.read(artifact)
-        except ValueError as exc:
+        except ArtifactNotFoundError as exc:
             raise FileNotFoundError(
-                f"Not a qphase 2.x artifact directory: {path} ({exc})"
+                f"Not a qphase 2.x artifact directory: {path}"
             ) from exc
-        datasets = load_products(artifact)
-        size = sum(
-            item.stat().st_size for item in artifact.rglob("*") if item.is_file()
-        )
+
         products: list[ProductSummary] = []
+        size = 0
         for entry in manifest.products:
-            summary = datasets[entry.name].summary()
+            schema = entry.product_schema
+            materializable = True
+            missing_reason: str | None = None
+            physical_nbytes = 0
+            if not storage_adapter_available(entry.storage.adapter):
+                materializable = False
+                missing_reason = (
+                    f"storage adapter {entry.storage.adapter!r} is not "
+                    "registered in this process"
+                )
+            else:
+                for file in storage_referenced_files(entry):
+                    try:
+                        physical_nbytes += (artifact / file).stat().st_size
+                    except OSError:
+                        materializable = False
+                        missing_reason = f"payload file {file!r} is missing"
+                        break
+            size += physical_nbytes
             products.append(
                 ProductSummary(
                     name=entry.name,
-                    kind=summary["kind"],
-                    axes=[AxisSummary(**axis) for axis in summary["axes"]],
+                    kind=schema.kind.value,
+                    axes=[
+                        AxisSummary(
+                            name=axis.name,
+                            role=axis.role.value,
+                            size=axis.size,
+                            coordinate=axis.coordinate,
+                            start=axis.start,
+                            step=axis.step,
+                            units=axis.units,
+                        )
+                        for axis in schema.axes
+                    ],
                     variables=[
-                        VariableSummary(**variable)
-                        for variable in summary["variables"]
+                        VariableSummary(
+                            name=variable.name,
+                            dtype=variable.dtype,
+                            value_domain=variable.value_domain,
+                            dims=list(variable.dims),
+                            quantity=variable.quantity,
+                            units=variable.units,
+                            constraints=variable.constraints.model_dump(mode="json"),
+                        )
+                        for variable in schema.variables
+                    ],
+                    coordinates=[
+                        CoordinateSummary(
+                            name=coordinate.name,
+                            variable=coordinate.variable,
+                            dims=list(coordinate.dims),
+                            role=coordinate.role,
+                            units=coordinate.units,
+                            monotonic=coordinate.monotonic,
+                        )
+                        for coordinate in schema.coordinates
+                    ],
+                    sampling_bases=[
+                        SamplingBasisSummary(
+                            name=basis.name,
+                            source_axis=basis.source_axis,
+                            count=basis.count,
+                            count_variable=basis.count_variable,
+                        )
+                        for basis in schema.sampling_bases
+                    ],
+                    uncertainties=[
+                        UncertaintySummary(
+                            target=uncertainty.target,
+                            kind=uncertainty.kind,
+                            sampling_basis=uncertainty.sampling_basis,
+                            covariance=uncertainty.covariance,
+                            scope=uncertainty.scope,
+                            data_variable=uncertainty.data_variable,
+                            confidence=uncertainty.confidence,
+                            count=uncertainty.count,
+                        )
+                        for uncertainty in schema.uncertainties
                     ],
                     backing="artifact",
-                    devices=summary["devices"],
-                    materializable=True,
-                    nbytes=summary["nbytes"],
+                    # All current storage adapters materialize to the host.
+                    devices=["cpu"],
+                    materializable=materializable,
+                    missing_reason=missing_reason,
+                    nbytes=sum(
+                        variable.nbytes for variable in entry.storage.summary.values()
+                    ),
+                    physical_nbytes=physical_nbytes,
                     chunk_count=sum(
                         variable.chunk_count
                         for variable in entry.storage.summary.values()
                     ),
                     sha256=entry.sha256,
-                    attributes=datasets[entry.name].attributes,
+                    schema_version=schema.schema_version,
+                    schema_fingerprint=schema.fingerprint(),
+                    storage_adapter=entry.storage.adapter,
+                    storage_descriptor_schema=entry.storage.descriptor_schema,
+                    attributes=dict(schema.attributes),
                 )
             )
         return ArtifactProductCatalog(
@@ -223,6 +319,7 @@ class SchedulerService:
                 sorted({entry.storage.adapter for entry in manifest.products})
             ),
             products=products,
+            bundle=_bundle_summary(manifest.bundle),
             size=size,
             content_hash=manifest.content_hash,
         )
@@ -353,3 +450,36 @@ class SchedulerService:
         if path.suffix.lower() in {".log", ".txt"}:
             return "log"
         return "other"
+
+
+def _bundle_summary(bundle: BundleDescriptor) -> BundleSummary:
+    """Unpack a manifest bundle descriptor into a read-only summary."""
+    scan_shape: list[int] | None = None
+    scan_combine: bool | str | None = None
+    scan_axes: dict[str, Any] | None = None
+    n_traj_per_point: int | None = None
+    scan = bundle.descriptor.get("scan")
+    if isinstance(scan, dict):
+        shape = scan.get("shape")
+        if isinstance(shape, list):
+            scan_shape = [int(extent) for extent in shape]
+        combine = scan.get("combine")
+        if isinstance(combine, bool | str):
+            scan_combine = combine
+        axes = scan.get("axes")
+        if isinstance(axes, dict):
+            scan_axes = dict(axes)
+        n_traj = scan.get("n_traj_per_point")
+        if n_traj is not None:
+            n_traj_per_point = int(n_traj)
+    return BundleSummary(
+        type_id=bundle.type_id,
+        adapter_id=bundle.adapter_id,
+        descriptor_schema=bundle.descriptor_schema,
+        descriptor=dict(bundle.descriptor),
+        product_roles=dict(bundle.product_roles),
+        scan_shape=scan_shape,
+        scan_combine=scan_combine,
+        scan_axes=scan_axes,
+        n_traj_per_point=n_traj_per_point,
+    )

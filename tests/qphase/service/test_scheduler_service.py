@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -10,11 +11,19 @@ from qphase.core.system_config import SystemConfig
 from qphase.data import (
     AxisRole,
     AxisSchema,
+    BundleDescriptor,
     DataKind,
     ProductSchema,
     TimeSeriesDataset,
     VariableSchema,
     save_products,
+)
+from qphase.data.errors import ArtifactCorruptError
+from qphase.data.resolver import default_artifact_resolver
+from qphase.data.store import (
+    artifact_content_hash,
+    product_content_hash,
+    storage_referenced_files,
 )
 from qphase.service import SchedulerService
 
@@ -241,3 +250,186 @@ def test_scheduler_service_describe_products_rejects_non_artifact(tmp_path):
         service.describe_products("job1", session_dir=session_root)
     with pytest.raises(FileNotFoundError):
         service.describe_products("missing", session_dir=session_root)
+
+
+def test_scheduler_service_describe_products_exposes_schema_and_storage_details(
+    tmp_path,
+):
+    session_root = tmp_path / "session"
+    manifest = save_products(
+        session_root / "job1",
+        {"trajectories": _products_dataset()},
+        provenance={"engine": "test"},
+    )
+
+    catalog = SchedulerService(_system_config(tmp_path)).describe_products(
+        "job1", session_dir=session_root
+    )
+
+    entry = manifest.products[0]
+    product = catalog.products[0]
+    assert product.schema_version == entry.product_schema.schema_version
+    assert product.schema_fingerprint == entry.product_schema.fingerprint()
+    assert product.storage_adapter == "npz/2"
+    assert product.storage_descriptor_schema == entry.storage.descriptor_schema
+    assert product.physical_nbytes > 0
+    assert product.missing_reason is None
+    assert product.coordinates == []
+    assert product.sampling_bases == []
+    assert product.uncertainties == []
+    constraints = product.variables[0].constraints
+    assert constraints["nonnegative"] is False
+    assert constraints["layout"] == "dense"
+    json.dumps(catalog.model_dump(mode="json"))
+
+
+def test_scheduler_service_describe_products_reports_generic_bundle_summary(
+    tmp_path,
+):
+    session_root = tmp_path / "session"
+    save_products(session_root / "job1", {"trajectories": _products_dataset()})
+
+    catalog = SchedulerService(_system_config(tmp_path)).describe_products(
+        "job1", session_dir=session_root
+    )
+
+    bundle = catalog.bundle
+    assert bundle is not None
+    assert bundle.type_id == "generic.dataset_bundle/1"
+    assert bundle.adapter_id == "generic/1"
+    assert bundle.scan_shape is None
+    assert bundle.scan_combine is None
+    assert bundle.scan_axes is None
+    assert bundle.n_traj_per_point is None
+
+
+def test_scheduler_service_describe_products_unpacks_scan_bundle_summary(tmp_path):
+    session_root = tmp_path / "session"
+    descriptor = BundleDescriptor(
+        type_id="test.bundle/1",
+        adapter_id="test/1",
+        descriptor_schema="test.bundle_descriptor/1",
+        descriptor={
+            "scan": {
+                "shape": [2, 3],
+                "dimension_order": ["alpha", "beta"],
+                "axes": {"alpha": [1.0, 2.0], "beta": [3.0, 4.0, 5.0]},
+                "n_traj_per_point": 4,
+                "combine": "cartesian",
+            }
+        },
+        product_roles={"primary": "trajectories"},
+    )
+    save_products(
+        session_root / "job1",
+        {"trajectories": _products_dataset()},
+        bundle=descriptor,
+    )
+
+    catalog = SchedulerService(_system_config(tmp_path)).describe_products(
+        "job1", session_dir=session_root
+    )
+
+    bundle = catalog.bundle
+    assert bundle is not None
+    assert bundle.type_id == "test.bundle/1"
+    assert bundle.adapter_id == "test/1"
+    assert bundle.descriptor_schema == "test.bundle_descriptor/1"
+    assert bundle.product_roles == {"primary": "trajectories"}
+    assert bundle.scan_shape == [2, 3]
+    assert bundle.scan_combine == "cartesian"
+    assert bundle.scan_axes == {"alpha": [1.0, 2.0], "beta": [3.0, 4.0, 5.0]}
+    assert bundle.n_traj_per_point == 4
+
+
+def test_scheduler_service_describe_products_size_counts_referenced_files_only(
+    tmp_path,
+):
+    session_root = tmp_path / "session"
+    save_products(session_root / "job1", {"trajectories": _products_dataset()})
+    service = SchedulerService(_system_config(tmp_path))
+    size_before = service.describe_products("job1", session_dir=session_root).size
+
+    (session_root / "job1" / "junk.bin").write_bytes(b"x" * 1024)
+
+    catalog = service.describe_products("job1", session_dir=session_root)
+    assert catalog.size == size_before
+    assert catalog.size == sum(product.physical_nbytes for product in catalog.products)
+
+
+def test_scheduler_service_describe_products_marks_missing_payload(tmp_path):
+    session_root = tmp_path / "session"
+    manifest = save_products(
+        session_root / "job1", {"trajectories": _products_dataset()}
+    )
+    payload = next(iter(storage_referenced_files(manifest.products[0])))
+    (session_root / "job1" / payload).unlink()
+
+    catalog = SchedulerService(_system_config(tmp_path)).describe_products(
+        "job1", session_dir=session_root
+    )
+
+    product = catalog.products[0]
+    assert product.materializable is False
+    assert payload in product.missing_reason
+    assert product.physical_nbytes == 0
+    assert catalog.size == 0
+
+
+def test_scheduler_service_describe_products_has_no_resolver_side_effects(tmp_path):
+    session_root = tmp_path / "session"
+    save_products(session_root / "job1", {"trajectories": _products_dataset()})
+    resolver = default_artifact_resolver()
+    bindings_before = dict(resolver._bindings)
+
+    SchedulerService(_system_config(tmp_path)).describe_products(
+        "job1", session_dir=session_root
+    )
+
+    assert dict(resolver._bindings) == bindings_before
+
+
+def test_scheduler_service_describe_products_rejects_tampered_manifest(tmp_path):
+    session_root = tmp_path / "session"
+    save_products(session_root / "job1", {"trajectories": _products_dataset()})
+    manifest_path = session_root / "job1" / "artifact_manifest.json"
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    raw["content_hash"] = "0" * 64
+    manifest_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ArtifactCorruptError):
+        SchedulerService(_system_config(tmp_path)).describe_products(
+            "job1", session_dir=session_root
+        )
+
+
+def test_scheduler_service_describe_products_marks_unknown_storage_adapter(tmp_path):
+    session_root = tmp_path / "session"
+    manifest = save_products(
+        session_root / "job1", {"trajectories": _products_dataset()}
+    )
+    entry = manifest.products[0]
+    storage = entry.storage.model_copy(update={"adapter": "unknown/9"})
+    forged = entry.model_copy(update={"storage": storage})
+    forged.sha256 = product_content_hash(
+        forged.name, forged.product_schema, forged.storage
+    )
+    forged_manifest = manifest.model_copy(update={"products": [forged]})
+    forged_manifest.content_hash = artifact_content_hash(
+        forged_manifest.bundle.model_dump(mode="json"),
+        forged_manifest.products,
+        forged_manifest.provenance,
+        forged_manifest.parents,
+    )
+    forged_manifest.write(session_root / "job1")
+
+    catalog = SchedulerService(_system_config(tmp_path)).describe_products(
+        "job1", session_dir=session_root
+    )
+
+    product = catalog.products[0]
+    assert product.materializable is False
+    assert "unknown/9" in product.missing_reason
+    assert product.physical_nbytes == 0
+    assert catalog.loader == "unknown/9"
+    assert catalog.size == 0

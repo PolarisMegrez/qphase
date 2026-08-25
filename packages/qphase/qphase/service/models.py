@@ -131,35 +131,107 @@ class VariableSummary(ServiceModel):
     dims: list[str] = Field(default_factory=list)
     quantity: str = ""
     units: str = ""
+    constraints: dict[str, Any] = Field(default_factory=dict)
+
+
+class CoordinateSummary(ServiceModel):
+    """Read-only summary of one typed coordinate (metadata only)."""
+
+    name: str
+    variable: str
+    dims: list[str] = Field(default_factory=list)
+    role: str = "dimension"
+    units: str = ""
+    monotonic: bool = True
+
+
+class SamplingBasisSummary(ServiceModel):
+    """Read-only summary of one uncertainty sampling basis."""
+
+    name: str
+    source_axis: str | None = None
+    count: int | None = None
+    count_variable: str | None = None
+
+
+class UncertaintySummary(ServiceModel):
+    """Read-only summary of one declared uncertainty (metadata only)."""
+
+    target: str
+    kind: str
+    sampling_basis: str = ""
+    covariance: str | None = None
+    scope: str | None = None
+    data_variable: str | None = None
+    confidence: float | None = None
+    count: int | None = None
+
+
+class BundleSummary(ServiceModel):
+    """Read-only summary of the bundle descriptor of a v3 artifact.
+
+    Scan fields are unpacked from the descriptor's ``scan`` record when the
+    owning resource package recorded one (e.g. ``sde.bundle/1``); generic
+    bundles leave them ``None``.
+    """
+
+    type_id: str
+    adapter_id: str
+    descriptor_schema: str
+    descriptor: dict[str, Any] = Field(default_factory=dict)
+    product_roles: dict[str, str] = Field(default_factory=dict)
+    scan_shape: list[int] | None = None
+    scan_combine: bool | str | None = None
+    scan_axes: dict[str, Any] | None = None
+    n_traj_per_point: int | None = None
 
 
 class ProductSummary(ServiceModel):
     """Read-only summary of one typed data product (metadata only).
 
-    Building this DTO never materializes payloads: sizes, devices and hashes
-    come from the schema and the artifact manifest.
+    Building this DTO never materializes payloads and never registers
+    artifact locations: every field comes from the artifact manifest
+    (product schema, storage summary, descriptor) plus ``stat`` of the
+    referenced payload files. ``materializable`` reports whether the
+    product could be reopened in this process — its storage adapter is
+    registered and every referenced payload file exists — with
+    ``missing_reason`` naming the first blocker otherwise.
     """
 
     name: str
     kind: str
     axes: list[AxisSummary] = Field(default_factory=list)
     variables: list[VariableSummary] = Field(default_factory=list)
+    coordinates: list[CoordinateSummary] = Field(default_factory=list)
+    sampling_bases: list[SamplingBasisSummary] = Field(default_factory=list)
+    uncertainties: list[UncertaintySummary] = Field(default_factory=list)
     backing: Literal["runtime", "artifact"] = "artifact"
     devices: list[str] = Field(default_factory=list)
     materializable: bool = True
+    missing_reason: str | None = None
     nbytes: int | None = None
+    physical_nbytes: int | None = None
     chunk_count: int | None = None
     sha256: str | None = None
+    schema_version: str = ""
+    schema_fingerprint: str = ""
+    storage_adapter: str = ""
+    storage_descriptor_schema: str = ""
     attributes: dict[str, Any] = Field(default_factory=dict)
 
 
 class ArtifactProductCatalog(ServiceModel):
-    """Read-only catalog of the typed products of a v3 artifact directory."""
+    """Read-only catalog of the typed products of a v3 artifact directory.
+
+    ``size`` counts only payload files referenced by the manifest; job
+    logs, exports and stale chunks left by replaced writes are excluded.
+    """
 
     artifact_id: str
     path: Path
     loader: str
     products: list[ProductSummary] = Field(default_factory=list)
+    bundle: BundleSummary | None = None
     size: int = 0
     content_hash: str
 
