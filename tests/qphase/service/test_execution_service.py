@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from qphase.core.config import JobConfig, WorkflowSpec
+from qphase.core.persistence import ProjectStateStore
 from qphase.core.progress import ProgressSnapshot
 from qphase.core.project import ProjectContext
 from qphase.service.execution import ExecutionManager
@@ -136,5 +137,43 @@ def test_invalid_execution_plan_is_rejected_before_queueing() -> None:
     try:
         with pytest.raises(ValueError, match="invalid dependency"):
             manager.submit("ignored")
+    finally:
+        manager.close()
+
+
+def test_manager_marks_running_record_interrupted_on_restart(tmp_path) -> None:
+    project = ProjectContext.create(tmp_path / "project")
+    scheduler = _BoundaryScheduler()
+    scheduler.project = project
+    scheduler.state_store = ProjectStateStore(project)
+    workflow = scheduler.load_workflow("ignored")
+    scheduler.state_store.save_execution(
+        {
+            "schema": "qphase.execution/1",
+            "execution_id": "interrupted-1",
+            "source_workflow": "test-workflow",
+            "workflow": workflow.model_dump(mode="json", by_alias=True),
+            "submitted_at": "2026-08-26T10:00:00+08:00",
+            "state": "running",
+            "session_id": None,
+            "session_dir": None,
+            "started_at": "2026-08-26T10:01:00+08:00",
+            "finished_at": None,
+            "current_job": "first",
+            "current_stage": "running",
+            "latest_message": "working",
+            "error": None,
+            "pause_requested": False,
+            "started_jobs": ["first"],
+            "revisions": {},
+        }
+    )
+
+    manager = ExecutionManager(scheduler)  # type: ignore[arg-type]
+    try:
+        summary = manager.get("interrupted-1")
+        assert summary.state == "failed"
+        assert summary.error == "execution worker interrupted by process restart"
+        assert scheduler.state_store.load_executions()[0]["state"] == "failed"
     finally:
         manager.close()

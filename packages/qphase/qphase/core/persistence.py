@@ -1,8 +1,8 @@
-"""Project-scoped persistence ports for sessions and execution events.
+"""Project-scoped persistence ports for execution control and Session events.
 
 The implementation is intentionally one small file-backed store. Session
-manifests and event journals have different protocols, but they share the
-project filesystem and do not need separate database wrappers.
+manifests, event journals, and execution records have different protocols, but
+they share the project filesystem and do not need separate database wrappers.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ class ExecutionStoreProtocol(Protocol):
 class ProjectStateStore(
     SessionStoreProtocol, EventStoreProtocol, ExecutionStoreProtocol
 ):
-    """Single project-scoped file implementation of Session/Event ports."""
+    """Single project-scoped file implementation of the state ports."""
 
     def __init__(self, project: ProjectContext) -> None:
         self.project = project
