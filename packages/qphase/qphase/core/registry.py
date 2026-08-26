@@ -578,14 +578,10 @@ class DiscoveryService:
         """
         discovered_count = 0
 
-        try:
-            from .project import ProjectContext
+        from .project import ProjectContext
 
-            project = project or ProjectContext.discover()
-            plugin_dirs = project.plugin_dirs
-        except Exception:
-            # If system config fails to load, skip local discovery
-            return 0
+        project = project or ProjectContext.discover()
+        plugin_dirs = project.plugin_dirs
 
         for plugin_dir in plugin_dirs:
             if not plugin_dir.exists() or not plugin_dir.is_dir():

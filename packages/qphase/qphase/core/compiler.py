@@ -21,6 +21,7 @@ from .config_loader import (
 )
 from .errors import ErrorCode, QPhaseConfigError, QPhasePluginError
 from .project import ProjectContext
+from .protocols import EngineManifest
 from .registry import RegistryView, registry
 from .scan import ParameterGrid
 from .system_config import SystemConfig
@@ -211,6 +212,14 @@ class WorkflowCompiler:
                 context={"engine": engine_name},
             ) from exc
         manifest = self.registry.get_plugin_manifest("engine", engine_name)
+        if self.registry.is_local_plugin("engine", engine_name) and not isinstance(
+            manifest, EngineManifest
+        ):
+            raise QPhasePluginError(
+                f"local engine {engine_name!r} must declare an EngineManifest",
+                code=ErrorCode.PLUGIN_DISCOVERY,
+                context={"engine": engine_name},
+            )
         input_plugins = set(getattr(manifest, "input_plugins", set()))
         required_plugins = set(getattr(manifest, "required_plugins", set()))
         required = (
