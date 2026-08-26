@@ -118,6 +118,8 @@ class SchedulerService:
             session_dir=scheduler.session_dir,
             status="failed"
             if "failed" in statuses
+            else "cancelled"
+            if "cancelled" in statuses
             else "partial"
             if "skipped_dependency" in statuses
             else "completed",

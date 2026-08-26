@@ -98,6 +98,27 @@ def test_scheduler_service_run_wraps_core_scheduler(tmp_path):
     scheduler.run.assert_called_once_with(job_list, resume_from=None)
 
 
+def test_scheduler_service_reports_cancelled_session(tmp_path):
+    job_list = WorkflowSpec(
+        schema="qphase.workflow/2",
+        id="cancelled-workflow",
+        title="Cancelled Workflow",
+        jobs=[JobConfig(name="job", engine={"dummy": {}})],
+    )
+
+    with patch("qphase.service.scheduler.Scheduler") as scheduler_cls:
+        scheduler = scheduler_cls.return_value
+        scheduler.run.return_value = [MagicMock(status="cancelled")]
+        scheduler.session_id = "cancelled-session"
+        scheduler.session_dir = tmp_path / "runs" / "cancelled-session"
+
+        service = SchedulerService(_system_config(tmp_path))
+        service.run(job_list)
+
+    assert service.last_session_handle is not None
+    assert service.last_session_handle.status == "cancelled"
+
+
 def test_scheduler_service_reports_cartesian_and_zipped_scan_shapes(tmp_path):
     cartesian = JobConfig(
         name="cartesian",
