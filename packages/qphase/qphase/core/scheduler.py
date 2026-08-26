@@ -342,17 +342,22 @@ class Scheduler:
             dry_results: list[JobResult] = []
             dry_job_results: dict[str, ResultProtocol] = {}
             logical_jobs = list(compiled.logical_jobs) if compiled else workflow.jobs
+            effective_jobs = list(logical_jobs)
             for job_idx, original in enumerate(logical_jobs):
                 job = (
                     self.before_job(original, job_idx, len(logical_jobs))
                     if self.before_job is not None
                     else original
                 )
+                if job is not original and compiled is not None:
+                    effective_jobs[job_idx] = job
+                    compiled = self._compile_revised_jobs(workflow, effective_jobs)
+                    self._compiled_workflow = compiled
                 self._run_single(
                     job,
                     job_idx,
                     len(logical_jobs),
-                    logical_jobs,
+                    effective_jobs,
                     dry_job_results,
                     dry_results,
                     compiled_job=(compiled.job(job.name) if compiled else None),
@@ -384,8 +389,9 @@ class Scheduler:
         results: list[JobResult] = []
         job_results: dict[str, ResultProtocol] = {}
         logical_jobs = list(compiled.logical_jobs) if compiled else workflow.jobs
+        effective_jobs = list(logical_jobs)
         try:
-            for job_idx, job in enumerate(logical_jobs):
+            for job_idx, job in enumerate(effective_jobs):
                 if self.cancellation.execution.cancelled:
                     self._cancel_pending_jobs(logical_jobs[job_idx:], job_idx, results)
                     break
@@ -396,6 +402,10 @@ class Scheduler:
                             "a pending job revision must preserve the logical job name"
                         )
                     job = replacement
+                    effective_jobs[job_idx] = replacement
+                    if compiled is not None:
+                        compiled = self._compile_revised_jobs(workflow, effective_jobs)
+                        self._compiled_workflow = compiled
                 compiled_job = (
                     compiled.job(job.name) if compiled is not None else None
                 )
@@ -403,7 +413,7 @@ class Scheduler:
                     job,
                     job_idx,
                     len(logical_jobs),
-                    logical_jobs,
+                    effective_jobs,
                     job_results,
                     results,
                     compiled_job=compiled_job,
@@ -1418,6 +1428,17 @@ class Scheduler:
         ).compile(workflow)
         self._compiled_workflow = compiled
         return compiled
+
+    def _compile_revised_jobs(
+        self, workflow: WorkflowSpec, jobs: list[JobConfig]
+    ) -> CompiledWorkflow:
+        """Recompile a pending-job revision before its execution boundary."""
+        revised = workflow.model_copy(update={"jobs": list(jobs)})
+        return WorkflowCompiler(
+            project=self.project,
+            system_config=self.system_config,
+            registry_view=self._registry.view(),
+        ).compile(revised)
 
     def _build_plugins(self, plugins_config: dict[str, Any]) -> dict[str, Any]:
         """Instantiate plugins based on configuration.
