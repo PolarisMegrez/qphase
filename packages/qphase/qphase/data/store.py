@@ -40,7 +40,7 @@ ProductEntry
     One named product inside an artifact manifest.
 BundleDescriptor
     Persisted bundle type/adapter plus product roles.
-ArtifactManifestV3
+ArtifactManifest
     The current artifact manifest.
 StorageAdapterProtocol
     Persistence adapter contract.
@@ -91,7 +91,7 @@ __all__ = [
     "GENERIC_BUNDLE_ADAPTER_ID",
     "GENERIC_BUNDLE_TYPE_ID",
     "MANIFEST_FILENAME",
-    "ArtifactManifestV3",
+    "ArtifactManifest",
     "BundleAdapterProtocol",
     "BundleDescriptor",
     "ProductEntry",
@@ -262,7 +262,7 @@ class BundleDescriptor(BaseModel):
         return value
 
 
-class ArtifactManifestV3(BaseModel):
+class ArtifactManifest(BaseModel):
     """The current artifact manifest: the public restore entry point."""
 
     model_config = ConfigDict(extra="forbid")
@@ -343,7 +343,7 @@ class ArtifactManifestV3(BaseModel):
         return path
 
     @classmethod
-    def read(cls, directory: Path | str) -> ArtifactManifestV3:
+    def read(cls, directory: Path | str) -> ArtifactManifest:
         """Read and fully validate the current manifest of an artifact directory.
 
         Raises typed errors for missing, unsupported or structurally invalid
@@ -656,7 +656,7 @@ def save_products(
     bundle: BundleDescriptor | None = None,
     layout: str = "sharded",
     replace: bool = False,
-) -> ArtifactManifestV3:
+) -> ArtifactManifest:
     """Persist typed datasets and write the current artifact manifest.
 
     The write is transactional: chunks are staged in a unique on-disk
@@ -702,7 +702,7 @@ def save_products(
                 f"an artifact manifest already exists at {directory}; pass "
                 "replace=True to overwrite it"
             )
-        old_manifest = ArtifactManifestV3.read(directory)
+        old_manifest = ArtifactManifest.read(directory)
         for old_entry in old_manifest.products:
             old_adapter = _resolve_adapter(old_entry.storage.adapter)
             old_files.update(old_adapter.referenced_files(old_entry))
@@ -765,7 +765,7 @@ def save_products(
             )
         if artifact_id is None:
             artifact_id = uuid4().hex
-        manifest = ArtifactManifestV3(
+        manifest = ArtifactManifest(
             artifact_id=artifact_id,
             created_at=datetime.now(UTC).isoformat(),
             bundle=bundle,
@@ -822,11 +822,11 @@ def load_products(directory: Path | str) -> dict[str, Dataset]:
     :class:`ArtifactAdapterError`.
     """
     directory = Path(directory)
-    manifest = ArtifactManifestV3.read(directory)
+    manifest = ArtifactManifest.read(directory)
     return _load_products(manifest, directory)
 
 
-def _load_products(manifest: ArtifactManifestV3, directory: Path) -> dict[str, Dataset]:
+def _load_products(manifest: ArtifactManifest, directory: Path) -> dict[str, Dataset]:
     """Open the products of an already-validated manifest.
 
     Every entry's adapter-specific descriptor is strictly parsed by its
@@ -876,12 +876,12 @@ class BundleAdapterProtocol(Protocol):
 
     def validate_descriptor(self, descriptor: BundleDescriptor) -> None: ...
 
-    def validate_manifest(self, manifest: ArtifactManifestV3) -> None:
+    def validate_manifest(self, manifest: ArtifactManifest) -> None:
         """Cross-check bundle metadata against product schemas."""
         ...
 
     def build(
-        self, manifest: ArtifactManifestV3, products: dict[str, Dataset]
+        self, manifest: ArtifactManifest, products: dict[str, Dataset]
     ) -> Any: ...
 
 
@@ -904,7 +904,7 @@ class _GenericBundleAdapter:
             raise ArtifactCorruptError("generic bundle descriptor must be empty")
 
     def build(
-        self, manifest: ArtifactManifestV3, products: dict[str, Dataset]
+        self, manifest: ArtifactManifest, products: dict[str, Dataset]
     ) -> Any:
         from .bundle import GenericDataBundle
 
@@ -915,7 +915,7 @@ class _GenericBundleAdapter:
             metadata={"artifact_id": manifest.artifact_id},
         )
 
-    def validate_manifest(self, manifest: ArtifactManifestV3) -> None:
+    def validate_manifest(self, manifest: ArtifactManifest) -> None:
         self.validate_descriptor(manifest.bundle)
 
 
@@ -951,7 +951,7 @@ def load_bundle(directory: Path | str) -> Any:
     from .bundle import GenericDataBundle
 
     directory = Path(directory)
-    manifest = ArtifactManifestV3.read(directory)
+    manifest = ArtifactManifest.read(directory)
     products = _load_products(manifest, directory)
     adapter = _BUNDLE_ADAPTERS.get(manifest.bundle.adapter_id)
     if adapter is None:

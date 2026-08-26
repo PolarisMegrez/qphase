@@ -124,7 +124,7 @@ class SchedulerService:
         from ..data.errors import ArtifactCorruptError
         from ..data.store import (
             ARTIFACT_SCHEMA_VERSION,
-            ArtifactManifestV3,
+            ArtifactManifest,
             storage_referenced_files,
         )
 
@@ -149,9 +149,9 @@ class SchedulerService:
             version = raw.get("schema_version")
             if version != ARTIFACT_SCHEMA_VERSION:
                 if isinstance(version, str) and version.startswith("qphase.artifact/"):
-                    ArtifactManifestV3.read(artifact_dir)
+                    ArtifactManifest.read(artifact_dir)
                 continue
-            manifest = ArtifactManifestV3.read(artifact_dir)
+            manifest = ArtifactManifest.read(artifact_dir)
             size = sum(
                 (artifact_dir / file).stat().st_size
                 for entry in manifest.products
@@ -276,13 +276,13 @@ class SchedulerService:
             raise FileNotFoundError(f"Artifact directory not found: {path}")
         from ..data.errors import ArtifactNotFoundError
         from ..data.store import (
-            ArtifactManifestV3,
+            ArtifactManifest,
             storage_adapter_available,
             storage_referenced_files,
         )
 
         try:
-            manifest = ArtifactManifestV3.read(artifact)
+            manifest = ArtifactManifest.read(artifact)
         except ArtifactNotFoundError as exc:
             raise FileNotFoundError(
                 f"Not a qphase 2.x artifact directory: {path}"

@@ -16,7 +16,7 @@ from qphase.core.result_loader import load_result
 from qphase.core.scan import ScanSpec
 from qphase.data import ArtifactCorruptError, BundleDescriptor, DataKind
 from qphase.data.resolver import default_artifact_resolver
-from qphase.data.store import ArtifactManifestV3
+from qphase.data.store import ArtifactManifest
 from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
 from qphase_sde.analyser.lorentz_fitter import LorentzFitter
 from qphase_sde.analyser.psd import PsdAnalyzer
@@ -97,7 +97,7 @@ def test_scan_bundle_restores_from_v3_artifact(tmp_path):
     job_dir = tmp_path / "scan"
     bundle = _save_scan_bundle(job_dir)
 
-    manifest = ArtifactManifestV3.read(job_dir)
+    manifest = ArtifactManifest.read(job_dir)
     assert manifest.bundle.type_id == SDE_BUNDLE_TYPE_ID
     assert manifest.bundle.adapter_id == SDE_BUNDLE_ADAPTER_ID
     assert manifest.bundle.product_roles == {

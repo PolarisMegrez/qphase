@@ -16,7 +16,7 @@ from qphase.data import (
     ArtifactAdapterError,
     ArtifactCorruptError,
     ArtifactError,
-    ArtifactManifestV3,
+    ArtifactManifest,
     ArtifactNotFoundError,
     ArtifactRef,
     ArtifactUnsupportedError,
@@ -186,7 +186,7 @@ def test_manifest_rejects_open_persisted_product_schema(tmp_path):
     _rewrite_manifest(tmp_path)
 
     with pytest.raises(ArtifactCorruptError, match="closed before persistence"):
-        ArtifactManifestV3.read(tmp_path)
+        ArtifactManifest.read(tmp_path)
 
 
 def test_unknown_artifact_ref_requires_store_open(tmp_path):
@@ -303,7 +303,7 @@ def test_unknown_adapter_is_rejected(tmp_path):
     _rewrite_manifest(tmp_path)
 
     # The manifest itself parses and lists fine; materializing fails clearly.
-    ArtifactManifestV3.read(tmp_path)
+    ArtifactManifest.read(tmp_path)
     with pytest.raises(ArtifactAdapterError, match="unknown storage adapter"):
         load_products(tmp_path)
 
@@ -324,9 +324,9 @@ def test_manifest_rejects_wrong_version(tmp_path):
         json.dumps({"schema_version": "2.0"})
     )
     with pytest.raises(ArtifactUnsupportedError, match="unsupported artifact schema"):
-        ArtifactManifestV3.read(tmp_path)
+        ArtifactManifest.read(tmp_path)
     with pytest.raises(FileNotFoundError):
-        ArtifactManifestV3.read(tmp_path / "missing")
+        ArtifactManifest.read(tmp_path / "missing")
 
 
 def test_manifest_rejects_unsafe_paths(tmp_path):
@@ -364,14 +364,14 @@ def test_manifest_rejects_duplicate_products_and_parents(tmp_path):
 
     _mutate_manifest(tmp_path, duplicate_product)
     with pytest.raises(ArtifactCorruptError, match="unique"):
-        ArtifactManifestV3.read(tmp_path)
+        ArtifactManifest.read(tmp_path)
 
     save_products(tmp_path / "second", {"trajectories": dataset})
     _mutate_manifest(
         tmp_path / "second", lambda raw: raw.update(parents=["a", "a"])
     )
     with pytest.raises(ArtifactCorruptError, match="unique"):
-        ArtifactManifestV3.read(tmp_path / "second")
+        ArtifactManifest.read(tmp_path / "second")
 
 
 def test_manifest_rejects_naive_created_at(tmp_path):
@@ -381,7 +381,7 @@ def test_manifest_rejects_naive_created_at(tmp_path):
         tmp_path, lambda raw: raw.update(created_at="2026-08-25T12:00:00")
     )
     with pytest.raises(ArtifactCorruptError, match="timezone"):
-        ArtifactManifestV3.read(tmp_path)
+        ArtifactManifest.read(tmp_path)
 
 
 def test_manifest_rejects_shared_chunk_files(tmp_path):
@@ -415,7 +415,7 @@ def test_manifest_read_rejects_payload_shared_across_products(tmp_path):
     _rewrite_manifest(tmp_path)
 
     with pytest.raises(ArtifactCorruptError, match="across products"):
-        ArtifactManifestV3.read(tmp_path)
+        ArtifactManifest.read(tmp_path)
 
 
 def test_manifest_rejects_storage_variable_mismatch(tmp_path):
@@ -427,7 +427,7 @@ def test_manifest_rejects_storage_variable_mismatch(tmp_path):
 
     _mutate_manifest(tmp_path, drop_variable)
     with pytest.raises(ArtifactCorruptError, match="missing"):
-        ArtifactManifestV3.read(tmp_path)
+        ArtifactManifest.read(tmp_path)
 
     save_products(tmp_path / "second", {"trajectories": dataset})
 
@@ -437,7 +437,7 @@ def test_manifest_rejects_storage_variable_mismatch(tmp_path):
 
     _mutate_manifest(tmp_path / "second", add_variable)
     with pytest.raises(ArtifactCorruptError, match="extra"):
-        ArtifactManifestV3.read(tmp_path / "second")
+        ArtifactManifest.read(tmp_path / "second")
 
 
 def test_manifest_rejects_removed_hash_fields(tmp_path):
@@ -446,7 +446,7 @@ def test_manifest_rejects_removed_hash_fields(tmp_path):
 
     _mutate_manifest(tmp_path, lambda raw: raw.update(content_hash="removed"))
     with pytest.raises(ArtifactCorruptError, match="content_hash"):
-        ArtifactManifestV3.read(tmp_path)
+        ArtifactManifest.read(tmp_path)
 
     save_products(tmp_path / "second", {"trajectories": dataset})
     _mutate_manifest(
@@ -456,7 +456,7 @@ def test_manifest_rejects_removed_hash_fields(tmp_path):
         ]["x"]["chunks"][0].update(sha256="removed"),
     )
     with pytest.raises(ArtifactCorruptError, match="sha256"):
-        ArtifactManifestV3.read(tmp_path / "second")
+        ArtifactManifest.read(tmp_path / "second")
 
 
 def test_manifest_rejects_bad_chunk_ranges(tmp_path):
@@ -596,12 +596,12 @@ def test_load_rejects_unsupported_descriptor_schema(tmp_path):
 
     # A known adapter rejects unsupported metadata at the read boundary.
     with pytest.raises(ArtifactUnsupportedError, match="descriptor schema"):
-        ArtifactManifestV3.read(tmp_path)
+        ArtifactManifest.read(tmp_path)
 
 
 def test_npz_rejects_undeclared_payload_keys(tmp_path):
     save_products(tmp_path, {"trajectories": _dataset()})
-    manifest = ArtifactManifestV3.read(tmp_path)
+    manifest = ArtifactManifest.read(tmp_path)
     descriptor = manifest.products[0].storage.descriptor
     chunk = next(iter(descriptor["variables"].values()))["chunks"][0]
     path = tmp_path / chunk["file"]
@@ -651,7 +651,7 @@ def test_manifest_rejects_summary_mismatch(tmp_path):
         _mutate_manifest(target, apply)
         _rewrite_manifest(target)
         with pytest.raises(ArtifactCorruptError, match=label):
-            ArtifactManifestV3.read(target)
+            ArtifactManifest.read(target)
 
 
 

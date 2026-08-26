@@ -95,7 +95,7 @@ Job 日志、配置快照和导出的 CSV 不属于 artifact payload，除非 ma
 - `save_products(directory, products, *, provenance=None, parents=(),
   artifact_id=None, shard_target_bytes=..., bundle=None, layout="sharded",
   replace=False)` 持久化 typed dataset 并返回写出的
-  `ArtifactManifestV3`。artifact-backed dataset 先被完整物化（显式加载，
+  `ArtifactManifest`。artifact-backed dataset 先被完整物化（显式加载，
   绝不隐式）；设备端 payload 以显式 `copy_policy="allow"` 拷回主机。允许
   空产品映射；所有持久化产品 schema 必须闭合。未显式给出 `bundle` 时记录通用 bundle 描述符。
 - `load_products(directory)` 以**惰性后端**重新打开 artifact：不读取

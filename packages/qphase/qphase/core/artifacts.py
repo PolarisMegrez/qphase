@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from ..data.datasets import Dataset
-    from ..data.store import ArtifactManifestV3, BundleDescriptor
+    from ..data.store import ArtifactManifest, BundleDescriptor
 
 
 class ArtifactStore:
@@ -32,7 +32,7 @@ class ArtifactStore:
         parents: Sequence[str] = (),
         artifact_id: str | None = None,
         bundle: BundleDescriptor | None = None,
-    ) -> ArtifactManifestV3:
+    ) -> ArtifactManifest:
         """Persist typed data products and write the current artifact manifest.
 
         This is the typed counterpart of :meth:`save_result`: products are

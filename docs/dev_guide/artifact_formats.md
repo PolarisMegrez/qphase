@@ -109,7 +109,7 @@ must preserve the manifest contracts defined here.
 - `save_products(directory, products, *, provenance=None, parents=(),
   artifact_id=None, shard_target_bytes=..., bundle=None, layout="sharded",
   replace=False)` persists typed datasets and returns the written
-  `ArtifactManifestV3`. Artifact-backed datasets are fully materialized first
+  `ArtifactManifest`. Artifact-backed datasets are fully materialized first
   (an explicit load, never an implicit one); device-resident payloads are
   copied to the host with an explicit `copy_policy="allow"`. An empty product
   mapping is allowed. Every persisted product schema must be closed. Without an explicit `bundle` a generic bundle

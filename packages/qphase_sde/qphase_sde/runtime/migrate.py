@@ -58,7 +58,7 @@ import numpy as np
 from qphase.core.errors import QPhaseError
 from qphase.core.utils import canonical_json
 from qphase.data import (
-    ArtifactManifestV3,
+    ArtifactManifest,
     AxisRole,
     AxisSchema,
     DataKind,
@@ -782,7 +782,7 @@ def migrate_scan_artifact(
             else {}
         ),
     )
-    manifest = ArtifactManifestV3(
+    manifest = ArtifactManifest(
         artifact_id=artifact_id,
         created_at=datetime.now(UTC).isoformat(),
         bundle=bundle,

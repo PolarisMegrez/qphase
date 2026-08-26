@@ -9,7 +9,7 @@ from qphase.core.result_loader import load_result
 from qphase.data import (
     ArtifactAdapterError,
     ArtifactCorruptError,
-    ArtifactManifestV3,
+    ArtifactManifest,
     ArtifactNotFoundError,
     ArtifactRef,
     ArtifactUnsupportedError,
@@ -307,7 +307,7 @@ def test_bundle_product_roles_must_reference_products(tmp_path):
     path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
 
     with pytest.raises(ArtifactCorruptError, match="unknown products"):
-        ArtifactManifestV3.read(tmp_path)
+        ArtifactManifest.read(tmp_path)
 
 
 def test_known_bundle_descriptor_is_validated_at_manifest_read(tmp_path):
@@ -318,7 +318,7 @@ def test_known_bundle_descriptor_is_validated_at_manifest_read(tmp_path):
     path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
 
     with pytest.raises(ArtifactCorruptError, match="must be empty"):
-        ArtifactManifestV3.read(tmp_path)
+        ArtifactManifest.read(tmp_path)
 
 
 # -- bundle adapters ---------------------------------------------------------------

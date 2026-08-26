@@ -89,7 +89,7 @@ from .schema import (
 )
 from .store import (
     ARTIFACT_SCHEMA_VERSION,
-    ArtifactManifestV3,
+    ArtifactManifest,
     BundleAdapterProtocol,
     BundleDescriptor,
     ProductEntry,
@@ -111,7 +111,7 @@ __all__ = [
     "ArtifactAdapterError",
     "ArtifactCorruptError",
     "ArtifactError",
-    "ArtifactManifestV3",
+    "ArtifactManifest",
     "ArtifactNotFoundError",
     "ArtifactRef",
     "ArtifactResolverProtocol",

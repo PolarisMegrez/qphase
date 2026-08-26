@@ -594,9 +594,9 @@ class NpzStorageAdapter:
             )
         active = resolver if resolver is not None else default_artifact_resolver()
         directory = active.resolve(ref)
-        from .store import ArtifactManifestV3  # local: avoid an import cycle
+        from .store import ArtifactManifest  # local: avoid an import cycle
 
-        manifest = ArtifactManifestV3.read(directory)
+        manifest = ArtifactManifest.read(directory)
         try:
             entry = manifest.product_entry(ref.product_name)
         except KeyError:
