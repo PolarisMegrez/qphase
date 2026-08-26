@@ -175,3 +175,33 @@ def test_project_reindex(temp_workspace):
     result = runner.invoke(app, ["project", "reindex"])
     assert result.exit_code == 0
     assert "1 sessions" in result.stdout
+
+
+def test_view_save_list_delete_roundtrip(temp_workspace, monkeypatch, tmp_path):
+    """'view save/list/delete' roundtrip against an isolated private home."""
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
+
+    saved = runner.invoke(
+        app,
+        ["view", "save", "review", "--kind", "session", "--tag", "task:scan"],
+    )
+    assert saved.exit_code == 0
+
+    listed = runner.invoke(app, ["view", "list"])
+    assert listed.exit_code == 0
+    assert "review" in listed.stdout
+    assert "task:scan" in listed.stdout
+
+    deleted = runner.invoke(app, ["view", "delete", "review"])
+    assert deleted.exit_code == 0
+    assert "review" not in runner.invoke(app, ["view", "list"]).stdout
+
+
+def test_view_save_rejects_unknown_kind(temp_workspace, monkeypatch, tmp_path):
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
+    result = runner.invoke(app, ["view", "save", "bad", "--kind", "nope"])
+    assert result.exit_code == 1

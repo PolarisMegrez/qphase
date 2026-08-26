@@ -2,13 +2,21 @@
 
 ``CatalogService`` is the single entry point used by the CLI and the GUI for
 catalog queries and annotation writes. Queries lazily build the read model on
-first use; every mutation validates tags against the project policy, applies
-an optimistic-locked annotation document write and then reindexes the catalog
-so the change is immediately visible in queries.
+first use; every shared mutation validates tags against the project policy,
+applies an optimistic-locked annotation document write and then reindexes the
+catalog so the change is immediately visible in queries.
+
+User-private state (private tags, saved views) lives in a per-user
+:class:`~qphase.service.private.UserPrivateStore` outside the project. Private
+tags never enter the catalog: they are overlaid onto query results at read
+time with source ``"user_private"``, and in cardinality-one namespaces they
+shadow the shared assignments of the same namespace (near shadows far, and
+private is the nearest level).
 """
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +39,7 @@ from qphase.core.project import ProjectContext
 from qphase.core.tags import (
     TAG_POLICY_FILENAME,
     ObjectKind,
+    TagPolicy,
     canonicalize_tag_syntax,
     load_tag_policy,
     validate_declared_tags,
@@ -43,19 +52,30 @@ from .models import (
     SessionSummary,
     TagPolicyInfo,
 )
+from .private import UserPrivateStore
 from .project import ProjectService
 
-__all__ = ["CatalogService"]
+__all__ = ["CatalogService", "VIRTUAL_FOLDERS"]
+
+#: Names of the built-in virtual folders, in display order.
+VIRTUAL_FOLDERS = (
+    "by-model",
+    "paper-evidence",
+    "diagnostics",
+    "superseded",
+    "cold-storage",
+)
 
 
 class CatalogService:
     """Query the project object catalog and mutate object annotations."""
 
-    def __init__(self, project: ProjectContext) -> None:
+    def __init__(self, project: ProjectContext, *, home: Path | None = None) -> None:
         self.project = project
         self.catalog = ProjectObjectCatalog(project)
         self.state_store = ProjectStateStore(project)
         self.project_service = ProjectService(project)
+        self.private = UserPrivateStore(project.project_id, home=home)
 
     def reindex(self) -> CatalogStats:
         """Rebuild the catalog read model from disk truth."""
@@ -72,12 +92,19 @@ class CatalogService:
     def effective_tags(
         self, object_kind: str, object_id: str
     ) -> list[EffectiveTagInfo]:
-        """Return the materialized effective tags of one object."""
+        """Return the effective tags of one object, shared plus private."""
         self._ensure_index()
-        return [
+        shared = [
             _tag_info(tag)
             for tag in self.catalog.effective_tags(object_kind, object_id)
         ]
+        private = [
+            EffectiveTagInfo(tag=tag, source="user_private")
+            for _object_id, tag in self.private.list_private_tags(
+                object_kind, object_id
+            )
+        ]
+        return _merge_private(shared, private, load_tag_policy(self.project))
 
     def tag_policy(self) -> TagPolicyInfo:
         """Return the resolved project tag policy (empty when unconfigured)."""
@@ -96,17 +123,62 @@ class CatalogService:
             ),
         )
 
+    def save_view(self, name: str, query: CatalogQuery) -> None:
+        """Save or replace one named catalog view in the private store."""
+        self.private.save_view(name, asdict(query))
+
+    def list_views(self) -> list[tuple[str, CatalogQuery]]:
+        """Return saved views as ``(name, query)`` pairs ordered by name."""
+        return [
+            (name, CatalogQuery(**payload))
+            for name, payload in self.private.list_views()
+        ]
+
+    def delete_view(self, name: str) -> None:
+        """Delete one saved view from the private store."""
+        self.private.delete_view(name)
+
+    def virtual_folders(self) -> list[tuple[str, int]]:
+        """Return ``(name, object count)`` for every built-in folder."""
+        return [(name, len(self.virtual_folder(name))) for name in VIRTUAL_FOLDERS]
+
+    def virtual_folder(self, name: str) -> list[CatalogObject]:
+        """Return the session objects of one built-in virtual folder."""
+        if name == "by-model":
+            return self.query(
+                CatalogQuery(object_kind="session", tag_namespace="model")
+            )
+        if name == "paper-evidence":
+            return self.query(
+                CatalogQuery(object_kind="session", retention="evidence")
+            ) + self.query(CatalogQuery(object_kind="session", retention="pinned"))
+        if name == "diagnostics":
+            return self.query(
+                CatalogQuery(object_kind="session", tags_all=("task:diagnostics",))
+            )
+        if name == "superseded":
+            return self.query(
+                CatalogQuery(object_kind="session", lifecycle="superseded")
+            )
+        if name == "cold-storage":
+            return self.query(CatalogQuery(object_kind="session", lifecycle="archived"))
+        raise KeyError(f"unknown virtual folder: {name!r}")
+
     def tag_session(
         self,
         session_id: str,
         *,
         add: list[str] | tuple[str, ...] = (),
         remove: list[str] | tuple[str, ...] = (),
+        private: bool = False,
     ) -> SessionSummary:
         """Add/remove session tag assignments; returns the session summary."""
         added = self._validate_tags(add, "session")
         removed = _canonical_set(remove)
         root = self.project_service.session_dir(session_id)
+        if private:
+            self._edit_private_tags("session", session_id, added, removed)
+            return self.project_service.get_session(session_id)
         document, expected = self._session_document(root, session_id)
         _apply_tag_edits(document.assignments, added, removed)
         self._save_session_document(root, document, expected)
@@ -138,10 +210,15 @@ class CatalogService:
         *,
         add: list[str] | tuple[str, ...] = (),
         remove: list[str] | tuple[str, ...] = (),
+        private: bool = False,
     ) -> list[EffectiveTagInfo]:
         """Add/remove artifact tag assignments; returns its effective tags."""
         added = self._validate_tags(add, "artifact")
         removed = _canonical_set(remove)
+        if private:
+            self._require_artifact(artifact_id)
+            self._edit_private_tags("artifact", artifact_id, added, removed)
+            return self.effective_tags("artifact", artifact_id)
         artifact_dir = self._artifact_dir(artifact_id)
         document, expected = self._artifact_document(artifact_dir, artifact_id)
         _apply_tag_edits(document.assignments, added, removed)
@@ -175,11 +252,15 @@ class CatalogService:
         *,
         add: list[str] | tuple[str, ...] = (),
         remove: list[str] | tuple[str, ...] = (),
+        private: bool = False,
     ) -> list[EffectiveTagInfo]:
         """Add/remove occurrence tag assignments; returns its effective tags."""
         occurrence_id = self._occurrence_id(session_id, artifact_id)
         added = self._validate_tags(add, "occurrence")
         removed = _canonical_set(remove)
+        if private:
+            self._edit_private_tags("occurrence", occurrence_id, added, removed)
+            return self.effective_tags("occurrence", occurrence_id)
         root = self.project_service.session_dir(session_id)
         document, expected = self._session_document(root, session_id)
         occurrence = document.occurrences.setdefault(
@@ -205,6 +286,35 @@ class CatalogService:
         occurrence.retention = retention
         self._save_session_document(root, document, expected)
         return self._single_object("occurrence", occurrence_id)
+
+    def promote_tag(
+        self, object_kind: str, object_id: str, tag: str
+    ) -> list[EffectiveTagInfo]:
+        """Move one private tag into the shared annotation document."""
+        canonical = canonicalize_tag_syntax(tag)
+        if object_kind == "session":
+            self.tag_session(object_id, add=[canonical])
+        elif object_kind == "artifact":
+            self.tag_artifact(object_id, add=[canonical])
+        elif object_kind == "occurrence":
+            artifact_id, session_id, _job_name = object_id.split(":", 2)
+            self.tag_occurrence(session_id, artifact_id, add=[canonical])
+        else:
+            raise ValueError(f"cannot promote tags on {object_kind!r} objects")
+        self.private.remove_private_tag(object_kind, object_id, canonical)
+        return self.effective_tags(object_kind, object_id)
+
+    def _edit_private_tags(
+        self,
+        object_kind: str,
+        object_id: str,
+        added: list[str],
+        removed: set[str],
+    ) -> None:
+        for tag in removed:
+            self.private.remove_private_tag(object_kind, object_id, tag)
+        for tag in added:
+            self.private.add_private_tag(object_kind, object_id, tag)
 
     def _ensure_index(self) -> None:
         if not self.catalog.path.exists():
@@ -267,11 +377,15 @@ class CatalogService:
         )
         self.catalog.reindex()
 
-    def _artifact_dir(self, artifact_id: str) -> Path:
+    def _require_artifact(self, artifact_id: str) -> None:
         self._ensure_index()
-        relative = self.catalog.locate_artifact(artifact_id)
-        if relative is None:
+        if self.catalog.locate_artifact(artifact_id) is None:
             raise ArtifactNotFoundError(f"unknown artifact: {artifact_id}")
+
+    def _artifact_dir(self, artifact_id: str) -> Path:
+        self._require_artifact(artifact_id)
+        relative = self.catalog.locate_artifact(artifact_id)
+        assert relative is not None
         return (self.project.session_root / relative).resolve()
 
     def _occurrence_id(self, session_id: str, artifact_id: str) -> str:
@@ -301,8 +415,8 @@ class CatalogService:
             id=object_id,
             facets=row,
             effective_tags=[
-                _tag_info(tag)
-                for tag in self.catalog.effective_tags(object_kind, object_id)
+                tag
+                for tag in self.effective_tags(object_kind, object_id)
                 if not tag.shadowed
             ],
         )
@@ -317,6 +431,22 @@ def _tag_info(tag: EffectiveTag) -> EffectiveTagInfo:
         inherited=tag.inherited,
         shadowed=tag.shadowed,
     )
+
+
+def _merge_private(
+    shared: list[EffectiveTagInfo],
+    private: list[EffectiveTagInfo],
+    policy: TagPolicy | None,
+) -> list[EffectiveTagInfo]:
+    """Overlay private tags: cardinality-one namespaces shadow shared tags."""
+    for tag in private:
+        namespace = tag.tag.split(":", 1)[0]
+        rule = policy.namespaces.get(namespace) if policy is not None else None
+        if rule is not None and rule.cardinality == "one":
+            for other in shared:
+                if other.tag.split(":", 1)[0] == namespace:
+                    other.shadowed = True
+    return [*shared, *private]
 
 
 def _canonical_set(values: list[str] | tuple[str, ...]) -> set[str]:

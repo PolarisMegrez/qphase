@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import time
 from collections.abc import Mapping
@@ -56,6 +57,8 @@ CATALOG_FILENAME = "object_catalog.sqlite"
 
 #: Read-model schema version; a mismatch forces a rebuild.
 CATALOG_SCHEMA = "qphase.catalog/1"
+
+_NAMESPACE_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
 
 OBJECT_KINDS = ("workflow", "execution", "session", "artifact", "occurrence")
 
@@ -203,6 +206,7 @@ class CatalogQuery:
     tags_any: tuple[str, ...] = ()
     tags_without: tuple[str, ...] = ()
     tag_descendant_of: str | None = None
+    tag_namespace: str | None = None
     lifecycle: str | None = None
     retention: str | None = None
     effective: bool = True
@@ -222,6 +226,13 @@ class CatalogQuery:
                 "tag_descendant_of",
                 canonicalize_tag_syntax(self.tag_descendant_of),
             )
+        if self.tag_namespace is not None:
+            namespace = self.tag_namespace.strip().lower()
+            if not _NAMESPACE_PATTERN.fullmatch(namespace):
+                raise ValueError(
+                    f"invalid tag namespace {self.tag_namespace!r}"
+                )
+            object.__setattr__(self, "tag_namespace", namespace)
 
 
 def _canonical_tags(values: tuple[str, ...]) -> tuple[str, ...]:
@@ -426,6 +437,15 @@ class ProjectObjectCatalog:
                     query.tag_descendant_of + "/%",
                 ]
             )
+        if query.tag_namespace is not None:
+            # tag_namespace is validated against the namespace pattern in
+            # __post_init__, so the LIKE pattern carries no user metacharacters
+            # beyond the (harmless) underscore wildcard.
+            where.append(
+                f"EXISTS (SELECT 1 FROM effective_tags et WHERE {base}"
+                " AND et.tag LIKE ?)"
+            )
+            params.extend([query.object_kind, query.tag_namespace + ":%"])
 
     def _connect(self, *, fresh: bool = False) -> sqlite3.Connection:
         path = self.path

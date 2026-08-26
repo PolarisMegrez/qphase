@@ -199,3 +199,141 @@ def test_revision_conflict_surfaces_as_runtime_error(tmp_path, monkeypatch):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__]))
+
+
+def test_private_tags_overlay_shared_without_reindex(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(project, "session-1")
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.tag_session("session-1", add=["task:scan"])
+    service.tag_session("session-1", add=["task:wip"], private=True)
+
+    tags = {tag.tag: tag for tag in service.effective_tags("session", "session-1")}
+    assert tags["task:scan"].source == "session_annotation"
+    assert tags["task:wip"].source == "user_private"
+    # Private writes never create or touch the shared annotation document.
+    document = json.loads(
+        (root / "session_annotations.json").read_text(encoding="utf-8")
+    )
+    assert [item["tag"] for item in document["assignments"]] == ["task:scan"]
+
+    service.tag_session("session-1", remove=["task:wip"], private=True)
+    assert {
+        tag.tag for tag in service.effective_tags("session", "session-1")
+    } == {"task:scan"}
+
+
+def test_private_tag_shadows_shared_in_cardinality_one_namespace(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\n"
+        "namespaces:\n"
+        "  stage:\n"
+        "    cardinality: one\n"
+        "    open: true\n",
+    )
+    _session(project, "session-1")
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.tag_session("session-1", add=["stage:q1"])
+    service.tag_session("session-1", add=["stage:q2"], private=True)
+
+    tags = {tag.tag: tag for tag in service.effective_tags("session", "session-1")}
+    assert tags["stage:q1"].shadowed
+    assert not tags["stage:q2"].shadowed
+    assert tags["stage:q2"].source == "user_private"
+    # CatalogObject.effective_tags hides shadowed entries.
+    row = service.query(
+        CatalogQuery(object_kind="session", facets={"id": "session-1"})
+    )[0]
+    assert [tag.tag for tag in row.effective_tags] == ["stage:q2"]
+
+
+def test_promote_tag_moves_private_tag_into_shared_annotations(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1")
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.tag_session("session-1", add=["task:wip"], private=True)
+    promoted = service.promote_tag("session", "session-1", "task:wip")
+
+    tags = {tag.tag: tag for tag in promoted}
+    assert tags["task:wip"].source == "session_annotation"
+    assert service.private.list_private_tags("session", "session-1") == []
+
+
+def test_promote_occurrence_tag(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.tag_occurrence("session-1", "art-1", add=["purpose:draft"], private=True)
+    promoted = service.promote_tag(
+        "occurrence", "art-1:session-1:sim", "purpose:draft"
+    )
+
+    tags = {tag.tag: tag for tag in promoted}
+    assert tags["purpose:draft"].source == "occurrence_annotation"
+    assert service.private.list_private_tags("occurrence") == []
+
+
+def test_saved_views_roundtrip(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.save_view(
+        "review", CatalogQuery(object_kind="session", tags_all=("task:scan",))
+    )
+
+    views = service.list_views()
+    assert [name for name, _ in views] == ["review"]
+    assert views[0][1] == CatalogQuery(
+        object_kind="session", tags_all=("task:scan",)
+    )
+
+    service.delete_view("review")
+    assert service.list_views() == []
+
+
+def test_virtual_folders(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "s-model")
+    _session(project, "s-evidence")
+    _session(project, "s-pinned")
+    _session(project, "s-diag")
+    _session(project, "s-superseded")
+    _session(project, "s-archived")
+    _session(project, "s-plain")
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.tag_session("s-model", add=["model:cam"])
+    service.set_session_retention("s-evidence", "evidence")
+    service.set_session_retention("s-pinned", "pinned")
+    service.tag_session("s-diag", add=["task:diagnostics"])
+    service.set_session_lifecycle("s-superseded", "superseded")
+    service.set_session_lifecycle("s-archived", "archived")
+
+    folders = dict(service.virtual_folders())
+    assert folders == {
+        "by-model": 1,
+        "paper-evidence": 2,
+        "diagnostics": 1,
+        "superseded": 1,
+        "cold-storage": 1,
+    }
+    assert [row.id for row in service.virtual_folder("by-model")] == ["s-model"]
+    assert [row.id for row in service.virtual_folder("paper-evidence")] == [
+        "s-evidence",
+        "s-pinned",
+    ]
+    assert [row.id for row in service.virtual_folder("diagnostics")] == ["s-diag"]
+    assert [row.id for row in service.virtual_folder("superseded")] == [
+        "s-superseded"
+    ]
+    assert [row.id for row in service.virtual_folder("cold-storage")] == [
+        "s-archived"
+    ]
+    with pytest.raises(KeyError, match="unknown virtual folder"):
+        service.virtual_folder("nope")

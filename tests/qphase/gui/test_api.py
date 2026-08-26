@@ -554,3 +554,93 @@ def test_gui_api_rejects_tag_update_after_completion(temp_workspace, sample_job_
             f"/executions/{execution_id}/tags", json={"tags": ["task:late"]}
         )
     assert response.status_code == 409
+
+
+def _private_catalog(client: TestClient, home) -> None:
+    """Swap the app's catalog service for one with an isolated private home."""
+    from qphase.service import CatalogService
+
+    context = client.app.state.context
+    context.catalog = CatalogService(context.project, home=home)
+
+
+def test_gui_api_saved_views_roundtrip(temp_workspace, tmp_path):
+    _catalog_session(temp_workspace)
+    with TestClient(create_app()) as client:
+        _private_catalog(client, tmp_path / "home")
+
+        saved = client.put(
+            "/views/review",
+            json={"object_kind": "session", "tags_all": ["task:scan"]},
+        )
+        assert saved.status_code == 200
+
+        listed = client.get("/views")
+        assert listed.status_code == 200
+        views = listed.json()["views"]
+        assert [view["name"] for view in views] == ["review"]
+        assert views[0]["query"]["tags_all"] == ["task:scan"]
+
+        deleted = client.delete("/views/review")
+        assert deleted.status_code == 204
+        assert client.get("/views").json()["views"] == []
+
+        invalid = client.put("/views/bad", json={"object_kind": "nope"})
+        assert invalid.status_code == 400
+
+
+def test_gui_api_virtual_folders(temp_workspace, tmp_path):
+    _catalog_session(temp_workspace)
+    with TestClient(create_app()) as client:
+        _private_catalog(client, tmp_path / "home")
+        client.patch("/sessions/catalog-session", json={"lifecycle": "archived"})
+
+        folders = client.get("/folders")
+        assert folders.status_code == 200
+        counts = {
+            folder["name"]: folder["count"] for folder in folders.json()["folders"]
+        }
+        assert counts == {
+            "by-model": 0,
+            "paper-evidence": 0,
+            "diagnostics": 0,
+            "superseded": 0,
+            "cold-storage": 1,
+        }
+
+        detail = client.get("/folders/cold-storage")
+        assert detail.status_code == 200
+        assert [item["id"] for item in detail.json()["objects"]] == [
+            "catalog-session"
+        ]
+        assert client.get("/folders/nope").status_code == 404
+
+
+def test_gui_api_private_tags_and_promote(temp_workspace, tmp_path):
+    root = _catalog_session(temp_workspace)
+    with TestClient(create_app()) as client:
+        _private_catalog(client, tmp_path / "home")
+
+        tagged = client.post(
+            "/sessions/catalog-session/tags",
+            json={"add": ["task:wip"], "private": True},
+        )
+        assert tagged.status_code == 200
+        # A private tag never creates the shared annotation document.
+        assert not (root / "session_annotations.json").exists()
+
+        tags = client.get("/catalog/session/catalog-session/tags").json()
+        assert {
+            tag["tag"]: tag["source"] for tag in tags["effective_tags"]
+        } == {"task:wip": "user_private"}
+
+        promoted = client.post(
+            "/catalog/session/catalog-session/tags/promote",
+            json={"tag": "task:wip"},
+        )
+        assert promoted.status_code == 200
+        assert {
+            tag["tag"]: tag["source"]
+            for tag in promoted.json()["effective_tags"]
+        } == {"task:wip": "session_annotation"}
+        assert (root / "session_annotations.json").exists()

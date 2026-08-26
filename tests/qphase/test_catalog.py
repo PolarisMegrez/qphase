@@ -371,3 +371,26 @@ def test_corrupt_catalog_rebuilds_from_disk_truth(tmp_path):
     assert rebuilt.artifacts == 1
     rows = catalog.query(CatalogQuery(object_kind="session"))
     assert [row["id"] for row in rows] == ["session-1"]
+
+
+def test_query_tag_namespace_filter(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(
+        project,
+        "session-1",
+        annotations={"assignments": [{"id": "s1", "tag": "model:cam"}]},
+    )
+    _session(
+        project,
+        "session-2",
+        start_time="2026-08-27T10:00:00+08:00",
+        annotations={"assignments": [{"id": "s2", "tag": "task:scan"}]},
+    )
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    rows = catalog.query(CatalogQuery(object_kind="session", tag_namespace="model"))
+    assert [row["id"] for row in rows] == ["session-1"]
+    with pytest.raises(ValueError, match="invalid tag namespace"):
+        CatalogQuery(object_kind="session", tag_namespace="model:cam")

@@ -63,6 +63,19 @@ class PendingJobRevisionRequest(BaseModel):
 class TagsUpdateRequest(BaseModel):
     add: list[str] = Field(default_factory=list)
     remove: list[str] = Field(default_factory=list)
+    private: bool = False
+
+
+class SavedViewRequest(BaseModel):
+    object_kind: str
+    tags_all: list[str] = Field(default_factory=list)
+    lifecycle: str | None = None
+    retention: str | None = None
+    limit: int = 100
+
+
+class PromoteTagRequest(BaseModel):
+    tag: str = Field(min_length=1)
 
 
 class ArtifactUpdateRequest(BaseModel):
@@ -506,7 +519,10 @@ def create_app(
     ) -> dict[str, Any]:
         try:
             return context.catalog.tag_session(
-                session_id, add=request.add, remove=request.remove
+                session_id,
+                add=request.add,
+                remove=request.remove,
+                private=request.private,
             ).model_dump(mode="json")
         except RuntimeError as exc:
             raise _http_error(exc, status_code=409) from exc
@@ -519,7 +535,10 @@ def create_app(
     ) -> dict[str, Any]:
         try:
             tags = context.catalog.tag_artifact(
-                artifact_id, add=request.add, remove=request.remove
+                artifact_id,
+                add=request.add,
+                remove=request.remove,
+                private=request.private,
             )
         except RuntimeError as exc:
             raise _http_error(exc, status_code=409) from exc
@@ -533,7 +552,11 @@ def create_app(
     ) -> dict[str, Any]:
         try:
             tags = context.catalog.tag_occurrence(
-                session_id, artifact_id, add=request.add, remove=request.remove
+                session_id,
+                artifact_id,
+                add=request.add,
+                remove=request.remove,
+                private=request.private,
             )
         except RuntimeError as exc:
             raise _http_error(exc, status_code=409) from exc
@@ -594,6 +617,77 @@ def create_app(
             return context.catalog.tag_policy().model_dump(mode="json")
         except Exception as exc:
             raise _http_error(exc) from exc
+
+    @app.get("/views")
+    def list_saved_views() -> dict[str, Any]:
+        try:
+            views = context.catalog.list_views()
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return {
+            "views": [
+                {"name": name, "query": asdict(query)} for name, query in views
+            ]
+        }
+
+    @app.put("/views/{name}")
+    def save_view(name: str, request: SavedViewRequest) -> dict[str, str]:
+        try:
+            context.catalog.save_view(
+                name,
+                CatalogQuery(
+                    object_kind=request.object_kind,
+                    tags_all=tuple(request.tags_all),
+                    lifecycle=request.lifecycle,
+                    retention=request.retention,
+                    limit=request.limit,
+                ),
+            )
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return {"status": "saved"}
+
+    @app.delete("/views/{name}", status_code=204)
+    def delete_saved_view(name: str) -> Response:
+        try:
+            context.catalog.delete_view(name)
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return Response(status_code=204)
+
+    @app.get("/folders")
+    def list_virtual_folders() -> dict[str, Any]:
+        try:
+            folders = context.catalog.virtual_folders()
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return {
+            "folders": [
+                {"name": name, "count": count} for name, count in folders
+            ]
+        }
+
+    @app.get("/folders/{name}")
+    def get_virtual_folder(name: str) -> dict[str, Any]:
+        try:
+            objects = context.catalog.virtual_folder(name)
+        except KeyError as exc:
+            raise _http_error(exc, status_code=404) from exc
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return {"objects": [item.model_dump(mode="json") for item in objects]}
+
+    @app.post("/catalog/{kind}/{object_id:path}/tags/promote")
+    def promote_tag(
+        kind: str, object_id: str, request: PromoteTagRequest
+    ) -> dict[str, Any]:
+        try:
+            tags = context.catalog.promote_tag(kind, object_id, request.tag)
+        except RuntimeError as exc:
+            raise _http_error(exc, status_code=409) from exc
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return {"effective_tags": [tag.model_dump(mode="json") for tag in tags]}
 
     return app
 
