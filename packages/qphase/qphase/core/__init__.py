@@ -16,6 +16,7 @@ Public API
 ``SystemConfig`` : System-level configuration model.
 ``load_system_config``, ``save_user_config``, ``get_system_param`` : System config I/O.
 ``ProjectContext`` : Explicit project identity and portable path boundary.
+``ProjectStateStore`` : Project-scoped Session, event, and execution persistence.
 ``QPhaseError`` : Unified exception hierarchy base class.
 ``get_logger``, ``configure_logging``
     Logging utilities.

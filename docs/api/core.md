@@ -30,6 +30,12 @@ Scheduler(
 Job graph, resolves engines and plugins, passes scan grids to resource engines,
 persists Artifacts, and returns `list[JobResult]`.
 
+`ExecutionManager` is the service-layer asynchronous control surface. It keeps
+one logical execution queue, persists lifecycle records under the project-local
+`.qphase/executions` directory, and restores queued records on process start.
+An execution that was running when the process stopped is reported as an
+interrupted failure; numerical integrator state is not reconstructed.
+
 Each new Execution creates one Session with a Workflow snapshot and content
 hash. Resume requires matching Project ID, Workflow ID, and Workflow hash.
 
@@ -51,8 +57,9 @@ Project paths never belong to `SystemConfig`.
 engine. A scan remains one logical Job.
 
 `ExecutionContext` carries the grid, resource snapshot, progress reporter,
-cancellation token, ArtifactStore, and CheckpointStore. Engines should report
-their natural work units through this context.
+cancellation token, ArtifactStore, CheckpointStore, and the project-scoped
+`artifact_resolver`. Engines should report their natural work units through
+this context.
 
 ## Registry
 

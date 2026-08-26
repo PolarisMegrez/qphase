@@ -55,6 +55,8 @@ The scheduler supplies a context containing:
 - `cancellation`: a cancellation token reserved for CLI/service clients.
 - `artifacts`: the logical job's `ArtifactStore`.
 - `checkpoints`: a chunk-level `CheckpointStore`.
+- `artifact_resolver`: the Project-scoped resolver for durable `ArtifactRef`
+  inputs.
 
 The preferred engine signature is:
 

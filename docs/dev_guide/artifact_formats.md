@@ -120,12 +120,14 @@ must preserve the manifest contracts defined here.
   chunks they touch. `load_bundle(directory)` additionally rebuilds the
   concrete bundle through the registered bundle adapter (the generic adapter
   yields a `GenericDataBundle`).
-- A process-local `DirectoryArtifactResolver` maps artifact ids to
-  directories so `ArtifactRef`-backed datasets can resolve their storage.
-  `save_products`/`load_products` populate it; cross-process restores must
-  open the artifact directory once before dereferencing refs. An
-  `ArtifactRef` carries identity only — artifact id, product name, product
-  schema and storage adapter id; it names no code and no filesystem location.
+- `DirectoryArtifactResolver` remains available for explicitly bound,
+  process-local references. `ProjectArtifactResolver` resolves an
+  `ArtifactRef` within one Project's Session root without process-global state;
+  the scheduler supplies it through `ExecutionContext.artifact_resolver`.
+  It performs a direct manifest scan until the later Project catalog provides
+  an indexed implementation. An `ArtifactRef` carries identity only – artifact
+  id, product name, product schema and storage adapter id; it names no code and
+  no filesystem location.
 
 ## SDE data products
 
