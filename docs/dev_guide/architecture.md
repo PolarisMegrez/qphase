@@ -34,6 +34,10 @@ separate execution semantics.
 - `WorkflowSpec` is a strict `qphase.workflow/2` document containing stable
   metadata and logical `JobConfig` nodes.
 - `ExecutionManager` owns the local asynchronous queue and cooperative control.
+- `ExecutionManager` persists low-frequency execution control records under
+  the project-local `.qphase/executions` directory. Queued records are restored
+  after a process restart; records that were running when the process stopped
+  are reported as interrupted failures rather than falsely resumed.
 - `Scheduler` executes one Workflow graph and persists one Session.
 - `ArtifactStore` saves each logical result and describes physical layout.
 - `ProjectService` indexes Workflow documents and Session history.
@@ -79,7 +83,8 @@ sampled into `ResourceSnapshot`, not persisted as configuration truth.
 4. Validate Workflow schema, Job graph, Engine manifests, and plugin schemas.
 5. Create an Execution; scheduler creates one Session attempt.
 6. For each logical Job, resolve inputs and plugins, compile `ParameterGrid`,
-   and construct `ExecutionContext`.
+   construct `ExecutionContext`, and provide its project-scoped artifact
+   resolver.
 7. Invoke the resource Engine once for that logical Job.
 8. Persist snapshots, events, logs, Artifacts, and manifest status.
 

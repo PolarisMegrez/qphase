@@ -7,9 +7,10 @@ module-level global, and an unbound ref refuses to materialize with a clear
 error.
 
 The process-default resolver holds explicit ``artifact_id -> directory``
-bindings populated by ``save_products``/``load_products``; richer
-project/session resolvers can implement :class:`ArtifactResolverProtocol`
-over a persistent artifact catalog.
+bindings populated by ``save_products``/``load_products``.  The
+:class:`ProjectArtifactResolver` resolves within one project's Session root
+without relying on process-global state; the later catalog phase can replace
+its direct scan with an indexed implementation.
 
 Public API
 ----------
@@ -17,6 +18,8 @@ ArtifactResolverProtocol
     Location-resolution contract for artifact refs.
 DirectoryArtifactResolver
     Process-local resolver over explicit bindings.
+ProjectArtifactResolver
+    Project-scoped resolver over manifest locations.
 default_artifact_resolver
     The process-default resolver instance.
 register_artifact_location
@@ -25,15 +28,18 @@ register_artifact_location
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from ..core.project import ProjectContext
 from .artifact import ArtifactRef
-from .errors import ArtifactNotFoundError
+from .errors import ArtifactCorruptError, ArtifactNotFoundError
 
 __all__ = [
     "ArtifactResolverProtocol",
     "DirectoryArtifactResolver",
+    "ProjectArtifactResolver",
     "default_artifact_resolver",
     "register_artifact_location",
 ]
@@ -77,6 +83,49 @@ class DirectoryArtifactResolver:
                 "open the artifact directory through "
                 "qphase.data.store.load_products or bind it explicitly first"
             ) from None
+
+
+class ProjectArtifactResolver:
+    """Resolve artifact identities within one project's session root.
+
+    The resolver deliberately performs a direct manifest scan. Project-wide
+    indexing belongs to the later catalog phase; this implementation provides
+    the correct project boundary without introducing a second index.
+    """
+
+    def __init__(self, project: ProjectContext) -> None:
+        self.project = project
+
+    def resolve(self, ref: ArtifactRef) -> Path:
+        """Return the unique artifact directory for ``ref`` in this project."""
+        matches: list[Path] = []
+        root = self.project.session_root
+        if not root.exists():
+            raise ArtifactNotFoundError(
+                f"artifact {ref.artifact_id!r} is not present in this project"
+            )
+        for manifest_path in root.rglob("artifact_manifest.json"):
+            try:
+                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ArtifactCorruptError(
+                    f"failed to read artifact manifest {manifest_path}: {exc}"
+                ) from exc
+            if not isinstance(payload, dict):
+                raise ArtifactCorruptError(
+                    f"artifact manifest {manifest_path} must contain an object"
+                )
+            if payload.get("artifact_id") == ref.artifact_id:
+                matches.append(manifest_path.parent.resolve())
+        if not matches:
+            raise ArtifactNotFoundError(
+                f"artifact {ref.artifact_id!r} is not present in this project"
+            )
+        if len(matches) > 1:
+            raise ArtifactCorruptError(
+                f"artifact identity conflict for {ref.artifact_id!r}: {matches}"
+            )
+        return matches[0]
 
 
 _DEFAULT_RESOLVER = DirectoryArtifactResolver()

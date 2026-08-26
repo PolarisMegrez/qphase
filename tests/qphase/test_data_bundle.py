@@ -5,6 +5,7 @@ import json
 import numpy as np
 import pytest
 from pydantic import ValidationError
+from qphase.core.project import ProjectContext
 from qphase.core.result_loader import load_result
 from qphase.data import (
     ArtifactAdapterError,
@@ -20,6 +21,7 @@ from qphase.data import (
     DirectoryArtifactResolver,
     GenericDataBundle,
     ProductSchema,
+    ProjectArtifactResolver,
     TimeSeriesDataset,
     VariableSchema,
     load_bundle,
@@ -407,6 +409,27 @@ def test_directory_resolver_rejects_unbound_refs():
     assert resolver.resolve(ref) == Path("/somewhere")
     resolver.clear()
     with pytest.raises(ArtifactNotFoundError):
+        resolver.resolve(ref)
+
+
+def test_project_resolver_isolated_and_rejects_duplicate_identity(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    dataset = _scan_dataset()
+    first = project.session_root / "session" / "job1"
+    manifest = save_products(
+        first, {"scan": dataset}, artifact_id="shared-artifact"
+    )
+    ref = manifest.product_ref("scan")
+    resolver = ProjectArtifactResolver(project)
+
+    assert resolver.resolve(ref) == first.resolve()
+
+    save_products(
+        project.session_root / "session" / "job2",
+        {"scan": dataset},
+        artifact_id="shared-artifact",
+    )
+    with pytest.raises(ArtifactCorruptError, match="identity conflict"):
         resolver.resolve(ref)
 
 

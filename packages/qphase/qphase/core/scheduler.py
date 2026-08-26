@@ -1234,6 +1234,8 @@ class Scheduler:
             )
         else:
             fingerprint = {}
+        from qphase.data.resolver import ProjectArtifactResolver
+
         context = ExecutionContext(
             parameter_grid=job.scan.compile() if job.scan is not None else None,
             resources=ResourceSnapshot.from_system_config(
@@ -1248,6 +1250,7 @@ class Scheduler:
                 fingerprint,
             ),
             job_dir=job_dir,
+            artifact_resolver=ProjectArtifactResolver(self.project),
             metadata={
                 "job_name": job.name,
                 "scan_summary": self._scan_summary(job),

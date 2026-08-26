@@ -65,6 +65,7 @@ from .product import (
 from .resolver import (
     ArtifactResolverProtocol,
     DirectoryArtifactResolver,
+    ProjectArtifactResolver,
     default_artifact_resolver,
     register_artifact_location,
 )
@@ -144,6 +145,7 @@ __all__ = [
     "ProductRequirement",
     "ProductSchema",
     "ProductStorage",
+    "ProjectArtifactResolver",
     "ReadOnlyArrayView",
     "RuntimeProductBacking",
     "SamplingBasisSchema",
