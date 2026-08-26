@@ -1,21 +1,28 @@
 """Project-scoped persistence ports for execution control and Session events.
 
 The implementation is intentionally one small file-backed store. Session
-manifests, event journals, and execution records have different protocols, but
-they share the project filesystem and do not need separate database wrappers.
+manifests, event journals, execution records and annotation documents have
+different protocols, but they share the project filesystem and do not need
+separate database wrappers.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from .annotations import (
+    ARTIFACT_ANNOTATIONS_FILENAME,
+    SESSION_ANNOTATIONS_FILENAME,
+)
 from .errors import ErrorCode, QPhaseIOError
 from .project import ProjectContext
 
 __all__ = [
+    "AnnotationStoreProtocol",
     "EventStoreProtocol",
     "ExecutionStoreProtocol",
     "ProjectStateStore",
@@ -69,8 +76,49 @@ class ExecutionStoreProtocol(Protocol):
         ...
 
 
+class AnnotationStoreProtocol(Protocol):
+    """Port for mutable annotation documents with optimistic concurrency.
+
+    ``expected_revision`` is the revision the caller based its edit on;
+    ``None`` requires that no document exists yet. A mismatch raises
+    ``RuntimeError("annotation revision conflict")``. The store stamps the
+    written document with the next revision and the current timestamp.
+    """
+
+    def load_session_annotations(self, session_dir: Path) -> dict[str, Any] | None:
+        """Load the session annotation document; ``None`` when absent."""
+        ...
+
+    def save_session_annotations(
+        self,
+        session_dir: Path,
+        document: Mapping[str, Any],
+        *,
+        expected_revision: int | None,
+    ) -> dict[str, Any]:
+        """Atomically persist the session annotation document."""
+        ...
+
+    def load_artifact_annotations(self, artifact_dir: Path) -> dict[str, Any] | None:
+        """Load the artifact annotation document; ``None`` when absent."""
+        ...
+
+    def save_artifact_annotations(
+        self,
+        artifact_dir: Path,
+        document: Mapping[str, Any],
+        *,
+        expected_revision: int | None,
+    ) -> dict[str, Any]:
+        """Atomically persist the artifact annotation document."""
+        ...
+
+
 class ProjectStateStore(
-    SessionStoreProtocol, EventStoreProtocol, ExecutionStoreProtocol
+    SessionStoreProtocol,
+    EventStoreProtocol,
+    ExecutionStoreProtocol,
+    AnnotationStoreProtocol,
 ):
     """Single project-scoped file implementation of the state ports."""
 
@@ -233,6 +281,132 @@ class ProjectStateStore(
                 context={"path": str(target)},
             ) from exc
         return result
+
+    def load_session_annotations(self, session_dir: Path) -> dict[str, Any] | None:
+        return self._load_annotation_document(
+            self._session_file(session_dir, SESSION_ANNOTATIONS_FILENAME)
+        )
+
+    def save_session_annotations(
+        self,
+        session_dir: Path,
+        document: Mapping[str, Any],
+        *,
+        expected_revision: int | None,
+    ) -> dict[str, Any]:
+        stored = self._save_annotation_document(
+            self._session_file(session_dir, SESSION_ANNOTATIONS_FILENAME),
+            document,
+            expected_revision=expected_revision,
+        )
+        self._append_annotation_event(session_dir, stored)
+        return stored
+
+    def load_artifact_annotations(self, artifact_dir: Path) -> dict[str, Any] | None:
+        return self._load_annotation_document(self._artifact_file(artifact_dir))
+
+    def save_artifact_annotations(
+        self,
+        artifact_dir: Path,
+        document: Mapping[str, Any],
+        *,
+        expected_revision: int | None,
+    ) -> dict[str, Any]:
+        stored = self._save_annotation_document(
+            self._artifact_file(artifact_dir),
+            document,
+            expected_revision=expected_revision,
+        )
+        # The artifact directory is one job directory below the session.
+        self._append_annotation_event(Path(artifact_dir).parent, stored)
+        return stored
+
+    def _load_annotation_document(self, target: Path) -> dict[str, Any] | None:
+        if not target.exists():
+            return None
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise QPhaseIOError(
+                f"failed to load annotation document: {target}",
+                code=ErrorCode.ARTIFACT_IO,
+                context={"path": str(target)},
+            ) from exc
+        if not isinstance(payload, dict):
+            raise QPhaseIOError(
+                f"annotation document must contain an object: {target}",
+                code=ErrorCode.ARTIFACT_IO,
+                context={"path": str(target)},
+            )
+        return dict(payload)
+
+    def _save_annotation_document(
+        self,
+        target: Path,
+        document: Mapping[str, Any],
+        *,
+        expected_revision: int | None,
+    ) -> dict[str, Any]:
+        current = self._load_annotation_document(target)
+        current_revision = int(current["revision"]) if current is not None else None
+        if current_revision != expected_revision:
+            raise RuntimeError("annotation revision conflict")
+        payload = dict(document)
+        payload["revision"] = 0 if current_revision is None else current_revision + 1
+        payload["updated_at"] = datetime.now(UTC).isoformat()
+        temporary = target.with_suffix(".tmp")
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(
+                json.dumps(payload, indent=2, allow_nan=False) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(target)
+        except (OSError, TypeError, ValueError) as exc:
+            temporary.unlink(missing_ok=True)
+            raise QPhaseIOError(
+                f"failed to save annotation document: {target}",
+                code=ErrorCode.ARTIFACT_IO,
+                context={"path": str(target)},
+            ) from exc
+        return payload
+
+    def _append_annotation_event(
+        self, session_dir: Path, document: Mapping[str, Any]
+    ) -> None:
+        """Journal one ``annotations_updated`` event for the owning session."""
+        existing = self.read_events(session_dir)
+        sequence = (
+            max((int(event.get("sequence", 0)) for event in existing), default=0) + 1
+        )
+        self.append_events(
+            session_dir,
+            [
+                {
+                    "sequence": sequence,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "execution_id": "",
+                    "session_id": document.get("session_id"),
+                    "payload": {
+                        "kind": "annotations_updated",
+                        "schema": document.get("schema"),
+                        "artifact_id": document.get("artifact_id"),
+                        "revision": document.get("revision"),
+                    },
+                }
+            ],
+        )
+
+    def _artifact_file(self, artifact_dir: Path) -> Path:
+        root = self.project.session_root.resolve()
+        directory = Path(artifact_dir).expanduser().resolve()
+        if not directory.is_relative_to(root):
+            raise QPhaseIOError(
+                f"artifact path escapes the current project: {directory}",
+                code=ErrorCode.ARTIFACT_IO,
+                context={"path": str(directory)},
+            )
+        return directory / ARTIFACT_ANNOTATIONS_FILENAME
 
     def _session_file(self, session_dir: Path, name: str) -> Path:
         root = self.project.session_root.resolve()

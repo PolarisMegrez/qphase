@@ -58,3 +58,89 @@ def test_project_state_store_rejects_paths_outside_project(tmp_path):
 
     with pytest.raises(QPhaseIOError, match="escapes"):
         store.load_session_manifest(tmp_path / "outside")
+
+
+def _annotation_document(project: ProjectContext, **extra):
+    document = {
+        "schema": "qphase.session-annotations/1",
+        "project_id": project.project_id,
+        "session_id": "session-1",
+        "assignments": [],
+        "alias": "first",
+    }
+    document.update(extra)
+    return document
+
+
+def test_annotation_store_roundtrip_and_revision_conflict(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    store = ProjectStateStore(project)
+    session_dir = project.session_root / "2026" / "08" / "session-1"
+    session_dir.mkdir(parents=True)
+
+    stored = store.save_session_annotations(
+        session_dir, _annotation_document(project), expected_revision=None
+    )
+    assert stored["revision"] == 0
+    assert store.load_session_annotations(session_dir)["alias"] == "first"
+
+    stored = store.save_session_annotations(
+        session_dir, {**stored, "alias": "second"}, expected_revision=0
+    )
+    assert stored["revision"] == 1
+    assert store.load_session_annotations(session_dir)["alias"] == "second"
+
+    with pytest.raises(RuntimeError, match="annotation revision conflict"):
+        store.save_session_annotations(session_dir, stored, expected_revision=0)
+
+    events = store.read_events(session_dir)
+    assert [event["payload"]["kind"] for event in events] == [
+        "annotations_updated",
+        "annotations_updated",
+    ]
+    assert [event["sequence"] for event in events] == [1, 2]
+
+
+def test_annotation_store_rejects_stale_create_and_ignores_tmp(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    store = ProjectStateStore(project)
+    session_dir = project.session_root / "session-1"
+    session_dir.mkdir(parents=True)
+
+    with pytest.raises(RuntimeError, match="annotation revision conflict"):
+        store.save_session_annotations(
+            session_dir, _annotation_document(project), expected_revision=3
+        )
+    assert store.load_session_annotations(session_dir) is None
+
+    # A stale temporary file from an interrupted write never shadows the
+    # committed document.
+    store.save_session_annotations(
+        session_dir, _annotation_document(project), expected_revision=None
+    )
+    (session_dir / "session_annotations.tmp").write_text("garbage")
+    assert store.load_session_annotations(session_dir)["revision"] == 0
+
+
+def test_artifact_annotations_stay_inside_session_root(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    store = ProjectStateStore(project)
+    session_dir = project.session_root / "session-1"
+    artifact_dir = session_dir / "job"
+    artifact_dir.mkdir(parents=True)
+
+    with pytest.raises(QPhaseIOError, match="escapes"):
+        store.save_artifact_annotations(
+            tmp_path / "outside",
+            _annotation_document(project),
+            expected_revision=None,
+        )
+
+    store.save_artifact_annotations(
+        artifact_dir, _annotation_document(project), expected_revision=None
+    )
+    assert store.load_artifact_annotations(artifact_dir)["alias"] == "first"
+    # Artifact annotation writes journal to the owning session directory.
+    assert store.read_events(session_dir)[0]["payload"]["kind"] == (
+        "annotations_updated"
+    )

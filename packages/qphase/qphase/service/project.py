@@ -8,7 +8,9 @@ import os
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import cast
 
+from qphase.core.annotations import SessionAnnotationDocument
 from qphase.core.errors import ErrorCode, QPhaseIOError
 from qphase.core.persistence import ProjectStateStore
 from qphase.core.project import ProjectContext
@@ -61,14 +63,35 @@ class ProjectService:
         note: str | None | object = _UNSET,
     ) -> SessionSummary:
         root = self.session_dir(session_id)
-        path = root / "session_metadata.json"
-        payload = self._read_json(path)
+        current = self.state_store.load_session_annotations(root)
+        if current is not None:
+            document = SessionAnnotationDocument.model_validate(current)
+            expected_revision: int | None = document.revision
+        else:
+            document = self._new_session_annotations(root, session_id)
+            expected_revision = None
         if alias is not _UNSET:
-            payload["alias"] = alias
+            document.alias = cast("str | None", alias)
         if note is not _UNSET:
-            payload["note"] = note
-        self._atomic_text(path, json.dumps(payload, indent=2))
+            document.note = cast("str | None", note)
+        self.state_store.save_session_annotations(
+            root,
+            document.model_dump(mode="json", by_alias=True),
+            expected_revision=expected_revision,
+        )
         return self.get_session(session_id)
+
+    def _new_session_annotations(
+        self, root: Path, session_id: str
+    ) -> SessionAnnotationDocument:
+        """Seed the first annotation document from legacy session metadata."""
+        legacy = self._read_json(root / "session_metadata.json")
+        return SessionAnnotationDocument(
+            project_id=self.project.project_id,
+            session_id=session_id,
+            alias=legacy.get("alias"),
+            note=legacy.get("note"),
+        )
 
     def trash_session(self, session_id: str) -> None:
         root = self.session_dir(session_id)
@@ -141,7 +164,17 @@ class ProjectService:
 
     def _session_summary(self, root: Path) -> SessionSummary:
         manifest = self._read_json(root / "session_manifest.json")
-        metadata = self._read_json(root / "session_metadata.json")
+        # Annotation documents are the primary store for alias/note; once one
+        # exists it is authoritative (creation imports legacy values). The
+        # legacy session_metadata.json fallback is removed in Phase 4.
+        annotations = self.state_store.load_session_annotations(root)
+        if annotations is not None:
+            alias = annotations.get("alias")
+            note = annotations.get("note")
+        else:
+            metadata = self._read_json(root / "session_metadata.json")
+            alias = metadata.get("alias")
+            note = metadata.get("note")
         status = str(manifest.get("status", "unknown"))
         if status == "running" and not self._owner_alive(root / "session.lock"):
             status = "interrupted"
@@ -168,8 +201,8 @@ class ProjectService:
             if manifest.get("workflow_id")
             else None,
             status=status,
-            alias=metadata.get("alias"),
-            note=metadata.get("note"),
+            alias=alias if isinstance(alias, str) else None,
+            note=note if isinstance(note, str) else None,
             start_time=datetime.fromisoformat(str(started)) if started else None,
             last_update=modified,
             jobs={str(key): value for key, value in jobs.items()},
