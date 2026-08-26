@@ -41,7 +41,6 @@ from .error_report import build_error_report, save_error_report
 from .errors import (
     ErrorCode,
     QPhaseConfigError,
-    QPhaseIOError,
     QPhasePluginError,
     QPhaseRuntimeError,
     attach_session_log,
@@ -62,6 +61,7 @@ from .progress import ProgressEvent, ProgressSnapshot, ProgressTracker
 from .project import ProjectContext
 from .protocols import ResultProtocol
 from .registry import registry
+from .result_router import ResultRouter
 from .system_config import SystemConfig, load_system_config
 from .utils import save_yaml
 
@@ -158,6 +158,7 @@ class Scheduler:
         from .registry import registry
 
         self._registry = registry
+        self._result_router = ResultRouter(self.system_config)
         self.session_id = None
         self.session_dir = None
         self.manifest = None
@@ -511,53 +512,13 @@ class Scheduler:
             If output references a non-existent downstream job
 
         """
-        # Determine the output destination (alias for downstream jobs)
-        output_alias = job.output if job.output else job.name
-
-        # Store result for downstream jobs
-        # We store by job name so downstream jobs can reference it
-        job_results[job.name] = output_result
-
-        # If output is explicitly set, we might also want to store it under that name
-        # (though usually output refers to filename or downstream job name)
-        if job.output:
-            job_results[job.output] = output_result
-
-        # Determine if we should save to disk
-        should_save = False
-        save_filename = output_alias
-
-        if job.save is not None:
-            # Explicit control
-            if isinstance(job.save, bool):
-                should_save = job.save
-            elif isinstance(job.save, str):
-                should_save = True
-                save_filename = job.save
-        else:
-            # Fallback to system default
-            should_save = self.system_config.auto_save_results
-
-        # Save to disk if enabled
-        if should_save:
-            # Build save path inside the Job's Session directory.
-            # Note: filename should not include extension -
-            # ResultProtocol.save() will add appropriate extension
-            save_path = job_dir / save_filename
-
-            try:
-                if context is not None:
-                    context.artifacts.save_result(output_result, save_filename)
-                else:
-                    output_result.save(save_path)
-                log.debug(f"Job '{job.name}' result saved to {save_path}")
-            except Exception as e:
-                raise QPhaseIOError(
-                    f"Failed to save job '{job.name}' output to '{save_path}': {e}",
-                    code=ErrorCode.ARTIFACT_IO,
-                    hint="Check disk space and write permissions for the Job "
-                    "directory.",
-                ) from e
+        self._result_router.route_output(
+            job,
+            output_result,
+            job_results,
+            job_dir,
+            context=context,
+        )
 
     def _resolve_input(
         self,
@@ -582,61 +543,12 @@ class Scheduler:
             Input result object or None if no input
 
         """
-        if job.input is None:
-            return None
-        source = source_override or job.input.from_
-
-        if source in job_results:
-            return job_results[source]
-
-        # Check if input is in manifest (from a previous run in same session context)
-        if self.manifest and source in self.manifest["jobs"]:
-            job_entry = self.manifest["jobs"][source]
-            if job_entry.get("status") == "completed" and self.session_dir:
-                output_rel_path = job_entry.get("output_dir")
-                if output_rel_path:
-                    job_dir = self.session_dir / output_rel_path
-                    try:
-                        from .result_loader import load_result
-
-                        log.info(f"Loading result for '{source}' from disk...")
-                        result = load_result(source, job_dir)
-                        # Cache it
-                        job_results[source] = result
-                        return result
-                    except Exception as e:
-                        log.warning(
-                            f"Failed to load result for '{source}' from disk: {e}"
-                        )
-
-        # Check if input is an external directory or file
-        input_path = Path(source)
-        if input_path.exists():
-            if input_path.is_dir():
-                log.info(
-                    f"Job '{job.name}' input '{source}' is a directory; "
-                    "passing path to engine for resource-specific loading."
-                )
-                from .aggregation import DirectoryInputResult
-
-                return DirectoryInputResult(
-                    path=input_path,
-                    meta={"input_kind": "directory", "path": str(input_path)},
-                )
-            # External file input is not supported without a loader mechanism
-            # which has been removed.
-            raise QPhaseConfigError(
-                f"Job '{job.name}' specifies file input '{source}', "
-                "but file loading is not currently supported.",
-                code=ErrorCode.INPUT,
-            )
-
-        # Input not found
-        raise QPhaseConfigError(
-            f"Job '{job.name}' input '{source}' not found. "
-            f"Expected a previous job name or a valid file path with input_loader.",
-            code=ErrorCode.INPUT,
-            hint="Run the upstream job first, or fix the 'input.from' reference.",
+        return self._result_router.resolve_input(
+            job,
+            job_results,
+            source=source_override,
+            manifest=self.manifest,
+            session_dir=self.session_dir,
         )
 
     def _run_single(
@@ -756,7 +668,13 @@ class Scheduler:
 
         # Resolve input (input/config boundary; the engine never starts).
         try:
-            input_result = self._resolve_input(job, job_results, source)
+            input_result = self._result_router.resolve_input(
+                job,
+                job_results,
+                source=source,
+                manifest=self.manifest,
+                session_dir=self.session_dir,
+            )
         except Exception as e:
             result = self._fail_job(job, job_idx, job_total, e, job_dir=None)
             results.append(result)
@@ -790,12 +708,12 @@ class Scheduler:
 
         assert outcome.output is not None and outcome.context is not None
         try:
-            self._handle_job_output(
+            self._result_router.route_output(
                 job,
                 outcome.output,
                 job_results,
                 outcome.result.job_dir,
-                outcome.context,
+                context=outcome.context,
             )
             outcome.context.checkpoints.complete()
         except Exception as e:

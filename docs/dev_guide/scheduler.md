@@ -7,8 +7,9 @@ description: Scheduler System
 The scheduler is QPhase's logical workflow orchestrator. It resolves engines and
 plugins, validates the DAG, transfers results between Jobs, creates reproducible
 Session/Job directories, reports progress, and delegates persistence to the Artifact
-store. It does not expand parameter points into jobs and it does not choose an
-engine's numerical parallelization strategy.
+store. `ResultRouter` owns the input-resolution and output-routing policy used by
+the scheduler. It does not expand parameter points into jobs and it does not choose
+an engine's numerical parallelization strategy.
 
 ## Logical Job Lifecycle
 

@@ -68,6 +68,7 @@ from .progress import (
 from .project import ProjectContext, ProjectManifest, ProjectPaths
 from .protocols import PluginManifest, SubpluginSlot
 from .registry import RegistryCenter, RegistryView, registry
+from .result_router import ResultRouter
 from .scan import ParameterGrid, ScanAxisSpec, ScanSpec
 from .scheduler import JobResult, Scheduler
 from .system_config import (
@@ -134,6 +135,7 @@ __all__ = [
     "ProjectContext",
     "ProjectManifest",
     "ProjectPaths",
+    "ResultRouter",
     "WorkflowCatalog",
     "WorkflowReference",
     # System config
