@@ -134,8 +134,9 @@ Job 标记为 `skipped_dependency`，不会启动 Engine。
 队列前会保存 resolved compiled request，恢复时不重新读取 Project defaults。
 
 Artifact 引用的 materialize 必须显式提供 resolver；执行上下文提供当前 Project 的
-resolver。本地插件发现和导入不会永久修改 `sys.path`，不同 Project 的同名模块不会
-通过控制进程的全局模块表互相覆盖。
+resolver。本地插件发现时加入当前 worker 的导入路径；一个 worker 进程只承载一个
+Project 的本地插件。QPhase 不在同一进程内模拟多个 Project 的模块隔离，跨 Project
+隔离由独立 worker 进程负责。
 
 对于 `input.mode=map`，scheduler 只按已完成 view 计数。子 engine 的进度作为
 map stage 的 verbose status 暴露，避免大型 dataset 为每个 point 产生独立终端流。

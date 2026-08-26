@@ -5,6 +5,7 @@ import pytest
 from pydantic import BaseModel
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.errors import QPhaseRuntimeError
+from qphase.core.job_runner import _JobOutcome
 from qphase.core.registry import registry
 from qphase.core.scheduler import JobResult, Scheduler
 from qphase.core.system_config import SystemConfig
@@ -88,10 +89,10 @@ def test_resume_capability(mock_system_config, simple_job_list, temp_project):
     ):
         # Mock run_job to return success for job2
         # The Job directory must be relative to Session for manifest serialization.
-        mock_run_job.return_value = (
-            JobResult(1, "job2", session_dir / "job2", True),
-            MagicMock(),
-            MagicMock(),
+        mock_run_job.return_value = _JobOutcome(
+            result=JobResult(1, "job2", session_dir / "job2", True),
+            output=MagicMock(),
+            context=MagicMock(),
         )
 
         results = scheduler.run(simple_job_list, resume_from=session_dir)

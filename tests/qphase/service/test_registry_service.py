@@ -1,9 +1,11 @@
-import sys
-
 import pytest
+from pydantic import BaseModel, ConfigDict
+from qphase.core.compiler import WorkflowCompiler
+from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.errors import QPhaseConfigError
 from qphase.core.project import ProjectContext
 from qphase.core.registry import DiscoveryService, RegistryCenter
+from qphase.core.system_config import SystemConfig
 from qphase.service import RegistryService
 
 
@@ -49,36 +51,62 @@ def test_registry_snapshot_is_not_changed_by_source_mutation():
     assert source.get_plugin_class("engine", "example") is Second
 
 
-def test_local_plugin_discovery_keeps_projects_out_of_sys_path_and_sys_modules(
-    tmp_path,
-):
-    def make_project(name: str, marker: str) -> ProjectContext:
-        project = ProjectContext.create(tmp_path / name)
-        models = project.root / "models"
-        (models / "__init__.py").write_text("", encoding="utf-8")
-        (models / "plugin.py").write_text(
-            f"class Model:\n    marker = {marker!r}\n", encoding="utf-8"
+def test_local_plugin_discovery_uses_worker_import_path_and_contract(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    package = project.root / "qphase_local_contract_plugin"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from pydantic import BaseModel, ConfigDict\n"
+        "from qphase.core.protocols import EngineManifest\n"
+        "\n"
+        "class Config(BaseModel):\n"
+        "    model_config = ConfigDict(extra='forbid')\n"
+        "    value: int = 0\n"
+        "\n"
+        "class Engine:\n"
+        "    config_schema = Config\n"
+        "    manifest = EngineManifest(required_plugins={'analyser'})\n"
+        "    marker = 'local'\n",
+        encoding="utf-8",
+    )
+    (project.root / "models" / ".qphase_plugins.yaml").write_text(
+        "plugins:\n"
+        "  - type: engine.local_contract\n"
+        "    target: qphase_local_contract_plugin:Engine\n",
+        encoding="utf-8",
+    )
+
+    local_registry = RegistryCenter()
+    DiscoveryService(local_registry).discover_local_plugins(project)
+
+    plugin = local_registry.get_plugin_class("engine", "local_contract")
+    assert plugin.marker == "local"
+    manifest = local_registry.get_plugin_manifest("engine", "local_contract")
+    assert manifest.required_plugins == {"analyser"}
+    assert (
+        local_registry.get_plugin_schema("engine", "local_contract")
+        is plugin.config_schema
+    )
+
+    class StubConfig(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+    class StubAnalyser:
+        config_schema = StubConfig
+
+    local_registry.register("analyser", "stub", StubAnalyser)
+    workflow = WorkflowSpec(
+        schema_="qphase.workflow/2",
+        id="local-contract",
+        title="Local contract",
+        jobs=[JobConfig(name="job", engine={"local_contract": {}})],
+    )
+    with pytest.raises(QPhaseConfigError, match="required plugins"):
+        WorkflowCompiler(
+            project, SystemConfig(), registry_view=local_registry.view()
+        ).compile(workflow)
+
+    with pytest.raises(QPhaseConfigError):
+        local_registry.validate_plugin_config(
+            "engine", {"name": "local_contract", "unknown": True}
         )
-        (models / ".qphase_plugins.yaml").write_text(
-            "plugins:\n"
-            "  - type: model.example\n"
-            "    target: models.plugin:Model\n",
-            encoding="utf-8",
-        )
-        return project
-
-    first = make_project("first", "first")
-    second = make_project("second", "second")
-    first_registry = RegistryCenter()
-    second_registry = RegistryCenter()
-    before = list(sys.path)
-
-    DiscoveryService(first_registry).discover_local_plugins(first)
-    DiscoveryService(second_registry).discover_local_plugins(second)
-
-    assert sys.path == before
-    first_class = first_registry.get_plugin_class("model", "example")
-    second_class = second_registry.get_plugin_class("model", "example")
-    assert first_class.marker == "first"
-    assert second_class.marker == "second"
-    assert first_class is not second_class
