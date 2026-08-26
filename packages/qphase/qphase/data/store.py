@@ -94,6 +94,7 @@ __all__ = [
     "GENERIC_BUNDLE_TYPE_ID",
     "MANIFEST_FILENAME",
     "ArtifactManifestV3",
+    "BundleAdapterProtocol",
     "BundleDescriptor",
     "ProductEntry",
     "ProductStorage",
@@ -435,7 +436,10 @@ class ArtifactManifestV3(BaseModel):
         """Write the manifest JSON into the artifact directory."""
         path = Path(directory) / MANIFEST_FILENAME
         path.write_text(
-            json.dumps(self.model_dump(mode="json"), indent=2) + "\n",
+            json.dumps(
+                self.model_dump(mode="json"), indent=2, allow_nan=False
+            )
+            + "\n",
             encoding="utf-8",
         )
         return path
@@ -476,9 +480,8 @@ class ArtifactManifestV3(BaseModel):
     def _cross_validate(self) -> None:
         """Cross-field and content-hash validation layer.
 
-        Validates the generic storage summary against the product schema;
-        adapter-specific descriptor details (chunk ranges, file uniqueness,
-        payload paths) are validated by the registered adapter at load time.
+        Validates generic summaries and descriptors owned by adapters that
+        are registered in this process. Unknown adapters remain listable.
         """
         product_names = {entry.name for entry in self.products}
         unknown_roles = sorted(
@@ -492,6 +495,16 @@ class ArtifactManifestV3(BaseModel):
             )
         for entry in self.products:
             _validate_product_entry(entry)
+            if storage_adapter_available(entry.storage.adapter):
+                try:
+                    _resolve_adapter(entry.storage.adapter).validate_descriptor(entry)
+                except ArtifactError:
+                    raise
+                except (KeyError, TypeError, ValueError, ValidationError) as exc:
+                    raise ArtifactCorruptError(
+                        f"storage descriptor of product {entry.name!r} is "
+                        f"invalid: {exc}"
+                    ) from exc
             expected = product_content_hash(
                 entry.name, entry.product_schema, entry.storage
             )
@@ -511,6 +524,17 @@ class ArtifactManifestV3(BaseModel):
                 "artifact content hash mismatch: the manifest was modified "
                 "after writing"
             )
+        bundle_adapter = _BUNDLE_ADAPTERS.get(self.bundle.adapter_id)
+        if bundle_adapter is not None:
+            try:
+                bundle_adapter.validate_descriptor(self.bundle)
+            except ArtifactError:
+                raise
+            except (KeyError, TypeError, ValueError, ValidationError) as exc:
+                raise ArtifactCorruptError(
+                    f"bundle descriptor for adapter "
+                    f"{self.bundle.adapter_id!r} is invalid: {exc}"
+                ) from exc
 
 
 # -- cross-field validation -----------------------------------------------------
@@ -620,6 +644,10 @@ class StorageAdapterProtocol(Protocol):
         (dtype/shape/coverage/ranges) against the product schema and payload
         path safety, returning an adapter-owned validated representation.
         """
+        ...
+
+    def validate_descriptor(self, entry: ProductEntry) -> None:
+        """Validate adapter metadata without reading payload bytes."""
         ...
 
     def referenced_files(self, entry: ProductEntry) -> dict[str, str]:
@@ -842,7 +870,7 @@ def save_products(
                 adapter_id=GENERIC_BUNDLE_ADAPTER_ID,
                 descriptor_schema=GENERIC_BUNDLE_TYPE_ID,
                 descriptor={},
-                product_roles={name: name for name in products},
+                product_roles={},
             )
         if artifact_id is None:
             artifact_id = hashlib.sha256(
@@ -860,13 +888,26 @@ def save_products(
             ),
         )
 
+        if not old_files:
+            collisions = sorted(
+                file for file in new_files if (directory / file).exists()
+            )
+            if collisions:
+                raise ArtifactError(
+                    "refusing first artifact publish because payload paths "
+                    f"already exist: {collisions}"
+                )
+
         # Publish chunks, then the manifest (atomic replace); the manifest
         # is the commit point of the transaction.
         for file in sorted(new_files):
             os.replace(staging / file, directory / file)
             moved.append(file)
         tmp_manifest.write_text(
-            json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n",
+            json.dumps(
+                manifest.model_dump(mode="json"), indent=2, allow_nan=False
+            )
+            + "\n",
             encoding="utf-8",
         )
         os.replace(tmp_manifest, manifest_path)
@@ -936,35 +977,69 @@ def _load_products(manifest: ArtifactManifestV3, directory: Path) -> dict[str, D
 # -- bundle restore -------------------------------------------------------------
 
 
-def _generic_bundle_builder(
-    manifest: ArtifactManifestV3, products: dict[str, Dataset]
-) -> Any:
-    from .bundle import GenericDataBundle
+@runtime_checkable
+class BundleAdapterProtocol(Protocol):
+    """Metadata validator and concrete bundle restorer."""
 
-    return GenericDataBundle(
-        products,
-        manifest.bundle,
-        provenance=manifest.provenance,
-        metadata={"artifact_id": manifest.artifact_id},
-    )
+    @property
+    def adapter_id(self) -> str: ...
+
+    @property
+    def descriptor_schema(self) -> str: ...
+
+    def validate_descriptor(self, descriptor: BundleDescriptor) -> None: ...
+
+    def build(
+        self, manifest: ArtifactManifestV3, products: dict[str, Dataset]
+    ) -> Any: ...
 
 
-_BUNDLE_ADAPTERS: dict[str, Any] = {GENERIC_BUNDLE_ADAPTER_ID: _generic_bundle_builder}
+class _GenericBundleAdapter:
+    adapter_id = GENERIC_BUNDLE_ADAPTER_ID
+    descriptor_schema = GENERIC_BUNDLE_TYPE_ID
+
+    def validate_descriptor(self, descriptor: BundleDescriptor) -> None:
+        if descriptor.type_id != GENERIC_BUNDLE_TYPE_ID:
+            raise ArtifactCorruptError(
+                f"generic bundle adapter cannot restore type {descriptor.type_id!r}"
+            )
+        if descriptor.descriptor_schema != self.descriptor_schema:
+            raise ArtifactUnsupportedError(
+                f"generic bundle descriptor schema "
+                f"{descriptor.descriptor_schema!r} is unsupported; expected "
+                f"{self.descriptor_schema!r}"
+            )
+        if descriptor.descriptor:
+            raise ArtifactCorruptError("generic bundle descriptor must be empty")
+
+    def build(
+        self, manifest: ArtifactManifestV3, products: dict[str, Dataset]
+    ) -> Any:
+        from .bundle import GenericDataBundle
+
+        return GenericDataBundle(
+            products,
+            manifest.bundle,
+            provenance=manifest.provenance,
+            metadata={"artifact_id": manifest.artifact_id},
+        )
 
 
-def register_bundle_adapter(adapter_id: str, builder: Any) -> None:
-    """Register a bundle adapter restoring concrete bundles by adapter id.
+_GENERIC_BUNDLE_ADAPTER = _GenericBundleAdapter()
+_BUNDLE_ADAPTERS: dict[str, BundleAdapterProtocol] = {
+    GENERIC_BUNDLE_ADAPTER_ID: _GENERIC_BUNDLE_ADAPTER
+}
 
-    ``builder`` receives ``(manifest, products)`` and returns the restored
-    bundle object. Registration never silently overwrites an existing id.
-    """
-    existing = _BUNDLE_ADAPTERS.get(adapter_id)
-    if existing is not None and existing is not builder:
+
+def register_bundle_adapter(adapter: BundleAdapterProtocol) -> None:
+    """Register a validating concrete-bundle adapter."""
+    existing = _BUNDLE_ADAPTERS.get(adapter.adapter_id)
+    if existing is not None and existing is not adapter:
         raise ArtifactAdapterError(
-            f"bundle adapter {adapter_id!r} is already registered; refusing "
+            f"bundle adapter {adapter.adapter_id!r} is already registered; refusing "
             "to overwrite it"
         )
-    _BUNDLE_ADAPTERS[adapter_id] = builder
+    _BUNDLE_ADAPTERS[adapter.adapter_id] = adapter
 
 
 def load_bundle(directory: Path | str) -> Any:
@@ -980,12 +1055,12 @@ def load_bundle(directory: Path | str) -> Any:
     directory = Path(directory)
     manifest = ArtifactManifestV3.read(directory)
     products = _load_products(manifest, directory)
-    builder = _BUNDLE_ADAPTERS.get(manifest.bundle.adapter_id)
-    if builder is None:
+    adapter = _BUNDLE_ADAPTERS.get(manifest.bundle.adapter_id)
+    if adapter is None:
         return GenericDataBundle(
             products,
             manifest.bundle,
             provenance=manifest.provenance,
             metadata={"artifact_id": manifest.artifact_id},
         )
-    return builder(manifest, products)
+    return adapter.build(manifest, products)

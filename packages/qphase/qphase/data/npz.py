@@ -143,7 +143,19 @@ class NpzProductDescriptor(BaseModel):
     variables: dict[str, NpzVariableDescriptor]
 
 
-def _read_chunk(path: Path, record: NpzChunkRecord) -> np.ndarray:
+def _expected_keys_by_file(
+    descriptor: NpzProductDescriptor,
+) -> dict[str, frozenset[str]]:
+    result: dict[str, set[str]] = {}
+    for variable in descriptor.variables.values():
+        for chunk in variable.chunks:
+            result.setdefault(chunk.file, set()).add(chunk.key)
+    return {file: frozenset(keys) for file, keys in result.items()}
+
+
+def _read_chunk(
+    path: Path, record: NpzChunkRecord, expected_keys: frozenset[str]
+) -> np.ndarray:
     """Read one chunk file and verify key set, dtype, shape and hash.
 
     ``allow_pickle`` is never enabled: chunk files hold native-dtype arrays
@@ -154,10 +166,10 @@ def _read_chunk(path: Path, record: NpzChunkRecord) -> np.ndarray:
     try:
         with np.load(path) as npz:
             keys = set(npz.files)
-            if record.key not in keys:
+            if keys != expected_keys:
                 raise ArtifactCorruptError(
                     f"artifact chunk {path} holds keys {sorted(keys)}, "
-                    f"missing the declared key {record.key!r}"
+                    f"expected exactly {sorted(expected_keys)}"
                 )
             array = np.asarray(npz[record.key])
     except FileNotFoundError:
@@ -199,10 +211,12 @@ class NpzArrayHandle(_ArrayHandleBase):
         variable_schema: VariableSchema,
         *,
         owner: str,
+        expected_keys: frozenset[str],
     ) -> None:
         super().__init__(variable_schema, owner=owner, read_only=True)
         self._path = path
         self._record = record
+        self._expected_keys = expected_keys
 
     @property
     def device(self) -> str:
@@ -237,7 +251,7 @@ class NpzArrayHandle(_ArrayHandleBase):
                 f"npz handle cannot materialize on {target_device!r}; device "
                 "transfers are performed by backends creating backend handles"
             )
-        return _read_chunk(self._path, self._record)
+        return _read_chunk(self._path, self._record, self._expected_keys)
 
     def materialize_selection(self, indexers: tuple[Any, ...]) -> np.ndarray:
         """Read the chunk and apply the selection (single-chunk fast path)."""
@@ -261,6 +275,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         shape: tuple[int, ...],
         axis: int = 0,
         owner: str,
+        expected_keys: dict[str, frozenset[str]],
     ) -> None:
         super().__init__(variable_schema, owner=owner, read_only=True)
         if not shape or len(shape) != len(variable_schema.dims):
@@ -298,6 +313,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         self._ranges = ranges
         self._shape = tuple(shape)
         self._axis = axis
+        self._expected_keys = expected_keys
 
     @property
     def device(self) -> str:
@@ -329,7 +345,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         """Read one chunk file (with full content verification)."""
         self._check_live()
         path, record = self._chunks[index]
-        return _read_chunk(path, record)
+        return _read_chunk(path, record, self._expected_keys[record.file])
 
     def materialize(
         self,
@@ -373,7 +389,9 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
                 self._chunks, self._ranges, strict=True
             ):
                 if start <= row < stop:
-                    return _read_chunk(path, record)[
+                    return _read_chunk(
+                        path, record, self._expected_keys[record.file]
+                    )[
                         (*prefix, row - start, *suffix)
                     ]
             raise IndexError(
@@ -403,7 +421,9 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
                     if c0 < stop and c1 > start:
                         local = slice(max(start, c0) - c0, min(stop, c1) - c0)
                         parts.append(
-                            _read_chunk(path, record)[(*prefix, local, *suffix)]
+                            _read_chunk(
+                                path, record, self._expected_keys[record.file]
+                            )[(*prefix, local, *suffix)]
                         )
                 if len(parts) == 1:
                     return parts[0]
@@ -527,27 +547,13 @@ class NpzStorageAdapter:
         self._validate_descriptor(entry, descriptor)
         return descriptor
 
+    def validate_descriptor(self, entry: ProductEntry) -> None:
+        """Validate NPZ metadata without reading payload bytes."""
+        self.parse_storage(entry)
+
     def referenced_files(self, entry: ProductEntry) -> dict[str, str]:
         """Report chunk files referenced by one entry (file -> owner)."""
-        storage = entry.storage
-        if storage.adapter != self.ADAPTER_ID:
-            raise ArtifactAdapterError(
-                f"product {entry.name!r} requires adapter {storage.adapter!r}, "
-                f"not {self.ADAPTER_ID!r}"
-            )
-        if storage.descriptor_schema != self.DESCRIPTOR_SCHEMA:
-            raise ArtifactUnsupportedError(
-                f"product {entry.name!r} uses NPZ descriptor schema "
-                f"{storage.descriptor_schema!r}; this adapter supports "
-                f"{self.DESCRIPTOR_SCHEMA!r}"
-            )
-        try:
-            descriptor = NpzProductDescriptor.model_validate(storage.descriptor)
-        except ValidationError as exc:
-            raise ArtifactCorruptError(
-                f"NPZ storage descriptor of product {entry.name!r} is "
-                f"invalid: {exc}"
-            ) from exc
+        descriptor = self.parse_storage(entry)
         return {
             chunk.file: f"{entry.name}.{name}"
             for name, variable in descriptor.variables.items()
@@ -565,6 +571,7 @@ class NpzStorageAdapter:
         """
         directory = Path(directory)
         descriptor = self.parse_storage(entry)
+        expected_keys = _expected_keys_by_file(descriptor)
         handles: dict[str, Any] = {}
         for variable in entry.product_schema.variables:
             variable_descriptor = descriptor.variables[variable.name]
@@ -580,7 +587,11 @@ class NpzStorageAdapter:
                     )
             if len(variable_descriptor.chunks) == 1:
                 handles[variable.name] = NpzArrayHandle(
-                    paths[0], variable_descriptor.chunks[0], variable, owner=owner
+                    paths[0],
+                    variable_descriptor.chunks[0],
+                    variable,
+                    owner=owner,
+                    expected_keys=expected_keys[variable_descriptor.chunks[0].file],
                 )
                 continue
             axis_index = variable.dims.index(variable_descriptor.chunk_axis)
@@ -590,6 +601,7 @@ class NpzStorageAdapter:
                 shape=tuple(variable_descriptor.full_shape),
                 axis=axis_index,
                 owner=owner,
+                expected_keys=expected_keys,
             )
         return DictProductBacking(handles)
 
@@ -602,9 +614,14 @@ class NpzStorageAdapter:
         """
         directory = Path(directory)
         descriptor = self.parse_storage(entry)
+        expected_keys = _expected_keys_by_file(descriptor)
         for variable_descriptor in descriptor.variables.values():
             for chunk in variable_descriptor.chunks:
-                _read_chunk(resolve_artifact_path(directory, chunk.file), chunk)
+                _read_chunk(
+                    resolve_artifact_path(directory, chunk.file),
+                    chunk,
+                    expected_keys[chunk.file],
+                )
 
     def open_ref(
         self,

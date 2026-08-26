@@ -23,6 +23,7 @@ from qphase.data import (
     ArtifactUnsupportedError,
     AxisRole,
     AxisSchema,
+    BundleDescriptor,
     DataKind,
     GenericDataBundle,
     ProductSchema,
@@ -569,10 +570,43 @@ def test_load_rejects_unsupported_descriptor_schema(tmp_path):
     )
     _recompute_hashes(tmp_path)
 
-    # Listing still works; materialization refuses the unknown schema.
-    ArtifactManifestV3.read(tmp_path)
+    # A known adapter rejects unsupported metadata at the read boundary.
     with pytest.raises(ArtifactUnsupportedError, match="descriptor schema"):
-        load_products(tmp_path)
+        ArtifactManifestV3.read(tmp_path)
+
+
+def test_npz_rejects_undeclared_payload_keys(tmp_path):
+    save_products(tmp_path, {"trajectories": _dataset()})
+    manifest = ArtifactManifestV3.read(tmp_path)
+    descriptor = manifest.products[0].storage.descriptor
+    chunk = next(iter(descriptor["variables"].values()))["chunks"][0]
+    path = tmp_path / chunk["file"]
+    with np.load(path) as payload:
+        data = np.asarray(payload[chunk["key"]])
+    np.savez(path, **{chunk["key"]: data, "undeclared": np.array([1])})
+
+    product = load_products(tmp_path)["trajectories"]
+    with pytest.raises(ArtifactCorruptError, match="expected exactly"):
+        product.handle("x").materialize()
+
+
+def test_first_publish_refuses_existing_payload_path(tmp_path):
+    collision = tmp_path / "00_trajectories__x.npz"
+    collision.write_bytes(b"user-owned")
+    with pytest.raises(ArtifactError, match="payload paths already exist"):
+        save_products(tmp_path, {"trajectories": _dataset()})
+    assert collision.read_bytes() == b"user-owned"
+    assert not (tmp_path / "artifact_manifest.json").exists()
+
+
+def test_manifest_metadata_rejects_nonfinite_json():
+    with pytest.raises(ValidationError, match="JSON-serializable"):
+        BundleDescriptor(
+            type_id="test/1",
+            adapter_id="test/1",
+            descriptor_schema="test/1",
+            descriptor={"bad": float("nan")},
+        )
 
 
 def test_manifest_rejects_summary_mismatch(tmp_path):
@@ -659,7 +693,11 @@ def test_single_layout_writes_one_multikey_file_per_product(tmp_path):
 
     raw = json.loads((tmp_path / "artifact_manifest.json").read_text())
     variables = raw["products"][0]["storage"]["descriptor"]["variables"]
-    files = {chunk["file"] for variable in variables.values() for chunk in variable["chunks"]}
+    files = {
+        chunk["file"]
+        for variable in variables.values()
+        for chunk in variable["chunks"]
+    }
     assert files == {"00_trajectories.npz"}
     keys = {
         chunk["key"] for variable in variables.values() for chunk in variable["chunks"]
@@ -917,5 +955,9 @@ def test_interrupted_manifest_publish_keeps_old_artifact(tmp_path, monkeypatch):
         restored.handle("count").materialize(), np.arange(5)
     )
     # New chunks published before the crash are rolled back as well.
-    assert not [name for name in (p.name for p in tmp_path.glob("*.npz")) if "__r" in name]
+    assert not [
+        name
+        for name in (p.name for p in tmp_path.glob("*.npz"))
+        if "__r" in name
+    ]
     assert not list(tmp_path.glob("*.tmp"))

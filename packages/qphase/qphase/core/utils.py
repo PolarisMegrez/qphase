@@ -56,6 +56,7 @@ def canonical_json(data: Any) -> str:
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,
     )
 
 

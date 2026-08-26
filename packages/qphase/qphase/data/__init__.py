@@ -91,6 +91,7 @@ from .schema import (
 from .store import (
     ARTIFACT_SCHEMA_VERSION,
     ArtifactManifestV3,
+    BundleAdapterProtocol,
     BundleDescriptor,
     ProductEntry,
     ProductStorage,
@@ -120,6 +121,7 @@ __all__ = [
     "AxisRole",
     "AxisSchema",
     "BackendArrayHandle",
+    "BundleAdapterProtocol",
     "BundleDescriptor",
     "CoordinateSchema",
     "CopyPolicy",

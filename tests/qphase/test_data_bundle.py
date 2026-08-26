@@ -12,6 +12,7 @@ from qphase.data import (
     ArtifactManifestV3,
     ArtifactNotFoundError,
     ArtifactRef,
+    ArtifactUnsupportedError,
     AxisRole,
     AxisSchema,
     CoordinateSchema,
@@ -30,6 +31,8 @@ from qphase.data.store import (
     GENERIC_BUNDLE_ADAPTER_ID,
     GENERIC_BUNDLE_TYPE_ID,
     BundleDescriptor,
+    ProductEntry,
+    artifact_content_hash,
 )
 
 
@@ -235,7 +238,7 @@ def test_generic_bundle_roundtrip(tmp_path):
     )
     assert manifest.bundle.type_id == GENERIC_BUNDLE_TYPE_ID
     assert manifest.bundle.adapter_id == GENERIC_BUNDLE_ADAPTER_ID
-    assert manifest.bundle.product_roles == {"trajectories": "trajectories"}
+    assert manifest.bundle.product_roles == {}
 
     raw = json.loads((tmp_path / "artifact_manifest.json").read_text())
     assert raw["bundle"]["type_id"] == GENERIC_BUNDLE_TYPE_ID
@@ -309,6 +312,21 @@ def test_bundle_product_roles_must_reference_products(tmp_path):
         ArtifactManifestV3.read(tmp_path)
 
 
+def test_known_bundle_descriptor_is_validated_at_manifest_read(tmp_path):
+    save_products(tmp_path, {"trajectories": _scan_dataset()})
+    path = tmp_path / "artifact_manifest.json"
+    raw = json.loads(path.read_text())
+    raw["bundle"]["descriptor"] = {"undeclared": True}
+    entries = [ProductEntry.model_validate(item) for item in raw["products"]]
+    raw["content_hash"] = artifact_content_hash(
+        raw["bundle"], entries, raw["provenance"], raw["parents"]
+    )
+    path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ArtifactCorruptError, match="must be empty"):
+        ArtifactManifestV3.read(tmp_path)
+
+
 # -- bundle adapters ---------------------------------------------------------------
 
 
@@ -322,15 +340,27 @@ def test_register_bundle_adapter_restores_custom_bundle(tmp_path):
     )
     save_products(tmp_path, {"trajectories": _scan_dataset()}, bundle=descriptor)
 
-    def builder(manifest, products):
-        return {
-            "descriptor": manifest.bundle.descriptor,
-            "products": sorted(products),
-        }
+    class Adapter:
+        adapter_id = "test/1"
+        descriptor_schema = "test.bundle/1"
+
+        def validate_descriptor(self, value):
+            if value.descriptor_schema != self.descriptor_schema:
+                raise ArtifactUnsupportedError("unsupported test descriptor")
+            if value.descriptor != {"answer": 42}:
+                raise ArtifactCorruptError("invalid test descriptor")
+
+        def build(self, manifest, products):
+            return {
+                "descriptor": manifest.bundle.descriptor,
+                "products": sorted(products),
+            }
+
+    adapter = Adapter()
 
     import qphase.data.store as store_module
 
-    register_bundle_adapter("test/1", builder)
+    register_bundle_adapter(adapter)
     try:
         restored = load_bundle(tmp_path)
         assert restored == {
@@ -338,9 +368,9 @@ def test_register_bundle_adapter_restores_custom_bundle(tmp_path):
             "products": ["trajectories"],
         }
         # Idempotent re-registration of the same builder is allowed.
-        register_bundle_adapter("test/1", builder)
+        register_bundle_adapter(adapter)
         with pytest.raises(ArtifactAdapterError, match="already registered"):
-            register_bundle_adapter("test/1", lambda m, p: None)
+            register_bundle_adapter(Adapter())
     finally:
         store_module._BUNDLE_ADAPTERS.pop("test/1", None)
 
