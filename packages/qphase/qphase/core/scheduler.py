@@ -350,7 +350,7 @@ class Scheduler:
         if self.manifest:
             for name, entry in self.manifest["jobs"].items():
                 status = entry.get("status")
-                if status in ("failed", "skipped_dependency"):
+                if status in ("failed", "skipped_dependency", "cancelled"):
                     self._job_statuses[name] = status
 
         results: list[JobResult] = []
@@ -610,7 +610,7 @@ class Scheduler:
             dependency
             for dependency in dependencies
             if self._job_statuses.get(dependency)
-            in {"failed", "skipped_dependency"}
+            in {"failed", "skipped_dependency", "cancelled"}
         ]
         if blocked_by:
             note = f"skipped: failed upstream dependencies {blocked_by}"

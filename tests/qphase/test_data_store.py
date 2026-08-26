@@ -37,7 +37,11 @@ from qphase.data import (
     save_products,
 )
 from qphase.data import npz as npz_module
-from qphase.data.npz import NpzStorageAdapter, ShardedNpzArrayHandle
+from qphase.data.npz import (
+    NpzStorageAdapter,
+    ShardedNpzArrayHandle,
+    load_product_backing,
+)
 
 
 def _schema(rows: int) -> ProductSchema:
@@ -157,6 +161,10 @@ def test_save_load_roundtrip_single_product(tmp_path):
     backed = TimeSeriesDataset(dataset.schema, ref)
     resolver = DirectoryArtifactResolver()
     resolver.register(manifest.artifact_id, tmp_path)
+    backing = load_product_backing(ref, resolver=resolver)
+    np.testing.assert_array_equal(
+        backing.variables["x"].materialize(), dataset.handle("x").materialize()
+    )
     np.testing.assert_array_equal(
         backed.materialize(resolver=resolver).handle("x").materialize(),
         dataset.handle("x").materialize(),

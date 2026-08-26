@@ -87,7 +87,8 @@ class RegistryService:
         namespace, name = root.split(".", 1)
         namespace = namespace.lower()
         name = name.lower()
-        self.registry.get_plugin_class(namespace, name)
+        if not self.registry.is_local_plugin(namespace, name):
+            self.registry.get_plugin_class(namespace, name)
         canonical = f"{namespace}.{name}"
         for segment in segments:
             if "." not in segment:
@@ -99,7 +100,8 @@ class RegistryService:
                 raise ValueError(f"plugin {canonical!r} has no slot {slot_name!r}")
             namespace = slot.namespace
             name = child_name.lower()
-            self.registry.get_plugin_class(namespace, name)
+            if not self.registry.is_local_plugin(namespace, name):
+                self.registry.get_plugin_class(namespace, name)
             canonical = f"{canonical}/{slot_name}.{name}"
         return namespace, name, canonical
 
@@ -192,7 +194,11 @@ class RegistryService:
         self, namespace: str, name: str, metadata: dict[str, Any]
     ) -> PluginSummary:
         schema = self.registry.get_plugin_schema(namespace, name)
-        plugin_class = self.registry.get_plugin_class(namespace, name)
+        plugin_class = (
+            None
+            if self.registry.is_local_plugin(namespace, name)
+            else self.registry.get_plugin_class(namespace, name)
+        )
         return PluginSummary(
             namespace=namespace,
             name=name,
