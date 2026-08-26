@@ -121,6 +121,15 @@ def test_product_schema_json_roundtrip_and_stable_fingerprint():
     assert len(schema.fingerprint()) == 64
 
 
+def test_product_schema_fingerprint_tracks_mutation():
+    """Fingerprinting reflects mutable schema metadata instead of caching it."""
+    schema = _time_series_schema()
+    before = schema.fingerprint()
+    schema.attributes["revision"] = "changed"
+
+    assert schema.fingerprint() != before
+
+
 def test_schema_fingerprint_golden():
     """Freeze canonical serialization with a golden digest."""
     assert _spectral_schema().fingerprint() == GOLDEN_SPECTRAL_FINGERPRINT

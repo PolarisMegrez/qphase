@@ -18,12 +18,10 @@ ProductGraph
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ..core.utils import canonical_json
 from .kinds import DataKind
 
 __all__ = [
@@ -59,11 +57,7 @@ class ProductDeclaration(BaseModel):
 
 
 class ProductNode(BaseModel):
-    """One graph node with an explicit compiler-assigned identity.
-
-    ``fingerprint()`` remains available as optional cache metadata, but it is
-    never used to address graph nodes or edges.
-    """
+    """One graph node with an explicit compiler-assigned identity."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -76,11 +70,6 @@ class ProductNode(BaseModel):
     )
     declaration: ProductDeclaration
     requirements: list[ProductRequirement] = Field(default_factory=list)
-
-    def fingerprint(self) -> str:
-        """Return the content fingerprint identifying this node."""
-        payload = self.model_dump(mode="json")
-        return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
 
 
 class GraphEdge(BaseModel):

@@ -103,8 +103,7 @@ core schema **没有** moment-family 字段——该领域语义归资源包所�
 
 `ProductRequirement`/`ProductDeclaration` 描述带类型的输入与输出；`ProductGraph` 是
 engine 从插件声明编译出的、经无环校验的 `ProductNode` 图。每个节点使用编译器
-分配的 `node_id`，图边使用这个可读 ID；节点 fingerprint 仅作为可选缓存元数据，
-不再承担图身份。
+分配的 `node_id`，图边使用这个可读 ID；图不再通过 hash 制造节点身份。
 
 `EngineTaskProfile` 使插件需求随任务条件化：
 
