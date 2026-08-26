@@ -21,6 +21,7 @@ from .config_loader import (
 )
 from .errors import ErrorCode, QPhaseConfigError, QPhasePluginError
 from .project import ProjectContext
+from .protocols import PluginManifest
 from .registry import RegistryView, registry
 from .scan import ParameterGrid
 from .system_config import SystemConfig
@@ -200,18 +201,20 @@ class WorkflowCompiler:
                 f"Job {job.name!r} is missing required 'engine' field",
                 code=ErrorCode.CONFIG,
             )
-        try:
-            self.registry.get_plugin_class("engine", engine_name)
-        except QPhasePluginError:
-            raise
-        except Exception as exc:
-            raise QPhasePluginError(
-                f"failed to resolve engine {engine_name!r}: {exc}",
-                code=ErrorCode.PLUGIN_DISCOVERY,
-                context={"engine": engine_name},
-            ) from exc
-
-        manifest = self.registry.get_plugin_manifest("engine", engine_name)
+        if self.registry.is_local_plugin("engine", engine_name):
+            manifest = PluginManifest()
+        else:
+            try:
+                self.registry.get_plugin_class("engine", engine_name)
+            except QPhasePluginError:
+                raise
+            except Exception as exc:
+                raise QPhasePluginError(
+                    f"failed to resolve engine {engine_name!r}: {exc}",
+                    code=ErrorCode.PLUGIN_DISCOVERY,
+                    context={"engine": engine_name},
+                ) from exc
+            manifest = self.registry.get_plugin_manifest("engine", engine_name)
         input_plugins = set(getattr(manifest, "input_plugins", set()))
         required_plugins = set(getattr(manifest, "required_plugins", set()))
         required = (
@@ -330,7 +333,9 @@ class WorkflowCompiler:
                 code=ErrorCode.CONFIG,
             )
         schema = self.registry.get_plugin_schema("engine", engine_name)
-        if schema is not None:
+        if schema is not None and not self.registry.is_local_plugin(
+            "engine", engine_name
+        ):
             schema.model_validate({"name": engine_name, **dict(config)})
         return dict(config)
 
