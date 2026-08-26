@@ -242,8 +242,12 @@ class Scheduler:
                 with open(temporary, "w", encoding="utf-8") as f:
                     json.dump(self.manifest, f, indent=2)
                 temporary.replace(manifest_path)
-            except Exception as e:
-                log.warning(f"Failed to save session manifest: {e}")
+            except OSError as exc:
+                raise QPhaseIOError(
+                    f"failed to save session manifest: {manifest_path}",
+                    code=ErrorCode.ARTIFACT_IO,
+                    context={"path": str(manifest_path)},
+                ) from exc
 
     def _start_session_heartbeat(self) -> None:
         if self.session_dir is None:

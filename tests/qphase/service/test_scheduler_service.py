@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 from pydantic import BaseModel
 from qphase.core.config import JobConfig, WorkflowSpec
+from qphase.core.errors import QPhaseIOError
 from qphase.core.protocols import EngineManifest
 from qphase.core.registry import registry
 from qphase.core.system_config import SystemConfig
@@ -27,6 +28,7 @@ from qphase.data.store import (
     storage_referenced_files,
 )
 from qphase.service import SchedulerService
+from qphase.service.project import ProjectService
 
 
 class ManifestEngineConfig(BaseModel):
@@ -40,6 +42,14 @@ class OptionalAnalyserEngine:
 
 def _system_config(tmp_path):
     return SystemConfig()
+
+
+def test_project_json_corruption_fails_fast(tmp_path):
+    path = tmp_path / "project.json"
+    path.write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(QPhaseIOError, match="failed to read project JSON"):
+        ProjectService._read_json(path)
 
 
 def test_scheduler_service_builds_logical_plan_without_creating_session(tmp_path):

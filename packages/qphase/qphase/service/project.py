@@ -9,6 +9,7 @@ import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from qphase.core.errors import ErrorCode, QPhaseIOError
 from qphase.core.project import ProjectContext
 from qphase.core.workflow import WorkflowCatalog, load_workflow
 
@@ -160,6 +161,13 @@ class ProjectService:
             else None
         )
         started = manifest.get("start_time")
+        jobs = manifest.get("jobs", {})
+        if not isinstance(jobs, dict):
+            raise QPhaseIOError(
+                f"session manifest jobs must be an object: {root}",
+                code=ErrorCode.ARTIFACT_IO,
+                context={"path": str(root / "session_manifest.json")},
+            )
         return SessionSummary(
             session_id=str(manifest.get("session_id") or root.name),
             project_id=str(manifest["project_id"])
@@ -173,7 +181,7 @@ class ProjectService:
             note=metadata.get("note"),
             start_time=datetime.fromisoformat(str(started)) if started else None,
             last_update=modified,
-            jobs=dict(manifest.get("jobs", {})),
+            jobs={str(key): value for key, value in jobs.items()},
         )
 
     def _workflow_path(self, doc_id: str, *, must_exist: bool) -> Path:
@@ -218,9 +226,20 @@ class ProjectService:
         if not path.exists():
             return {}
         try:
-            return dict(json.loads(path.read_text(encoding="utf-8")))
-        except (OSError, ValueError, TypeError):
-            return {}
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise QPhaseIOError(
+                f"failed to read project JSON: {path}",
+                code=ErrorCode.ARTIFACT_IO,
+                context={"path": str(path)},
+            ) from exc
+        if not isinstance(payload, dict):
+            raise QPhaseIOError(
+                f"project JSON must contain an object: {path}",
+                code=ErrorCode.ARTIFACT_IO,
+                context={"path": str(path)},
+            )
+        return {str(key): value for key, value in payload.items()}
 
     @staticmethod
     def _owner_alive(path: Path) -> bool:

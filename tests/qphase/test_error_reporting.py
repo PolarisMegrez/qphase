@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, ClassVar
+from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel, ConfigDict
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.error_report import build_error_report, save_error_report
-from qphase.core.errors import ErrorCode, QPhaseRuntimeError
+from qphase.core.errors import ErrorCode, QPhaseIOError, QPhaseRuntimeError
 from qphase.core.protocols import EngineManifest
 from qphase.core.registry import registry
 from qphase.core.scheduler import Scheduler
@@ -102,3 +103,16 @@ def test_scheduler_uses_one_error_id_across_result_manifest_and_report(
     assert manifest["workflow_hash"]
     assert (scheduler.session_dir / "workflow_snapshot.yaml").exists()
     assert (scheduler.session_dir / "qphase.log").exists()
+
+
+def test_session_manifest_write_failure_is_not_silently_ignored(
+    temp_project,
+) -> None:
+    scheduler = Scheduler(system_config=SystemConfig(), project=temp_project)
+    scheduler.session_dir = temp_project.session_root / "session"
+    scheduler.session_dir.mkdir(parents=True)
+    scheduler.manifest = {"status": "running"}
+
+    with patch("builtins.open", side_effect=OSError("read-only filesystem")):
+        with pytest.raises(QPhaseIOError, match="failed to save session manifest"):
+            scheduler._save_manifest()
