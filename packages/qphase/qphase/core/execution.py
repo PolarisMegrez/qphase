@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
-import inspect
 import json
 import os
 import pickle
@@ -17,6 +16,7 @@ from typing import Any
 from .errors import ErrorCode, QPhaseConfigError, QPhaseRuntimeError
 from .progress import ProgressEvent, ProgressReporter
 from .scan import ParameterGrid
+from .utils import canonical_json
 
 __all__ = [
     "CancellationController",
@@ -326,7 +326,7 @@ def execution_fingerprint(
     dtype: str | None,
 ) -> dict[str, Any]:
     """Build the compatibility fingerprint stored beside checkpoints."""
-    encoded = json.dumps(job_config, sort_keys=True, default=str).encode("utf-8")
+    encoded = canonical_json(job_config).encode("utf-8")
     return {
         "config_sha256": hashlib.sha256(encoded).hexdigest(),
         "plugins": plugins,
@@ -348,15 +348,7 @@ def plugin_fingerprint(instance: Any) -> dict[str, str | None]:
         except importlib.metadata.PackageNotFoundError:
             continue
 
-    source_sha256 = None
-    try:
-        source_path = inspect.getsourcefile(plugin_type)
-        if source_path is not None:
-            source_sha256 = hashlib.sha256(Path(source_path).read_bytes()).hexdigest()
-    except (OSError, TypeError):
-        pass
     return {
         "class": f"{module_name}:{plugin_type.__qualname__}",
         "distribution_version": distribution_version,
-        "source_sha256": source_sha256,
     }

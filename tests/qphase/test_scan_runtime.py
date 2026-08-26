@@ -204,7 +204,7 @@ def test_plugin_fingerprint_records_code_identity():
     fingerprint = plugin_fingerprint(DatasetSourceEngine())
 
     assert fingerprint["class"].endswith(":DatasetSourceEngine")
-    assert fingerprint["source_sha256"] is not None
+    assert "source_sha256" not in fingerprint
 
 
 def test_execution_plan_keeps_scan_as_one_logical_job(tmp_path: Path, temp_project):

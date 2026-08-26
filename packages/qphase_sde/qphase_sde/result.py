@@ -28,7 +28,6 @@ import numpy as np
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.dataset import DatasetSaveReport
 from qphase.core.errors import QPhaseError
-from qphase.core.utils import canonical_json
 from qphase.data import (
     AxisRole,
     AxisSchema,
@@ -553,18 +552,14 @@ class SDEDataBundle:
 
 
 def _fingerprint_text(instance: Any) -> str:
-    """Short stable fingerprint string of a plugin instance."""
+    """Return a readable plugin identity for numerical provenance."""
     if instance is None:
         return ""
-    import hashlib
-
     from qphase.core.execution import plugin_fingerprint
 
-    try:
-        payload = plugin_fingerprint(instance)
-    except Exception:  # noqa: BLE001 - fingerprinting must not break runs
-        return ""
-    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()[:16]
+    payload = plugin_fingerprint(instance)
+    version = payload["distribution_version"] or "workspace"
+    return f"{payload['class']}@{version}"
 
 
 def _trajectory_product(

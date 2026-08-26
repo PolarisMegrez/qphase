@@ -1229,17 +1229,21 @@ class Scheduler:
             backend_name = str(backend.backend_name())
         backend_config = getattr(backend, "config", None)
         dtype = getattr(backend_config, "float_dtype", None)
-        plugin_ids = {
-            name: plugin_fingerprint(instance)
-            for name, instance in plugins.items()
-            if "." not in name
-        }
-        fingerprint = execution_fingerprint(
-            job.model_dump(by_alias=True),
-            plugins=plugin_ids,
-            backend=backend_name,
-            dtype=None if dtype is None else str(dtype),
-        )
+        checkpoint_config = effective_system.scan_runtime.checkpoint
+        if checkpoint_config.enabled:
+            plugin_ids = {
+                name: plugin_fingerprint(instance)
+                for name, instance in plugins.items()
+                if "." not in name
+            }
+            fingerprint = execution_fingerprint(
+                job.model_dump(by_alias=True),
+                plugins=plugin_ids,
+                backend=backend_name,
+                dtype=None if dtype is None else str(dtype),
+            )
+        else:
+            fingerprint = {}
         context = ExecutionContext(
             parameter_grid=job.scan.compile() if job.scan is not None else None,
             resources=ResourceSnapshot.from_system_config(
@@ -1250,7 +1254,7 @@ class Scheduler:
             artifacts=ArtifactStore(job_dir, effective_system.scan_runtime),
             checkpoints=CheckpointStore(
                 job_dir,
-                effective_system.scan_runtime.checkpoint,
+                checkpoint_config,
                 fingerprint,
             ),
             job_dir=job_dir,

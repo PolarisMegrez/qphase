@@ -38,8 +38,8 @@ qphase 2.x 的 artifact 是一个**目录**：一个 `artifact_manifest.json` �
       `descriptor_schema`、adapter 私有的 `descriptor`，以及通用 `summary`
       （每个变量的 `nbytes`/`chunk_count`），列表页无需打开 adapter 即可
       读取；
-    - `sha256` —— 覆盖名称、schema 与 storage 的内容哈希，**每次读取时重
-      算**。
+    - `sha256` —— 覆盖名称、schema 与 storage 的内容哈希，在 manifest 写入和
+      打开时计算。
 - `provenance` —— JSON 可序列化的 engine/插件元数据（经过校验）。
 - `parents` —— 本 artifact 派生自的 artifact id（唯一）。
 - `content_hash` —— 对规范化 bundle/product/provenance/parent 列表的
@@ -72,8 +72,9 @@ manifest 校验还会聚合不同产品的 payload ownership：同一产品的�
   对路径）、`key`、`logical_range`（沿 `chunk_axis` 的 `[start, stop)`
   区间，chunk 持有整个变量时为 `null`）、`shape`、`dtype` 与 `sha256`
   —— 哈希覆盖 dtype/shape/order/selection 头部与 C 连续 payload 字节，
-  **每次读取时校验**，同时核对实际 dtype、shape 与该 payload 文件由 descriptor
-  声明的精确 key 集合；额外 key 视为损坏。
+  **首次 handle 访问时校验**，同时核对实际 dtype、shape 与该 payload 文件由
+  descriptor 声明的精确 key 集合；后续读取只进行轻量结构检查，不重新扫描 payload；
+  额外 key 视为损坏。
 
 文件布局：
 
@@ -85,9 +86,9 @@ manifest 校验还会聚合不同产品的 payload ownership：同一产品的�
 - 数组以**原生 dtype** 存储（包括复数与张量 payload）——绝不使用 object
   数组；元数据只存在于 manifest JSON 中。
 
-写入是事务化的：chunk 先写入 `.staging-{token}` 暂存目录，刷盘后被重新读
-取并校验（dtype/shape/hash），原子地移动到最终文件名，manifest 最后通过
-原子 `os.replace` 发布。已有 manifest 永远不会被覆盖，除非
+写入是事务化的：chunk 先写入 `.staging-{token}` 暂存目录，发布前校验
+descriptor，随后原子地移动到最终文件名，manifest 最后通过原子
+`os.replace` 发布。完整 payload 校验由 adapter 的显式操作提供。已有 manifest 永远不会被覆盖，除非
 `replace=True`；替换时只有在新 manifest 发布后才删除旧 payload，因此失败
 的写入不会破坏仍可读取的旧 artifact。首次发布时，如果目标 payload 路径已经
 存在且不属于经过校验的旧 manifest，也会拒绝覆盖。

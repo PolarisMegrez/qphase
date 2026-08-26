@@ -17,8 +17,8 @@ Trust model:
   re-resolved under the artifact root at open time (no ``..``, absolute,
   drive, UNC or symlink escapes);
 - integrity is verified in three layers: the manifest/product layer is
-  re-validated (cross-field and content hashes) at parse time, and each
-  payload chunk is hash/dtype/shape-verified on first read. ``content_hash``
+  re-validated (cross-field and metadata hashes) at parse time, and each
+  payload chunk is hash/dtype/shape-verified on first handle access. ``content_hash``
   is an integrity check against accidental corruption, not a digital
   signature.
 
@@ -691,8 +691,9 @@ class StorageAdapterProtocol(Protocol):
     def verify_product(self, entry: ProductEntry, directory: Path) -> None:
         """Re-read and verify every chunk of a freshly written product.
 
-        The transactional writer calls this before publishing chunks, so a
-        torn or corrupt write never reaches the final artifact layout.
+        This is an explicit boundary operation for imports, diagnostics or
+        user-requested verification. The normal internal writer does not call
+        it, because its staged output is trusted and already descriptor-checked.
         """
         ...
 
@@ -880,9 +881,9 @@ def save_products(
                 storage=storage,
                 sha256=product_content_hash(name, dataset.schema, storage),
             )
-            # Flush-time verification: re-read and hash every staged chunk
-            # before anything is published.
-            adapter.verify_product(entry, staging)
+            # The writer owns the staged payload and already computed its
+            # descriptor hashes while writing. Full payload verification is an
+            # explicit adapter operation, not part of every internal publish.
             for file in adapter.referenced_files(entry):
                 if file in new_files:
                     raise ArtifactError(
@@ -900,9 +901,7 @@ def save_products(
                 product_roles={},
             )
         if artifact_id is None:
-            artifact_id = hashlib.sha256(
-                f"{datetime.now(UTC).isoformat()}-{sorted(products)}".encode()
-            ).hexdigest()[:16]
+            artifact_id = uuid4().hex
         manifest = ArtifactManifestV3(
             artifact_id=artifact_id,
             created_at=datetime.now(UTC).isoformat(),

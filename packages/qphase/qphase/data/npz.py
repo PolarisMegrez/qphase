@@ -11,8 +11,8 @@ Layout rules:
   ``allow_pickle``;
 - metadata lives only in the manifest JSON, never inside the NPZ;
 - every chunk carries a content hash over its dtype/shape/order/selection
-  header plus its C-contiguous payload bytes, verified on each read together
-  with the actual dtype, shape and key set;
+  header plus its C-contiguous payload bytes; a handle verifies it on first
+  access, while subsequent reads only check the lightweight structure;
 - reopening a product is lazy: handles expose shape/dtype/nbytes from the
   validated manifest without reading, and selections read only the chunks
   they touch (no full concatenation for point/chunk access).
@@ -154,7 +154,11 @@ def _expected_keys_by_file(
 
 
 def _read_chunk(
-    path: Path, record: NpzChunkRecord, expected_keys: frozenset[str]
+    path: Path,
+    record: NpzChunkRecord,
+    expected_keys: frozenset[str],
+    *,
+    verify_checksum: bool = True,
 ) -> np.ndarray:
     """Read one chunk file and verify key set, dtype, shape and hash.
 
@@ -192,12 +196,13 @@ def _read_chunk(
             f"artifact chunk {path} has shape {tuple(array.shape)}, expected "
             f"{tuple(record.shape)}"
         )
-    actual = chunk_content_hash(array, record.logical_range)
-    if actual != record.sha256:
-        raise ArtifactChecksumError(
-            f"checksum mismatch for artifact chunk {path}: expected "
-            f"{record.sha256}, got {actual}"
-        )
+    if verify_checksum:
+        actual = chunk_content_hash(array, record.logical_range)
+        if actual != record.sha256:
+            raise ArtifactChecksumError(
+                f"checksum mismatch for artifact chunk {path}: expected "
+                f"{record.sha256}, got {actual}"
+            )
     return array
 
 
@@ -217,6 +222,7 @@ class NpzArrayHandle(_ArrayHandleBase):
         self._path = path
         self._record = record
         self._expected_keys = expected_keys
+        self._checksum_verified = False
 
     @property
     def device(self) -> str:
@@ -251,7 +257,14 @@ class NpzArrayHandle(_ArrayHandleBase):
                 f"npz handle cannot materialize on {target_device!r}; device "
                 "transfers are performed by backends creating backend handles"
             )
-        return _read_chunk(self._path, self._record, self._expected_keys)
+        array = _read_chunk(
+            self._path,
+            self._record,
+            self._expected_keys,
+            verify_checksum=not self._checksum_verified,
+        )
+        self._checksum_verified = True
+        return array
 
     def materialize_selection(self, indexers: tuple[Any, ...]) -> np.ndarray:
         """Read the chunk and apply the selection (single-chunk fast path)."""
@@ -314,6 +327,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         self._shape = tuple(shape)
         self._axis = axis
         self._expected_keys = expected_keys
+        self._checksum_verified: set[str] = set()
 
     @property
     def device(self) -> str:
@@ -345,7 +359,14 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         """Read one chunk file (with full content verification)."""
         self._check_live()
         path, record = self._chunks[index]
-        return _read_chunk(path, record, self._expected_keys[record.file])
+        array = _read_chunk(
+            path,
+            record,
+            self._expected_keys[record.file],
+            verify_checksum=record.file not in self._checksum_verified,
+        )
+        self._checksum_verified.add(record.file)
+        return array
 
     def materialize(
         self,
@@ -385,13 +406,11 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
             row = int(selector)
             if row < 0:
                 row += axis_size
-            for (path, record), (start, stop) in zip(
-                self._chunks, self._ranges, strict=True
+            for index, ((_path, _record), (start, stop)) in enumerate(
+                zip(self._chunks, self._ranges, strict=True)
             ):
                 if start <= row < stop:
-                    return _read_chunk(
-                        path, record, self._expected_keys[record.file]
-                    )[
+                    return self.read_chunk(index)[
                         (*prefix, row - start, *suffix)
                     ]
             raise IndexError(
@@ -415,15 +434,13 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
                     )
                     return empty[(*prefix, slice(None), *suffix)]
                 parts: list[np.ndarray] = []
-                for (path, record), (c0, c1) in zip(
-                    self._chunks, self._ranges, strict=True
+                for index, ((_path, _record), (c0, c1)) in enumerate(
+                    zip(self._chunks, self._ranges, strict=True)
                 ):
                     if c0 < stop and c1 > start:
                         local = slice(max(start, c0) - c0, min(stop, c1) - c0)
                         parts.append(
-                            _read_chunk(
-                                path, record, self._expected_keys[record.file]
-                            )[(*prefix, local, *suffix)]
+                            self.read_chunk(index)[(*prefix, local, *suffix)]
                         )
                 if len(parts) == 1:
                     return parts[0]
@@ -606,11 +623,11 @@ class NpzStorageAdapter:
         return DictProductBacking(handles)
 
     def verify_product(self, entry: ProductEntry, directory: Path) -> None:
-        """Re-read every chunk of a freshly written product (with hashing).
+        """Explicitly re-read every chunk of a product (with hashing).
 
-        Called by the transactional writer before chunks are published:
-        each chunk file is reopened, and its key set, dtype, shape and
-        content hash are verified against the descriptor.
+        Each chunk file is reopened, and its key set, dtype, shape and content
+        hash are verified against the descriptor. Ordinary writes and reads do
+        not invoke this full payload scan automatically.
         """
         directory = Path(directory)
         descriptor = self.parse_storage(entry)

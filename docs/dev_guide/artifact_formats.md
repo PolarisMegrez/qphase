@@ -43,8 +43,8 @@ document:
       `descriptor_schema`, the adapter-specific `descriptor`, and a common
       `summary` (per-variable `nbytes`/`chunk_count`) that listings can read
       without opening the adapter;
-    - `sha256` — content hash over name, schema and storage, **recomputed on
-      every read**.
+- `sha256` — content hash over name, schema and storage, recomputed when the
+  manifest is written or opened.
 - `provenance` — JSON-serializable engine/plugin metadata (validated).
 - `parents` — artifact ids this artifact derives from (unique).
 - `content_hash` — SHA-256 over the canonical bundle/product/provenance/
@@ -81,9 +81,10 @@ schema `npz.product/2`) records per variable in its descriptor:
   `file` (artifact-relative), `key`, `logical_range` (`[start, stop)` along
   `chunk_axis`, `null` when the chunk holds the whole variable), `shape`,
   `dtype` and `sha256` — the hash covers the dtype/shape/order/selection
-  header plus the C-contiguous payload bytes and is **verified on every
-  read**, together with the actual dtype, shape and exact descriptor-wide key
-  set for that payload file. Undeclared keys are corruption.
+  header plus the C-contiguous payload bytes and is **verified on first handle
+  access**, together with the actual dtype, shape and exact descriptor-wide key
+  set for that payload file. Undeclared keys are corruption; later reads keep
+  the lightweight key/dtype/shape checks without rescanning payload bytes.
 
 File layout:
 
@@ -96,9 +97,10 @@ File layout:
   included) — never object arrays; metadata lives only in the manifest JSON.
 
 Writes are transactional: chunks are staged in a `.staging-{token}`
-directory, re-read and verified (dtype/shape/hash) after the flush,
-atomically moved to their final names, and the manifest is published last
-through an atomic `os.replace`. An existing manifest is never overwritten
+directory, their descriptors are checked before publication, atomically moved
+to their final names, and the manifest is published last through an atomic
+`os.replace`. Full payload verification remains an explicit adapter operation.
+An existing manifest is never overwritten
 unless `replace=True`; replacement removes the old payload only after the
 new manifest is published, so a failed write leaves the previous artifact
 fully readable. A first publish also refuses to replace any pre-existing
