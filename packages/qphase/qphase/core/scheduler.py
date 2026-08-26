@@ -62,6 +62,7 @@ class SessionManifest(TypedDict):
     workflow_hash: str
     start_time: str
     status: str
+    submission_tags: list[str]
     jobs: dict[str, dict[str, Any]]
 
 
@@ -123,7 +124,11 @@ class Scheduler:
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: threading.Thread | None = None
 
-    def _initialize_session(self, workflow: WorkflowSpec) -> None:
+    def _initialize_session(
+        self,
+        workflow: WorkflowSpec,
+        submission_tags: list[str] | None = None,
+    ) -> None:
         """Initialize a new execution session."""
         # Generate session ID
         ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
@@ -153,6 +158,7 @@ class Scheduler:
             "workflow_hash": workflow_hash,
             "start_time": datetime.now().isoformat(),
             "status": "running",
+            "submission_tags": list(submission_tags or []),
             "jobs": {},
         }
         self._save_manifest()
@@ -261,6 +267,7 @@ class Scheduler:
         dry_run: bool = False,
         resume_from: Path | None = None,
         compiled_workflow: CompiledWorkflow | None = None,
+        submission_tags: list[str] | None = None,
     ) -> list[JobResult]:
         """Execute all jobs in the workflow serially.
 
@@ -275,6 +282,9 @@ class Scheduler:
         compiled_workflow : CompiledWorkflow | None, optional
             Previously resolved execution request. When provided, the scheduler
             does not re-read project defaults or recompile the workflow.
+        submission_tags : list[str] | None, optional
+            Frozen execution-level tags recorded in the session manifest.
+            Callers are responsible for policy validation.
 
         Returns
         -------
@@ -342,7 +352,7 @@ class Scheduler:
         if resume_from:
             self._resume_session(resume_from, workflow)
         else:
-            self._initialize_session(workflow)
+            self._initialize_session(workflow, submission_tags)
 
         # Seed per-Session Job statuses from the manifest so that Jobs depending
         # on a previously failed upstream are marked skipped_dependency.

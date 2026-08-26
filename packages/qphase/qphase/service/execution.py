@@ -19,6 +19,7 @@ from qphase.core.execution import CancellationController
 from qphase.core.persistence import ProjectStateStore
 from qphase.core.progress import ProgressSnapshot
 from qphase.core.scheduler import Scheduler
+from qphase.core.tags import load_tag_policy, validate_declared_tags
 
 from .models import (
     ExecutionEvent,
@@ -60,6 +61,7 @@ class _ExecutionRecord:
     compiled_workflow: CompiledWorkflow | None = None
     last_persisted_progress: float = 0.0
     persisted_sequence: int = 0
+    submission_tags: list[str] = field(default_factory=list)
 
 
 class ExecutionManager:
@@ -96,10 +98,15 @@ class ExecutionManager:
         self._worker.join(timeout=5.0)
 
     def submit(
-        self, workflow_reference: str, *, resume_from: str | None = None
+        self,
+        workflow_reference: str,
+        *,
+        resume_from: str | None = None,
+        tags: list[str] | None = None,
     ) -> ExecutionSummary:
         del resume_from  # Resume support remains on the synchronous service for now.
         workflow = self.scheduler.load_workflow(workflow_reference)
+        submission_tags = self._validate_submission_tags(tags)
         compiled_workflow = None
         if self.state_store is not None:
             compiled_workflow = self.scheduler.compile_workflow(workflow)
@@ -114,6 +121,7 @@ class ExecutionManager:
                 workflow=workflow,
                 source_workflow=workflow_reference,
                 compiled_workflow=compiled_workflow,
+                submission_tags=submission_tags,
             )
             self._records[execution_id] = record
             self._queue.append(execution_id)
@@ -126,6 +134,31 @@ class ExecutionManager:
                 self._records.pop(execution_id, None)
                 raise
             self._wake.notify()
+            return self._summary(record)
+
+    def _validate_submission_tags(self, tags: list[str] | None) -> list[str]:
+        """Policy-validate submission tags at the service boundary."""
+        policy = load_tag_policy(self.scheduler.project)
+        return validate_declared_tags(list(tags or []), "execution", policy)
+
+    def update_submission_tags(
+        self, execution_id: str, tags: list[str]
+    ) -> ExecutionSummary:
+        """Replace submission tags while the execution is still queued."""
+        with self._wake:
+            record = self._require(execution_id)
+            if record.state != "queued":
+                raise ValueError("submission tags can only be updated while queued")
+            record.submission_tags = self._validate_submission_tags(tags)
+            self._save_execution(record)
+            self._append_event(
+                record,
+                {
+                    "kind": "submission_tags_updated",
+                    "tags": list(record.submission_tags),
+                },
+                persist=False,
+            )
             return self._summary(record)
 
     def list_executions(self) -> list[ExecutionSummary]:
@@ -245,6 +278,15 @@ class ExecutionManager:
         record.started_at = _now()
         self._save_execution(record)
         self._append_event(record, {"kind": "execution_started"}, persist=False)
+        if record.submission_tags:
+            self._append_event(
+                record,
+                {
+                    "kind": "submission_tags_frozen",
+                    "tags": list(record.submission_tags),
+                },
+                persist=False,
+            )
 
         def _scheduler_ready(scheduler: Scheduler) -> None:
             record.scheduler = scheduler
@@ -280,6 +322,7 @@ class ExecutionManager:
                 before_job=_before_job,
                 on_scheduler=_scheduler_ready,
                 compiled_workflow=record.compiled_workflow,
+                submission_tags=list(record.submission_tags),
             )
             record.session_id = (
                 record.scheduler.session_id if record.scheduler is not None else None
@@ -382,6 +425,7 @@ class ExecutionManager:
             "schema": "qphase.execution/1",
             "execution_id": record.execution_id,
             "source_workflow": record.source_workflow,
+            "submission_tags": list(record.submission_tags),
             "workflow": record.workflow.model_dump(mode="json", by_alias=True),
             "compiled_workflow": record.compiled_workflow.to_payload()
             if record.compiled_workflow is not None
@@ -475,6 +519,7 @@ class ExecutionManager:
             revisions=revisions,
             started_jobs=set(payload.get("started_jobs", [])),
             compiled_workflow=compiled_workflow,
+            submission_tags=[str(item) for item in payload.get("submission_tags", [])],
         )
         session_dir = payload.get("session_dir")
         if isinstance(session_dir, str):
@@ -547,6 +592,7 @@ class ExecutionManager:
             current_stage=record.current_stage,
             latest_message=record.latest_message,
             error=record.error,
+            submission_tags=list(record.submission_tags),
         )
 
     @staticmethod

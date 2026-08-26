@@ -158,3 +158,23 @@ def test_load_workflow_rejects_malformed_tags(tmp_path: Path):
 
     with pytest.raises(QPhaseConfigError, match="invalid tags"):
         WorkflowCatalog(project).list()
+
+
+def test_session_manifest_records_submission_tags(tmp_path: Path):
+    import json
+
+    project = ProjectContext.create(tmp_path / "project")
+    path = project.workflow_root / "example.yaml"
+    _workflow(path)
+    workflow = load_workflow(path)
+    scheduler = Scheduler(system_config=SystemConfig(), project=project)
+
+    scheduler.run(workflow, submission_tags=["task:urgent"])
+
+    assert scheduler.session_dir is not None
+    manifest = json.loads(
+        (scheduler.session_dir / "session_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["submission_tags"] == ["task:urgent"]

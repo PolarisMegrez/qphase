@@ -297,6 +297,7 @@ class ExecutionSummary(ServiceModel):
     current_job: str | None = None
     current_stage: str | None = None
     latest_message: str = ""
+    submission_tags: list[str] = Field(default_factory=list)
     error: str | None = None
 
 

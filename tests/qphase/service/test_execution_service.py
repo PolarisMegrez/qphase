@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from qphase.core.compiler import WorkflowCompiler
 from qphase.core.config import JobConfig, WorkflowSpec
+from qphase.core.errors import QPhaseConfigError
 from qphase.core.persistence import ProjectStateStore
 from qphase.core.progress import ProgressSnapshot
 from qphase.core.project import ProjectContext
@@ -179,5 +180,86 @@ def test_manager_marks_running_record_interrupted_on_restart(tmp_path) -> None:
         assert summary.state == "failed"
         assert summary.error == "execution worker interrupted by process restart"
         assert scheduler.state_store.load_executions()[0]["state"] == "failed"
+    finally:
+        manager.close()
+
+
+def test_submission_tags_are_validated_at_submit() -> None:
+    scheduler = _BoundaryScheduler()
+    manager = ExecutionManager(scheduler)  # type: ignore[arg-type]
+    try:
+        with pytest.raises(QPhaseConfigError, match="namespace:value"):
+            manager.submit("ignored", tags=["no-namespace"])
+    finally:
+        manager.close()
+
+
+def test_submission_tags_update_while_queued_and_freeze_on_start() -> None:
+    scheduler = _BoundaryScheduler()
+    manager = ExecutionManager(scheduler)  # type: ignore[arg-type]
+    try:
+        first = manager.submit("ignored", tags=["Task:Urgent"])
+        assert first.submission_tags == ["task:urgent"]
+        assert scheduler.first_started.wait(1.0)
+
+        second = manager.submit("ignored", tags=["task:queued"])
+        updated = manager.update_submission_tags(
+            second.execution_id, ["task:revised"]
+        )
+        assert updated.submission_tags == ["task:revised"]
+        with pytest.raises(ValueError, match="while queued"):
+            manager.update_submission_tags(first.execution_id, ["task:late"])
+
+        scheduler.release_first.set()
+        _wait_for_state(manager, first.execution_id, "completed")
+        _wait_for_state(manager, second.execution_id, "completed")
+
+        first_kinds = [
+            event.payload["kind"] for event in manager.events(first.execution_id)
+        ]
+        assert "submission_tags_frozen" in first_kinds
+        second_payloads = [
+            event.payload for event in manager.events(second.execution_id)
+        ]
+        kinds = [payload["kind"] for payload in second_payloads]
+        assert "submission_tags_updated" in kinds
+        frozen = second_payloads[kinds.index("submission_tags_frozen")]
+        assert frozen["tags"] == ["task:revised"]
+    finally:
+        manager.close()
+
+
+def test_submission_tags_persist_in_execution_record(tmp_path) -> None:
+    project = ProjectContext.create(tmp_path / "project")
+    scheduler = _BoundaryScheduler()
+    scheduler.project = project
+    scheduler.state_store = ProjectStateStore(project)
+    scheduler.compile_workflow = lambda workflow: WorkflowCompiler(  # type: ignore[method-assign]
+        project, SystemConfig()
+    ).compile(workflow)
+    manager = ExecutionManager(scheduler)  # type: ignore[arg-type]
+    try:
+        blocker = manager.submit("ignored")
+        assert scheduler.first_started.wait(1.0)
+        # The worker is parked inside the first execution, so the queued
+        # record is stable on disk (Windows forbids replace-during-read).
+        execution = manager.submit("ignored", tags=["task:urgent"])
+        payload = next(
+            item
+            for item in scheduler.state_store.load_executions()
+            if item["execution_id"] == execution.execution_id
+        )
+        assert payload["submission_tags"] == ["task:urgent"]
+        scheduler.release_first.set()
+        _wait_for_state(manager, blocker.execution_id, "completed")
+        _wait_for_state(manager, execution.execution_id, "completed")
+
+        restored = ExecutionManager(scheduler)  # type: ignore[arg-type]
+        try:
+            assert restored.get(execution.execution_id).submission_tags == [
+                "task:urgent"
+            ]
+        finally:
+            restored.close()
     finally:
         manager.close()

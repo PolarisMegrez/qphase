@@ -19,6 +19,11 @@ from .progress import CliProgressRenderer, ProgressLogHandler
 
 log = get_logger()
 _RESUME_FROM_OPTION = typer.Option(None, "--resume-from")
+_TAG_OPTION = typer.Option(
+    [],
+    "--tag",
+    help="Submission tag recorded in the session manifest (repeatable)",
+)
 
 
 def run_command(
@@ -32,6 +37,7 @@ def run_command(
     dry_run: bool = typer.Option(False, "--dry-run"),
     show_plan: bool = typer.Option(False, "--plan"),
     resume_from: Path | None = _RESUME_FROM_OPTION,
+    tag: list[str] = _TAG_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Plan or execute one versioned workflow in the current project."""
@@ -76,6 +82,7 @@ def run_command(
             workflow,
             progress_callback=None if renderer is None else renderer.handle,
             resume_from=resume_from,
+            submission_tags=tag or None,
         )
         success = sum(result.success for result in results)
         failed = sum(result.status == "failed" for result in results)

@@ -22,6 +22,7 @@ from qphase.core.project import ProjectContext
 from qphase.core.registry import DiscoveryService, RegistryCenter, registry
 from qphase.core.scheduler import JobResult, Scheduler
 from qphase.core.system_config import SystemConfig, load_system_config
+from qphase.core.tags import load_tag_policy, validate_declared_tags
 from qphase.core.workflow import WorkflowCatalog
 from qphase.data.errors import ArtifactCorruptError
 
@@ -110,6 +111,7 @@ class SchedulerService:
         before_job: Any = None,
         on_scheduler: Any = None,
         compiled_workflow: CompiledWorkflow | None = None,
+        submission_tags: list[str] | None = None,
     ) -> list[JobResult]:
         scheduler = Scheduler(
             system_config=self.system_config,
@@ -127,6 +129,11 @@ class SchedulerService:
         }
         if compiled_workflow is not None:
             run_kwargs["compiled_workflow"] = compiled_workflow
+        if submission_tags is not None:
+            policy = load_tag_policy(self.project)
+            run_kwargs["submission_tags"] = validate_declared_tags(
+                list(submission_tags), "execution", policy
+            )
         results = scheduler.run(workflow, **run_kwargs)
         statuses = {result.status for result in results}
         self.last_session_handle = SessionHandle(
