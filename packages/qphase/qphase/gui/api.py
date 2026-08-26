@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import importlib.resources as resources
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from qphase.core.annotations import Lifecycle, RetentionPolicy
+from qphase.core.catalog import CatalogQuery
 from qphase.core.errors import QPhaseError, QPhaseIOError
 from qphase.core.system_config import load_system_config
 from qphase.data.errors import ArtifactError
 from qphase.service import (
+    CatalogService,
     ConfigService,
     ExecutionManager,
     ProjectService,
@@ -30,6 +34,7 @@ class WorkflowSelectionRequest(BaseModel):
 
 class ExecutionRequest(WorkflowSelectionRequest):
     resume_from: str | None = None
+    tags: list[str] = Field(default_factory=list)
 
 
 class JobValidationRequest(BaseModel):
@@ -43,6 +48,8 @@ class ProjectDefaultsRequest(BaseModel):
 class SessionUpdateRequest(BaseModel):
     alias: str | None = None
     note: str | None = None
+    lifecycle: Lifecycle | None = None
+    retention: RetentionPolicy | None = None
 
 
 class WorkflowDocumentRequest(BaseModel):
@@ -51,6 +58,27 @@ class WorkflowDocumentRequest(BaseModel):
 
 class PendingJobRevisionRequest(BaseModel):
     job: dict[str, Any]
+
+
+class TagsUpdateRequest(BaseModel):
+    add: list[str] = Field(default_factory=list)
+    remove: list[str] = Field(default_factory=list)
+
+
+class ArtifactUpdateRequest(BaseModel):
+    lifecycle: Lifecycle | None = None
+    retention: RetentionPolicy | None = None
+
+
+class OccurrenceUpdateRequest(BaseModel):
+    retention: RetentionPolicy | None = None
+
+
+class ExecutionTagsRequest(BaseModel):
+    tags: list[str] = Field(default_factory=list)
+
+
+_TAGS_QUERY = Query([])
 
 
 def create_app(
@@ -96,6 +124,7 @@ def create_app(
             scheduler,
             ExecutionManager(scheduler),
             ProjectService(project),
+            CatalogService(project),
         )
     else:
         context = ApplicationContext.create()
@@ -182,7 +211,9 @@ def create_app(
     def submit_execution(request: ExecutionRequest) -> dict[str, Any]:
         try:
             return context.executions.submit(
-                request.workflow, resume_from=request.resume_from
+                request.workflow,
+                resume_from=request.resume_from,
+                tags=request.tags,
             ).model_dump(mode="json")
         except Exception as exc:
             raise _http_error(exc, status_code=429) from exc
@@ -243,6 +274,19 @@ def create_app(
         except Exception as exc:
             raise _http_error(exc, status_code=409) from exc
 
+    @app.put("/executions/{execution_id}/tags")
+    def update_execution_tags(
+        execution_id: str, request: ExecutionTagsRequest
+    ) -> dict[str, Any]:
+        try:
+            return context.executions.update_submission_tags(
+                execution_id, request.tags
+            ).model_dump(mode="json")
+        except ValueError as exc:
+            raise _http_error(exc, status_code=409) from exc
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
     @app.get("/plugins")
     def list_plugins(namespace: str | None = None) -> dict[str, Any]:
         plugins = registry.list_plugins(namespace)
@@ -299,9 +343,22 @@ def create_app(
     ) -> dict[str, Any]:
         try:
             fields = request.model_dump(exclude_unset=True)
-            return context.project_service.update_session(
-                session_id, **fields
-            ).model_dump(mode="json")
+            if "lifecycle" in fields:
+                context.catalog.set_session_lifecycle(
+                    session_id, fields.pop("lifecycle")
+                )
+            if "retention" in fields:
+                context.catalog.set_session_retention(
+                    session_id, fields.pop("retention")
+                )
+            summary = (
+                context.project_service.update_session(session_id, **fields)
+                if fields
+                else context.project_service.get_session(session_id)
+            )
+            return summary.model_dump(mode="json")
+        except RuntimeError as exc:
+            raise _http_error(exc, status_code=409) from exc
         except Exception as exc:
             raise _http_error(exc) from exc
 
@@ -410,6 +467,133 @@ def create_app(
         except Exception as exc:
             raise _http_error(exc) from exc
         return Response(status_code=204)
+
+    @app.get("/catalog/{kind}")
+    def list_catalog_objects(
+        kind: str,
+        tag: list[str] = _TAGS_QUERY,
+        lifecycle: str | None = None,
+        retention: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        try:
+            objects = context.catalog.query(
+                CatalogQuery(
+                    object_kind=kind,
+                    tags_all=tuple(tag),
+                    lifecycle=lifecycle,
+                    retention=retention,
+                    limit=limit,
+                    offset=offset,
+                )
+            )
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return {"objects": [item.model_dump(mode="json") for item in objects]}
+
+    @app.get("/catalog/{kind}/{object_id:path}/tags")
+    def get_catalog_tags(kind: str, object_id: str) -> dict[str, Any]:
+        try:
+            tags = context.catalog.effective_tags(kind, object_id)
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return {"effective_tags": [tag.model_dump(mode="json") for tag in tags]}
+
+    @app.post("/sessions/{session_id}/tags")
+    def update_session_tags(
+        session_id: str, request: TagsUpdateRequest
+    ) -> dict[str, Any]:
+        try:
+            return context.catalog.tag_session(
+                session_id, add=request.add, remove=request.remove
+            ).model_dump(mode="json")
+        except RuntimeError as exc:
+            raise _http_error(exc, status_code=409) from exc
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @app.post("/artifacts/{artifact_id}/tags")
+    def update_artifact_tags(
+        artifact_id: str, request: TagsUpdateRequest
+    ) -> dict[str, Any]:
+        try:
+            tags = context.catalog.tag_artifact(
+                artifact_id, add=request.add, remove=request.remove
+            )
+        except RuntimeError as exc:
+            raise _http_error(exc, status_code=409) from exc
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return {"effective_tags": [tag.model_dump(mode="json") for tag in tags]}
+
+    @app.post("/sessions/{session_id}/occurrences/{artifact_id}/tags")
+    def update_occurrence_tags(
+        session_id: str, artifact_id: str, request: TagsUpdateRequest
+    ) -> dict[str, Any]:
+        try:
+            tags = context.catalog.tag_occurrence(
+                session_id, artifact_id, add=request.add, remove=request.remove
+            )
+        except RuntimeError as exc:
+            raise _http_error(exc, status_code=409) from exc
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return {"effective_tags": [tag.model_dump(mode="json") for tag in tags]}
+
+    @app.patch("/artifacts/{artifact_id}")
+    def update_artifact(
+        artifact_id: str, request: ArtifactUpdateRequest
+    ) -> dict[str, Any]:
+        fields = request.model_dump(exclude_unset=True)
+        if not fields:
+            raise HTTPException(status_code=400, detail="no fields to update")
+        try:
+            result = None
+            if "lifecycle" in fields:
+                result = context.catalog.set_artifact_lifecycle(
+                    artifact_id, fields["lifecycle"]
+                )
+            if "retention" in fields:
+                result = context.catalog.set_artifact_retention(
+                    artifact_id, fields["retention"]
+                )
+            assert result is not None
+            return result.model_dump(mode="json")
+        except RuntimeError as exc:
+            raise _http_error(exc, status_code=409) from exc
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @app.patch("/sessions/{session_id}/occurrences/{artifact_id}")
+    def update_occurrence(
+        session_id: str, artifact_id: str, request: OccurrenceUpdateRequest
+    ) -> dict[str, Any]:
+        fields = request.model_dump(exclude_unset=True)
+        if "retention" not in fields:
+            raise HTTPException(status_code=400, detail="no fields to update")
+        try:
+            return context.catalog.set_occurrence_retention(
+                session_id, artifact_id, fields["retention"]
+            ).model_dump(mode="json")
+        except RuntimeError as exc:
+            raise _http_error(exc, status_code=409) from exc
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @app.post("/project/reindex")
+    def reindex_catalog() -> dict[str, Any]:
+        try:
+            return asdict(context.catalog.reindex())
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @app.get("/tags/policy")
+    def get_tag_policy() -> dict[str, Any]:
+        try:
+            return context.catalog.tag_policy().model_dump(mode="json")
+        except Exception as exc:
+            raise _http_error(exc) from exc
 
     return app
 

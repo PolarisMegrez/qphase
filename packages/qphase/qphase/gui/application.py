@@ -8,6 +8,7 @@ from qphase.core.project import ProjectContext
 from qphase.core.registry import registry as global_registry
 from qphase.core.system_config import SystemConfig, load_system_config
 from qphase.service import (
+    CatalogService,
     ConfigService,
     ExecutionManager,
     ProjectService,
@@ -25,6 +26,7 @@ class ApplicationContext:
     scheduler: SchedulerService
     executions: ExecutionManager
     project_service: ProjectService
+    catalog: CatalogService
 
     @classmethod
     def create(
@@ -54,6 +56,7 @@ class ApplicationContext:
             scheduler,
             ExecutionManager(scheduler),
             ProjectService(project_context),
+            CatalogService(project_context),
         )
 
     def close(self) -> None:

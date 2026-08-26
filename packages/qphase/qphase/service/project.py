@@ -68,7 +68,7 @@ class ProjectService:
             document = SessionAnnotationDocument.model_validate(current)
             expected_revision: int | None = document.revision
         else:
-            document = self._new_session_annotations(root, session_id)
+            document = self.new_session_annotations(root, session_id)
             expected_revision = None
         if alias is not _UNSET:
             document.alias = cast("str | None", alias)
@@ -81,7 +81,7 @@ class ProjectService:
         )
         return self.get_session(session_id)
 
-    def _new_session_annotations(
+    def new_session_annotations(
         self, root: Path, session_id: str
     ) -> SessionAnnotationDocument:
         """Seed the first annotation document from legacy session metadata."""

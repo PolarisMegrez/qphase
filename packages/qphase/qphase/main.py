@@ -17,9 +17,13 @@ from pathlib import Path
 
 import typer
 
+from .commands import artifact as artifact_cmd
 from .commands import config as config_cmd
+from .commands import occurrence as occurrence_cmd
 from .commands import project as project_cmd
 from .commands import run as run_cmd
+from .commands import session as session_cmd
+from .commands import tag as tag_cmd
 from .commands import workflow as workflow_cmd
 from .commands.gui import gui_command
 from .commands.plugin import list_command, show_command, template_command
@@ -48,3 +52,7 @@ app.command("gui")(gui_command)
 app.add_typer(config_cmd.app, name="config", help="Manage system configuration")
 app.add_typer(project_cmd.app, name="project")
 app.add_typer(workflow_cmd.app, name="workflow")
+app.add_typer(tag_cmd.app, name="tag")
+app.add_typer(session_cmd.app, name="session")
+app.add_typer(artifact_cmd.app, name="artifact")
+app.add_typer(occurrence_cmd.app, name="occurrence")

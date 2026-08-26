@@ -427,3 +427,130 @@ def test_gui_api_job_products_maps_removed_hash_to_422(temp_workspace):
     assert response.status_code == 422
     assert listing.status_code == 422
     assert missing.status_code == 404
+
+
+def _catalog_session(workspace, session_id="catalog-session"):
+    """Fabricate a minimal session directory for catalog API tests."""
+    root = workspace / "runs" / "2026" / "08" / session_id
+    root.mkdir(parents=True)
+    manifest = {
+        "schema": "qphase.session/2",
+        "session_id": session_id,
+        "project_id": "test-project",
+        "workflow_id": "example",
+        "status": "completed",
+        "start_time": "2026-08-26T10:00:00+08:00",
+        "jobs": {},
+    }
+    (root / "session_manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    return root
+
+
+def test_gui_api_catalog_query_and_session_tags(temp_workspace):
+    _catalog_session(temp_workspace)
+    with TestClient(create_app()) as client:
+        listing = client.get("/catalog/session")
+        assert listing.status_code == 200
+        assert [item["id"] for item in listing.json()["objects"]] == [
+            "catalog-session"
+        ]
+
+        tagged = client.post(
+            "/sessions/catalog-session/tags", json={"add": ["task:scan"]}
+        )
+        assert tagged.status_code == 200
+
+        filtered = client.get("/catalog/session", params={"tag": "task:scan"})
+        missing = client.get("/catalog/session", params={"tag": "task:other"})
+        assert [item["id"] for item in filtered.json()["objects"]] == [
+            "catalog-session"
+        ]
+        assert missing.json()["objects"] == []
+
+        tags = client.get("/catalog/session/catalog-session/tags")
+        assert tags.status_code == 200
+        assert {tag["tag"] for tag in tags.json()["effective_tags"]} == {"task:scan"}
+
+        patched = client.patch(
+            "/sessions/catalog-session", json={"lifecycle": "reference"}
+        )
+        assert patched.status_code == 200
+        lifecycle = client.get("/catalog/session", params={"lifecycle": "reference"})
+        assert [item["id"] for item in lifecycle.json()["objects"]] == [
+            "catalog-session"
+        ]
+
+        policy = client.get("/tags/policy")
+        assert policy.status_code == 200
+        assert policy.json() == {"path": None, "revision": None, "namespaces": {}}
+
+        reindex = client.post("/project/reindex")
+        assert reindex.status_code == 200
+        assert reindex.json()["sessions"] >= 1
+
+
+def test_gui_api_submits_execution_with_tags(temp_workspace, sample_job_file):
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/executions",
+            json={"workflow": "test_job", "tags": ["Task:Urgent"]},
+        )
+        assert response.status_code == 202
+        assert response.json()["submission_tags"] == ["task:urgent"]
+
+
+def test_gui_api_updates_submission_tags_while_queued(temp_workspace, sample_job_file):
+    import threading
+
+    gate = threading.Event()
+    with TestClient(create_app()) as client:
+        scheduler = client.app.state.context.scheduler
+        original_run = scheduler.run
+
+        def blocked_run(*args, **kwargs):
+            gate.wait(5.0)
+            return original_run(*args, **kwargs)
+
+        scheduler.run = blocked_run
+        try:
+            first = client.post("/executions", json={"workflow": "test_job"}).json()
+            for _ in range(200):
+                state = client.get(f"/executions/{first['execution_id']}").json()
+                if state["state"] == "running":
+                    break
+                time.sleep(0.01)
+
+            second = client.post(
+                "/executions",
+                json={"workflow": "test_job", "tags": ["task:queued"]},
+            ).json()
+            response = client.put(
+                f"/executions/{second['execution_id']}/tags",
+                json={"tags": ["task:revised"]},
+            )
+            assert response.status_code == 200
+            assert response.json()["submission_tags"] == ["task:revised"]
+        finally:
+            gate.set()
+        for execution in (first, second):
+            _execute_workflow_poll(client, execution["execution_id"])
+
+
+def _execute_workflow_poll(client: TestClient, execution_id: str) -> dict:
+    for _ in range(500):
+        payload = client.get(f"/executions/{execution_id}").json()
+        if payload["state"] in {"completed", "failed", "cancelled", "partial"}:
+            return payload
+        time.sleep(0.01)
+    raise AssertionError("execution did not finish")
+
+
+def test_gui_api_rejects_tag_update_after_completion(temp_workspace, sample_job_file):
+    with TestClient(create_app()) as client:
+        execution_id = _execute_workflow(client)["execution_id"]
+        response = client.put(
+            f"/executions/{execution_id}/tags", json={"tags": ["task:late"]}
+        )
+    assert response.status_code == 409

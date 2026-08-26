@@ -330,3 +330,31 @@ class WorkflowDocument(ServiceModel):
     revision: str
     job_names: list[str] = Field(default_factory=list)
     content: str | None = None
+
+
+class EffectiveTagInfo(ServiceModel):
+    """One materialized effective tag with provenance."""
+
+    tag: str
+    source: str
+    assignment_id: str | None = None
+    policy_revision: str | None = None
+    inherited: bool = False
+    shadowed: bool = False
+
+
+class CatalogObject(ServiceModel):
+    """One catalog row plus its non-shadowed effective tags."""
+
+    kind: str
+    id: str
+    facets: dict[str, Any] = Field(default_factory=dict)
+    effective_tags: list[EffectiveTagInfo] = Field(default_factory=list)
+
+
+class TagPolicyInfo(ServiceModel):
+    """Resolved project tag policy (``path`` is None when no file exists)."""
+
+    path: str | None = None
+    revision: str | None = None
+    namespaces: dict[str, Any] = Field(default_factory=dict)
