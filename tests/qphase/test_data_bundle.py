@@ -5,6 +5,7 @@ import json
 import numpy as np
 import pytest
 from pydantic import ValidationError
+from qphase.core.catalog import CatalogQuery, ProjectObjectCatalog
 from qphase.core.project import ProjectContext
 from qphase.core.result_loader import load_result
 from qphase.data import (
@@ -412,25 +413,75 @@ def test_directory_resolver_rejects_unbound_refs():
         resolver.resolve(ref)
 
 
-def test_project_resolver_isolated_and_rejects_duplicate_identity(tmp_path):
+def test_project_resolver_indexes_repeated_identity_as_occurrences(tmp_path):
     project = ProjectContext.create(tmp_path / "project")
     dataset = _scan_dataset()
-    first = project.session_root / "session" / "job1"
+    first = project.session_root / "session-a" / "job1"
     manifest = save_products(
         first, {"scan": dataset}, artifact_id="shared-artifact"
     )
     ref = manifest.product_ref("scan")
-    resolver = ProjectArtifactResolver(project)
+    second = project.session_root / "session-b" / "job1"
+    save_products(second, {"scan": dataset}, artifact_id="shared-artifact")
+    for name in ("session-a", "session-b"):
+        (project.session_root / name / "session_manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema": "qphase.session/2",
+                    "session_id": name,
+                    "status": "completed",
+                    "jobs": {},
+                }
+            ),
+            encoding="utf-8",
+        )
 
+    resolver = ProjectArtifactResolver(project)
+    # Repeated identity is legal under the occurrence model; resolution
+    # deterministically returns the first indexed location.
     assert resolver.resolve(ref) == first.resolve()
 
-    save_products(
-        project.session_root / "session" / "job2",
-        {"scan": dataset},
-        artifact_id="shared-artifact",
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+    rows = catalog.query(
+        CatalogQuery(
+            object_kind="occurrence",
+            facets={"artifact_id": "shared-artifact"},
+        )
     )
-    with pytest.raises(ArtifactCorruptError, match="identity conflict"):
-        resolver.resolve(ref)
+    assert len(rows) == 2
+
+
+def test_project_resolver_survives_project_move(tmp_path):
+    import shutil
+
+    project = ProjectContext.create(tmp_path / "project")
+    dataset = _scan_dataset()
+    job_dir = project.session_root / "session" / "job1"
+    manifest = save_products(job_dir, {"scan": dataset}, artifact_id="movable")
+    ref = manifest.product_ref("scan")
+    (project.session_root / "session" / "session_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "qphase.session/2",
+                "session_id": "session",
+                "status": "completed",
+                "jobs": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    resolver = ProjectArtifactResolver(project)
+    assert resolver.resolve(ref) == job_dir.resolve()
+
+    moved = tmp_path / "moved"
+    shutil.move(str(tmp_path / "project"), str(moved))
+    moved_project = ProjectContext.load(moved / "qphase.toml")
+
+    assert moved_project.project_id == project.project_id
+    assert ProjectArtifactResolver(moved_project).resolve(ref) == (
+        moved_project.session_root / "session" / "job1"
+    ).resolve()
 
 
 def test_coordinates_roundtrip_in_clean_subprocess(tmp_path):

@@ -9,8 +9,8 @@ error.
 The process-default resolver holds explicit ``artifact_id -> directory``
 bindings populated by ``save_products``/``load_products``.  The
 :class:`ProjectArtifactResolver` resolves within one project's Session root
-without relying on process-global state; the later catalog phase can replace
-its direct scan with an indexed implementation.
+without relying on process-global state, backed by the project object catalog
+with a direct scan as the fresh-truth fallback.
 
 Public API
 ----------
@@ -88,44 +88,62 @@ class DirectoryArtifactResolver:
 class ProjectArtifactResolver:
     """Resolve artifact identities within one project's session root.
 
-    The resolver deliberately performs a direct manifest scan. Project-wide
-    indexing belongs to the later catalog phase; this implementation provides
-    the correct project boundary without introducing a second index.
+    Resolution is catalog-first: the project object catalog (a rebuildable
+    index of session-relative paths) answers historical lookups without a
+    filesystem scan. On a catalog miss — for example an artifact written
+    seconds ago by a running session — the resolver falls back to a direct
+    manifest scan, which remains the fresh truth.
+
+    Artifact identity is occurrence-based: the same ``artifact_id`` may live
+    in several session job directories (copies, mirrors). Resolution returns
+    the first indexed location; all occurrences stay visible through the
+    catalog.
     """
 
     def __init__(self, project: ProjectContext) -> None:
         self.project = project
 
     def resolve(self, ref: ArtifactRef) -> Path:
-        """Return the unique artifact directory for ``ref`` in this project."""
-        matches: list[Path] = []
+        """Return one directory holding ``ref``'s artifact in this project."""
+        located = self._catalog_lookup(ref.artifact_id)
+        if located is not None:
+            return located
+        return self._scan(ref)
+
+    def _catalog_lookup(self, artifact_id: str) -> Path | None:
+        from ..core.catalog import ProjectObjectCatalog
+
+        catalog = ProjectObjectCatalog(self.project)
+        if not catalog.path.exists():
+            catalog.reindex()
+        relative = catalog.locate_artifact(artifact_id)
+        if relative is None:
+            return None
+        candidate = (self.project.session_root / relative).resolve()
+        # A stale index entry (artifact moved or deleted) misses to the scan.
+        return candidate if candidate.exists() else None
+
+    def _scan(self, ref: ArtifactRef) -> Path:
         root = self.project.session_root
-        if not root.exists():
-            raise ArtifactNotFoundError(
-                f"artifact {ref.artifact_id!r} is not present in this project"
-            )
-        for manifest_path in root.rglob("artifact_manifest.json"):
-            try:
-                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise ArtifactCorruptError(
-                    f"failed to read artifact manifest {manifest_path}: {exc}"
-                ) from exc
-            if not isinstance(payload, dict):
-                raise ArtifactCorruptError(
-                    f"artifact manifest {manifest_path} must contain an object"
-                )
-            if payload.get("artifact_id") == ref.artifact_id:
-                matches.append(manifest_path.parent.resolve())
-        if not matches:
-            raise ArtifactNotFoundError(
-                f"artifact {ref.artifact_id!r} is not present in this project"
-            )
-        if len(matches) > 1:
-            raise ArtifactCorruptError(
-                f"artifact identity conflict for {ref.artifact_id!r}: {matches}"
-            )
-        return matches[0]
+        if root.exists():
+            for manifest_path in sorted(root.rglob("artifact_manifest.json")):
+                if ".trash" in manifest_path.parts:
+                    continue
+                try:
+                    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise ArtifactCorruptError(
+                        f"failed to read artifact manifest {manifest_path}: {exc}"
+                    ) from exc
+                if not isinstance(payload, dict):
+                    raise ArtifactCorruptError(
+                        f"artifact manifest {manifest_path} must contain an object"
+                    )
+                if payload.get("artifact_id") == ref.artifact_id:
+                    return manifest_path.parent.resolve()
+        raise ArtifactNotFoundError(
+            f"artifact {ref.artifact_id!r} is not present in this project"
+        )
 
 
 _DEFAULT_RESOLVER = DirectoryArtifactResolver()
