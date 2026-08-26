@@ -116,3 +116,7 @@ def test_session_manifest_write_failure_is_not_silently_ignored(
     with patch("builtins.open", side_effect=OSError("read-only filesystem")):
         with pytest.raises(QPhaseIOError, match="failed to save session manifest"):
             scheduler._save_manifest()
+
+    scheduler.manifest = {"bad": object()}
+    with pytest.raises(QPhaseIOError, match="failed to save session manifest"):
+        scheduler._save_manifest()

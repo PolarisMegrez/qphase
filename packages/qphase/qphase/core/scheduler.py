@@ -242,7 +242,7 @@ class Scheduler:
                 with open(temporary, "w", encoding="utf-8") as f:
                     json.dump(self.manifest, f, indent=2)
                 temporary.replace(manifest_path)
-            except OSError as exc:
+            except (OSError, TypeError, ValueError) as exc:
                 raise QPhaseIOError(
                     f"failed to save session manifest: {manifest_path}",
                     code=ErrorCode.ARTIFACT_IO,

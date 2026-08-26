@@ -227,7 +227,7 @@ class ProjectService:
             return {}
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise QPhaseIOError(
                 f"failed to read project JSON: {path}",
                 code=ErrorCode.ARTIFACT_IO,
