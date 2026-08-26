@@ -25,9 +25,9 @@ resolver
 bundle
     The resource-independent generic data bundle.
 store
-    Artifact manifest v3 and the storage adapter contract.
+    Artifact manifest v4 and the storage adapter contract.
 npz
-    NPZ 2.x storage adapter with lazy sharded handles.
+    NPZ 3.x storage adapter with lazy sharded handles.
 graph
     Typed product dependency graphs.
 """
@@ -42,7 +42,6 @@ from .datasets import (
 )
 from .errors import (
     ArtifactAdapterError,
-    ArtifactChecksumError,
     ArtifactCorruptError,
     ArtifactError,
     ArtifactNotFoundError,
@@ -110,7 +109,6 @@ __all__ = [
     "ARTIFACT_SCHEMA_VERSION",
     "PRODUCT_SCHEMA_VERSION",
     "ArtifactAdapterError",
-    "ArtifactChecksumError",
     "ArtifactCorruptError",
     "ArtifactError",
     "ArtifactManifestV3",

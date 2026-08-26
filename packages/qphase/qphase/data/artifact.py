@@ -2,8 +2,8 @@
 ---------------------------------------------------------
 Freezes the durable-reference side of the data product contract. An
 ``ArtifactRef`` is the only cross-process/restart reference: it carries an
-artifact id, a product name, the product schema, a *trusted storage adapter
-id* and a content hash — never runtime handles, devices, leases, arrays,
+artifact id, a product name, the product schema and a *trusted storage adapter
+id* — never runtime handles, devices, leases, arrays,
 cache state or free-form provenance dicts (provenance belongs to the data
 product and the artifact manifest; the storage context is resolved by the
 artifact store).
@@ -40,14 +40,13 @@ __all__ = [
 ]
 
 _ADAPTER_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*/[0-9]+$")
-_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ArtifactRef(BaseModel):
     """Durable, cross-process reference to a persisted data product.
 
     Contains identity only: artifact id, product name, product schema, the
-    registered storage adapter id and the product content hash. Recovery
+    registered storage adapter id. Recovery
     resolves the adapter through the trusted registry and the artifact
     location through an artifact resolver — the ref itself names no code and
     no filesystem location.
@@ -59,10 +58,7 @@ class ArtifactRef(BaseModel):
     product_name: str = Field(min_length=1)
     product_schema: ProductSchema
     storage_adapter: str = Field(
-        description="Registered storage adapter id (for example 'npz/2')."
-    )
-    content_hash: str = Field(
-        description="Lowercase SHA-256 digest of the persisted product."
+        description="Registered storage adapter id (for example 'npz/3')."
     )
 
     @field_validator("storage_adapter")
@@ -74,14 +70,6 @@ class ArtifactRef(BaseModel):
                 f"syntax, got {value!r}"
             )
         return value
-
-    @field_validator("content_hash")
-    @classmethod
-    def _check_content_hash(cls, value: str) -> str:
-        if not _SHA256_PATTERN.match(value):
-            raise ValueError("content_hash must be a 64-character lowercase SHA-256")
-        return value
-
 
 @runtime_checkable
 class DataMaterializerProtocol(Protocol):

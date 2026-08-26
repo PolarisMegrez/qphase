@@ -1,7 +1,7 @@
 """qphase_sde: One-Way 1.x Result Migration (2.0)
 ---------------------------------------------------------
 Offline converter from frozen 1.x SDE result files to 2.0 typed data
-products plus an artifact manifest v3.
+products plus an artifact manifest v4.
 
 Three legacy layouts are recognized:
 
@@ -77,9 +77,6 @@ from qphase.data.store import (
     GENERIC_BUNDLE_ADAPTER_ID,
     GENERIC_BUNDLE_TYPE_ID,
     BundleDescriptor,
-    artifact_content_hash,
-    chunk_content_hash,
-    product_content_hash,
 )
 
 from qphase_sde.contracts.bundle import SDEProvenance
@@ -309,7 +306,7 @@ def migrate_legacy_result(
     adapter: PayloadAdapter | None = None,
     shard_target_bytes: int | None = None,
 ) -> MigrationReport:
-    """Convert one ``sde_result/1`` or ``trajectory_set/1`` file to v3.
+    """Convert one ``sde_result/1`` or ``trajectory_set/1`` file to v4.
 
     The source file is hashed, never modified, and the output directory must
     be empty and disjoint from it. Unknown object payloads are rejected
@@ -445,7 +442,7 @@ def _write_chunk(
     index: int,
     array: np.ndarray,
 ) -> NpzChunkRecord:
-    """Write one point chunk file following the ``npz/2`` conventions."""
+    """Write one point chunk file following the ``npz/3`` conventions."""
     chunk = np.ascontiguousarray(array)
     filename = f"{stem}__{variable}__{index:04d}.npz"
     np.savez(directory / filename, data=chunk)
@@ -455,7 +452,6 @@ def _write_chunk(
         logical_range=(index, index + 1),
         shape=tuple(chunk.shape),
         dtype=np.dtype(chunk.dtype).str,
-        sha256=chunk_content_hash(chunk, (index, index + 1)),
     )
 
 
@@ -597,7 +593,7 @@ def migrate_scan_artifact(
     *,
     adapter: PayloadAdapter | None = None,
 ) -> MigrationReport:
-    """Convert an ``sde_scan/2`` per-point artifact to v3, streaming per point.
+    """Convert an ``sde_scan/2`` per-point artifact to v4, streaming per point.
 
     Each legacy shard is read twice (structure pass, chunk pass) and never
     concatenated as a whole: every point contributes one chunk per variable
@@ -751,7 +747,6 @@ def migrate_scan_artifact(
                 name=product_name,
                 product_schema=schema,
                 storage=storage,
-                sha256=product_content_hash(product_name, schema, storage),
             )
         )
 
@@ -794,12 +789,6 @@ def migrate_scan_artifact(
         products=entries,
         provenance=provenance,
         parents=[sources[manifest_path.name]],
-        content_hash=artifact_content_hash(
-            bundle.model_dump(mode="json"),
-            entries,
-            provenance,
-            [sources[manifest_path.name]],
-        ),
     )
     manifest.write(output_dir)
     return MigrationReport(

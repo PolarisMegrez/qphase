@@ -370,7 +370,6 @@ def test_artifact_backed_dataset_materializes_through_loader():
         product_name="trajectories",
         product_schema=schema,
         storage_adapter="fake/1",
-        content_hash="ab" * 32,
     )
     dataset = TimeSeriesDataset(schema, ref, provenance={"origin": "test"})
 
@@ -400,7 +399,6 @@ def test_artifact_backed_dataset_materializes_through_loader():
         product_name="trajectories",
         product_schema=schema,
         storage_adapter="missing/1",
-        content_hash="ab" * 32,
     )
     with pytest.raises(ArtifactAdapterError, match="unknown storage adapter"):
         TimeSeriesDataset(schema, bad_ref).materialize()
@@ -413,7 +411,6 @@ def test_artifact_backed_dataset_materializes_through_loader():
         product_name="trajectories",
         product_schema=mismatched,
         storage_adapter="fake/1",
-        content_hash="ab" * 32,
     )
     with pytest.raises(ValueError, match="does not match"):
         TimeSeriesDataset(schema, other_ref)

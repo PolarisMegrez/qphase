@@ -558,8 +558,7 @@ def test_artifact_ref_is_minimal_and_typed():
         artifact_id="art-123",
         product_name="psd",
         product_schema=schema,
-        storage_adapter="npz/2",
-        content_hash="a" * 64,
+        storage_adapter="npz/3",
     )
     payload = json.loads(json.dumps(ref.model_dump(mode="json")))
     assert ArtifactRef.model_validate(payload) == ref
@@ -569,8 +568,7 @@ def test_artifact_ref_is_minimal_and_typed():
             artifact_id="a",
             product_name="psd",
             product_schema=schema,
-            storage_adapter="npz/2",
-            content_hash="a" * 64,
+            storage_adapter="npz/3",
             provenance={"engine": "sde"},
         )
     with pytest.raises(ValidationError, match="storage_adapter"):
@@ -579,15 +577,14 @@ def test_artifact_ref_is_minimal_and_typed():
             product_name="psd",
             product_schema=schema,
             storage_adapter="qphase_sde.serialization.npz:load",
-            content_hash="a" * 64,
         )
-    with pytest.raises(ValidationError, match="SHA-256"):
+    with pytest.raises(ValidationError, match="extra"):
         ArtifactRef(
             artifact_id="a",
             product_name="psd",
             product_schema=schema,
-            storage_adapter="npz/2",
-            content_hash="abc",
+            storage_adapter="npz/3",
+            content_hash="removed",
         )
 
 
@@ -870,8 +867,7 @@ def test_runtime_and_artifact_backings_are_distinct_types():
         artifact_id="art-1",
         product_name="psd",
         product_schema=_spectral_schema(),
-        storage_adapter="npz/2",
-        content_hash="a" * 64,
+        storage_adapter="npz/3",
     )
     assert isinstance(ref, ArtifactRef)
     assert not isinstance(ref, RuntimeProductBacking)

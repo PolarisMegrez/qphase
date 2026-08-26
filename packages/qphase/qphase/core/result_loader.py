@@ -74,8 +74,8 @@ class GenericResult:
 def load_result(job_name: str, job_dir: Path) -> ResultProtocol:
     """Attempt to load a result from a job directory.
 
-    v3 artifact manifests (``artifact_manifest.json`` with
-    ``schema_version="qphase.artifact/3"``) are the authoritative restore
+    Current artifact manifests (``artifact_manifest.json`` with
+    ``schema_version="qphase.artifact/4"``) are the authoritative restore
     entry: products are reopened as lazily-backed typed datasets, without
     filename guessing and without ``allow_pickle``. Directories without a v3
     manifest fall back to legacy filename-based loading.
@@ -111,7 +111,7 @@ def load_result(job_name: str, job_dir: Path) -> ResultProtocol:
             raise QPhaseError(
                 f"failed to read artifact manifest {manifest_path}: {exc}"
             ) from exc
-        if raw.get("schema_version") == "qphase.artifact/3":
+        if raw.get("schema_version") == "qphase.artifact/4":
             from ..data.store import load_bundle
 
             return load_bundle(job_dir)

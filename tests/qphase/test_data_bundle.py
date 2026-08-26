@@ -31,8 +31,6 @@ from qphase.data.store import (
     GENERIC_BUNDLE_ADAPTER_ID,
     GENERIC_BUNDLE_TYPE_ID,
     BundleDescriptor,
-    ProductEntry,
-    artifact_content_hash,
 )
 
 
@@ -317,10 +315,6 @@ def test_known_bundle_descriptor_is_validated_at_manifest_read(tmp_path):
     path = tmp_path / "artifact_manifest.json"
     raw = json.loads(path.read_text())
     raw["bundle"]["descriptor"] = {"undeclared": True}
-    entries = [ProductEntry.model_validate(item) for item in raw["products"]]
-    raw["content_hash"] = artifact_content_hash(
-        raw["bundle"], entries, raw["provenance"], raw["parents"]
-    )
     path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
 
     with pytest.raises(ArtifactCorruptError, match="must be empty"):
@@ -403,7 +397,6 @@ def test_directory_resolver_rejects_unbound_refs():
         product_name="trajectories",
         product_schema=dataset.schema,
         storage_adapter=NpzStorageAdapter.ADAPTER_ID,
-        content_hash="0" * 64,
     )
     with pytest.raises(ArtifactNotFoundError, match="not bound"):
         resolver.resolve(ref)

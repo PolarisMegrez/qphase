@@ -1,4 +1,4 @@
-"""Tests for the artifact manifest v3 store and the NPZ 2.x adapter."""
+"""Tests for the artifact manifest v4 store and the NPZ 3.x adapter."""
 
 import json
 import os
@@ -14,7 +14,6 @@ from qphase.core.result_loader import load_result
 from qphase.data import (
     ARTIFACT_SCHEMA_VERSION,
     ArtifactAdapterError,
-    ArtifactChecksumError,
     ArtifactCorruptError,
     ArtifactError,
     ArtifactManifestV3,
@@ -38,7 +37,6 @@ from qphase.data import (
 )
 from qphase.data import npz as npz_module
 from qphase.data.npz import NpzStorageAdapter, ShardedNpzArrayHandle
-from qphase.data.store import artifact_content_hash, product_content_hash
 
 
 def _schema(rows: int) -> ProductSchema:
@@ -86,28 +84,11 @@ def _dataset(rows: int = 5) -> TimeSeriesDataset:
     )
 
 
-def _recompute_hashes(directory: Path) -> None:
-    """Recompute product/artifact hashes after a raw manifest mutation.
-
-    Lets tests craft manifests that pass the hash layer so the specific
-    cross-field validation under test is what actually fires.
-    """
+def _rewrite_manifest(directory: Path) -> None:
+    """Rewrite a mutated manifest without any content-hash bookkeeping."""
     path = directory / "artifact_manifest.json"
-    manifest = ArtifactManifestV3.model_validate(json.loads(path.read_text()))
-    for entry in manifest.products:
-        entry.sha256 = product_content_hash(
-            entry.name, entry.product_schema, entry.storage
-        )
-    manifest.content_hash = artifact_content_hash(
-        manifest.bundle.model_dump(mode="json"),
-        manifest.products,
-        manifest.provenance,
-        manifest.parents,
-    )
-    path.write_text(
-        json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n",
-        encoding="utf-8",
-    )
+    raw = json.loads(path.read_text())
+    path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
 
 
 def _mutate_manifest(directory: Path, mutate) -> None:
@@ -129,16 +110,17 @@ def test_save_load_roundtrip_single_product(tmp_path):
     assert manifest.schema_version == ARTIFACT_SCHEMA_VERSION
     assert manifest.parents == ["parent-artifact"]
     assert manifest.provenance == {"plugin": "engine.sde"}
-    assert len(manifest.content_hash) == 64
-    assert {entry.storage.adapter for entry in manifest.products} == {"npz/2"}
+    assert not hasattr(manifest, "content_hash")
+    assert {entry.storage.adapter for entry in manifest.products} == {"npz/3"}
 
     raw = json.loads((tmp_path / "artifact_manifest.json").read_text())
-    assert raw["schema_version"] == "qphase.artifact/3"
+    assert raw["schema_version"] == "qphase.artifact/4"
+    assert "content_hash" not in raw
     assert "loader" not in raw  # manifests name adapter ids, never code paths
-    assert {entry["storage"]["adapter"] for entry in raw["products"]} == {"npz/2"}
+    assert {entry["storage"]["adapter"] for entry in raw["products"]} == {"npz/3"}
     assert {
         entry["storage"]["descriptor_schema"] for entry in raw["products"]
-    } == {"npz.product/2"}
+    } == {"npz.product/3"}
     files = {
         chunk["file"]
         for entry in raw["products"]
@@ -169,8 +151,8 @@ def test_save_load_roundtrip_single_product(tmp_path):
     assert isinstance(ref, ArtifactRef)
     assert ref.artifact_id == manifest.artifact_id
     assert ref.product_name == "trajectories"
-    assert ref.storage_adapter == "npz/2"
-    assert ref.content_hash == manifest.products[0].sha256
+    assert ref.storage_adapter == "npz/3"
+    assert "content_hash" not in ref.model_dump()
     backed = TimeSeriesDataset(dataset.schema, ref)
     np.testing.assert_array_equal(
         backed.materialize().handle("x").materialize(),
@@ -201,7 +183,7 @@ def test_manifest_rejects_open_persisted_product_schema(tmp_path):
         raw["products"][0]["product_schema"]["axes"][0]["size"] = None
 
     _mutate_manifest(tmp_path, open_axis)
-    _recompute_hashes(tmp_path)
+    _rewrite_manifest(tmp_path)
 
     with pytest.raises(ArtifactCorruptError, match="closed before persistence"):
         ArtifactManifestV3.read(tmp_path)
@@ -262,18 +244,17 @@ def test_sharded_lazy_selection_prunes_untouched_chunks(tmp_path, monkeypatch):
     np.testing.assert_array_equal(full, x)
 
 
-def test_corrupted_chunk_is_detected(tmp_path):
+def test_payload_bytes_are_not_hashed_during_normal_read(tmp_path):
     dataset = _dataset()
     save_products(tmp_path, {"trajectories": dataset})
     chunk_file = tmp_path / "00_trajectories__x.npz"
     np.savez(chunk_file, data=np.zeros((5, 8), dtype=np.complex128))
 
     loaded = load_products(tmp_path)["trajectories"]
-    # Ordinary reads validate structure only; payload integrity is explicit.
-    loaded.handle("x").materialize()
-    manifest = ArtifactManifestV3.read(tmp_path)
-    with pytest.raises(ArtifactChecksumError, match="checksum mismatch"):
-        NpzStorageAdapter().verify_product(manifest.products[0], tmp_path)
+    np.testing.assert_array_equal(
+        loaded.handle("x").materialize(),
+        np.zeros((5, 8), dtype=np.complex128),
+    )
 
 
 def test_chunk_read_rejects_reinterpreted_payload(tmp_path):
@@ -308,7 +289,7 @@ def test_chunk_read_rejects_reinterpreted_payload(tmp_path):
     np.savez(chunk_file, data=y.reshape(-1).view(np.complex128).reshape(4, 4))
 
     loaded = load_products(tmp_path)["trajectories"]
-    with pytest.raises(ArtifactChecksumError, match="dtype"):
+    with pytest.raises(ArtifactCorruptError, match="dtype"):
         loaded.handle("y").materialize()
 
 
@@ -319,7 +300,7 @@ def test_unknown_adapter_is_rejected(tmp_path):
         tmp_path,
         lambda raw: raw["products"][0]["storage"].update(adapter="zarr/0"),
     )
-    _recompute_hashes(tmp_path)
+    _rewrite_manifest(tmp_path)
 
     # The manifest itself parses and lists fine; materializing fails clearly.
     ArtifactManifestV3.read(tmp_path)
@@ -367,7 +348,7 @@ def test_manifest_rejects_unsafe_paths(tmp_path):
         "./00_trajectories__x.npz",
     ):
         _mutate_manifest(tmp_path, lambda raw, v=bad: set_chunk_file(raw, v))
-        _recompute_hashes(tmp_path)
+        _rewrite_manifest(tmp_path)
         # Payload paths live in the adapter descriptor: they are validated
         # when the adapter parses the descriptor at load time.
         with pytest.raises(ArtifactCorruptError):
@@ -414,7 +395,7 @@ def test_manifest_rejects_shared_chunk_files(tmp_path):
         ]
 
     _mutate_manifest(tmp_path, share_file)
-    _recompute_hashes(tmp_path)
+    _rewrite_manifest(tmp_path)
     with pytest.raises(ArtifactCorruptError, match="referenced by both"):
         load_products(tmp_path)
 
@@ -431,7 +412,7 @@ def test_manifest_read_rejects_payload_shared_across_products(tmp_path):
         raw["products"][1]["storage"] = raw["products"][0]["storage"]
 
     _mutate_manifest(tmp_path, share_product_payload)
-    _recompute_hashes(tmp_path)
+    _rewrite_manifest(tmp_path)
 
     with pytest.raises(ArtifactCorruptError, match="across products"):
         ArtifactManifestV3.read(tmp_path)
@@ -459,25 +440,22 @@ def test_manifest_rejects_storage_variable_mismatch(tmp_path):
         ArtifactManifestV3.read(tmp_path / "second")
 
 
-def test_manifest_rejects_stale_hashes(tmp_path):
+def test_manifest_rejects_removed_hash_fields(tmp_path):
     dataset = _dataset()
     save_products(tmp_path, {"trajectories": dataset})
 
-    def flip_chunk_hash(raw):
-        chunks = raw["products"][0]["storage"]["descriptor"]["variables"]["x"][
-            "chunks"
-        ]
-        chunks[0]["sha256"] = "0" * 64
-
-    _mutate_manifest(tmp_path, flip_chunk_hash)
-    with pytest.raises(ArtifactCorruptError, match="content hash mismatch"):
+    _mutate_manifest(tmp_path, lambda raw: raw.update(content_hash="removed"))
+    with pytest.raises(ArtifactCorruptError, match="content_hash"):
         ArtifactManifestV3.read(tmp_path)
 
     save_products(tmp_path / "second", {"trajectories": dataset})
     _mutate_manifest(
-        tmp_path / "second", lambda raw: raw.update(content_hash="0" * 64)
+        tmp_path / "second",
+        lambda raw: raw["products"][0]["storage"]["descriptor"][
+            "variables"
+        ]["x"]["chunks"][0].update(sha256="removed"),
     )
-    with pytest.raises(ArtifactCorruptError, match="content hash mismatch"):
+    with pytest.raises(ArtifactCorruptError, match="sha256"):
         ArtifactManifestV3.read(tmp_path / "second")
 
 
@@ -509,7 +487,7 @@ def test_manifest_rejects_bad_chunk_ranges(tmp_path):
         target = tmp_path / f"case_{index}"
         shutil.copytree(tmp_path, target, ignore=shutil.ignore_patterns("case_*"))
         _mutate_manifest(target, lambda raw, r=ranges: mutate_ranges(raw, r))
-        _recompute_hashes(target)
+        _rewrite_manifest(target)
         with pytest.raises(ArtifactCorruptError, match=label):
             load_products(target)
 
@@ -552,8 +530,7 @@ def test_artifact_ref_uses_trusted_adapter_ids():
         artifact_id="art-1",
         product_name="trajectories",
         product_schema=schema,
-        storage_adapter="npz/2",
-        content_hash="ab" * 32,
+        storage_adapter="npz/3",
     )
     payload = json.loads(json.dumps(ref.model_dump(mode="json")))
     assert ArtifactRef.model_validate(payload) == ref
@@ -564,15 +541,13 @@ def test_artifact_ref_uses_trusted_adapter_ids():
             product_name="trajectories",
             product_schema=schema,
             storage_adapter="os:system",
-            content_hash="ab" * 32,
         )
     with pytest.raises(ValidationError):  # no dotted loader field remains
         ArtifactRef(
             artifact_id="art-1",
             product_name="trajectories",
             product_schema=schema,
-            storage_adapter="npz/2",
-            content_hash="ab" * 32,
+            storage_adapter="npz/3",
             loader="os:system",
         )
 
@@ -584,7 +559,6 @@ def test_dataset_materialize_unknown_adapter_fails_clearly():
         product_name="trajectories",
         product_schema=schema,
         storage_adapter="zarr/9",
-        content_hash="ab" * 32,
     )
     with pytest.raises(ArtifactAdapterError, match="unknown storage adapter"):
         TimeSeriesDataset(schema, ref).materialize()
@@ -593,12 +567,12 @@ def test_dataset_materialize_unknown_adapter_fails_clearly():
 def test_register_adapter_forbids_silent_overwrite():
     from qphase.data.store import _resolve_adapter
 
-    _resolve_adapter("npz/2")  # ensure the built-in adapter is registered
+    _resolve_adapter("npz/3")  # ensure the built-in adapter is registered
 
     class _FakeAdapter:
         @property
         def adapter_id(self):
-            return "npz/2"
+            return "npz/3"
 
     with pytest.raises(ArtifactAdapterError, match="already registered"):
         register_adapter(_FakeAdapter())
@@ -618,7 +592,7 @@ def test_load_rejects_unsupported_descriptor_schema(tmp_path):
         tmp_path,
         lambda raw: _storage(raw).update(descriptor_schema="npz.product/99"),
     )
-    _recompute_hashes(tmp_path)
+    _rewrite_manifest(tmp_path)
 
     # A known adapter rejects unsupported metadata at the read boundary.
     with pytest.raises(ArtifactUnsupportedError, match="descriptor schema"):
@@ -675,7 +649,7 @@ def test_manifest_rejects_summary_mismatch(tmp_path):
             m(raw["products"][0]["storage"]["summary"])
 
         _mutate_manifest(target, apply)
-        _recompute_hashes(target)
+        _rewrite_manifest(target)
         with pytest.raises(ArtifactCorruptError, match=label):
             ArtifactManifestV3.read(target)
 
@@ -684,8 +658,8 @@ def test_manifest_rejects_summary_mismatch(tmp_path):
 def test_storage_descriptor_must_be_json():
     with pytest.raises(ValidationError, match="JSON-serializable"):
         ProductStorage(
-            adapter="npz/2",
-            descriptor_schema="npz.product/2",
+            adapter="npz/3",
+            descriptor_schema="npz.product/3",
             summary={
                 "x": StorageVariableSummary(
                     full_shape=(5, 8), dtype="<c16", nbytes=640, chunk_count=1
@@ -729,7 +703,7 @@ def test_load_rejects_descriptor_schema_inconsistencies(tmp_path):
         target = tmp_path / f"case_{index}"
         shutil.copytree(tmp_path, target, ignore=shutil.ignore_patterns("case_*"))
         _mutate_manifest(target, mutate)
-        _recompute_hashes(target)
+        _rewrite_manifest(target)
         with pytest.raises(ArtifactCorruptError, match=label):
             load_products(target)
 

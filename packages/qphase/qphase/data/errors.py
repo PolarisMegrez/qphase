@@ -1,9 +1,9 @@
 """qphase: Artifact Error Taxonomy
 ---------------------------------------------------------
 Differentiated error types for the artifact store, so service/GUI layers can
-distinguish *not found*, *unsupported schema*, *corrupt manifest*,
-*missing/unknown adapter* and *checksum mismatch* instead of collapsing every
-failure into one opaque error.
+distinguish *not found*, *unsupported schema*, *corrupt manifest* and
+*missing/unknown adapter* instead of collapsing every failure into one opaque
+error.
 
 Public API
 ----------
@@ -17,8 +17,6 @@ ArtifactCorruptError
     Manifest/payload failed structural or cross-field validation.
 ArtifactAdapterError
     Storage adapter is unknown, duplicated or cannot materialize.
-ArtifactChecksumError
-    A payload chunk failed hash/dtype/shape verification at read time.
 """
 
 from __future__ import annotations
@@ -27,7 +25,6 @@ from ..core.errors import QPhaseError
 
 __all__ = [
     "ArtifactAdapterError",
-    "ArtifactChecksumError",
     "ArtifactCorruptError",
     "ArtifactError",
     "ArtifactNotFoundError",
@@ -57,7 +54,3 @@ class ArtifactCorruptError(ArtifactError):
 
 class ArtifactAdapterError(ArtifactError):
     """Storage adapter is unknown, duplicated or cannot materialize."""
-
-
-class ArtifactChecksumError(ArtifactError):
-    """A payload chunk failed hash, dtype or shape verification."""

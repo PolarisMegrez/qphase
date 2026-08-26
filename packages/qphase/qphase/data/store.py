@@ -1,9 +1,9 @@
-"""qphase: Artifact Manifest v3 and Storage Adapter Contract
+"""qphase: Artifact Manifest v4 and Storage Adapter Contract
 ---------------------------------------------------------
-The v3 artifact manifest is the single public restore entry point for
+The current artifact manifest is the single public restore entry point for
 persisted data products. It records, per artifact:
 
-- artifact schema/version/id/content hash and creation time;
+- artifact schema/version/id and creation time;
 - product names with their full :class:`ProductSchema`;
 - the storage adapter id and the per-variable chunk/shard mapping;
 - JSON provenance (plugin/config/backend fingerprints, conventions);
@@ -16,13 +16,12 @@ Trust model:
 - all payload paths are validated as artifact-relative POSIX paths and
   re-resolved under the artifact root at open time (no ``..``, absolute,
   drive, UNC or symlink escapes);
-- integrity is verified at the manifest/product boundary (cross-field and
-  metadata hashes). Ordinary payload handles check key/dtype/shape only;
-  payload hashes are checked by explicit adapter verification. ``content_hash``
-  is an integrity check against accidental corruption, not a digital
-  signature.
+- integrity is verified at the manifest/product boundary through schema,
+  descriptor, path, key, dtype and shape checks. Payload checksums are not a
+  normal artifact responsibility; detached checksums belong to future import
+  or export boundaries.
 
-Storage adapters implement :class:`StorageAdapterProtocol`; the NPZ 2.x
+Storage adapters implement :class:`StorageAdapterProtocol`; the NPZ 3.x
 adapter (:mod:`qphase.data.npz`) is the reference implementation. Other
 adapters (e.g. Zarr) can register through :func:`register_adapter` without
 changing the manifest format; registration never silently overwrites an
@@ -42,11 +41,11 @@ ProductEntry
 BundleDescriptor
     Persisted bundle type/adapter plus product roles.
 ArtifactManifestV3
-    The v3 artifact manifest.
+    The current artifact manifest.
 StorageAdapterProtocol
     Persistence adapter contract.
 save_products
-    Persist typed datasets and write the v3 manifest.
+    Persist typed datasets and write the current v4 manifest.
 load_products
     Reopen an artifact directory as lazily-backed datasets.
 load_bundle
@@ -59,7 +58,6 @@ register_bundle_adapter
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -100,11 +98,8 @@ __all__ = [
     "ProductStorage",
     "StorageAdapterProtocol",
     "StorageVariableSummary",
-    "artifact_content_hash",
-    "chunk_content_hash",
     "load_bundle",
     "load_products",
-    "product_content_hash",
     "register_adapter",
     "register_bundle_adapter",
     "resolve_artifact_path",
@@ -112,24 +107,17 @@ __all__ = [
     "validate_artifact_relative_path",
 ]
 
-#: Manifest schema identifier for the qphase 2.x artifact format.
-ARTIFACT_SCHEMA_VERSION: Literal["qphase.artifact/3"] = "qphase.artifact/3"
+#: Manifest schema identifier for the current qphase artifact format.
+ARTIFACT_SCHEMA_VERSION: Literal["qphase.artifact/4"] = "qphase.artifact/4"
 
 #: Manifest file name inside every artifact directory.
 MANIFEST_FILENAME = "artifact_manifest.json"
 
-_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_STEM_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
 _DRIVE_PATTERN = re.compile(r"^[A-Za-z]:$")
 
 #: Default shard target: 64 MiB of payload per chunk.
 DEFAULT_SHARD_TARGET_BYTES = 64 * (1 << 20)
-
-
-def _validate_sha256_digest(value: str) -> str:
-    if not _SHA256_PATTERN.match(value):
-        raise ValueError("expected a 64-character lowercase SHA-256 digest")
-    return value
 
 
 # -- path safety --------------------------------------------------------------
@@ -178,79 +166,6 @@ def resolve_artifact_path(root: Path | str, relative: str) -> Path:
             f"artifact path escapes the artifact root: {relative!r}"
         )
     return resolved
-
-
-# -- layered content hashes -----------------------------------------------------
-
-
-def chunk_content_hash(
-    array: np.ndarray, logical_range: tuple[int, int] | None = None
-) -> str:
-    """Hash one chunk: canonical header + NUL + C-order payload bytes.
-
-    The header pins dtype (including byte order), shape, memory order and
-    the logical selection, so the same payload bytes reinterpreted as a
-    different dtype or shape never match. NaN payloads hash like any other
-    bit pattern; 0-d arrays are trivially C-contiguous.
-    """
-    contiguous = (
-        np.ascontiguousarray(array) if array.ndim else np.asarray(array)
-    )
-    header = canonical_json(
-        {
-            "dtype": np.dtype(contiguous.dtype).str,
-            "shape": list(contiguous.shape),
-            "order": "C",
-            "logical_range": list(logical_range)
-            if logical_range is not None
-            else None,
-        }
-    )
-    return hashlib.sha256(
-        header.encode("utf-8") + b"\x00" + contiguous.tobytes()
-    ).hexdigest()
-
-
-def product_content_hash(
-    name: str, product_schema: ProductSchema, storage: ProductStorage
-) -> str:
-    """Hash a product over its canonical storage descriptor."""
-    listing = {
-        "adapter": storage.adapter,
-        "descriptor_schema": storage.descriptor_schema,
-        "descriptor": storage.descriptor,
-        "name": name,
-        "schema": product_schema.fingerprint(),
-        "summary": {
-            variable: {
-                "chunk_count": summary.chunk_count,
-                "dtype": summary.dtype,
-                "full_shape": list(summary.full_shape),
-                "nbytes": summary.nbytes,
-            }
-            for variable, summary in sorted(storage.summary.items())
-        },
-    }
-    return hashlib.sha256(canonical_json(listing).encode("utf-8")).hexdigest()
-
-
-def artifact_content_hash(
-    bundle: Mapping[str, Any] | None,
-    products: Sequence[ProductEntry],
-    provenance: Mapping[str, Any],
-    parents: Sequence[str],
-) -> str:
-    """Hash an artifact over bundle, products, provenance and parents."""
-    listing = {
-        "bundle": bundle,
-        "parents": sorted(parents),
-        "products": [
-            {"name": entry.name, "sha256": entry.sha256}
-            for entry in sorted(products, key=lambda entry: entry.name)
-        ],
-        "provenance": provenance,
-    }
-    return hashlib.sha256(canonical_json(listing).encode("utf-8")).hexdigest()
 
 
 # -- manifest models ------------------------------------------------------------
@@ -309,14 +224,6 @@ class ProductEntry(BaseModel):
     name: str = Field(min_length=1)
     product_schema: ProductSchema
     storage: ProductStorage
-    sha256: str = Field(
-        description="Content hash over the canonical storage descriptor."
-    )
-
-    @field_validator("sha256")
-    @classmethod
-    def _check_sha256(cls, value: str) -> str:
-        return _validate_sha256_digest(value)
 
 
 #: Bundle type of a plain product collection (no resource-specific semantics).
@@ -356,26 +263,17 @@ class BundleDescriptor(BaseModel):
 
 
 class ArtifactManifestV3(BaseModel):
-    """The v3 artifact manifest: the public restore entry of an artifact."""
+    """The current artifact manifest: the public restore entry point."""
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["qphase.artifact/3"] = ARTIFACT_SCHEMA_VERSION
+    schema_version: Literal["qphase.artifact/4"] = ARTIFACT_SCHEMA_VERSION
     artifact_id: str = Field(min_length=1)
     created_at: str
     bundle: BundleDescriptor
     products: list[ProductEntry] = Field(default_factory=list)
     provenance: dict[str, Any] = Field(default_factory=dict)
     parents: list[str] = Field(default_factory=list)
-    content_hash: str = Field(
-        description="SHA-256 over the canonical bundle/product/provenance/"
-        "parent listing. An integrity check, not a digital signature."
-    )
-
-    @field_validator("content_hash")
-    @classmethod
-    def _check_content_hash(cls, value: str) -> str:
-        return _validate_sha256_digest(value)
 
     @field_validator("created_at")
     @classmethod
@@ -429,7 +327,6 @@ class ArtifactManifestV3(BaseModel):
             product_name=name,
             product_schema=entry.product_schema,
             storage_adapter=entry.storage.adapter,
-            content_hash=entry.sha256,
         )
 
     def write(self, directory: Path | str) -> Path:
@@ -447,12 +344,10 @@ class ArtifactManifestV3(BaseModel):
 
     @classmethod
     def read(cls, directory: Path | str) -> ArtifactManifestV3:
-        """Read and fully validate the v3 manifest of an artifact directory.
+        """Read and fully validate the current manifest of an artifact directory.
 
-        Raises typed errors: :class:`ArtifactNotFoundError` when no manifest
-        exists, :class:`ArtifactUnsupportedError` for other schema versions
-        and :class:`ArtifactCorruptError` for parse, cross-field or hash
-        failures.
+        Raises typed errors for missing, unsupported or structurally invalid
+        manifests.
         """
         path = Path(directory) / MANIFEST_FILENAME
         if not path.exists():
@@ -479,7 +374,7 @@ class ArtifactManifestV3(BaseModel):
         return manifest
 
     def _cross_validate(self) -> None:
-        """Cross-field and content-hash validation layer.
+        """Cross-field and descriptor validation layer.
 
         Validates generic summaries and descriptors owned by adapters that
         are registered in this process. Unknown adapters remain listable.
@@ -515,25 +410,6 @@ class ArtifactManifestV3(BaseModel):
                             f"payload file {file!r} is referenced across products "
                             f"{previous!r} and {entry.name!r}"
                         )
-            expected = product_content_hash(
-                entry.name, entry.product_schema, entry.storage
-            )
-            if entry.sha256 != expected:
-                raise ArtifactCorruptError(
-                    f"product {entry.name!r} content hash mismatch: the "
-                    "manifest was modified after writing"
-                )
-        expected_content = artifact_content_hash(
-            self.bundle.model_dump(mode="json"),
-            self.products,
-            self.provenance,
-            self.parents,
-        )
-        if self.content_hash != expected_content:
-            raise ArtifactCorruptError(
-                "artifact content hash mismatch: the manifest was modified "
-                "after writing"
-            )
         bundle_adapter = _BUNDLE_ADAPTERS.get(self.bundle.adapter_id)
         if bundle_adapter is not None:
             try:
@@ -627,7 +503,7 @@ class StorageAdapterProtocol(Protocol):
 
     Adapters write a runtime-backed dataset as chunk files plus a storage
     record, reopen a storage record as a lazily-reading runtime backing and
-    restore artifact refs. The NPZ 2.x adapter is the reference
+    restore artifact refs. The NPZ 3.x adapter is the reference
     implementation; further adapters (e.g. Zarr) plug in without manifest
     changes.
     """
@@ -686,15 +562,6 @@ class StorageAdapterProtocol(Protocol):
         self, entry: ProductEntry, directory: Path
     ) -> RuntimeProductBacking:
         """Open a stored product as a lazily-reading runtime backing."""
-        ...
-
-    def verify_product(self, entry: ProductEntry, directory: Path) -> None:
-        """Re-read and verify every chunk of a freshly written product.
-
-        This is an explicit boundary operation for imports, diagnostics or
-        user-requested verification. The normal internal writer does not call
-        it, because its staged output is trusted and already descriptor-checked.
-        """
         ...
 
     def open_ref(
@@ -790,12 +657,12 @@ def save_products(
     layout: str = "sharded",
     replace: bool = False,
 ) -> ArtifactManifestV3:
-    """Persist typed datasets and write the v3 artifact manifest.
+    """Persist typed datasets and write the current artifact manifest.
 
     The write is transactional: chunks are staged in a unique on-disk
-    staging directory, re-read and verified (dtype/shape/hash) after the
-    flush, atomically moved to their final names, and the manifest is
-    published last through an atomic ``os.replace`` — a failure before
+    staging directory, structurally checked by the adapter, atomically moved
+    to their final names, and the manifest is published last through an
+    atomic ``os.replace`` — a failure before
     publication leaves any pre-existing artifact fully readable.
 
     ``layout="single"`` stores every variable of a product as a key of one
@@ -879,11 +746,7 @@ def save_products(
                 name=name,
                 product_schema=dataset.schema,
                 storage=storage,
-                sha256=product_content_hash(name, dataset.schema, storage),
             )
-            # The writer owns the staged payload and already computed its
-            # descriptor hashes while writing. Full payload verification is an
-            # explicit adapter operation, not part of every internal publish.
             for file in adapter.referenced_files(entry):
                 if file in new_files:
                     raise ArtifactError(
@@ -909,9 +772,6 @@ def save_products(
             products=entries,
             provenance=provenance_dict,
             parents=parent_list,
-            content_hash=artifact_content_hash(
-                bundle.model_dump(mode="json"), entries, provenance_dict, parent_list
-            ),
         )
         manifest._cross_validate()
 
@@ -1081,7 +941,7 @@ def register_bundle_adapter(adapter: BundleAdapterProtocol) -> None:
 
 
 def load_bundle(directory: Path | str) -> Any:
-    """Restore a v3 artifact directory as a bundle object.
+    """Restore a current artifact directory as a bundle object.
 
     The manifest's bundle adapter id selects the registered builder; without
     a registered builder a :class:`~qphase.data.bundle.GenericDataBundle` is

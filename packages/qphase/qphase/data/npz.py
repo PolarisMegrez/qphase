@@ -1,4 +1,4 @@
-"""qphase: NPZ 2.x Storage Adapter
+"""qphase: NPZ 3.x Storage Adapter
 ---------------------------------------------------------
 Reference :class:`~qphase.data.store.StorageAdapterProtocol` implementation.
 Layout rules:
@@ -10,10 +10,8 @@ Layout rules:
   included) — never object arrays, so restoring never needs
   ``allow_pickle``;
 - metadata lives only in the manifest JSON, never inside the NPZ;
-- every chunk carries a content hash over its dtype/shape/order/selection
-  header plus its C-contiguous payload bytes; ordinary handles check only the
-  lightweight structure, while explicit adapter verification checks payload
-  bytes;
+- every chunk descriptor records only its location, key, range, dtype and
+  shape; ordinary reads validate this structure without hashing payload bytes;
 - reopening a product is lazy: handles expose shape/dtype/nbytes from the
   validated manifest without reading, and selections read only the chunks
   they touch (no full concatenation for point/chunk access).
@@ -27,7 +25,7 @@ artifact directory once before dereferencing refs.
 Public API
 ----------
 NpzStorageAdapter
-    The NPZ 2.x storage adapter.
+    The NPZ 3.x storage adapter.
 NpzArrayHandle
     Lazy single-chunk array handle.
 ShardedNpzArrayHandle
@@ -39,7 +37,6 @@ load_product_backing
 from __future__ import annotations
 
 import math
-import re
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -50,7 +47,6 @@ from .artifact import ArtifactRef
 from .datasets import Dataset
 from .errors import (
     ArtifactAdapterError,
-    ArtifactChecksumError,
     ArtifactCorruptError,
     ArtifactNotFoundError,
     ArtifactUnsupportedError,
@@ -64,7 +60,6 @@ from .store import (
     ProductEntry,
     ProductStorage,
     StorageVariableSummary,
-    chunk_content_hash,
     resolve_artifact_path,
     validate_artifact_relative_path,
 )
@@ -83,10 +78,8 @@ __all__ = [
 
 _KEY = "data"
 
-_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-
-#: Descriptor schema id of the NPZ 2.x per-product storage descriptor.
-NPZ_DESCRIPTOR_SCHEMA = "npz.product/2"
+#: Descriptor schema id of the NPZ 3.x per-product storage descriptor.
+NPZ_DESCRIPTOR_SCHEMA = "npz.product/3"
 
 
 class NpzChunkRecord(BaseModel):
@@ -105,20 +98,11 @@ class NpzChunkRecord(BaseModel):
     logical_range: tuple[int, int] | None = None
     shape: tuple[int, ...]
     dtype: str
-    sha256: str
 
     @field_validator("file")
     @classmethod
     def _check_file(cls, value: str) -> str:
         return validate_artifact_relative_path(value)
-
-    @field_validator("sha256")
-    @classmethod
-    def _check_sha256(cls, value: str) -> str:
-        if not _SHA256_PATTERN.fullmatch(value):
-            raise ValueError("expected a 64-character lowercase SHA-256 digest")
-        return value
-
 
 class NpzVariableDescriptor(BaseModel):
     """NPZ storage layout of one variable.
@@ -137,7 +121,7 @@ class NpzVariableDescriptor(BaseModel):
 
 
 class NpzProductDescriptor(BaseModel):
-    """NPZ 2.x per-product storage descriptor (``npz.product/2``)."""
+    """NPZ 3.x per-product storage descriptor (``npz.product/3``)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -158,15 +142,12 @@ def _read_chunk(
     path: Path,
     record: NpzChunkRecord,
     expected_keys: frozenset[str],
-    *,
-    verify_checksum: bool = False,
 ) -> np.ndarray:
-    """Read one chunk file and verify structure, optionally including its hash.
+    """Read one chunk file and verify its declared structure.
 
     ``allow_pickle`` is never enabled: chunk files hold native-dtype arrays
-    only, so a payload that would require pickle is rejected by NumPy. The
-    content hash covers the dtype/shape/order/selection header plus the
-    C-order payload bytes, so reinterpreted payloads never verify.
+    only, so a payload that would require pickle is rejected by NumPy. Payload
+    bytes are intentionally not hashed during ordinary reads.
     """
     try:
         with np.load(path) as npz:
@@ -188,22 +169,15 @@ def _read_chunk(
             f"failed to read artifact chunk {path}: {exc}"
         ) from exc
     if np.dtype(array.dtype) != np.dtype(record.dtype):
-        raise ArtifactChecksumError(
+        raise ArtifactCorruptError(
             f"artifact chunk {path} has dtype {array.dtype.str!r}, expected "
             f"{np.dtype(record.dtype).str!r}"
         )
     if tuple(array.shape) != tuple(record.shape):
-        raise ArtifactChecksumError(
+        raise ArtifactCorruptError(
             f"artifact chunk {path} has shape {tuple(array.shape)}, expected "
             f"{tuple(record.shape)}"
         )
-    if verify_checksum:
-        actual = chunk_content_hash(array, record.logical_range)
-        if actual != record.sha256:
-            raise ArtifactChecksumError(
-                f"checksum mismatch for artifact chunk {path}: expected "
-                f"{record.sha256}, got {actual}"
-            )
     return array
 
 
@@ -434,9 +408,9 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
 
 
 class NpzStorageAdapter:
-    """NPZ 2.x storage adapter: native dtypes, per-chunk content hashes."""
+    """NPZ 3.x storage adapter: native dtypes and structural descriptors."""
 
-    ADAPTER_ID: ClassVar[str] = "npz/2"
+    ADAPTER_ID: ClassVar[str] = "npz/3"
     DESCRIPTOR_SCHEMA: ClassVar[str] = NPZ_DESCRIPTOR_SCHEMA
 
     @property
@@ -519,7 +493,6 @@ class NpzStorageAdapter:
                         key=variable.name,
                         shape=tuple(array.shape),
                         dtype=np.dtype(array.dtype).str,
-                        sha256=chunk_content_hash(array),
                     )
                 ],
             )
@@ -607,25 +580,6 @@ class NpzStorageAdapter:
             )
         return DictProductBacking(handles)
 
-    def verify_product(self, entry: ProductEntry, directory: Path) -> None:
-        """Explicitly re-read every chunk of a product (with hashing).
-
-        Each chunk file is reopened, and its key set, dtype, shape and content
-        hash are verified against the descriptor. Ordinary writes and reads do
-        not invoke this full payload scan automatically.
-        """
-        directory = Path(directory)
-        descriptor = self.parse_storage(entry)
-        expected_keys = _expected_keys_by_file(descriptor)
-        for variable_descriptor in descriptor.variables.values():
-            for chunk in variable_descriptor.chunks:
-                _read_chunk(
-                    resolve_artifact_path(directory, chunk.file),
-                    chunk,
-                    expected_keys[chunk.file],
-                    verify_checksum=True,
-                )
-
     def open_ref(
         self,
         ref: ArtifactRef,
@@ -650,13 +604,8 @@ class NpzStorageAdapter:
                 f"artifact {ref.artifact_id!r} has no product {ref.product_name!r}"
             ) from None
         if entry.product_schema != ref.product_schema:
-            raise ArtifactChecksumError(
+            raise ArtifactCorruptError(
                 f"artifact {ref.artifact_id!r} product schema does not match "
-                "the reference"
-            )
-        if entry.sha256 != ref.content_hash:
-            raise ArtifactChecksumError(
-                f"artifact {ref.artifact_id!r} content hash does not match "
                 "the reference"
             )
         return self.open_product(entry, directory)
@@ -716,7 +665,6 @@ class NpzStorageAdapter:
                         logical_range=(start, stop),
                         shape=tuple(chunk.shape),
                         dtype=np.dtype(chunk.dtype).str,
-                        sha256=chunk_content_hash(chunk, (start, stop)),
                     )
                 )
             return NpzVariableDescriptor(
@@ -736,7 +684,6 @@ class NpzStorageAdapter:
                     key=_KEY,
                     shape=tuple(array.shape),
                     dtype=np.dtype(array.dtype).str,
-                    sha256=chunk_content_hash(array),
                 )
             ],
         )
