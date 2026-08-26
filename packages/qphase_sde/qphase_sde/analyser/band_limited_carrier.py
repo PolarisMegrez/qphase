@@ -1193,9 +1193,11 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                     "pattern": config.pattern,
                 }
             )
-            ridge_payload = (
-                SpectralRidgeAnalyzer(ridge_config).analyze(data, backend).data_dict
+            ridge_result = cast(
+                AnalysisResult,
+                SpectralRidgeAnalyzer(ridge_config).analyze(data, backend),
             )
+            ridge_payload = ridge_result.data_dict
             measurement_name = (
                 "trace" if config.readout == "trace" else f"mode_{config.readout}"
             )

@@ -330,8 +330,8 @@ class Scheduler:
             self.session_dir = None
             self.manifest = None
             self._validate_jobs(workflow)
-            results: list[JobResult] = []
-            job_results: dict[str, ResultProtocol] = {}
+            dry_results: list[JobResult] = []
+            dry_job_results: dict[str, ResultProtocol] = {}
             for job_idx, original in enumerate(workflow.jobs):
                 job = (
                     self.before_job(original, job_idx, len(workflow.jobs))
@@ -343,11 +343,11 @@ class Scheduler:
                     job_idx,
                     len(workflow.jobs),
                     workflow.jobs,
-                    job_results,
-                    results,
+                    dry_job_results,
+                    dry_results,
                     dry_run=True,
                 )
-            return results
+            return dry_results
 
         # Step 0: Initialize Session
         if resume_from:

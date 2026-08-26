@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -83,7 +84,7 @@ class WorkflowCatalog:
         collection: str | None = None,
         tag: str | None = None,
         query: str | None = None,
-    ) -> list[WorkflowReference]:
+    ) -> builtins.list[WorkflowReference]:
         """Filter catalog entries without changing stable identity resolution."""
         needle = query.casefold().strip() if query else None
         return [

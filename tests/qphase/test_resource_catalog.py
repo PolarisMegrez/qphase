@@ -21,7 +21,7 @@ def _load_manifest(name: str) -> ResourcePackageManifest:
 
 
 def _descriptors() -> list[EntryPointDescriptor]:
-    """A mixed global group: SDE + CAM + backend + third-party plugin."""
+    """Build a mixed group with SDE, CAM, backend and third-party plugins."""
     descriptors = [
         EntryPointDescriptor(
             "resource.sde", "qphase_sde.manifest:RESOURCE_MANIFEST",

@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
-
 from qphase.core.registry import DiscoveryService, RegistryCenter
 from qphase.resources import (
     AssetOrigin,

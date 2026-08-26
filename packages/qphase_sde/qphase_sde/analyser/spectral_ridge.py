@@ -987,14 +987,16 @@ class SpectralRidgeAnalyzer(Analyzer):
         if output_dir is not None:
             destination = Path(output_dir)
             if "spectral_ridge.csv" in config.export:
-                path = write_table_csv(rows, destination / "spectral_ridge.csv")
-                written["spectral_ridge"] = str(path)
+                output_path = write_table_csv(
+                    rows, destination / "spectral_ridge.csv"
+                )
+                written["spectral_ridge"] = str(output_path)
             if "spectral_ridge_candidates.csv" in config.export:
-                path = write_table_csv(
+                output_path = write_table_csv(
                     candidate_rows,
                     destination / "spectral_ridge_candidates.csv",
                 )
-                written["spectral_ridge_candidates"] = str(path)
+                written["spectral_ridge_candidates"] = str(output_path)
         metadata = orientation_metadata(
             reference_orientation or resolve_frequency_orientation(None)
         )

@@ -2,7 +2,6 @@
 
 import numpy as np
 import pytest
-
 from qphase.data import (
     AxisRole,
     AxisSchema,
