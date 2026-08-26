@@ -108,6 +108,6 @@ ExecutionManager 将低频生命周期记录保存到 Project 内的 `.qphase/ex
 interrupted failure，不伪造数值积分状态恢复。
 
 Artifact-backed Dataset 必须由调用方显式传入 `ArtifactResolver`。Project 运行路径
-使用 Project-scoped resolver，不依赖进程级默认绑定。本地插件在发现时加入当前
-worker 的导入路径；一个 worker 进程只承载一个 Project 的本地插件。QPhase 不在同一
-进程内模拟多个 Project 的模块隔离，跨 Project 隔离由独立 worker 进程负责。
+使用 Project-scoped resolver，不依赖进程级默认绑定。当前本地插件由应用进程在编译
+前发现并导入。QPhase 尚未提供独立 worker 或同进程多 Project 模块隔离，这两项能力
+留待 Global Phase 6；在此之前，一个应用进程应只使用一个 Project 的本地插件集合。

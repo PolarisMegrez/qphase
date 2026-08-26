@@ -92,10 +92,10 @@ sampled into `ResourceSnapshot`, not persisted as configuration truth.
 7. Invoke the resource Engine once for that logical Job.
 8. Persist snapshots, events, logs, Artifacts, and manifest status.
 
-Project-local plugins are imported through the ordinary worker import path. A worker
-process owns one Project's local plugin set; core does not emulate module isolation
-for multiple Projects in one process. Cross-Project isolation belongs to the worker
-boundary.
+Project-local plugins are currently discovered and imported by the application process
+before compilation. QPhase does not yet provide an independent worker or same-process
+multi-Project module isolation; both are reserved for Global Phase 6. Until then, one
+application process should be used with one Project's local plugin set.
 
 Execution control is cooperative. Pause/revision occurs at Job boundaries;
 cancellation is observed where an Engine checks its token. Core does not kill

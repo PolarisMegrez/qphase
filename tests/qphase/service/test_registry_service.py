@@ -2,7 +2,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 from qphase.core.compiler import WorkflowCompiler
 from qphase.core.config import JobConfig, WorkflowSpec
-from qphase.core.errors import QPhaseConfigError
+from qphase.core.errors import QPhaseConfigError, QPhasePluginError
 from qphase.core.project import ProjectContext
 from qphase.core.registry import DiscoveryService, RegistryCenter
 from qphase.core.system_config import SystemConfig
@@ -106,7 +106,39 @@ def test_local_plugin_discovery_uses_worker_import_path_and_contract(tmp_path):
             project, SystemConfig(), registry_view=local_registry.view()
         ).compile(workflow)
 
+    class NoManifestEngine:
+        config_schema = plugin.config_schema
+
+    local_registry.register(
+        "engine",
+        "no_manifest",
+        NoManifestEngine,
+        local_import_root=str(project.root),
+    )
+    no_manifest_workflow = WorkflowSpec(
+        schema_="qphase.workflow/2",
+        id="no-manifest",
+        title="No manifest",
+        jobs=[JobConfig(name="job", engine={"no_manifest": {}})],
+    )
+    with pytest.raises(QPhasePluginError, match="must declare an EngineManifest"):
+        WorkflowCompiler(
+            project, SystemConfig(), registry_view=local_registry.view()
+        ).compile(no_manifest_workflow)
+
     with pytest.raises(QPhaseConfigError):
         local_registry.validate_plugin_config(
             "engine", {"name": "local_contract", "unknown": True}
         )
+
+
+def test_local_plugin_discovery_propagates_project_errors(monkeypatch):
+    error = QPhaseConfigError("invalid Project")
+
+    def fail_discovery(cls, *args, **kwargs):
+        del cls, args, kwargs
+        raise error
+
+    monkeypatch.setattr(ProjectContext, "discover", classmethod(fail_discovery))
+    with pytest.raises(QPhaseConfigError, match="invalid Project"):
+        DiscoveryService(RegistryCenter()).discover_local_plugins()
