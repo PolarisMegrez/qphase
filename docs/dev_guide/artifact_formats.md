@@ -5,7 +5,7 @@ description: Artifact and resource formats of qphase 2.x
 # Artifact Formats
 
 !!! warning "Draft — pending Phase 1 re-approval"
-    This page was refrozen against the Phase 1 audit corrections (secured
+    This page has been updated against the Phase 1 audit corrections (secured
     manifest validation, bundle descriptors, versioned storage descriptors,
     transactional NPZ writes, typed product/bundle summaries). It is a draft
     under review; until re-approval the authoritative behavior is the
@@ -32,7 +32,8 @@ document:
   registry id, never a code path), `descriptor_schema`, the adapter-validated
   JSON `descriptor` (for SDE bundles: the scan grid — `shape`,
   `dimension_order`, `axes`, `n_traj_per_point`, optional `combine`), and
-  `product_roles` mapping semantic roles to product names.
+  `product_roles` mapping stable semantic roles to job-local product names.
+  Labels without a cross-workflow meaning are intentionally omitted.
 - `products` — list of product entries, each with:
     - `name` — product name (unique within the artifact);
     - `product_schema` — the full frozen [product schema](data_products.md)
@@ -58,6 +59,12 @@ typed errors: `ArtifactNotFoundError` (also a `FileNotFoundError`),
 `ArtifactUnsupportedError` (unknown schema version), `ArtifactCorruptError`
 (parse, cross-field or hash failures), `ArtifactAdapterError` (unregistered
 adapter) and `ArtifactChecksumError` (payload verification failures).
+Registered storage and bundle adapters validate their descriptors while the
+manifest is read, without opening payload files. Unknown bundle adapters
+remain listable as generic bundles; malformed descriptors owned by known
+adapters are corrupt, not merely unavailable. Manifest metadata is strict
+JSON: `NaN` and infinity are rejected, while typed numeric payload arrays may
+still contain them.
 
 ## NPZ 2.x storage adapter
 
@@ -73,7 +80,8 @@ schema `npz.product/2`) records per variable in its descriptor:
   `chunk_axis`, `null` when the chunk holds the whole variable), `shape`,
   `dtype` and `sha256` — the hash covers the dtype/shape/order/selection
   header plus the C-contiguous payload bytes and is **verified on every
-  read**, together with the actual dtype, shape and key set.
+  read**, together with the actual dtype, shape and exact descriptor-wide key
+  set for that payload file. Undeclared keys are corruption.
 
 File layout:
 
@@ -91,7 +99,8 @@ atomically moved to their final names, and the manifest is published last
 through an atomic `os.replace`. An existing manifest is never overwritten
 unless `replace=True`; replacement removes the old payload only after the
 new manifest is published, so a failed write leaves the previous artifact
-fully readable.
+fully readable. A first publish also refuses to replace any pre-existing
+payload path when no validated prior manifest owns it.
 
 ## Writing and reading
 
@@ -133,6 +142,11 @@ descriptor:
   moment statistics, coherence matrix and coherence carrier persist as
   `statistics` products with declared axes, quantities and per-variable
   uncertainties.
+- Every graph-ready scan product carries flattened scan parameter coordinates
+  as typed `(scan,)` variables. Sampling coordinates shared by every point
+  (frequency, tau, lag and channel) are deduplicated into dimension
+  coordinates; point-varying coordinates remain declared auxiliary
+  coordinates.
 - remaining analysers persist through the versioned `legacy_analysis/1`
   bridge (`graph_ready=False`) until Phase 2: numeric leaves become
   variables, nested dicts are flattened with dotted paths, string/JSON-safe
@@ -147,6 +161,13 @@ descriptor:
   views) straight from the v3 manifest; `legacy_result()` renders the
   single-point 1.x view and `point_view` rewrites `metadata["params"]` to
   the point's scan parameters.
+- SDE bundle roles expose only stable meanings: `trajectories` when retained
+  and `primary_spectrum` when exactly one spectral product exists. Other
+  products are selected by kind, quantity and fields.
+- Peak candidates and paths are not currently declared as graph-ready public
+  products. Their grouped ragged schema and producers are a mandatory Phase
+  2A prerequisite to the ProductGraph executor; legacy PSD peak metadata does
+  not constitute that product.
 
 ## Migrating SDE 1.x results
 

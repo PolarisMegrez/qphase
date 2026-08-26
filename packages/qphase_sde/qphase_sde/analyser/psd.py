@@ -46,7 +46,13 @@ from qphase.data import (
     VariableConstraints,
 )
 
-from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
+from ..products import (
+    StackedLeaves,
+    TypedAxisSpec,
+    assemble_typed_product,
+    json_safe_meta,
+    stack_payload_leaves,
+)
 from .base import (
     Analyzer,
     AnalyzerExecutionCapabilities,
@@ -916,7 +922,19 @@ def _build_psd_products(
     ``analyze()`` payload; typed axes, the PSD quantity and the
     trajectory-sampling uncertainties are layered on top.
     """
-    leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
+    points = payload if scan_size > 1 else [payload]
+    cleaned_points: list[Any] = []
+    peak_points: list[Any] = []
+    for point in points:
+        if isinstance(point, dict):
+            clean = dict(point)
+            peak_points.append(clean.pop("peaks", {}))
+            cleaned_points.append(clean)
+        else:
+            peak_points.append({})
+            cleaned_points.append(point)
+    cleaned_payload = cleaned_points if scan_size > 1 else cleaned_points[0]
+    leaves = stack_payload_leaves(label, cleaned_payload, scan_size=scan_size)
     if leaves is None:
         return None
     sampling_bases = (
@@ -928,19 +946,22 @@ def _build_psd_products(
         if "uncertainty.n_independent" in leaves.arrays
         else [SamplingBasisSchema(name="trajectory")]
     )
-    coordinates: list[CoordinateSchema] = []
-    if scan_size == 1:
-        # Coordinate backing variables must match their declared dims exactly,
-        # so scan products (leading scan axis) carry no coordinates.
-        coordinates = [
-            CoordinateSchema(
-                name="frequency",
-                variable="axis",
-                dims=("frequency",),
-                units="inverse_time",
-            ),
-            CoordinateSchema(name="mode", variable="modes", dims=("channel",)),
-        ]
+    leading = ("scan",) if scan_size > 1 else ()
+    coordinates = [
+        CoordinateSchema(
+            name="frequency",
+            variable="axis",
+            dims=(*leading, "frequency"),
+            role="auxiliary" if leading else "dimension",
+            units="inverse_time",
+        ),
+        CoordinateSchema(
+            name="mode",
+            variable="modes",
+            dims=(*leading, "channel"),
+            role="auxiliary" if leading else "dimension",
+        ),
+    ]
     dataset = assemble_typed_product(
         label,
         leaves,
@@ -996,7 +1017,33 @@ def _build_psd_products(
     )
     if dataset is None:
         return None
-    return {label: dataset}
+    products: dict[str, Dataset] = {label: dataset}
+    if any(bool(peaks) for peaks in peak_points):
+        peak_value: Any = peak_points if scan_size > 1 else peak_points[0]
+        peak_meta, dropped = json_safe_meta({"peaks": peak_value})
+        marker = (
+            _np.ones(scan_size, dtype=_np.int8)
+            if scan_size > 1
+            else _np.asarray(1, dtype=_np.int8)
+        )
+        legacy = assemble_typed_product(
+            f"{label}.legacy_peaks",
+            StackedLeaves(
+                arrays={"present": marker},
+                payload_meta=peak_meta,
+                per_point_meta=["peaks"] if scan_size > 1 else [],
+                dropped=dropped,
+            ),
+            scan_size=scan_size,
+            kind=DataKind.STATISTICS,
+            attributes={
+                "bridge": "legacy_peaks/1",
+                "graph_ready": False,
+            },
+        )
+        if legacy is not None:
+            products[f"{label}.legacy_peaks"] = legacy
+    return products
 
 
 class PsdResultAccumulator:

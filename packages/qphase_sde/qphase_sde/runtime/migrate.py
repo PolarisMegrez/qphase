@@ -770,7 +770,11 @@ def migrate_scan_artifact(
         adapter_id=GENERIC_BUNDLE_ADAPTER_ID,
         descriptor_schema=GENERIC_BUNDLE_TYPE_ID,
         descriptor={},
-        product_roles={entry.name: entry.name for entry in entries},
+        product_roles=(
+            {"trajectories": "trajectories"}
+            if any(entry.name == "trajectories" for entry in entries)
+            else {}
+        ),
     )
     manifest = ArtifactManifestV3(
         artifact_id=artifact_id,

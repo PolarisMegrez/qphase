@@ -39,6 +39,7 @@ from qphase.data import (
     VariableSchema,
     save_products,
 )
+from qphase.data.errors import ArtifactCorruptError, ArtifactUnsupportedError
 from qphase.data.store import ARTIFACT_SCHEMA_VERSION, register_bundle_adapter
 
 from qphase_sde.contracts.bundle import (
@@ -49,6 +50,7 @@ from qphase_sde.contracts.bundle import (
 )
 from qphase_sde.contracts.quantities import SDEQuantity
 from qphase_sde.products import (
+    add_scan_parameter_coordinates,
     assemble_typed_product,
     json_safe_meta,
     stack_payload_leaves,
@@ -263,6 +265,7 @@ class SDEDataBundle:
         scan_shape: tuple[int, ...] = (),
         meta: dict[str, Any] | None = None,
         n_traj_per_point: int | None = None,
+        product_roles: Mapping[str, str] | None = None,
     ) -> None:
         self._products = dict(products)
         self._provenance = provenance
@@ -270,6 +273,20 @@ class SDEDataBundle:
         self._scan_shape = tuple(scan_shape)
         self._meta = dict(meta or {})
         self._n_traj_per_point = n_traj_per_point
+        if product_roles is None:
+            roles: dict[str, str] = {}
+            if "trajectories" in self._products:
+                roles["trajectories"] = "trajectories"
+            spectra = [
+                name
+                for name, product in self._products.items()
+                if product.kind is DataKind.SPECTRAL
+            ]
+            if len(spectra) == 1:
+                roles["primary_spectrum"] = spectra[0]
+            self._product_roles = roles
+        else:
+            self._product_roles = dict(product_roles)
 
     # -- SDEDataBundleProtocol --------------------------------------------
 
@@ -413,6 +430,7 @@ class SDEDataBundle:
             self._provenance,
             meta=meta,
             n_traj_per_point=self._n_traj_per_point,
+            product_roles=self._product_roles,
         )
 
     # -- persistence ---------------------------------------------------------
@@ -449,7 +467,7 @@ class SDEDataBundle:
             adapter_id=SDE_BUNDLE_ADAPTER_ID,
             descriptor_schema=SDE_BUNDLE_TYPE_ID,
             descriptor={"scan": scan},
-            product_roles={name: name for name in self._products},
+            product_roles=self._product_roles,
         )
 
     @property
@@ -822,17 +840,22 @@ def bundle_from_result(
         scan_size = int(grid.size)
         scan_shape = tuple(grid.shape)
         scan_axes = dict(grid.axes)
+        scan_coordinates = grid.parameter_arrays(flatten=True)
         if n_traj_per_point is None:
             n_traj_per_point = getattr(result, "n_traj_per_point", None)
     else:
         scan_size, scan_shape, scan_axes = 1, (), {}
+        scan_coordinates = {}
 
     products: dict[str, Dataset] = {}
     if combined.trajectory is not None:
-        products["trajectories"] = _trajectory_product(
-            combined.trajectory,
-            scan_size=scan_size,
-            n_traj_per_point=n_traj_per_point,
+        products["trajectories"] = add_scan_parameter_coordinates(
+            _trajectory_product(
+                combined.trajectory,
+                scan_size=scan_size,
+                n_traj_per_point=n_traj_per_point,
+            ),
+            scan_coordinates,
         )
     dropped_products: list[str] = []
     for name, payload in combined.analysis.items():
@@ -848,7 +871,57 @@ def bundle_from_result(
                 else None
             )
             if built:
-                products.update(built)
+                analyser = analysers.get(str(name)) if analysers is not None else None
+                declaration_factory = getattr(analyser, "output_spec", None)
+                declaration = (
+                    declaration_factory() if callable(declaration_factory) else None
+                )
+                for product_name, product in built.items():
+                    if product_name in products:
+                        raise ValueError(
+                            f"analyser product {product_name!r} collides with "
+                            "an existing engine or analyser product"
+                        )
+                    if not isinstance(product, Dataset):
+                        raise TypeError(
+                            f"analyser product {product_name!r} must be a Dataset"
+                        )
+                    graph_ready = product.attributes.get("graph_ready") is True
+                    migration_bridge = product.attributes.get("bridge") in {
+                        "legacy_analysis/1",
+                        "legacy_peaks/1",
+                    }
+                    if not graph_ready and not migration_bridge:
+                        raise TypeError(
+                            f"analyser product {product_name!r} is not graph-ready"
+                        )
+                    if declaration is not None and graph_ready:
+                        if product.kind is not declaration.kind:
+                            raise TypeError(
+                                f"analyser product {product_name!r} has kind "
+                                f"{product.kind.value!r}, declared "
+                                f"{declaration.kind.value!r}"
+                            )
+                        fields = {variable.name for variable in product.variables}
+                        missing = sorted(set(declaration.fields) - fields)
+                        if missing:
+                            raise TypeError(
+                                f"analyser product {product_name!r} misses "
+                                f"declared fields {missing}"
+                            )
+                        if declaration.quantity and not any(
+                            variable.quantity == declaration.quantity
+                            for variable in product.variables
+                        ):
+                            raise TypeError(
+                                f"analyser product {product_name!r} misses "
+                                f"declared quantity {declaration.quantity!r}"
+                            )
+                    products[product_name] = (
+                        add_scan_parameter_coordinates(product, scan_coordinates)
+                        if graph_ready
+                        else product
+                    )
             elif payload is not None:
                 dropped_products.append(str(name))
             continue
@@ -929,7 +1002,109 @@ def restore_sde_bundle(manifest: Any, products: dict[str, Dataset]) -> SDEDataBu
         scan_shape=shape,
         meta=meta,
         n_traj_per_point=int(n_traj) if n_traj is not None else None,
+        product_roles=manifest.bundle.product_roles,
     )
 
 
-register_bundle_adapter(SDE_BUNDLE_ADAPTER_ID, restore_sde_bundle)
+class _SDEBundleAdapter:
+    adapter_id = SDE_BUNDLE_ADAPTER_ID
+    descriptor_schema = SDE_BUNDLE_TYPE_ID
+
+    def validate_descriptor(self, descriptor: BundleDescriptor) -> None:
+        if descriptor.type_id != SDE_BUNDLE_TYPE_ID:
+            raise ArtifactCorruptError(
+                f"SDE bundle adapter cannot restore type {descriptor.type_id!r}"
+            )
+        if descriptor.descriptor_schema != self.descriptor_schema:
+            raise ArtifactUnsupportedError(
+                f"SDE bundle descriptor schema {descriptor.descriptor_schema!r} "
+                f"is unsupported; expected {self.descriptor_schema!r}"
+            )
+        if set(descriptor.descriptor) != {"scan"}:
+            raise ArtifactCorruptError(
+                "SDE bundle descriptor must contain exactly the scan field"
+            )
+        scan = descriptor.descriptor.get("scan")
+        if not isinstance(scan, dict):
+            raise ArtifactCorruptError("SDE bundle descriptor misses scan mapping")
+        allowed = {
+            "shape",
+            "dimension_order",
+            "axes",
+            "n_traj_per_point",
+            "combine",
+        }
+        extra = sorted(set(scan) - allowed)
+        missing = sorted({"shape", "dimension_order", "axes"} - set(scan))
+        if extra or missing:
+            raise ArtifactCorruptError(
+                f"SDE scan descriptor fields are invalid (missing: {missing}, "
+                f"extra: {extra})"
+            )
+        try:
+            shape = tuple(int(extent) for extent in scan["shape"])
+            axes = scan["axes"]
+            order = scan["dimension_order"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ArtifactCorruptError(
+                f"invalid SDE scan descriptor: {exc}"
+            ) from exc
+        if not isinstance(axes, dict) or not isinstance(order, list):
+            raise ArtifactCorruptError(
+                "SDE scan axes must be a mapping and dimension_order a list"
+            )
+        if len(set(order)) != len(order) or set(order) != set(axes):
+            raise ArtifactCorruptError(
+                "SDE scan shape, dimension_order and axes are inconsistent"
+            )
+        combine = scan.get("combine", "cartesian")
+        if combine not in {"cartesian", "zipped"}:
+            raise ArtifactCorruptError(
+                f"SDE scan combine mode {combine!r} is unsupported"
+            )
+        if combine == "cartesian" and len(shape) != len(order):
+            raise ArtifactCorruptError(
+                "cartesian SDE scan needs one shape extent per axis"
+            )
+        if combine == "zipped" and (len(shape) != 1 or not order):
+            raise ArtifactCorruptError(
+                "zipped SDE scan needs one point extent and at least one axis"
+            )
+        expected_sizes = (
+            dict(zip(order, shape, strict=True))
+            if combine == "cartesian"
+            else {name: shape[0] for name in order}
+        )
+        for name in order:
+            try:
+                size = len(axes[name])
+            except (KeyError, TypeError) as exc:
+                raise ArtifactCorruptError(
+                    f"SDE scan axis {name!r} is not a coordinate sequence"
+                ) from exc
+            if size != expected_sizes[name]:
+                raise ArtifactCorruptError(
+                    f"SDE scan axis {name!r} has {size} values, expected "
+                    f"{expected_sizes[name]}"
+                )
+        n_traj = scan.get("n_traj_per_point")
+        if n_traj is not None and (
+            not isinstance(n_traj, int) or isinstance(n_traj, bool) or n_traj <= 0
+        ):
+            raise ArtifactCorruptError(
+                "SDE n_traj_per_point must be a positive integer or null"
+            )
+
+    def build(self, manifest: Any, products: dict[str, Dataset]) -> SDEDataBundle:
+        try:
+            return restore_sde_bundle(manifest, products)
+        except (ArtifactCorruptError, ArtifactUnsupportedError):
+            raise
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ArtifactCorruptError(
+                f"failed to restore SDE bundle descriptor: {exc}"
+            ) from exc
+
+
+_SDE_BUNDLE_ADAPTER = _SDEBundleAdapter()
+register_bundle_adapter(_SDE_BUNDLE_ADAPTER)

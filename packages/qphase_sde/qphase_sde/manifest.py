@@ -101,12 +101,6 @@ MANIFEST = ResourcePackageManifest(
             "coherence).",
         ),
         DataProductDeclaration(
-            name="spectral_peaks",
-            kind="statistics",
-            schema_ref="qphase_sde.contracts.peaks:PEAK_PRODUCT",
-            description="Unified peak candidates and scan-resolved peak paths.",
-        ),
-        DataProductDeclaration(
             name="coherence_frequency",
             kind="statistics",
             schema_ref=(

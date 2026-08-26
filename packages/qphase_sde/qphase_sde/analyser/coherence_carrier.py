@@ -617,12 +617,14 @@ def _build_coherence_carrier_products(
         # Scan payloads keep per-point strings; the estimator is job-wide.
         method = method[0] if method else "short_delay"
     coordinates: list[CoordinateSchema] = []
-    if scan_size == 1 and "lag" in leaves.arrays:
+    if "lag" in leaves.arrays:
+        leading = ("scan",) if scan_size > 1 else ()
         coordinates.append(
             CoordinateSchema(
                 name="lag",
                 variable="lag",
-                dims=("lag",),
+                dims=(*leading, "lag"),
+                role="auxiliary" if leading else "dimension",
                 units="time",
             )
         )

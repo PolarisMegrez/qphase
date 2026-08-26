@@ -136,6 +136,7 @@ class StackedLeaves:
     payload_meta: dict[str, Any]
     per_point_meta: list[str]
     dropped: list[str]
+    scan_independent: frozenset[str] = frozenset()
 
 
 def stack_payload_leaves(
@@ -272,7 +273,28 @@ def assemble_typed_product(
     quantities = quantities or {}
     constraints = constraints or {}
 
-    leading: tuple[str, ...] = (_SCAN_AXIS,) if scan_size > 1 else ()
+    arrays = dict(leaves.arrays)
+    coordinate_specs = list(coordinates)
+    scan_independent = set(leaves.scan_independent)
+    if scan_size > 1:
+        for coordinate in list(coordinate_specs):
+            array = arrays.get(coordinate.variable)
+            if (
+                array is not None
+                and coordinate.dims[:1] == (_SCAN_AXIS,)
+                and array.shape[:1] == (scan_size,)
+                and all(
+                    np.array_equal(array[0], row, equal_nan=True)
+                    for row in array[1:]
+                )
+            ):
+                arrays[coordinate.variable] = array[0]
+                scan_independent.add(coordinate.variable)
+                coordinate_specs[coordinate_specs.index(coordinate)] = (
+                    coordinate.model_copy(
+                        update={"dims": coordinate.dims[1:], "role": "dimension"}
+                    )
+                )
     axes: list[AxisSchema] = []
     if scan_size > 1:
         axes.append(
@@ -282,7 +304,12 @@ def assemble_typed_product(
     positional: dict[str, AxisSchema] = {}
     variables: list[VariableSchema] = []
     clean_arrays: dict[str, np.ndarray] = {}
-    for key, array in leaves.arrays.items():
+    for key, array in arrays.items():
+        leading = (
+            ()
+            if key in scan_independent or scan_size <= 1
+            else (_SCAN_AXIS,)
+        )
         trailing_ndim = array.ndim - len(leading)
         declared = _resolve_declared_dims(key, declared_dims)
         if declared is None:
@@ -354,7 +381,7 @@ def assemble_typed_product(
         sampling_bases=list(sampling_bases),
         variables=variables,
         uncertainties=list(uncertainties),
-        coordinates=list(coordinates),
+        coordinates=coordinate_specs,
         attributes={
             "source_analyser": str(name),
             "dropped_keys": leaves.dropped,
@@ -369,4 +396,71 @@ def assemble_typed_product(
         clean_arrays,
         owner=owner,
         provenance={"source_analyser": str(name)},
+    )
+
+
+def add_scan_parameter_coordinates(
+    dataset: Dataset,
+    coordinates: Mapping[str, np.ndarray],
+) -> Dataset:
+    """Attach flattened scan parameters to one graph-ready product."""
+    if not coordinates or "scan" not in {axis.name for axis in dataset.axes}:
+        return dataset
+    from qphase.data.runtime import DictProductBacking, HostArrayHandle
+
+    handles = {
+        variable.name: dataset.handle(variable.name)
+        for variable in dataset.variables
+    }
+    variables = list(dataset.variables)
+    coordinate_specs = list(dataset.schema.coordinates)
+    coordinate_names = {item.name for item in coordinate_specs}
+    scan_size = dataset.axis("scan").size
+    assert scan_size is not None
+    for name, raw in coordinates.items():
+        variable_name = f"parameter.{name}"
+        if variable_name in handles:
+            raise TypeError(
+                f"scan coordinate {variable_name!r} collides with product data"
+            )
+        values = np.asarray(raw)
+        if values.shape != (scan_size,):
+            raise TypeError(
+                f"scan coordinate {name!r} has shape {values.shape}, "
+                f"expected {(scan_size,)}"
+            )
+        variable = VariableSchema(
+                name=variable_name,
+                dtype=values.dtype.str,
+                value_domain="complex" if values.dtype.kind == "c" else "real",
+                dims=("scan",),
+                quantity="scan_parameter",
+            )
+        variables.append(variable)
+        handles[variable_name] = HostArrayHandle(
+            values, variable, owner="engine.sde"
+        )
+        coordinate_name = (
+            str(name) if str(name) not in coordinate_names else f"parameter.{name}"
+        )
+        coordinate_names.add(coordinate_name)
+        coordinate_specs.append(
+            CoordinateSchema(
+                name=coordinate_name,
+                variable=variable_name,
+                dims=("scan",),
+                role="parameter",
+            )
+        )
+    schema = ProductSchema.model_validate(
+        {
+            **dataset.schema.model_dump(mode="python"),
+            "variables": variables,
+            "coordinates": coordinate_specs,
+        }
+    )
+    return type(dataset)(
+        schema,
+        DictProductBacking(handles),
+        provenance=dataset.provenance,
     )

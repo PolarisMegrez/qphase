@@ -98,6 +98,10 @@ def test_scan_bundle_restores_from_v3_artifact(tmp_path):
     manifest = ArtifactManifestV3.read(job_dir)
     assert manifest.bundle.type_id == SDE_BUNDLE_TYPE_ID
     assert manifest.bundle.adapter_id == SDE_BUNDLE_ADAPTER_ID
+    assert manifest.bundle.product_roles == {
+        "trajectories": "trajectories",
+        "primary_spectrum": "psd",
+    }
     scan = manifest.bundle.descriptor["scan"]
     assert scan["shape"] == [2]
     assert scan["dimension_order"] == ["rate"]
@@ -127,6 +131,7 @@ def test_scan_bundle_restores_from_v3_artifact(tmp_path):
     assert sorted(restored.products) == ["psd", "trajectories"]
     assert restored.provenance.dt == bundle.provenance.dt
     assert restored.metadata["scan_combine"] == "cartesian"
+    assert restored.bundle_descriptor.product_roles == manifest.bundle.product_roles
 
     point = restored.point_view((1,))
     assert point.metadata["scan_point"] == {"rate": 2.0}
@@ -154,7 +159,7 @@ def test_restored_scan_bundle_feeds_downstream_analysers(tmp_path):
     allan = AllanVarianceAnalyzer(
         modes=[0], points=5, min_windows=2, min_independent_windows=1
     )
-    for label, view in views:
+    for _label, view in views:
         assert isinstance(view, SDEDataBundle)
         legacy = view.legacy_result()
         payload = allan.analyze(legacy.trajectory, backend).data_dict
@@ -174,12 +179,16 @@ def test_scan_bundle_restores_in_clean_subprocess(tmp_path):
         "restored = load_result('scan', Path(sys.argv[1]));"
         "assert type(restored).__name__ == 'SDEDataBundle';"
         "point = restored.point_view((1,));"
+        "psd = restored.products['psd'];"
+        "coords = {item.name: list(item.dims) for item in psd.schema.coordinates};"
         "print(json.dumps({"
         "'shape': list(restored.shape),"
         "'axes': restored.axes,"
         "'n_traj_per_point': restored.n_traj_per_point,"
         "'scan_point': point.metadata['scan_point'],"
         "'params': point.metadata['params'],"
+        "'coordinates': coords,"
+        "'rate': psd.coordinate('rate').tolist(),"
         "}))"
     )
     completed = subprocess.run(
@@ -197,6 +206,12 @@ def test_scan_bundle_restores_in_clean_subprocess(tmp_path):
         "n_traj_per_point": 8,
         "scan_point": {"rate": 2.0},
         "params": {"rate": 2.0},
+        "coordinates": {
+            "frequency": ["frequency"],
+            "mode": ["channel"],
+            "rate": ["scan"],
+        },
+        "rate": [1.0, 2.0],
     }
 
 

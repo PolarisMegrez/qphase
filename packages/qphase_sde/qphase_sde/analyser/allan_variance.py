@@ -250,21 +250,20 @@ def _build_allan_products(
         return None
     variance_keys = _variance_leaf_keys(leaves.arrays)
     coordinates: list[CoordinateSchema] = []
-    if scan_size == 1:
-        # Coordinate backing variables must match their declared dims exactly,
-        # so scan products (leading scan axis) carry no coordinates.
-        tau_keys = sorted(
-            key for key in leaves.arrays if fnmatchcase(key, "mode_results.*.allan.tau")
-        )
-        if tau_keys:
-            coordinates = [
-                CoordinateSchema(
-                    name="tau",
-                    variable=tau_keys[0],
-                    dims=("tau",),
-                    units="time",
-                )
-            ]
+    tau_keys = sorted(
+        key for key in leaves.arrays if fnmatchcase(key, "mode_results.*.allan.tau")
+    )
+    if tau_keys:
+        leading = ("scan",) if scan_size > 1 else ()
+        coordinates = [
+            CoordinateSchema(
+                name="tau",
+                variable=tau_keys[0],
+                dims=(*leading, "tau"),
+                role="auxiliary" if leading else "dimension",
+                units="time",
+            )
+        ]
     dataset = assemble_typed_product(
         label,
         leaves,

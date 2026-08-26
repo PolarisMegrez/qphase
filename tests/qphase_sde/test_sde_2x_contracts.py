@@ -48,6 +48,17 @@ _ALLOWED_IMPORT_ROOTS = {
 }
 
 
+def test_package_dependency_matches_resource_core_compatibility():
+    pyproject = tomllib.loads((SDE_ROOT / "pyproject.toml").read_text("utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+    assert "qphase>=2.0.0a0,<3.0" in dependencies
+    requirements = (SDE_ROOT / "requirements.txt").read_text("utf-8").splitlines()
+    assert "qphase>=2.0.0a0,<3.0" in requirements
+    assert MANIFEST_FIXTURE.exists()
+    fixture = json.loads(MANIFEST_FIXTURE.read_text("utf-8"))
+    assert fixture["compatibility"]["qphase_core"] == ">=2.0a0,<3.0"
+
+
 def _imported_roots(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     roots: set[str] = set()

@@ -55,7 +55,6 @@ SDE_BUNDLE_ADAPTER_ID = "sde/1"
 BUNDLE_PRODUCT_LABELS = (
     "trajectories",
     "spectrum",
-    "spectral_peaks",
     "coherence_frequency",
     "allan_variance",
     "moments",

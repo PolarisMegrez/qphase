@@ -63,12 +63,6 @@
       "description": "Spectral estimates (amplitude, PSD, cross spectrum, coherence)."
     },
     {
-      "name": "spectral_peaks",
-      "kind": "statistics",
-      "schema_ref": "qphase_sde.contracts.peaks:PEAK_PRODUCT",
-      "description": "Unified peak candidates and scan-resolved peak paths."
-    },
-    {
       "name": "coherence_frequency",
       "kind": "statistics",
       "schema_ref": "qphase_sde.contracts.coherence:COHERENCE_FREQUENCY_PRODUCT",

@@ -6,7 +6,7 @@ description: qphase 2.x 的 artifact 与资源格式
 
 !!! warning "草案 —— 等待 Phase 1 复审批准"
     本页已按 Phase 1 审计修正（manifest 安全校验、bundle 描述符、带版本的
-    存储描述符、事务化 NPZ 写入、typed product/bundle 摘要）重新冻结，目前
+    存储描述符、事务化 NPZ 写入、typed product/bundle 摘要）完成更新，目前
     处于复审中的草案状态；在复审批准之前，以 `qphase.data` 与 `qphase_sde`
     下的实现为准。本页是 [数据产品契约](data_products.md) 的格式层
     配套文档。
@@ -28,7 +28,8 @@ qphase 2.x 的 artifact 是一个**目录**：一个 `artifact_manifest.json` �
   具体结果的**已注册** bundle adapter（可信注册表 id，绝不是代码路径）；
   `descriptor_schema`；经 adapter 校验的 JSON `descriptor`（SDE bundle 记
   录 scan 网格——`shape`、`dimension_order`、`axes`、`n_traj_per_point`
-  及可选的 `combine`）；以及把语义角色映射到产品名的 `product_roles`。
+  及可选的 `combine`）；以及把稳定语义角色映射到 job-local 产品名的
+  `product_roles`。不具备跨 workflow 稳定含义的 label 不写入 roles。
 - `products` —— 产品条目列表，每条包含：
     - `name` —— 产品名（artifact 内唯一）；
     - `product_schema` —— 完整的冻结[产品 schema](data_products.md)
@@ -51,7 +52,11 @@ qphase 2.x 的 artifact 是一个**目录**：一个 `artifact_manifest.json` �
 `ArtifactNotFoundError`（同时是 `FileNotFoundError`）、
 `ArtifactUnsupportedError`（未知 schema 版本）、`ArtifactCorruptError`
 （解析、跨字段或哈希失败）、`ArtifactAdapterError`（未注册 adapter）与
-`ArtifactChecksumError`（payload 校验失败）。
+`ArtifactChecksumError`（payload 校验失败）。已注册的 storage/bundle adapter
+会在 manifest 读取阶段完成 descriptor 的 metadata-only 严格校验。未知 bundle
+adapter 仍可作为 generic bundle 列出；已知 adapter 拥有的畸形 descriptor
+属于损坏，而不是单纯不可用。manifest metadata 使用严格 JSON，拒绝 `NaN` 与
+无穷大；typed 数值 payload 数组仍可保存它们。
 
 ## NPZ 2.x 存储 adapter
 
@@ -65,7 +70,8 @@ qphase 2.x 的 artifact 是一个**目录**：一个 `artifact_manifest.json` �
   对路径）、`key`、`logical_range`（沿 `chunk_axis` 的 `[start, stop)`
   区间，chunk 持有整个变量时为 `null`）、`shape`、`dtype` 与 `sha256`
   —— 哈希覆盖 dtype/shape/order/selection 头部与 C 连续 payload 字节，
-  **每次读取时校验**，同时核对实际 dtype、shape 与 key 集合。
+  **每次读取时校验**，同时核对实际 dtype、shape 与该 payload 文件由 descriptor
+  声明的精确 key 集合；额外 key 视为损坏。
 
 文件布局：
 
@@ -81,7 +87,8 @@ qphase 2.x 的 artifact 是一个**目录**：一个 `artifact_manifest.json` �
 取并校验（dtype/shape/hash），原子地移动到最终文件名，manifest 最后通过
 原子 `os.replace` 发布。已有 manifest 永远不会被覆盖，除非
 `replace=True`；替换时只有在新 manifest 发布后才删除旧 payload，因此失败
-的写入不会破坏仍可读取的旧 artifact。
+的写入不会破坏仍可读取的旧 artifact。首次发布时，如果目标 payload 路径已经
+存在且不属于经过校验的旧 manifest，也会拒绝覆盖。
 
 ## 写入与读取
 
@@ -116,6 +123,9 @@ qphase 2.x 的 artifact 是一个**目录**：一个 `artifact_manifest.json` �
   基于采样基的不确定度的 `spectral` 产品持久化；Allan 方差、矩族、矩统
   计、相干矩阵与相干载波以带声明轴、量纲与逐变量不确定度的
   `statistics` 产品持久化。
+- 每个 graph-ready scan 产品都携带 typed `(scan,)` 扁平扫描参数坐标。所有点
+  共用的 frequency、tau、lag、channel 等采样坐标折叠为 dimension coordinate；
+  逐点变化的坐标保留为显式 auxiliary coordinate。
 - 其余 analyser 在 Phase 2 之前仍通过带版本的 `legacy_analysis/1` 桥接
   （`graph_ready=False`）持久化：数值叶成为变量，嵌套 dict 按点号路径拍
   平，字符串/JSON 安全叶进入 `attributes["payload_meta"]`，逐点 ragged
@@ -128,6 +138,11 @@ qphase 2.x 的 artifact 是一个**目录**：一个 `artifact_manifest.json` �
   直接凭 v3 manifest 恢复 scan bundle（shape、轴、逐点参数视图）；
   `legacy_result()` 渲染单点 1.x 视图，`point_view` 把
   `metadata["params"]` 重写为该点的 scan 参数。
+- SDE bundle roles 只记录稳定含义：保留轨迹时的 `trajectories`，以及恰有一个
+  频谱产品时的 `primary_spectrum`。其余产品按 kind、quantity 和 fields 选择。
+- peak candidates/paths 当前不声明为 graph-ready 公共产品。分组 ragged schema
+  与 producer 是 ProductGraph executor 之前必须完成的 Phase 2A；旧 PSD peak
+  metadata 不构成该正式产品。
 
 ## 迁移 SDE 1.x 结果
 
