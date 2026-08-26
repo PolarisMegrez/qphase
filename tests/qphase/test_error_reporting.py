@@ -122,7 +122,15 @@ def test_session_manifest_write_failure_is_not_silently_ignored(
         scheduler._save_manifest()
 
 
-def test_snapshot_write_failure_fails_job_and_session(temp_project) -> None:
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError("read-only filesystem"),
+        TypeError("not JSON serializable"),
+        ValueError("invalid JSON value"),
+    ],
+)
+def test_snapshot_write_failure_fails_job_and_session(temp_project, failure) -> None:
     scheduler = Scheduler(system_config=SystemConfig(), project=temp_project)
     workflow = WorkflowSpec(
         schema="qphase.workflow/2",
@@ -133,7 +141,7 @@ def test_snapshot_write_failure_fails_job_and_session(temp_project) -> None:
 
     with patch(
         "qphase.core.snapshot.SnapshotManager.save_snapshot",
-        side_effect=OSError("read-only filesystem"),
+        side_effect=failure,
     ):
         results = scheduler.run(workflow)
 
