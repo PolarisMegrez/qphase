@@ -437,7 +437,7 @@ class SDEDataBundle:
 
     @property
     def bundle_descriptor(self) -> BundleDescriptor:
-        """v3 bundle descriptor restoring this bundle as an SDEDataBundle.
+        """Bundle descriptor restoring this bundle as an SDEDataBundle.
 
         The descriptor records the scan grid (shape, named dimension order,
         coordinate values, combine flag) and the trajectories-per-point
@@ -472,11 +472,11 @@ class SDEDataBundle:
 
     @property
     def manifest_provenance(self) -> dict[str, Any]:
-        """JSON provenance record persisted into the v3 artifact manifest."""
+        """JSON provenance record persisted into the current artifact manifest."""
         return self._manifest_provenance()
 
     def save(self, path: str | Path) -> None:
-        """Persist all products as a v3 artifact directory at ``path``."""
+        """Persist all products as an artifact directory at ``path``."""
         save_products(
             Path(path),
             self._products,
@@ -491,7 +491,7 @@ class SDEDataBundle:
         layout: str,
         shard_target_bytes: int,
     ) -> DatasetSaveReport:
-        """Persist through the v3 manifest pipeline (DatasetResultProtocol).
+        """Persist through the current manifest pipeline (DatasetResultProtocol).
 
         ``layout="single"`` truly disables sharding (one payload file per
         product); ``"sharded"`` and the legacy ``"per_point"`` both map to
@@ -968,12 +968,12 @@ def bundle_from_result(
 
 
 # ---------------------------------------------------------------------------
-# v3 artifact restore
+# current artifact restore
 # ---------------------------------------------------------------------------
 
 
 def restore_sde_bundle(manifest: Any, products: dict[str, Dataset]) -> SDEDataBundle:
-    """Rebuild an SDEDataBundle from a v3 artifact manifest.
+    """Rebuild an SDEDataBundle from the current artifact manifest.
 
     Registered as the ``sde/1`` bundle adapter: the manifest's bundle
     descriptor supplies the scan grid and its provenance record supplies

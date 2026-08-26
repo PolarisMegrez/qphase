@@ -43,10 +43,10 @@ __all__ = [
     "SDEProvenance",
 ]
 
-#: Bundle type id recorded in the v3 artifact manifests the SDE engine writes.
+#: Bundle type id recorded in the current artifact manifests the SDE engine writes.
 SDE_BUNDLE_TYPE_ID = "sde.bundle/1"
 
-#: Registered bundle adapter id restoring :class:`SDEDataBundle` from a v3
+#: Registered bundle adapter id restoring :class:`SDEDataBundle` from the current
 #: artifact manifest (a trusted registry id, never a code path).
 SDE_BUNDLE_ADAPTER_ID = "sde/1"
 

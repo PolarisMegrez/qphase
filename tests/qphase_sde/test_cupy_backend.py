@@ -348,7 +348,7 @@ jobs:
     assert results[0].success
     assert captured_job_dir is not None
 
-    # Typed bundles persist as a v3 artifact directory, not an npz result.
+    # Typed bundles persist as a v4 artifact directory, not an npz result.
     from qphase.data import load_products
     from qphase_sde.result import legacy_view_from_products
 

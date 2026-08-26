@@ -1,6 +1,6 @@
 """qphase: Generic Data Bundle
 ---------------------------------------------------------
-The generic bundle is the resource-independent restore result of a v3
+The generic bundle is the resource-independent restore result of the current
 artifact: a named product collection plus the persisted
 :class:`~qphase.data.store.BundleDescriptor`. Core can always restore it,
 even when the resource package that produced the artifact is not installed;
@@ -36,7 +36,7 @@ __all__ = [
 
 
 class GenericDataBundle:
-    """Product collection restored from a v3 artifact (generic bundle).
+    """Product collection restored from the current artifact (generic bundle).
 
     ``axes``/``shape``/``point_view`` describe the parameter (scan) axes of
     the anchor product — the first product declaring parameter axes. Axis
@@ -181,7 +181,7 @@ class GenericDataBundle:
         layout: str,
         shard_target_bytes: int,
     ) -> DatasetSaveReport:
-        """Persist through the v3 manifest pipeline (DatasetResultProtocol)."""
+        """Persist through the current manifest pipeline (DatasetResultProtocol)."""
         root = Path(path)
         resolved = "single" if layout == "single" else "sharded"
         manifest = save_products(

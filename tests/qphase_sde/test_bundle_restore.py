@@ -1,4 +1,4 @@
-"""Restore SDE scan bundles from v3 artifacts (clean-process chain)."""
+"""Restore SDE scan bundles from v4 artifacts (clean-process chain)."""
 
 import importlib.metadata
 import json
@@ -341,7 +341,7 @@ def test_describe_products_summarizes_sde_scan_artifact(tmp_path):
     assert psd.attributes["graph_ready"] is True
     assert psd.schema_version == "qphase.product/1"
     assert psd.schema_fingerprint
-    assert psd.storage_adapter == "npz/2"
+    assert psd.storage_adapter == "npz/3"
     assert psd.physical_nbytes > 0
     assert psd.sampling_bases
     assert psd.uncertainties

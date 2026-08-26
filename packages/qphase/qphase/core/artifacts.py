@@ -33,11 +33,11 @@ class ArtifactStore:
         artifact_id: str | None = None,
         bundle: BundleDescriptor | None = None,
     ) -> ArtifactManifestV3:
-        """Persist typed data products and write the v3 artifact manifest.
+        """Persist typed data products and write the current artifact manifest.
 
         This is the typed counterpart of :meth:`save_result`: products are
-        stored through the manifest v3 pipeline (native dtypes, per-chunk
-        checksums, lazy restore). The storage layout honors the system
+        stored through the current manifest pipeline (native dtypes, lazy
+        restore). The storage layout honors the system
         configuration exactly like :meth:`save_result` does: ``single``
         disables external sharding, ``auto`` compares the estimated payload
         size against ``auto_shard_threshold_mib`` and the legacy
@@ -64,7 +64,7 @@ class ArtifactStore:
         """Resolve the configured layout for a typed product mapping."""
         requested = getattr(self.config, "storage_layout", "auto")
         if requested == "per_point":
-            # Legacy export-only layout; the v3 pipeline stores per-point
+            # Legacy export-only layout; the current pipeline stores per-point
             # chunks through byte-targeted sharding instead.
             return "sharded"
         if requested != "auto":
@@ -98,7 +98,7 @@ class ArtifactStore:
         if isinstance(products, _Mapping) and all(
             isinstance(product, _Dataset) for product in products.values()
         ):
-            # 2.0 typed bundles persist through the v3 manifest pipeline;
+            # 2.0 typed bundles persist through the current manifest pipeline;
             # no legacy manifest is written for them.
             from ..data.store import BundleDescriptor as _BundleDescriptor
 

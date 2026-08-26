@@ -15,7 +15,7 @@ JSON — pickle and object arrays are forbidden by the schema layer.
 Artifact-backed datasets resolve their payload lazily through the registered
 storage adapter named in the artifact reference (a trusted registry id, never
 a Python code path); the concrete artifact store and NPZ adapters ship with
-the v3 artifact manifest.
+the current artifact manifest.
 
 Public API
 ----------

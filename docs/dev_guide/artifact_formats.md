@@ -4,26 +4,24 @@ description: Artifact and resource formats of qphase 2.x
 
 # Artifact Formats
 
-!!! warning "Draft — pending Phase 1 re-approval"
-    This page has been updated against the Phase 1 audit corrections (secured
-    manifest validation, bundle descriptors, versioned storage descriptors,
-    transactional NPZ writes, typed product/bundle summaries). It is a draft
-    under review; until re-approval the authoritative behavior is the
-    implementation under `qphase.data` and `qphase_sde`. It is the
-    format-level companion of the [Data Product Contract](data_products.md).
+!!! note "Current v4 format"
+    This page describes the approved v4 artifact and NPZ 3.x contracts. The
+    authoritative behavior is the implementation under `qphase.data` and
+    `qphase_sde`. It is the format-level companion of the [Data Product
+    Contract](data_products.md).
 
 A qphase 2.x artifact is a **directory**: one `artifact_manifest.json` plus
-payload files written by a registered storage adapter. The reference `npz/2`
+payload files written by a registered storage adapter. The reference `npz/3`
 adapter writes one NPZ chunk file per variable chunk. Directories are
 self-describing, relocatable and inspectable with plain NumPy — restoring
 never requires `allow_pickle`.
 
-## Manifest v3
+## Manifest v4
 
 `artifact_manifest.json` is a strictly validated (`extra="forbid"`) JSON
 document:
 
-- `schema_version` — the literal `"qphase.artifact/3"`.
+- `schema_version` — the literal `"qphase.artifact/4"`.
 - `artifact_id` — stable artifact identifier.
 - `created_at` — creation timestamp.
 - `bundle` — a `BundleDescriptor`: `type_id` (for example
@@ -39,16 +37,12 @@ document:
     - `product_schema` — the full frozen [product schema](data_products.md)
       JSON (`qphase.product/1`): axes, variables, coordinates, sampling
       bases, uncertainties and attributes;
-    - `storage` — `adapter` (a registered adapter id such as `npz/2`),
+    - `storage` — `adapter` (a registered adapter id such as `npz/3`),
       `descriptor_schema`, the adapter-specific `descriptor`, and a common
       `summary` (per-variable `nbytes`/`chunk_count`) that listings can read
       without opening the adapter;
-- `sha256` — content hash over name, schema and storage, recomputed when the
-  manifest is written or opened.
 - `provenance` — JSON-serializable engine/plugin metadata (validated).
 - `parents` — artifact ids this artifact derives from (unique).
-- `content_hash` — SHA-256 over the canonical bundle/product/provenance/
-  parent listing, recomputed on every read.
 
 There is no `loader` field and no `module:attr` reference anywhere in the
 format: storage adapters and bundle adapters are resolved through trusted
@@ -57,8 +51,8 @@ Manifest paths are validated as safe artifact-relative paths; product names,
 parents and bundle role targets must be unique/consistent. Violations raise
 typed errors: `ArtifactNotFoundError` (also a `FileNotFoundError`),
 `ArtifactUnsupportedError` (unknown schema version), `ArtifactCorruptError`
-(parse, cross-field or hash failures), `ArtifactAdapterError` (unregistered
-adapter) and `ArtifactChecksumError` (payload verification failures).
+(parse or structural failures) and `ArtifactAdapterError` (unregistered
+adapter).
 Registered storage and bundle adapters validate their descriptors while the
 manifest is read, without opening payload files. Unknown bundle adapters
 remain listable as generic bundles; malformed descriptors owned by known
@@ -68,10 +62,10 @@ still contain them. For registered storage adapters, manifest validation also
 aggregates payload ownership across products: one payload file may hold several
 keys of one product, but it cannot be shared by two products.
 
-## NPZ 2.x storage adapter
+## NPZ 3.x storage adapter
 
-The reference adapter (`qphase.data.npz`, adapter id `npz/2`, descriptor
-schema `npz.product/2`) records per variable in its descriptor:
+The reference adapter (`qphase.data.npz`, adapter id `npz/3`, descriptor
+schema `npz.product/3`) records per variable in its descriptor:
 
 - `full_shape` and `dtype` of the whole variable;
 - `chunk_axis` — the **named** dimension along which the variable is sharded
@@ -80,11 +74,9 @@ schema `npz.product/2`) records per variable in its descriptor:
 - `chunks` — contiguous, non-overlapping, fully covering chunk records with
   `file` (artifact-relative), `key`, `logical_range` (`[start, stop)` along
   `chunk_axis`, `null` when the chunk holds the whole variable), `shape`,
-  `dtype` and `sha256` — the hash covers the dtype/shape/order/selection
-  header plus the C-contiguous payload bytes. Ordinary reads verify the actual
-  dtype, shape and exact descriptor-wide key set for that payload file;
-  payload hash verification is an explicit adapter operation. Undeclared keys
-  are corruption.
+  `dtype`. Ordinary reads verify the actual dtype, shape and exact
+  descriptor-wide key set for that payload file. Undeclared keys are
+  corruption.
 
 File layout:
 
@@ -99,7 +91,7 @@ File layout:
 Writes are transactional: chunks are staged in a `.staging-{token}`
 directory, their descriptors are checked before publication, atomically moved
 to their final names, and the manifest is published last through an atomic
-`os.replace`. Full payload verification remains an explicit adapter operation.
+`os.replace`. Payload bytes are not hashed by the normal writer or reader.
 An existing manifest is never overwritten
 unless `replace=True`; replacement removes the old payload only after the
 new manifest is published, so a failed write leaves the previous artifact
@@ -133,13 +125,12 @@ must preserve the manifest contracts defined here.
   `save_products`/`load_products` populate it; cross-process restores must
   open the artifact directory once before dereferencing refs. An
   `ArtifactRef` carries identity only — artifact id, product name, product
-  schema, storage adapter id and content hash; it names no code and no
-  filesystem location.
+  schema and storage adapter id; it names no code and no filesystem location.
 
 ## SDE data products
 
 `qphase_sde` returns typed `SDEDataBundle`s from every `engine.run()` exit
-point and persists them as v3 artifacts with an `sde.bundle/1` bundle
+point and persists them as v4 artifacts with an `sde.bundle/1` bundle
 descriptor:
 
 - `trajectories` — a `time_series` product with axes
@@ -176,7 +167,7 @@ descriptor:
   packages define their own numerical provenance schemas.
 - importing `qphase_sde.result` registers the `sde/1` bundle adapter, so a
   clean process restores scan bundles (shape, axes, per-point parameter
-  views) straight from the v3 manifest; `legacy_result()` renders the
+  views) straight from the v4 manifest; `legacy_result()` renders the
   single-point 1.x view and `point_view` rewrites `metadata["params"]` to
   the point's scan parameters.
 - SDE bundle roles expose only stable meanings: `trajectories` when retained
@@ -197,7 +188,7 @@ descriptor:
     them after all retained project data has been migrated and verified. QPhase
     2.x does not promise permanent old-major compatibility.
 
-`qphase_sde.runtime.migrate` converts existing results **one way** to v3:
+`qphase_sde.runtime.migrate` converts existing results **one way** to v4:
 
 - `migrate_legacy_result(source, output_dir, *, adapter=None,
   shard_target_bytes=None)` — one `sde_result/1` or `trajectory_set/1` file.
@@ -220,10 +211,17 @@ unrecognized inputs.
 
 Listings never materialize payloads and never register artifact locations:
 
+- `SchedulerService.list_artifacts(session_dir)` returns one item per current
+  v4 manifest-backed artifact with its real UUID `artifact_id`. Ordinary files
+  outside artifact directories have no artifact identity and are addressed by
+  a project-relative `file_ref`.
+- The GUI uses `GET /sessions/{session_id}/artifacts/{artifact_id}` for a
+  typed product catalog and `GET /sessions/{session_id}/files/{file_ref}` for
+  ordinary text or binary files.
 - `SchedulerService.describe_products(path, *, session_dir)` builds an
   `ArtifactProductCatalog` purely from the manifest plus `stat` of the
   manifest-referenced payload files: artifact id, loader (adapter ids),
-  content hash, total size (referenced files only — stray files in the
+  total size (referenced files only — stray files in the
   directory are not counted), a `BundleSummary` (type/adapter ids,
   descriptor schema, product roles, unpacked scan shape/combine/axes and
   `n_traj_per_point`), and one `ProductSummary` per product: kind, axes
@@ -231,8 +229,8 @@ Listings never materialize payloads and never register artifact locations:
   coordinates, sampling bases, uncertainties, devices, `materializable` with
   a typed `missing_reason` (unregistered adapter or missing payload file),
   logical `nbytes` and physical on-disk `physical_nbytes`, `chunk_count`,
-  `sha256`, `schema_version`/`schema_fingerprint`, storage adapter and
-  descriptor schema, attributes.
+  `schema_version`/`schema_fingerprint`, storage adapter and descriptor
+  schema, attributes.
 - The GUI exposes it as `GET /sessions/{session_id}/jobs/{job_name}/products`,
   returning the catalog JSON; missing or non-artifact directories answer
   404, while unsupported or corrupt artifacts answer 422.

@@ -42,7 +42,7 @@ frozen contract; a genuine contract tightening requires a minor release.
 ## Schema versions
 
 Package and schema versions are not interchangeable. Persisted contracts carry
-explicit identifiers such as `qphase.product/1`, `qphase.artifact/3`, `npz/2`
+explicit identifiers such as `qphase.product/1`, `qphase.artifact/4`, `npz/3`
 and `qphase_sde.provenance/1`. A schema change is classified as patch, minor or
 major by compatibility impact, not by matching the package version numerically.
 

@@ -261,7 +261,7 @@ def _coerce_analysis_input(data: Any | None) -> Any | None:
     """Coerce 2.0 trajectory products back to a TrajectorySet for analysers.
 
     Accepts an SDEDataBundle (in-workflow hand-off) or a products mapping
-    (v3 artifact restored through the manifest loader). Inputs carrying a
+    (current artifact restored through the manifest loader). Inputs carrying a
     ``trajectories`` product are coerced to a TrajectorySet for
     trajectory-consuming analysers (single-point only: scan products must be
     mapped per point by the scheduler, not flattened here). Inputs without

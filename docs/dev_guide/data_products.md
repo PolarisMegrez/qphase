@@ -118,8 +118,8 @@ In-process transfer, session caching and persistence are separate layers:
   variable, checked by `validate_backing` (missing/extra variables, full variable
   schema identity, dtype and closed-axis shape mismatches are rejected).
 - `ArtifactRef` — durable, cross-process reference carrying identity only: artifact
-  id, product name, product schema, the registered storage adapter id and a
-  lowercase SHA-256 content hash. It names no code and no filesystem location; no
+  id, product name, product schema and the registered storage adapter id. It names
+  no code and no filesystem location; no
   provenance, no arrays, no extra fields or cache state.
 - `DataMaterializerProtocol` — resource-registered conversion between runtime handles
   and artifact-backed products.

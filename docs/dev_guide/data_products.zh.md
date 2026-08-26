@@ -88,8 +88,8 @@ core schema **没有** moment-family 字段——该领域语义归资源包所�
 - `RuntimeProductBacking`——产品的运行时支撑：每个 schema 变量恰好一个 handle，由
   `validate_backing` 校验（变量缺失/多余、完整 variable schema identity、dtype 与闭合轴
   shape 不符都会被拒绝）。
-- `ArtifactRef`——持久化、可跨进程引用，只携带身份：artifact id、产品名、产品 schema、
-  已注册 storage adapter id 与小写 SHA-256 content hash。无 provenance、无数组、无额外字段或
+- `ArtifactRef`——持久化、可跨进程引用，只携带身份：artifact id、产品名、产品 schema 与
+  已注册 storage adapter id。无 provenance、无数组、无额外字段或
   cache state。
 - `DataMaterializerProtocol`——资源包注册的 runtime handle 与 artifact 产品之间的转换
   协议。

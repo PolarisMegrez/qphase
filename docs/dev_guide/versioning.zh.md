@@ -30,7 +30,7 @@ patch 在公共契约层双向兼容：不得增加必填 schema 字段、改变
 ## Schema 版本
 
 包版本与 schema 版本不是同一个编号。持久化契约使用独立 ID，例如 `qphase.product/1`、
-`qphase.artifact/3`、`npz/2` 与 `qphase_sde.provenance/1`。schema 修改属于 patch、minor 还是 major，取决于
+`qphase.artifact/4`、`npz/3` 与 `qphase_sde.provenance/1`。schema 修改属于 patch、minor 还是 major，取决于
 兼容性影响，而不是与包版本数字对应。
 
 迁移工具只能通过显式命令或维护工具运行。Artifact loader 不静默重写数据，普通插件发现也不导入旧 major

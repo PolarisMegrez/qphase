@@ -89,7 +89,7 @@ def load_sde_results(data: Any, pattern: str) -> list[LoadedResult]:
         data = data.results
 
     if _is_products_mapping(data):
-        # One v3 artifact restored through the manifest loader: the mapping
+        # One current artifact restored through the manifest loader: the mapping
         # itself is a single logical result with one product per analyser.
         result = legacy_view_from_products(data)
         return [
