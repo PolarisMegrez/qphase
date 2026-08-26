@@ -26,7 +26,7 @@ class RegistryService:
         system_config: SystemConfig | None = None,
         project: ProjectContext | None = None,
     ):
-        self.registry = registry_center or registry
+        self.registry = registry_center or registry.snapshot(include_local=False)
         self.project = project or ProjectContext.discover()
         self.system_config = system_config
         self.discovery = DiscoveryService(self.registry)

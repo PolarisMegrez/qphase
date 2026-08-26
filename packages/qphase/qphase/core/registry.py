@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 from .errors import (
@@ -49,6 +50,7 @@ class _Entry:
     target: str | None = None  # dotted path like "pkg.mod:Class"
     config_schema: type[Any] | None = None
     meta: dict[str, Any] | None = None
+    resolved: Any | None = None
 
     def __post_init__(self):
         if self.meta is None:
@@ -84,7 +86,7 @@ class RegistryCenter:
         """Return the read-only view used by control-plane compilation."""
         return RegistryView(self)
 
-    def snapshot(self) -> "RegistryCenter":
+    def snapshot(self, *, include_local: bool = True) -> "RegistryCenter":
         """Copy registered asset definitions for one project runtime."""
         copied = RegistryCenter()
         copied._tables = {
@@ -95,8 +97,10 @@ class RegistryCenter:
                     target=entry.target,
                     config_schema=entry.config_schema,
                     meta=dict(entry.meta or {}),
+                    resolved=entry.resolved,
                 )
                 for name, entry in table.items()
+                if include_local or not (entry.meta or {}).get("local_import_root")
             }
             for namespace, table in self._tables.items()
         }
@@ -219,6 +223,12 @@ class RegistryCenter:
             assert entry.builder is not None
             return entry.builder
         assert entry.target is not None
+        meta = entry.meta or {}
+        if meta.get("local_import_root"):
+            return self._import_local_target(
+                entry.target,
+                Path(str(meta["local_import_root"])),
+            )
         return self._import_target(entry.target)
 
     def get_plugin_class(self, namespace: str, name: str) -> Any:
@@ -237,7 +247,9 @@ class RegistryCenter:
         # dotted path import
         assert entry.target is not None
         try:
-            obj = self._import_target(entry.target)
+            if entry.resolved is None:
+                entry.resolved = self._resolve_entry(entry)
+            obj = entry.resolved
             return obj
         except Exception as e:
             raise QPhasePluginError(
@@ -285,10 +297,8 @@ class RegistryCenter:
                 return entry.builder
             return entry.builder(**kwargs)
 
-        # dotted path import
-        assert entry.target is not None
         try:
-            obj = self._import_target(entry.target)
+            obj = self.get_plugin_class(ns, nm)
         except Exception as e:
             raise QPhasePluginError(
                 f"Failed to import plugin '{nm}' from '{entry.target}': {e}"
@@ -332,6 +342,46 @@ class RegistryCenter:
                 f"Target '{target}' not found in module '{module_name}'"
             )
         return getattr(mod, attr_name)
+
+    @staticmethod
+    def _import_local_target(target: str, import_root: Path) -> Any:
+        """Load a local target while isolating its module namespace."""
+        module_name, separator, found_attr = target.partition(":")
+        attr_name: str | None
+        if not separator:
+            parts = module_name.rsplit(".", 1)
+            module_name, attr_name = parts if len(parts) == 2 else (target, None)
+        else:
+            attr_name = found_attr
+        module_prefix = module_name.split(".", 1)[0]
+        saved_modules = {
+            name: module
+            for name, module in sys.modules.items()
+            if name == module_prefix or name.startswith(f"{module_prefix}.")
+        }
+        import_root_text = str(import_root)
+        path_was_present = import_root_text in sys.path
+        try:
+            for name in list(sys.modules):
+                if name == module_prefix or name.startswith(f"{module_prefix}."):
+                    del sys.modules[name]
+            if not path_was_present:
+                sys.path.insert(0, import_root_text)
+            module = import_module(module_name)
+            if attr_name is None:
+                return module
+            if not hasattr(module, attr_name):
+                raise QPhaseConfigError(
+                    f"Target '{target}' not found in local module '{module_name}'"
+                )
+            return getattr(module, attr_name)
+        finally:
+            for name in list(sys.modules):
+                if name == module_prefix or name.startswith(f"{module_prefix}."):
+                    del sys.modules[name]
+            sys.modules.update(saved_modules)
+            if not path_was_present:
+                sys.path.remove(import_root_text)
 
     # --------------------------- plugin factory ---------------------------
     def create_plugin_instance(
@@ -398,9 +448,7 @@ class RegistryCenter:
 
         # Load plugin to inspect
         try:
-            # Import the target class without instantiating
-            assert entry.target is not None
-            obj = self._import_target(entry.target)
+            obj = self.get_plugin_class(namespace, name)
 
             # Check for config_schema on the class/object
             if hasattr(obj, "config_schema"):
@@ -598,11 +646,6 @@ class DiscoveryService:
             if not isinstance(plugins_list, list):
                 continue
 
-            # Add plugin_dir to sys.path for imports
-            plugin_dir_str = str(plugin_dir.parent)  # Parent dir for module imports
-            if plugin_dir_str not in sys.path:
-                sys.path.insert(0, plugin_dir_str)
-
             for plugin_entry in plugins_list:
                 if not isinstance(plugin_entry, dict):
                     continue
@@ -640,6 +683,7 @@ class DiscoveryService:
                     target=target,
                     auto_discovered=True,
                     source_file=str(plugins_file),
+                    local_import_root=str(plugin_dir.parent.resolve()),
                     **extra_meta,
                 )
                 discovered_count += 1

@@ -19,7 +19,7 @@ from qphase.core.errors import ErrorCode, QPhaseIOError
 from qphase.core.execution import CancellationController
 from qphase.core.persistence import ProjectStateStore
 from qphase.core.project import ProjectContext
-from qphase.core.registry import RegistryCenter, registry
+from qphase.core.registry import DiscoveryService, RegistryCenter, registry
 from qphase.core.scheduler import JobResult, Scheduler
 from qphase.core.system_config import SystemConfig, load_system_config
 from qphase.core.workflow import WorkflowCatalog
@@ -56,7 +56,13 @@ class SchedulerService:
         self.system_config = system_config or load_system_config()
         self.catalog = WorkflowCatalog(self.project)
         self.state_store = ProjectStateStore(self.project)
-        self.registry = registry_center or registry.snapshot()
+        if registry_center is None:
+            self.registry = registry.snapshot(include_local=False)
+            project_discovery = DiscoveryService(self.registry)
+            project_discovery.discover_plugins()
+            project_discovery.discover_local_plugins(self.project)
+        else:
+            self.registry = registry_center
         self.last_session_handle: SessionHandle | None = None
 
     def list_workflows(self) -> list[str]:

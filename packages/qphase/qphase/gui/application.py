@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
-from pathlib import Path
 
 from qphase.core.project import ProjectContext
 from qphase.core.registry import registry as global_registry
@@ -36,13 +34,7 @@ class ApplicationContext:
     ) -> ApplicationContext:
         project_context = project or ProjectContext.discover()
         system = system_config or load_system_config()
-        for directory in [project_context.workflow_root, *project_context.plugin_dirs]:
-            path = Path(directory).expanduser().resolve()
-            for candidate in (path, path.parent):
-                value = str(candidate)
-                if candidate.exists() and value not in sys.path:
-                    sys.path.insert(0, value)
-        project_registry = global_registry.snapshot()
+        project_registry = global_registry.snapshot(include_local=False)
         registry = RegistryService(
             registry_center=project_registry,
             system_config=system,

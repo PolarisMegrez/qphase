@@ -138,7 +138,7 @@ def test_snapshot_write_failure_fails_job_and_session(temp_project) -> None:
         results = scheduler.run(workflow)
 
     assert results[0].status == "failed"
-    assert results[0].error_code == ErrorCode.UNKNOWN
+    assert results[0].error_code == ErrorCode.ARTIFACT_IO
     assert scheduler.manifest is not None
     assert scheduler.manifest["status"] == "failed"
 

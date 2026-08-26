@@ -878,4 +878,4 @@ def load_product_backing(
     backing. Datasets reach this through the storage adapter registry, never
     through a persisted code path.
     """
-    return NpzStorageAdapter().open_ref(ref)
+    return NpzStorageAdapter().open_ref(ref, resolver=resolver)

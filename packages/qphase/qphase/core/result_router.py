@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import JobConfig
-from .errors import ErrorCode, QPhaseConfigError, QPhaseIOError
+from .errors import ErrorCode, QPhaseConfigError, QPhaseError, QPhaseIOError
 from .execution import ExecutionContext
 from .protocols import ResultProtocol
 
@@ -55,13 +55,15 @@ class ResultRouter:
                     log.info("Loading result for '%s' from disk...", input_source)
                     try:
                         result = load_result(input_source, job_dir)
-                    except Exception as exc:
+                    except OSError as exc:
                         raise QPhaseIOError(
                             f"failed to load completed upstream result "
                             f"'{input_source}' from '{job_dir}': {exc}",
                             code=ErrorCode.ARTIFACT_IO,
                             context={"source": input_source, "path": str(job_dir)},
                         ) from exc
+                    except QPhaseError:
+                        raise
                     job_results[input_source] = result
                     return result
 
@@ -129,9 +131,11 @@ class ResultRouter:
             else:
                 output_result.save(save_path)
             log.debug("Job '%s' result saved to %s", job.name, save_path)
-        except Exception as exc:
+        except OSError as exc:
             raise QPhaseIOError(
                 f"Failed to save job '{job.name}' output to '{save_path}': {exc}",
                 code=ErrorCode.ARTIFACT_IO,
                 hint="Check disk space and write permissions for the Job directory.",
             ) from exc
+        except QPhaseError:
+            raise

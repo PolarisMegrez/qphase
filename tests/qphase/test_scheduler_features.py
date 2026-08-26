@@ -2,7 +2,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import BaseModel
 from qphase.core.config import JobConfig, WorkflowSpec
+from qphase.core.errors import QPhaseRuntimeError
+from qphase.core.registry import registry
 from qphase.core.scheduler import JobResult, Scheduler
 from qphase.core.system_config import SystemConfig
 
@@ -113,3 +116,94 @@ def test_validate_command_logic(mock_system_config, simple_job_list, temp_projec
     with patch.object(scheduler, "_validate_jobs") as mock_validate:
         scheduler._validate_jobs(simple_job_list)
         mock_validate.assert_called_once()
+
+
+def test_scheduler_executes_compiled_topological_order(temp_project):
+    order: list[str] = []
+
+    class OrderedEngine:
+        class Config(BaseModel):
+            pass
+
+        config_schema = Config
+
+        def __init__(self, config=None, **kwargs):
+            del config, kwargs
+
+        def run(self, data=None, **kwargs):
+            del data, kwargs
+            order.append(self.name)
+            return _Result()
+
+        name = "ordered"
+
+    class _Result:
+        data = None
+        metadata = {}
+        label = None
+
+        def save(self, path):
+            del path
+
+    registry.register("engine", "ordered", OrderedEngine, overwrite=True)
+    try:
+        workflow = WorkflowSpec(
+            schema="qphase.workflow/2",
+            id="topological",
+            title="Topological",
+            jobs=[
+                JobConfig(
+                    name="sink",
+                    engine={"ordered": {}},
+                    depends_on=["source"],
+                    save=False,
+                ),
+                JobConfig(name="source", engine={"ordered": {}}, save=False),
+            ],
+        )
+        scheduler = Scheduler(system_config=SystemConfig(), project=temp_project)
+        results = scheduler.run(workflow)
+    finally:
+        registry._tables.get("engine", {}).pop("ordered", None)
+
+    assert [result.job_name for result in results] == ["source", "sink"]
+    assert order == ["ordered", "ordered"]
+
+
+def test_depends_on_failure_skips_downstream_job(temp_project):
+    class FailingEngine:
+        class Config(BaseModel):
+            pass
+
+        config_schema = Config
+        name = "fails"
+
+        def __init__(self, config=None, **kwargs):
+            del config, kwargs
+
+        def run(self, data=None, **kwargs):
+            del data, kwargs
+            raise QPhaseRuntimeError("source failed")
+
+    registry.register("engine", "fails", FailingEngine, overwrite=True)
+    try:
+        workflow = WorkflowSpec(
+            schema="qphase.workflow/2",
+            id="dependency-failure",
+            title="Dependency failure",
+            jobs=[
+                JobConfig(name="source", engine={"fails": {}}, save=False),
+                JobConfig(
+                    name="sink",
+                    engine={"dummy": {}},
+                    depends_on=["source"],
+                    save=False,
+                ),
+            ],
+        )
+        scheduler = Scheduler(system_config=SystemConfig(), project=temp_project)
+        results = scheduler.run(workflow)
+    finally:
+        registry._tables.get("engine", {}).pop("fails", None)
+
+    assert [result.status for result in results] == ["failed", "skipped_dependency"]

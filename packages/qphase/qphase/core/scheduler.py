@@ -300,7 +300,9 @@ class Scheduler:
             self._compiled_workflow = compiled
             dry_results: list[JobResult] = []
             dry_job_results: dict[str, ResultProtocol] = {}
-            logical_jobs = list(compiled.logical_jobs)
+            logical_jobs = [
+                compiled.job(name).job for name in compiled.topological_order
+            ]
             effective_jobs = list(logical_jobs)
             for job_idx, original in enumerate(logical_jobs):
                 job = (
@@ -353,7 +355,7 @@ class Scheduler:
 
         results: list[JobResult] = []
         job_results: dict[str, ResultProtocol] = {}
-        logical_jobs = list(compiled.logical_jobs)
+        logical_jobs = [compiled.job(name).job for name in compiled.topological_order]
         effective_jobs = list(logical_jobs)
         try:
             for job_idx, job in enumerate(effective_jobs):
@@ -601,18 +603,23 @@ class Scheduler:
         # Skip jobs whose upstream failed or was skipped earlier in this run.
         # Independent downstream jobs keep running (existing scheduler policy).
         source = compiled_job.input_source
-        upstream_status = self._job_statuses.get(source) if source else None
-        if upstream_status in ("failed", "skipped_dependency"):
-            note = (
-                f"skipped: upstream job '{source}' {upstream_status.replace('_', ' ')}"
-            )
+        dependencies = list(compiled_job.depends_on)
+        if source is not None and source not in dependencies:
+            dependencies.append(source)
+        blocked_by = [
+            dependency
+            for dependency in dependencies
+            if self._job_statuses.get(dependency)
+            in {"failed", "skipped_dependency"}
+        ]
+        if blocked_by:
+            note = f"skipped: failed upstream dependencies {blocked_by}"
             log.info(f"Skipping job '{job.name}': {note}")
+            assert self.session_dir is not None
             result = JobResult(
                 job_index=job_idx,
                 job_name=job.name,
-                job_dir=(self.session_dir / job.name)
-                if self.session_dir
-                else Path("."),
+                job_dir=self.session_dir / job.name,
                 success=False,
                 status="skipped_dependency",
                 error_summary=note,

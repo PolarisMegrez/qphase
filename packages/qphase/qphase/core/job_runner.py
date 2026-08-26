@@ -18,6 +18,7 @@ from .error_report import build_error_report, save_error_report
 from .errors import (
     ErrorCode,
     QPhaseConfigError,
+    QPhaseIOError,
     QPhasePluginError,
     QPhaseRuntimeError,
     QPhaseSchedulerError,
@@ -132,7 +133,9 @@ def build_plugins(
         type_instances: dict[str, Any] = {}
         for plugin_name, plugin_config in config_data.items():
             if not isinstance(plugin_config, dict):
-                continue
+                raise QPhasePluginError(
+                    f"Invalid plugin config for '{plugin_type}.{plugin_name}'"
+                )
             flat_config = dict(plugin_config)
             flat_config["name"] = plugin_name
             try:
@@ -199,7 +202,14 @@ def write_snapshot(
             "snapshot_created_by": "scheduler",
         },
     )
-    path = manager.save_snapshot(snapshot, job_dir)
+    try:
+        path = manager.save_snapshot(snapshot, job_dir)
+    except OSError as exc:
+        raise QPhaseIOError(
+            f"failed to save Job snapshot for '{job.name}'",
+            code=ErrorCode.ARTIFACT_IO,
+            context={"path": str(job_dir / "config_snapshot.json")},
+        ) from exc
     log.debug("Snapshot saved to %s", path)
 
 
