@@ -946,12 +946,21 @@ class _Scanner:
             if isinstance(compiled, Mapping) and isinstance(
                 compiled.get("workflow"), Mapping
             ):
+                # Declared-tag provenance comes from the compiled tag
+                # snapshot frozen at compile time, not from the submission
+                # tag policy revision.
+                frozen = compiled.get("tag_snapshot")
+                frozen_revision = (
+                    frozen.get("policy_revision")
+                    if isinstance(frozen, Mapping)
+                    else None
+                )
                 revision_id = self._register_revision(
                     compiled["workflow"],
                     source=f"execution:{payload.get('execution_id', '')}",
                     relative_path=None,
                     policy_revision=(
-                        str(tag_revision) if tag_revision is not None else None
+                        str(frozen_revision) if frozen_revision is not None else None
                     ),
                 )
             self.rows["executions"].append(
