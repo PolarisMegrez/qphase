@@ -668,13 +668,7 @@ class Scheduler:
 
         # Resolve input (input/config boundary; the engine never starts).
         try:
-            input_result = self._result_router.resolve_input(
-                job,
-                job_results,
-                source=source,
-                manifest=self.manifest,
-                session_dir=self.session_dir,
-            )
+            input_result = self._resolve_input(job, job_results, source)
         except Exception as e:
             result = self._fail_job(job, job_idx, job_total, e, job_dir=None)
             results.append(result)
@@ -708,7 +702,7 @@ class Scheduler:
 
         assert outcome.output is not None and outcome.context is not None
         try:
-            self._result_router.route_output(
+            self._handle_job_output(
                 job,
                 outcome.output,
                 job_results,
