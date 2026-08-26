@@ -15,45 +15,33 @@ Public API
 from __future__ import annotations
 
 import hashlib
-import inspect
 import json
 import os
 import threading
-import time
 import uuid
-from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
-from .artifacts import ArtifactStore
 from .compiler import CompiledJob, CompiledWorkflow, WorkflowCompiler
 from .config import JobConfig, WorkflowSpec
-from .dataset import DatasetResultProtocol, MappedDatasetResult, iter_dataset_views
-from .error_report import build_error_report, save_error_report
 from .errors import (
-    ErrorCode,
     QPhaseConfigError,
-    QPhasePluginError,
-    QPhaseRuntimeError,
-    QPhaseSchedulerError,
     attach_session_log,
     get_logger,
 )
-from .execution import (
-    CancellationController,
-    CheckpointStore,
-    ExecutionContext,
-    ProgressReporter,
-    ResourceSnapshot,
-    execution_fingerprint,
-    plugin_fingerprint,
+from .execution import CancellationController, ExecutionContext
+from .job_runner import (
+    JobResult,
+    _JobOutcome,
+    configured_plugin_paths,
+    fail_job,
+    run_job,
+    scan_summary,
 )
-from .logging_context import bind_log_context, set_log_context
 from .persistence import ProjectStateStore
-from .progress import ProgressEvent, ProgressSnapshot, ProgressTracker
+from .progress import ProgressSnapshot
 from .project import ProjectContext
 from .protocols import ResultProtocol
 from .registry import RegistryCenter, registry
@@ -62,35 +50,6 @@ from .system_config import SystemConfig, load_system_config
 from .utils import save_yaml
 
 log = get_logger()
-
-
-@dataclass
-class JobResult:
-    """Result of a single job execution."""
-
-    job_index: int
-    job_name: str
-    job_dir: Path
-    success: bool
-    status: str = "completed"  # "completed" | "failed" | "skipped_dependency"
-    error_summary: str | None = None
-    error_id: str | None = None
-    error_code: str | None = None
-    error_report_path: str | None = None
-
-    @property
-    def error(self) -> str | None:
-        """Backward-compatible alias for ``error_summary``."""
-        return self.error_summary
-
-
-@dataclass
-class _JobOutcome:
-    """Internal result of one engine invocation before artifact persistence."""
-
-    result: JobResult
-    output: ResultProtocol | None
-    context: ExecutionContext | None
 
 
 class SessionManifest(TypedDict):
@@ -634,8 +593,8 @@ class Scheduler:
                 total_jobs=job_total,
                 engine=engine_name,
                 message="Starting job...",
-                scan_summary=self._scan_summary(job),
-                metadata={"plugins": self._configured_plugin_paths(job)},
+                scan_summary=scan_summary(job),
+                metadata={"plugins": configured_plugin_paths(job)},
             )
         )
 
@@ -677,7 +636,7 @@ class Scheduler:
         try:
             input_result = self._resolve_input(job, job_results, source)
         except Exception as e:
-            result = self._fail_job(job, job_idx, job_total, e, job_dir=None)
+            result = fail_job(self, job, job_idx, job_total, e, job_dir=None)
             results.append(result)
             self._job_statuses[job.name] = "failed"
             self._record_failure(result)
@@ -718,7 +677,8 @@ class Scheduler:
             )
             outcome.context.checkpoints.complete()
         except Exception as e:
-            failed = self._fail_job(
+            failed = fail_job(
+                self,
                 job,
                 job_idx,
                 job_total,
@@ -798,87 +758,6 @@ class Scheduler:
         if self.on_progress is not None:
             self.on_progress(snapshot)
 
-    @staticmethod
-    def _scan_summary(job: JobConfig) -> dict[str, Any] | None:
-        """Small scan descriptor for start events and error reports."""
-        if job.scan is None:
-            return None
-        try:
-            return job.scan.compile().summary()
-        except Exception:
-            return None
-
-    @staticmethod
-    def _configured_plugin_paths(job: JobConfig) -> list[str]:
-        return [
-            f"{namespace}.{name}"
-            for namespace, entries in job.plugins.items()
-            for name in entries
-        ]
-
-    def _fail_job(
-        self,
-        job: JobConfig,
-        job_idx: int,
-        job_total: int,
-        exc: BaseException,
-        *,
-        job_dir: Path | None,
-        stage: str | None = None,
-        plugin: str | None = None,
-    ) -> JobResult:
-        """Build the structured error report for a failed job, exactly once.
-
-        This is the single place that logs the exception traceback and writes
-        ``error_report.json``; callers must not re-log the same failure.
-        """
-        report = build_error_report(
-            exc,
-            session_id=self.session_id,
-            job_name=job.name,
-            engine=job.get_engine_name(),
-            stage=stage,
-            plugin=plugin,
-            job_dir=job_dir,
-            scan_context=self._scan_summary(job),
-            log_file=self._session_log_path,
-        )
-        if job_dir is not None:
-            target_dir = job_dir
-        elif self.session_dir is not None:
-            target_dir = self.session_dir / job.name
-        else:
-            target_dir = Path(".")
-        report_path = save_error_report(report, target_dir)
-        log.exception(f"Job '{job.name}' failed [{report.code}]: {report.summary}")
-        summary = report.summary_dto(
-            report_path=str(report_path) if report_path is not None else None
-        )
-        self._emit_snapshot(
-            ProgressSnapshot(
-                kind="job_failed",
-                job_name=job.name,
-                job_index=job_idx,
-                total_jobs=job_total,
-                engine=job.get_engine_name(),
-                stage=stage,
-                job_dir=str(target_dir),
-                error=summary,
-                message=report.summary,
-            )
-        )
-        return JobResult(
-            job_index=job_idx,
-            job_name=job.name,
-            job_dir=target_dir,
-            success=False,
-            status="failed",
-            error_summary=report.summary,
-            error_id=report.error_id,
-            error_code=report.code,
-            error_report_path=(str(report_path) if report_path is not None else None),
-        )
-
     def _run_job(
         self,
         job: JobConfig,
@@ -889,393 +768,16 @@ class Scheduler:
         compiled_job: CompiledJob,
         display_total: int | None = None,
     ) -> _JobOutcome:
-        """Execute a single job and return its outcome.
-
-        This method handles the complete job execution lifecycle:
-        1. Create the Session Job directory
-        2. Merge global config with job-specific config
-        3. Build plugin instances from configuration
-        4. Instantiate and run the engine
-        5. Aggregate progress events and save snapshot
-
-        Plugin and engine failures are converted into a failed ``_JobOutcome``
-        with a structured error report; this method does not re-raise them.
-
-        Parameters
-        ----------
-        job : JobConfig
-            Job configuration to execute
-        job_idx : int
-            Index of this job in the execution group (0-based)
-        job_total : int
-            Total number of jobs in the execution group
-        input_result : ResultProtocol | None
-            Input data from upstream job, or None
-        compiled_job : CompiledJob | None, optional
-            Precompiled control-plane configuration for this job.
-        display_total : int | None, optional
-            Number of jobs to display in progress reporting, so progress
-            reflects the user's mental model.
-
-        Returns
-        -------
-        _JobOutcome
-            Job execution metadata, engine output (on success), and the
-            execution context (on success).
-
-        """
-        display_total = job_total if display_total is None else display_total
-        job_dir = self._create_job_dir(job)
-        engine_name = job.get_engine_name()
-        tracker = self._make_tracker()
-        clock_start = time.monotonic()
-
-        with bind_log_context(
-            session_id=self.session_id, job=job.name, engine=engine_name
-        ):
-            try:
-                return self._run_job_inner(
-                    job,
-                    job_idx,
-                    display_total,
-                    input_result,
-                    compiled_job=compiled_job,
-                    job_dir=job_dir,
-                    engine_name=engine_name,
-                    tracker=tracker,
-                    clock_start=clock_start,
-                )
-            except Exception as e:
-                if getattr(e, "code", None) == ErrorCode.CANCELLATION:
-                    self._emit_snapshot(
-                        ProgressSnapshot(
-                            kind="job_skipped",
-                            job_name=job.name,
-                            job_index=job_idx,
-                            total_jobs=display_total,
-                            engine=engine_name,
-                            stage=tracker.current_stage,
-                            job_dir=str(job_dir),
-                            message="Cancelled",
-                        )
-                    )
-                    return _JobOutcome(
-                        result=JobResult(
-                            job_index=job_idx,
-                            job_name=job.name,
-                            job_dir=job_dir,
-                            success=False,
-                            status="cancelled",
-                            error_summary="cancelled by user",
-                        ),
-                        output=None,
-                        context=None,
-                    )
-                result = self._fail_job(
-                    job,
-                    job_idx,
-                    display_total,
-                    e,
-                    job_dir=job_dir,
-                    stage=tracker.current_stage,
-                )
-                return _JobOutcome(result=result, output=None, context=None)
-
-    def _run_job_inner(
-        self,
-        job: JobConfig,
-        job_idx: int,
-        display_total: int,
-        input_result: ResultProtocol | None,
-        *,
-        compiled_job: CompiledJob,
-        job_dir: Path,
-        engine_name: str,
-        tracker: ProgressTracker,
-        clock_start: float,
-    ) -> _JobOutcome:
-        """Job body executed under the error boundary of :meth:`_run_job`."""
-        merged_config = dict(compiled_job.merged_config)
-        final_plugins_cfg = dict(compiled_job.plugin_config)
-        engine_name = compiled_job.engine_name
-
-        # Build plugins (backend, integrator, state, etc.)
-        plugins = self._build_plugins(final_plugins_cfg)
-
-        # Extract engine name and config
-        engine_config_dict = merged_config.get("engine", {})
-        if (
-            not isinstance(engine_config_dict, dict)
-            or engine_name not in engine_config_dict
-        ):
-            raise QPhaseConfigError(
-                f"merged config has no engine config for {engine_name!r}",
-                code=ErrorCode.CONFIG,
-            )
-        engine_config_raw = dict(engine_config_dict[engine_name])
-        engine_config_raw["name"] = engine_name
-
-        # Inject the Job directory as output_dir for engines that support it.
-        # (e.g. VizEngine). We cast to str because config expects str.
-        # Engines that don't support this field should have extra="allow"
-        # in their config schema.
-        engine_config_raw["output_dir"] = str(job_dir)
-
-        # Instantiate engine via registry
-        try:
-            engine = self._registry.create_plugin_instance(
-                "engine", engine_config_raw, plugins=plugins
-            )
-        except Exception as e:
-            raise QPhasePluginError(
-                f"Failed to instantiate engine '{engine_name}': {e}",
-                code=ErrorCode.PLUGIN_CREATION,
-                hint="Check the engine configuration against its schema.",
-                context={"engine": engine_name},
-            ) from e
-
-        # Also write snapshot
-        self._write_snapshot(job_dir, job, compiled_job, job_idx)
-
-        # Structured progress plumbing: engines emit work events through the
-        # reporter; the tracker aggregates them into snapshots. Legacy engines
-        # keep working through the percent-signature adapter.
-        on_progress = self.on_progress
-
-        def _sink(event: ProgressEvent) -> None:
-            observed = tracker.observe(event)
-            if observed.stage:
-                set_log_context(stage=observed.stage)
-            if on_progress is None:
-                return
-            fraction, rate, remaining = tracker.estimates(observed)
-            on_progress(
-                ProgressSnapshot(
-                    kind=(
-                        "job_status" if observed.kind == "status" else "job_progress"
-                    ),
-                    job_name=job.name,
-                    job_index=job_idx,
-                    total_jobs=display_total,
-                    engine=engine_name,
-                    stage=observed.stage,
-                    completed=observed.completed,
-                    total=observed.total,
-                    unit=observed.unit,
-                    fraction=fraction,
-                    elapsed=tracker.elapsed(observed),
-                    rate=rate,
-                    remaining=remaining,
-                    message=observed.message,
-                    importance=observed.importance,
-                    metadata=observed.metadata,
-                    monotonic_time=observed.monotonic_time,
-                )
-            )
-
-        reporter = ProgressReporter(_sink)
-        legacy_cb = reporter.legacy_callback()
-
-        effective_system = job.merge_with_system_config(self.system_config)
-        backend = plugins.get("backend")
-        backend_name = None
-        if backend is not None and hasattr(backend, "backend_name"):
-            backend_name = str(backend.backend_name())
-        backend_config = getattr(backend, "config", None)
-        dtype = getattr(backend_config, "float_dtype", None)
-        checkpoint_config = effective_system.scan_runtime.checkpoint
-        if checkpoint_config.enabled:
-            plugin_ids = {
-                name: plugin_fingerprint(instance)
-                for name, instance in plugins.items()
-                if "." not in name
-            }
-            fingerprint = execution_fingerprint(
-                job.model_dump(by_alias=True),
-                plugins=plugin_ids,
-                backend=backend_name,
-                dtype=None if dtype is None else str(dtype),
-            )
-        else:
-            fingerprint = {}
-        from qphase.data.resolver import ProjectArtifactResolver
-
-        context = ExecutionContext(
-            parameter_grid=job.scan.compile() if job.scan is not None else None,
-            resources=ResourceSnapshot.from_system_config(
-                effective_system, backend=backend
-            ),
-            progress=reporter,
-            cancellation=self.cancellation.token_for(job.name),
-            artifacts=ArtifactStore(job_dir, effective_system.scan_runtime),
-            checkpoints=CheckpointStore(
-                job_dir,
-                checkpoint_config,
-                fingerprint,
-            ),
-            job_dir=job_dir,
-            artifact_resolver=ProjectArtifactResolver(self.project),
-            metadata={
-                "job_name": job.name,
-                "scan_summary": self._scan_summary(job),
-                "configured_plugins": self._configured_plugin_paths(job),
-            },
+        """Compatibility entry point for the module-level Job boundary."""
+        return run_job(
+            self,
+            job,
+            job_idx,
+            job_total,
+            input_result,
+            compiled_job=compiled_job,
+            display_total=display_total,
         )
-
-        output_result: ResultProtocol
-        if job.input is not None and job.input.mode == "map":
-            if not isinstance(input_result, DatasetResultProtocol):
-                raise QPhaseConfigError(
-                    f"job {job.name!r} uses input.mode=map but its source is not "
-                    "a dataset result",
-                    code=ErrorCode.INPUT,
-                )
-            mapped: OrderedDict[str, ResultProtocol] = OrderedDict()
-            views = list(
-                iter_dataset_views(
-                    input_result,
-                    select=job.input.select,
-                    group_by=tuple(job.input.group_by),
-                )
-            )
-            total_views = len(views)
-            for view_index, (label, view) in enumerate(views, start=1):
-                reporter.update(
-                    completed=view_index - 1,
-                    total=total_views,
-                    unit="view",
-                    stage="map",
-                    message=f"map view {view_index}/{total_views}: {label}",
-                )
-
-                def _map_child_sink(
-                    event: ProgressEvent,
-                    current_view_index: int = view_index,
-                ) -> None:
-                    detail = event.message or event.stage or "running"
-                    reporter.status(
-                        f"map view {current_view_index}/{total_views}: {detail}",
-                        stage="map",
-                        metadata={
-                            "view_index": current_view_index - 1,
-                            "view_total": total_views,
-                            "child_stage": event.stage,
-                            "child_completed": event.completed,
-                            "child_total": event.total,
-                            "child_unit": event.unit,
-                        },
-                    )
-
-                child_reporter = ProgressReporter(_map_child_sink)
-                context.progress = child_reporter
-                try:
-                    mapped[label] = self._invoke_engine(
-                        engine,
-                        view,
-                        context,
-                        child_reporter.legacy_callback(),
-                    )
-                finally:
-                    context.progress = reporter
-            reporter.update(
-                completed=total_views,
-                total=total_views,
-                unit="view",
-                stage="map",
-                message="map views complete",
-            )
-            preserves_shape = not job.input.select and not job.input.group_by
-            output_result = MappedDatasetResult(
-                mapped,
-                dict(input_result.axes)
-                if preserves_shape
-                else {"view": list(range(len(mapped)))},
-                input_result.shape if preserves_shape else (len(mapped),),
-                meta={"source": job.input.from_, "mode": "map"},
-            )
-        else:
-            output_result = self._invoke_engine(
-                engine, input_result, context, legacy_cb
-            )
-
-        # Ensure output is a ResultProtocol object
-        if not isinstance(output_result, ResultProtocol):
-            raise QPhaseRuntimeError(
-                f"Engine '{engine_name}' did not return a "
-                f"ResultProtocol object. "
-                f"All engines must return a ResultProtocol instance from "
-                f"their run() method."
-            )
-
-        # Report job completion
-        duration = time.monotonic() - clock_start
-        self._emit_snapshot(
-            ProgressSnapshot(
-                kind="job_completed",
-                job_name=job.name,
-                job_index=job_idx,
-                total_jobs=display_total,
-                engine=engine_name,
-                message="Completed successfully",
-                duration=duration,
-                job_dir=str(job_dir),
-            )
-        )
-
-        if self.on_job_dir is not None:
-            self.on_job_dir(job_dir)
-
-        return _JobOutcome(
-            result=JobResult(
-                job_index=job_idx,
-                job_name=job.name,
-                job_dir=job_dir,
-                success=True,
-                status="completed",
-            ),
-            output=output_result,
-            context=context,
-        )
-
-    def _make_tracker(self) -> ProgressTracker:
-        """Create a progress tracker parameterized by reporting config."""
-        try:
-            cfg = self.system_config.reporting.progress
-        except AttributeError:
-            cfg = None
-        return ProgressTracker(
-            eta_warmup_seconds=self._cfg_number(cfg, "eta_warmup_seconds", 2.0),
-            eta_min_samples=int(self._cfg_number(cfg, "eta_min_samples", 3)),
-            eta_smoothing=self._cfg_number(cfg, "eta_smoothing", 0.25),
-        )
-
-    @staticmethod
-    def _cfg_number(cfg: Any, name: str, default: float) -> float:
-        """Read a numeric config value defensively (tolerates test doubles)."""
-        try:
-            return float(getattr(cfg, name))
-        except (TypeError, ValueError, AttributeError):
-            return default
-
-    @staticmethod
-    def _invoke_engine(
-        engine: Any,
-        data: Any,
-        context: ExecutionContext,
-        progress_cb: Any | None,
-    ) -> ResultProtocol:
-        """Invoke an engine without masking TypeError raised inside the engine."""
-        signature = inspect.signature(engine.run)
-        accepts_kwargs = any(
-            parameter.kind is inspect.Parameter.VAR_KEYWORD
-            for parameter in signature.parameters.values()
-        )
-        kwargs: dict[str, Any] = {"data": data}
-        if accepts_kwargs or "context" in signature.parameters:
-            kwargs["context"] = context
-        if accepts_kwargs or "progress_cb" in signature.parameters:
-            kwargs["progress_cb"] = progress_cb
-        return engine.run(**kwargs)
 
     def _validate_jobs(self, workflow: WorkflowSpec) -> CompiledWorkflow:
         """Compile and validate a workflow before execution begins."""
@@ -1297,120 +799,6 @@ class Scheduler:
             system_config=self.system_config,
             registry_view=self._registry.view(),
         ).compile(revised)
-
-    def _build_plugins(self, plugins_config: dict[str, Any]) -> dict[str, Any]:
-        """Instantiate plugins based on configuration.
-
-        Supports nested format: {plugin_type: {plugin_name: config}}
-        or flat format: {plugin_type: {name: "...", params: {...}}}
-        """
-        plugins: dict[str, Any] = {}
-
-        for plugin_type, config_data in plugins_config.items():
-            if not config_data:
-                continue
-
-            # Check if this is nested format (plugin_name -> config)
-            # or flat format (with 'name' field)
-            if isinstance(config_data, dict) and "name" in config_data:
-                # Flat format: {name: "...", params: {...}}
-                try:
-                    instance = self._registry.create_plugin_instance(
-                        plugin_type, config_data
-                    )
-                    plugins[plugin_type] = instance
-                except Exception as e:
-                    raise QPhasePluginError(
-                        f"Failed to create plugin '{plugin_type}': {e}"
-                    ) from e
-            elif isinstance(config_data, dict):
-                # Nested format: {plugin_name: config, ...}
-                # Create instances for each plugin
-                type_instances = {}
-                for plugin_name, plugin_config in config_data.items():
-                    if not isinstance(plugin_config, dict):
-                        continue
-
-                    # Convert to flat format with name
-                    flat_config = dict(plugin_config)
-                    flat_config["name"] = plugin_name
-
-                    try:
-                        instance = self._registry.create_plugin_instance(
-                            plugin_type, flat_config
-                        )
-                        # Store by specific name (e.g. "analyser.psd")
-                        plugins[f"{plugin_type}.{plugin_name}"] = instance
-                        type_instances[plugin_name] = instance
-                    except Exception as e:
-                        raise QPhasePluginError(
-                            f"Failed to create plugin "
-                            f"'{plugin_type}.{plugin_name}': {e}"
-                        ) from e
-
-                # Store single instance directly, multiple instances as dict
-                if len(type_instances) == 1:
-                    plugins[plugin_type] = list(type_instances.values())[0]
-                else:
-                    plugins[plugin_type] = type_instances
-
-            else:
-                raise QPhasePluginError(f"Invalid plugin config for '{plugin_type}'")
-
-        return plugins
-
-    def _create_job_dir(self, job: JobConfig) -> Path:
-        """Create and return this logical Job's Artifact directory."""
-        if self.session_dir is None:
-            raise QPhaseSchedulerError(
-                f"cannot create Job directory for '{job.name}' without a Session"
-            )
-        job_dir = self.session_dir / job.name
-        job_dir.mkdir(parents=True, exist_ok=True)
-        return job_dir
-
-    def _write_snapshot(
-        self,
-        job_dir: Path,
-        job: JobConfig,
-        compiled_job: CompiledJob,
-        job_idx: int,
-    ) -> None:
-        """Write configuration snapshot for reproducibility.
-
-        Parameters
-        ----------
-        job_dir : Path
-            Session directory for this Job.
-        job : JobConfig
-            Job configuration
-        compiled_job : CompiledJob
-            Resolved configuration used by this execution.
-        job_idx : int
-            Job index
-
-        """
-        from .snapshot import SnapshotManager
-
-        snapshot_manager = SnapshotManager(self.project.session_root)
-        snapshot = snapshot_manager.create_snapshot(
-            job=job,
-            job_index=job_idx,
-            system_config=self.system_config,
-            validated_plugins=dict(compiled_job.plugin_config),
-            engine_config=dict(compiled_job.engine_config),
-            session_id=self.session_id,
-            job_dir=job_dir,
-            input_job=compiled_job.input_source,
-            output_job=compiled_job.output,
-            metadata={
-                "scheduler_version": "2.0",
-                "snapshot_created_by": "scheduler",
-            },
-        )
-        snapshot_path = snapshot_manager.save_snapshot(snapshot, job_dir)
-        log.debug(f"Snapshot saved to {snapshot_path}")
-
 
 def execute_workflow(
     workflow: WorkflowSpec,

@@ -23,12 +23,21 @@ Scheduler(
     on_progress: Callable[[ProgressSnapshot], None] | None = None,
     on_job_dir: Callable[[Path], None] | None = None,
     cancellation: CancellationController | None = None,
+    state_store: ProjectStateStore | None = None,
+    registry_center: RegistryCenter | None = None,
 )
 ```
 
 `Scheduler.run(workflow, dry_run=False, resume_from=None)` validates the logical
 Job graph, resolves engines and plugins, passes scan grids to resource engines,
 persists Artifacts, and returns `list[JobResult]`.
+
+`Scheduler.run(..., compiled_workflow=compiled)` consumes a previously resolved
+compiled request without re-reading project defaults or rebuilding the logical
+plugin selection. The normal call compiles the Workflow once at the execution
+boundary. Single Job plugin/context/Engine work is implemented by the internal
+`qphase.core.job_runner` boundary; the Scheduler retains graph and lifecycle
+responsibilities.
 
 `ExecutionManager` is the service-layer asynchronous control surface. It keeps
 one logical execution queue, persists lifecycle records under the project-local

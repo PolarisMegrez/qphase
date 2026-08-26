@@ -39,6 +39,10 @@ separate execution semantics.
   after a process restart; records that were running when the process stopped
   are reported as interrupted failures rather than falsely resumed.
 - `Scheduler` executes one Workflow graph and persists one Session.
+- `job_runner.py` is the single logical-Job execution boundary: it constructs
+  the resolved plugins and context, invokes the Engine, adapts progress, and
+  converts Job failures into typed results. Scheduler remains responsible for
+  graph order, dependency state, cancellation, and terminal aggregation.
 - `ArtifactStore` saves each logical result and describes physical layout.
 - `ProjectService` indexes Workflow documents and Session history.
 
