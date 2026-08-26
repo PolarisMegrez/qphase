@@ -24,6 +24,7 @@ from qphase.data import (
     AxisSchema,
     BundleDescriptor,
     DataKind,
+    DirectoryArtifactResolver,
     GenericDataBundle,
     ProductSchema,
     ProductStorage,
@@ -154,8 +155,10 @@ def test_save_load_roundtrip_single_product(tmp_path):
     assert ref.storage_adapter == "npz/3"
     assert "content_hash" not in ref.model_dump()
     backed = TimeSeriesDataset(dataset.schema, ref)
+    resolver = DirectoryArtifactResolver()
+    resolver.register(manifest.artifact_id, tmp_path)
     np.testing.assert_array_equal(
-        backed.materialize().handle("x").materialize(),
+        backed.materialize(resolver=resolver).handle("x").materialize(),
         dataset.handle("x").materialize(),
     )
 
@@ -194,11 +197,11 @@ def test_unknown_artifact_ref_requires_store_open(tmp_path):
     manifest = save_products(tmp_path, {"trajectories": dataset})
     ref = manifest.product_ref("trajectories")
     default_artifact_resolver().clear()
-    with pytest.raises(ArtifactNotFoundError, match="not bound"):
+    with pytest.raises(ArtifactNotFoundError, match="explicit"):
         TimeSeriesDataset(dataset.schema, ref).materialize()
-    # Opening through the store re-registers the location.
-    load_products(tmp_path)
-    TimeSeriesDataset(dataset.schema, ref).materialize()
+    resolver = DirectoryArtifactResolver()
+    resolver.register(manifest.artifact_id, tmp_path)
+    TimeSeriesDataset(dataset.schema, ref).materialize(resolver=resolver)
 
 
 def test_sharded_lazy_selection_prunes_untouched_chunks(tmp_path, monkeypatch):

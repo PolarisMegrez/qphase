@@ -14,8 +14,9 @@ JSON — pickle and object arrays are forbidden by the schema layer.
 
 Artifact-backed datasets resolve their payload lazily through the registered
 storage adapter named in the artifact reference (a trusted registry id, never
-a Python code path); the concrete artifact store and NPZ adapters ship with
-the current artifact manifest.
+a Python code path) and an explicit ``ArtifactResolver`` supplied by the
+caller; the concrete artifact store and NPZ adapters ship with the current
+artifact manifest.
 
 Public API
 ----------
@@ -38,9 +39,11 @@ import numpy as np
 
 from ..core.utils import canonical_json
 from .artifact import ArtifactRef
+from .errors import ArtifactNotFoundError
 from .handles import CopyPolicy, DataHandleProtocol
 from .kinds import DataKind
 from .product import RuntimeProductBacking, validate_backing
+from .resolver import ArtifactResolverProtocol
 from .runtime import (
     BackendArrayHandle,
     DictProductBacking,
@@ -84,12 +87,18 @@ def _wrap_array(
     )
 
 
-def _load_artifact_backing(ref: ArtifactRef) -> RuntimeProductBacking:
-    """Resolve the registered storage adapter and open the ref's backing."""
+def _load_artifact_backing(
+    ref: ArtifactRef, resolver: ArtifactResolverProtocol | None
+) -> RuntimeProductBacking:
+    """Resolve a storage adapter through an explicit artifact resolver."""
     from .store import _resolve_adapter  # local import: store imports datasets
 
     adapter = _resolve_adapter(ref.storage_adapter)
-    backing = adapter.open_ref(ref)
+    if resolver is None:
+        raise ArtifactNotFoundError(
+            "artifact materialization requires an explicit ArtifactResolver"
+        )
+    backing = adapter.open_ref(ref, resolver=resolver)
     if not isinstance(backing, RuntimeProductBacking):
         raise TypeError(
             f"storage adapter {ref.storage_adapter!r} returned "
@@ -342,12 +351,15 @@ class Dataset:
         self,
         target_device: str | None = None,
         copy_policy: CopyPolicy = "allow",
+        *,
+        resolver: ArtifactResolverProtocol | None = None,
     ) -> Dataset:
         """Return a runtime-backed dataset on ``target_device``.
 
         ``target_device=None`` keeps the payload where it is: runtime-backed
         datasets are returned unchanged, artifact-backed datasets are loaded
-        onto the host through the storage adapter named in the reference. Explicit
+        onto the host through the storage adapter named in the reference and
+        ``resolver``. Explicit
         device placement goes through the per-variable handles with the given
         copy policy; host handles never perform host-to-device transfers, so
         moving a host payload to a device raises. No implicit device-to-host
@@ -357,12 +369,14 @@ class Dataset:
         if isinstance(backing, ArtifactRef):
             host = type(self)(
                 self._schema,
-                _load_artifact_backing(backing),
+                _load_artifact_backing(backing, resolver),
                 provenance=self._provenance,
             )
             if target_device in (None, "cpu"):
                 return host
-            return host.materialize(target_device, copy_policy)
+            return host.materialize(
+                target_device, copy_policy, resolver=resolver
+            )
         handles = dict(backing.variables)
         if target_device is None or (
             target_device == "cpu"

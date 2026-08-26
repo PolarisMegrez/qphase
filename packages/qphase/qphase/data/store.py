@@ -573,7 +573,7 @@ class StorageAdapterProtocol(Protocol):
         """Open the product referenced by an artifact ref.
 
         ``resolver`` turns the ref's artifact id into an on-disk location;
-        adapters fall back to the process-default resolver when omitted.
+        artifact materialization must provide it explicitly.
         """
         ...
 

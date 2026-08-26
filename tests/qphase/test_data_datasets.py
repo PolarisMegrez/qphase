@@ -11,6 +11,7 @@ from qphase.data import (
     DataKind,
     DataProduct,
     DictProductBacking,
+    DirectoryArtifactResolver,
     HostArrayHandle,
     ProductSchema,
     SamplingBasisSchema,
@@ -37,7 +38,10 @@ class _FakeAdapter:
     def open_product(self, *args, **kwargs):
         raise NotImplementedError
 
-    def open_ref(self, ref: ArtifactRef) -> DictProductBacking:
+    def open_ref(
+        self, ref: ArtifactRef, *, resolver=None
+    ) -> DictProductBacking:
+        del resolver
         handles = {}
         for variable in ref.product_schema.variables:
             shape = tuple(
@@ -389,7 +393,7 @@ def test_artifact_backed_dataset_materializes_through_loader():
     with pytest.raises(RuntimeError, match="materialize"):
         dataset.slice_view(time=0)
 
-    loaded = dataset.materialize()
+    loaded = dataset.materialize(resolver=DirectoryArtifactResolver())
     assert loaded.is_runtime_backed
     assert loaded.shape == {"x": (3, 5)}
     assert loaded.handle("x").materialize().dtype == np.complex128

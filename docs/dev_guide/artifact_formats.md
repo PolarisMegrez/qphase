@@ -129,6 +129,11 @@ must preserve the manifest contracts defined here.
   id, product name, product schema and storage adapter id; it names no code and
   no filesystem location.
 
+Artifact-backed datasets must be materialized with an explicit resolver, for
+example `dataset.materialize(resolver=ProjectArtifactResolver(project))`.
+There is no implicit process-global resolver on the normal materialization
+path; this prevents identical Artifact IDs from crossing Project boundaries.
+
 ## SDE data products
 
 `qphase_sde` returns typed `SDEDataBundle`s from every `engine.run()` exit

@@ -16,11 +16,10 @@ Layout rules:
   validated manifest without reading, and selections read only the chunks
   they touch (no full concatenation for point/chunk access).
 
-The module keeps a process-local registry mapping artifact ids to artifact
-directories, so that :class:`~qphase.data.artifact.ArtifactRef`-backed
-datasets can resolve their storage context. The registry is populated by
-``save_products``/``load_products``; cross-process restores must open the
-artifact directory once before dereferencing refs.
+Artifact references are opened through an explicit
+:class:`~qphase.data.resolver.ArtifactResolverProtocol`. The process-local
+resolver remains available for callers that deliberately bind a location;
+project execution supplies a project-scoped resolver instead.
 
 Public API
 ----------
@@ -53,7 +52,7 @@ from .errors import (
 )
 from .handles import CopyPolicy
 from .product import RuntimeProductBacking
-from .resolver import ArtifactResolverProtocol, default_artifact_resolver
+from .resolver import ArtifactResolverProtocol
 from .runtime import DictProductBacking, _ArrayHandleBase
 from .schema import ProductSchema, VariableSchema
 from .store import (
@@ -592,8 +591,11 @@ class NpzStorageAdapter:
                 f"artifact ref requires adapter {ref.storage_adapter!r}, "
                 f"not {self.ADAPTER_ID!r}"
             )
-        active = resolver if resolver is not None else default_artifact_resolver()
-        directory = active.resolve(ref)
+        if resolver is None:
+            raise ArtifactNotFoundError(
+                "NPZ artifact references require an explicit ArtifactResolver"
+            )
+        directory = resolver.resolve(ref)
         from .store import ArtifactManifest  # local: avoid an import cycle
 
         manifest = ArtifactManifest.read(directory)
@@ -866,12 +868,14 @@ def _sanitize_stem(name: str) -> str:
     return "".join(c if c.isalnum() or c in "_.-" else "_" for c in name)
 
 
-def load_product_backing(ref: ArtifactRef) -> RuntimeProductBacking:
+def load_product_backing(
+    ref: ArtifactRef, *, resolver: ArtifactResolverProtocol
+) -> RuntimeProductBacking:
     """Restore entry point for NPZ-backed artifact refs.
 
-    Resolves the artifact's on-disk location through the process-local
-    registry populated by ``save_products``/``load_products`` and opens the
-    product as a lazily-reading runtime backing. Datasets reach this through
-    the storage adapter registry, never through a persisted code path.
+    Resolves the artifact's on-disk location through the explicit resolver
+    supplied by the caller and opens the product as a lazily-reading runtime
+    backing. Datasets reach this through the storage adapter registry, never
+    through a persisted code path.
     """
     return NpzStorageAdapter().open_ref(ref)
