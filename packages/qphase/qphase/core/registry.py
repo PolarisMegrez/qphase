@@ -16,12 +16,10 @@ registry
 
 import importlib.metadata
 import sys
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from importlib import import_module
-from pathlib import Path
 from typing import Any
 
 from .errors import (
@@ -61,7 +59,6 @@ class _Entry:
 Namespace = str
 Name = str
 FullName = str
-_LOCAL_IMPORT_LOCK = threading.RLock()
 
 
 class RegistryCenter:
@@ -225,12 +222,6 @@ class RegistryCenter:
             assert entry.builder is not None
             return entry.builder
         assert entry.target is not None
-        meta = entry.meta or {}
-        if meta.get("local_import_root"):
-            return self._import_local_target(
-                entry.target,
-                Path(str(meta["local_import_root"])),
-            )
         return self._import_target(entry.target)
 
     def get_plugin_class(self, namespace: str, name: str) -> Any:
@@ -259,9 +250,7 @@ class RegistryCenter:
             ) from e
 
     def get_plugin_manifest(self, namespace: str, name: str) -> PluginManifest:
-        """Return a plugin manifest, using an empty manifest for legacy plugins."""
-        if self.is_local_plugin(namespace, name):
-            return PluginManifest()
+        """Return the manifest declared by a registered plugin."""
         plugin_class = self.get_plugin_class(namespace, name)
         manifest = getattr(plugin_class, "manifest", None)
         return manifest if isinstance(manifest, PluginManifest) else PluginManifest()
@@ -352,49 +341,6 @@ class RegistryCenter:
             )
         return getattr(mod, attr_name)
 
-    @staticmethod
-    def _import_local_target(target: str, import_root: Path) -> Any:
-        """Load a local target while isolating its module namespace."""
-        with _LOCAL_IMPORT_LOCK:
-            module_name, separator, found_attr = target.partition(":")
-            attr_name: str | None
-            if not separator:
-                parts = module_name.rsplit(".", 1)
-                module_name, attr_name = (
-                    parts if len(parts) == 2 else (target, None)
-                )
-            else:
-                attr_name = found_attr
-            module_prefix = module_name.split(".", 1)[0]
-            saved_modules = {
-                name: module
-                for name, module in sys.modules.items()
-                if name == module_prefix or name.startswith(f"{module_prefix}.")
-            }
-            import_root_text = str(import_root)
-            path_was_present = import_root_text in sys.path
-            try:
-                for name in list(sys.modules):
-                    if name == module_prefix or name.startswith(f"{module_prefix}."):
-                        del sys.modules[name]
-                if not path_was_present:
-                    sys.path.insert(0, import_root_text)
-                module = import_module(module_name)
-                if attr_name is None:
-                    return module
-                if not hasattr(module, attr_name):
-                    raise QPhaseConfigError(
-                        f"Target '{target}' not found in local module '{module_name}'"
-                    )
-                return getattr(module, attr_name)
-            finally:
-                for name in list(sys.modules):
-                    if name == module_prefix or name.startswith(f"{module_prefix}."):
-                        del sys.modules[name]
-                sys.modules.update(saved_modules)
-                if not path_was_present:
-                    sys.path.remove(import_root_text)
-
     # --------------------------- plugin factory ---------------------------
     def create_plugin_instance(
         self, plugin_type: str, config: Any, **extra_kwargs: Any
@@ -458,9 +404,6 @@ class RegistryCenter:
         if entry.config_schema is not None:
             return entry.config_schema
 
-        if self.is_local_plugin(namespace, name):
-            return None
-
         # Load plugin to inspect
         try:
             obj = self.get_plugin_class(namespace, name)
@@ -482,15 +425,11 @@ class RegistryCenter:
         if not name:
             raise QPhaseConfigError(f"Plugin config for '{plugin_type}' missing 'name'")
 
-        if not self.get_plugin_schema(plugin_type, name) and not self.is_local_plugin(
-            plugin_type, str(name)
-        ):
+        if not self.get_plugin_schema(plugin_type, name):
             raise QPhaseConfigError(
                 f"No configuration schema found for plugin "
                 f"'{plugin_type}:{name}'. All plugins must define a config_schema."
             )
-        if self.is_local_plugin(plugin_type, str(name)):
-            return dict(config_data)
 
         params = config_data.get("params", {}).copy()
         # Merge other fields into params if they are not name/params
@@ -668,6 +607,10 @@ class DiscoveryService:
             plugins_list = data.get("plugins", [])
             if not isinstance(plugins_list, list):
                 continue
+
+            import_root = str(plugin_dir.parent.resolve())
+            if import_root not in sys.path:
+                sys.path.insert(0, import_root)
 
             for plugin_entry in plugins_list:
                 if not isinstance(plugin_entry, dict):

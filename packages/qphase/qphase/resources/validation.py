@@ -194,13 +194,15 @@ def validate_source_layout(
                     location=module,
                 )
             )
-    for directory in profile_required_directories(profiles):
-        if not (root / directory).is_dir():
+    for required_directory in profile_required_directories(profiles):
+        if not (root / required_directory).is_dir():
             issues.append(
                 ValidationIssue(
                     code="missing-directory",
-                    message=f"profile-required directory {directory!r}/ is missing",
-                    location=directory,
+                    message=(
+                        f"profile-required directory {required_directory!r}/ is missing"
+                    ),
+                    location=required_directory,
                 )
             )
 

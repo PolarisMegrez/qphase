@@ -204,7 +204,7 @@ def write_snapshot(
     )
     try:
         path = manager.save_snapshot(snapshot, job_dir)
-    except OSError as exc:
+    except (OSError, TypeError, ValueError) as exc:
         raise QPhaseIOError(
             f"failed to save Job snapshot for '{job.name}'",
             code=ErrorCode.ARTIFACT_IO,

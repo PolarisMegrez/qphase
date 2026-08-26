@@ -650,18 +650,13 @@ class Scheduler:
             return
 
         # Normal execution (engine/plugin boundary inside _run_job).
-        raw_outcome = self._run_job(
+        outcome = self._run_job(
             job,
             job_idx,
             job_total,
             input_result,
             compiled_job=compiled_job,
             display_total=len(logical_jobs),
-        )
-        # Keep one compatibility cycle for tests/extensions that patched the
-        # former private three-tuple return contract.
-        outcome = (
-            _JobOutcome(*raw_outcome) if isinstance(raw_outcome, tuple) else raw_outcome
         )
         results.append(outcome.result)
         self._job_statuses[job.name] = outcome.result.status

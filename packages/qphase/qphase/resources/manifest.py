@@ -276,7 +276,7 @@ class ResourcePackageManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["qphase.resource/1"] = RESOURCE_MANIFEST_SCHEMA
+    schema_version: Literal["qphase.resource/1"] = "qphase.resource/1"
     resource_id: str
     package_version: str
     engine: EngineDeclaration
