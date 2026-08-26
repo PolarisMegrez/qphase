@@ -269,8 +269,11 @@ def test_corrupted_chunk_is_detected(tmp_path):
     np.savez(chunk_file, data=np.zeros((5, 8), dtype=np.complex128))
 
     loaded = load_products(tmp_path)["trajectories"]
+    # Ordinary reads validate structure only; payload integrity is explicit.
+    loaded.handle("x").materialize()
+    manifest = ArtifactManifestV3.read(tmp_path)
     with pytest.raises(ArtifactChecksumError, match="checksum mismatch"):
-        loaded.handle("x").materialize()
+        NpzStorageAdapter().verify_product(manifest.products[0], tmp_path)
 
 
 def test_chunk_read_rejects_reinterpreted_payload(tmp_path):

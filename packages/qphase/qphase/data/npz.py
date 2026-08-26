@@ -11,8 +11,9 @@ Layout rules:
   ``allow_pickle``;
 - metadata lives only in the manifest JSON, never inside the NPZ;
 - every chunk carries a content hash over its dtype/shape/order/selection
-  header plus its C-contiguous payload bytes; a handle verifies it on first
-  access, while subsequent reads only check the lightweight structure;
+  header plus its C-contiguous payload bytes; ordinary handles check only the
+  lightweight structure, while explicit adapter verification checks payload
+  bytes;
 - reopening a product is lazy: handles expose shape/dtype/nbytes from the
   validated manifest without reading, and selections read only the chunks
   they touch (no full concatenation for point/chunk access).
@@ -158,9 +159,9 @@ def _read_chunk(
     record: NpzChunkRecord,
     expected_keys: frozenset[str],
     *,
-    verify_checksum: bool = True,
+    verify_checksum: bool = False,
 ) -> np.ndarray:
-    """Read one chunk file and verify key set, dtype, shape and hash.
+    """Read one chunk file and verify structure, optionally including its hash.
 
     ``allow_pickle`` is never enabled: chunk files hold native-dtype arrays
     only, so a payload that would require pickle is rejected by NumPy. The
@@ -222,7 +223,6 @@ class NpzArrayHandle(_ArrayHandleBase):
         self._path = path
         self._record = record
         self._expected_keys = expected_keys
-        self._checksum_verified = False
 
     @property
     def device(self) -> str:
@@ -257,14 +257,7 @@ class NpzArrayHandle(_ArrayHandleBase):
                 f"npz handle cannot materialize on {target_device!r}; device "
                 "transfers are performed by backends creating backend handles"
             )
-        array = _read_chunk(
-            self._path,
-            self._record,
-            self._expected_keys,
-            verify_checksum=not self._checksum_verified,
-        )
-        self._checksum_verified = True
-        return array
+        return _read_chunk(self._path, self._record, self._expected_keys)
 
     def materialize_selection(self, indexers: tuple[Any, ...]) -> np.ndarray:
         """Read the chunk and apply the selection (single-chunk fast path)."""
@@ -327,7 +320,6 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         self._shape = tuple(shape)
         self._axis = axis
         self._expected_keys = expected_keys
-        self._checksum_verified: set[str] = set()
 
     @property
     def device(self) -> str:
@@ -356,17 +348,10 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         return len(self._chunks)
 
     def read_chunk(self, index: int) -> np.ndarray:
-        """Read one chunk file (with full content verification)."""
+        """Read one chunk file with ordinary structural validation."""
         self._check_live()
         path, record = self._chunks[index]
-        array = _read_chunk(
-            path,
-            record,
-            self._expected_keys[record.file],
-            verify_checksum=record.file not in self._checksum_verified,
-        )
-        self._checksum_verified.add(record.file)
-        return array
+        return _read_chunk(path, record, self._expected_keys[record.file])
 
     def materialize(
         self,
@@ -638,6 +623,7 @@ class NpzStorageAdapter:
                     resolve_artifact_path(directory, chunk.file),
                     chunk,
                     expected_keys[chunk.file],
+                    verify_checksum=True,
                 )
 
     def open_ref(

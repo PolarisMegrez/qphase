@@ -81,10 +81,10 @@ schema `npz.product/2`) records per variable in its descriptor:
   `file` (artifact-relative), `key`, `logical_range` (`[start, stop)` along
   `chunk_axis`, `null` when the chunk holds the whole variable), `shape`,
   `dtype` and `sha256` — the hash covers the dtype/shape/order/selection
-  header plus the C-contiguous payload bytes and is **verified on first handle
-  access**, together with the actual dtype, shape and exact descriptor-wide key
-  set for that payload file. Undeclared keys are corruption; later reads keep
-  the lightweight key/dtype/shape checks without rescanning payload bytes.
+  header plus the C-contiguous payload bytes. Ordinary reads verify the actual
+  dtype, shape and exact descriptor-wide key set for that payload file;
+  payload hash verification is an explicit adapter operation. Undeclared keys
+  are corruption.
 
 File layout:
 

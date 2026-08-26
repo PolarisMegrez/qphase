@@ -16,9 +16,9 @@ Trust model:
 - all payload paths are validated as artifact-relative POSIX paths and
   re-resolved under the artifact root at open time (no ``..``, absolute,
   drive, UNC or symlink escapes);
-- integrity is verified in three layers: the manifest/product layer is
-  re-validated (cross-field and metadata hashes) at parse time, and each
-  payload chunk is hash/dtype/shape-verified on first handle access. ``content_hash``
+- integrity is verified at the manifest/product boundary (cross-field and
+  metadata hashes). Ordinary payload handles check key/dtype/shape only;
+  payload hashes are checked by explicit adapter verification. ``content_hash``
   is an integrity check against accidental corruption, not a digital
   signature.
 

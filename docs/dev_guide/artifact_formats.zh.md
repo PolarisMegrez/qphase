@@ -72,9 +72,8 @@ manifest 校验还会聚合不同产品的 payload ownership：同一产品的�
   对路径）、`key`、`logical_range`（沿 `chunk_axis` 的 `[start, stop)`
   区间，chunk 持有整个变量时为 `null`）、`shape`、`dtype` 与 `sha256`
   —— 哈希覆盖 dtype/shape/order/selection 头部与 C 连续 payload 字节，
-  **首次 handle 访问时校验**，同时核对实际 dtype、shape 与该 payload 文件由
-  descriptor 声明的精确 key 集合；后续读取只进行轻量结构检查，不重新扫描 payload；
-  额外 key 视为损坏。
+  普通读取只核对实际 dtype、shape 与该 payload 文件由 descriptor 声明的精确
+  key 集合；payload 哈希由 adapter 的显式校验操作完成。额外 key 视为损坏。
 
 文件布局：
 
