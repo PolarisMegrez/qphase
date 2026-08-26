@@ -120,3 +120,7 @@ def test_session_manifest_write_failure_is_not_silently_ignored(
     scheduler.manifest = {"bad": object()}
     with pytest.raises(QPhaseIOError, match="failed to save session manifest"):
         scheduler._save_manifest()
+
+    scheduler.manifest = {"bad": float("nan")}
+    with pytest.raises(QPhaseIOError, match="failed to save session manifest"):
+        scheduler._save_manifest()

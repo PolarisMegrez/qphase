@@ -272,9 +272,20 @@ def test_scheduler_service_lists_manifest_artifact_as_one_item(tmp_path):
     assert items[0].artifact_id == manifest.artifact_id
     assert items[0].file_ref is None
     assert items[0].path == job_dir
+    assert items[0].job_name == "job1"
     assert service.describe_artifact_by_id(
         manifest.artifact_id, session_dir=session_root
     ).artifact_id == manifest.artifact_id
+
+
+def test_scheduler_service_rejects_corrupt_manifest_during_listing(tmp_path):
+    session_root = tmp_path / "session"
+    job_dir = session_root / "job1"
+    job_dir.mkdir(parents=True)
+    (job_dir / "artifact_manifest.json").write_text("{bad", encoding="utf-8")
+
+    with pytest.raises(ArtifactCorruptError, match="failed to parse"):
+        SchedulerService(_system_config(tmp_path)).list_artifacts(session_root)
 
 
 def test_scheduler_service_describe_products_rejects_non_artifact(tmp_path):

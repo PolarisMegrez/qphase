@@ -423,7 +423,9 @@ def test_gui_api_job_products_maps_corrupt_manifest_to_422(temp_workspace):
 
     with TestClient(create_app()) as client:
         response = client.get("/sessions/corrupt-session/jobs/job1/products")
+        listing = client.get("/sessions/corrupt-session/artifacts")
         missing = client.get("/sessions/corrupt-session/jobs/nope/products")
 
     assert response.status_code == 422
+    assert listing.status_code == 422
     assert missing.status_code == 404

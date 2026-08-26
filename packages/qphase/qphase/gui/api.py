@@ -320,11 +320,14 @@ def create_app(
     @app.get("/sessions/{session_id}/artifacts")
     def list_session_artifacts(session_id: str) -> dict[str, Any]:
         root = context.project_service.session_dir(session_id)
+        try:
+            artifacts = scheduler.list_artifacts(root)
+        except FileNotFoundError as exc:
+            raise _http_error(exc, status_code=404) from exc
+        except ArtifactError as exc:
+            raise _http_error(exc, status_code=422) from exc
         return {
-            "artifacts": [
-                artifact.model_dump(mode="json")
-                for artifact in scheduler.list_artifacts(root)
-            ]
+            "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts]
         }
 
     @app.get("/sessions/{session_id}/files/{file_ref:path}")

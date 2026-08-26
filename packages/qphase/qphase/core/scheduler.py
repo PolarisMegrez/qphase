@@ -240,7 +240,7 @@ class Scheduler:
             try:
                 temporary = manifest_path.with_suffix(".tmp")
                 with open(temporary, "w", encoding="utf-8") as f:
-                    json.dump(self.manifest, f, indent=2)
+                    json.dump(self.manifest, f, indent=2, allow_nan=False)
                 temporary.replace(manifest_path)
             except (OSError, TypeError, ValueError) as exc:
                 raise QPhaseIOError(

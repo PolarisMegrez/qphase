@@ -119,20 +119,35 @@ class SchedulerService:
         project-relative ``file_ref`` and have no artifact identity.
         """
         root = Path(session_dir).expanduser().resolve()
+        from ..data.errors import ArtifactCorruptError
         from ..data.store import (
             ARTIFACT_SCHEMA_VERSION,
             ArtifactManifestV3,
             storage_referenced_files,
         )
 
+        def job_name(path: Path) -> str | None:
+            relative = path.relative_to(root)
+            return relative.parts[0] if relative.parts else None
+
         artifact_dirs: set[Path] = set()
         artifacts: list[ArtifactSummary] = []
         for manifest_path in sorted(root.rglob("artifact_manifest.json")):
             artifact_dir = manifest_path.parent.resolve()
-            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if not isinstance(raw, dict) or raw.get("schema_version") != (
-                ARTIFACT_SCHEMA_VERSION
-            ):
+            try:
+                raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ArtifactCorruptError(
+                    f"failed to parse artifact manifest {manifest_path}: {exc}"
+                ) from exc
+            if not isinstance(raw, dict):
+                raise ArtifactCorruptError(
+                    f"artifact manifest {manifest_path} must contain an object"
+                )
+            version = raw.get("schema_version")
+            if version != ARTIFACT_SCHEMA_VERSION:
+                if isinstance(version, str) and version.startswith("qphase.artifact/"):
+                    ArtifactManifestV3.read(artifact_dir)
                 continue
             manifest = ArtifactManifestV3.read(artifact_dir)
             size = sum(
@@ -147,11 +162,7 @@ class SchedulerService:
                     path=artifact_dir,
                     kind="result",
                     format=manifest.schema_version,
-                    job_name=(
-                        artifact_dir.parent.name
-                        if artifact_dir.parent != root
-                        else None
-                    ),
+                    job_name=job_name(artifact_dir),
                     size=size,
                 )
             )
@@ -168,7 +179,7 @@ class SchedulerService:
                     path=path,
                     kind=self._artifact_kind(path),
                     format=path.suffix.lstrip(".") or None,
-                    job_name=path.parent.name if path.parent != root else None,
+                    job_name=job_name(path.parent),
                     size=path.stat().st_size,
                 )
             )
