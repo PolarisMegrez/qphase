@@ -592,31 +592,44 @@ class DiscoveryService:
             if not plugins_file.exists():
                 continue
 
-            try:
-                data = load_yaml(plugins_file)
-            except Exception:
-                continue
-
-            if not data or not isinstance(data, dict):
-                continue
-
-            plugins_list = data.get("plugins", [])
+            data = load_yaml(plugins_file)
+            if not isinstance(data, dict):
+                raise QPhaseConfigError(
+                    f"local plugin manifest must contain a mapping: {plugins_file}"
+                )
+            if "plugins" not in data:
+                raise QPhaseConfigError(
+                    f"local plugin manifest is missing 'plugins': {plugins_file}"
+                )
+            plugins_list = data["plugins"]
             if not isinstance(plugins_list, list):
-                continue
+                raise QPhaseConfigError(
+                    f"local plugin manifest 'plugins' must be a list: {plugins_file}"
+                )
 
             import_root = str(plugin_dir.parent.resolve())
             if import_root not in sys.path:
                 sys.path.insert(0, import_root)
 
-            for plugin_entry in plugins_list:
+            for index, plugin_entry in enumerate(plugins_list):
                 if not isinstance(plugin_entry, dict):
-                    continue
+                    raise QPhaseConfigError(
+                        f"local plugin entry {index} must be a mapping: {plugins_file}"
+                    )
 
                 plugin_type = plugin_entry.get("type", "")
                 target = plugin_entry.get("target", "")
 
-                if not plugin_type or not target:
-                    continue
+                if not isinstance(plugin_type, str) or not plugin_type.strip():
+                    raise QPhaseConfigError(
+                        f"local plugin entry {index} requires a string 'type': "
+                        f"{plugins_file}"
+                    )
+                if not isinstance(target, str) or not target.strip():
+                    raise QPhaseConfigError(
+                        f"local plugin entry {index} requires a string 'target': "
+                        f"{plugins_file}"
+                    )
 
                 # Parse type: "namespace.name" format
                 type_parts = plugin_type.split(".", 1)

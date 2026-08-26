@@ -142,3 +142,23 @@ def test_local_plugin_discovery_propagates_project_errors(monkeypatch):
     monkeypatch.setattr(ProjectContext, "discover", classmethod(fail_discovery))
     with pytest.raises(QPhaseConfigError, match="invalid Project"):
         DiscoveryService(RegistryCenter()).discover_local_plugins()
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ("plugins: [", "Failed to parse YAML"),
+        ("- model.example", "must contain a mapping"),
+        ("plugins: {}", "must be a list"),
+        ("plugins:\n  - type: model.example\n", "requires a string 'target'"),
+    ],
+)
+def test_local_plugin_discovery_rejects_malformed_manifests(
+    tmp_path, payload, message
+):
+    project = ProjectContext.create(tmp_path / "project")
+    manifest = project.root / "models" / ".qphase_plugins.yaml"
+    manifest.write_text(payload, encoding="utf-8")
+
+    with pytest.raises(QPhaseConfigError, match=message):
+        DiscoveryService(RegistryCenter()).discover_local_plugins(project)
