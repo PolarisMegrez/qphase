@@ -335,6 +335,18 @@ def create_app(
         except Exception as exc:
             raise _http_error(exc, status_code=404) from exc
 
+    @app.get("/sessions/{session_id}/artifacts/{artifact_id}")
+    def get_session_artifact(session_id: str, artifact_id: str) -> dict[str, Any]:
+        root = context.project_service.session_dir(session_id)
+        try:
+            return scheduler.describe_artifact_by_id(
+                artifact_id, session_dir=root
+            ).model_dump(mode="json")
+        except FileNotFoundError as exc:
+            raise _http_error(exc, status_code=404) from exc
+        except ArtifactError as exc:
+            raise _http_error(exc, status_code=422) from exc
+
     @app.get("/sessions/{session_id}/jobs/{job_name}/products")
     def get_job_products(session_id: str, job_name: str) -> dict[str, Any]:
         root = context.project_service.session_dir(session_id)

@@ -51,6 +51,10 @@ def test_project_json_corruption_fails_fast(tmp_path):
     with pytest.raises(QPhaseIOError, match="failed to read project JSON"):
         ProjectService._read_json(path)
 
+    path.write_bytes(b"\xff\xfe")
+    with pytest.raises(QPhaseIOError, match="failed to read project JSON"):
+        ProjectService._read_json(path)
+
 
 def test_scheduler_service_builds_logical_plan_without_creating_session(tmp_path):
     job_list = WorkflowSpec(
@@ -250,6 +254,27 @@ def test_scheduler_service_describes_products_without_materializing(tmp_path):
     # JSON round-trip: the DTO must be serializable for the GUI route.
     payload = catalog.model_dump(mode="json")
     assert payload["products"][0]["axes"][1]["step"] == 0.1
+
+
+def test_scheduler_service_lists_manifest_artifact_as_one_item(tmp_path):
+    session_root = tmp_path / "session"
+    job_dir = session_root / "job1"
+    manifest = save_products(
+        job_dir,
+        {"trajectories": _products_dataset()},
+        provenance={"engine": "test"},
+    )
+    service = SchedulerService(_system_config(tmp_path))
+
+    items = service.list_artifacts(session_root)
+
+    assert len(items) == 1
+    assert items[0].artifact_id == manifest.artifact_id
+    assert items[0].file_ref is None
+    assert items[0].path == job_dir
+    assert service.describe_artifact_by_id(
+        manifest.artifact_id, session_dir=session_root
+    ).artifact_id == manifest.artifact_id
 
 
 def test_scheduler_service_describe_products_rejects_non_artifact(tmp_path):

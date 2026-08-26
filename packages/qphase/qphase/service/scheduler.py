@@ -112,19 +112,76 @@ class SchedulerService:
         return self.build_plan(workflow)
 
     def list_artifacts(self, session_dir: str | Path) -> list[ArtifactSummary]:
-        root = Path(session_dir)
-        return [
-            ArtifactSummary(
-                file_ref=path.relative_to(root).as_posix(),
-                path=path,
-                kind=self._artifact_kind(path),
-                format=path.suffix.lstrip(".") or None,
-                job_name=path.parent.name if path.parent != root else None,
-                size=path.stat().st_size,
+        """List typed artifact directories and ordinary session files.
+
+        A v3 artifact is one manifest-backed directory, not its manifest and
+        payload files individually. Files outside those directories retain a
+        project-relative ``file_ref`` and have no artifact identity.
+        """
+        root = Path(session_dir).expanduser().resolve()
+        from ..data.store import (
+            ARTIFACT_SCHEMA_VERSION,
+            ArtifactManifestV3,
+            storage_referenced_files,
+        )
+
+        artifact_dirs: set[Path] = set()
+        artifacts: list[ArtifactSummary] = []
+        for manifest_path in sorted(root.rglob("artifact_manifest.json")):
+            artifact_dir = manifest_path.parent.resolve()
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict) or raw.get("schema_version") != (
+                ARTIFACT_SCHEMA_VERSION
+            ):
+                continue
+            manifest = ArtifactManifestV3.read(artifact_dir)
+            size = sum(
+                (artifact_dir / file).stat().st_size
+                for entry in manifest.products
+                for file in storage_referenced_files(entry)
             )
-            for path in root.rglob("*")
-            if path.is_file()
-        ]
+            artifact_dirs.add(artifact_dir)
+            artifacts.append(
+                ArtifactSummary(
+                    artifact_id=manifest.artifact_id,
+                    path=artifact_dir,
+                    kind="result",
+                    format=manifest.schema_version,
+                    job_name=(
+                        artifact_dir.parent.name
+                        if artifact_dir.parent != root
+                        else None
+                    ),
+                    size=size,
+                )
+            )
+
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            resolved = path.resolve()
+            if any(resolved.is_relative_to(directory) for directory in artifact_dirs):
+                continue
+            artifacts.append(
+                ArtifactSummary(
+                    file_ref=path.relative_to(root).as_posix(),
+                    path=path,
+                    kind=self._artifact_kind(path),
+                    format=path.suffix.lstrip(".") or None,
+                    job_name=path.parent.name if path.parent != root else None,
+                    size=path.stat().st_size,
+                )
+            )
+        return artifacts
+
+    def describe_artifact_by_id(
+        self, artifact_id: str, *, session_dir: str | Path
+    ) -> ArtifactProductCatalog:
+        """Describe one manifest-backed artifact by its persisted identity."""
+        for item in self.list_artifacts(session_dir):
+            if item.artifact_id == artifact_id:
+                return self.describe_products(item.path, session_dir=session_dir)
+        raise FileNotFoundError(f"Artifact not found: {artifact_id}")
 
     def load_file_by_ref(
         self, file_ref: str, *, session_dir: str | Path
