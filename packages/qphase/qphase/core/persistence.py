@@ -17,6 +17,7 @@ from .project import ProjectContext
 
 __all__ = [
     "EventStoreProtocol",
+    "ExecutionStoreProtocol",
     "ProjectStateStore",
     "SessionStoreProtocol",
 ]
@@ -52,11 +53,94 @@ class EventStoreProtocol(Protocol):
         ...
 
 
-class ProjectStateStore(SessionStoreProtocol, EventStoreProtocol):
+class ExecutionStoreProtocol(Protocol):
+    """Port for durable logical execution records."""
+
+    def save_execution(self, payload: Mapping[str, Any]) -> None:
+        """Persist one execution control record."""
+        ...
+
+    def load_executions(self) -> list[dict[str, Any]]:
+        """Load persisted execution control records."""
+        ...
+
+    def delete_execution(self, execution_id: str) -> None:
+        """Delete one retained execution record."""
+        ...
+
+
+class ProjectStateStore(
+    SessionStoreProtocol, EventStoreProtocol, ExecutionStoreProtocol
+):
     """Single project-scoped file implementation of Session/Event ports."""
 
     def __init__(self, project: ProjectContext) -> None:
         self.project = project
+
+    @property
+    def execution_root(self) -> Path:
+        """Project-local control records, separate from scientific artifacts."""
+        return self.project.root / ".qphase" / "executions"
+
+    def save_execution(self, payload: Mapping[str, Any]) -> None:
+        """Atomically persist one JSON-safe execution record."""
+        execution_id = payload.get("execution_id")
+        if not isinstance(execution_id, str) or not execution_id:
+            raise QPhaseIOError(
+                "execution record requires a non-empty execution_id",
+                code=ErrorCode.ARTIFACT_IO,
+            )
+        target = self.execution_root / f"{execution_id}.json"
+        temporary = target.with_suffix(".tmp")
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(
+                json.dumps(dict(payload), indent=2, allow_nan=False) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(target)
+        except (OSError, TypeError, ValueError) as exc:
+            temporary.unlink(missing_ok=True)
+            raise QPhaseIOError(
+                f"failed to save execution record: {target}",
+                code=ErrorCode.ARTIFACT_IO,
+                context={"path": str(target)},
+            ) from exc
+
+    def load_executions(self) -> list[dict[str, Any]]:
+        """Load all project execution records in submission order."""
+        if not self.execution_root.exists():
+            return []
+        result: list[dict[str, Any]] = []
+        for path in sorted(self.execution_root.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise QPhaseIOError(
+                    f"failed to load execution record: {path}",
+                    code=ErrorCode.ARTIFACT_IO,
+                    context={"path": str(path)},
+                ) from exc
+            if not isinstance(payload, dict):
+                raise QPhaseIOError(
+                    f"execution record must contain an object: {path}",
+                    code=ErrorCode.ARTIFACT_IO,
+                    context={"path": str(path)},
+                )
+            result.append(dict(payload))
+        result.sort(key=lambda item: str(item.get("submitted_at", "")))
+        return result
+
+    def delete_execution(self, execution_id: str) -> None:
+        """Delete one project execution record if it exists."""
+        try:
+            (self.execution_root / f"{execution_id}.json").unlink(missing_ok=True)
+        except OSError as exc:
+            raise QPhaseIOError(
+                f"failed to delete execution record: {execution_id}",
+                code=ErrorCode.ARTIFACT_IO,
+                context={"execution_id": execution_id},
+            ) from exc
 
     def save_session_manifest(
         self, session_dir: Path, manifest: Mapping[str, Any]

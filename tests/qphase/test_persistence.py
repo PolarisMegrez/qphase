@@ -35,6 +35,23 @@ def test_project_state_store_round_trips_manifest_and_event_cursor(tmp_path):
     ]
 
 
+def test_project_state_store_round_trips_execution_record(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    store = ProjectStateStore(project)
+    payload = {
+        "schema": "qphase.execution/1",
+        "execution_id": "execution-1",
+        "submitted_at": "2026-08-26T10:00:00+08:00",
+        "state": "queued",
+    }
+
+    store.save_execution(payload)
+
+    assert store.load_executions() == [payload]
+    store.delete_execution("execution-1")
+    assert store.load_executions() == []
+
+
 def test_project_state_store_rejects_paths_outside_project(tmp_path):
     project = ProjectContext.create(tmp_path / "project")
     store = ProjectStateStore(project)

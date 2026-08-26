@@ -152,7 +152,19 @@ class WorkflowCompiler:
         selected: dict[str, Any] = {}
         for namespace, config in plugin_sections.items():
             if namespace in explicit or namespace in required:
-                selected[namespace] = config
+                if namespace in explicit and isinstance(config, Mapping):
+                    extra = job.model_extra or {}
+                    allowed = set(job.plugins.get(namespace, {}))
+                    override = extra.get(namespace)
+                    if isinstance(override, Mapping):
+                        allowed.update(override)
+                    selected[namespace] = {
+                        name: values
+                        for name, values in config.items()
+                        if name in allowed
+                    }
+                else:
+                    selected[namespace] = config
 
         missing = sorted(
             namespace for namespace in required if not selected.get(namespace)

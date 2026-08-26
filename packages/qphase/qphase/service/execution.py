@@ -10,10 +10,12 @@ from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.execution import CancellationController
+from qphase.core.persistence import ProjectStateStore
 from qphase.core.progress import ProgressSnapshot
 from qphase.core.scheduler import Scheduler
 
@@ -73,9 +75,13 @@ class ExecutionManager:
         self.retained_executions = retained_executions
         self._records: dict[str, _ExecutionRecord] = {}
         self._queue: deque[str] = deque()
+        self.state_store: ProjectStateStore | None = getattr(
+            scheduler, "state_store", None
+        )
         self._lock = threading.RLock()
         self._wake = threading.Condition(self._lock)
         self._closed = False
+        self._restore_persisted()
         self._worker = threading.Thread(
             target=self._worker_loop, name="qphase-run-manager", daemon=True
         )
@@ -105,7 +111,13 @@ class ExecutionManager:
             self._records[execution_id] = record
             self._queue.append(execution_id)
             self._append_event(record, {"kind": "execution_queued"}, persist=False)
-            self._trim_records()
+            try:
+                self._save_execution(record)
+                self._trim_records()
+            except Exception:
+                self._queue.remove(execution_id)
+                self._records.pop(execution_id, None)
+                raise
             self._wake.notify()
             return self._summary(record)
 
@@ -131,6 +143,7 @@ class ExecutionManager:
                     self._queue.remove(execution_id)
                 record.state = "cancelled"
                 record.finished_at = _now()
+            self._save_execution(record)
             with record.gate:
                 record.gate.notify_all()
             self._append_event(record, {"kind": "cancellation_requested"})
@@ -155,6 +168,7 @@ class ExecutionManager:
                 record.state = "paused"
             else:
                 record.state = "pause_requested"
+            self._save_execution(record)
             self._append_event(record, {"kind": "pause_requested"})
             return self._summary(record)
 
@@ -165,6 +179,7 @@ class ExecutionManager:
                 raise ValueError("execution is not paused at a job boundary")
             record.pause_requested = False
             record.state = "running" if record.started_at else "queued"
+            self._save_execution(record)
             record.gate.notify_all()
         with self._wake:
             if record.started_at is None and execution_id not in self._queue:
@@ -194,6 +209,7 @@ class ExecutionManager:
             raise KeyError(f"unknown job {job_name!r}")
         self._validate_plan(record.workflow.model_copy(update={"jobs": jobs}))
         record.revisions[job_name] = replacement
+        self._save_execution(record)
         self._append_event(
             record, {"kind": "pending_job_revised", "job_name": job_name}
         )
@@ -214,6 +230,7 @@ class ExecutionManager:
     def _execute(self, record: _ExecutionRecord) -> None:
         record.state = "running"
         record.started_at = _now()
+        self._save_execution(record)
         self._append_event(record, {"kind": "execution_started"}, persist=False)
 
         def _scheduler_ready(scheduler: Scheduler) -> None:
@@ -224,6 +241,7 @@ class ExecutionManager:
             with record.gate:
                 if record.pause_requested and not record.controller.execution.cancelled:
                     record.state = "paused"
+                    self._save_execution(record)
                     self._append_event(
                         record,
                         {"kind": "execution_paused", "before_job": job.name},
@@ -234,7 +252,9 @@ class ExecutionManager:
                     )
                     if not record.controller.execution.cancelled:
                         record.state = "running"
+                        self._save_execution(record)
                 record.started_jobs.add(job.name)
+                self._save_execution(record)
                 return record.revisions.get(job.name, job)
 
         try:
@@ -265,6 +285,7 @@ class ExecutionManager:
         finally:
             record.finished_at = _now()
             self._append_event(record, {"kind": f"execution_{record.state}"})
+            self._save_execution(record)
 
     def _on_progress(
         self, record: _ExecutionRecord, snapshot: ProgressSnapshot
@@ -273,7 +294,10 @@ class ExecutionManager:
         record.current_stage = snapshot.stage
         record.latest_message = snapshot.message
         if record.scheduler is not None:
+            previous_session_id = record.session_id
             record.session_id = record.scheduler.session_id
+            if record.session_id != previous_session_id:
+                self._save_execution(record)
         payload = snapshot.to_dict()
         now = time.monotonic()
         persist = snapshot.kind != "job_progress" or (
@@ -327,6 +351,114 @@ class ExecutionManager:
                 f"{issue.path}: {issue.message}" for issue in plan.validation_issues
             )
             raise ValueError(f"execution plan is invalid: {details}")
+
+    def _save_execution(self, record: _ExecutionRecord) -> None:
+        if self.state_store is not None:
+            self.state_store.save_execution(self._execution_payload(record))
+
+    def _execution_payload(self, record: _ExecutionRecord) -> dict[str, Any]:
+        session_dir: str | None = None
+        if record.scheduler is not None and record.scheduler.session_dir is not None:
+            session_dir = Path(record.scheduler.session_dir).resolve().relative_to(
+                self.scheduler.project.session_root.resolve()
+            ).as_posix()
+        return {
+            "schema": "qphase.execution/1",
+            "execution_id": record.execution_id,
+            "source_workflow": record.source_workflow,
+            "workflow": record.workflow.model_dump(mode="json", by_alias=True),
+            "submitted_at": record.submitted_at.isoformat(),
+            "state": record.state,
+            "session_id": record.session_id,
+            "session_dir": session_dir,
+            "started_at": record.started_at.isoformat()
+            if record.started_at is not None
+            else None,
+            "finished_at": record.finished_at.isoformat()
+            if record.finished_at is not None
+            else None,
+            "current_job": record.current_job,
+            "current_stage": record.current_stage,
+            "latest_message": record.latest_message,
+            "error": record.error,
+            "pause_requested": record.pause_requested,
+            "started_jobs": sorted(record.started_jobs),
+            "revisions": {
+                name: job.model_dump(mode="json", by_alias=True)
+                for name, job in record.revisions.items()
+            },
+        }
+
+    def _restore_persisted(self) -> None:
+        if self.state_store is None:
+            return
+        for payload in self.state_store.load_executions():
+            record = self._record_from_payload(payload)
+            if record.state in {"running", "pause_requested"}:
+                record.state = "failed"
+                record.error = "execution worker interrupted by process restart"
+                record.finished_at = _now()
+                self._save_execution(record)
+            self._records[record.execution_id] = record
+            if record.state == "queued":
+                self._queue.append(record.execution_id)
+        self._trim_records()
+
+    def _record_from_payload(self, payload: dict[str, Any]) -> _ExecutionRecord:
+        if payload.get("schema") != "qphase.execution/1":
+            raise ValueError("unsupported execution record schema")
+        workflow = WorkflowSpec.model_validate(payload["workflow"])
+        state = payload["state"]
+        allowed_states = {
+            "queued",
+            "running",
+            "pause_requested",
+            "paused",
+            "completed",
+            "partial",
+            "failed",
+            "cancelled",
+        }
+        if state not in allowed_states:
+            raise ValueError(f"unsupported execution state: {state!r}")
+        revisions = {
+            name: JobConfig.model_validate(job)
+            for name, job in dict(payload.get("revisions", {})).items()
+        }
+        record = _ExecutionRecord(
+            execution_id=str(payload["execution_id"]),
+            workflow=workflow,
+            source_workflow=str(payload["source_workflow"]),
+            submitted_at=datetime.fromisoformat(str(payload["submitted_at"])),
+            state=state,
+            session_id=payload.get("session_id"),
+            started_at=self._parse_time(payload.get("started_at")),
+            finished_at=self._parse_time(payload.get("finished_at")),
+            current_job=payload.get("current_job"),
+            current_stage=payload.get("current_stage"),
+            latest_message=str(payload.get("latest_message", "")),
+            error=payload.get("error"),
+            pause_requested=bool(payload.get("pause_requested", False)),
+            revisions=revisions,
+            started_jobs=set(payload.get("started_jobs", [])),
+        )
+        session_dir = payload.get("session_dir")
+        if isinstance(session_dir, str):
+            root = self.scheduler.project.session_root.resolve()
+            candidate = (root / session_dir).resolve()
+            if candidate.is_relative_to(root) and candidate.exists():
+                assert self.state_store is not None
+                events = self.state_store.read_events(candidate)
+                for item in events:
+                    event = ExecutionEvent.model_validate(item)
+                    record.events.append(event)
+                    record.sequence = max(record.sequence, event.sequence)
+                record.persisted_sequence = record.sequence
+        return record
+
+    @staticmethod
+    def _parse_time(value: Any) -> datetime | None:
+        return datetime.fromisoformat(str(value)) if value is not None else None
 
     def _summary(self, record: _ExecutionRecord) -> ExecutionSummary:
         positions = list(self._queue)
@@ -417,3 +549,5 @@ class ExecutionManager:
         ]
         for key in completed[: max(0, len(completed) - self.retained_executions)]:
             self._records.pop(key, None)
+            if self.state_store is not None:
+                self.state_store.delete_execution(key)

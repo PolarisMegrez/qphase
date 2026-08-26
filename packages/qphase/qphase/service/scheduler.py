@@ -18,6 +18,7 @@ from qphase.core.config_loader import (
 )
 from qphase.core.errors import ErrorCode, QPhaseIOError
 from qphase.core.execution import CancellationController
+from qphase.core.persistence import ProjectStateStore
 from qphase.core.project import ProjectContext
 from qphase.core.registry import registry
 from qphase.core.scheduler import JobResult, Scheduler
@@ -54,6 +55,7 @@ class SchedulerService:
         self.project = project or ProjectContext.discover()
         self.system_config = system_config or load_system_config()
         self.catalog = WorkflowCatalog(self.project)
+        self.state_store = ProjectStateStore(self.project)
         self.last_session_handle: SessionHandle | None = None
 
     def list_workflows(self) -> list[str]:
@@ -102,6 +104,7 @@ class SchedulerService:
             on_progress=progress_callback,
             cancellation=cancellation,
             before_job=before_job,
+            state_store=self.state_store,
         )
         if on_scheduler is not None:
             on_scheduler(scheduler)

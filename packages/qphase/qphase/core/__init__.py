@@ -51,7 +51,12 @@ from .execution import (
     HardwareSnapshot,
     ResourceSnapshot,
 )
-from .persistence import EventStoreProtocol, ProjectStateStore, SessionStoreProtocol
+from .persistence import (
+    EventStoreProtocol,
+    ExecutionStoreProtocol,
+    ProjectStateStore,
+    SessionStoreProtocol,
+)
 from .plugin_graph import PluginGraphResolver, ResolvedPluginNode
 from .progress import (
     ProgressEvent,
@@ -104,6 +109,7 @@ __all__ = [
     "ResolvedPluginNode",
     "SessionStoreProtocol",
     "EventStoreProtocol",
+    "ExecutionStoreProtocol",
     "ProjectStateStore",
     "PluginManifest",
     "SubpluginSlot",
