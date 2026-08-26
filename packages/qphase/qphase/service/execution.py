@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
@@ -315,18 +314,11 @@ class ExecutionManager:
         ]
         if not pending:
             return
-        path = record.scheduler.session_dir / "events.jsonl"
-        try:
-            with path.open("a", encoding="utf-8") as handle:
-                for event in pending:
-                    handle.write(
-                        json.dumps(event.model_dump(mode="python"), default=str) + "\n"
-                    )
-            record.persisted_sequence = pending[-1].sequence
-        except OSError as exc:
-            # Monitoring must never turn an otherwise valid numerical run into a
-            # failed execution. The in-memory event ring remains available.
-            log.warning("Failed to persist execution events: %s", exc)
+        record.scheduler.state_store.append_events(
+            record.scheduler.session_dir,
+            (event.model_dump(mode="json") for event in pending),
+        )
+        record.persisted_sequence = pending[-1].sequence
 
     def _validate_plan(self, workflow: WorkflowSpec) -> None:
         plan = self.scheduler.build_plan(workflow)

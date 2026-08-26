@@ -51,6 +51,7 @@ from .execution import (
     HardwareSnapshot,
     ResourceSnapshot,
 )
+from .persistence import EventStoreProtocol, ProjectStateStore, SessionStoreProtocol
 from .plugin_graph import PluginGraphResolver, ResolvedPluginNode
 from .progress import (
     ProgressEvent,
@@ -101,6 +102,9 @@ __all__ = [
     "CompiledJob",
     "PluginGraphResolver",
     "ResolvedPluginNode",
+    "SessionStoreProtocol",
+    "EventStoreProtocol",
+    "ProjectStateStore",
     "PluginManifest",
     "SubpluginSlot",
     # Scheduler

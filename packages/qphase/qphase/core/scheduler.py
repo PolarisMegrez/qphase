@@ -26,7 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from .artifacts import ArtifactStore
 from .compiler import CompiledJob, CompiledWorkflow, WorkflowCompiler
@@ -57,6 +57,7 @@ from .execution import (
     plugin_fingerprint,
 )
 from .logging_context import bind_log_context, set_log_context
+from .persistence import ProjectStateStore
 from .progress import ProgressEvent, ProgressSnapshot, ProgressTracker
 from .project import ProjectContext
 from .protocols import ResultProtocol
@@ -140,6 +141,7 @@ class Scheduler:
         on_job_dir: Callable[[Path], None] | None = None,
         cancellation: CancellationController | None = None,
         before_job: Callable[[JobConfig, int, int], JobConfig] | None = None,
+        state_store: ProjectStateStore | None = None,
     ):
         if system_config is None:
             self.system_config = load_system_config()
@@ -147,6 +149,7 @@ class Scheduler:
             self.system_config = system_config
 
         self.project = project or ProjectContext.discover()
+        self.state_store = state_store or ProjectStateStore(self.project)
 
         self.on_progress = on_progress
         self.on_job_dir = on_job_dir
@@ -238,18 +241,7 @@ class Scheduler:
     def _save_manifest(self) -> None:
         """Save session manifest to disk."""
         if self.session_dir and self.manifest:
-            manifest_path = self.session_dir / "session_manifest.json"
-            try:
-                temporary = manifest_path.with_suffix(".tmp")
-                with open(temporary, "w", encoding="utf-8") as f:
-                    json.dump(self.manifest, f, indent=2, allow_nan=False)
-                temporary.replace(manifest_path)
-            except (OSError, TypeError, ValueError) as exc:
-                raise QPhaseIOError(
-                    f"failed to save session manifest: {manifest_path}",
-                    code=ErrorCode.ARTIFACT_IO,
-                    context={"path": str(manifest_path)},
-                ) from exc
+            self.state_store.save_session_manifest(self.session_dir, self.manifest)
 
     def _start_session_heartbeat(self) -> None:
         if self.session_dir is None:
@@ -455,11 +447,10 @@ class Scheduler:
         if not manifest_path.exists():
             raise QPhaseConfigError(f"Session manifest not found in: {session_path}")
 
-        try:
-            with open(manifest_path, encoding="utf-8") as f:
-                self.manifest = json.load(f)
-        except Exception as e:
-            raise QPhaseConfigError(f"Failed to load session manifest: {e}") from e
+        self.manifest = cast(
+            SessionManifest,
+            self.state_store.load_session_manifest(session_path),
+        )
 
         assert self.manifest is not None
         if self.manifest.get("project_id") != self.project.project_id:
