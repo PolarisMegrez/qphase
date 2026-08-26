@@ -15,12 +15,14 @@ from qphase.core.config_loader import (
     merge_plugin_config_sections,
     registered_plugin_namespaces,
 )
+from qphase.core.errors import ErrorCode, QPhaseIOError
 from qphase.core.execution import CancellationController
 from qphase.core.project import ProjectContext
 from qphase.core.registry import registry
 from qphase.core.scheduler import JobResult, Scheduler
 from qphase.core.system_config import SystemConfig, load_system_config
 from qphase.core.workflow import WorkflowCatalog
+from qphase.data.errors import ArtifactCorruptError
 
 from .models import (
     ArtifactProductCatalog,
@@ -114,7 +116,7 @@ class SchedulerService:
     def list_artifacts(self, session_dir: str | Path) -> list[ArtifactSummary]:
         """List typed artifact directories and ordinary session files.
 
-        A v3 artifact is one manifest-backed directory, not its manifest and
+        A v4 artifact is one manifest-backed directory, not its manifest and
         payload files individually. Files outside those directories retain a
         project-relative ``file_ref`` and have no artifact identity.
         """
@@ -189,10 +191,19 @@ class SchedulerService:
         self, artifact_id: str, *, session_dir: str | Path
     ) -> ArtifactProductCatalog:
         """Describe one manifest-backed artifact by its persisted identity."""
-        for item in self.list_artifacts(session_dir):
-            if item.artifact_id == artifact_id:
-                return self.describe_products(item.path, session_dir=session_dir)
-        raise FileNotFoundError(f"Artifact not found: {artifact_id}")
+        matches = [
+            item
+            for item in self.list_artifacts(session_dir)
+            if item.artifact_id == artifact_id
+        ]
+        if not matches:
+            raise FileNotFoundError(f"Artifact not found: {artifact_id}")
+        if len(matches) > 1:
+            raise ArtifactCorruptError(
+                f"artifact identity conflict for {artifact_id!r}: "
+                f"{len(matches)} manifest-backed artifacts found"
+            )
+        return self.describe_products(matches[0].path, session_dir=session_dir)
 
     def load_file_by_ref(
         self, file_ref: str, *, session_dir: str | Path
@@ -212,27 +223,37 @@ class SchedulerService:
         )
         if not artifact.is_relative_to(root) or not artifact.is_file():
             raise FileNotFoundError(f"Artifact not found: {path}")
-        payload: dict[str, Any] = {
-            "path": str(artifact),
-            "size": artifact.stat().st_size,
-        }
-        if artifact.suffix.lower() == ".json":
-            payload.update(
-                content=json.loads(artifact.read_text(encoding="utf-8")),
-                content_type="application/json",
-            )
-        elif artifact.suffix.lower() in {".txt", ".log", ".csv"}:
-            payload.update(
-                content=artifact.read_text(encoding="utf-8"), content_type="text/plain"
-            )
-        else:
-            payload.update(content=None, content_type="application/octet-stream")
-        return payload
+        try:
+            payload: dict[str, Any] = {
+                "path": str(artifact),
+                "size": artifact.stat().st_size,
+            }
+            if artifact.suffix.lower() == ".json":
+                payload.update(
+                    content=json.loads(artifact.read_text(encoding="utf-8")),
+                    content_type="application/json",
+                )
+            elif artifact.suffix.lower() in {".txt", ".log", ".csv"}:
+                payload.update(
+                    content=artifact.read_text(encoding="utf-8"),
+                    content_type="text/plain",
+                )
+            else:
+                payload.update(
+                    content=None, content_type="application/octet-stream"
+                )
+            return payload
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise QPhaseIOError(
+                f"failed to read session file: {artifact}",
+                code=ErrorCode.ARTIFACT_IO,
+                context={"path": str(artifact)},
+            ) from exc
 
     def describe_products(
         self, path: str | Path, *, session_dir: str | Path
     ) -> ArtifactProductCatalog:
-        """Build the metadata-only product catalog of a v3 artifact directory.
+        """Build the metadata-only product catalog of a v4 artifact directory.
 
         Never materializes payloads, never opens storage adapters and never
         registers artifact locations: every field comes from the manifest
@@ -363,7 +384,6 @@ class SchedulerService:
                         variable.chunk_count
                         for variable in entry.storage.summary.values()
                     ),
-                    sha256=entry.sha256,
                     schema_version=schema.schema_version,
                     schema_fingerprint=schema.fingerprint(),
                     storage_adapter=entry.storage.adapter,
@@ -380,7 +400,6 @@ class SchedulerService:
             products=products,
             bundle=_bundle_summary(manifest.bundle),
             size=size,
-            content_hash=manifest.content_hash,
         )
 
     def load_session_manifest(self, session_dir: str | Path) -> dict[str, Any]:

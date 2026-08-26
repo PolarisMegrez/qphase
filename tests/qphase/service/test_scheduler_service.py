@@ -14,7 +14,6 @@ from qphase.data import (
     AxisSchema,
     BundleDescriptor,
     DataKind,
-    ProductEntry,
     ProductSchema,
     TimeSeriesDataset,
     VariableSchema,
@@ -22,11 +21,7 @@ from qphase.data import (
 )
 from qphase.data.errors import ArtifactCorruptError
 from qphase.data.resolver import default_artifact_resolver
-from qphase.data.store import (
-    artifact_content_hash,
-    product_content_hash,
-    storage_referenced_files,
-)
+from qphase.data.store import storage_referenced_files
 from qphase.service import SchedulerService
 from qphase.service.project import ProjectService
 
@@ -228,8 +223,8 @@ def test_scheduler_service_describes_products_without_materializing(tmp_path):
     )
 
     assert catalog.artifact_id == manifest.artifact_id
-    assert catalog.content_hash == manifest.content_hash
-    assert catalog.loader == "npz/2"
+    assert not hasattr(catalog, "content_hash")
+    assert catalog.loader == "npz/3"
     assert catalog.size > 0
     assert len(catalog.products) == 1
     product = catalog.products[0]
@@ -240,7 +235,6 @@ def test_scheduler_service_describes_products_without_materializing(tmp_path):
     assert product.materializable is True
     assert product.nbytes == 4 * 8 * 16
     assert product.chunk_count == 1
-    assert product.sha256 == manifest.products[0].sha256
     axes = {axis.name: axis for axis in product.axes}
     assert axes["time"].coordinate == "regular"
     assert axes["time"].start == 0.0
@@ -276,6 +270,21 @@ def test_scheduler_service_lists_manifest_artifact_as_one_item(tmp_path):
     assert service.describe_artifact_by_id(
         manifest.artifact_id, session_dir=session_root
     ).artifact_id == manifest.artifact_id
+
+
+def test_scheduler_service_reports_duplicate_artifact_identity(tmp_path):
+    session_root = tmp_path / "session"
+    for job_name in ("job1", "job2"):
+        save_products(
+            session_root / job_name,
+            {"trajectories": _products_dataset()},
+            artifact_id="duplicate-id",
+        )
+
+    with pytest.raises(ArtifactCorruptError, match="identity conflict"):
+        SchedulerService(_system_config(tmp_path)).describe_artifact_by_id(
+            "duplicate-id", session_dir=session_root
+        )
 
 
 def test_scheduler_service_rejects_corrupt_manifest_during_listing(tmp_path):
@@ -317,7 +326,7 @@ def test_scheduler_service_describe_products_exposes_schema_and_storage_details(
     product = catalog.products[0]
     assert product.schema_version == entry.product_schema.schema_version
     assert product.schema_fingerprint == entry.product_schema.fingerprint()
-    assert product.storage_adapter == "npz/2"
+    assert product.storage_adapter == "npz/3"
     assert product.storage_descriptor_schema == entry.storage.descriptor_schema
     assert product.physical_nbytes > 0
     assert product.missing_reason is None
@@ -436,12 +445,12 @@ def test_scheduler_service_describe_products_has_no_resolver_side_effects(tmp_pa
     assert dict(resolver._bindings) == bindings_before
 
 
-def test_scheduler_service_describe_products_rejects_tampered_manifest(tmp_path):
+def test_scheduler_service_describe_products_rejects_removed_hash_field(tmp_path):
     session_root = tmp_path / "session"
     save_products(session_root / "job1", {"trajectories": _products_dataset()})
     manifest_path = session_root / "job1" / "artifact_manifest.json"
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-    raw["content_hash"] = "0" * 64
+    raw["content_hash"] = "removed"
     manifest_path.write_text(json.dumps(raw), encoding="utf-8")
 
     with pytest.raises(ArtifactCorruptError):
@@ -464,15 +473,6 @@ def test_scheduler_service_rejects_cross_product_payload_aliasing(tmp_path):
     manifest_path = job_dir / "artifact_manifest.json"
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     raw["products"][1]["storage"] = raw["products"][0]["storage"]
-    entries = [ProductEntry.model_validate(item) for item in raw["products"]]
-    for entry in entries:
-        entry.sha256 = product_content_hash(
-            entry.name, entry.product_schema, entry.storage
-        )
-    raw["products"] = [entry.model_dump(mode="json") for entry in entries]
-    raw["content_hash"] = artifact_content_hash(
-        raw["bundle"], entries, raw["provenance"], raw["parents"]
-    )
     manifest_path.write_text(json.dumps(raw), encoding="utf-8")
 
     with pytest.raises(ArtifactCorruptError, match="across products"):
@@ -489,16 +489,7 @@ def test_scheduler_service_describe_products_marks_unknown_storage_adapter(tmp_p
     entry = manifest.products[0]
     storage = entry.storage.model_copy(update={"adapter": "unknown/9"})
     forged = entry.model_copy(update={"storage": storage})
-    forged.sha256 = product_content_hash(
-        forged.name, forged.product_schema, forged.storage
-    )
     forged_manifest = manifest.model_copy(update={"products": [forged]})
-    forged_manifest.content_hash = artifact_content_hash(
-        forged_manifest.bundle.model_dump(mode="json"),
-        forged_manifest.products,
-        forged_manifest.provenance,
-        forged_manifest.parents,
-    )
     forged_manifest.write(session_root / "job1")
 
     catalog = SchedulerService(_system_config(tmp_path)).describe_products(

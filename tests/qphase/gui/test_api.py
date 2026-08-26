@@ -364,21 +364,19 @@ def test_gui_api_lists_job_products(temp_workspace):
     assert response.status_code == 200
     payload = response.json()
     assert payload["artifact_id"]
-    assert payload["content_hash"]
     assert payload["size"] > 0
     product = payload["products"][0]
     assert product["name"] == "trajectories"
     assert product["kind"] == "time_series"
     assert product["backing"] == "artifact"
     assert product["chunk_count"] == 1
-    assert product["sha256"]
     axes = {axis["name"]: axis for axis in product["axes"]}
     assert axes["time"]["start"] == 0.0
     assert axes["time"]["step"] == 0.1
     assert missing.status_code == 404
 
 
-def test_gui_api_job_products_maps_corrupt_manifest_to_422(temp_workspace):
+def test_gui_api_job_products_maps_removed_hash_to_422(temp_workspace):
     import numpy as np
     from qphase.data import (
         AxisRole,
@@ -418,7 +416,7 @@ def test_gui_api_job_products_maps_corrupt_manifest_to_422(temp_workspace):
     save_products(job_dir, {"trajectories": dataset})
     manifest_path = job_dir / "artifact_manifest.json"
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-    raw["content_hash"] = "0" * 64
+    raw["content_hash"] = "removed"
     manifest_path.write_text(json.dumps(raw), encoding="utf-8")
 
     with TestClient(create_app()) as client:

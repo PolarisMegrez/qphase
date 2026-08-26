@@ -176,7 +176,7 @@ class UncertaintySummary(ServiceModel):
 
 
 class BundleSummary(ServiceModel):
-    """Read-only summary of the bundle descriptor of a v3 artifact.
+    """Read-only summary of the bundle descriptor of an artifact.
 
     Scan fields are unpacked from the descriptor's ``scan`` record when the
     owning resource package recorded one (e.g. ``sde.bundle/1``); generic
@@ -220,7 +220,6 @@ class ProductSummary(ServiceModel):
     nbytes: int | None = None
     physical_nbytes: int | None = None
     chunk_count: int | None = None
-    sha256: str | None = None
     schema_version: str = ""
     schema_fingerprint: str = ""
     storage_adapter: str = ""
@@ -229,7 +228,7 @@ class ProductSummary(ServiceModel):
 
 
 class ArtifactProductCatalog(ServiceModel):
-    """Read-only catalog of the typed products of a v3 artifact directory.
+    """Read-only catalog of the typed products of a v4 artifact directory.
 
     ``size`` counts only payload files referenced by the manifest; job
     logs, exports and stale chunks left by replaced writes are excluded.
@@ -241,7 +240,6 @@ class ArtifactProductCatalog(ServiceModel):
     products: list[ProductSummary] = Field(default_factory=list)
     bundle: BundleSummary | None = None
     size: int = 0
-    content_hash: str
 
 
 class ExecutionPlan(ServiceModel):

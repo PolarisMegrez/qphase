@@ -10,7 +10,7 @@ from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from qphase.core.errors import QPhaseError
+from qphase.core.errors import QPhaseError, QPhaseIOError
 from qphase.core.system_config import load_system_config
 from qphase.data.errors import ArtifactError
 from qphase.service import (
@@ -335,8 +335,10 @@ def create_app(
         root = context.project_service.session_dir(session_id)
         try:
             return scheduler.load_file_by_ref(file_ref, session_dir=root)
-        except Exception as exc:
+        except FileNotFoundError as exc:
             raise _http_error(exc, status_code=404) from exc
+        except QPhaseIOError as exc:
+            raise _http_error(exc, status_code=422) from exc
 
     @app.get("/sessions/{session_id}/artifacts/{artifact_id}")
     def get_session_artifact(session_id: str, artifact_id: str) -> dict[str, Any]:
