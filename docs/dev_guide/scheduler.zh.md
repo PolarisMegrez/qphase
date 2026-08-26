@@ -123,5 +123,19 @@ warm-up 后，仅在当前 `(stage, unit)` 范围内估算速率和剩余时间�
 重置估算器。总量未知时只显示 elapsed，不会根据异构 job 外推 workflow ETA；
 workflow 层只显示已完成逻辑 job 数。
 
+## Phase 2 执行边界
+
+Scheduler 执行 `CompiledWorkflow.topological_order`，而不是直接按 YAML 中的 Job
+排列。`input` 与 `depends_on` 都会参与依赖失败传播；上游失败或被跳过时，下游
+Job 标记为 `skipped_dependency`，不会启动 Engine。
+
+单 Job 的插件构造、Engine 调用、上下文、map view、快照和错误转换集中在
+`qphase.core.job_runner`。Scheduler 保留逻辑图、取消和终态管理。计划提交到异步
+队列前会保存 resolved compiled request，恢复时不重新读取 Project defaults。
+
+Artifact 引用的 materialize 必须显式提供 resolver；执行上下文提供当前 Project 的
+resolver。本地插件发现和导入不会永久修改 `sys.path`，不同 Project 的同名模块不会
+通过控制进程的全局模块表互相覆盖。
+
 对于 `input.mode=map`，scheduler 只按已完成 view 计数。子 engine 的进度作为
 map stage 的 verbose status 暴露，避免大型 dataset 为每个 point 产生独立终端流。

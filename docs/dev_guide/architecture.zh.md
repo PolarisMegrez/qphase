@@ -96,3 +96,17 @@ runs/YYYY/MM/<session-id>/
 可复用的生命周期与基础设施行为属于 core；科学决策、内存模型、batching、融合 kernel
 和领域后处理属于资源包。只有至少两个资源包需要同一个领域无关契约时，才应把能力
 加入 core。
+
+## Phase 2 核心边界
+
+`core/job_runner.py` 是单个逻辑 Job 的唯一执行边界：它负责解析后的插件实例化、
+`ExecutionContext`、Engine 调用、map view、进度适配、快照和 Job 级错误转换。
+Scheduler 只负责 compiled DAG 的拓扑顺序、依赖传播、取消和终态汇总。
+
+ExecutionManager 将低频生命周期记录保存到 Project 内的 `.qphase/executions`。
+重启时 queued 记录重新入队；进程停止时处于 running 或已开始 paused 的记录标记为
+interrupted failure，不伪造数值积分状态恢复。
+
+Artifact-backed Dataset 必须由调用方显式传入 `ArtifactResolver`。Project 运行路径
+使用 Project-scoped resolver，不依赖进程级默认绑定；本地插件导入采用临时隔离的
+模块加载，不永久修改 `sys.path`。
