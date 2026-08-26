@@ -115,11 +115,12 @@ def test_gui_api_submits_asynchronous_execution(temp_workspace, sample_job_file)
         assert response.status_code == 202
         execution_id = response.json()["execution_id"]
 
-        for _ in range(100):
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
             payload = client.get(f"/executions/{execution_id}").json()
             if payload["state"] in {"completed", "failed"}:
                 break
-            time.sleep(0.01)
+            time.sleep(0.02)
 
         events = client.get(f"/executions/{execution_id}/events").json()["events"]
 

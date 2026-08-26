@@ -22,7 +22,7 @@ SDEDataBundleProtocol
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 from qphase.data import (
@@ -73,8 +73,17 @@ class SDEProvenance(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: Literal["qphase_sde.provenance/1"] = (
+        "qphase_sde.provenance/1"
+    )
     t0: float = 0.0
-    dt: float | None = None
+    dt: float | None = Field(
+        default=None,
+        description=(
+            "Nominal/fixed SDE integration step. This is resource-specific "
+            "numerical provenance, not the saved time-series sample interval."
+        ),
+    )
     saved_samples: int | None = None
     warmup_samples: int = 0
     master_seed: int | None = None

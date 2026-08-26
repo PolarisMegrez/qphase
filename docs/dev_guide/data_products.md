@@ -37,7 +37,8 @@ and must not redefine incompatible dataset base classes.
 
 A `ProductSchema` is JSON-serializable, strictly extra-forbid, and has a stable hash.
 Shapes may be partially unknown at plan time (`AxisSchema.size is None`) but must be
-**closed** before materialization.
+**closed** before artifact persistence. Runtime planning may use open templates;
+persisted products never do.
 
 - `AxisSchema` — `name`, `role`, optional `size`, `coordinate` (`regular` or
   `explicit`), `units`, `monotonic`. The `AxisRole` is one of `parameter` (a swept
@@ -73,6 +74,11 @@ Shapes may be partially unknown at plan time (`AxisSchema.size is None`) but mus
   variables referenced by `data_variable` — never metadata dicts.
 - Matrix/tensor variables use named dimensions plus a symmetry/layout descriptor;
   moment order is an axis or variable attribute, never a new dataset class.
+
+`monotonic`, `nonnegative` and tensor symmetry/layout are declarative scientific
+constraints. Core checks that they are structurally applicable to the declared
+axes and dtypes, but does not eagerly scan large payloads to prove them. Producers
+or domain-specific validators perform numerical checks when required.
 
 ## Spectral quantities
 

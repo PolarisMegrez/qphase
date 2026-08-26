@@ -64,7 +64,9 @@ manifest is read, without opening payload files. Unknown bundle adapters
 remain listable as generic bundles; malformed descriptors owned by known
 adapters are corrupt, not merely unavailable. Manifest metadata is strict
 JSON: `NaN` and infinity are rejected, while typed numeric payload arrays may
-still contain them.
+still contain them. For registered storage adapters, manifest validation also
+aggregates payload ownership across products: one payload file may hold several
+keys of one product, but it cannot be shared by two products.
 
 ## NPZ 2.x storage adapter
 
@@ -104,13 +106,19 @@ payload path when no validated prior manifest owns it.
 
 ## Writing and reading
 
+The current scheduler treats each Job directory as the root of exactly one
+primary bundle artifact. Job logs, configuration snapshots and exported CSVs
+are not artifact payload unless the manifest references them. A future
+multi-artifact layout may place separate artifact roots below the Job, but it
+must preserve the manifest contracts defined here.
+
 - `save_products(directory, products, *, provenance=None, parents=(),
   artifact_id=None, shard_target_bytes=..., bundle=None, layout="sharded",
   replace=False)` persists typed datasets and returns the written
   `ArtifactManifestV3`. Artifact-backed datasets are fully materialized first
   (an explicit load, never an implicit one); device-resident payloads are
   copied to the host with an explicit `copy_policy="allow"`. An empty product
-  mapping is allowed. Without an explicit `bundle` a generic bundle
+  mapping is allowed. Every persisted product schema must be closed. Without an explicit `bundle` a generic bundle
   descriptor is recorded.
 - `load_products(directory)` reopens an artifact as **lazily backed**
   datasets: payloads are not read; handles expose shape/dtype/nbytes from the
@@ -147,15 +155,23 @@ descriptor:
   (frequency, tau, lag and channel) are deduplicated into dimension
   coordinates; point-varying coordinates remain declared auxiliary
   coordinates.
+- The `sde/1` bundle adapter cross-checks its scan descriptor against every
+  product schema: shape extents are strict positive integers, every product
+  carrying a `scan` axis has the flattened bundle scan size, and the stable
+  `trajectories`/`primary_spectrum` roles point to compatible time-series and
+  spectral products.
 - remaining analysers persist through the versioned `legacy_analysis/1`
   bridge (`graph_ready=False`) until Phase 2: numeric leaves become
   variables, nested dicts are flattened with dotted paths, string/JSON-safe
   leaves land in `attributes["payload_meta"]`, ragged per-point leaves
   degrade to meta lists recorded under `per_point_meta`, and unbridgeable
   keys are reported under `dropped_keys`.
-- manifest provenance records `engine`, the `SDEProvenance` record under
-  `sde`, JSON-safe job `meta` (plus `meta_dropped`), and the real installed
-  distribution `versions` of `qphase` and `qphase_sde`.
+- manifest provenance records `engine`, the versioned
+  `qphase_sde.provenance/1` record under `sde`, JSON-safe job `meta` (plus
+  `meta_dropped`), and the real installed distribution `versions` of `qphase`
+  and `qphase_sde`. Its `dt` is the SDE integration step, not a core-wide
+  provenance field or the saved time-series sample interval; other resource
+  packages define their own numerical provenance schemas.
 - importing `qphase_sde.result` registers the `sde/1` bundle adapter, so a
   clean process restores scan bundles (shape, axes, per-point parameter
   views) straight from the v3 manifest; `legacy_result()` renders the
@@ -165,11 +181,19 @@ descriptor:
   and `primary_spectrum` when exactly one spectral product exists. Other
   products are selected by kind, quantity and fields.
 - Peak candidates and paths are not currently declared as graph-ready public
-  products. Their grouped ragged schema and producers are a mandatory Phase
-  2A prerequisite to the ProductGraph executor; legacy PSD peak metadata does
-  not constitute that product.
+  products. Their grouped ragged schema and producers are a mandatory Global
+  Phase 5A prerequisite to the ProductGraph executor. Until then, legacy PSD
+  peak metadata is stored in a `legacy_peaks/1` bridge carrying explicit
+  `source_product` and `payload_field` routes, so `legacy_result()` restores
+  the original `analysis["psd"]["peaks"]` field without treating it as a
+  graph-ready peak product.
 
 ## Migrating SDE 1.x results
+
+!!! warning "Temporary major-version transition tool"
+    These 1.x-to-2.x utilities are not stable 2.x APIs. Global Phase 4 removes
+    them after all retained project data has been migrated and verified. QPhase
+    2.x does not promise permanent old-major compatibility.
 
 `qphase_sde.runtime.migrate` converts existing results **one way** to v3:
 

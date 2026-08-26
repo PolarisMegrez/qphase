@@ -29,7 +29,8 @@ schema 语言与三个公开 data kind；资源包定义 quantity、provenance �
 ## 产品 schema
 
 `ProductSchema` 可 JSON 序列化、严格 extra-forbid、具有稳定 hash。shape 在 plan 阶段
-可以部分未知（`AxisSchema.size is None`），但在 materialize 前必须**闭合**。
+可以部分未知（`AxisSchema.size is None`），但在 Artifact 持久化前必须**闭合**。runtime
+planning 可以使用 open template，持久化产品不允许。
 
 - `AxisSchema`——`name`、`role`、可选 `size`、`coordinate`（`regular` 或 `explicit`）、
   `units`、`monotonic`。`AxisRole` 取值为 `parameter`（被扫描的参数轴——绝不是样本
@@ -53,6 +54,9 @@ schema 语言与三个公开 data kind；资源包定义 quantity、provenance �
   变量——绝不是 metadata dict。
 - 矩阵/张量变量使用命名维度加 symmetry/layout 描述符；moment order 是轴或变量属性，
   绝不创建新的 Dataset 类。
+
+`monotonic`、`nonnegative` 与 tensor symmetry/layout 是声明式科学约束。Core 只校验它们是否适用于声明的
+轴和 dtype，不通过遍历大型 payload 来证明数值约束；需要时由 producer 或领域 validator 执行数值检查。
 
 ## 频域 quantity
 
@@ -84,8 +88,8 @@ core schema **没有** moment-family 字段——该领域语义归资源包所�
 - `RuntimeProductBacking`——产品的运行时支撑：每个 schema 变量恰好一个 handle，由
   `validate_backing` 校验（变量缺失/多余、完整 variable schema identity、dtype 与闭合轴
   shape 不符都会被拒绝）。
-- `ArtifactRef`——持久化、可跨进程引用，只携带身份：artifact id、产品 schema、
-  `module:attr` loader 与小写 SHA-256 content hash。无 provenance、无数组、无额外字段或
+- `ArtifactRef`——持久化、可跨进程引用，只携带身份：artifact id、产品名、产品 schema、
+  已注册 storage adapter id 与小写 SHA-256 content hash。无 provenance、无数组、无额外字段或
   cache state。
 - `DataMaterializerProtocol`——资源包注册的 runtime handle 与 artifact 产品之间的转换
   协议。

@@ -13,7 +13,7 @@ Three legacy layouts are recognized:
 - ``sde_scan/2``: an artifact-manifest v2 with ``layout="per_point"`` whose
   shards are per-point ``sde_result/1`` files.
 
-Guarantees (frozen by the Phase 1 plan):
+Temporary transition guarantees (this module is removed after Global Phase 4):
 
 - conversion is one-way and never overwrites or modifies the source files;
 - unknown object payloads are rejected unless an explicit adapter is given;
@@ -37,6 +37,10 @@ MigrationWarning
     One structured, non-fatal conversion finding.
 LegacyFormatError
     Raised for unrecognized or unsupported legacy payloads.
+
+This module is a workspace migration tool, not a stable qphase_sde 2.x API.
+QPhase does not retain old-major compatibility code after the project migration
+has been verified.
 """
 
 from __future__ import annotations
@@ -510,11 +514,19 @@ def _fused_analysis_schema(
     variables: list[VariableSchema] = []
     for key, array in arrays.items():
         dims = ["scan"]
-        for position in range(array.ndim):
-            axis_name = f"dim{position}"
+        for position, extent in enumerate(array.shape):
+            axis_name = f"{key}.dim{position}"
             if axis_name not in positional:
                 positional[axis_name] = AxisSchema(
-                    name=axis_name, role=AxisRole.INDEX
+                    name=axis_name,
+                    role=AxisRole.INDEX,
+                    size=int(extent),
+                )
+            elif positional[axis_name].size != int(extent):
+                raise LegacyFormatError(
+                    f"analyser {name!r}: positional axis {axis_name!r} has "
+                    f"conflicting sizes {positional[axis_name].size} and "
+                    f"{int(extent)}"
                 )
             dims.append(axis_name)
         dtype = np.dtype(array.dtype)

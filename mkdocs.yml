@@ -73,6 +73,7 @@ plugins:
             Protocols: 协议
             Resource Packages: 资源包
             Data Products: 数据产品
+            Versioning & Migration: 版本与迁移
             Registry: 注册表
             Scheduler: 调度器
             FAQ: 常见问题
@@ -127,6 +128,7 @@ nav:
     - Protocols: dev_guide/protocols.md
     - Resource Packages: dev_guide/resource_packages.md
     - Data Products: dev_guide/data_products.md
+    - Versioning & Migration: dev_guide/versioning.md
     - Artifact Formats: dev_guide/artifact_formats.md
     - Registry: dev_guide/registry.md
     - Scheduler: dev_guide/scheduler.md

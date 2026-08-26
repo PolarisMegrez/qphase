@@ -8,11 +8,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.artifacts import ArtifactStore
 from qphase.core.dataset import iter_dataset_views
 from qphase.core.result_loader import load_result
 from qphase.core.scan import ScanSpec
+from qphase.data import ArtifactCorruptError, BundleDescriptor, DataKind
 from qphase.data.resolver import default_artifact_resolver
 from qphase.data.store import ArtifactManifestV3
 from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
@@ -139,6 +141,67 @@ def test_scan_bundle_restores_from_v3_artifact(tmp_path):
     alpha = point.products["trajectories"].handle("alpha").materialize()
     assert alpha.shape[0] == 8
     assert alpha.dtype.kind == "c"
+
+
+@pytest.mark.parametrize("extent", [2.5, True, 0, -1])
+def test_sde_bundle_rejects_non_positive_integer_scan_shape(extent):
+    descriptor = BundleDescriptor(
+        type_id=SDE_BUNDLE_TYPE_ID,
+        adapter_id=SDE_BUNDLE_ADAPTER_ID,
+        descriptor_schema=SDE_BUNDLE_TYPE_ID,
+        descriptor={
+            "scan": {
+                "shape": [extent],
+                "dimension_order": ["rate"],
+                "axes": {"rate": [1.0, 2.0]},
+                "n_traj_per_point": 8,
+                "combine": "cartesian",
+            }
+        },
+    )
+
+    from qphase_sde.result import _SDE_BUNDLE_ADAPTER
+
+    with pytest.raises(ArtifactCorruptError, match="positive integer"):
+        _SDE_BUNDLE_ADAPTER.validate_descriptor(descriptor)
+
+
+def test_sde_bundle_rejects_product_scan_size_mismatch(tmp_path):
+    job_dir = tmp_path / "scan"
+    bundle = _scan_bundle()
+    descriptor = bundle.bundle_descriptor.model_copy(deep=True)
+    descriptor.descriptor["scan"]["shape"] = [3]
+    descriptor.descriptor["scan"]["axes"] = {"rate": [1.0, 2.0, 3.0]}
+
+    from qphase.data import save_products
+
+    with pytest.raises(ArtifactCorruptError, match="scan axis size"):
+        save_products(
+            job_dir,
+            bundle.products,
+            provenance=bundle.manifest_provenance,
+            bundle=descriptor,
+        )
+
+
+def test_sde_bundle_rejects_invalid_stable_product_role(tmp_path):
+    job_dir = tmp_path / "scan"
+    bundle = _scan_bundle()
+    descriptor = bundle.bundle_descriptor.model_copy(
+        update={"product_roles": {"primary_spectrum": "trajectories"}}
+    )
+
+    from qphase.data import save_products
+
+    with pytest.raises(ArtifactCorruptError, match="primary_spectrum"):
+        save_products(
+            job_dir,
+            bundle.products,
+            provenance=bundle.manifest_provenance,
+            bundle=descriptor,
+        )
+
+    assert bundle.products["trajectories"].kind is DataKind.TIME_SERIES
 
 
 def test_restored_scan_bundle_feeds_downstream_analysers(tmp_path):

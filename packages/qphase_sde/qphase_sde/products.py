@@ -314,11 +314,19 @@ def assemble_typed_product(
         declared = _resolve_declared_dims(key, declared_dims)
         if declared is None:
             declared_list: list[str] = []
-            for position in range(trailing_ndim):
-                axis_name = f"dim{position}"
+            for position, extent in enumerate(array.shape[len(leading) :]):
+                axis_name = f"{key}.dim{position}"
                 if axis_name not in positional:
                     positional[axis_name] = AxisSchema(
-                        name=axis_name, role=AxisRole.INDEX
+                        name=axis_name,
+                        role=AxisRole.INDEX,
+                        size=int(extent),
+                    )
+                elif positional[axis_name].size != int(extent):
+                    raise TypeError(
+                        f"analysis product {name!r}: positional axis "
+                        f"{axis_name!r} has conflicting sizes "
+                        f"{positional[axis_name].size} and {int(extent)}"
                     )
                 declared_list.append(axis_name)
             declared = tuple(declared_list)

@@ -13,6 +13,7 @@ from qphase.data import (
     AxisSchema,
     BundleDescriptor,
     DataKind,
+    ProductEntry,
     ProductSchema,
     TimeSeriesDataset,
     VariableSchema,
@@ -398,6 +399,37 @@ def test_scheduler_service_describe_products_rejects_tampered_manifest(tmp_path)
     manifest_path.write_text(json.dumps(raw), encoding="utf-8")
 
     with pytest.raises(ArtifactCorruptError):
+        SchedulerService(_system_config(tmp_path)).describe_products(
+            "job1", session_dir=session_root
+        )
+
+
+def test_scheduler_service_rejects_cross_product_payload_aliasing(tmp_path):
+    session_root = tmp_path / "session"
+    job_dir = session_root / "job1"
+    save_products(
+        job_dir,
+        {
+            "first": _products_dataset(),
+            "second": _products_dataset(),
+        },
+        layout="single",
+    )
+    manifest_path = job_dir / "artifact_manifest.json"
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    raw["products"][1]["storage"] = raw["products"][0]["storage"]
+    entries = [ProductEntry.model_validate(item) for item in raw["products"]]
+    for entry in entries:
+        entry.sha256 = product_content_hash(
+            entry.name, entry.product_schema, entry.storage
+        )
+    raw["products"] = [entry.model_dump(mode="json") for entry in entries]
+    raw["content_hash"] = artifact_content_hash(
+        raw["bundle"], entries, raw["provenance"], raw["parents"]
+    )
+    manifest_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ArtifactCorruptError, match="across products"):
         SchedulerService(_system_config(tmp_path)).describe_products(
             "job1", session_dir=session_root
         )

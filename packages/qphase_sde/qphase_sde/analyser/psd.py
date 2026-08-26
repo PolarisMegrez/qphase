@@ -1039,6 +1039,8 @@ def _build_psd_products(
             attributes={
                 "bridge": "legacy_peaks/1",
                 "graph_ready": False,
+                "source_product": label,
+                "payload_field": "peaks",
             },
         )
         if legacy is not None:

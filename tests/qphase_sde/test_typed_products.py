@@ -24,6 +24,7 @@ from qphase_sde.analyser.result import AnalysisResult
 from qphase_sde.contracts.quantities import SDEQuantity
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
+from qphase_sde.result import legacy_view_from_products
 
 
 class _OneModeModel:
@@ -257,6 +258,42 @@ def test_psd_peak_metadata_isolated_from_graph_ready_spectrum():
     legacy = products["psd.legacy_peaks"]
     assert legacy.attributes["bridge"] == "legacy_peaks/1"
     assert legacy.attributes["graph_ready"] is False
+    assert legacy.attributes["source_product"] == "psd"
+    assert legacy.attributes["payload_field"] == "peaks"
+
+    restored = legacy_view_from_products(products)
+    assert sorted(restored.analysis) == ["psd"]
+    assert restored.analysis["psd"]["peaks"]["0"]["center"] == 0.25
+
+
+def test_psd_peak_bridge_restores_per_scan_point():
+    analyser = PsdAnalyzer(kind="complex", modes=[0])
+    axis = np.linspace(-1.0, 1.0, 5)
+    points = [
+        {
+            "axis": axis,
+            "psd": np.ones((5, 1)),
+            "psd_std": np.ones((5, 1)) * 0.1,
+            "psd_sem": np.ones((5, 1)) * 0.05,
+            "modes": [0],
+            "orientation": "phase_decreasing",
+            "uncertainty": {"n_independent": 4},
+            "peaks": {0: {"center": center}},
+        }
+        for center in (0.25, 0.5)
+    ]
+    products = analyser.build_products(points, scan_size=2, label="psd")
+    assert products is not None
+
+    for index, expected in enumerate((0.25, 0.5)):
+        point_products = {
+            name: product.point_view(scan=index)
+            for name, product in products.items()
+        }
+        restored = legacy_view_from_products(
+            point_products, meta={"scan_index": index}
+        )
+        assert restored.analysis["psd"]["peaks"]["0"]["center"] == expected
 
 
 def test_allan_product_is_graph_ready_statistics():

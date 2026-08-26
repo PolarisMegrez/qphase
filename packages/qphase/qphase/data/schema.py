@@ -85,8 +85,9 @@ class AxisSchema(BaseModel):
 
     ``size`` may be unknown at plan time; the axis is *closed* once its size
     is known and — for regular coordinates — a finite, non-zero step is set.
-    Explicit coordinate arrays never enter the schema; their length and
-    monotonicity are validated at materialization time.
+    Explicit coordinate arrays never enter the schema. ``monotonic`` records
+    a semantic expectation for consumers; core does not eagerly scan large
+    coordinate payloads to prove it.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -160,7 +161,12 @@ class SamplingBasisSchema(BaseModel):
 
 
 class VariableConstraints(BaseModel):
-    """Value and layout constraints of a variable."""
+    """Declarative value and layout constraints of a variable.
+
+    Core validates that a constraint is applicable to the declared dtype and
+    dimensions. It does not eagerly scan payload values for nonnegativity,
+    Hermiticity or symmetry; producers and domain validators own those checks.
+    """
 
     model_config = ConfigDict(extra="forbid")
 

@@ -350,6 +350,9 @@ def test_register_bundle_adapter_restores_custom_bundle(tmp_path):
             if value.descriptor != {"answer": 42}:
                 raise ArtifactCorruptError("invalid test descriptor")
 
+        def validate_manifest(self, manifest):
+            self.validate_descriptor(manifest.bundle)
+
         def build(self, manifest, products):
             return {
                 "descriptor": manifest.bundle.descriptor,

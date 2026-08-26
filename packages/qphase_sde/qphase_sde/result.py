@@ -18,6 +18,7 @@ recorded in artifact provenance.
 """
 
 import importlib.metadata
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -762,6 +763,7 @@ def legacy_view_from_products(
 
     trajectory = None
     analysis: dict[str, Any] = {}
+    deferred_bridges: list[tuple[str, str, dict[Any, Any]]] = []
     for name, product in products.items():
         axis_names = {axis.name for axis in product.axes}
         if _SCAN_AXIS in axis_names:
@@ -806,7 +808,30 @@ def legacy_view_from_products(
             if meta_key in per_point and scan_index is not None:
                 meta_value = list(meta_value)[int(scan_index)]
             _assign_nested(payload, meta_key, meta_value)
+        if product.attributes.get("bridge") == "legacy_peaks/1":
+            source = product.attributes.get("source_product")
+            field = product.attributes.get("payload_field")
+            if not isinstance(source, str) or not isinstance(field, str):
+                raise ValueError(
+                    f"legacy peak product {name!r} lacks an explicit source route"
+                )
+            deferred_bridges.append((source, field, payload))
+            continue
         analysis[name] = payload
+    for source, field, payload in deferred_bridges:
+        if source not in analysis:
+            raise ValueError(
+                f"legacy peak bridge references missing source product {source!r}"
+            )
+        if field not in payload:
+            raise ValueError(
+                f"legacy peak bridge for {source!r} misses payload field {field!r}"
+            )
+        if field in analysis[source]:
+            raise ValueError(
+                f"legacy peak bridge would overwrite {source!r}.{field}"
+            )
+        analysis[source][field] = payload[field]
     return SDEResult(trajectory=trajectory, analysis=analysis, meta=dict(meta or {}))
 
 
@@ -1041,17 +1066,27 @@ class _SDEBundleAdapter:
                 f"SDE scan descriptor fields are invalid (missing: {missing}, "
                 f"extra: {extra})"
             )
-        try:
-            shape = tuple(int(extent) for extent in scan["shape"])
-            axes = scan["axes"]
-            order = scan["dimension_order"]
-        except (KeyError, TypeError, ValueError) as exc:
+        shape_raw = scan["shape"]
+        axes = scan["axes"]
+        order = scan["dimension_order"]
+        if not isinstance(shape_raw, list) or any(
+            type(extent) is not int or extent <= 0 for extent in shape_raw
+        ):
             raise ArtifactCorruptError(
-                f"invalid SDE scan descriptor: {exc}"
-            ) from exc
+                "SDE scan shape extents must be positive integers"
+            )
+        shape = tuple(shape_raw)
         if not isinstance(axes, dict) or not isinstance(order, list):
             raise ArtifactCorruptError(
                 "SDE scan axes must be a mapping and dimension_order a list"
+            )
+        if any(not isinstance(name, str) or not name for name in order):
+            raise ArtifactCorruptError(
+                "SDE scan dimension_order entries must be non-empty strings"
+            )
+        if any(not isinstance(name, str) or not name for name in axes):
+            raise ArtifactCorruptError(
+                "SDE scan axis names must be non-empty strings"
             )
         if len(set(order)) != len(order) or set(order) != set(axes):
             raise ArtifactCorruptError(
@@ -1076,12 +1111,12 @@ class _SDEBundleAdapter:
             else {name: shape[0] for name in order}
         )
         for name in order:
-            try:
-                size = len(axes[name])
-            except (KeyError, TypeError) as exc:
+            values = axes[name]
+            if not isinstance(values, list):
                 raise ArtifactCorruptError(
                     f"SDE scan axis {name!r} is not a coordinate sequence"
-                ) from exc
+                )
+            size = len(values)
             if size != expected_sizes[name]:
                 raise ArtifactCorruptError(
                     f"SDE scan axis {name!r} has {size} values, expected "
@@ -1094,6 +1129,50 @@ class _SDEBundleAdapter:
             raise ArtifactCorruptError(
                 "SDE n_traj_per_point must be a positive integer or null"
             )
+
+    def validate_manifest(self, manifest: Any) -> None:
+        self.validate_descriptor(manifest.bundle)
+        shape = tuple(manifest.bundle.descriptor["scan"]["shape"])
+        scan_size = math.prod(shape) if shape else 1
+        entries = {entry.name: entry for entry in manifest.products}
+        for entry in manifest.products:
+            axis_names = {axis.name for axis in entry.product_schema.axes}
+            if "scan" not in axis_names:
+                continue
+            axis = entry.product_schema.axis("scan")
+            if axis.size != scan_size:
+                raise ArtifactCorruptError(
+                    f"product {entry.name!r} scan axis size {axis.size} does "
+                    f"not match SDE bundle scan size {scan_size}"
+                )
+
+        allowed_roles = {"trajectories", "primary_spectrum"}
+        unknown_roles = sorted(
+            set(manifest.bundle.product_roles) - allowed_roles
+        )
+        if unknown_roles:
+            raise ArtifactCorruptError(
+                f"SDE bundle contains unknown stable roles {unknown_roles}"
+            )
+        trajectories = manifest.bundle.product_roles.get("trajectories")
+        if trajectories is not None:
+            schema = entries[trajectories].product_schema
+            fields = {variable.name for variable in schema.variables}
+            if schema.kind is not DataKind.TIME_SERIES or not {
+                "alpha",
+                "valid_length",
+            } <= fields:
+                raise ArtifactCorruptError(
+                    "SDE trajectories role must reference a trajectory "
+                    "time-series product"
+                )
+        spectrum = manifest.bundle.product_roles.get("primary_spectrum")
+        if spectrum is not None:
+            schema = entries[spectrum].product_schema
+            if schema.kind is not DataKind.SPECTRAL:
+                raise ArtifactCorruptError(
+                    "SDE primary_spectrum role must reference a spectral product"
+                )
 
     def build(self, manifest: Any, products: dict[str, Dataset]) -> SDEDataBundle:
         try:

@@ -56,7 +56,9 @@ qphase 2.x 的 artifact 是一个**目录**：一个 `artifact_manifest.json` �
 会在 manifest 读取阶段完成 descriptor 的 metadata-only 严格校验。未知 bundle
 adapter 仍可作为 generic bundle 列出；已知 adapter 拥有的畸形 descriptor
 属于损坏，而不是单纯不可用。manifest metadata 使用严格 JSON，拒绝 `NaN` 与
-无穷大；typed 数值 payload 数组仍可保存它们。
+无穷大；typed 数值 payload 数组仍可保存它们。对于已注册 storage adapter，
+manifest 校验还会聚合不同产品的 payload ownership：同一产品的一个文件可包含
+多个 key，但同一 payload 文件不得由两个产品共享。
 
 ## NPZ 2.x 存储 adapter
 
@@ -92,12 +94,17 @@ adapter 仍可作为 generic bundle 列出；已知 adapter 拥有的畸形 desc
 
 ## 写入与读取
 
+当前 scheduler 把每个 Job 目录作为有且仅有一个主 bundle artifact 的根目录。
+Job 日志、配置快照和导出的 CSV 不属于 artifact payload，除非 manifest 显式引用
+它们。未来的多 artifact 布局可以在 Job 下建立独立 artifact 根目录，但必须保持
+本页定义的 manifest 契约。
+
 - `save_products(directory, products, *, provenance=None, parents=(),
   artifact_id=None, shard_target_bytes=..., bundle=None, layout="sharded",
   replace=False)` 持久化 typed dataset 并返回写出的
   `ArtifactManifestV3`。artifact-backed dataset 先被完整物化（显式加载，
   绝不隐式）；设备端 payload 以显式 `copy_policy="allow"` 拷回主机。允许
-  空产品映射。未显式给出 `bundle` 时记录通用 bundle 描述符。
+  空产品映射；所有持久化产品 schema 必须闭合。未显式给出 `bundle` 时记录通用 bundle 描述符。
 - `load_products(directory)` 以**惰性后端**重新打开 artifact：不读取
   payload；句柄从已校验的 manifest 暴露 shape/dtype/nbytes，
   `point_view` 等选择操作只读取触及的 chunk。`load_bundle(directory)` 进
@@ -126,14 +133,20 @@ adapter 仍可作为 generic bundle 列出；已知 adapter 拥有的畸形 desc
 - 每个 graph-ready scan 产品都携带 typed `(scan,)` 扁平扫描参数坐标。所有点
   共用的 frequency、tau、lag、channel 等采样坐标折叠为 dimension coordinate；
   逐点变化的坐标保留为显式 auxiliary coordinate。
+- `sde/1` bundle adapter 会把 scan descriptor 与全部产品 schema 交叉校验：
+  shape extent 必须是严格正整数；所有带 `scan` 轴的产品必须等于 bundle 的扁平
+  scan size；稳定的 `trajectories`/`primary_spectrum` role 必须分别指向兼容的
+  time-series/spectral 产品。
 - 其余 analyser 在 Phase 2 之前仍通过带版本的 `legacy_analysis/1` 桥接
   （`graph_ready=False`）持久化：数值叶成为变量，嵌套 dict 按点号路径拍
   平，字符串/JSON 安全叶进入 `attributes["payload_meta"]`，逐点 ragged
   叶退化为记录在 `per_point_meta` 下的 meta 列表，无法桥接的键报告在
   `dropped_keys` 下。
-- manifest provenance 记录 `engine`、`sde` 下的 `SDEProvenance` 记录、
-  JSON 安全的任务 `meta`（以及 `meta_dropped`），以及 `qphase` 与
-  `qphase_sde` 的真实安装 distribution `versions`。
+- manifest provenance 记录 `engine`、`sde` 下带版本的
+  `qphase_sde.provenance/1`、JSON 安全的任务 `meta`（以及
+  `meta_dropped`），以及 `qphase` 与 `qphase_sde` 的真实安装 distribution
+  `versions`。其中 `dt` 是 SDE 积分步长，不是 core 通用 provenance 字段，
+  也不是保存时序的 sample interval；其他资源包定义自己的数值 provenance schema。
 - 导入 `qphase_sde.result` 即注册 `sde/1` bundle adapter，因此干净进程可
   直接凭 v3 manifest 恢复 scan bundle（shape、轴、逐点参数视图）；
   `legacy_result()` 渲染单点 1.x 视图，`point_view` 把
@@ -141,10 +154,16 @@ adapter 仍可作为 generic bundle 列出；已知 adapter 拥有的畸形 desc
 - SDE bundle roles 只记录稳定含义：保留轨迹时的 `trajectories`，以及恰有一个
   频谱产品时的 `primary_spectrum`。其余产品按 kind、quantity 和 fields 选择。
 - peak candidates/paths 当前不声明为 graph-ready 公共产品。分组 ragged schema
-  与 producer 是 ProductGraph executor 之前必须完成的 Phase 2A；旧 PSD peak
-  metadata 不构成该正式产品。
+  与 producer 是 ProductGraph executor 之前必须完成的 Global Phase 5A。在此
+  之前，旧 PSD peak metadata 保存为带显式 `source_product` 与
+  `payload_field` 路由的 `legacy_peaks/1` bridge；`legacy_result()` 可还原原始
+  `analysis["psd"]["peaks"]` 字段，但不会把它声明为 graph-ready peak 产品。
 
 ## 迁移 SDE 1.x 结果
+
+!!! warning "临时 major 版本迁移工具"
+    这些1.x到2.x工具不属于稳定2.x API。Global Phase 4 在全部保留数据完成迁移和验证后删除它们；QPhase
+    2.x 不承诺永久兼容旧 major。
 
 `qphase_sde.runtime.migrate` 把既有结果**单向**转换为 v3：
 

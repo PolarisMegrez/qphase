@@ -178,6 +178,35 @@ def test_save_load_roundtrip_single_product(tmp_path):
     )
 
 
+def test_persistence_requires_closed_product_schema(tmp_path):
+    schema = _schema(5).model_copy(deep=True)
+    schema.axes[0].size = None
+    dataset = TimeSeriesDataset.from_arrays(
+        schema,
+        {
+            "x": np.zeros((5, 8), dtype=np.complex128),
+            "count": np.arange(5),
+        },
+        owner="engine.fake",
+    )
+
+    with pytest.raises(ValueError, match="closed before persistence"):
+        save_products(tmp_path, {"trajectories": dataset})
+
+
+def test_manifest_rejects_open_persisted_product_schema(tmp_path):
+    save_products(tmp_path, {"trajectories": _dataset()})
+
+    def open_axis(raw):
+        raw["products"][0]["product_schema"]["axes"][0]["size"] = None
+
+    _mutate_manifest(tmp_path, open_axis)
+    _recompute_hashes(tmp_path)
+
+    with pytest.raises(ArtifactCorruptError, match="closed before persistence"):
+        ArtifactManifestV3.read(tmp_path)
+
+
 def test_unknown_artifact_ref_requires_store_open(tmp_path):
     dataset = _dataset()
     manifest = save_products(tmp_path, {"trajectories": dataset})
@@ -385,6 +414,24 @@ def test_manifest_rejects_shared_chunk_files(tmp_path):
     _recompute_hashes(tmp_path)
     with pytest.raises(ArtifactCorruptError, match="referenced by both"):
         load_products(tmp_path)
+
+
+def test_manifest_read_rejects_payload_shared_across_products(tmp_path):
+    dataset = _dataset()
+    save_products(
+        tmp_path,
+        {"first": dataset, "second": dataset},
+        layout="single",
+    )
+
+    def share_product_payload(raw):
+        raw["products"][1]["storage"] = raw["products"][0]["storage"]
+
+    _mutate_manifest(tmp_path, share_product_payload)
+    _recompute_hashes(tmp_path)
+
+    with pytest.raises(ArtifactCorruptError, match="across products"):
+        ArtifactManifestV3.read(tmp_path)
 
 
 def test_manifest_rejects_storage_variable_mismatch(tmp_path):

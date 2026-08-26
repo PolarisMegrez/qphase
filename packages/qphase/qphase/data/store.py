@@ -434,6 +434,7 @@ class ArtifactManifestV3(BaseModel):
 
     def write(self, directory: Path | str) -> Path:
         """Write the manifest JSON into the artifact directory."""
+        self._cross_validate()
         path = Path(directory) / MANIFEST_FILENAME
         path.write_text(
             json.dumps(
@@ -493,11 +494,13 @@ class ArtifactManifestV3(BaseModel):
             raise ArtifactCorruptError(
                 f"bundle product_roles reference unknown products {unknown_roles}"
             )
+        payload_owners: dict[str, str] = {}
         for entry in self.products:
             _validate_product_entry(entry)
             if storage_adapter_available(entry.storage.adapter):
+                adapter = _resolve_adapter(entry.storage.adapter)
                 try:
-                    _resolve_adapter(entry.storage.adapter).validate_descriptor(entry)
+                    adapter.validate_descriptor(entry)
                 except ArtifactError:
                     raise
                 except (KeyError, TypeError, ValueError, ValidationError) as exc:
@@ -505,6 +508,13 @@ class ArtifactManifestV3(BaseModel):
                         f"storage descriptor of product {entry.name!r} is "
                         f"invalid: {exc}"
                     ) from exc
+                for file in adapter.referenced_files(entry):
+                    previous = payload_owners.setdefault(file, entry.name)
+                    if previous != entry.name:
+                        raise ArtifactCorruptError(
+                            f"payload file {file!r} is referenced across products "
+                            f"{previous!r} and {entry.name!r}"
+                        )
             expected = product_content_hash(
                 entry.name, entry.product_schema, entry.storage
             )
@@ -535,6 +545,15 @@ class ArtifactManifestV3(BaseModel):
                     f"bundle descriptor for adapter "
                     f"{self.bundle.adapter_id!r} is invalid: {exc}"
                 ) from exc
+            try:
+                bundle_adapter.validate_manifest(self)
+            except ArtifactError:
+                raise
+            except (KeyError, TypeError, ValueError, ValidationError) as exc:
+                raise ArtifactCorruptError(
+                    f"bundle manifest for adapter "
+                    f"{self.bundle.adapter_id!r} is invalid: {exc}"
+                ) from exc
 
 
 # -- cross-field validation -----------------------------------------------------
@@ -542,6 +561,10 @@ class ArtifactManifestV3(BaseModel):
 
 def _validate_product_entry(entry: ProductEntry) -> None:
     """Validate the storage summary against the product schema."""
+    if not entry.product_schema.is_closed:
+        raise ArtifactCorruptError(
+            f"product {entry.name!r} schema must be closed before persistence"
+        )
     schema_vars = {
         variable.name: variable for variable in entry.product_schema.variables
     }
@@ -834,6 +857,10 @@ def save_products(
                 )
             if dataset.is_artifact_backed:
                 dataset = dataset.materialize()
+            if not dataset.schema.is_closed:
+                raise ValueError(
+                    f"product {name!r} schema must be closed before persistence"
+                )
             # Replacement writes fresh file names, so publishing can never
             # clobber payload the old manifest still references.
             stem = f"{index:02d}_{_sanitize(name)}"
@@ -887,6 +914,7 @@ def save_products(
                 bundle.model_dump(mode="json"), entries, provenance_dict, parent_list
             ),
         )
+        manifest._cross_validate()
 
         if not old_files:
             collisions = sorted(
@@ -989,6 +1017,10 @@ class BundleAdapterProtocol(Protocol):
 
     def validate_descriptor(self, descriptor: BundleDescriptor) -> None: ...
 
+    def validate_manifest(self, manifest: ArtifactManifestV3) -> None:
+        """Cross-check bundle metadata against product schemas."""
+        ...
+
     def build(
         self, manifest: ArtifactManifestV3, products: dict[str, Dataset]
     ) -> Any: ...
@@ -1024,6 +1056,9 @@ class _GenericBundleAdapter:
             metadata={"artifact_id": manifest.artifact_id},
         )
 
+    def validate_manifest(self, manifest: ArtifactManifestV3) -> None:
+        self.validate_descriptor(manifest.bundle)
+
 
 _GENERIC_BUNDLE_ADAPTER = _GenericBundleAdapter()
 _BUNDLE_ADAPTERS: dict[str, BundleAdapterProtocol] = {
@@ -1033,6 +1068,10 @@ _BUNDLE_ADAPTERS: dict[str, BundleAdapterProtocol] = {
 
 def register_bundle_adapter(adapter: BundleAdapterProtocol) -> None:
     """Register a validating concrete-bundle adapter."""
+    if not isinstance(adapter, BundleAdapterProtocol):
+        raise ArtifactAdapterError(
+            "bundle adapters must implement BundleAdapterProtocol"
+        )
     existing = _BUNDLE_ADAPTERS.get(adapter.adapter_id)
     if existing is not None and existing is not adapter:
         raise ArtifactAdapterError(

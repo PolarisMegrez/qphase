@@ -59,6 +59,14 @@ def test_package_dependency_matches_resource_core_compatibility():
     assert fixture["compatibility"]["qphase_core"] == ">=2.0a0,<3.0"
 
 
+def test_sde_provenance_is_resource_versioned():
+    from qphase_sde.contracts.bundle import SDEProvenance
+
+    provenance = SDEProvenance(dt=0.05)
+    assert provenance.schema_version == "qphase_sde.provenance/1"
+    assert provenance.dt == 0.05
+
+
 def _imported_roots(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     roots: set[str] = set()
