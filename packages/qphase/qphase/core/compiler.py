@@ -25,7 +25,12 @@ from .protocols import EngineManifest
 from .registry import RegistryView, registry
 from .scan import ParameterGrid
 from .system_config import SystemConfig
-from .tags import load_tag_policy, validate_declared_tags
+from .tags import (
+    job_tag_assignment_id,
+    load_tag_policy,
+    validate_declared_tags,
+    workflow_tag_assignment_id,
+)
 
 __all__ = ["CompiledJob", "CompiledWorkflow", "WorkflowCompiler"]
 
@@ -204,18 +209,49 @@ class WorkflowCompiler:
         )
 
     def _freeze_tags(self, workflow: WorkflowSpec) -> Mapping[str, Any]:
-        """Validate declared tags against the project policy and freeze them."""
+        """Validate declared tags against the project policy and freeze them.
+
+        The snapshot carries canonical workflow/job tags, the policy revision
+        that validated them, and deterministic assignment ids so every
+        declared tag can cite a stable provenance anchor without an
+        annotation document.
+        """
         policy = load_tag_policy(self.project)
+        canonical_tags = validate_declared_tags(
+            list(workflow.tags), "workflow", policy
+        )
+        job_tags = {
+            job.name: validate_declared_tags(list(job.tags), "job", policy)
+            for job in workflow.jobs
+        }
         snapshot = {
             "raw_tags": list(workflow.tags),
-            "canonical_tags": validate_declared_tags(
-                list(workflow.tags), "workflow", policy
-            ),
-            "job_tags": {
-                job.name: validate_declared_tags(list(job.tags), "job", policy)
-                for job in workflow.jobs
-            },
+            "canonical_tags": canonical_tags,
+            "job_tags": job_tags,
             "policy_revision": policy.revision if policy is not None else None,
+            "assignments": {
+                "workflow": [
+                    {
+                        "tag": tag,
+                        "assignment_id": workflow_tag_assignment_id(
+                            workflow.id, tag
+                        ),
+                    }
+                    for tag in canonical_tags
+                ],
+                "jobs": {
+                    job.name: [
+                        {
+                            "tag": tag,
+                            "assignment_id": job_tag_assignment_id(
+                                workflow.id, job.name, tag
+                            ),
+                        }
+                        for tag in job_tags[job.name]
+                    ]
+                    for job in workflow.jobs
+                },
+            },
         }
         return _freeze_mapping(snapshot)
 

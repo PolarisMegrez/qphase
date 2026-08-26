@@ -7,8 +7,8 @@ documents with optimistic-concurrency revisions:
 
 - ``SessionAnnotationDocument`` (``qphase.session-annotations/1``) lives in
   the session directory (``session_annotations.json``) and also carries the
-  per-occurrence annotations keyed by artifact id, because an occurrence's
-  producing context is session-scoped truth;
+  per-occurrence annotations keyed by ``job_name:artifact_id``, because an
+  occurrence's producing context is session-scoped truth;
 - ``ArtifactAnnotationDocument`` (``qphase.artifact-annotations/1``) lives in
   the artifact directory (``artifact_annotations.json``) so identity-scoped
   annotations travel with the artifact.
@@ -54,13 +54,19 @@ def _utc_now() -> str:
 
 
 class TagAssignment(BaseModel):
-    """One immutable tag assignment with a stable id."""
+    """One immutable tag assignment with a stable id.
+
+    ``policy_revision`` freezes the tag policy revision that validated the
+    assignment at write time, so historical provenance survives later policy
+    edits. Assignments written before provenance tracking carry ``None``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     tag: str
     created_at: str = Field(default_factory=_utc_now)
+    policy_revision: str | None = None
 
     @field_validator("tag")
     @classmethod
@@ -69,7 +75,7 @@ class TagAssignment(BaseModel):
 
 
 class OccurrenceAnnotations(BaseModel):
-    """Annotations of one producing occurrence (keyed by artifact id)."""
+    """Annotations of one producing occurrence (keyed by job + artifact id)."""
 
     model_config = ConfigDict(extra="forbid")
 

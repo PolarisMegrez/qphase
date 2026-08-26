@@ -62,6 +62,7 @@ class _ExecutionRecord:
     last_persisted_progress: float = 0.0
     persisted_sequence: int = 0
     submission_tags: list[str] = field(default_factory=list)
+    tag_policy_revision: str | None = None
 
 
 class ExecutionManager:
@@ -106,7 +107,7 @@ class ExecutionManager:
     ) -> ExecutionSummary:
         del resume_from  # Resume support remains on the synchronous service for now.
         workflow = self.scheduler.load_workflow(workflow_reference)
-        submission_tags = self._validate_submission_tags(tags)
+        submission_tags, tag_policy_revision = self._validate_submission_tags(tags)
         compiled_workflow = None
         if self.state_store is not None:
             compiled_workflow = self.scheduler.compile_workflow(workflow)
@@ -122,6 +123,7 @@ class ExecutionManager:
                 source_workflow=workflow_reference,
                 compiled_workflow=compiled_workflow,
                 submission_tags=submission_tags,
+                tag_policy_revision=tag_policy_revision,
             )
             self._records[execution_id] = record
             self._queue.append(execution_id)
@@ -136,10 +138,17 @@ class ExecutionManager:
             self._wake.notify()
             return self._summary(record)
 
-    def _validate_submission_tags(self, tags: list[str] | None) -> list[str]:
-        """Policy-validate submission tags at the service boundary."""
+    def _validate_submission_tags(
+        self, tags: list[str] | None
+    ) -> tuple[list[str], str | None]:
+        """Policy-validate submission tags at the service boundary.
+
+        Returns the canonical tags together with the revision of the policy
+        that validated them, so the frozen provenance travels with the record.
+        """
         policy = load_tag_policy(self.scheduler.project)
-        return validate_declared_tags(list(tags or []), "execution", policy)
+        validated = validate_declared_tags(list(tags or []), "execution", policy)
+        return validated, (policy.revision if policy is not None else None)
 
     def update_submission_tags(
         self, execution_id: str, tags: list[str]
@@ -149,7 +158,9 @@ class ExecutionManager:
             record = self._require(execution_id)
             if record.state != "queued":
                 raise ValueError("submission tags can only be updated while queued")
-            record.submission_tags = self._validate_submission_tags(tags)
+            record.submission_tags, record.tag_policy_revision = (
+                self._validate_submission_tags(tags)
+            )
             self._save_execution(record)
             self._append_event(
                 record,
@@ -323,6 +334,7 @@ class ExecutionManager:
                 on_scheduler=_scheduler_ready,
                 compiled_workflow=record.compiled_workflow,
                 submission_tags=list(record.submission_tags),
+                submission_tag_policy_revision=record.tag_policy_revision,
             )
             record.session_id = (
                 record.scheduler.session_id if record.scheduler is not None else None
@@ -426,6 +438,7 @@ class ExecutionManager:
             "execution_id": record.execution_id,
             "source_workflow": record.source_workflow,
             "submission_tags": list(record.submission_tags),
+            "tag_policy_revision": record.tag_policy_revision,
             "workflow": record.workflow.model_dump(mode="json", by_alias=True),
             "compiled_workflow": record.compiled_workflow.to_payload()
             if record.compiled_workflow is not None
@@ -520,6 +533,7 @@ class ExecutionManager:
             started_jobs=set(payload.get("started_jobs", [])),
             compiled_workflow=compiled_workflow,
             submission_tags=[str(item) for item in payload.get("submission_tags", [])],
+            tag_policy_revision=payload.get("tag_policy_revision"),
         )
         session_dir = payload.get("session_dir")
         if isinstance(session_dir, str):

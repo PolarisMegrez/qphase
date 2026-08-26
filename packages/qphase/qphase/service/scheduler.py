@@ -112,6 +112,7 @@ class SchedulerService:
         on_scheduler: Any = None,
         compiled_workflow: CompiledWorkflow | None = None,
         submission_tags: list[str] | None = None,
+        submission_tag_policy_revision: str | None = None,
     ) -> list[JobResult]:
         scheduler = Scheduler(
             system_config=self.system_config,
@@ -133,6 +134,13 @@ class SchedulerService:
             policy = load_tag_policy(self.project)
             run_kwargs["submission_tags"] = validate_declared_tags(
                 list(submission_tags), "execution", policy
+            )
+            run_kwargs["submission_tag_policy_revision"] = (
+                submission_tag_policy_revision
+                if submission_tag_policy_revision is not None
+                else policy.revision
+                if policy is not None
+                else None
             )
         results = scheduler.run(workflow, **run_kwargs)
         statuses = {result.status for result in results}

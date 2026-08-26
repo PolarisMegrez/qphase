@@ -35,9 +35,11 @@ __all__ = [
     "TagPolicy",
     "canonicalize_tag_list",
     "canonicalize_tag_syntax",
+    "job_tag_assignment_id",
     "load_tag_policy",
     "parse_tag",
     "validate_declared_tags",
+    "workflow_tag_assignment_id",
 ]
 
 #: Schema identifier of the project tag policy document.
@@ -47,9 +49,10 @@ TAG_POLICY_SCHEMA: Literal["qphase.tag-policy/1"] = "qphase.tag-policy/1"
 TAG_POLICY_FILENAME = "tags.yaml"
 
 ObjectKind = Literal[
-    "workflow", "job", "execution", "session", "artifact", "occurrence"
+    "project", "workflow", "job", "execution", "session", "artifact", "occurrence"
 ]
 OBJECT_KINDS: tuple[str, ...] = (
+    "project",
     "workflow",
     "job",
     "execution",
@@ -110,6 +113,23 @@ def canonicalize_tag_list(values: list[str]) -> list[str]:
             code=ErrorCode.CONFIG,
         )
     return canonical
+
+
+def workflow_tag_assignment_id(workflow_id: str, tag: str) -> str:
+    """Deterministic assignment id of one workflow-declared tag.
+
+    Declared tags have no annotation document to host a mutable assignment
+    id, so the id is derived from the stable identity of the declaration
+    itself: the same workflow id and tag always produce the same id.
+    """
+    digest = hashlib.sha256(f"workflow:{workflow_id}:{tag}".encode())
+    return digest.hexdigest()[:16]
+
+
+def job_tag_assignment_id(workflow_id: str, job_name: str, tag: str) -> str:
+    """Deterministic assignment id of one job-declared tag."""
+    digest = hashlib.sha256(f"job:{workflow_id}:{job_name}:{tag}".encode())
+    return digest.hexdigest()[:16]
 
 
 class TagNamespacePolicy(BaseModel):

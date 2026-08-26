@@ -47,6 +47,7 @@ from .protocols import ResultProtocol
 from .registry import RegistryCenter, registry
 from .result_router import ResultRouter
 from .system_config import SystemConfig, load_system_config
+from .tags import load_tag_policy
 from .utils import save_yaml
 
 log = get_logger()
@@ -63,6 +64,7 @@ class SessionManifest(TypedDict):
     start_time: str
     status: str
     submission_tags: list[str]
+    submission_tag_policy_revision: str | None
     jobs: dict[str, dict[str, Any]]
 
 
@@ -128,6 +130,7 @@ class Scheduler:
         self,
         workflow: WorkflowSpec,
         submission_tags: list[str] | None = None,
+        submission_tag_policy_revision: str | None = None,
     ) -> None:
         """Initialize a new execution session."""
         # Generate session ID
@@ -143,7 +146,12 @@ class Scheduler:
 
         workflow_payload = workflow.model_dump(mode="json", by_alias=True)
         workflow_hash = self._workflow_hash(workflow_payload)
-        save_yaml(workflow_payload, self.session_dir / "workflow_snapshot.yaml")
+        self._write_workflow_snapshot(workflow)
+        if submission_tag_policy_revision is None:
+            policy = load_tag_policy(self.project)
+            submission_tag_policy_revision = (
+                policy.revision if policy is not None else None
+            )
 
         # Attach the per-session log file (full DEBUG content). A failure here
         # surfaces one explicit warning and never blocks the run.
@@ -159,11 +167,35 @@ class Scheduler:
             "start_time": datetime.now().isoformat(),
             "status": "running",
             "submission_tags": list(submission_tags or []),
+            "submission_tag_policy_revision": submission_tag_policy_revision,
             "jobs": {},
         }
         self._save_manifest()
         self._start_session_heartbeat()
         log.debug(f"Initialized session {self.session_id} at {self.session_dir}")
+
+    def _write_workflow_snapshot(self, workflow: WorkflowSpec) -> None:
+        """Persist the frozen workflow plus its compiled tag snapshot.
+
+        ``workflow_snapshot.yaml`` stays a loadable ``qphase.workflow/2``
+        document; the compiled tag snapshot goes to the separate
+        ``tag_snapshot.yaml`` sidecar. It records the canonical tags, the
+        validating policy revision and the stable assignment ids from the
+        compiled workflow, so a later policy edit never rewrites historical
+        provenance at reindex time.
+        """
+        assert self.session_dir is not None
+        payload = workflow.model_dump(mode="json", by_alias=True)
+        save_yaml(payload, self.session_dir / "workflow_snapshot.yaml")
+        tag_snapshot = (
+            self._compiled_workflow.tag_snapshot
+            if self._compiled_workflow is not None
+            else None
+        )
+        if tag_snapshot is not None:
+            save_yaml(
+                dict(tag_snapshot), self.session_dir / "tag_snapshot.yaml"
+            )
 
     @staticmethod
     def _workflow_hash(payload: dict[str, Any]) -> str:
@@ -268,6 +300,7 @@ class Scheduler:
         resume_from: Path | None = None,
         compiled_workflow: CompiledWorkflow | None = None,
         submission_tags: list[str] | None = None,
+        submission_tag_policy_revision: str | None = None,
     ) -> list[JobResult]:
         """Execute all jobs in the workflow serially.
 
@@ -285,6 +318,10 @@ class Scheduler:
         submission_tags : list[str] | None, optional
             Frozen execution-level tags recorded in the session manifest.
             Callers are responsible for policy validation.
+        submission_tag_policy_revision : str | None, optional
+            Revision of the tag policy that validated ``submission_tags`` at
+            submit time. When omitted, the current policy revision is recorded
+            at session initialization.
 
         Returns
         -------
@@ -352,7 +389,9 @@ class Scheduler:
         if resume_from:
             self._resume_session(resume_from, workflow)
         else:
-            self._initialize_session(workflow, submission_tags)
+            self._initialize_session(
+                workflow, submission_tags, submission_tag_policy_revision
+            )
 
         # Seed per-Session Job statuses from the manifest so that Jobs depending
         # on a previously failed upstream are marked skipped_dependency.
@@ -383,6 +422,11 @@ class Scheduler:
                         effective_jobs[job_idx] = replacement
                         compiled = self._compile_revised_jobs(workflow, effective_jobs)
                         self._compiled_workflow = compiled
+                        # The snapshot is the session's workflow truth; a
+                        # pending-job revision rewrites it (with its frozen
+                        # tag snapshot) so the catalog indexes the revision
+                        # that actually ran.
+                        self._write_workflow_snapshot(compiled.workflow)
                 compiled_job = compiled.job(job.name)
                 self._run_single(
                     job,
