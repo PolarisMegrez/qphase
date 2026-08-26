@@ -42,6 +42,7 @@ from .datasets import (
 )
 from .errors import (
     ArtifactAdapterError,
+    ArtifactAmbiguousError,
     ArtifactCorruptError,
     ArtifactError,
     ArtifactNotFoundError,
@@ -110,6 +111,7 @@ __all__ = [
     "ARTIFACT_SCHEMA_VERSION",
     "PRODUCT_SCHEMA_VERSION",
     "ArtifactAdapterError",
+    "ArtifactAmbiguousError",
     "ArtifactCorruptError",
     "ArtifactError",
     "ArtifactManifest",

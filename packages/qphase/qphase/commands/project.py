@@ -48,7 +48,8 @@ def reindex() -> None:
         typer.echo(f"Error: {exc}")
         raise typer.Exit(code=1) from exc
     typer.echo(
-        f"Reindexed catalog: {stats.workflows} workflows, "
+        f"Reindexed catalog: {stats.projects} project, "
+        f"{stats.workflows} workflow revisions, {stats.jobs} jobs, "
         f"{stats.executions} executions, {stats.sessions} sessions, "
         f"{stats.artifacts} artifacts, {stats.occurrences} occurrences, "
         f"{stats.effective_tags} effective tags "

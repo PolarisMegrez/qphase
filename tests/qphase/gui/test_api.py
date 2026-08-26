@@ -644,3 +644,34 @@ def test_gui_api_private_tags_and_promote(temp_workspace, tmp_path):
             for tag in promoted.json()["effective_tags"]
         } == {"task:wip": "session_annotation"}
         assert (root / "session_annotations.json").exists()
+def test_gui_api_occurrence_tags_disambiguated_by_job(temp_workspace):
+    root = _catalog_session(temp_workspace)
+    for job in ("sim", "fit"):
+        job_dir = root / job
+        job_dir.mkdir()
+        (job_dir / "artifact_manifest.json").write_text(
+            json.dumps({"artifact_id": "art-1"}), encoding="utf-8"
+        )
+    with TestClient(create_app()) as client:
+        ambiguous = client.post(
+            "/sessions/catalog-session/occurrences/art-1/tags",
+            json={"add": ["task:scan"]},
+        )
+        assert ambiguous.status_code == 400
+        assert "ambiguous" in ambiguous.json()["detail"]
+
+        resolved = client.post(
+            "/sessions/catalog-session/occurrences/art-1/tags",
+            params={"job_name": "fit"},
+            json={"add": ["task:scan"]},
+        )
+        assert resolved.status_code == 200
+
+        fit = client.get(
+            "/catalog/occurrence/art-1:catalog-session:fit/tags"
+        ).json()["effective_tags"]
+        assert any(tag["tag"] == "task:scan" for tag in fit)
+        sim = client.get(
+            "/catalog/occurrence/art-1:catalog-session:sim/tags"
+        ).json()["effective_tags"]
+        assert all(tag["tag"] != "task:scan" for tag in sim)

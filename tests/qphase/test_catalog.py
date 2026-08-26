@@ -41,6 +41,7 @@ def _session(
     artifacts: tuple[tuple[str, str], ...] = (),
     annotations: dict | None = None,
     start_time: str = "2026-08-26T10:00:00+08:00",
+    frozen: dict | None = None,
 ) -> Path:
     root = project.session_root / "2026" / "08" / session_id
     root.mkdir(parents=True)
@@ -57,19 +58,28 @@ def _session(
     (root / "session_manifest.json").write_text(
         json.dumps(manifest), encoding="utf-8"
     )
+    # The snapshot mirrors the current workflow file (job "sim", dummy
+    # engine) so an unchanged session rebuilds the same workflow revision.
     snapshot = {
         "schema": "qphase.workflow/2",
         "id": "example",
         "title": "Example",
         "tags": list(snapshot_tags),
         "jobs": [
-            {"name": name, "tags": list(tags)}
-            for name, tags in (job_tags or {}).items()
+            {
+                "name": "sim",
+                "engine": {"dummy": {}},
+                "tags": list((job_tags or {}).get("sim", ())),
+            }
         ],
     }
     (root / "workflow_snapshot.yaml").write_text(
         json.dumps(snapshot), encoding="utf-8"
     )
+    if frozen is not None:
+        (root / "tag_snapshot.yaml").write_text(
+            json.dumps(frozen), encoding="utf-8"
+        )
     for job_name, artifact_id in artifacts:
         job_dir = root / job_name
         job_dir.mkdir()
@@ -105,13 +115,16 @@ def test_reindex_counts_and_rebuild_parity(tmp_path):
     _session(
         project,
         "session-1",
+        snapshot_tags=("task:scan",),
         artifacts=(("sim", "art-1"), ("fit", "art-2")),
     )
     catalog = ProjectObjectCatalog(project)
 
     stats = catalog.reindex()
 
+    assert stats.projects == 1
     assert stats.workflows == 1
+    assert stats.jobs == 1
     assert stats.sessions == 1
     assert stats.artifacts == 2
     assert stats.occurrences == 2
@@ -119,6 +132,8 @@ def test_reindex_counts_and_rebuild_parity(tmp_path):
     assert again == stats.__class__(**{**stats.__dict__, "duration_seconds": again.duration_seconds})
     rows = catalog.query(CatalogQuery(object_kind="session"))
     assert [row["id"] for row in rows] == ["session-1"]
+    projects = catalog.query(CatalogQuery(object_kind="project"))
+    assert [row["id"] for row in projects] == [project.project_id]
 
 
 def test_occurrence_effective_tags_carry_provenance(tmp_path):
@@ -134,7 +149,7 @@ def test_occurrence_effective_tags_carry_provenance(tmp_path):
         annotations={
             "assignments": [{"id": "s1", "tag": "task:review"}],
             "occurrences": {
-                "art-1": {
+                "sim:art-1": {
                     "assignments": [{"id": "o1", "tag": "purpose:paper/fig3"}]
                 }
             },
@@ -223,7 +238,8 @@ def test_inherit_false_namespace_does_not_flow_down(tmp_path):
     catalog = ProjectObjectCatalog(project)
     catalog.reindex()
 
-    workflow_tags = catalog.effective_tags("workflow", "example")
+    (workflow_row,) = catalog.query(CatalogQuery(object_kind="workflow"))
+    workflow_tags = catalog.effective_tags("workflow", workflow_row["id"])
     assert [tag.tag for tag in workflow_tags] == ["local:wip"]
     session_tags = catalog.effective_tags("session", "session-1")
     assert session_tags == []
@@ -257,7 +273,8 @@ def test_same_artifact_in_two_sessions_keeps_contexts_isolated(tmp_path):
     }
     assert first == {"task:first"}
     assert second == {"task:second"}
-    assert catalog.locate_artifact("art-1") is not None
+    # Both occurrence locations stay indexed under one artifact identity.
+    assert len(catalog.locate_artifact_paths("art-1")) == 2
 
 
 def test_query_filters_and_stable_pagination(tmp_path):
@@ -331,7 +348,7 @@ def test_retention_inherits_to_occurrences(tmp_path):
         artifacts=(("sim", "art-1"), ("fit", "art-2"),),
         annotations={
             "retention": "evidence",
-            "occurrences": {"art-2": {"retention": "pinned"}},
+            "occurrences": {"fit:art-2": {"retention": "pinned"}},
         },
     )
     catalog = ProjectObjectCatalog(project)
@@ -394,3 +411,157 @@ def test_query_tag_namespace_filter(tmp_path):
     assert [row["id"] for row in rows] == ["session-1"]
     with pytest.raises(ValueError, match="invalid tag namespace"):
         CatalogQuery(object_kind="session", tag_namespace="model:cam")
+
+
+def test_workflow_revisions_accumulate_without_overwrite(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project, tags=("task:scan",))
+    # A historical session froze an older revision of the same workflow id.
+    _session(project, "session-1", snapshot_tags=("task:legacy",))
+    catalog = ProjectObjectCatalog(project)
+    stats = catalog.reindex()
+
+    assert stats.workflows == 2
+    rows = catalog.query(
+        CatalogQuery(object_kind="workflow", facets={"workflow_id": "example"})
+    )
+    assert len(rows) == 2
+    ids = {row["id"] for row in rows}
+    assert all(revision.startswith("example@") for revision in ids)
+    sources = {row["id"]: json.loads(row["sources_json"]) for row in rows}
+    file_rows = [row for row in rows if row["relative_path"] == "example.yaml"]
+    snapshot_rows = [row for row in rows if row["relative_path"] is None]
+    assert len(file_rows) == 1 and len(snapshot_rows) == 1
+    assert sources[file_rows[0]["id"]] == ["file:example.yaml"]
+    assert sources[snapshot_rows[0]["id"]][0].startswith("session:2026/08/session-1")
+    # Editing the file replaces the file-backed revision (the old content is
+    # no longer on disk); the snapshot-frozen revision survives.
+    old_file_id = file_rows[0]["id"]
+    _workflow_file(project, tags=("task:revised",))
+    assert catalog.reindex().workflows == 2
+    rows = catalog.query(
+        CatalogQuery(object_kind="workflow", facets={"workflow_id": "example"})
+    )
+    new_ids = {row["id"] for row in rows}
+    assert old_file_id not in new_ids
+    assert snapshot_rows[0]["id"] in new_ids
+
+
+def test_job_objects_indexed_with_facets(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(project, "session-1")
+    catalog = ProjectObjectCatalog(project)
+    stats = catalog.reindex()
+
+    # File and session snapshot freeze the same document, so one revision
+    # with two sources and one job object.
+    assert stats.workflows == 1
+    assert stats.jobs == 1
+    (workflow_row,) = catalog.query(CatalogQuery(object_kind="workflow"))
+    assert sorted(json.loads(workflow_row["sources_json"])) == [
+        "file:example.yaml",
+        "session:2026/08/session-1",
+    ]
+    (job_row,) = catalog.query(
+        CatalogQuery(
+            object_kind="job",
+            facets={"workflow_revision_id": workflow_row["id"]},
+        )
+    )
+    assert job_row["id"] == f"{workflow_row['id']}:sim"
+    assert job_row["workflow_id"] == "example"
+    assert job_row["name"] == "sim"
+    assert job_row["engine"] == "dummy"
+    assert job_row["model"] is None
+
+
+def test_frozen_snapshot_provenance_survives_policy_change(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\nnamespaces:\n  stage:\n    open: true\n",
+    )
+    from qphase.core.tags import load_tag_policy
+
+    revision_v1 = load_tag_policy(project).revision
+    _workflow_file(project)
+    _session(
+        project,
+        "session-1",
+        frozen={
+            "raw_tags": ["stage:q1"],
+            "canonical_tags": ["stage:q1"],
+            "job_tags": {},
+            "policy_revision": revision_v1,
+            "assignments": {
+                "workflow": [{"tag": "stage:q1", "assignment_id": "wf-a1"}],
+                "jobs": {},
+            },
+        },
+        artifacts=(("sim", "art-1"),),
+    )
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    session_tags = {
+        tag.tag: tag for tag in catalog.effective_tags("session", "session-1")
+    }
+    assert session_tags["stage:q1"].policy_revision == revision_v1
+    assert session_tags["stage:q1"].assignment_id == "wf-a1"
+    occurrence_tags = {
+        tag.tag: tag
+        for tag in catalog.effective_tags("occurrence", "art-1:session-1:sim")
+    }
+    assert occurrence_tags["stage:q1"].assignment_id == "wf-a1"
+
+    # A policy edit must not rewrite the frozen provenance on reindex.
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\nnamespaces:\n"
+        "  stage:\n    open: true\n  task:\n    open: true\n",
+    )
+    assert load_tag_policy(project).revision != revision_v1
+    catalog.reindex()
+
+    again = {
+        tag.tag: tag for tag in catalog.effective_tags("session", "session-1")
+    }
+    assert again["stage:q1"].policy_revision == revision_v1
+    assert again["stage:q1"].assignment_id == "wf-a1"
+
+
+def test_execution_links_workflow_revision_and_freezes_provenance(tmp_path):
+    from qphase.core.persistence import ProjectStateStore
+    from qphase.core.workflow import load_workflow
+
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    workflow = load_workflow(project.workflow_root / "example.yaml")
+    workflow_payload = workflow.model_dump(mode="json", by_alias=True)
+    ProjectStateStore(project).save_execution(
+        {
+            "schema": "qphase.execution/1",
+            "execution_id": "exec-1",
+            "source_workflow": "example",
+            "submission_tags": ["task:urgent"],
+            "tag_policy_revision": "rev-at-submit",
+            "workflow": workflow_payload,
+            "compiled_workflow": {
+                "schema": "qphase.compiled_workflow/1",
+                "workflow": workflow_payload,
+            },
+            "submitted_at": "2026-08-26T09:00:00+08:00",
+            "state": "completed",
+        }
+    )
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    (execution,) = catalog.query(CatalogQuery(object_kind="execution"))
+    (workflow_row,) = catalog.query(CatalogQuery(object_kind="workflow"))
+    assert execution["workflow_revision_id"] == workflow_row["id"]
+    tags = catalog.effective_tags("execution", "exec-1")
+    assert [(tag.tag, tag.policy_revision) for tag in tags] == [
+        ("task:urgent", "rev-at-submit")
+    ]

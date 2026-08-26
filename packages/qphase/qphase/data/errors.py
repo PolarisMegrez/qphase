@@ -11,6 +11,8 @@ ArtifactError
     Base class of all artifact store errors.
 ArtifactNotFoundError
     Artifact directory, manifest or referenced payload file is missing.
+ArtifactAmbiguousError
+    Artifact identity resolves to more than one occurrence location.
 ArtifactUnsupportedError
     Manifest or descriptor schema version is not supported.
 ArtifactCorruptError
@@ -25,6 +27,7 @@ from ..core.errors import QPhaseError
 
 __all__ = [
     "ArtifactAdapterError",
+    "ArtifactAmbiguousError",
     "ArtifactCorruptError",
     "ArtifactError",
     "ArtifactNotFoundError",
@@ -41,6 +44,15 @@ class ArtifactNotFoundError(ArtifactError, FileNotFoundError):
 
     Also subclasses :class:`FileNotFoundError` so existing callers that map
     missing artifacts to 404 keep working.
+    """
+
+
+class ArtifactAmbiguousError(ArtifactError):
+    """An artifact identity resolves to more than one location.
+
+    ``artifact_id`` identifies the immutable artifact; each location is an
+    occurrence. Without an explicit occurrence context (session/job) the
+    resolver must not pick one location arbitrarily.
     """
 
 

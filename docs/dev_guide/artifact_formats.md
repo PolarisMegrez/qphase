@@ -124,8 +124,12 @@ must preserve the manifest contracts defined here.
   process-local references. `ProjectArtifactResolver` resolves an
   `ArtifactRef` within one Project's Session root without process-global state;
   the scheduler supplies it through `ExecutionContext.artifact_resolver`.
-  It performs a direct manifest scan until the later Project catalog provides
-  an indexed implementation. An `ArtifactRef` carries identity only – artifact
+  Resolution is catalog-first with a direct manifest scan as the fresh-truth
+  fallback. An `artifact_id` identifies the immutable artifact; each on-disk
+  location is a producing occurrence. Without occurrence context the resolver
+  returns the location only when it is unique and raises
+  `ArtifactAmbiguousError` (listing every location) otherwise — it never picks
+  one copy arbitrarily. An `ArtifactRef` carries identity only – artifact
   id, product name, product schema and storage adapter id; it names no code and
   no filesystem location.
 

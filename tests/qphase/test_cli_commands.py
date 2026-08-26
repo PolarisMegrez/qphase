@@ -241,3 +241,29 @@ def test_project_migrate_dry_run(temp_workspace):
         if path.is_file()
     }
     assert after == before
+def test_occurrence_tag_requires_job_when_ambiguous(temp_workspace):
+    """'occurrence tag' refuses silent first-match; --job disambiguates."""
+    import json
+
+    root = _catalog_session(temp_workspace)
+    for job in ("sim", "fit"):
+        job_dir = root / job
+        job_dir.mkdir()
+        (job_dir / "artifact_manifest.json").write_text(
+            json.dumps({"artifact_id": "art-1", "bundle": {"type_id": "t/1"}}),
+            encoding="utf-8",
+        )
+
+    ambiguous = runner.invoke(
+        app, ["occurrence", "tag", "session-1", "art-1", "--add", "task:scan"]
+    )
+    assert ambiguous.exit_code == 1
+    assert "ambiguous" in ambiguous.stdout
+
+    resolved = runner.invoke(
+        app,
+        ["occurrence", "tag", "session-1", "art-1", "--job", "fit",
+         "--add", "task:scan"],
+    )
+    assert resolved.exit_code == 0
+    assert "task:scan" in resolved.stdout

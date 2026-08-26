@@ -437,3 +437,87 @@ def test_tag_artifact_never_touches_manifest_or_payload(tmp_path):
     assert (artifact_dir / "artifact_manifest.json").read_bytes() == manifest_before
     assert (artifact_dir / "payload.bin").read_bytes() == payload_before
     assert (artifact_dir / "artifact_annotations.json").exists()
+
+
+def test_assignments_freeze_the_current_policy_revision(tmp_path):
+    from qphase.core.tags import load_tag_policy
+
+    project = ProjectContext.create(tmp_path / "project")
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\nnamespaces:\n  stage:\n    open: true\n",
+    )
+    _session(project, "session-1")
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.tag_session("session-1", add=["stage:q1"])
+    revision_v1 = load_tag_policy(project).revision
+    tags = {tag.tag: tag for tag in service.effective_tags("session", "session-1")}
+    assert tags["stage:q1"].policy_revision == revision_v1
+
+    # After a policy edit, the historical assignment keeps its provenance and
+    # only new mutations freeze the new revision.
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\nnamespaces:\n"
+        "  stage:\n    open: true\n  task:\n    open: true\n",
+    )
+    revision_v2 = load_tag_policy(project).revision
+    assert revision_v2 != revision_v1
+    service.tag_session("session-1", add=["task:scan"])
+
+    tags = {tag.tag: tag for tag in service.effective_tags("session", "session-1")}
+    assert tags["stage:q1"].policy_revision == revision_v1
+    assert tags["task:scan"].policy_revision == revision_v2
+
+
+def test_occurrence_mutation_requires_job_name_when_ambiguous(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(
+        project, "session-1", artifacts=(("sim", "art-1"), ("fit", "art-1"))
+    )
+    service = CatalogService(project, home=tmp_path / "home")
+
+    with pytest.raises(ValueError, match="ambiguous occurrence"):
+        service.tag_occurrence("session-1", "art-1", add=["purpose:draft"])
+    with pytest.raises(ValueError, match="ambiguous occurrence"):
+        service.set_occurrence_retention("session-1", "art-1", "pinned")
+
+    service.tag_occurrence(
+        "session-1", "art-1", job_name="fit", add=["purpose:draft"]
+    )
+    service.set_occurrence_retention("session-1", "art-1", "pinned", job_name="fit")
+
+    sim_tags = {
+        tag.tag
+        for tag in service.effective_tags("occurrence", "art-1:session-1:sim")
+    }
+    fit_tags = {
+        tag.tag
+        for tag in service.effective_tags("occurrence", "art-1:session-1:fit")
+    }
+    assert "purpose:draft" not in sim_tags
+    assert "purpose:draft" in fit_tags
+    # The sidecar keys occurrences by job_name:artifact_id.
+    document = json.loads((root / "session_annotations.json").read_text("utf-8"))
+    assert set(document["occurrences"]) == {"fit:art-1"}
+
+
+def test_artifact_mutation_rejects_multiple_locations(tmp_path):
+    from qphase.data.errors import ArtifactAmbiguousError
+
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    _session(project, "session-2", artifacts=(("sim", "art-1"),))
+    service = CatalogService(project, home=tmp_path / "home")
+
+    with pytest.raises(ArtifactAmbiguousError, match="2 locations"):
+        service.tag_artifact("art-1", add=["method:cam"])
+    with pytest.raises(ArtifactAmbiguousError):
+        service.set_artifact_lifecycle("art-1", "archived")
+
+    # Removing the second location restores a unique annotation target.
+    service.project_service.trash_session("session-2")
+    service.reindex()
+    tags = service.tag_artifact("art-1", add=["method:cam"])
+    assert [tag.tag for tag in tags] == ["method:cam"]

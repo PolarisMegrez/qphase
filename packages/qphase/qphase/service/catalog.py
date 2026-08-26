@@ -47,7 +47,7 @@ from qphase.core.tags import (
     validate_declared_tags,
 )
 from qphase.core.utils import load_yaml
-from qphase.data.errors import ArtifactNotFoundError
+from qphase.data.errors import ArtifactAmbiguousError, ArtifactNotFoundError
 
 from .models import (
     CatalogObject,
@@ -252,14 +252,14 @@ class CatalogService:
         private: bool = False,
     ) -> SessionSummary:
         """Add/remove session tag assignments; returns the session summary."""
-        added = self._validate_tags(add, "session")
+        added, policy_revision = self._validate_tags(add, "session")
         removed = _canonical_set(remove)
         root = self.project_service.session_dir(session_id)
         if private:
             self._edit_private_tags("session", session_id, added, removed)
             return self.project_service.get_session(session_id)
         document, expected = self._session_document(root, session_id)
-        _apply_tag_edits(document.assignments, added, removed)
+        _apply_tag_edits(document.assignments, added, removed, policy_revision)
         self._save_session_document(root, document, expected)
         return self.project_service.get_session(session_id)
 
@@ -292,7 +292,7 @@ class CatalogService:
         private: bool = False,
     ) -> list[EffectiveTagInfo]:
         """Add/remove artifact tag assignments; returns its effective tags."""
-        added = self._validate_tags(add, "artifact")
+        added, policy_revision = self._validate_tags(add, "artifact")
         removed = _canonical_set(remove)
         if private:
             self._require_artifact(artifact_id)
@@ -300,7 +300,7 @@ class CatalogService:
             return self.effective_tags("artifact", artifact_id)
         artifact_dir = self._artifact_dir(artifact_id)
         document, expected = self._artifact_document(artifact_dir, artifact_id)
-        _apply_tag_edits(document.assignments, added, removed)
+        _apply_tag_edits(document.assignments, added, removed, policy_revision)
         self._save_artifact_document(artifact_dir, document, expected)
         return self.effective_tags("artifact", artifact_id)
 
@@ -329,23 +329,28 @@ class CatalogService:
         session_id: str,
         artifact_id: str,
         *,
+        job_name: str | None = None,
         add: list[str] | tuple[str, ...] = (),
         remove: list[str] | tuple[str, ...] = (),
         private: bool = False,
     ) -> list[EffectiveTagInfo]:
-        """Add/remove occurrence tag assignments; returns its effective tags."""
-        occurrence_id = self._occurrence_id(session_id, artifact_id)
-        added = self._validate_tags(add, "occurrence")
+        """Add/remove occurrence tag assignments; returns its effective tags.
+
+        ``job_name`` disambiguates artifacts occurring in several jobs of the
+        session; when omitted, exactly one occurrence must exist.
+        """
+        row = self._resolve_occurrence(session_id, artifact_id, job_name)
+        occurrence_id = str(row["id"])
+        added, policy_revision = self._validate_tags(add, "occurrence")
         removed = _canonical_set(remove)
         if private:
             self._edit_private_tags("occurrence", occurrence_id, added, removed)
             return self.effective_tags("occurrence", occurrence_id)
         root = self.project_service.session_dir(session_id)
         document, expected = self._session_document(root, session_id)
-        occurrence = document.occurrences.setdefault(
-            artifact_id, OccurrenceAnnotations()
-        )
-        _apply_tag_edits(occurrence.assignments, added, removed)
+        key = f"{row['job_name']}:{artifact_id}"
+        occurrence = document.occurrences.setdefault(key, OccurrenceAnnotations())
+        _apply_tag_edits(occurrence.assignments, added, removed, policy_revision)
         self._save_session_document(root, document, expected)
         return self.effective_tags("occurrence", occurrence_id)
 
@@ -354,14 +359,16 @@ class CatalogService:
         session_id: str,
         artifact_id: str,
         retention: RetentionPolicy | None,
+        *,
+        job_name: str | None = None,
     ) -> CatalogObject:
         """Set or clear one occurrence's retention policy."""
-        occurrence_id = self._occurrence_id(session_id, artifact_id)
+        row = self._resolve_occurrence(session_id, artifact_id, job_name)
+        occurrence_id = str(row["id"])
         root = self.project_service.session_dir(session_id)
         document, expected = self._session_document(root, session_id)
-        occurrence = document.occurrences.setdefault(
-            artifact_id, OccurrenceAnnotations()
-        )
+        key = f"{row['job_name']}:{artifact_id}"
+        occurrence = document.occurrences.setdefault(key, OccurrenceAnnotations())
         occurrence.retention = retention
         self._save_session_document(root, document, expected)
         return self._single_object("occurrence", occurrence_id)
@@ -376,8 +383,10 @@ class CatalogService:
         elif object_kind == "artifact":
             self.tag_artifact(object_id, add=[canonical])
         elif object_kind == "occurrence":
-            artifact_id, session_id, _job_name = object_id.split(":", 2)
-            self.tag_occurrence(session_id, artifact_id, add=[canonical])
+            artifact_id, session_id, job_name = object_id.split(":", 2)
+            self.tag_occurrence(
+                session_id, artifact_id, job_name=job_name, add=[canonical]
+            )
         else:
             raise ValueError(f"cannot promote tags on {object_kind!r} objects")
         self.private.remove_private_tag(object_kind, object_id, canonical)
@@ -401,9 +410,11 @@ class CatalogService:
 
     def _validate_tags(
         self, values: list[str] | tuple[str, ...], object_kind: ObjectKind
-    ) -> list[str]:
+    ) -> tuple[list[str], str | None]:
+        """Validate tags against the current policy; return its revision too."""
         policy = load_tag_policy(self.project)
-        return validate_declared_tags(list(values), object_kind, policy)
+        tags = validate_declared_tags(list(values), object_kind, policy)
+        return tags, (policy.revision if policy is not None else None)
 
     def _session_document(
         self, root: Path, session_id: str
@@ -458,28 +469,51 @@ class CatalogService:
 
     def _require_artifact(self, artifact_id: str) -> None:
         self._ensure_index()
-        if self.catalog.locate_artifact(artifact_id) is None:
+        if not self.catalog.locate_artifact_paths(artifact_id):
             raise ArtifactNotFoundError(f"unknown artifact: {artifact_id}")
 
     def _artifact_dir(self, artifact_id: str) -> Path:
-        self._require_artifact(artifact_id)
-        relative = self.catalog.locate_artifact(artifact_id)
-        assert relative is not None
-        return (self.project.session_root / relative).resolve()
+        """Return the single occurrence location of one artifact identity.
 
-    def _occurrence_id(self, session_id: str, artifact_id: str) -> str:
+        An artifact id denotes the immutable artifact, not a location. When
+        several occurrences exist the identity is ambiguous: artifact-level
+        annotations need one canonical location, so callers must annotate the
+        occurrence (session/job) instead.
+        """
         self._ensure_index()
-        rows = self.catalog.query(
-            CatalogQuery(
-                object_kind="occurrence",
-                facets={"session_id": session_id, "artifact_id": artifact_id},
+        paths = self.catalog.locate_artifact_paths(artifact_id)
+        if not paths:
+            raise ArtifactNotFoundError(f"unknown artifact: {artifact_id}")
+        if len(paths) > 1:
+            raise ArtifactAmbiguousError(
+                f"artifact {artifact_id!r} occurs in {len(paths)} locations "
+                f"{paths}; annotate a specific occurrence (session/job) "
+                "instead of the artifact identity"
             )
+        return (self.project.session_root / paths[0]).resolve()
+
+    def _resolve_occurrence(
+        self, session_id: str, artifact_id: str, job_name: str | None = None
+    ) -> dict[str, Any]:
+        """Resolve one occurrence row, never silently picking the first."""
+        self._ensure_index()
+        facets = {"session_id": session_id, "artifact_id": artifact_id}
+        if job_name is not None:
+            facets["job_name"] = job_name
+        rows = self.catalog.query(
+            CatalogQuery(object_kind="occurrence", facets=facets)
         )
         if not rows:
             raise ArtifactNotFoundError(
                 f"unknown occurrence: artifact {artifact_id} in session {session_id}"
             )
-        return str(rows[0]["id"])
+        if len(rows) > 1:
+            candidates = sorted(str(row["job_name"]) for row in rows)
+            raise ValueError(
+                f"ambiguous occurrence: artifact {artifact_id} occurs in jobs "
+                f"{candidates} of session {session_id}; pass job_name"
+            )
+        return rows[0]
 
     def _single_object(self, object_kind: str, object_id: str) -> CatalogObject:
         rows = self.catalog.query(
@@ -533,10 +567,20 @@ def _canonical_set(values: list[str] | tuple[str, ...]) -> set[str]:
 
 
 def _apply_tag_edits(
-    assignments: list[TagAssignment], added: list[str], removed: set[str]
+    assignments: list[TagAssignment],
+    added: list[str],
+    removed: set[str],
+    policy_revision: str | None = None,
 ) -> None:
-    """Apply immutable-assignment edits in place on an assignment list."""
+    """Apply immutable-assignment edits in place on an assignment list.
+
+    New assignments freeze the revision of the policy that validated them.
+    """
     kept = [assignment for assignment in assignments if assignment.tag not in removed]
     existing = {assignment.tag for assignment in kept}
-    kept.extend(TagAssignment(tag=tag) for tag in added if tag not in existing)
+    kept.extend(
+        TagAssignment(tag=tag, policy_revision=policy_revision)
+        for tag in added
+        if tag not in existing
+    )
     assignments[:] = kept

@@ -10,6 +10,7 @@ from qphase.core.project import ProjectContext
 from qphase.core.result_loader import load_result
 from qphase.data import (
     ArtifactAdapterError,
+    ArtifactAmbiguousError,
     ArtifactCorruptError,
     ArtifactManifest,
     ArtifactNotFoundError,
@@ -437,9 +438,14 @@ def test_project_resolver_indexes_repeated_identity_as_occurrences(tmp_path):
         )
 
     resolver = ProjectArtifactResolver(project)
-    # Repeated identity is legal under the occurrence model; resolution
-    # deterministically returns the first indexed location.
-    assert resolver.resolve(ref) == first.resolve()
+    # Repeated identity is legal under the occurrence model, but an artifact
+    # ref without occurrence context must not pick a location arbitrarily.
+    with pytest.raises(ArtifactAmbiguousError, match="2 locations"):
+        resolver.resolve(ref)
+    assert resolver.locations("shared-artifact") == [
+        first.resolve(),
+        second.resolve(),
+    ]
 
     catalog = ProjectObjectCatalog(project)
     catalog.reindex()
@@ -450,6 +456,9 @@ def test_project_resolver_indexes_repeated_identity_as_occurrences(tmp_path):
         )
     )
     assert len(rows) == 2
+    # The catalog path answers the same ambiguity without a rescan.
+    with pytest.raises(ArtifactAmbiguousError):
+        resolver.resolve(ref)
 
 
 def test_project_resolver_survives_project_move(tmp_path):

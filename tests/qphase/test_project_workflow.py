@@ -137,6 +137,34 @@ def test_session_persists_workflow_snapshot_and_hash(tmp_path: Path):
     assert '"workflow_hash"' in manifest.read_text(encoding="utf-8")
 
 
+def test_session_persists_frozen_tag_snapshot(tmp_path: Path):
+    """Sessions freeze the compiled tag snapshot as a sidecar."""
+    import json
+
+    from qphase.core.utils import load_yaml
+
+    project = ProjectContext.create(tmp_path / "project")
+    path = project.workflow_root / "example.yaml"
+    _workflow(path)
+    workflow = load_workflow(path)
+    scheduler = Scheduler(system_config=SystemConfig(), project=project)
+
+    scheduler.run(workflow)
+
+    assert scheduler.session_dir is not None
+    frozen = load_yaml(scheduler.session_dir / "tag_snapshot.yaml")
+    assert frozen["canonical_tags"] == []
+    assert frozen["job_tags"] == {"example": []}
+    assert frozen["policy_revision"] is None
+    assert frozen["assignments"] == {"workflow": [], "jobs": {"example": []}}
+    manifest = json.loads(
+        (scheduler.session_dir / "session_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "submission_tag_policy_revision" in manifest
+
+
 def test_load_workflow_rejects_malformed_tags(tmp_path: Path):
     project = ProjectContext.create(tmp_path / "project")
     path = project.workflow_root / "bad-tags.yaml"

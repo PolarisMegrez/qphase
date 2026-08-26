@@ -548,12 +548,16 @@ def create_app(
 
     @app.post("/sessions/{session_id}/occurrences/{artifact_id}/tags")
     def update_occurrence_tags(
-        session_id: str, artifact_id: str, request: TagsUpdateRequest
+        session_id: str,
+        artifact_id: str,
+        request: TagsUpdateRequest,
+        job_name: str | None = None,
     ) -> dict[str, Any]:
         try:
             tags = context.catalog.tag_occurrence(
                 session_id,
                 artifact_id,
+                job_name=job_name,
                 add=request.add,
                 remove=request.remove,
                 private=request.private,
@@ -590,14 +594,17 @@ def create_app(
 
     @app.patch("/sessions/{session_id}/occurrences/{artifact_id}")
     def update_occurrence(
-        session_id: str, artifact_id: str, request: OccurrenceUpdateRequest
+        session_id: str,
+        artifact_id: str,
+        request: OccurrenceUpdateRequest,
+        job_name: str | None = None,
     ) -> dict[str, Any]:
         fields = request.model_dump(exclude_unset=True)
         if "retention" not in fields:
             raise HTTPException(status_code=400, detail="no fields to update")
         try:
             return context.catalog.set_occurrence_retention(
-                session_id, artifact_id, fields["retention"]
+                session_id, artifact_id, fields["retention"], job_name=job_name
             ).model_dump(mode="json")
         except RuntimeError as exc:
             raise _http_error(exc, status_code=409) from exc

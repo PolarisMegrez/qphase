@@ -34,7 +34,11 @@ from typing import Protocol, runtime_checkable
 
 from ..core.project import ProjectContext
 from .artifact import ArtifactRef
-from .errors import ArtifactCorruptError, ArtifactNotFoundError
+from .errors import (
+    ArtifactAmbiguousError,
+    ArtifactCorruptError,
+    ArtifactNotFoundError,
+)
 
 __all__ = [
     "ArtifactResolverProtocol",
@@ -89,42 +93,65 @@ class ProjectArtifactResolver:
     """Resolve artifact identities within one project's session root.
 
     Resolution is catalog-first: the project object catalog (a rebuildable
-    index of session-relative paths) answers historical lookups without a
-    filesystem scan. On a catalog miss — for example an artifact written
-    seconds ago by a running session — the resolver falls back to a direct
-    manifest scan, which remains the fresh truth.
+    index of session-relative occurrence paths) answers historical lookups
+    without a filesystem scan. On a catalog miss — for example an artifact
+    written seconds ago by a running session — the resolver falls back to a
+    direct manifest scan, which remains the fresh truth.
 
-    Artifact identity is occurrence-based: the same ``artifact_id`` may live
-    in several session job directories (copies, mirrors). Resolution returns
-    the first indexed location; all occurrences stay visible through the
-    catalog.
+    An ``artifact_id`` identifies the immutable artifact; every location is a
+    producing *occurrence* (session/job context). The two concepts never
+    merge: an artifact ref without occurrence context resolves only when
+    exactly one location exists, otherwise the lookup reports
+    :class:`ArtifactAmbiguousError` listing all locations instead of picking
+    one arbitrarily.
     """
 
     def __init__(self, project: ProjectContext) -> None:
         self.project = project
 
     def resolve(self, ref: ArtifactRef) -> Path:
-        """Return one directory holding ``ref``'s artifact in this project."""
-        located = self._catalog_lookup(ref.artifact_id)
-        if located is not None:
-            return located
-        return self._scan(ref)
+        """Return the single directory holding ``ref``'s artifact.
 
-    def _catalog_lookup(self, artifact_id: str) -> Path | None:
+        Raises :class:`ArtifactNotFoundError` when no location exists and
+        :class:`ArtifactAmbiguousError` when several do.
+        """
+        candidates = self.locations(ref.artifact_id)
+        if not candidates:
+            raise ArtifactNotFoundError(
+                f"artifact {ref.artifact_id!r} is not present in this project"
+            )
+        if len(candidates) > 1:
+            raise ArtifactAmbiguousError(
+                f"artifact {ref.artifact_id!r} occurs in {len(candidates)} "
+                f"locations: {[str(path) for path in candidates]}; resolve a "
+                "specific occurrence (session/job) instead"
+            )
+        return candidates[0]
+
+    def locations(self, artifact_id: str) -> list[Path]:
+        """Return every existing directory holding ``artifact_id``, sorted."""
+        located = self._catalog_locations(artifact_id)
+        if located:
+            return located
+        return self._scan_locations(artifact_id)
+
+    def _catalog_locations(self, artifact_id: str) -> list[Path]:
         from ..core.catalog import ProjectObjectCatalog
 
         catalog = ProjectObjectCatalog(self.project)
         if not catalog.path.exists():
             catalog.reindex()
-        relative = catalog.locate_artifact(artifact_id)
-        if relative is None:
-            return None
-        candidate = (self.project.session_root / relative).resolve()
-        # A stale index entry (artifact moved or deleted) misses to the scan.
-        return candidate if candidate.exists() else None
+        candidates = []
+        for relative in catalog.locate_artifact_paths(artifact_id):
+            candidate = (self.project.session_root / relative).resolve()
+            # Stale index entries (artifact moved or deleted) miss to the scan.
+            if candidate.exists():
+                candidates.append(candidate)
+        return candidates
 
-    def _scan(self, ref: ArtifactRef) -> Path:
+    def _scan_locations(self, artifact_id: str) -> list[Path]:
         root = self.project.session_root
+        candidates: list[Path] = []
         if root.exists():
             for manifest_path in sorted(root.rglob("artifact_manifest.json")):
                 if ".trash" in manifest_path.parts:
@@ -139,11 +166,9 @@ class ProjectArtifactResolver:
                     raise ArtifactCorruptError(
                         f"artifact manifest {manifest_path} must contain an object"
                     )
-                if payload.get("artifact_id") == ref.artifact_id:
-                    return manifest_path.parent.resolve()
-        raise ArtifactNotFoundError(
-            f"artifact {ref.artifact_id!r} is not present in this project"
-        )
+                if payload.get("artifact_id") == artifact_id:
+                    candidates.append(manifest_path.parent.resolve())
+        return candidates
 
 
 _DEFAULT_RESOLVER = DirectoryArtifactResolver()
