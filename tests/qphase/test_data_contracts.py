@@ -584,6 +584,7 @@ def test_artifact_ref_is_minimal_and_typed():
 
 def _node(producer: str, product: str, requires=()) -> ProductNode:
     return ProductNode(
+        node_id=f"{producer}:{product}",
         producer=producer,
         declaration=ProductDeclaration(name=product, kind=DataKind.SPECTRAL),
         requirements=list(requires),
@@ -604,8 +605,8 @@ def test_product_graph_validates_and_orders():
         [ProductRequirement(name="spectrum", kind=DataKind.SPECTRAL)],
     )
     edges = [
-        {"producer": source.fingerprint(), "consumer": mid.fingerprint()},
-        {"producer": mid.fingerprint(), "consumer": sink.fingerprint()},
+        {"producer": source.node_id, "consumer": mid.node_id},
+        {"producer": mid.node_id, "consumer": sink.node_id},
     ]
     graph = ProductGraph(nodes=[sink, source, mid], edges=edges)
     order = [n.producer for n in graph.topological_order()]
@@ -615,15 +616,15 @@ def test_product_graph_validates_and_orders():
         ProductGraph(
             nodes=[source, mid],
             edges=[
-                {"producer": source.fingerprint(), "consumer": mid.fingerprint()},
-                {"producer": mid.fingerprint(), "consumer": source.fingerprint()},
+                {"producer": source.node_id, "consumer": mid.node_id},
+                {"producer": mid.node_id, "consumer": source.node_id},
             ],
         )
 
     with pytest.raises(ValidationError, match="unknown producer"):
         ProductGraph(
             nodes=[source],
-            edges=[{"producer": "0" * 64, "consumer": source.fingerprint()}],
+            edges=[{"producer": "missing", "consumer": source.node_id}],
         )
 
 

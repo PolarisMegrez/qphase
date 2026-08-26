@@ -189,8 +189,8 @@ def test_manifest_load_failure_and_id_mismatch_are_issues():
     assert "resource-id-mismatch" in codes
 
 
-def test_catalog_snapshot_is_json_serializable_and_fingerprinted():
-    """Snapshots are JSON-safe; fingerprints track the resolved asset set."""
+def test_catalog_snapshot_is_json_serializable():
+    """Catalog snapshots are JSON-safe without a global hash identity."""
     catalog = _catalog()
     snapshot = catalog.snapshot()
     assert snapshot["schema"] == "qphase.catalog/1"
@@ -204,8 +204,7 @@ def test_catalog_snapshot_is_json_serializable_and_fingerprinted():
         source="proj/.qphase_plugins.yaml",
     )
     with_overlay = _catalog(overlays=[overlay])
-    assert catalog.fingerprint() != with_overlay.fingerprint()
-    assert catalog.fingerprint() == _catalog().fingerprint()
+    assert with_overlay.snapshot() != snapshot
 
 
 def test_overlay_assets_do_not_change_package_fingerprint():

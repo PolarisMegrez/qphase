@@ -26,13 +26,12 @@ read_project_overlays
 
 from __future__ import annotations
 
-import hashlib
 import importlib
 import importlib.metadata
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from ..core.utils import canonical_json, load_yaml
+from ..core.utils import load_yaml
 from .assets import AssetOrigin
 from .manifest import (
     RESOURCE_ENTRY_POINT_PREFIX,
@@ -453,18 +452,6 @@ class ResourcePackageCatalog:
                 for issue in self._issues
             ],
         }
-
-    def fingerprint(self) -> str:
-        """Content fingerprint of the resolved package/overlay asset set."""
-        snapshot = self.snapshot()
-        payload = {
-            "packages": snapshot["packages"],
-            "unattributed_overlays": snapshot["unattributed_overlays"],
-        }
-        return hashlib.sha256(
-            canonical_json(payload).encode("utf-8")
-        ).hexdigest()
-
 
 def _attribute_overlays(
     manifest: ResourcePackageManifest,

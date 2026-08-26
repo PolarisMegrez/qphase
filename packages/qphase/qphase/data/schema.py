@@ -40,7 +40,14 @@ from enum import Enum
 from typing import Any, Literal
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 from ..core.utils import canonical_json
 from .kinds import DataKind
@@ -347,7 +354,12 @@ class SpectralAttributes(BaseModel):
 
 
 class ProductSchema(BaseModel):
-    """Complete, fingerprintable schema of one data product."""
+    """Complete, fingerprintable schema of one data product.
+
+    Schema instances are constructed once and then treated as immutable by
+    the data-product runtime. The cached fingerprint avoids re-hashing the
+    same small schema in summaries, dataset views and storage descriptors.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -359,6 +371,7 @@ class ProductSchema(BaseModel):
     uncertainties: list[UncertaintySchema] = Field(default_factory=list)
     coordinates: list[CoordinateSchema] = Field(default_factory=list)
     attributes: dict[str, Any] = Field(default_factory=dict)
+    _fingerprint_cache: str | None = PrivateAttr(default=None)
 
     @field_validator("attributes")
     @classmethod
@@ -538,5 +551,9 @@ class ProductSchema(BaseModel):
 
     def fingerprint(self) -> str:
         """Return the stable content hash of this schema."""
-        payload = self.model_dump(mode="json")
-        return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+        if self._fingerprint_cache is None:
+            payload = self.model_dump(mode="json")
+            self._fingerprint_cache = hashlib.sha256(
+                canonical_json(payload).encode("utf-8")
+            ).hexdigest()
+        return self._fingerprint_cache

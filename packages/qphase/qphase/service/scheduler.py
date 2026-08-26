@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -116,9 +115,7 @@ class SchedulerService:
         root = Path(session_dir)
         return [
             ArtifactSummary(
-                artifact_id=hashlib.sha256(
-                    str(path.relative_to(root)).encode()
-                ).hexdigest()[:16],
+                file_ref=path.relative_to(root).as_posix(),
                 path=path,
                 kind=self._artifact_kind(path),
                 format=path.suffix.lstrip(".") or None,
@@ -129,17 +126,11 @@ class SchedulerService:
             if path.is_file()
         ]
 
-    def load_artifact_by_id(
-        self, artifact_id: str, *, session_dir: str | Path
+    def load_file_by_ref(
+        self, file_ref: str, *, session_dir: str | Path
     ) -> dict[str, Any]:
-        matches = [
-            item
-            for item in self.list_artifacts(session_dir)
-            if item.artifact_id == artifact_id
-        ]
-        if len(matches) != 1:
-            raise FileNotFoundError(f"Artifact not found: {artifact_id}")
-        return self.load_artifact(matches[0].path, session_dir=session_dir)
+        """Load an ordinary session file through its relative reference."""
+        return self.load_artifact(file_ref, session_dir=session_dir)
 
     def load_artifact(
         self, path: str | Path, *, session_dir: str | Path

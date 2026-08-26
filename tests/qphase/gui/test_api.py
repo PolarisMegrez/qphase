@@ -162,7 +162,7 @@ def test_gui_api_reads_run_manifest_and_artifacts(temp_workspace, sample_job_fil
     )
 
 
-def test_gui_api_reads_json_artifact(temp_workspace, sample_job_file):
+def test_gui_api_reads_json_file_by_reference(temp_workspace, sample_job_file):
     with TestClient(create_app()) as client:
         session_id = _execute_workflow(client)["session_id"]
         artifacts = client.get(f"/sessions/{session_id}/artifacts").json()["artifacts"]
@@ -170,7 +170,7 @@ def test_gui_api_reads_json_artifact(temp_workspace, sample_job_file):
             artifact for artifact in artifacts if artifact["kind"] == "manifest"
         )
         artifact_response = client.get(
-            f"/sessions/{session_id}/artifacts/{manifest['artifact_id']}"
+            f"/sessions/{session_id}/files/{manifest['file_ref']}"
         )
 
     assert artifact_response.status_code == 200
@@ -179,13 +179,13 @@ def test_gui_api_reads_json_artifact(temp_workspace, sample_job_file):
     assert payload["content"]["session_id"] == session_id
 
 
-def test_gui_api_reads_session_artifact_by_id(temp_workspace, sample_job_file):
+def test_gui_api_reads_session_file_by_reference(temp_workspace, sample_job_file):
     with TestClient(create_app()) as client:
         session_id = _execute_workflow(client)["session_id"]
         artifacts = client.get(f"/sessions/{session_id}/artifacts").json()["artifacts"]
         manifest = next(item for item in artifacts if item["kind"] == "manifest")
         response = client.get(
-            f"/sessions/{session_id}/artifacts/{manifest['artifact_id']}"
+            f"/sessions/{session_id}/files/{manifest['file_ref']}"
         )
 
     assert response.status_code == 200
@@ -207,10 +207,10 @@ def test_gui_api_preserves_session_note_when_alias_changes(
     assert response.json()["note"] == "keep this"
 
 
-def test_gui_api_rejects_unknown_artifact_id(temp_workspace, sample_job_file):
+def test_gui_api_rejects_unknown_file_ref(temp_workspace, sample_job_file):
     with TestClient(create_app()) as client:
         session_id = _execute_workflow(client)["session_id"]
-        response = client.get(f"/sessions/{session_id}/artifacts/not-an-artifact")
+        response = client.get(f"/sessions/{session_id}/files/not-a-file.json")
 
     assert response.status_code == 404
 

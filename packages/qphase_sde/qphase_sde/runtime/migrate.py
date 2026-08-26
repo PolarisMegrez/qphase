@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 from qphase.core.errors import QPhaseError
@@ -774,9 +775,7 @@ def migrate_scan_artifact(
             },
         },
     )
-    artifact_id = hashlib.sha256(
-        f"{datetime.now(UTC).isoformat()}-{manifest_path.name}".encode()
-    ).hexdigest()[:16]
+    artifact_id = uuid4().hex
     bundle = BundleDescriptor(
         type_id=GENERIC_BUNDLE_TYPE_ID,
         adapter_id=GENERIC_BUNDLE_ADAPTER_ID,

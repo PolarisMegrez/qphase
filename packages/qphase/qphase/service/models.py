@@ -100,7 +100,15 @@ class ExecutionPlanEdge(ServiceModel):
 
 
 class ArtifactSummary(ServiceModel):
+    """One session file reference.
+
+    ``artifact_id`` is reserved for typed manifest artifacts and is absent for
+    ordinary logs, reports and payload files. Those files are addressed by the
+    project-relative ``file_ref`` instead.
+    """
+
     artifact_id: str | None = None
+    file_ref: str | None = None
     path: Path
     kind: Literal["result", "figure", "table", "manifest", "log", "other"] = "other"
     format: str | None = None

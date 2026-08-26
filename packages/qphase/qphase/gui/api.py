@@ -327,11 +327,11 @@ def create_app(
             ]
         }
 
-    @app.get("/sessions/{session_id}/artifacts/{artifact_id}")
-    def get_session_artifact(session_id: str, artifact_id: str) -> dict[str, Any]:
+    @app.get("/sessions/{session_id}/files/{file_ref:path}")
+    def get_session_file(session_id: str, file_ref: str) -> dict[str, Any]:
         root = context.project_service.session_dir(session_id)
         try:
-            return scheduler.load_artifact_by_id(artifact_id, session_dir=root)
+            return scheduler.load_file_by_ref(file_ref, session_dir=root)
         except Exception as exc:
             raise _http_error(exc, status_code=404) from exc
 

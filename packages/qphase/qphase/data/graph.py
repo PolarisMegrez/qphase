@@ -11,7 +11,7 @@ ProductRequirement
 ProductDeclaration
     Declared output product of one node.
 ProductNode
-    One graph node, identified by its content fingerprint.
+    One graph node, identified by a compiler-assigned node id.
 ProductGraph
     Validated acyclic graph of product nodes.
 """
@@ -59,10 +59,18 @@ class ProductDeclaration(BaseModel):
 
 
 class ProductNode(BaseModel):
-    """One node of a product graph, identified by content fingerprint."""
+    """One graph node with an explicit compiler-assigned identity.
+
+    ``fingerprint()`` remains available as optional cache metadata, but it is
+    never used to address graph nodes or edges.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    node_id: str = Field(
+        min_length=1,
+        description="Stable id assigned by the workflow/product compiler.",
+    )
     producer: str = Field(
         description="Identifier of the producing component (plugin/engine)."
     )
@@ -80,8 +88,8 @@ class GraphEdge(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    producer: str = Field(description="Fingerprint of the producer node.")
-    consumer: str = Field(description="Fingerprint of the consumer node.")
+    producer: str = Field(description="Id of the producer node.")
+    consumer: str = Field(description="Id of the consumer node.")
     requirement: str = Field(
         default="", description="Name of the requirement this edge satisfies."
     )
@@ -97,10 +105,10 @@ class ProductGraph(BaseModel):
 
     @model_validator(mode="after")
     def _check_graph(self) -> ProductGraph:
-        fingerprints = [node.fingerprint() for node in self.nodes]
-        if len(set(fingerprints)) != len(fingerprints):
-            raise ValueError("product graph nodes must have unique fingerprints")
-        known = set(fingerprints)
+        node_ids = [node.node_id for node in self.nodes]
+        if len(set(node_ids)) != len(node_ids):
+            raise ValueError("product graph nodes must have unique node ids")
+        known = set(node_ids)
         for edge in self.edges:
             if edge.producer not in known:
                 raise ValueError(
@@ -110,17 +118,17 @@ class ProductGraph(BaseModel):
                 raise ValueError(
                     f"edge references unknown consumer {edge.consumer!r}"
                 )
-        self._check_acyclic(fingerprints)
+        self._check_acyclic(node_ids)
         return self
 
-    def _check_acyclic(self, fingerprints: list[str]) -> None:
-        indegree = dict.fromkeys(fingerprints, 0)
-        successors: dict[str, list[str]] = {fp: [] for fp in fingerprints}
+    def _check_acyclic(self, node_ids: list[str]) -> None:
+        indegree = dict.fromkeys(node_ids, 0)
+        successors: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
         for edge in self.edges:
             indegree[edge.consumer] += 1
             successors[edge.producer].append(edge.consumer)
 
-        queue = [fp for fp, degree in indegree.items() if degree == 0]
+        queue = [node_id for node_id, degree in indegree.items() if degree == 0]
         visited = 0
         while queue:
             current = queue.pop()
@@ -129,22 +137,22 @@ class ProductGraph(BaseModel):
                 indegree[nxt] -= 1
                 if indegree[nxt] == 0:
                     queue.append(nxt)
-        if visited != len(fingerprints):
+        if visited != len(node_ids):
             raise ValueError("product graph must be acyclic")
 
     def topological_order(self) -> list[ProductNode]:
         """Return nodes in a valid topological order."""
-        by_fingerprint = {node.fingerprint(): node for node in self.nodes}
-        indegree = dict.fromkeys(by_fingerprint, 0)
-        successors: dict[str, list[str]] = {fp: [] for fp in by_fingerprint}
+        by_id = {node.node_id: node for node in self.nodes}
+        indegree = dict.fromkeys(by_id, 0)
+        successors: dict[str, list[str]] = {node_id: [] for node_id in by_id}
         for edge in self.edges:
             indegree[edge.consumer] += 1
             successors[edge.producer].append(edge.consumer)
-        queue = [fp for fp, degree in indegree.items() if degree == 0]
+        queue = [node_id for node_id, degree in indegree.items() if degree == 0]
         order: list[ProductNode] = []
         while queue:
             current = queue.pop(0)
-            order.append(by_fingerprint[current])
+            order.append(by_id[current])
             for nxt in successors[current]:
                 indegree[nxt] -= 1
                 if indegree[nxt] == 0:
@@ -156,7 +164,7 @@ class ProductGraph(BaseModel):
         return {
             "nodes": [
                 {
-                    "fingerprint": node.fingerprint(),
+                    "id": node.node_id,
                     "producer": node.producer,
                     "product": node.declaration.name,
                     "kind": str(node.declaration.kind),

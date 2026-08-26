@@ -134,8 +134,9 @@ another job outside a lease.
 ## Product graphs and task profiles
 
 `ProductRequirement` / `ProductDeclaration` describe typed inputs and outputs;
-`ProductGraph` is the validated acyclic graph of `ProductNode`s (identified by
-fingerprint) that engines compile from plugin declarations.
+`ProductGraph` is the validated acyclic graph of `ProductNode`s. Each node has
+a compiler-assigned `node_id`; graph edges use those readable IDs. A node
+fingerprint remains optional cache metadata and is not a graph identity.
 
 `EngineTaskProfile` makes plugin requirements conditional on the job:
 
