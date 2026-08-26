@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from qphase.core.annotations import (
+    SESSION_ANNOTATIONS_FILENAME,
     ArtifactAnnotationDocument,
     Lifecycle,
     OccurrenceAnnotations,
@@ -34,6 +35,7 @@ from qphase.core.catalog import (
     EffectiveTag,
     ProjectObjectCatalog,
 )
+from qphase.core.errors import QPhaseConfigError
 from qphase.core.persistence import ProjectStateStore
 from qphase.core.project import ProjectContext
 from qphase.core.tags import (
@@ -44,11 +46,15 @@ from qphase.core.tags import (
     load_tag_policy,
     validate_declared_tags,
 )
+from qphase.core.utils import load_yaml
 from qphase.data.errors import ArtifactNotFoundError
 
 from .models import (
     CatalogObject,
     EffectiveTagInfo,
+    InvalidSnapshotTag,
+    LegacyMetadataImport,
+    MigrationReport,
     SessionSummary,
     TagPolicyInfo,
 )
@@ -137,6 +143,79 @@ class CatalogService:
     def delete_view(self, name: str) -> None:
         """Delete one saved view from the private store."""
         self.private.delete_view(name)
+
+    def migration_dry_run(self) -> MigrationReport:
+        """Preview the Phase 4 history migration; pure read, writes nothing.
+
+        Reports sessions whose legacy ``session_metadata.json`` would seed a
+        new annotation document, counts sessions needing no action, and lists
+        declared tags in session workflow snapshots that fail validation
+        against the current tag policy. Never reindexes the catalog.
+        """
+        policy = load_tag_policy(self.project)
+        report = MigrationReport()
+        root = self.project.session_root
+        if not root.exists():
+            return report
+        for manifest_path in sorted(root.rglob("session_manifest.json")):
+            if ".trash" in manifest_path.parts:
+                continue
+            report.sessions_total += 1
+            session_dir = manifest_path.parent
+            manifest = self.state_store.load_session_manifest(session_dir)
+            session_id = str(manifest.get("session_id") or session_dir.name)
+            if not (session_dir / SESSION_ANNOTATIONS_FILENAME).exists():
+                # Seed the document exactly the way the migration will, so the
+                # preview matches the future import by construction.
+                seeded = self.project_service.new_session_annotations(
+                    session_dir, session_id
+                )
+                if seeded.alias is not None or seeded.note is not None:
+                    report.legacy_metadata_imports.append(
+                        LegacyMetadataImport(
+                            session_id=session_id,
+                            path=session_dir.relative_to(root).as_posix(),
+                            alias=seeded.alias,
+                            note=seeded.note,
+                        )
+                    )
+                else:
+                    report.untouched_sessions += 1
+            report.invalid_snapshot_tags.extend(
+                self._invalid_snapshot_tags(session_dir, session_id, policy)
+            )
+        return report
+
+    @staticmethod
+    def _invalid_snapshot_tags(
+        session_dir: Path, session_id: str, policy: TagPolicy | None
+    ) -> list[InvalidSnapshotTag]:
+        """List declared snapshot tags failing the current validation rules."""
+        path = session_dir / "workflow_snapshot.yaml"
+        if not path.exists():
+            return []
+        payload = load_yaml(path)
+        if not isinstance(payload, dict):
+            return []
+        declared: list[tuple[str, str, ObjectKind]] = [
+            (str(tag), "workflow", "workflow") for tag in payload.get("tags", [])
+        ]
+        for job in payload.get("jobs", []):
+            if isinstance(job, dict) and job.get("name"):
+                declared.extend(
+                    (str(tag), str(job["name"]), "job") for tag in job.get("tags", [])
+                )
+        invalid = []
+        for tag, source, kind in declared:
+            try:
+                validate_declared_tags([tag], kind, policy)
+            except QPhaseConfigError as exc:
+                invalid.append(
+                    InvalidSnapshotTag(
+                        session_id=session_id, tag=tag, source=source, error=str(exc)
+                    )
+                )
+        return invalid
 
     def virtual_folders(self) -> list[tuple[str, int]]:
         """Return ``(name, object count)`` for every built-in folder."""

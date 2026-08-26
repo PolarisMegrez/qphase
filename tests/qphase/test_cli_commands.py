@@ -205,3 +205,39 @@ def test_view_save_rejects_unknown_kind(temp_workspace, monkeypatch, tmp_path):
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
     result = runner.invoke(app, ["view", "save", "bad", "--kind", "nope"])
     assert result.exit_code == 1
+
+
+def test_project_migrate_requires_dry_run(temp_workspace):
+    """'project migrate' without --dry-run fails fast with a Phase 4 hint."""
+    result = runner.invoke(app, ["project", "migrate"])
+    assert result.exit_code == 1
+    assert "Phase 4" in result.stdout
+
+
+def test_project_migrate_dry_run(temp_workspace):
+    """'project migrate --dry-run' previews legacy imports without writing."""
+    import json
+
+    root = _catalog_session(temp_workspace, "legacy-session")
+    (root / "session_metadata.json").write_text(
+        json.dumps({"alias": "old-run"}), encoding="utf-8"
+    )
+    (root / "workflow_snapshot.yaml").write_text("tags: [vdp_2mode]\n", encoding="utf-8")
+    before = {
+        path: path.read_bytes()
+        for path in temp_workspace.rglob("*")
+        if path.is_file()
+    }
+
+    result = runner.invoke(app, ["project", "migrate", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "legacy-session" in result.stdout
+    assert "old-run" in result.stdout
+    assert "vdp_2mode" in result.stdout
+    after = {
+        path: path.read_bytes()
+        for path in temp_workspace.rglob("*")
+        if path.is_file()
+    }
+    assert after == before

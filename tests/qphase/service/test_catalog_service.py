@@ -337,3 +337,103 @@ def test_virtual_folders(tmp_path):
     ]
     with pytest.raises(KeyError, match="unknown virtual folder"):
         service.virtual_folder("nope")
+
+
+def _snapshot_files(root: Path) -> dict[Path, bytes]:
+    return {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+
+def test_migration_dry_run_writes_nothing(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(
+        project,
+        "session-legacy",
+        legacy_metadata={"alias": "old-run", "note": "from v1"},
+    )
+    _session(project, "session-plain")
+    _session(project, "session-annotated")
+    (project.session_root / "2026" / "08" / "session-annotated"
+     / "session_annotations.json").write_text(
+        json.dumps(
+            {
+                "schema": "qphase.session-annotations/1",
+                "project_id": project.project_id,
+                "session_id": "session-annotated",
+                "revision": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = _snapshot_files(project.root)
+
+    report = CatalogService(project, home=tmp_path / "home").migration_dry_run()
+
+    assert _snapshot_files(project.root) == before
+    assert not (root / "session_annotations.json").exists()
+    assert not (project.root / ".qphase").exists()
+    assert report.sessions_total == 3
+    assert [item.session_id for item in report.legacy_metadata_imports] == [
+        "session-legacy"
+    ]
+    assert report.untouched_sessions == 1
+
+
+def test_migration_dry_run_preview_matches_real_seed(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(
+        project,
+        "session-legacy",
+        legacy_metadata={"alias": "old-run", "note": "from v1"},
+    )
+    service = CatalogService(project, home=tmp_path / "home")
+
+    (item,) = service.migration_dry_run().legacy_metadata_imports
+
+    seeded = ProjectService(project).new_session_annotations(root, "session-legacy")
+    assert item.alias == seeded.alias == "old-run"
+    assert item.note == seeded.note == "from v1"
+    assert item.path == "2026/08/session-legacy"
+
+
+def test_migration_dry_run_lists_invalid_snapshot_tags(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(project, "session-1")
+    (root / "workflow_snapshot.yaml").write_text(
+        "schema: qphase.workflow/2\n"
+        "id: example\n"
+        "tags:\n"
+        "  - vdp_2mode\n"
+        "  - task:scan\n"
+        "jobs:\n"
+        "  - name: sim\n"
+        "    tags:\n"
+        "      - Cam\n"
+        "      - method:cam\n",
+        encoding="utf-8",
+    )
+    service = CatalogService(project, home=tmp_path / "home")
+
+    report = service.migration_dry_run()
+
+    invalid = {(item.tag, item.source) for item in report.invalid_snapshot_tags}
+    assert invalid == {("vdp_2mode", "workflow"), ("Cam", "sim")}
+    assert all(
+        item.session_id == "session-1" for item in report.invalid_snapshot_tags
+    )
+
+
+def test_tag_artifact_never_touches_manifest_or_payload(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    artifact_dir = root / "sim"
+    (artifact_dir / "payload.bin").write_bytes(b"\x00\x01payload")
+    manifest_before = (artifact_dir / "artifact_manifest.json").read_bytes()
+    payload_before = (artifact_dir / "payload.bin").read_bytes()
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.tag_artifact("art-1", add=["method:cam"])
+    service.set_artifact_lifecycle("art-1", "reference")
+
+    assert (artifact_dir / "artifact_manifest.json").read_bytes() == manifest_before
+    assert (artifact_dir / "payload.bin").read_bytes() == payload_before
+    assert (artifact_dir / "artifact_annotations.json").exists()

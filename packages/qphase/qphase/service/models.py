@@ -358,3 +358,32 @@ class TagPolicyInfo(ServiceModel):
     path: str | None = None
     revision: str | None = None
     namespaces: dict[str, Any] = Field(default_factory=dict)
+
+
+class LegacyMetadataImport(ServiceModel):
+    """One session whose legacy sidecar would seed an annotation document."""
+
+    session_id: str
+    path: str
+    alias: str | None = None
+    note: str | None = None
+
+
+class InvalidSnapshotTag(ServiceModel):
+    """One declared tag in a session workflow snapshot that fails validation."""
+
+    session_id: str
+    tag: str
+    source: str
+    error: str
+
+
+class MigrationReport(ServiceModel):
+    """Pure-read preview of the Phase 4 history migration."""
+
+    sessions_total: int = 0
+    legacy_metadata_imports: list[LegacyMetadataImport] = Field(
+        default_factory=list
+    )
+    untouched_sessions: int = 0
+    invalid_snapshot_tags: list[InvalidSnapshotTag] = Field(default_factory=list)

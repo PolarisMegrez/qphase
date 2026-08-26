@@ -54,3 +54,37 @@ def reindex() -> None:
         f"{stats.effective_tags} effective tags "
         f"in {stats.duration_seconds:.2f}s"
     )
+
+
+@app.command("migrate")
+def migrate(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report only"),
+) -> None:
+    """Preview the history migration (the real migration lands in Phase 4)."""
+    if not dry_run:
+        typer.echo(
+            "Error: the formal history migration will be provided in Phase 4; "
+            "use --dry-run to preview what it will do"
+        )
+        raise typer.Exit(code=1)
+    try:
+        report = CatalogService(ProjectContext.discover()).migration_dry_run()
+    except QPhaseError as exc:
+        typer.echo(f"Error: {exc}")
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Migration dry-run: {report.sessions_total} sessions scanned")
+    imports = report.legacy_metadata_imports
+    typer.echo(f"Legacy metadata imports ({len(imports)}):")
+    for item in imports:
+        typer.echo(f"  {item.session_id}  alias={item.alias} note={item.note}")
+    typer.echo(
+        f"Sessions without annotations or legacy metadata: "
+        f"{report.untouched_sessions} (no action)"
+    )
+    invalid = report.invalid_snapshot_tags
+    affected = sorted({item.session_id for item in invalid})
+    typer.echo(f"Invalid snapshot tags ({len(invalid)} in {len(affected)} sessions):")
+    for entry in invalid:
+        typer.echo(
+            f"  {entry.session_id}  {entry.source} tag {entry.tag!r}: {entry.error}"
+        )
