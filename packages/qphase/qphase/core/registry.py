@@ -33,6 +33,7 @@ Builder = Callable[..., Any]
 
 __all__ = [
     "RegistryCenter",
+    "RegistryView",
     "DiscoveryService",
     "registry",
     "discovery",
@@ -78,6 +79,10 @@ class RegistryCenter:
     def reset(self) -> None:
         """Reset the registry to its initial state."""
         self._tables.clear()
+
+    def view(self) -> "RegistryView":
+        """Return the read-only view used by control-plane compilation."""
+        return RegistryView(self)
 
     # --------------------------- utilities ---------------------------
     @staticmethod
@@ -441,6 +446,35 @@ class RegistryCenter:
         except Exception:
             pass
         return type(obj).__name__.lower()
+
+
+class RegistryView:
+    """Read-only registry facade for compiler and service consumers."""
+
+    def __init__(self, source: RegistryCenter) -> None:
+        self._source = source
+
+    def list(self, namespace: str | None = None) -> dict[str, Any]:
+        """List registered plugins without exposing mutation methods."""
+        return self._source.list(namespace)
+
+    def get_plugin_class(self, namespace: str, name: str) -> Any:
+        """Resolve a plugin class through the trusted registry."""
+        return self._source.get_plugin_class(namespace, name)
+
+    def get_plugin_manifest(self, namespace: str, name: str) -> PluginManifest:
+        """Read one plugin manifest."""
+        return self._source.get_plugin_manifest(namespace, name)
+
+    def get_plugin_schema(self, namespace: str, name: str) -> type[Any] | None:
+        """Read one plugin configuration schema."""
+        return self._source.get_plugin_schema(namespace, name)
+
+    def validate_plugin_config(
+        self, namespace: str, config: dict[str, Any]
+    ) -> Any:
+        """Validate plugin configuration without constructing the plugin."""
+        return self._source.validate_plugin_config(namespace, config)
 
 
 class DiscoveryService:

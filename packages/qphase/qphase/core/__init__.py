@@ -21,6 +21,7 @@ Public API
     Logging utilities.
 """
 
+from .compiler import CompiledJob, CompiledWorkflow, WorkflowCompiler
 from .config import InputSpec, JobConfig, WorkflowSpec
 from .config_loader import (
     get_config_for_job,
@@ -59,7 +60,7 @@ from .progress import (
 )
 from .project import ProjectContext, ProjectManifest, ProjectPaths
 from .protocols import PluginManifest, SubpluginSlot
-from .registry import RegistryCenter, registry
+from .registry import RegistryCenter, RegistryView, registry
 from .scan import ParameterGrid, ScanAxisSpec, ScanSpec
 from .scheduler import JobResult, Scheduler
 from .system_config import (
@@ -94,6 +95,10 @@ __all__ = [
     # Registry
     "registry",
     "RegistryCenter",
+    "RegistryView",
+    "WorkflowCompiler",
+    "CompiledWorkflow",
+    "CompiledJob",
     "PluginGraphResolver",
     "ResolvedPluginNode",
     "PluginManifest",

@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from .artifacts import ArtifactStore
+from .compiler import CompiledJob, CompiledWorkflow, WorkflowCompiler
 from .config import JobConfig, WorkflowSpec
 from .config_loader import (
     get_config_for_job,
@@ -160,6 +161,7 @@ class Scheduler:
         self._session_log_path: Path | None = None
         self._session_log_handler: Any | None = None
         self._job_statuses: dict[str, str] = {}
+        self._compiled_workflow: CompiledWorkflow | None = None
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: threading.Thread | None = None
 
@@ -333,25 +335,36 @@ class Scheduler:
             self.session_id = None
             self.session_dir = None
             self.manifest = None
-            self._validate_jobs(workflow)
+            compiled = self._validate_jobs(workflow)
+            if not isinstance(compiled, CompiledWorkflow):
+                compiled = None
+            self._compiled_workflow = compiled
             dry_results: list[JobResult] = []
             dry_job_results: dict[str, ResultProtocol] = {}
-            for job_idx, original in enumerate(workflow.jobs):
+            logical_jobs = list(compiled.logical_jobs) if compiled else workflow.jobs
+            for job_idx, original in enumerate(logical_jobs):
                 job = (
-                    self.before_job(original, job_idx, len(workflow.jobs))
+                    self.before_job(original, job_idx, len(logical_jobs))
                     if self.before_job is not None
                     else original
                 )
                 self._run_single(
                     job,
                     job_idx,
-                    len(workflow.jobs),
-                    workflow.jobs,
+                    len(logical_jobs),
+                    logical_jobs,
                     dry_job_results,
                     dry_results,
+                    compiled_job=(compiled.job(job.name) if compiled else None),
                     dry_run=True,
                 )
             return dry_results
+
+        # Compile before creating a Session or starting a worker.
+        compiled = self._validate_jobs(workflow)
+        if not isinstance(compiled, CompiledWorkflow):
+            compiled = None
+        self._compiled_workflow = compiled
 
         # Step 0: Initialize Session
         if resume_from:
@@ -370,11 +383,8 @@ class Scheduler:
 
         results: list[JobResult] = []
         job_results: dict[str, ResultProtocol] = {}
-        logical_jobs = workflow.jobs
+        logical_jobs = list(compiled.logical_jobs) if compiled else workflow.jobs
         try:
-            # Step 1: Validate jobs before execution
-            self._validate_jobs(workflow)
-
             for job_idx, job in enumerate(logical_jobs):
                 if self.cancellation.execution.cancelled:
                     self._cancel_pending_jobs(logical_jobs[job_idx:], job_idx, results)
@@ -386,6 +396,9 @@ class Scheduler:
                             "a pending job revision must preserve the logical job name"
                         )
                     job = replacement
+                compiled_job = (
+                    compiled.job(job.name) if compiled is not None else None
+                )
                 self._run_single(
                     job,
                     job_idx,
@@ -393,6 +406,7 @@ class Scheduler:
                     logical_jobs,
                     job_results,
                     results,
+                    compiled_job=compiled_job,
                     dry_run=dry_run,
                 )
 
@@ -545,7 +559,10 @@ class Scheduler:
                 ) from e
 
     def _resolve_input(
-        self, job: JobConfig, job_results: dict[str, ResultProtocol]
+        self,
+        job: JobConfig,
+        job_results: dict[str, ResultProtocol],
+        source_override: str | None = None,
     ) -> ResultProtocol | None:
         """Resolve input for a job.
 
@@ -555,6 +572,8 @@ class Scheduler:
             Job configuration
         job_results : dict[str, ResultProtocol]
             Previously executed job results
+        source_override : str | None, optional
+            Compiler-normalized source name, when one is available.
 
         Returns
         -------
@@ -564,7 +583,7 @@ class Scheduler:
         """
         if job.input is None:
             return None
-        source = job.input.from_
+        source = source_override or job.input.from_
 
         if source in job_results:
             return job_results[source]
@@ -628,6 +647,7 @@ class Scheduler:
         job_results: dict[str, ResultProtocol],
         results: list[JobResult],
         *,
+        compiled_job: CompiledJob | None = None,
         dry_run: bool,
     ) -> None:
         """Execute one logical job and update the shared result state."""
@@ -697,7 +717,11 @@ class Scheduler:
 
         # Skip jobs whose upstream failed or was skipped earlier in this run.
         # Independent downstream jobs keep running (existing scheduler policy).
-        source = job.input.from_ if job.input else None
+        source = (
+            compiled_job.input_source
+            if compiled_job is not None
+            else job.input.from_ if job.input else None
+        )
         upstream_status = self._job_statuses.get(source) if source else None
         if upstream_status in ("failed", "skipped_dependency"):
             note = (
@@ -731,7 +755,7 @@ class Scheduler:
 
         # Resolve input (input/config boundary; the engine never starts).
         try:
-            input_result = self._resolve_input(job, job_results)
+            input_result = self._resolve_input(job, job_results, source)
         except Exception as e:
             result = self._fail_job(job, job_idx, job_total, e, job_dir=None)
             results.append(result)
@@ -745,6 +769,7 @@ class Scheduler:
             job_idx,
             job_total,
             input_result,
+            compiled_job=compiled_job,
             display_total=len(logical_jobs),
         )
         # Keep one compatibility cycle for tests/extensions that patched the
@@ -968,6 +993,7 @@ class Scheduler:
         job_total: int,
         input_result: ResultProtocol | None,
         *,
+        compiled_job: CompiledJob | None = None,
         display_total: int | None = None,
     ) -> _JobOutcome:
         """Execute a single job and return its outcome.
@@ -992,6 +1018,8 @@ class Scheduler:
             Total number of jobs in the execution group
         input_result : ResultProtocol | None
             Input data from upstream job, or None
+        compiled_job : CompiledJob | None, optional
+            Precompiled control-plane configuration for this job.
         display_total : int | None, optional
             Number of jobs to display in progress reporting, so progress
             reflects the user's mental model.
@@ -1018,6 +1046,7 @@ class Scheduler:
                     job_idx,
                     display_total,
                     input_result,
+                    compiled_job=compiled_job,
                     job_dir=job_dir,
                     engine_name=engine_name,
                     tracker=tracker,
@@ -1066,104 +1095,60 @@ class Scheduler:
         display_total: int,
         input_result: ResultProtocol | None,
         *,
+        compiled_job: CompiledJob | None = None,
         job_dir: Path,
         engine_name: str,
         tracker: ProgressTracker,
         clock_start: float,
     ) -> _JobOutcome:
         """Job body executed under the error boundary of :meth:`_run_job`."""
-        merged_config = self._get_merged_config_for_job(job)
+        merged_config = (
+            dict(compiled_job.merged_config)
+            if compiled_job is not None
+            else self._get_merged_config_for_job(job)
+        )
 
-        plugin_namespaces = registered_plugin_namespaces()
-        plugins_cfg = merge_plugin_config_sections(merged_config)
-
-        # Determine target Engine class to inspect Manifest
-        # This helps us decide which plugins are actually needed
-        engine_config_dict = merged_config.get("engine", {})
-
-        target_engine_name = None
-        if engine_name:
-            target_engine_name = engine_name
-        elif engine_config_dict:
-            target_engine_name = list(engine_config_dict.keys())[0]
-
-        # Inspect Engine Manifest to determine plugin requirements
-        required_namespaces = set()
-        optional_namespaces = set()
-
-        if target_engine_name:
-            try:
-                engine_cls = registry.get_plugin_class("engine", target_engine_name)
-                if hasattr(engine_cls, "manifest"):
-                    manifest = engine_cls.manifest
-                    # If the job consumes an upstream input and the engine declares
-                    # input_plugins, use those instead of the normal required set.
-                    if job.input and manifest.input_plugins:
-                        required_namespaces.update(manifest.input_plugins)
-                    elif manifest.required_plugins:
-                        required_namespaces.update(manifest.required_plugins)
-                    if manifest.optional_plugins:
-                        optional_namespaces.update(manifest.optional_plugins)
-            except Exception as e:
-                log.debug(
-                    f"Could not inspect manifest for engine '{target_engine_name}': {e}"
-                )
-
-        # Determine explicit namespaces defined in JobConfig.
-        # This separates user overrides from merged defaults.
-        job_extra = job.model_extra or {}
-        explicit_namespaces = set(job.plugins.keys())
-        for key in plugin_namespaces:
-            if key in job_extra:
-                explicit_namespaces.add(key)
-
-        # Filter and configure plugins based on Job intent and Engine requirements
-        final_plugins_cfg = {}
-
-        for ns, ns_config in plugins_cfg.items():
-            # 1. Explicitly configured in Job?
-            # If yes, we strictly respect the Job's choice (filtering specific plugins).
-            if ns in explicit_namespaces:
-                allowed_plugins = set(job.plugins.get(ns, {}).keys())
-                if ns in job_extra and isinstance(job_extra[ns], dict):
-                    allowed_plugins.update(job_extra[ns].keys())
-
-                final_plugins_cfg[ns] = {
-                    k: v for k, v in ns_config.items() if k in allowed_plugins
-                }
-
-            # 2. Required by Engine but not in the job.
-            # Fall back to global defaults for the namespace.
-            elif ns in required_namespaces:
-                final_plugins_cfg[ns] = ns_config
-
-            # 3. Optional or Unknown?
-            # Do NOT inherit Global defaults. This prevents side-effects from plugins
-            # like 'analyser' or 'visualizer' running when not requested.
-            else:
-                pass
+        if compiled_job is None:
+            plugin_namespaces = registered_plugin_namespaces()
+            plugins_cfg = merge_plugin_config_sections(merged_config)
+            manifest = registry.get_plugin_manifest("engine", engine_name)
+            input_plugins = set(getattr(manifest, "input_plugins", set()))
+            required_namespaces = (
+                input_plugins
+                if job.input and input_plugins
+                else set(getattr(manifest, "required_plugins", set()))
+            )
+            job_extra = job.model_extra or {}
+            explicit_namespaces = set(job.plugins)
+            explicit_namespaces.update(
+                namespace
+                for namespace in plugin_namespaces
+                if namespace in job_extra
+            )
+            final_plugins_cfg = {
+                namespace: config
+                for namespace, config in plugins_cfg.items()
+                if namespace in explicit_namespaces or namespace in required_namespaces
+            }
+        else:
+            final_plugins_cfg = dict(compiled_job.plugin_config)
+            engine_name = compiled_job.engine_name
 
         # Build plugins (backend, integrator, state, etc.)
         plugins = self._build_plugins(final_plugins_cfg)
 
         # Extract engine name and config
         engine_config_dict = merged_config.get("engine", {})
-        if engine_config_dict:
-            # Prioritize the engine specified in the job config
-            job_engine_name = job.get_engine_name()
-            if job_engine_name and job_engine_name in engine_config_dict:
-                engine_name = job_engine_name
-            else:
-                # Fallback (might be ambiguous if global config adds engines)
-                engine_name = list(engine_config_dict.keys())[0]
-
-            engine_config_raw = engine_config_dict[engine_name].copy()
-            engine_config_raw["name"] = engine_name
-        else:
-            # Fallback to job's engine config
-            engine_name = job.get_engine_name()
-            engine_config_raw = job.engine.get(engine_name, {}).copy()
-            engine_config_raw["name"] = engine_name
+        if (
+            not isinstance(engine_config_dict, dict)
+            or engine_name not in engine_config_dict
+        ):
+            raise QPhaseConfigError(
+                f"merged config has no engine config for {engine_name!r}",
+                code=ErrorCode.CONFIG,
+            )
+        engine_config_raw = dict(engine_config_dict[engine_name])
+        engine_config_raw["name"] = engine_name
 
         # Inject the Job directory as output_dir for engines that support it.
         # (e.g. VizEngine). We cast to str because config expects str.
@@ -1424,182 +1409,15 @@ class Scheduler:
             kwargs["progress_cb"] = progress_cb
         return engine.run(**kwargs)
 
-    def _validate_jobs(self, workflow: WorkflowSpec) -> None:
-        """Validate job configurations and data flow.
-
-        Performs two-stage validation:
-        1. Check that each job has exactly one engine
-        2. Validate input/output data flow
-
-        Raises
-        ------
-        QPhaseConfigError
-            If validation fails
-
-        """
-        log.debug("Validating job configurations...")
-
-        # Stage 1: Check each job has exactly one engine
-        self._validate_single_engine_per_job(workflow)
-
-        # Stage 2: Validate engine dependencies
-        for job in workflow.jobs:
-            self._validate_job_dependencies(job)
-
-        # Stage 3: Validate data flow
-        self._validate_data_flow(workflow)
-
-        log.debug("Job validation completed successfully")
-
-    def _validate_job_dependencies(self, job: JobConfig) -> None:
-        """Validate that the job provides all plugins required by its engine.
-
-        The set of "provided" plugins is computed consistently with
-        :meth:`_run_job`: it includes explicit ``plugins:`` entries, top-level
-        plugin sections (``backend``, ``integrator``, ``model``, ``analyser``,
-        etc.), and plugin namespaces provided by the merged global configuration.
-        """
-        engine_name = job.get_engine_name()
-        try:
-            engine_cls = registry.get_plugin_class("engine", engine_name)
-        except Exception as e:
-            # If we can't find the engine class, we can't validate dependencies.
-            log.warning(
-                f"Could not validate dependencies for engine '{engine_name}': {e}"
-            )
-            return
-
-        if not hasattr(engine_cls, "manifest"):
-            # Engine does not declare dependencies
-            return
-
-        manifest = engine_cls.manifest
-        provided_plugins = self._effective_plugin_namespaces(job)
-
-        # When an upstream input is provided and the engine declares input_plugins,
-        # validate against those instead of the normal required plugins. This allows
-        # engines to run in analysis/aggregation mode without their simulation
-        # dependencies.
-        required_namespaces = (
-            manifest.input_plugins
-            if job.input and manifest.input_plugins
-            else manifest.required_plugins
-        )
-
-        # Check required plugins
-        missing = required_namespaces - provided_plugins
-        if missing:
-            mode_hint = (
-                " for input/analyze mode"
-                if job.input and manifest.input_plugins
-                else ""
-            )
-            raise QPhaseConfigError(
-                f"Job '{job.name}' uses engine '{engine_name}' but is missing "
-                f"required plugins{mode_hint}: {missing}"
-            )
-
-    def _effective_plugin_namespaces(self, job: JobConfig) -> set[str]:
-        """Return all plugin namespaces available to a job.
-
-        This mirrors the resolution logic used in :meth:`_run_job` so that
-        validation and execution agree on which plugins are available.
-        """
-        namespaces: set[str] = set(job.plugins.keys())
-
-        # Top-level plugin sections are stored as model extras by JobConfig
-        job_extra = job.model_extra or {}
-        for key in registered_plugin_namespaces():
-            if key in job_extra:
-                namespaces.add(key)
-
-        # Merge project defaults so inherited required plugins are recognized.
-        # are not reported as missing.
-        try:
-            job_override = {
-                "plugins": job.plugins,
-                "engine": job.engine,
-                "params": job.params,
-            }
-            merged = get_config_for_job(self.project, job_config_dict=job_override)
-            merged_plugins = merge_plugin_config_sections(merged)
-            namespaces.update(merged_plugins.keys())
-        except Exception as e:
-            log.debug(
-                f"Could not merge global config for plugin validation of "
-                f"'{job.name}': {e}"
-            )
-
-        return namespaces
-
-    def _validate_single_engine_per_job(self, workflow: WorkflowSpec) -> None:
-        """Verify each job has exactly one engine."""
-        for job in workflow.jobs:
-            if not job.get_engine_name():
-                raise QPhaseConfigError(
-                    f"Job '{job.name}' is missing required 'engine' field"
-                )
-
-    def _validate_data_flow(self, workflow: WorkflowSpec) -> None:
-        """Validate input/output data flow.
-
-        Checks:
-        - Input references are valid (job name or engine name with no ambiguity)
-        - Output references are valid (optional - can point to multiple jobs)
-        """
-        jobs_by_name = {job.name: job for job in workflow.jobs}
-        jobs_by_engine: dict[str, list[JobConfig]] = {}
-
-        # Group jobs by engine name
-        for job in workflow.jobs:
-            engine_name = job.get_engine_name()
-            if engine_name not in jobs_by_engine:
-                jobs_by_engine[engine_name] = []
-            jobs_by_engine[engine_name].append(job)
-
-        # Validate input references
-        for job in workflow.jobs:
-            if not job.input:
-                continue
-            source = job.input.from_
-
-            # Check if input matches a job name
-            if source in jobs_by_name:
-                # Valid job reference
-                continue
-
-            # Check if input matches an engine name
-            upstream_jobs = jobs_by_engine.get(source, [])
-            if not upstream_jobs:
-                # Not a job name or engine name - could be a file path
-                # This is valid (external input)
-                log.debug(f"Job '{job.name}' input '{source}' appears to be external")
-                continue
-
-            # It's an engine name - check for ambiguity
-            if len(upstream_jobs) > 1:
-                job_names = ", ".join([j.name for j in upstream_jobs])
-                raise QPhaseConfigError(
-                    f"Job '{job.name}' input '{source}' is ambiguous. "
-                    f"Multiple jobs use this engine: {job_names}. "
-                    "Specify the exact job name instead."
-                )
-
-        # Validate output references (optional - just check for existence)
-        for job in workflow.jobs:
-            if not job.output:
-                continue
-
-            # Output can be a job name or engine name
-            # We don't validate ambiguity for output since one job can feed
-            # multiple downstream jobs
-            if job.output in jobs_by_name or job.output in jobs_by_engine:
-                log.debug(f"Job '{job.name}' output '{job.output}' is valid")
-            else:
-                # Could be a file path
-                log.debug(
-                    f"Job '{job.name}' output '{job.output}' appears to be external"
-                )
+    def _validate_jobs(self, workflow: WorkflowSpec) -> CompiledWorkflow:
+        """Compile and validate a workflow before execution begins."""
+        compiled = WorkflowCompiler(
+            project=self.project,
+            system_config=self.system_config,
+            registry_view=self._registry.view(),
+        ).compile(workflow)
+        self._compiled_workflow = compiled
+        return compiled
 
     def _build_plugins(self, plugins_config: dict[str, Any]) -> dict[str, Any]:
         """Instantiate plugins based on configuration.

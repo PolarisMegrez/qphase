@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal
 if TYPE_CHECKING:
     from ..data.store import BundleDescriptor
 
+from qphase.core.compiler import CompiledJob, WorkflowCompiler
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.config_loader import (
     get_config_for_job,
@@ -62,17 +63,27 @@ class SchedulerService:
         return self.catalog.load(reference)
 
     def build_plan(self, workflow: WorkflowSpec) -> ExecutionPlan:
-        scheduler = Scheduler(system_config=self.system_config, project=self.project)
         issues: list[ConfigValidationIssue] = []
+        compiled = None
         try:
-            scheduler._validate_jobs(workflow)
+            compiled = WorkflowCompiler(
+                project=self.project,
+                system_config=self.system_config,
+            ).compile(workflow)
         except Exception as exc:
             issues.append(
-                ConfigValidationIssue(path="jobs", message=str(exc), source="scheduler")
+                ConfigValidationIssue(path="jobs", message=str(exc), source="compiler")
             )
+        jobs = list(compiled.logical_jobs) if compiled is not None else workflow.jobs
         return ExecutionPlan(
-            jobs=[self._plan_job(job) for job in workflow.jobs],
-            edges=self._build_edges(workflow.jobs),
+            jobs=[
+                self._plan_job(
+                    job,
+                    compiled.job(job.name) if compiled is not None else None,
+                )
+                for job in jobs
+            ],
+            edges=self._build_edges(jobs),
             validation_issues=issues,
         )
 
@@ -407,7 +418,44 @@ class SchedulerService:
             (Path(session_dir) / "session_manifest.json").read_text(encoding="utf-8")
         )
 
-    def _plan_job(self, job: JobConfig) -> ExecutionPlanJob:
+    def _plan_job(
+        self, job: JobConfig, compiled: CompiledJob | None = None
+    ) -> ExecutionPlanJob:
+        if compiled is not None:
+            return ExecutionPlanJob(
+                name=compiled.name,
+                engine=compiled.engine_name,
+                plugins=job.plugins,
+                required_plugins=list(compiled.required_plugins),
+                optional_plugins=list(compiled.optional_plugins),
+                explicit_plugins=list(compiled.explicit_plugins),
+                inherited_project_defaults={
+                    namespace: list(names)
+                    for namespace, names in compiled.inherited_plugins.items()
+                },
+                optional_plugins_enabled=[
+                    namespace
+                    for namespace in compiled.optional_plugins
+                    if namespace in compiled.plugin_config
+                ],
+                scan_summary=(
+                    compiled.parameter_grid.summary()
+                    if compiled.parameter_grid is not None
+                    else None
+                ),
+                input=compiled.input_source,
+                output=compiled.output,
+                save=compiled.save,
+                expected_job_subdir=compiled.name,
+                expected_output_name=self._expected_output_name(job),
+                configured_plugin_paths=[
+                    f"{namespace}.{name}"
+                    for namespace, entries in compiled.plugin_config.items()
+                    if isinstance(entries, dict)
+                    for name in entries
+                ],
+                reusable_output=compiled.save is not False,
+            )
         manifest = self._engine_manifest(job.get_engine_name())
         explicit = self._explicit_plugin_namespaces(job)
         inherited = self._inherited_defaults(
