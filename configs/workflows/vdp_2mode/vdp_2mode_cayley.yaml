@@ -3,7 +3,7 @@ id: vdp_2mode_cayley
 title: Vdp 2Mode Cayley
 collection: vdp_2mode
 tags:
-- vdp_2mode
+- model:vdp_2mode
 jobs:
 - name: vdp_2mode_cayley_sim
   save: true

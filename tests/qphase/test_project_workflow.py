@@ -93,7 +93,9 @@ def test_workflow_catalog_filters_collection_tag_and_query(tmp_path: Path):
         "id: stable-example\n"
         "title: Example Workflow\n"
         "collection: models\n"
-        "tags: [quick, sde]\n"
+        "tags:\n"
+        "  - topic:quick\n"
+        "  - engine:sde\n"
         "jobs:\n  - name: example\n    engine:\n      dummy: {}\n",
         encoding="utf-8",
     )
@@ -102,11 +104,13 @@ def test_workflow_catalog_filters_collection_tag_and_query(tmp_path: Path):
     assert [item.id for item in catalog.search(collection="models")] == [
         "stable-example"
     ]
-    assert [item.id for item in catalog.search(tag="sde")] == ["stable-example"]
+    assert [item.id for item in catalog.search(tag="engine:sde")] == [
+        "stable-example"
+    ]
     assert [item.id for item in catalog.search(query="EXAMPLE")] == [
         "stable-example"
     ]
-    assert catalog.search(tag="cam") == []
+    assert catalog.search(tag="engine:cam") == []
 
 
 def test_legacy_top_level_job_document_is_rejected(tmp_path: Path):
@@ -131,3 +135,26 @@ def test_session_persists_workflow_snapshot_and_hash(tmp_path: Path):
     manifest = scheduler.session_dir / "session_manifest.json"
     assert load_workflow(snapshot) == workflow
     assert '"workflow_hash"' in manifest.read_text(encoding="utf-8")
+
+
+def test_load_workflow_rejects_malformed_tags(tmp_path: Path):
+    project = ProjectContext.create(tmp_path / "project")
+    path = project.workflow_root / "bad-tags.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "schema: qphase.workflow/2\n"
+        "id: bad-tags\n"
+        "title: Bad Tags\n"
+        "tags: ['no-namespace']\n"
+        "jobs:\n"
+        "  - name: example\n"
+        "    engine:\n"
+        "      dummy: {}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(QPhaseConfigError, match="namespace:value"):
+        load_workflow(path)
+
+    with pytest.raises(QPhaseConfigError, match="invalid tags"):
+        WorkflowCatalog(project).list()

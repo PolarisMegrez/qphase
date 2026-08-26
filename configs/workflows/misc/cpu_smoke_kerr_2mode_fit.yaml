@@ -3,7 +3,7 @@ id: cpu_smoke_kerr_2mode_fit
 title: Cpu Smoke Kerr 2Mode Fit
 collection: misc
 tags:
-- misc
+- group:misc
 jobs:
 - name: cpu_smoke_kerr_2mode
   save: true

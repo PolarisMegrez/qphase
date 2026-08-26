@@ -9,6 +9,7 @@ from pathlib import Path
 from .config import JobConfig, WorkflowSpec
 from .errors import QPhaseConfigError, QPhaseIOError
 from .project import ProjectContext
+from .tags import canonicalize_tag_list
 from .utils import deep_merge_dicts, load_yaml
 
 
@@ -49,9 +50,19 @@ def load_workflow(path: str | Path) -> WorkflowSpec:
     payload = dict(data)
     payload["jobs"] = [_load_job(item, workflow_path) for item in raw_jobs]
     try:
-        return WorkflowSpec.model_validate(payload)
+        workflow = WorkflowSpec.model_validate(payload)
     except Exception as exc:
         raise QPhaseConfigError(f"Invalid workflow {workflow_path}: {exc}") from exc
+    # Syntax phase only: policy validation happens at compile time.
+    try:
+        canonicalize_tag_list(list(workflow.tags))
+        for job in workflow.jobs:
+            canonicalize_tag_list(list(job.tags))
+    except QPhaseConfigError as exc:
+        raise QPhaseConfigError(
+            f"Invalid tags in workflow {workflow_path}: {exc}"
+        ) from exc
+    return workflow
 
 
 class WorkflowCatalog:
@@ -158,6 +169,10 @@ class WorkflowCatalog:
             isinstance(item, str) for item in tags
         ):
             raise QPhaseConfigError(f"Workflow {path} tags must be a string list")
+        try:
+            canonicalize_tag_list(tags)
+        except QPhaseConfigError as exc:
+            raise QPhaseConfigError(f"Workflow {path} has invalid tags: {exc}") from exc
         collection = data.get("collection")
         if collection is not None and not isinstance(collection, str):
             raise QPhaseConfigError(f"Workflow {path} collection must be a string")

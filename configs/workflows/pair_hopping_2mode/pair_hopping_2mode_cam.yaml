@@ -3,7 +3,7 @@ id: pair_hopping_2mode_cam
 title: Pair Hopping 2Mode Cam
 collection: pair_hopping_2mode
 tags:
-- pair_hopping_2mode
+- model:pair_hopping_2mode
 jobs:
 - name: pair_hopping_2mode_cam
   save: true

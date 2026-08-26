@@ -3,7 +3,7 @@ id: kerr_3mode_cam
 title: Kerr 3Mode Cam
 collection: kerr_3mode
 tags:
-- kerr_3mode
+- model:kerr_3mode
 jobs:
 - name: kerr_3mode_cam
   save: true

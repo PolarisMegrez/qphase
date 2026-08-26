@@ -3,7 +3,7 @@ id: vdp_2mode_bifurcation
 title: Vdp 2Mode Bifurcation
 collection: vdp_2mode
 tags:
-- vdp_2mode
+- model:vdp_2mode
 jobs:
 - name: vdp_2mode_bifurcation
   save: true

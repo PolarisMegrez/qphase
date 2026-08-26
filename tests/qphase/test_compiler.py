@@ -153,3 +153,69 @@ def test_compiled_workflow_round_trips_without_registry_access(tmp_path):
     assert restored.topological_order == ("job",)
     assert restored.job("job").parameter_grid is not None
     assert restored.job("job").parameter_grid.shape == (2,)
+
+
+def _write_tag_policy(project: ProjectContext) -> None:
+    path = project.defaults_path.parent / "tags.yaml"
+    path.write_text(
+        "schema: qphase.tag-policy/1\n"
+        "namespaces:\n"
+        "  task:\n"
+        "    open: true\n"
+        "  model:\n"
+        "    cardinality: one\n"
+        "    values: [vdp, kerr]\n",
+        encoding="utf-8",
+    )
+
+
+def _tagged_workflow(
+    workflow_tags: list[str], job_tags: list[str]
+) -> WorkflowSpec:
+    return WorkflowSpec(
+        schema_="qphase.workflow/2",
+        id="tagged",
+        title="Tagged",
+        tags=workflow_tags,
+        jobs=[JobConfig(name="sim", engine={"dummy": {}}, tags=job_tags)],
+    )
+
+
+def test_compiler_freezes_declared_tags_without_policy(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+
+    compiled = WorkflowCompiler(project, SystemConfig()).compile(
+        _tagged_workflow(["Task:Scan"], ["Model:VDP"])
+    )
+
+    snapshot = compiled.tag_snapshot
+    assert snapshot is not None
+    assert snapshot["raw_tags"] == ["Task:Scan"]
+    assert snapshot["canonical_tags"] == ["task:scan"]
+    assert snapshot["job_tags"] == {"sim": ["model:vdp"]}
+    assert snapshot["policy_revision"] is None
+
+    restored = CompiledWorkflow.from_payload(compiled.to_payload())
+    assert restored.tag_snapshot is not None
+    assert dict(restored.tag_snapshot) == dict(compiled.tag_snapshot)
+
+
+def test_compiler_validates_declared_tags_against_policy(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _write_tag_policy(project)
+    compiler = WorkflowCompiler(project, SystemConfig())
+
+    compiled = compiler.compile(_tagged_workflow(["task:scan"], ["model:vdp"]))
+
+    assert compiled.tag_snapshot is not None
+    assert compiled.tag_snapshot["policy_revision"] is not None
+    assert compiled.tag_snapshot["canonical_tags"] == ["task:scan"]
+
+    with pytest.raises(QPhaseConfigError, match="unknown tag namespace"):
+        compiler.compile(_tagged_workflow(["unknown:value"], []))
+
+    with pytest.raises(QPhaseConfigError, match="one tag per object"):
+        compiler.compile(_tagged_workflow([], ["model:vdp", "model:kerr"]))
+
+    with pytest.raises(QPhaseConfigError, match="not an allowed value"):
+        compiler.compile(_tagged_workflow([], ["model:other"]))

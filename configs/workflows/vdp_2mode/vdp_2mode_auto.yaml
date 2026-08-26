@@ -3,7 +3,7 @@ id: vdp_2mode_auto
 title: Vdp 2Mode Auto
 collection: vdp_2mode
 tags:
-- vdp_2mode
+- model:vdp_2mode
 jobs:
 - name: vdp_2mode_auto_sim
   save: true

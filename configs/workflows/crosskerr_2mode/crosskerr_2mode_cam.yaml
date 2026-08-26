@@ -3,7 +3,7 @@ id: crosskerr_2mode_cam
 title: Crosskerr 2Mode Cam
 collection: crosskerr_2mode
 tags:
-- crosskerr_2mode
+- model:crosskerr_2mode
 jobs:
 - name: crosskerr_2mode_cam
   save: true

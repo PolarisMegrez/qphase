@@ -25,6 +25,7 @@ from .protocols import EngineManifest
 from .registry import RegistryView, registry
 from .scan import ParameterGrid
 from .system_config import SystemConfig
+from .tags import load_tag_policy, validate_declared_tags
 
 __all__ = ["CompiledJob", "CompiledWorkflow", "WorkflowCompiler"]
 
@@ -119,6 +120,7 @@ class CompiledWorkflow:
     jobs: tuple[CompiledJob, ...]
     topological_order: tuple[str, ...]
     revision: str | None = None
+    tag_snapshot: Mapping[str, Any] | None = None
 
     def job(self, name: str) -> CompiledJob:
         """Return one compiled job by logical name."""
@@ -141,6 +143,9 @@ class CompiledWorkflow:
             "jobs": [job.to_payload() for job in self.jobs],
             "topological_order": list(self.topological_order),
             "revision": self.revision,
+            "tag_snapshot": (
+                dict(self.tag_snapshot) if self.tag_snapshot is not None else None
+            ),
         }
 
     @classmethod
@@ -152,12 +157,16 @@ class CompiledWorkflow:
         jobs = tuple(
             CompiledJob.from_payload(item) for item in payload["jobs"]
         )
+        tag_snapshot = payload.get("tag_snapshot")
         return cls(
             workflow=workflow,
             project_id=str(payload["project_id"]),
             jobs=jobs,
             topological_order=tuple(payload["topological_order"]),
             revision=payload.get("revision"),
+            tag_snapshot=(
+                _freeze_mapping(tag_snapshot) if tag_snapshot is not None else None
+            ),
         )
 
 
@@ -182,6 +191,7 @@ class WorkflowCompiler:
     ) -> CompiledWorkflow:
         """Resolve and validate a workflow without instantiating plugins."""
         self._validate_unique_names(workflow)
+        tag_snapshot = self._freeze_tags(workflow)
         compiled = tuple(self._compile_job(job, workflow) for job in workflow.jobs)
         order = self._topological_order(compiled)
         return CompiledWorkflow(
@@ -190,7 +200,24 @@ class WorkflowCompiler:
             jobs=compiled,
             topological_order=order,
             revision=revision,
+            tag_snapshot=tag_snapshot,
         )
+
+    def _freeze_tags(self, workflow: WorkflowSpec) -> Mapping[str, Any]:
+        """Validate declared tags against the project policy and freeze them."""
+        policy = load_tag_policy(self.project)
+        snapshot = {
+            "raw_tags": list(workflow.tags),
+            "canonical_tags": validate_declared_tags(
+                list(workflow.tags), "workflow", policy
+            ),
+            "job_tags": {
+                job.name: validate_declared_tags(list(job.tags), "job", policy)
+                for job in workflow.jobs
+            },
+            "policy_revision": policy.revision if policy is not None else None,
+        }
+        return _freeze_mapping(snapshot)
 
     def _compile_job(
         self, job: JobConfig, workflow: WorkflowSpec

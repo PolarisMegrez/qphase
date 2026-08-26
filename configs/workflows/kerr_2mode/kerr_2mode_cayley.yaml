@@ -3,7 +3,7 @@ id: kerr_2mode_cayley
 title: Kerr 2Mode Cayley
 collection: kerr_2mode
 tags:
-- kerr_2mode
+- model:kerr_2mode
 jobs:
 - name: kerr_2mode_cayley_sim
   save: true

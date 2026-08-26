@@ -3,7 +3,7 @@ id: collective_kerr_2mode_best_extended_cam
 title: Collective Kerr 2Mode Best Extended Cam
 collection: collective_kerr_2mode
 tags:
-- collective_kerr_2mode
+- model:collective_kerr_2mode
 jobs:
 - name: collective_kerr_2mode_best_extended_cam
   save: true

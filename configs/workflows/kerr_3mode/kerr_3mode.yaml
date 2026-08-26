@@ -3,7 +3,7 @@ id: kerr_3mode
 title: Kerr 3Mode
 collection: kerr_3mode
 tags:
-- kerr_3mode
+- model:kerr_3mode
 jobs:
 - name: kerr_3mode
   save: true

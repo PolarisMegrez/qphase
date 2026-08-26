@@ -33,9 +33,11 @@ __all__ = [
     "ObjectKind",
     "TagNamespacePolicy",
     "TagPolicy",
+    "canonicalize_tag_list",
     "canonicalize_tag_syntax",
     "load_tag_policy",
     "parse_tag",
+    "validate_declared_tags",
 ]
 
 #: Schema identifier of the project tag policy document.
