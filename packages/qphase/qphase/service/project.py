@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from qphase.core.errors import ErrorCode, QPhaseIOError
+from qphase.core.persistence import ProjectStateStore
 from qphase.core.project import ProjectContext
 from qphase.core.workflow import WorkflowCatalog, load_workflow
 
@@ -24,6 +25,7 @@ class ProjectService:
     def __init__(self, project: ProjectContext) -> None:
         self.project = project
         self.catalog = WorkflowCatalog(project)
+        self.state_store = ProjectStateStore(project)
 
     @property
     def output_root(self) -> Path:
@@ -49,18 +51,7 @@ class ProjectService:
 
     def session_events(self, session_id: str, *, after: int = 0) -> list[dict]:
         """Read persisted execution events for a completed or active Session."""
-        path = self.session_dir(session_id) / "events.jsonl"
-        if not path.exists():
-            return []
-        events: list[dict] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(payload, dict) and int(payload.get("sequence", 0)) > after:
-                events.append(payload)
-        return events
+        return self.state_store.read_events(self.session_dir(session_id), after=after)
 
     def update_session(
         self,

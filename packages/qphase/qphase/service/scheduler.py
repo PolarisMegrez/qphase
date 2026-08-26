@@ -414,8 +414,10 @@ class SchedulerService:
         )
 
     def load_session_manifest(self, session_dir: str | Path) -> dict[str, Any]:
-        return json.loads(
-            (Path(session_dir) / "session_manifest.json").read_text(encoding="utf-8")
+        from qphase.core.persistence import ProjectStateStore
+
+        return ProjectStateStore(self.project).load_session_manifest(
+            Path(session_dir)
         )
 
     def _plan_job(
