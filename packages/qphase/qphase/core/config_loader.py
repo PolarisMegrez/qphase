@@ -78,10 +78,14 @@ def registered_plugin_namespaces() -> set[str]:
     }
 
 
-def merge_plugin_config_sections(config: dict[str, Any]) -> dict[str, Any]:
+def merge_plugin_config_sections(
+    config: dict[str, Any], *, namespaces: set[str] | None = None
+) -> dict[str, Any]:
     """Merge top-level project plugin defaults with explicit job plugins."""
     plugins = deep_copy(config.get("plugins", {}))
-    for namespace in registered_plugin_namespaces():
+    for namespace in (
+        registered_plugin_namespaces() if namespaces is None else namespaces
+    ):
         inherited = config.get(namespace)
         if not isinstance(inherited, Mapping):
             continue

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from qphase.core.project import ProjectContext
+from qphase.core.registry import registry as global_registry
 from qphase.core.system_config import SystemConfig, load_system_config
 from qphase.service import (
     ConfigService,
@@ -41,9 +42,18 @@ class ApplicationContext:
                 value = str(candidate)
                 if candidate.exists() and value not in sys.path:
                     sys.path.insert(0, value)
-        registry = RegistryService(system_config=system, project=project_context)
+        project_registry = global_registry.snapshot()
+        registry = RegistryService(
+            registry_center=project_registry,
+            system_config=system,
+            project=project_context,
+        )
         registry.discover(include_local=True)
-        scheduler = SchedulerService(system, project=project_context)
+        scheduler = SchedulerService(
+            system,
+            project=project_context,
+            registry_center=project_registry,
+        )
         return cls(
             project_context,
             system,

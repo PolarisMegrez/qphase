@@ -18,7 +18,6 @@ from .config import JobConfig, WorkflowSpec
 from .config_loader import (
     get_config_for_job,
     merge_plugin_config_sections,
-    registered_plugin_namespaces,
 )
 from .errors import ErrorCode, QPhaseConfigError, QPhasePluginError
 from .project import ProjectContext
@@ -59,6 +58,56 @@ class CompiledJob:
         """Logical job name."""
         return self.job.name
 
+    def to_payload(self) -> dict[str, Any]:
+        """Serialize the resolved job request without runtime objects."""
+        return {
+            "job": self.job.model_dump(mode="json", by_alias=True),
+            "engine_name": self.engine_name,
+            "engine_config": dict(self.engine_config),
+            "merged_config": dict(self.merged_config),
+            "plugin_config": dict(self.plugin_config),
+            "required_plugins": list(self.required_plugins),
+            "optional_plugins": list(self.optional_plugins),
+            "explicit_plugins": list(self.explicit_plugins),
+            "inherited_plugins": {
+                namespace: list(names)
+                for namespace, names in self.inherited_plugins.items()
+            },
+            "input_source": self.input_source,
+            "input_mode": self.input_mode,
+            "output": self.output,
+            "save": self.save,
+            "depends_on": list(self.depends_on),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> CompiledJob:
+        """Restore a resolved job request without registry access."""
+        job = JobConfig.model_validate(payload["job"])
+        parameter_grid = job.scan.compile() if job.scan is not None else None
+        return cls(
+            job=job,
+            engine_name=str(payload["engine_name"]),
+            engine_config=_freeze_mapping(payload["engine_config"]),
+            merged_config=_freeze_mapping(payload["merged_config"]),
+            plugin_config=_freeze_mapping(payload["plugin_config"]),
+            required_plugins=tuple(payload["required_plugins"]),
+            optional_plugins=tuple(payload["optional_plugins"]),
+            explicit_plugins=tuple(payload["explicit_plugins"]),
+            inherited_plugins={
+                str(namespace): tuple(names)
+                for namespace, names in dict(
+                    payload["inherited_plugins"]
+                ).items()
+            },
+            input_source=payload.get("input_source"),
+            input_mode=payload.get("input_mode"),
+            output=payload.get("output"),
+            save=payload.get("save"),
+            depends_on=tuple(payload["depends_on"]),
+            parameter_grid=parameter_grid,
+        )
+
 
 @dataclass(frozen=True)
 class CompiledWorkflow:
@@ -81,6 +130,34 @@ class CompiledWorkflow:
     def logical_jobs(self) -> tuple[JobConfig, ...]:
         """Return jobs in declared workflow order for execution/reporting."""
         return tuple(item.job for item in self.jobs)
+
+    def to_payload(self) -> dict[str, Any]:
+        """Serialize the resolved workflow request for execution recovery."""
+        return {
+            "schema": "qphase.compiled_workflow/1",
+            "project_id": self.project_id,
+            "workflow": self.workflow.model_dump(mode="json", by_alias=True),
+            "jobs": [job.to_payload() for job in self.jobs],
+            "topological_order": list(self.topological_order),
+            "revision": self.revision,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> CompiledWorkflow:
+        """Restore a resolved workflow request without registry access."""
+        if payload.get("schema") != "qphase.compiled_workflow/1":
+            raise ValueError("unsupported compiled workflow schema")
+        workflow = WorkflowSpec.model_validate(payload["workflow"])
+        jobs = tuple(
+            CompiledJob.from_payload(item) for item in payload["jobs"]
+        )
+        return cls(
+            workflow=workflow,
+            project_id=str(payload["project_id"]),
+            jobs=jobs,
+            topological_order=tuple(payload["topological_order"]),
+            revision=payload.get("revision"),
+        )
 
 
 class WorkflowCompiler:
@@ -143,12 +220,13 @@ class WorkflowCompiler:
             else required_plugins
         )
         optional = set(getattr(manifest, "optional_plugins", set()))
+        namespaces = set(self.registry.list(namespace=None))
         merged = get_config_for_job(
             self.project,
-            job_config_dict=self._job_override(job),
+            job_config_dict=self._job_override(job, namespaces),
         )
-        plugin_sections = merge_plugin_config_sections(merged)
-        explicit = self._explicit_namespaces(job)
+        plugin_sections = merge_plugin_config_sections(merged, namespaces=namespaces)
+        explicit = self._explicit_namespaces(job, namespaces)
         selected: dict[str, Any] = {}
         for namespace, config in plugin_sections.items():
             if namespace in explicit or namespace in required:
@@ -216,25 +294,25 @@ class WorkflowCompiler:
         )
 
     @staticmethod
-    def _job_override(job: JobConfig) -> dict[str, Any]:
+    def _job_override(job: JobConfig, namespaces: set[str]) -> dict[str, Any]:
         override: dict[str, Any] = {
             "plugins": job.plugins,
             "engine": job.engine,
             "params": job.params,
         }
-        for namespace in registered_plugin_namespaces():
+        for namespace in namespaces:
             if namespace in (job.model_extra or {}):
                 override[namespace] = (job.model_extra or {})[namespace]
         return override
 
     @staticmethod
-    def _explicit_namespaces(job: JobConfig) -> set[str]:
-        namespaces = set(job.plugins)
+    def _explicit_namespaces(job: JobConfig, namespaces: set[str]) -> set[str]:
+        explicit = set(job.plugins)
         extra = job.model_extra or {}
-        namespaces.update(
-            key for key in registered_plugin_namespaces() if key in extra
+        explicit.update(
+            key for key in namespaces if key in extra
         )
-        return namespaces
+        return explicit
 
     def _engine_config(
         self, merged: Mapping[str, Any], engine_name: str

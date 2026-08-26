@@ -84,6 +84,24 @@ class RegistryCenter:
         """Return the read-only view used by control-plane compilation."""
         return RegistryView(self)
 
+    def snapshot(self) -> "RegistryCenter":
+        """Copy registered asset definitions for one project runtime."""
+        copied = RegistryCenter()
+        copied._tables = {
+            namespace: {
+                name: _Entry(
+                    kind=entry.kind,
+                    builder=entry.builder,
+                    target=entry.target,
+                    config_schema=entry.config_schema,
+                    meta=dict(entry.meta or {}),
+                )
+                for name, entry in table.items()
+            }
+            for namespace, table in self._tables.items()
+        }
+        return copied
+
     # --------------------------- utilities ---------------------------
     @staticmethod
     def _split(full_name: FullName) -> tuple[Namespace, Name]:
@@ -452,7 +470,7 @@ class RegistryView:
     """Read-only registry facade for compiler and service consumers."""
 
     def __init__(self, source: RegistryCenter) -> None:
-        self._source = source
+        self._source = source.snapshot()
 
     def list(self, namespace: str | None = None) -> dict[str, Any]:
         """List registered plugins without exposing mutation methods."""

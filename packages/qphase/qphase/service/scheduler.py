@@ -9,18 +9,17 @@ from typing import TYPE_CHECKING, Any, Literal
 if TYPE_CHECKING:
     from ..data.store import BundleDescriptor
 
-from qphase.core.compiler import CompiledJob, WorkflowCompiler
+from qphase.core.compiler import CompiledJob, CompiledWorkflow, WorkflowCompiler
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.config_loader import (
     get_config_for_job,
     merge_plugin_config_sections,
-    registered_plugin_namespaces,
 )
 from qphase.core.errors import ErrorCode, QPhaseIOError
 from qphase.core.execution import CancellationController
 from qphase.core.persistence import ProjectStateStore
 from qphase.core.project import ProjectContext
-from qphase.core.registry import registry
+from qphase.core.registry import RegistryCenter, registry
 from qphase.core.scheduler import JobResult, Scheduler
 from qphase.core.system_config import SystemConfig, load_system_config
 from qphase.core.workflow import WorkflowCatalog
@@ -51,11 +50,13 @@ class SchedulerService:
         self,
         system_config: SystemConfig | None = None,
         project: ProjectContext | None = None,
+        registry_center: RegistryCenter | None = None,
     ) -> None:
         self.project = project or ProjectContext.discover()
         self.system_config = system_config or load_system_config()
         self.catalog = WorkflowCatalog(self.project)
         self.state_store = ProjectStateStore(self.project)
+        self.registry = registry_center or registry.snapshot()
         self.last_session_handle: SessionHandle | None = None
 
     def list_workflows(self) -> list[str]:
@@ -64,14 +65,19 @@ class SchedulerService:
     def load_workflow(self, reference: str | Path) -> WorkflowSpec:
         return self.catalog.load(reference)
 
+    def compile_workflow(self, workflow: WorkflowSpec) -> CompiledWorkflow:
+        """Compile one workflow for planning, submission, or execution."""
+        return WorkflowCompiler(
+            project=self.project,
+            system_config=self.system_config,
+            registry_view=self.registry.view(),
+        ).compile(workflow)
+
     def build_plan(self, workflow: WorkflowSpec) -> ExecutionPlan:
         issues: list[ConfigValidationIssue] = []
         compiled = None
         try:
-            compiled = WorkflowCompiler(
-                project=self.project,
-                system_config=self.system_config,
-            ).compile(workflow)
+            compiled = self.compile_workflow(workflow)
         except Exception as exc:
             issues.append(
                 ConfigValidationIssue(path="jobs", message=str(exc), source="compiler")
@@ -97,6 +103,7 @@ class SchedulerService:
         cancellation: CancellationController | None = None,
         before_job: Any = None,
         on_scheduler: Any = None,
+        compiled_workflow: CompiledWorkflow | None = None,
     ) -> list[JobResult]:
         scheduler = Scheduler(
             system_config=self.system_config,
@@ -105,13 +112,16 @@ class SchedulerService:
             cancellation=cancellation,
             before_job=before_job,
             state_store=self.state_store,
+            registry_center=self.registry,
         )
         if on_scheduler is not None:
             on_scheduler(scheduler)
-        results = scheduler.run(
-            workflow,
-            resume_from=Path(resume_from) if resume_from is not None else None,
-        )
+        run_kwargs: dict[str, Any] = {
+            "resume_from": Path(resume_from) if resume_from is not None else None
+        }
+        if compiled_workflow is not None:
+            run_kwargs["compiled_workflow"] = compiled_workflow
+        results = scheduler.run(workflow, **run_kwargs)
         statuses = {result.status for result in results}
         self.last_session_handle = SessionHandle(
             session_id=scheduler.session_id,
@@ -517,10 +527,9 @@ class SchedulerService:
                 )
         return edges
 
-    @staticmethod
-    def _engine_manifest(engine_name: str) -> dict[str, list[str]]:
+    def _engine_manifest(self, engine_name: str) -> dict[str, list[str]]:
         try:
-            cls = registry.get_plugin_class("engine", engine_name)
+            cls = self.registry.get_plugin_class("engine", engine_name)
             manifest = getattr(cls, "manifest", None)
             return {
                 "required_plugins": sorted(manifest.required_plugins)
@@ -533,11 +542,12 @@ class SchedulerService:
         except Exception:
             return {"required_plugins": [], "optional_plugins": []}
 
-    @staticmethod
-    def _explicit_plugin_namespaces(job: JobConfig) -> set[str]:
+    def _explicit_plugin_namespaces(self, job: JobConfig) -> set[str]:
         explicit = set(job.plugins)
         extra = job.model_extra or {}
-        explicit.update(key for key in registered_plugin_namespaces() if key in extra)
+        explicit.update(
+            key for key in self.registry.list(namespace=None) if key in extra
+        )
         return explicit
 
     def _inherited_defaults(
@@ -551,7 +561,9 @@ class SchedulerService:
                 "params": job.params,
             },
         )
-        plugins = merge_plugin_config_sections(merged)
+        plugins = merge_plugin_config_sections(
+            merged, namespaces=set(self.registry.list(namespace=None))
+        )
         return {
             namespace: sorted(plugins[namespace])
             for namespace in required

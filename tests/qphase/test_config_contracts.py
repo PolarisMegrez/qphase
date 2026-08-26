@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 import yaml
 from qphase.core.config import JobConfig
-from qphase.core.config_loader import merge_plugin_config_sections
+from qphase.core.config_loader import (
+    get_config_for_job,
+    merge_plugin_config_sections,
+)
 from qphase.core.errors import QPhaseConfigError
 from qphase.core.registry import registry
 from qphase.core.scheduler import Scheduler
@@ -179,7 +182,18 @@ def test_dynamic_plugin_namespace_inherits_project_defaults(temp_workspace):
     )
     scheduler = Scheduler(system_config=load_system_config(force_reload=True))
 
-    merged = merge_plugin_config_sections(scheduler._get_merged_config_for_job(job))
+    merged_config = get_config_for_job(
+        scheduler.project,
+        job_config_dict={
+            "plugins": job.plugins,
+            "engine": job.engine,
+            "params": job.params,
+        },
+    )
+    merged = merge_plugin_config_sections(
+        merged_config,
+        namespaces=set(scheduler._registry.list(namespace=None)),
+    )
 
     assert merged["research_solver"]["search"] == {
         "seed": 42,

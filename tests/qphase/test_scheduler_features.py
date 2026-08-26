@@ -16,10 +16,10 @@ def mock_system_config():
 
 @pytest.fixture
 def simple_job_list():
-    job1 = JobConfig(name="job1", engine={"test_engine": {}})
+    job1 = JobConfig(name="job1", engine={"dummy": {}})
     job2 = JobConfig(
         name="job2",
-        engine={"test_engine": {}},
+        engine={"dummy": {}},
         input={"from": "job1", "mode": "dataset"},
     )
     return WorkflowSpec(
@@ -33,7 +33,8 @@ def simple_job_list():
 def test_dry_run(mock_system_config, simple_job_list, temp_project):
     scheduler = Scheduler(system_config=mock_system_config, project=temp_project)
 
-    with patch.object(scheduler, "_validate_jobs"):
+    compiled = scheduler._validate_jobs(simple_job_list)
+    with patch.object(scheduler, "_validate_jobs", return_value=compiled):
         results = scheduler.run(simple_job_list, dry_run=True)
 
         assert len(results) == 2
@@ -75,8 +76,9 @@ def test_resume_capability(mock_system_config, simple_job_list, temp_project):
     # 2. Run scheduler with resume
     scheduler = Scheduler(system_config=mock_system_config, project=temp_project)
 
+    compiled = scheduler._validate_jobs(simple_job_list)
     with (
-        patch.object(scheduler, "_validate_jobs"),
+        patch.object(scheduler, "_validate_jobs", return_value=compiled),
         patch.object(scheduler, "_run_job") as mock_run_job,
         patch.object(scheduler, "_resolve_input", return_value=MagicMock()),
         patch.object(scheduler, "_handle_job_output"),

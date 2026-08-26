@@ -31,11 +31,6 @@ from typing import Any, TypedDict, cast
 from .artifacts import ArtifactStore
 from .compiler import CompiledJob, CompiledWorkflow, WorkflowCompiler
 from .config import JobConfig, WorkflowSpec
-from .config_loader import (
-    get_config_for_job,
-    merge_plugin_config_sections,
-    registered_plugin_namespaces,
-)
 from .dataset import DatasetResultProtocol, MappedDatasetResult, iter_dataset_views
 from .error_report import build_error_report, save_error_report
 from .errors import (
@@ -43,6 +38,7 @@ from .errors import (
     QPhaseConfigError,
     QPhasePluginError,
     QPhaseRuntimeError,
+    QPhaseSchedulerError,
     attach_session_log,
     get_logger,
 )
@@ -60,7 +56,7 @@ from .persistence import ProjectStateStore
 from .progress import ProgressEvent, ProgressSnapshot, ProgressTracker
 from .project import ProjectContext
 from .protocols import ResultProtocol
-from .registry import registry
+from .registry import RegistryCenter, registry
 from .result_router import ResultRouter
 from .system_config import SystemConfig, load_system_config
 from .utils import save_yaml
@@ -142,6 +138,7 @@ class Scheduler:
         cancellation: CancellationController | None = None,
         before_job: Callable[[JobConfig, int, int], JobConfig] | None = None,
         state_store: ProjectStateStore | None = None,
+        registry_center: RegistryCenter | None = None,
     ):
         if system_config is None:
             self.system_config = load_system_config()
@@ -155,9 +152,7 @@ class Scheduler:
         self.on_job_dir = on_job_dir
         self.cancellation = cancellation or CancellationController()
         self.before_job = before_job
-        from .registry import registry
-
-        self._registry = registry
+        self._registry = registry_center or registry.snapshot()
         self._result_router = ResultRouter(self.system_config)
         self.session_id = None
         self.session_dir = None
@@ -306,6 +301,7 @@ class Scheduler:
         workflow: WorkflowSpec,
         dry_run: bool = False,
         resume_from: Path | None = None,
+        compiled_workflow: CompiledWorkflow | None = None,
     ) -> list[JobResult]:
         """Execute all jobs in the workflow serially.
 
@@ -317,6 +313,9 @@ class Scheduler:
             If True, simulate execution without running engines.
         resume_from : Path | None, optional
             Path to a previous session directory to resume from.
+        compiled_workflow : CompiledWorkflow | None, optional
+            Previously resolved execution request. When provided, the scheduler
+            does not re-read project defaults or recompile the workflow.
 
         Returns
         -------
@@ -324,17 +323,25 @@ class Scheduler:
             Results for each executed job, in order
 
         """
+        if compiled_workflow is not None:
+            if compiled_workflow.project_id != self.project.project_id:
+                raise QPhaseConfigError(
+                    "compiled workflow belongs to a different project"
+                )
+            if compiled_workflow.workflow.id != workflow.id:
+                raise QPhaseConfigError(
+                    "compiled workflow does not match the requested workflow"
+                )
+
         if dry_run:
             self.session_id = None
             self.session_dir = None
             self.manifest = None
-            compiled = self._validate_jobs(workflow)
-            if not isinstance(compiled, CompiledWorkflow):
-                compiled = None
+            compiled = compiled_workflow or self._validate_jobs(workflow)
             self._compiled_workflow = compiled
             dry_results: list[JobResult] = []
             dry_job_results: dict[str, ResultProtocol] = {}
-            logical_jobs = list(compiled.logical_jobs) if compiled else workflow.jobs
+            logical_jobs = list(compiled.logical_jobs)
             effective_jobs = list(logical_jobs)
             for job_idx, original in enumerate(logical_jobs):
                 job = (
@@ -342,7 +349,7 @@ class Scheduler:
                     if self.before_job is not None
                     else original
                 )
-                if job is not original and compiled is not None:
+                if job != original:
                     effective_jobs[job_idx] = job
                     compiled = self._compile_revised_jobs(workflow, effective_jobs)
                     self._compiled_workflow = compiled
@@ -353,15 +360,21 @@ class Scheduler:
                     effective_jobs,
                     dry_job_results,
                     dry_results,
-                    compiled_job=(compiled.job(job.name) if compiled else None),
+                    compiled_job=compiled.job(job.name),
                     dry_run=True,
                 )
             return dry_results
 
         # Compile before creating a Session or starting a worker.
-        compiled = self._validate_jobs(workflow)
-        if not isinstance(compiled, CompiledWorkflow):
-            compiled = None
+        compiled = compiled_workflow or self._validate_jobs(workflow)
+        if compiled.project_id != self.project.project_id:
+            raise QPhaseConfigError(
+                "compiled workflow belongs to a different project"
+            )
+        if compiled.workflow.id != workflow.id:
+            raise QPhaseConfigError(
+                "compiled workflow does not match the requested workflow"
+            )
         self._compiled_workflow = compiled
 
         # Step 0: Initialize Session
@@ -381,7 +394,7 @@ class Scheduler:
 
         results: list[JobResult] = []
         job_results: dict[str, ResultProtocol] = {}
-        logical_jobs = list(compiled.logical_jobs) if compiled else workflow.jobs
+        logical_jobs = list(compiled.logical_jobs)
         effective_jobs = list(logical_jobs)
         try:
             for job_idx, job in enumerate(effective_jobs):
@@ -394,14 +407,12 @@ class Scheduler:
                         raise QPhaseConfigError(
                             "a pending job revision must preserve the logical job name"
                         )
-                    job = replacement
-                    effective_jobs[job_idx] = replacement
-                    if compiled is not None:
+                    if replacement != job:
+                        job = replacement
+                        effective_jobs[job_idx] = replacement
                         compiled = self._compile_revised_jobs(workflow, effective_jobs)
                         self._compiled_workflow = compiled
-                compiled_job = (
-                    compiled.job(job.name) if compiled is not None else None
-                )
+                compiled_job = compiled.job(job.name)
                 self._run_single(
                     job,
                     job_idx,
@@ -560,7 +571,7 @@ class Scheduler:
         job_results: dict[str, ResultProtocol],
         results: list[JobResult],
         *,
-        compiled_job: CompiledJob | None = None,
+        compiled_job: CompiledJob,
         dry_run: bool,
     ) -> None:
         """Execute one logical job and update the shared result state."""
@@ -630,11 +641,7 @@ class Scheduler:
 
         # Skip jobs whose upstream failed or was skipped earlier in this run.
         # Independent downstream jobs keep running (existing scheduler policy).
-        source = (
-            compiled_job.input_source
-            if compiled_job is not None
-            else job.input.from_ if job.input else None
-        )
+        source = compiled_job.input_source
         upstream_status = self._job_statuses.get(source) if source else None
         if upstream_status in ("failed", "skipped_dependency"):
             note = (
@@ -872,33 +879,6 @@ class Scheduler:
             error_report_path=(str(report_path) if report_path is not None else None),
         )
 
-    def _get_merged_config_for_job(self, job: JobConfig) -> dict[str, Any]:
-        """Merge global system config with job-specific overrides.
-
-        Returns
-        -------
-        dict[str, Any]
-            Merged configuration dictionary containing plugins, engine,
-            params, and any top-level plugin sections defined in the job.
-
-        """
-        plugin_namespaces = registered_plugin_namespaces()
-
-        # Merge global config with job config
-        job_override: dict[str, Any] = {
-            "plugins": job.plugins,
-            "engine": job.engine,
-            "params": job.params,
-        }
-        # Preserve top-level plugin sections (e.g. backend, analyser) that live in
-        # JobConfig.model_extra so the merge/extraction logic sees them.
-        job_extra = job.model_extra or {}
-        for key in plugin_namespaces:
-            if key in job_extra:
-                job_override[key] = job_extra[key]
-
-        return get_config_for_job(self.project, job_config_dict=job_override)
-
     def _run_job(
         self,
         job: JobConfig,
@@ -906,7 +886,7 @@ class Scheduler:
         job_total: int,
         input_result: ResultProtocol | None,
         *,
-        compiled_job: CompiledJob | None = None,
+        compiled_job: CompiledJob,
         display_total: int | None = None,
     ) -> _JobOutcome:
         """Execute a single job and return its outcome.
@@ -1008,44 +988,16 @@ class Scheduler:
         display_total: int,
         input_result: ResultProtocol | None,
         *,
-        compiled_job: CompiledJob | None = None,
+        compiled_job: CompiledJob,
         job_dir: Path,
         engine_name: str,
         tracker: ProgressTracker,
         clock_start: float,
     ) -> _JobOutcome:
         """Job body executed under the error boundary of :meth:`_run_job`."""
-        merged_config = (
-            dict(compiled_job.merged_config)
-            if compiled_job is not None
-            else self._get_merged_config_for_job(job)
-        )
-
-        if compiled_job is None:
-            plugin_namespaces = registered_plugin_namespaces()
-            plugins_cfg = merge_plugin_config_sections(merged_config)
-            manifest = registry.get_plugin_manifest("engine", engine_name)
-            input_plugins = set(getattr(manifest, "input_plugins", set()))
-            required_namespaces = (
-                input_plugins
-                if job.input and input_plugins
-                else set(getattr(manifest, "required_plugins", set()))
-            )
-            job_extra = job.model_extra or {}
-            explicit_namespaces = set(job.plugins)
-            explicit_namespaces.update(
-                namespace
-                for namespace in plugin_namespaces
-                if namespace in job_extra
-            )
-            final_plugins_cfg = {
-                namespace: config
-                for namespace, config in plugins_cfg.items()
-                if namespace in explicit_namespaces or namespace in required_namespaces
-            }
-        else:
-            final_plugins_cfg = dict(compiled_job.plugin_config)
-            engine_name = compiled_job.engine_name
+        merged_config = dict(compiled_job.merged_config)
+        final_plugins_cfg = dict(compiled_job.plugin_config)
+        engine_name = compiled_job.engine_name
 
         # Build plugins (backend, integrator, state, etc.)
         plugins = self._build_plugins(final_plugins_cfg)
@@ -1071,7 +1023,7 @@ class Scheduler:
 
         # Instantiate engine via registry
         try:
-            engine = registry.create_plugin_instance(
+            engine = self._registry.create_plugin_instance(
                 "engine", engine_config_raw, plugins=plugins
             )
         except Exception as e:
@@ -1083,7 +1035,7 @@ class Scheduler:
             ) from e
 
         # Also write snapshot
-        self._write_snapshot(job_dir, job, merged_config, job_idx)
+        self._write_snapshot(job_dir, job, compiled_job, job_idx)
 
         # Structured progress plumbing: engines emit work events through the
         # reporter; the tracker aggregates them into snapshots. Legacy engines
@@ -1363,7 +1315,9 @@ class Scheduler:
             if isinstance(config_data, dict) and "name" in config_data:
                 # Flat format: {name: "...", params: {...}}
                 try:
-                    instance = registry.create_plugin_instance(plugin_type, config_data)
+                    instance = self._registry.create_plugin_instance(
+                        plugin_type, config_data
+                    )
                     plugins[plugin_type] = instance
                 except Exception as e:
                     raise QPhasePluginError(
@@ -1382,7 +1336,7 @@ class Scheduler:
                     flat_config["name"] = plugin_name
 
                     try:
-                        instance = registry.create_plugin_instance(
+                        instance = self._registry.create_plugin_instance(
                             plugin_type, flat_config
                         )
                         # Store by specific name (e.g. "analyser.psd")
@@ -1407,14 +1361,11 @@ class Scheduler:
 
     def _create_job_dir(self, job: JobConfig) -> Path:
         """Create and return this logical Job's Artifact directory."""
-        if self.session_dir:
-            job_dir = self.session_dir / job.name
-            job_dir.mkdir(parents=True, exist_ok=True)
-            return job_dir
-
-        # Defensive fallback; normal Workflow execution always owns a Session.
-        output_root = self.project.session_root
-        job_dir = output_root / job.name
+        if self.session_dir is None:
+            raise QPhaseSchedulerError(
+                f"cannot create Job directory for '{job.name}' without a Session"
+            )
+        job_dir = self.session_dir / job.name
         job_dir.mkdir(parents=True, exist_ok=True)
         return job_dir
 
@@ -1422,7 +1373,7 @@ class Scheduler:
         self,
         job_dir: Path,
         job: JobConfig,
-        config: dict[str, Any],
+        compiled_job: CompiledJob,
         job_idx: int,
     ) -> None:
         """Write configuration snapshot for reproducibility.
@@ -1433,46 +1384,32 @@ class Scheduler:
             Session directory for this Job.
         job : JobConfig
             Job configuration
-        config : dict[str, Any]
-            Merged configuration (global + job)
+        compiled_job : CompiledJob
+            Resolved configuration used by this execution.
         job_idx : int
             Job index
 
         """
-        try:
-            from .snapshot import SnapshotManager
+        from .snapshot import SnapshotManager
 
-            # Extract validated plugins from job
-            validated_plugins = job.get_all_plugin_configs()
-
-            # Create and save snapshot
-            snapshot_manager = SnapshotManager(self.project.session_root)
-
-            # Create snapshot
-            snapshot = snapshot_manager.create_snapshot(
-                job=job,
-                job_index=job_idx,
-                system_config=self.system_config,
-                validated_plugins=validated_plugins,
-                engine_config=config.get("engine", {}),
-                session_id=self.session_id,
-                job_dir=job_dir,
-                input_job=job.input.from_ if job.input is not None else None,
-                output_job=job.output,
-                metadata={
-                    "scheduler_version": "2.0",
-                    "snapshot_created_by": "scheduler",
-                },
-            )
-
-            # Save snapshot
-            snapshot_path = snapshot_manager.save_snapshot(snapshot, job_dir)
-            log.debug(f"Snapshot saved to {snapshot_path}")
-
-        except Exception as e:
-            log.warning(f"Failed to write snapshot: {e}")
-
-        # Don't raise - snapshot failure shouldn't stop job execution
+        snapshot_manager = SnapshotManager(self.project.session_root)
+        snapshot = snapshot_manager.create_snapshot(
+            job=job,
+            job_index=job_idx,
+            system_config=self.system_config,
+            validated_plugins=dict(compiled_job.plugin_config),
+            engine_config=dict(compiled_job.engine_config),
+            session_id=self.session_id,
+            job_dir=job_dir,
+            input_job=compiled_job.input_source,
+            output_job=compiled_job.output,
+            metadata={
+                "scheduler_version": "2.0",
+                "snapshot_created_by": "scheduler",
+            },
+        )
+        snapshot_path = snapshot_manager.save_snapshot(snapshot, job_dir)
+        log.debug(f"Snapshot saved to {snapshot_path}")
 
 
 def execute_workflow(

@@ -6,10 +6,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from qphase.core.compiler import WorkflowCompiler
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.persistence import ProjectStateStore
 from qphase.core.progress import ProgressSnapshot
 from qphase.core.project import ProjectContext
+from qphase.core.system_config import SystemConfig
 from qphase.service.execution import ExecutionManager
 from qphase.service.models import ExecutionPlan
 
@@ -147,12 +149,14 @@ def test_manager_marks_running_record_interrupted_on_restart(tmp_path) -> None:
     scheduler.project = project
     scheduler.state_store = ProjectStateStore(project)
     workflow = scheduler.load_workflow("ignored")
+    compiled = WorkflowCompiler(project, SystemConfig()).compile(workflow)
     scheduler.state_store.save_execution(
         {
             "schema": "qphase.execution/1",
             "execution_id": "interrupted-1",
             "source_workflow": "test-workflow",
             "workflow": workflow.model_dump(mode="json", by_alias=True),
+            "compiled_workflow": compiled.to_payload(),
             "submitted_at": "2026-08-26T10:00:00+08:00",
             "state": "running",
             "session_id": None,

@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from qphase.core.compiler import CompiledWorkflow
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.execution import CancellationController
 from qphase.core.persistence import ProjectStateStore
@@ -56,6 +57,7 @@ class _ExecutionRecord:
     gate: threading.Condition = field(default_factory=threading.Condition)
     revisions: dict[str, JobConfig] = field(default_factory=dict)
     started_jobs: set[str] = field(default_factory=set)
+    compiled_workflow: CompiledWorkflow | None = None
     last_persisted_progress: float = 0.0
     persisted_sequence: int = 0
 
@@ -98,7 +100,11 @@ class ExecutionManager:
     ) -> ExecutionSummary:
         del resume_from  # Resume support remains on the synchronous service for now.
         workflow = self.scheduler.load_workflow(workflow_reference)
-        self._validate_plan(workflow)
+        compiled_workflow = None
+        if self.state_store is not None:
+            compiled_workflow = self.scheduler.compile_workflow(workflow)
+        else:
+            self._validate_plan(workflow)
         with self._wake:
             if len(self._queue) >= self.queue_capacity:
                 raise RuntimeError("execution queue is full")
@@ -107,6 +113,7 @@ class ExecutionManager:
                 execution_id=execution_id,
                 workflow=workflow,
                 source_workflow=workflow_reference,
+                compiled_workflow=compiled_workflow,
             )
             self._records[execution_id] = record
             self._queue.append(execution_id)
@@ -207,8 +214,14 @@ class ExecutionManager:
         ]
         if not any(item.name == job_name for item in record.workflow.jobs):
             raise KeyError(f"unknown job {job_name!r}")
-        self._validate_plan(record.workflow.model_copy(update={"jobs": jobs}))
+        revised_workflow = record.workflow.model_copy(update={"jobs": jobs})
+        compiled_workflow = None
+        if self.state_store is not None:
+            compiled_workflow = self.scheduler.compile_workflow(revised_workflow)
+        else:
+            self._validate_plan(revised_workflow)
         record.revisions[job_name] = replacement
+        record.compiled_workflow = compiled_workflow
         self._save_execution(record)
         self._append_event(
             record, {"kind": "pending_job_revised", "job_name": job_name}
@@ -259,11 +272,14 @@ class ExecutionManager:
 
         try:
             results = self.scheduler.run(
-                record.workflow,
+                record.compiled_workflow.workflow
+                if record.compiled_workflow is not None
+                else record.workflow,
                 progress_callback=lambda snapshot: self._on_progress(record, snapshot),
                 cancellation=record.controller,
                 before_job=_before_job,
                 on_scheduler=_scheduler_ready,
+                compiled_workflow=record.compiled_workflow,
             )
             record.session_id = (
                 record.scheduler.session_id if record.scheduler is not None else None
@@ -367,6 +383,9 @@ class ExecutionManager:
             "execution_id": record.execution_id,
             "source_workflow": record.source_workflow,
             "workflow": record.workflow.model_dump(mode="json", by_alias=True),
+            "compiled_workflow": record.compiled_workflow.to_payload()
+            if record.compiled_workflow is not None
+            else None,
             "submitted_at": record.submitted_at.isoformat(),
             "state": record.state,
             "session_id": record.session_id,
@@ -394,7 +413,9 @@ class ExecutionManager:
             return
         for payload in self.state_store.load_executions():
             record = self._record_from_payload(payload)
-            if record.state in {"running", "pause_requested"}:
+            if record.state in {"running", "pause_requested"} or (
+                record.state == "paused" and record.started_at is not None
+            ):
                 record.state = "failed"
                 record.error = "execution worker interrupted by process restart"
                 record.finished_at = _now()
@@ -408,6 +429,18 @@ class ExecutionManager:
         if payload.get("schema") != "qphase.execution/1":
             raise ValueError("unsupported execution record schema")
         workflow = WorkflowSpec.model_validate(payload["workflow"])
+        compiled_payload = payload.get("compiled_workflow")
+        compiled_workflow = (
+            CompiledWorkflow.from_payload(compiled_payload)
+            if compiled_payload is not None
+            else None
+        )
+        if compiled_workflow is None:
+            raise ValueError("execution record is missing compiled workflow")
+        if compiled_workflow.project_id != self.scheduler.project.project_id:
+            raise ValueError("execution record belongs to a different project")
+        if compiled_workflow.workflow.id != workflow.id:
+            raise ValueError("compiled workflow does not match execution workflow")
         state = payload["state"]
         allowed_states = {
             "queued",
@@ -441,6 +474,7 @@ class ExecutionManager:
             pause_requested=bool(payload.get("pause_requested", False)),
             revisions=revisions,
             started_jobs=set(payload.get("started_jobs", [])),
+            compiled_workflow=compiled_workflow,
         )
         session_dir = payload.get("session_dir")
         if isinstance(session_dir, str):

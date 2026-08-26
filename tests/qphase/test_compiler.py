@@ -6,7 +6,7 @@ from typing import ClassVar
 
 import pytest
 from pydantic import BaseModel
-from qphase.core.compiler import WorkflowCompiler
+from qphase.core.compiler import CompiledWorkflow, WorkflowCompiler
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.errors import QPhaseConfigError
 from qphase.core.project import ProjectContext
@@ -126,3 +126,30 @@ def test_compiler_does_not_instantiate_engine(tmp_path):
         assert CountedEngine.constructed == 0
     finally:
         registry._tables.get("engine", {}).pop("counted", None)
+
+
+def test_compiled_workflow_round_trips_without_registry_access(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    workflow = _workflow(
+        JobConfig(
+            name="job",
+            engine={"dummy": {"param": 2.0}},
+            model={"dummy": {"param": 3.0}},
+            scan={
+                "axes": {
+                    "value": {
+                        "target": "model.dummy.param",
+                        "values": [1, 2],
+                    }
+                }
+            },
+        )
+    )
+    compiled = WorkflowCompiler(project, SystemConfig()).compile(workflow)
+
+    restored = CompiledWorkflow.from_payload(compiled.to_payload())
+
+    assert restored.project_id == compiled.project_id
+    assert restored.topological_order == ("job",)
+    assert restored.job("job").parameter_grid is not None
+    assert restored.job("job").parameter_grid.shape == (2,)
