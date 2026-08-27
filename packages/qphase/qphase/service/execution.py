@@ -87,6 +87,10 @@ class ExecutionManager:
         self._wake = threading.Condition(self._lock)
         self._closed = False
         self._restore_persisted()
+        if self._records:
+            # Records restored from disk were persisted without a catalog
+            # trigger; reindex once so they are visible immediately.
+            self._reindex_catalog()
         self._worker = threading.Thread(
             target=self._worker_loop, name="qphase-run-manager", daemon=True
         )
@@ -135,6 +139,7 @@ class ExecutionManager:
                 self._queue.remove(execution_id)
                 self._records.pop(execution_id, None)
                 raise
+            self._reindex_catalog()
             self._wake.notify()
             return self._summary(record)
 
@@ -357,6 +362,12 @@ class ExecutionManager:
             record.finished_at = _now()
             self._append_event(record, {"kind": f"execution_{record.state}"})
             self._save_execution(record)
+            # A reindex failure must not kill the worker thread; the read
+            # model recovers via its fingerprint probe on the next query.
+            try:
+                self._reindex_catalog()
+            except Exception:
+                log.exception("catalog reindex after execution failed")
 
     def _on_progress(
         self, record: _ExecutionRecord, snapshot: ProgressSnapshot
@@ -426,6 +437,15 @@ class ExecutionManager:
     def _save_execution(self, record: _ExecutionRecord) -> None:
         if self.state_store is not None:
             self.state_store.save_execution(self._execution_payload(record))
+
+    def _reindex_catalog(self) -> None:
+        """Refresh the object catalog after execution records are persisted."""
+        if self.state_store is None:
+            return
+        # Late import: the catalog is a read model layered above the service.
+        from qphase.core.catalog import ProjectObjectCatalog
+
+        ProjectObjectCatalog(self.scheduler.project).reindex()
 
     def _execution_payload(self, record: _ExecutionRecord) -> dict[str, Any]:
         session_dir: str | None = None

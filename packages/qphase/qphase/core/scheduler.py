@@ -171,6 +171,7 @@ class Scheduler:
             "jobs": {},
         }
         self._save_manifest()
+        self._reindex_catalog()
         self._start_session_heartbeat()
         log.debug(f"Initialized session {self.session_id} at {self.session_dir}")
 
@@ -235,6 +236,18 @@ class Scheduler:
         """Save session manifest to disk."""
         if self.session_dir and self.manifest:
             self.state_store.save_session_manifest(self.session_dir, self.manifest)
+
+    def _reindex_catalog(self) -> None:
+        """Refresh the object catalog after session lifecycle writes.
+
+        Session manifests are disk truth for the catalog read model; the
+        explicit trigger boundaries are session initialization and job
+        finalization (see ``qphase.core.catalog``). Late import: the catalog
+        is a read model layered above the scheduler.
+        """
+        from .catalog import ProjectObjectCatalog
+
+        ProjectObjectCatalog(self.project).reindex()
 
     def _start_session_heartbeat(self) -> None:
         if self.session_dir is None:
@@ -455,11 +468,13 @@ class Scheduler:
                     else "completed"
                 )
                 self._save_manifest()
+                self._reindex_catalog()
             return results
         except Exception:
             if self.manifest:
                 self.manifest["status"] = "failed"
                 self._save_manifest()
+                self._reindex_catalog()
             raise
         finally:
             self._stop_session_heartbeat()
