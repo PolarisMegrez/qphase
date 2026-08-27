@@ -19,11 +19,19 @@ Without it, QPhase uses `QPHASE_PROJECT` and then searches upward for
 ```bash
 qphase project init [PATH] [--name TEXT] [--force]
 qphase project show
+qphase project tag [--add TAG] [--remove TAG] [--private]
+qphase project alias [TEXT] [--clear]
+qphase project note [TEXT] [--clear]
+qphase project reindex
+qphase project migrate --dry-run
 ```
 
 `init` writes `qphase.toml`, creates Workflow, plugin, and Session directories,
 and generates Project plugin defaults. `show` prints the resolved Project ID,
-root, Workflow root, Session root, and defaults path.
+root, Workflow root, Session root, and defaults path. `tag`/`alias`/`note`
+annotate the Project itself. `reindex` rebuilds the object catalog read model
+and lists location issues. `migrate --dry-run` previews the Phase 4 history
+migration without writing anything.
 
 ## Workflow Catalog
 
@@ -31,11 +39,50 @@ root, Workflow root, Session root, and defaults path.
 qphase workflow list [--collection NAME] [--tag TAG] [--query TEXT] [--json]
 qphase workflow show WORKFLOW_ID
 qphase workflow path WORKFLOW_ID
+qphase workflow tag WORKFLOW_ID@REVISION [--add TAG] [--remove TAG] [--private]
 ```
 
 The catalog scans the Project's Workflow root recursively and can filter by
 Collection, Tag, or ID/title/path text. Stable Workflow IDs, not filenames, are
-the normal invocation contract. Duplicate IDs are errors.
+the normal invocation contract. Duplicate IDs are errors. `workflow tag`
+annotates one content revision of a workflow.
+
+## Catalog & Tags
+
+Sessions, artifacts, occurrences, jobs, and executions are listed and
+annotated through the object catalog. Every `list` command accepts the same
+filters: `--tag`, `--tag-any`, `--tag-without`, `--tag-descendant`,
+`--tag-namespace`, `--facet k=v`, `--range k=low..high`, `--lifecycle`,
+`--retention`, `--direct`, `--limit`, and `--offset`.
+
+```bash
+qphase session list|tag|lifecycle|retention ...
+qphase artifact list|tag|lifecycle|retention ...
+qphase occurrence list [--session ID] [--artifact ID]
+qphase occurrence tag SESSION_ID ARTIFACT_ID [--add TAG] [--job NAME] [--private]
+qphase occurrence retention SESSION_ID ARTIFACT_ID [VALUE] [--clear] [--job NAME]
+qphase job list ...
+qphase job tag WORKFLOW_ID@REVISION:JOB_NAME [--add TAG] [--remove TAG] [--private]
+qphase execution tag EXECUTION_ID [--add TAG] [--remove TAG] [--private]
+```
+
+Tag commands write shared annotation documents by default; `--private` keeps
+the change in the user-private store. `execution tag` edits the frozen
+submission tags, which is only allowed while the execution is queued.
+
+```bash
+qphase tag policy show
+qphase tag policy validate
+qphase tag promote KIND OBJECT_ID TAG
+qphase view save NAME --kind KIND [--tag TAG] [--lifecycle X] [--retention Y]
+qphase view list
+qphase view delete NAME
+```
+
+`tag promote` moves a private tag into the shared annotation layer. Saved
+views are user-private named catalog filters. See the
+[Tags & Catalog](../user_guide/tags.md) guide for the object model, tag
+policy, inheritance, and shadowing rules.
 
 ## Execute
 

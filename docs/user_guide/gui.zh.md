@@ -49,9 +49,10 @@ Workflow 文档使用内容 revision，过期 GUI 写入会冲突而不是覆盖
 展示状态、别名、备注、逻辑 Job、事件、日志和 Artifact。删除非运行 Session 时先
 移动到 Project 本地回收站，永久清理需要显式操作。
 
-未来 Archive 可以提供基于 Project/Workflow/Session ID 的虚拟目录、收藏与私人备注，
-但它始终是用户本地元数据，不影响执行与复现。
+用户本地组织功能现已可用：私有 tag、别名与备注（按 Project/Workflow/Session/
+Artifact ID 键控）、保存的 catalog 视图，以及 catalog 内建的虚拟目录。它们全部
+存放在项目之外的用户私有库中，不影响执行与复现。参见 [Tags 与 Catalog](tags.md)。
 
 主要 API 为 `/workflows`、`/plans`、`/executions`、`/sessions` 与
 `/workflow-docs`。GUI 当前不提供多用户认证、公开网络服务、多 Execution 资源调度、
-插件热加载、SDE 时间步 checkpoint、在线 FFT 或 Archive 虚拟目录。
+插件热加载、SDE 时间步 checkpoint 或在线 FFT。

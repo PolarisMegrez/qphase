@@ -48,6 +48,8 @@ plugins:
             Workflow Configuration: Workflow 配置
             GUI & Local API: GUI 与本地 API
             Results & Reproducibility: 结果与复现
+            Tags & Catalog: 标签与 Catalog
+            Catalog Contract: Catalog 契约
             SDE Physics: SDE 物理
             CAM Analysis: CAM 分析
             CAM: CAM
@@ -95,6 +97,7 @@ nav:
   - Workflow Configuration: user_guide/configuration.md
   - GUI & Local API: user_guide/gui.md
   - Results & Reproducibility: user_guide/output.md
+  - Tags & Catalog: user_guide/tags.md
   - SDE Physics:
     - Modeling: user_guide/sde/modeling.md
     - Simulation: user_guide/sde/simulation.md
@@ -121,6 +124,7 @@ nav:
     - Backend: dev_guide/backend.md
     - CLI System: dev_guide/cli.md
     - Service Layer: dev_guide/service_layer.md
+    - Catalog Contract: dev_guide/catalog_contract.md
     - Configuration: dev_guide/configuration.md
     - Error Handling: dev_guide/error_handling.md
     - Plugin Development: dev_guide/plugin_development.md

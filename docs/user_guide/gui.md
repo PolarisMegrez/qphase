@@ -58,9 +58,11 @@ instead of overwriting concurrent IDE edits. Sessions expose status, alias,
 notes, logical Jobs, events, logs, and Artifacts. Deletion first moves a
 non-running Session to Project-local trash; purge is explicit.
 
-Future Archive metadata may provide virtual folders, favorites, and private
-notes keyed by Project/Workflow/Session IDs. It remains user-local and cannot
-affect execution or reproducibility.
+User-local organization is available today: private tags, aliases and notes
+(keyed by Project/Workflow/Session/Artifact IDs), saved catalog views, and
+the catalog's built-in virtual folders. All of it lives in the per-user
+private store outside the project, so it cannot affect execution or
+reproducibility. See [Tags & Catalog](tags.md).
 
 ## API Surface
 
@@ -84,5 +86,5 @@ affect execution or reproducibility.
 
 The GUI does not yet provide multi-user authentication, public network serving,
 multi-Execution resource scheduling, plugin hot reload, SDE time-step
-checkpointing, online FFT, or Archive virtual folders. These are explicit
+checkpointing, or online FFT. These are explicit
 future capabilities, not hidden behaviors of the current API.
