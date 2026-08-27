@@ -269,3 +269,144 @@ def test_occurrence_tag_requires_job_when_ambiguous(temp_workspace):
     )
     assert resolved.exit_code == 0
     assert "task:scan" in resolved.stdout
+
+
+def _execution_record(workspace, execution_id, state):
+    """Persist a minimal execution record for execution CLI tests."""
+    from qphase.core.persistence import ProjectStateStore
+    from qphase.core.project import ProjectContext
+
+    ProjectStateStore(ProjectContext.discover()).save_execution(
+        {
+            "schema": "qphase.execution/1",
+            "execution_id": execution_id,
+            "source_workflow": "example",
+            "workflow": {"id": "example"},
+            "submission_tags": [],
+            "submitted_at": "2026-08-26T09:00:00+08:00",
+            "state": state,
+        }
+    )
+
+
+def _workflow_file(workspace):
+    path = workspace / "configs" / "workflows" / "example.yaml"
+    path.write_text(
+        "schema: qphase.workflow/2\n"
+        "id: example\n"
+        "title: Example\n"
+        "jobs:\n"
+        "  - name: sim\n"
+        "    engine:\n"
+        "      dummy: {}\n",
+        encoding="utf-8",
+    )
+
+
+def test_project_tag_alias_note_roundtrip(temp_workspace):
+    tagged = runner.invoke(app, ["project", "tag", "--add", "task:paper"])
+    assert tagged.exit_code == 0
+    assert "task:paper" in tagged.stdout
+    alias = runner.invoke(app, ["project", "alias", "paper-project"])
+    assert alias.exit_code == 0
+    note = runner.invoke(app, ["project", "note", "results"])
+    assert note.exit_code == 0
+    cleared = runner.invoke(app, ["project", "alias", "--clear"])
+    assert cleared.exit_code == 0
+
+
+def test_workflow_and_job_tag_roundtrip(temp_workspace):
+    _workflow_file(temp_workspace)
+    listed = runner.invoke(app, ["workflow", "list"])
+    assert listed.exit_code == 0
+    revision_id = listed.stdout.splitlines()[0].split(":", 1)[0]
+    assert revision_id.startswith("example@")
+
+    tagged = runner.invoke(
+        app, ["workflow", "tag", revision_id, "--add", "task:reviewed"]
+    )
+    assert tagged.exit_code == 0
+    assert "task:reviewed" in tagged.stdout
+    hit = runner.invoke(app, ["workflow", "list", "--tag", "task:reviewed"])
+    assert revision_id in hit.stdout
+
+    jobs = runner.invoke(app, ["job", "list"])
+    assert jobs.exit_code == 0
+    job_id = jobs.stdout.split()[0]
+    assert job_id == f"{revision_id}:sim"
+    job_tagged = runner.invoke(app, ["job", "tag", job_id, "--add", "method:cam"])
+    assert job_tagged.exit_code == 0
+    assert "method:cam" in job_tagged.stdout
+    job_hit = runner.invoke(app, ["job", "list", "--tag-any", "method:cam"])
+    assert job_id in job_hit.stdout
+
+
+def test_execution_tag_requires_queued_state(temp_workspace):
+    _execution_record(temp_workspace, "exec-queued", "queued")
+    _execution_record(temp_workspace, "exec-done", "completed")
+
+    ok = runner.invoke(app, ["execution", "tag", "exec-queued", "--add", "task:retry"])
+    assert ok.exit_code == 0
+    assert "task:retry" in ok.stdout
+
+    blocked = runner.invoke(
+        app, ["execution", "tag", "exec-done", "--add", "task:retry"]
+    )
+    assert blocked.exit_code == 1
+    assert "queued" in blocked.stdout
+
+    missing = runner.invoke(app, ["execution", "tag", "exec-nope", "--add", "task:x"])
+    assert missing.exit_code == 1
+
+
+def test_occurrence_list_filters_by_session_and_artifact(temp_workspace):
+    import json
+
+    from tests.qphase.test_catalog import _v4_artifact_manifest
+
+    root = _catalog_session(temp_workspace)
+    job_dir = root / "sim"
+    job_dir.mkdir()
+    (job_dir / "artifact_manifest.json").write_text(
+        json.dumps(_v4_artifact_manifest("art-1")), encoding="utf-8"
+    )
+    listed = runner.invoke(app, ["occurrence", "list", "--session", "session-1"])
+    assert listed.exit_code == 0
+    assert "art-1:session-1:sim" in listed.stdout
+    empty = runner.invoke(app, ["occurrence", "list", "--session", "other"])
+    assert "art-1" not in empty.stdout
+    by_artifact = runner.invoke(app, ["occurrence", "list", "--artifact", "art-1"])
+    assert "art-1:session-1:sim" in by_artifact.stdout
+
+
+def test_private_tag_and_promote_via_cli(temp_workspace):
+    _catalog_session(temp_workspace)
+    tagged = runner.invoke(
+        app, ["session", "tag", "session-1", "--add", "task:mine", "--private"]
+    )
+    assert tagged.exit_code == 0
+    listed = runner.invoke(app, ["session", "list", "--tag", "task:mine"])
+    assert "session-1" in listed.stdout
+    promoted = runner.invoke(
+        app, ["tag", "promote", "session", "session-1", "task:mine"]
+    )
+    assert promoted.exit_code == 0
+    assert "task:mine" in promoted.stdout
+
+
+def test_session_list_supports_full_query_flags(temp_workspace):
+    _catalog_session(temp_workspace)
+    tagged = runner.invoke(app, ["session", "tag", "session-1", "--add", "task:scan"])
+    assert tagged.exit_code == 0
+    hit = runner.invoke(
+        app,
+        [
+            "session", "list", "--tag-any", "task:scan",
+            "--facet", "status=completed", "--direct",
+        ],
+    )
+    assert "session-1" in hit.stdout
+    excluded = runner.invoke(app, ["session", "list", "--tag-without", "task:scan"])
+    assert "session-1" not in excluded.stdout
+    paged = runner.invoke(app, ["session", "list", "--limit", "1", "--offset", "1"])
+    assert "session-1" not in paged.stdout

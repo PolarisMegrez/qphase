@@ -41,3 +41,22 @@ def policy_validate() -> None:
         typer.echo("no tag policy (configs/tags.yaml absent)")
         return
     typer.echo(f"valid: {info.path} (revision {info.revision})")
+
+
+@app.command("promote")
+def promote_tag(
+    kind: str = typer.Argument(
+        ...,
+        help="Object kind: project|workflow|job|execution|session|artifact|occurrence",
+    ),
+    object_id: str = typer.Argument(..., help="Catalog object id"),
+    tag: str = typer.Argument(..., help="Private tag to promote to the shared layer"),
+) -> None:
+    """Move one private tag into the shared annotation document."""
+    try:
+        tags = catalog_service().promote_tag(kind, object_id, tag)
+    except (QPhaseError, RuntimeError, ValueError) as exc:
+        fail(exc)
+    typer.echo(
+        f"{kind} {object_id} tags=[{', '.join(item.tag for item in tags)}]"
+    )

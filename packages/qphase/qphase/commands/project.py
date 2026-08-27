@@ -10,6 +10,15 @@ from qphase.core.project import ProjectContext
 from qphase.core.registry import discovery, registry
 from qphase.service import CatalogService
 
+from ._annotations import (
+    ADD_OPTION,
+    CLEAR_OPTION,
+    PRIVATE_OPTION,
+    REMOVE_OPTION,
+    catalog_service,
+    fail,
+)
+
 app = typer.Typer(help="Initialize and inspect QPhase projects")
 _PATH_ARGUMENT = typer.Argument(Path("."))
 
@@ -37,6 +46,52 @@ def show() -> None:
     typer.echo(f"Workflows: {project.workflow_root}")
     typer.echo(f"Sessions: {project.session_root}")
     typer.echo(f"Defaults: {project.defaults_path}")
+
+
+@app.command("tag")
+def tag_project(
+    add: list[str] = ADD_OPTION,
+    remove: list[str] = REMOVE_OPTION,
+    private: bool = PRIVATE_OPTION,
+) -> None:
+    """Add or remove annotation tags on the project itself."""
+    try:
+        tags = catalog_service().tag_project(add=add, remove=remove, private=private)
+    except (QPhaseError, RuntimeError, ValueError) as exc:
+        fail(exc)
+    typer.echo(f"project tags=[{', '.join(item.tag for item in tags)}]")
+
+
+@app.command("alias")
+def project_alias(
+    value: str | None = typer.Argument(None, help="Project alias"),
+    clear: bool = CLEAR_OPTION,
+) -> None:
+    """Set or clear the project alias."""
+    if not clear and value is None:
+        typer.echo("Error: pass an alias value or use --clear")
+        raise typer.Exit(code=1)
+    try:
+        catalog_service().set_project_alias(None if clear else value)
+    except (QPhaseError, RuntimeError) as exc:
+        fail(exc)
+    typer.echo(f"project alias={None if clear else value}")
+
+
+@app.command("note")
+def project_note(
+    value: str | None = typer.Argument(None, help="Project note"),
+    clear: bool = CLEAR_OPTION,
+) -> None:
+    """Set or clear the project note."""
+    if not clear and value is None:
+        typer.echo("Error: pass a note value or use --clear")
+        raise typer.Exit(code=1)
+    try:
+        catalog_service().set_project_note(None if clear else value)
+    except (QPhaseError, RuntimeError) as exc:
+        fail(exc)
+    typer.echo(f"project note={None if clear else value}")
 
 
 @app.command("reindex")

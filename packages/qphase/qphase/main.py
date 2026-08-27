@@ -19,6 +19,8 @@ import typer
 
 from .commands import artifact as artifact_cmd
 from .commands import config as config_cmd
+from .commands import execution as execution_cmd
+from .commands import job as job_cmd
 from .commands import occurrence as occurrence_cmd
 from .commands import project as project_cmd
 from .commands import run as run_cmd
@@ -53,6 +55,8 @@ app.command("gui")(gui_command)
 app.add_typer(config_cmd.app, name="config", help="Manage system configuration")
 app.add_typer(project_cmd.app, name="project")
 app.add_typer(workflow_cmd.app, name="workflow")
+app.add_typer(job_cmd.app, name="job")
+app.add_typer(execution_cmd.app, name="execution")
 app.add_typer(tag_cmd.app, name="tag")
 app.add_typer(view_cmd.app, name="view")
 app.add_typer(session_cmd.app, name="session")

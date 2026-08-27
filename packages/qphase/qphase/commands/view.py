@@ -19,7 +19,9 @@ from ._annotations import (
 app = typer.Typer(help="Manage user-private saved catalog views")
 
 _KIND_OPTION = typer.Option(
-    ..., "--kind", help="Object kind: workflow|execution|session|artifact|occurrence"
+    ...,
+    "--kind",
+    help="Object kind: project|workflow|job|execution|session|artifact|occurrence",
 )
 
 
