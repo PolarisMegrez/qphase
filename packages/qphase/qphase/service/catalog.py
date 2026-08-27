@@ -9,14 +9,15 @@ catalog so the change is immediately visible in queries.
 User-private state (private tags, saved views) lives in a per-user
 :class:`~qphase.service.private.UserPrivateStore` outside the project. Private
 tags never enter the catalog: they are overlaid onto query results at read
-time with source ``"user_private"``, and in cardinality-one namespaces they
+time with source ``"user_private"``, they take part in tag predicates with
+the same semantics as shared tags, and in cardinality-one namespaces they
 shadow the shared assignments of the same namespace (near shadows far, and
 private is the nearest level).
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -93,11 +94,87 @@ class CatalogService:
         return self.catalog.location_issues()
 
     def query(self, query: CatalogQuery) -> list[CatalogObject]:
-        """List objects of one kind with their non-shadowed effective tags."""
+        """List objects of one kind with their non-shadowed effective tags.
+
+        Private tags participate in tag predicates with the same semantics as
+        shared tags without ever entering the shared catalog: when the query
+        carries tag predicates and the user has private tags on this object
+        kind, filtering runs over merged shared+private tags in memory.
+        """
         self._ensure_index()
+        if self._has_tag_predicates(query) and self.private.list_private_tags(
+            query.object_kind
+        ):
+            return self._query_with_private(query)
         return [
             self._catalog_object(query.object_kind, row)
             for row in self.catalog.query(query)
+        ]
+
+    @staticmethod
+    def _has_tag_predicates(query: CatalogQuery) -> bool:
+        return bool(
+            query.tags_all
+            or query.tags_any
+            or query.tags_without
+            or query.tag_descendant_of is not None
+            or query.tag_namespace is not None
+        )
+
+    def _query_with_private(self, query: CatalogQuery) -> list[CatalogObject]:
+        """Evaluate tag predicates over merged shared+private tags."""
+        shared_only = replace(
+            query,
+            tags_all=(),
+            tags_any=(),
+            tags_without=(),
+            tag_descendant_of=None,
+            tag_namespace=None,
+            limit=10000,
+            offset=0,
+        )
+        private_by_object: dict[str, list[str]] = {}
+        for object_id, tag in self.private.list_private_tags(query.object_kind):
+            private_by_object.setdefault(object_id, []).append(tag)
+        policy = load_tag_policy(self.project)
+        matched: list[dict[str, Any]] = []
+        for row in self.catalog.query(shared_only):
+            object_id = str(row["id"])
+            merged = _merge_private(
+                [
+                    _tag_info(tag)
+                    for tag in self.catalog.effective_tags(query.object_kind, object_id)
+                ],
+                [
+                    EffectiveTagInfo(tag=tag, source="user_private")
+                    for tag in private_by_object.get(object_id, [])
+                ],
+                policy,
+            )
+            visible = [tag for tag in merged if not tag.shadowed]
+            if not query.effective:
+                visible = [tag for tag in visible if not tag.inherited]
+            tags = {tag.tag for tag in visible}
+            if not all(tag in tags for tag in query.tags_all):
+                continue
+            if query.tags_any and not any(tag in tags for tag in query.tags_any):
+                continue
+            if any(tag in tags for tag in query.tags_without):
+                continue
+            if query.tag_descendant_of is not None and not any(
+                tag == query.tag_descendant_of
+                or tag.startswith(query.tag_descendant_of + "/")
+                for tag in tags
+            ):
+                continue
+            if query.tag_namespace is not None and not any(
+                tag.split(":", 1)[0] == query.tag_namespace for tag in tags
+            ):
+                continue
+            matched.append(row)
+        return [
+            self._catalog_object(query.object_kind, row)
+            for row in matched[query.offset : query.offset + query.limit]
         ]
 
     def effective_tags(

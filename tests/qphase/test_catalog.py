@@ -730,3 +730,82 @@ def test_query_reindexes_when_disk_changes(tmp_path):
     _session(project, "session-2")
     rows = catalog.query(CatalogQuery(object_kind="session"))
     assert [row["id"] for row in rows] == ["session-1", "session-2"]
+
+
+def test_query_rejects_unbounded_pagination():
+    with pytest.raises(ValueError, match="offset"):
+        CatalogQuery(object_kind="session", offset=-1)
+    with pytest.raises(ValueError, match="limit"):
+        CatalogQuery(object_kind="session", limit=0)
+    with pytest.raises(ValueError, match="limit"):
+        CatalogQuery(object_kind="session", limit=-1)
+    with pytest.raises(ValueError, match="limit"):
+        CatalogQuery(object_kind="session", limit=10001)
+
+
+def test_tag_namespace_predicate_escapes_underscores(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(project, "session-1", snapshot_tags=("foo_bar:one",))
+    _session(project, "session-2", snapshot_tags=("fooxbar:two",))
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    rows = catalog.query(CatalogQuery(object_kind="session", tag_namespace="foo_bar"))
+
+    assert [row["id"] for row in rows] == ["session-1"]
+
+
+def test_tag_descendant_predicate_escapes_underscores(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(project, "session-1", snapshot_tags=("task:a_b",))
+    _session(project, "session-2", snapshot_tags=("task:aXb/y",))
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    rows = catalog.query(
+        CatalogQuery(object_kind="session", tag_descendant_of="task:a_b")
+    )
+
+    assert [row["id"] for row in rows] == ["session-1"]
+
+
+def test_inheritance_respects_object_applicability(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\n"
+        "namespaces:\n"
+        "  wfonly:\n"
+        "    open: true\n"
+        "    objects: [workflow]\n"
+        "  task:\n"
+        "    open: true\n",
+    )
+    _workflow_file(project, tags=("wfonly:alpha", "task:scan"))
+    _session(
+        project,
+        "session-1",
+        snapshot_tags=("wfonly:alpha", "task:scan"),
+        artifacts=(("sim", "art-1"),),
+    )
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    workflow_row = catalog.query(CatalogQuery(object_kind="workflow"))[0]
+    workflow_tags = {
+        tag.tag for tag in catalog.effective_tags("workflow", workflow_row["id"])
+    }
+    assert {"wfonly:alpha", "task:scan"} <= workflow_tags
+
+    session_tags = {tag.tag for tag in catalog.effective_tags("session", "session-1")}
+    assert "task:scan" in session_tags
+    assert "wfonly:alpha" not in session_tags
+
+    occurrence_tags = {
+        tag.tag
+        for tag in catalog.effective_tags("occurrence", "art-1:session-1:sim")
+    }
+    assert "task:scan" in occurrence_tags
+    assert "wfonly:alpha" not in occurrence_tags

@@ -93,6 +93,7 @@ from .persistence import ProjectStateStore
 from .project import ProjectContext
 from .tags import (
     TAG_POLICY_FILENAME,
+    ObjectKind,
     TagPolicy,
     canonicalize_tag_syntax,
     job_tag_assignment_id,
@@ -328,6 +329,10 @@ class CatalogQuery:
         """Canonicalize tag filters and reject unknown object kinds."""
         if self.object_kind not in OBJECT_KINDS:
             raise ValueError(f"unknown catalog object kind {self.object_kind!r}")
+        if self.offset < 0:
+            raise ValueError(f"offset must be non-negative, got {self.offset}")
+        if not 1 <= self.limit <= 10000:
+            raise ValueError(f"limit must be within 1..10000, got {self.limit}")
         object.__setattr__(self, "tags_all", _canonical_tags(self.tags_all))
         object.__setattr__(self, "tags_any", _canonical_tags(self.tags_any))
         object.__setattr__(self, "tags_without", _canonical_tags(self.tags_without))
@@ -346,6 +351,11 @@ class CatalogQuery:
 
 def _canonical_tags(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(canonicalize_tag_syntax(value) for value in values)
+
+
+def _like_escape(value: str) -> str:
+    """Escape LIKE metacharacters so the pattern matches literally."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _try_canonical_tag(raw: str) -> str | None:
@@ -608,24 +618,23 @@ class ProjectObjectCatalog:
         if query.tag_descendant_of is not None:
             where.append(
                 f"EXISTS (SELECT 1 FROM effective_tags et WHERE {base}"
-                " AND (et.tag = ? OR et.tag LIKE ?))"
+                " AND (et.tag = ? OR et.tag LIKE ? ESCAPE '\\'))"
             )
             params.extend(
                 [
                     query.object_kind,
                     query.tag_descendant_of,
-                    query.tag_descendant_of + "/%",
+                    _like_escape(query.tag_descendant_of) + "/%",
                 ]
             )
         if query.tag_namespace is not None:
-            # tag_namespace is validated against the namespace pattern in
-            # __post_init__, so the LIKE pattern carries no user metacharacters
-            # beyond the (harmless) underscore wildcard.
+            # Namespaces legally contain underscores, which are LIKE
+            # wildcards: escape them so ``foo_bar`` never matches ``fooxbar``.
             where.append(
                 f"EXISTS (SELECT 1 FROM effective_tags et WHERE {base}"
-                " AND et.tag LIKE ?)"
+                " AND et.tag LIKE ? ESCAPE '\\')"
             )
-            params.extend([query.object_kind, query.tag_namespace + ":%"])
+            params.extend([query.object_kind, _like_escape(query.tag_namespace) + ":%"])
 
     def _connect(self, *, fresh: bool = False) -> sqlite3.Connection:
         if fresh:
@@ -754,6 +763,7 @@ TagLevel = tuple[str, list[tuple[str, str | None, str | None]], bool]
 def compute_effective_tags(
     levels: list[TagLevel],
     policy: TagPolicy | None,
+    target_kind: ObjectKind,
 ) -> list[EffectiveTag]:
     """Merge far-to-near tag levels into effective tags with provenance.
 
@@ -762,16 +772,21 @@ def compute_effective_tags(
     of the policy that validated it (frozen at compile or write time);
     ``None`` marks assignments that predate provenance tracking. Tags from
     levels other than the object's own are marked inherited and skipped when
-    their namespace disables inheritance; cardinality-one namespaces shadow
-    all farther assignments.
+    their namespace disables inheritance or when the policy declares the
+    namespace inapplicable to ``target_kind``; cardinality-one namespaces
+    shadow all farther assignments. The object's own level is never filtered:
+    it was validated at write time.
     """
     effective: list[EffectiveTag] = []
     for source, items, is_self in levels:
         for tag, assignment_id, policy_revision in items:
             namespace = tag.split(":", 1)[0]
             rule = policy.namespaces.get(namespace) if policy is not None else None
-            if not is_self and rule is not None and not rule.inherit:
-                continue
+            if not is_self:
+                if rule is not None and not rule.inherit:
+                    continue
+                if policy is not None and not policy.tag_applies_to(tag, target_kind):
+                    continue
             if rule is not None and rule.cardinality == "one":
                 for prior in effective:
                     if prior.tag.split(":", 1)[0] == namespace:
@@ -1074,6 +1089,7 @@ class _Scanner:
                     )
                 ],
                 self.policy,
+                "workflow",
             ),
         )
         for name, pairs in job_tags.items():
@@ -1094,6 +1110,7 @@ class _Scanner:
                         ),
                     ],
                     self.policy,
+                    "job",
                 ),
             )
         return revision_id
@@ -1168,6 +1185,7 @@ class _Scanner:
                         )
                     ],
                     self.policy,
+                    "execution",
                 ),
             )
 
@@ -1236,7 +1254,7 @@ class _Scanner:
         self._tags(
             "session",
             session_id,
-            compute_effective_tags(session_chain, self.policy),
+            compute_effective_tags(session_chain, self.policy, "session"),
         )
 
         retention = annotations.get("retention")
@@ -1402,6 +1420,7 @@ class _Scanner:
                         )
                     ],
                     self.policy,
+                    "artifact",
                 ),
             )
         elif known[0] != facets:
@@ -1441,7 +1460,7 @@ class _Scanner:
         self._tags(
             "occurrence",
             occurrence.object_id,
-            compute_effective_tags(occurrence_chain, self.policy),
+            compute_effective_tags(occurrence_chain, self.policy, "occurrence"),
         )
 
     @staticmethod

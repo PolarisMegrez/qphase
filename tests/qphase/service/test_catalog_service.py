@@ -529,3 +529,64 @@ def test_location_issues_passthrough(tmp_path):
     assert issue["kind"] == "corrupt"
     assert issue["path"] == "2026/08/session-1/sim"
     assert issue["message"]
+
+
+def test_private_tags_participate_in_tag_queries(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1")
+    _session(project, "session-2")
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.tag_session("session-1", add=["task:wip"], private=True)
+
+    rows = service.query(CatalogQuery(object_kind="session", tags_all=("task:wip",)))
+    assert [row.id for row in rows] == ["session-1"]
+    rows = service.query(
+        CatalogQuery(object_kind="session", tags_without=("task:wip",))
+    )
+    assert [row.id for row in rows] == ["session-2"]
+    # The private tag never entered the shared catalog: another user (another
+    # home) with the same query sees nothing.
+    other = CatalogService(project, home=tmp_path / "other-home")
+    assert other.query(CatalogQuery(object_kind="session", tags_all=("task:wip",))) == []
+
+
+def test_private_query_respects_cardinality_one_shadowing(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\n"
+        "namespaces:\n"
+        "  stage:\n"
+        "    open: true\n"
+        "    cardinality: one\n",
+    )
+    _session(project, "session-1")
+    _session(project, "session-2")
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.tag_session("session-1", add=["stage:q1"])
+    service.tag_session("session-1", add=["stage:q2"], private=True)
+
+    # The private assignment shadows the shared one in this user's view.
+    assert service.query(
+        CatalogQuery(object_kind="session", tags_all=("stage:q1",))
+    ) == []
+    rows = service.query(CatalogQuery(object_kind="session", tags_all=("stage:q2",)))
+    assert [row.id for row in rows] == ["session-1"]
+
+
+def test_saved_view_applies_private_tag_predicates(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1")
+    _session(project, "session-2")
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.tag_session("session-1", add=["task:wip"], private=True)
+    service.save_view(
+        "wip", CatalogQuery(object_kind="session", tags_all=("task:wip",))
+    )
+
+    views = dict(service.list_views())
+    rows = service.query(views["wip"])
+    assert [row.id for row in rows] == ["session-1"]

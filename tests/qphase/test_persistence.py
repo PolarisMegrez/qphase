@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 from qphase.core.errors import QPhaseIOError
 from qphase.core.persistence import ProjectStateStore
@@ -144,3 +146,43 @@ def test_artifact_annotations_stay_inside_session_root(tmp_path):
     assert store.read_events(session_dir)[0]["payload"]["kind"] == (
         "annotations_updated"
     )
+
+
+def test_annotation_writes_serialize_concurrent_writers(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    store = ProjectStateStore(project)
+    session_dir = project.session_root / "2026" / "08" / "session-1"
+    session_dir.mkdir(parents=True)
+    store.save_session_annotations(
+        session_dir, _annotation_document(project), expected_revision=None
+    )
+
+    barrier = threading.Barrier(2)
+    outcomes: list[str] = []
+
+    def write(alias: str) -> None:
+        # Both writers base their edit on revision 0, then race to commit.
+        document = store.load_session_annotations(session_dir)
+        barrier.wait(timeout=10)
+        try:
+            store.save_session_annotations(
+                session_dir, {**document, "alias": alias}, expected_revision=0
+            )
+        except RuntimeError:
+            outcomes.append("conflict")
+        else:
+            outcomes.append("ok")
+
+    threads = [
+        threading.Thread(target=write, args=(alias,)) for alias in ("a", "b")
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+
+    # Exactly one writer wins; the loser gets a stable revision conflict and
+    # no update is lost silently.
+    assert sorted(outcomes) == ["conflict", "ok"]
+    assert store.load_session_annotations(session_dir)["revision"] == 1

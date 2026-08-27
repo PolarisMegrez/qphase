@@ -9,10 +9,18 @@ separate database wrappers.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+import sys
+import time
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 from .annotations import (
     ARTIFACT_ANNOTATIONS_FILENAME,
@@ -347,29 +355,35 @@ class ProjectStateStore(
         *,
         expected_revision: int | None,
     ) -> dict[str, Any]:
-        current = self._load_annotation_document(target)
-        current_revision = int(current["revision"]) if current is not None else None
-        if current_revision != expected_revision:
-            raise RuntimeError("annotation revision conflict")
-        payload = dict(document)
-        payload["revision"] = 0 if current_revision is None else current_revision + 1
-        payload["updated_at"] = datetime.now(UTC).isoformat()
-        temporary = target.with_suffix(".tmp")
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            temporary.write_text(
-                json.dumps(payload, indent=2, allow_nan=False) + "\n",
-                encoding="utf-8",
+        # The lock serializes read/check/write across processes so a
+        # concurrent writer gets a stable revision conflict instead of a
+        # lost update or an I/O error. The OS releases it if the holder dies.
+        with _annotation_lock(target):
+            current = self._load_annotation_document(target)
+            current_revision = int(current["revision"]) if current is not None else None
+            if current_revision != expected_revision:
+                raise RuntimeError("annotation revision conflict")
+            payload = dict(document)
+            payload["revision"] = (
+                0 if current_revision is None else current_revision + 1
             )
-            temporary.replace(target)
-        except (OSError, TypeError, ValueError) as exc:
-            temporary.unlink(missing_ok=True)
-            raise QPhaseIOError(
-                f"failed to save annotation document: {target}",
-                code=ErrorCode.ARTIFACT_IO,
-                context={"path": str(target)},
-            ) from exc
-        return payload
+            payload["updated_at"] = datetime.now(UTC).isoformat()
+            temporary = target.with_suffix(".tmp")
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                temporary.write_text(
+                    json.dumps(payload, indent=2, allow_nan=False) + "\n",
+                    encoding="utf-8",
+                )
+                temporary.replace(target)
+            except (OSError, TypeError, ValueError) as exc:
+                temporary.unlink(missing_ok=True)
+                raise QPhaseIOError(
+                    f"failed to save annotation document: {target}",
+                    code=ErrorCode.ARTIFACT_IO,
+                    context={"path": str(target)},
+                ) from exc
+            return payload
 
     def _append_annotation_event(
         self, session_dir: Path, document: Mapping[str, Any]
@@ -418,3 +432,37 @@ class ProjectStateStore(
                 context={"path": str(directory)},
             )
         return directory / name
+
+
+@contextmanager
+def _annotation_lock(target: Path) -> Iterator[None]:
+    """Cross-process mutex covering one annotation document's read/check/write.
+
+    The lock lives in a ``<name>.lock`` sibling file. Blocking acquisition is
+    safe against holder crashes: the OS releases the lock when the process
+    dies.
+    """
+    lock_path = target.with_name(target.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("a+b")
+    try:
+        if sys.platform == "win32":
+            handle.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.05)
+        else:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if sys.platform == "win32":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
