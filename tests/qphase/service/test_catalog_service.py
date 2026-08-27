@@ -12,7 +12,7 @@ from qphase.core.project import ProjectContext
 from qphase.service import CatalogService
 from qphase.service.project import ProjectService
 
-from tests.qphase.test_catalog import _v4_artifact_manifest
+from tests.qphase.test_catalog import _v4_artifact_manifest, _workflow_file
 
 pytestmark = pytest.mark.integration
 
@@ -548,7 +548,8 @@ def test_private_tags_participate_in_tag_queries(tmp_path):
     # The private tag never entered the shared catalog: another user (another
     # home) with the same query sees nothing.
     other = CatalogService(project, home=tmp_path / "other-home")
-    assert other.query(CatalogQuery(object_kind="session", tags_all=("task:wip",))) == []
+    query = CatalogQuery(object_kind="session", tags_all=("task:wip",))
+    assert other.query(query) == []
 
 
 def test_private_query_respects_cardinality_one_shadowing(tmp_path):
@@ -590,3 +591,125 @@ def test_saved_view_applies_private_tag_predicates(tmp_path):
     views = dict(service.list_views())
     rows = service.query(views["wip"])
     assert [row.id for row in rows] == ["session-1"]
+
+
+def _execution_record(project: ProjectContext, execution_id: str) -> None:
+    from qphase.core.persistence import ProjectStateStore
+
+    ProjectStateStore(project).save_execution(
+        {
+            "schema": "qphase.execution/1",
+            "execution_id": execution_id,
+            "source_workflow": "example",
+            "workflow": {"id": "example"},
+            "submission_tags": [],
+            "submitted_at": "2026-08-26T09:00:00+08:00",
+            "state": "completed",
+        }
+    )
+
+
+def _revision_and_job(service: CatalogService) -> tuple[str, str]:
+    service.reindex()
+    (workflow_row,) = service.catalog.query(CatalogQuery(object_kind="workflow"))
+    revision_id = str(workflow_row["id"])
+    return revision_id, f"{revision_id}:sim"
+
+
+def test_project_annotation_roundtrip(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    service = CatalogService(project, home=tmp_path / "home")
+
+    tags = service.tag_project(add=["task:paper"])
+    assert [tag.tag for tag in tags] == ["task:paper"]
+    service.set_project_alias("paper project")
+    service.set_project_note("results for the paper")
+
+    document = service.project_annotations()
+    assert document.alias == "paper project"
+    assert document.note == "results for the paper"
+    assert [assignment.tag for assignment in document.assignments] == ["task:paper"]
+    rows = service.query(CatalogQuery(object_kind="project", tags_all=("task:paper",)))
+    assert [row.id for row in rows] == [project.project_id]
+
+
+def test_workflow_job_execution_annotation_roundtrip(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _execution_record(project, "exec-1")
+    service = CatalogService(project, home=tmp_path / "home")
+    revision_id, job_id = _revision_and_job(service)
+
+    workflow_tags = service.tag_workflow(revision_id, add=["task:reviewed"])
+    assert {tag.tag: tag.source for tag in workflow_tags} == {
+        "task:reviewed": "workflow_annotation"
+    }
+    job_tags = service.tag_job(job_id, add=["method:cam"])
+    assert {tag.tag: tag.source for tag in job_tags} == {"method:cam": "job_annotation"}
+    execution_tags = service.tag_execution("exec-1", add=["task:rerun"])
+    assert {tag.tag: tag.source for tag in execution_tags} == {
+        "task:rerun": "execution_annotation"
+    }
+
+    # The annotations live in the project document with provenance.
+    document = service.project_annotations()
+    objects = document.objects
+    assert [a.tag for a in objects[revision_id].assignments] == ["task:reviewed"]
+    assert [a.tag for a in objects[job_id].assignments] == ["method:cam"]
+    assert [a.tag for a in objects["exec-1"].assignments] == ["task:rerun"]
+
+    # Removal roundtrip.
+    assert service.tag_workflow(revision_id, remove=["task:reviewed"]) == []
+
+
+def test_tag_workflow_job_execution_reject_unknown_objects(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    service = CatalogService(project, home=tmp_path / "home")
+    with pytest.raises(ValueError, match="unknown workflow"):
+        service.tag_workflow("example@deadbeef", add=["task:x"])
+    with pytest.raises(ValueError, match="unknown job"):
+        service.tag_job("example@deadbeef:sim", add=["task:x"])
+    with pytest.raises(ValueError, match="unknown execution"):
+        service.tag_execution("exec-nope", add=["task:x"])
+
+
+def test_private_tags_overlay_and_promote_on_new_kinds(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _execution_record(project, "exec-1")
+    service = CatalogService(project, home=tmp_path / "home")
+    revision_id, job_id = _revision_and_job(service)
+
+    service.tag_project(add=["task:mine"], private=True)
+    service.tag_workflow(revision_id, add=["task:mine"], private=True)
+    service.tag_job(job_id, add=["task:mine"], private=True)
+    service.tag_execution("exec-1", add=["task:mine"], private=True)
+
+    targets = (
+        ("project", project.project_id),
+        ("workflow", revision_id),
+        ("job", job_id),
+        ("execution", "exec-1"),
+    )
+    for kind, object_id in targets:
+        mine = [
+            tag
+            for tag in service.effective_tags(kind, object_id)
+            if tag.tag == "task:mine"
+        ]
+        assert [tag.source for tag in mine] == ["user_private"]
+    # Private tags never enter the shared project document.
+    assert service.project_annotations().objects == {}
+    assert service.project_annotations().assignments == []
+
+    expected_sources = {
+        "project": "project_annotation",
+        "workflow": "workflow_annotation",
+        "job": "job_annotation",
+        "execution": "execution_annotation",
+    }
+    for kind, object_id in targets:
+        promoted = service.promote_tag(kind, object_id, "task:mine")
+        mine = [tag for tag in promoted if tag.tag == "task:mine"]
+        assert [tag.source for tag in mine] == [expected_sources[kind]]
+        assert service.private.list_private_tags(kind, object_id) == []

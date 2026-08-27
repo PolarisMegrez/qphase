@@ -24,9 +24,18 @@ assignment id, policy revision, inherited and shadowed flags) so queries
 never recompute the inheritance chain:
 
 ```text
-workflow declared -> execution submission -> session annotation
-                 -> job declared -> occurrence annotation
+project annotation                                     (project only)
+workflow declared -> workflow annotation               (workflow revision)
+workflow declared -> job declared -> job annotation    (job)
+execution submission -> execution annotation           (execution)
+workflow declared -> execution submission -> session annotation    (session)
+                 -> job declared -> occurrence annotation          (occurrence)
 ```
+
+Annotation assignments on the project, workflow revisions, jobs and
+executions live in the project annotation document
+(``.qphase/project_annotations.json``) and never flow downward: they are the
+organization layer of those objects themselves, not new inheritance levels.
 
 Declared levels take their policy revision from the frozen tag snapshot of
 the session (or from the current policy for the live workflow file);
@@ -944,6 +953,7 @@ class _Scanner:
         self.store = ProjectStateStore(project)
         self._artifact_facets: dict[str, tuple[tuple[Any, ...], str]] = {}
         self._revisions: dict[str, _RevisionEntry] = {}
+        self._project_annotations: dict[str, Any] = {}
         self.rows: dict[str, list[tuple[Any, ...]]] = {
             "projects": [],
             "workflows": [],
@@ -957,6 +967,9 @@ class _Scanner:
         }
 
     def collect(self) -> dict[str, list[tuple[Any, ...]]]:
+        # The project annotation document is read once per scan so the
+        # project, workflow, job and execution levels stay consistent.
+        self._project_annotations = self.store.load_project_annotations() or {}
         self._scan_project()
         self._scan_workflows()
         self._scan_executions()
@@ -997,8 +1010,8 @@ class _Scanner:
         self.rows["location_issues"].append((path, kind, message))
 
     def _scan_project(self) -> None:
-        # The project object is a single addressable row. There is no project
-        # annotation document format yet, so it carries no effective tags.
+        # The project object is a single addressable row; its annotations
+        # (tags, alias, note) live in the project annotation document.
         self.rows["projects"].append(
             (
                 self.project.project_id,
@@ -1006,6 +1019,31 @@ class _Scanner:
                 str(self.project.root),
             )
         )
+        self._tags(
+            "project",
+            self.project.project_id,
+            compute_effective_tags(
+                [
+                    (
+                        "project_annotation",
+                        _assignment_triples(
+                            self._project_annotations.get("assignments")
+                        ),
+                        True,
+                    )
+                ],
+                self.policy,
+                "project",
+            ),
+        )
+
+    def _object_annotations(self, object_id: str) -> Mapping[str, Any]:
+        """Return the raw per-object annotation entry of the project document."""
+        objects = self._project_annotations.get("objects")
+        if not isinstance(objects, Mapping):
+            return {}
+        entry = objects.get(object_id)
+        return entry if isinstance(entry, Mapping) else {}
 
     def _register_revision(
         self,
@@ -1086,16 +1124,24 @@ class _Scanner:
                         "workflow_declared",
                         _declared_triples(workflow_pairs, policy_revision),
                         True,
-                    )
+                    ),
+                    (
+                        "workflow_annotation",
+                        _assignment_triples(
+                            self._object_annotations(revision_id).get("assignments")
+                        ),
+                        True,
+                    ),
                 ],
                 self.policy,
                 "workflow",
             ),
         )
         for name, pairs in job_tags.items():
+            job_id = f"{revision_id}:{name}"
             self._tags(
                 "job",
-                f"{revision_id}:{name}",
+                job_id,
                 compute_effective_tags(
                     [
                         (
@@ -1106,6 +1152,13 @@ class _Scanner:
                         (
                             "job_declared",
                             _declared_triples(pairs, policy_revision),
+                            True,
+                        ),
+                        (
+                            "job_annotation",
+                            _assignment_triples(
+                                self._object_annotations(job_id).get("assignments")
+                            ),
                             True,
                         ),
                     ],
@@ -1170,9 +1223,10 @@ class _Scanner:
                     str(payload.get("submitted_at", "")),
                 )
             )
+            execution_id = str(payload["execution_id"])
             self._tags(
                 "execution",
-                str(payload["execution_id"]),
+                execution_id,
                 compute_effective_tags(
                     [
                         (
@@ -1182,7 +1236,16 @@ class _Scanner:
                                 for tag in tags
                             ],
                             True,
-                        )
+                        ),
+                        (
+                            "execution_annotation",
+                            _assignment_triples(
+                                self._object_annotations(execution_id).get(
+                                    "assignments"
+                                )
+                            ),
+                            True,
+                        ),
                     ],
                     self.policy,
                     "execution",

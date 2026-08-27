@@ -36,6 +36,13 @@ CREATE TABLE IF NOT EXISTS project_locations (
     root TEXT NOT NULL,
     last_seen REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS private_annotations (
+    object_kind TEXT NOT NULL,
+    object_id TEXT NOT NULL,
+    alias TEXT,
+    note TEXT,
+    PRIMARY KEY (object_kind, object_id)
+);
 """
 
 
@@ -134,6 +141,81 @@ class UserPrivateStore:
         finally:
             connection.close()
 
+    def set_private_alias(
+        self, object_kind: str, object_id: str, alias: str | None
+    ) -> None:
+        """Set or clear the private alias of one object."""
+        self._set_private_field(object_kind, object_id, "alias", alias)
+
+    def set_private_note(
+        self, object_kind: str, object_id: str, note: str | None
+    ) -> None:
+        """Set or clear the private note of one object."""
+        self._set_private_field(object_kind, object_id, "note", note)
+
+    def _set_private_field(
+        self, object_kind: str, object_id: str, column: str, value: str | None
+    ) -> None:
+        # ``column`` is whitelisted by the two public callers above.
+        connection = self._connect()
+        try:
+            with connection:
+                connection.execute(
+                    f"INSERT INTO private_annotations (object_kind, object_id,"
+                    f" {column}) VALUES (?, ?, ?)"
+                    " ON CONFLICT(object_kind, object_id)"
+                    f" DO UPDATE SET {column} = excluded.{column}",
+                    (object_kind, object_id, value),
+                )
+        finally:
+            connection.close()
+
+    def get_private_annotation(
+        self, object_kind: str, object_id: str
+    ) -> tuple[str | None, str | None]:
+        """Return the ``(alias, note)`` private annotation of one object."""
+        if not self.path.exists():
+            return (None, None)
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT alias, note FROM private_annotations"
+                " WHERE object_kind = ? AND object_id = ?",
+                (object_kind, object_id),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return (None, None)
+        return (
+            str(row[0]) if row[0] is not None else None,
+            str(row[1]) if row[1] is not None else None,
+        )
+
+    def list_private_annotations(
+        self, object_kind: str
+    ) -> list[tuple[str, str | None, str | None]]:
+        """Return ``(object_id, alias, note)`` triples for one object kind."""
+        if not self.path.exists():
+            return []
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT object_id, alias, note FROM private_annotations"
+                " WHERE object_kind = ? ORDER BY object_id",
+                (object_kind,),
+            ).fetchall()
+        finally:
+            connection.close()
+        return [
+            (
+                str(row[0]),
+                str(row[1]) if row[1] is not None else None,
+                str(row[2]) if row[2] is not None else None,
+            )
+            for row in rows
+        ]
+
     def record_location(self, root: Path) -> None:
         """Remember the project root and refresh its last-seen timestamp."""
         connection = self._connect()
@@ -159,6 +241,42 @@ class UserPrivateStore:
         finally:
             connection.close()
         return [(str(row[0]), str(row[1]), float(row[2])) for row in rows]
+
+    @staticmethod
+    def list_recent_projects(home: Path | None = None) -> list[tuple[str, str, float]]:
+        """Merge the recorded locations across all per-project databases.
+
+        Each project's private database records only its own location, so the
+        recent-project list scans every ``*.sqlite`` under the shared
+        ``<home>/.qphase/gui`` directory. Corrupt or foreign databases are
+        skipped.
+        """
+        gui_dir = (Path.home() if home is None else Path(home)) / ".qphase" / "gui"
+        if not gui_dir.exists():
+            return []
+        merged: dict[str, tuple[str, float]] = {}
+        for database in sorted(gui_dir.glob("*.sqlite")):
+            try:
+                connection = sqlite3.connect(database)
+                try:
+                    rows = connection.execute(
+                        "SELECT project_id, root, last_seen FROM project_locations"
+                    ).fetchall()
+                finally:
+                    connection.close()
+            except sqlite3.DatabaseError:
+                continue
+            for project_id, root, last_seen in rows:
+                key = str(project_id)
+                seen = float(last_seen)
+                if key not in merged or merged[key][1] < seen:
+                    merged[key] = (str(root), seen)
+        return [
+            (project_id, root, seen)
+            for project_id, (root, seen) in sorted(
+                merged.items(), key=lambda item: item[1][1], reverse=True
+            )
+        ]
 
     def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)

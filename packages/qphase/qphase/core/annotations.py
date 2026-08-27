@@ -11,7 +11,13 @@ documents with optimistic-concurrency revisions:
   occurrence's producing context is session-scoped truth;
 - ``ArtifactAnnotationDocument`` (``qphase.artifact-annotations/1``) lives in
   the artifact directory (``artifact_annotations.json``) so identity-scoped
-  annotations travel with the artifact.
+  annotations travel with the artifact;
+- ``ProjectAnnotationDocument`` (``qphase.project-annotations/1``) lives in
+  the project ``.qphase`` directory (``project_annotations.json``) and
+  carries the annotations of the project itself plus the per-object
+  annotations of workflow revisions (``workflow_id@revision``), jobs
+  (``workflow_id@revision:job_name``) and executions, which have no
+  directory of their own.
 
 Lifecycle and retention are typed fields, never plain tags. Tag assignments
 are immutable once created — editing a tag removes one assignment and adds a
@@ -30,10 +36,13 @@ from .tags import canonicalize_tag_syntax
 
 __all__ = [
     "ARTIFACT_ANNOTATIONS_FILENAME",
+    "PROJECT_ANNOTATIONS_FILENAME",
     "SESSION_ANNOTATIONS_FILENAME",
     "ArtifactAnnotationDocument",
     "Lifecycle",
+    "ObjectAnnotations",
     "OccurrenceAnnotations",
+    "ProjectAnnotationDocument",
     "RetentionPolicy",
     "SessionAnnotationDocument",
     "TagAssignment",
@@ -44,6 +53,10 @@ SESSION_ANNOTATIONS_FILENAME = "session_annotations.json"
 
 #: File name of the artifact annotation document inside an artifact directory.
 ARTIFACT_ANNOTATIONS_FILENAME = "artifact_annotations.json"
+
+#: File name of the project annotation document inside the project
+#: ``.qphase`` directory.
+PROJECT_ANNOTATIONS_FILENAME = "project_annotations.json"
 
 Lifecycle = Literal["active", "reference", "superseded", "archived"]
 RetentionPolicy = Literal["transient", "preserve", "evidence", "pinned"]
@@ -120,3 +133,34 @@ class ArtifactAnnotationDocument(BaseModel):
     lifecycle: Lifecycle | None = None
     retention: RetentionPolicy | None = None
     note: str | None = None
+
+
+class ObjectAnnotations(BaseModel):
+    """Annotations of one catalog object inside the project document.
+
+    Keyed by object id: ``workflow_id@revision`` for workflow revisions,
+    ``workflow_id@revision:job_name`` for jobs and the execution id for
+    executions.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    assignments: list[TagAssignment] = Field(default_factory=list)
+    note: str | None = None
+
+
+class ProjectAnnotationDocument(BaseModel):
+    """Durable annotations of the project and its workflow/job/execution objects."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_: Literal["qphase.project-annotations/1"] = Field(
+        default="qphase.project-annotations/1", alias="schema"
+    )
+    project_id: str
+    revision: int = 0
+    updated_at: str = Field(default_factory=_utc_now)
+    assignments: list[TagAssignment] = Field(default_factory=list)
+    alias: str | None = None
+    note: str | None = None
+    objects: dict[str, ObjectAnnotations] = Field(default_factory=dict)

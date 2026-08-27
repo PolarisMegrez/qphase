@@ -24,6 +24,7 @@ else:
 
 from .annotations import (
     ARTIFACT_ANNOTATIONS_FILENAME,
+    PROJECT_ANNOTATIONS_FILENAME,
     SESSION_ANNOTATIONS_FILENAME,
 )
 from .errors import ErrorCode, QPhaseIOError
@@ -119,6 +120,19 @@ class AnnotationStoreProtocol(Protocol):
         expected_revision: int | None,
     ) -> dict[str, Any]:
         """Atomically persist the artifact annotation document."""
+        ...
+
+    def load_project_annotations(self) -> dict[str, Any] | None:
+        """Load the project annotation document; ``None`` when absent."""
+        ...
+
+    def save_project_annotations(
+        self,
+        document: Mapping[str, Any],
+        *,
+        expected_revision: int | None,
+    ) -> dict[str, Any]:
+        """Atomically persist the project annotation document."""
         ...
 
 
@@ -329,6 +343,25 @@ class ProjectStateStore(
         self._append_annotation_event(Path(artifact_dir).parent, stored)
         return stored
 
+    def load_project_annotations(self) -> dict[str, Any] | None:
+        return self._load_annotation_document(
+            self._project_file(PROJECT_ANNOTATIONS_FILENAME)
+        )
+
+    def save_project_annotations(
+        self,
+        document: Mapping[str, Any],
+        *,
+        expected_revision: int | None,
+    ) -> dict[str, Any]:
+        # The project document is not session-scoped truth, so saving it
+        # journals no session annotation event.
+        return self._save_annotation_document(
+            self._project_file(PROJECT_ANNOTATIONS_FILENAME),
+            document,
+            expected_revision=expected_revision,
+        )
+
     def _load_annotation_document(self, target: Path) -> dict[str, Any] | None:
         if not target.exists():
             return None
@@ -432,6 +465,17 @@ class ProjectStateStore(
                 context={"path": str(directory)},
             )
         return directory / name
+
+    def _project_file(self, name: str) -> Path:
+        root = self.project.root.resolve()
+        target = (root / ".qphase" / name).resolve()
+        if not target.is_relative_to(root):
+            raise QPhaseIOError(
+                f"project file escapes the current project: {target}",
+                code=ErrorCode.ARTIFACT_IO,
+                context={"path": str(target)},
+            )
+        return target
 
 
 @contextmanager

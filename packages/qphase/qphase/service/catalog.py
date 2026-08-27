@@ -25,7 +25,9 @@ from qphase.core.annotations import (
     SESSION_ANNOTATIONS_FILENAME,
     ArtifactAnnotationDocument,
     Lifecycle,
+    ObjectAnnotations,
     OccurrenceAnnotations,
+    ProjectAnnotationDocument,
     RetentionPolicy,
     SessionAnnotationDocument,
     TagAssignment,
@@ -62,7 +64,12 @@ from .models import (
 from .private import UserPrivateStore
 from .project import ProjectService
 
-__all__ = ["CatalogService", "VIRTUAL_FOLDERS"]
+__all__ = [
+    "CatalogService",
+    "VIRTUAL_FOLDERS",
+    "parse_facet_filters",
+    "parse_range_filters",
+]
 
 #: Names of the built-in virtual folders, in display order.
 VIRTUAL_FOLDERS = (
@@ -106,8 +113,9 @@ class CatalogService:
             query.object_kind
         ):
             return self._query_with_private(query)
+        private = self._private_annotations(query.object_kind)
         return [
-            self._catalog_object(query.object_kind, row)
+            self._catalog_object(query.object_kind, row, private)
             for row in self.catalog.query(query)
         ]
 
@@ -172,8 +180,9 @@ class CatalogService:
             ):
                 continue
             matched.append(row)
+        private = self._private_annotations(query.object_kind)
         return [
-            self._catalog_object(query.object_kind, row)
+            self._catalog_object(query.object_kind, row, private)
             for row in matched[query.offset : query.offset + query.limit]
         ]
 
@@ -455,6 +464,126 @@ class CatalogService:
         self._save_session_document(root, document, expected)
         return self._single_object("occurrence", occurrence_id)
 
+    def tag_project(
+        self,
+        *,
+        add: list[str] | tuple[str, ...] = (),
+        remove: list[str] | tuple[str, ...] = (),
+        private: bool = False,
+    ) -> list[EffectiveTagInfo]:
+        """Add/remove project tag assignments; returns its effective tags."""
+        added, policy_revision = self._validate_tags(add, "project")
+        removed = _canonical_set(remove)
+        object_id = self.project.project_id
+        if private:
+            self._edit_private_tags("project", object_id, added, removed)
+            return self.effective_tags("project", object_id)
+        document, expected = self._project_document()
+        _apply_tag_edits(document.assignments, added, removed, policy_revision)
+        self._save_project_document(document, expected)
+        return self.effective_tags("project", object_id)
+
+    def set_project_alias(self, alias: str | None) -> CatalogObject:
+        """Set or clear the shared project alias."""
+        document, expected = self._project_document()
+        document.alias = alias
+        self._save_project_document(document, expected)
+        return self._single_object("project", self.project.project_id)
+
+    def set_project_note(self, note: str | None) -> CatalogObject:
+        """Set or clear the shared project note."""
+        document, expected = self._project_document()
+        document.note = note
+        self._save_project_document(document, expected)
+        return self._single_object("project", self.project.project_id)
+
+    def project_annotations(self) -> ProjectAnnotationDocument:
+        """Return the project annotation document (empty default when absent)."""
+        return self._project_document()[0]
+
+    def tag_workflow(
+        self,
+        revision_id: str,
+        *,
+        add: list[str] | tuple[str, ...] = (),
+        remove: list[str] | tuple[str, ...] = (),
+        private: bool = False,
+    ) -> list[EffectiveTagInfo]:
+        """Add/remove tag assignments on one workflow revision.
+
+        ``revision_id`` is the catalog workflow object id
+        (``workflow_id@revision``); the annotation lives in the project
+        annotation document and never flows down to jobs or sessions.
+        """
+        self._require_object("workflow", revision_id)
+        return self._tag_project_object(
+            "workflow", revision_id, add=add, remove=remove, private=private
+        )
+
+    def tag_job(
+        self,
+        job_id: str,
+        *,
+        add: list[str] | tuple[str, ...] = (),
+        remove: list[str] | tuple[str, ...] = (),
+        private: bool = False,
+    ) -> list[EffectiveTagInfo]:
+        """Add/remove tag assignments on one job (``workflow_id@revision:name``)."""
+        self._require_object("job", job_id)
+        return self._tag_project_object(
+            "job", job_id, add=add, remove=remove, private=private
+        )
+
+    def tag_execution(
+        self,
+        execution_id: str,
+        *,
+        add: list[str] | tuple[str, ...] = (),
+        remove: list[str] | tuple[str, ...] = (),
+        private: bool = False,
+    ) -> list[EffectiveTagInfo]:
+        """Add/remove tag assignments on one execution.
+
+        Execution submission tags (``submission_tags`` on the execution
+        record) are the frozen submit-time layer and can only change while
+        the execution is queued; these annotations are the after-the-fact
+        organization layer and stay editable for the execution's lifetime.
+        The two layers coexist as separate effective-tag levels.
+        """
+        self._require_object("execution", execution_id)
+        return self._tag_project_object(
+            "execution", execution_id, add=add, remove=remove, private=private
+        )
+
+    def _tag_project_object(
+        self,
+        object_kind: ObjectKind,
+        object_id: str,
+        *,
+        add: list[str] | tuple[str, ...],
+        remove: list[str] | tuple[str, ...],
+        private: bool,
+    ) -> list[EffectiveTagInfo]:
+        """Edit the tag assignments of one project-document-scoped object."""
+        added, policy_revision = self._validate_tags(add, object_kind)
+        removed = _canonical_set(remove)
+        if private:
+            self._edit_private_tags(object_kind, object_id, added, removed)
+            return self.effective_tags(object_kind, object_id)
+        document, expected = self._project_document()
+        entry = document.objects.setdefault(object_id, ObjectAnnotations())
+        _apply_tag_edits(entry.assignments, added, removed, policy_revision)
+        self._save_project_document(document, expected)
+        return self.effective_tags(object_kind, object_id)
+
+    def _require_object(self, object_kind: str, object_id: str) -> None:
+        self._ensure_index()
+        rows = self.catalog.query(
+            CatalogQuery(object_kind=object_kind, facets={"id": object_id})
+        )
+        if not rows:
+            raise ValueError(f"unknown {object_kind}: {object_id}")
+
     def promote_tag(
         self, object_kind: str, object_id: str, tag: str
     ) -> list[EffectiveTagInfo]:
@@ -469,6 +598,14 @@ class CatalogService:
             self.tag_occurrence(
                 session_id, artifact_id, job_name=job_name, add=[canonical]
             )
+        elif object_kind == "project":
+            self.tag_project(add=[canonical])
+        elif object_kind == "workflow":
+            self.tag_workflow(object_id, add=[canonical])
+        elif object_kind == "job":
+            self.tag_job(object_id, add=[canonical])
+        elif object_kind == "execution":
+            self.tag_execution(object_id, add=[canonical])
         else:
             raise ValueError(f"cannot promote tags on {object_kind!r} objects")
         self.private.remove_private_tag(object_kind, object_id, canonical)
@@ -522,6 +659,27 @@ class CatalogService:
             ),
             None,
         )
+
+    def _project_document(self) -> tuple[ProjectAnnotationDocument, int | None]:
+        current = self.state_store.load_project_annotations()
+        if current is not None:
+            document = ProjectAnnotationDocument.model_validate(current)
+            return document, document.revision
+        return (
+            ProjectAnnotationDocument(project_id=self.project.project_id),
+            None,
+        )
+
+    def _save_project_document(
+        self,
+        document: ProjectAnnotationDocument,
+        expected_revision: int | None,
+    ) -> None:
+        self.state_store.save_project_annotations(
+            document.model_dump(mode="json", by_alias=True),
+            expected_revision=expected_revision,
+        )
+        self.catalog.reindex()
 
     def _save_session_document(
         self,
@@ -601,10 +759,33 @@ class CatalogService:
         rows = self.catalog.query(
             CatalogQuery(object_kind=object_kind, facets={"id": object_id})
         )
-        return self._catalog_object(object_kind, rows[0])
+        return self._catalog_object(
+            object_kind, rows[0], self._private_annotations(object_kind)
+        )
 
-    def _catalog_object(self, object_kind: str, row: dict[str, Any]) -> CatalogObject:
+    def _private_annotations(
+        self, object_kind: str
+    ) -> dict[str, tuple[str | None, str | None]]:
+        """Prefetch the private alias/note overlay of one object kind."""
+        return {
+            object_id: (alias, note)
+            for object_id, alias, note in self.private.list_private_annotations(
+                object_kind
+            )
+        }
+
+    def _catalog_object(
+        self,
+        object_kind: str,
+        row: dict[str, Any],
+        private_annotations: dict[str, tuple[str | None, str | None]] | None = None,
+    ) -> CatalogObject:
         object_id = str(row["id"])
+        alias, note = (
+            private_annotations.get(object_id, (None, None))
+            if private_annotations is not None
+            else self.private.get_private_annotation(object_kind, object_id)
+        )
         return CatalogObject(
             kind=object_kind,
             id=object_id,
@@ -614,6 +795,8 @@ class CatalogService:
                 for tag in self.effective_tags(object_kind, object_id)
                 if not tag.shadowed
             ],
+            private_alias=alias,
+            private_note=note,
         )
 
 
@@ -646,6 +829,31 @@ def _merge_private(
 
 def _canonical_set(values: list[str] | tuple[str, ...]) -> set[str]:
     return {canonicalize_tag_syntax(value) for value in values}
+
+
+def parse_facet_filters(values: list[str] | tuple[str, ...]) -> dict[str, str]:
+    """Parse repeated ``key=value`` facet filter options into a mapping."""
+    facets: dict[str, str] = {}
+    for item in values:
+        key, separator, value = item.partition("=")
+        if not separator or not key.strip():
+            raise ValueError(f"facet filter must be key=value, got {item!r}")
+        facets[key.strip()] = value
+    return facets
+
+
+def parse_range_filters(
+    values: list[str] | tuple[str, ...],
+) -> dict[str, tuple[str | None, str | None]]:
+    """Parse repeated ``key=low..high`` range filters; either bound may be empty."""
+    ranges: dict[str, tuple[str | None, str | None]] = {}
+    for item in values:
+        key, separator, body = item.partition("=")
+        low, dots, high = body.partition("..")
+        if not separator or not key.strip() or not dots:
+            raise ValueError(f"range filter must be key=low..high, got {item!r}")
+        ranges[key.strip()] = (low or None, high or None)
+    return ranges
 
 
 def _apply_tag_edits(

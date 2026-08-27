@@ -809,3 +809,169 @@ def test_inheritance_respects_object_applicability(tmp_path):
     }
     assert "task:scan" in occurrence_tags
     assert "wfonly:alpha" not in occurrence_tags
+
+
+def _project_annotations(project: ProjectContext, **fields) -> None:
+    """Write the project annotation document into the project .qphase dir."""
+    from qphase.core.annotations import PROJECT_ANNOTATIONS_FILENAME
+
+    document = {
+        "schema": "qphase.project-annotations/1",
+        "project_id": project.project_id,
+        "revision": 0,
+        **fields,
+    }
+    path = project.root / ".qphase" / PROJECT_ANNOTATIONS_FILENAME
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+
+def _execution_record(
+    project: ProjectContext, execution_id: str, *, state: str = "completed"
+) -> None:
+    from qphase.core.persistence import ProjectStateStore
+
+    ProjectStateStore(project).save_execution(
+        {
+            "schema": "qphase.execution/1",
+            "execution_id": execution_id,
+            "source_workflow": "example",
+            "workflow": {"id": "example"},
+            "submission_tags": [],
+            "submitted_at": "2026-08-26T09:00:00+08:00",
+            "state": state,
+        }
+    )
+
+
+def test_project_annotation_document_roundtrip_with_optimistic_lock(tmp_path):
+    from qphase.core.persistence import ProjectStateStore
+
+    project = ProjectContext.create(tmp_path / "project")
+    store = ProjectStateStore(project)
+    assert store.load_project_annotations() is None
+
+    stored = store.save_project_annotations(
+        {
+            "schema": "qphase.project-annotations/1",
+            "project_id": project.project_id,
+            "assignments": [{"id": "p1", "tag": "task:paper"}],
+        },
+        expected_revision=None,
+    )
+    assert stored["revision"] == 0
+    assert store.load_project_annotations()["assignments"][0]["tag"] == "task:paper"
+    with pytest.raises(RuntimeError, match="revision conflict"):
+        store.save_project_annotations(stored, expected_revision=None)
+    saved = store.save_project_annotations(stored, expected_revision=0)
+    assert saved["revision"] == 1
+
+
+def test_project_annotations_materialize_on_project_workflow_job_execution(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(project, "session-1")
+    _execution_record(project, "exec-1")
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+    (workflow_row,) = catalog.query(CatalogQuery(object_kind="workflow"))
+    revision_id = workflow_row["id"]
+    job_id = f"{revision_id}:sim"
+    _project_annotations(
+        project,
+        alias="paper",
+        assignments=[{"id": "p1", "tag": "task:paper"}],
+        objects={
+            revision_id: {"assignments": [{"id": "w1", "tag": "task:reviewed"}]},
+            job_id: {"assignments": [{"id": "j1", "tag": "method:cam"}]},
+            "exec-1": {"assignments": [{"id": "e1", "tag": "task:rerun"}]},
+        },
+    )
+    catalog.reindex()
+
+    project_tags = catalog.effective_tags("project", project.project_id)
+    assert [(tag.tag, tag.source, tag.assignment_id) for tag in project_tags] == [
+        ("task:paper", "project_annotation", "p1")
+    ]
+    workflow_tags = {
+        tag.tag: tag for tag in catalog.effective_tags("workflow", revision_id)
+    }
+    assert workflow_tags["task:reviewed"].source == "workflow_annotation"
+    assert workflow_tags["task:reviewed"].assignment_id == "w1"
+    assert not workflow_tags["task:reviewed"].inherited
+    job_tags = {tag.tag: tag for tag in catalog.effective_tags("job", job_id)}
+    assert job_tags["method:cam"].source == "job_annotation"
+    execution_tags = {
+        tag.tag: tag for tag in catalog.effective_tags("execution", "exec-1")
+    }
+    assert execution_tags["task:rerun"].source == "execution_annotation"
+
+
+def test_project_document_annotations_never_flow_downward(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    _execution_record(project, "exec-1")
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+    (workflow_row,) = catalog.query(CatalogQuery(object_kind="workflow"))
+    revision_id = workflow_row["id"]
+    _project_annotations(
+        project,
+        assignments=[{"id": "p1", "tag": "task:paper"}],
+        objects={
+            revision_id: {"assignments": [{"id": "w1", "tag": "task:reviewed"}]},
+            f"{revision_id}:sim": {
+                "assignments": [{"id": "j1", "tag": "method:cam"}]
+            },
+            "exec-1": {"assignments": [{"id": "e1", "tag": "task:rerun"}]},
+        },
+    )
+    catalog.reindex()
+
+    # Project/workflow/job/execution annotations organize their own object
+    # only; they are not new levels of the inheritance chain.
+    assert catalog.effective_tags("session", "session-1") == []
+    assert catalog.effective_tags("occurrence", "art-1:session-1:sim") == []
+    workflow_tags = {
+        tag.tag for tag in catalog.effective_tags("workflow", revision_id)
+    }
+    assert workflow_tags == {"task:reviewed"}
+    job_tags = {
+        tag.tag for tag in catalog.effective_tags("job", f"{revision_id}:sim")
+    }
+    assert job_tags == {"method:cam"}
+
+
+def test_workflow_annotation_shadows_declared_in_cardinality_one(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\n"
+        "namespaces:\n"
+        "  stage:\n"
+        "    cardinality: one\n"
+        "    open: true\n",
+    )
+    _workflow_file(project, tags=("stage:q1",))
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+    (workflow_row,) = catalog.query(CatalogQuery(object_kind="workflow"))
+    revision_id = workflow_row["id"]
+    _project_annotations(
+        project,
+        objects={revision_id: {"assignments": [{"id": "w1", "tag": "stage:q2"}]}},
+    )
+    catalog.reindex()
+
+    tags = {tag.tag: tag for tag in catalog.effective_tags("workflow", revision_id)}
+    assert tags["stage:q1"].shadowed
+    assert not tags["stage:q2"].shadowed
+    # The nearer annotation wins queries; the shadowed declared tag does not.
+    assert (
+        catalog.query(CatalogQuery(object_kind="workflow", tags_all=("stage:q1",)))
+        == []
+    )
+    assert (
+        len(catalog.query(CatalogQuery(object_kind="workflow", tags_all=("stage:q2",))))
+        == 1
+    )

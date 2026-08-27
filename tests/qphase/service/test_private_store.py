@@ -82,3 +82,28 @@ def test_project_locations_roundtrip(tmp_path):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__]))
+
+
+def test_private_alias_note_roundtrip(tmp_path):
+    store = UserPrivateStore("project-a", home=tmp_path)
+    assert store.get_private_annotation("session", "s1") == (None, None)
+    store.set_private_alias("session", "s1", "alias-1")
+    store.set_private_note("session", "s1", "note-1")
+    assert store.get_private_annotation("session", "s1") == ("alias-1", "note-1")
+    # Clearing one column keeps the other.
+    store.set_private_alias("session", "s1", None)
+    assert store.get_private_annotation("session", "s1") == (None, "note-1")
+    assert store.list_private_annotations("session") == [("s1", None, "note-1")]
+
+
+def test_recent_projects_merge_across_databases(tmp_path):
+    first = UserPrivateStore("project-a", home=tmp_path)
+    second = UserPrivateStore("project-b", home=tmp_path)
+    first.record_location(tmp_path / "a")
+    second.record_location(tmp_path / "b")
+
+    recents = UserPrivateStore.list_recent_projects(tmp_path)
+
+    assert {project_id for project_id, _, _ in recents} == {"project-a", "project-b"}
+    seen = [entry[2] for entry in recents]
+    assert seen == sorted(seen, reverse=True)

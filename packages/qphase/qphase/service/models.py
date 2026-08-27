@@ -344,12 +344,18 @@ class EffectiveTagInfo(ServiceModel):
 
 
 class CatalogObject(ServiceModel):
-    """One catalog row plus its non-shadowed effective tags."""
+    """One catalog row plus its non-shadowed effective tags.
+
+    ``private_alias``/``private_note`` overlay the user-private store; they
+    never enter the shared catalog.
+    """
 
     kind: str
     id: str
     facets: dict[str, Any] = Field(default_factory=dict)
     effective_tags: list[EffectiveTagInfo] = Field(default_factory=list)
+    private_alias: str | None = None
+    private_note: str | None = None
 
 
 class TagPolicyInfo(ServiceModel):

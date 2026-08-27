@@ -34,6 +34,12 @@ def setup_env():
     yield
 
 
+@pytest.fixture(autouse=True)
+def isolated_user_home(tmp_path, monkeypatch):
+    """Keep per-user private state (tags, views, locations) out of the real home."""
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "user-home"))
+
+
 @pytest.fixture
 def temp_workspace(tmp_path):
     """Create a temporary workspace with config and output directories."""
