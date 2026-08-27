@@ -12,6 +12,8 @@ from qphase.core.project import ProjectContext
 from qphase.service import CatalogService
 from qphase.service.project import ProjectService
 
+from tests.qphase.test_catalog import _v4_artifact_manifest
+
 pytestmark = pytest.mark.integration
 
 
@@ -40,15 +42,7 @@ def _session(
         job_dir = root / job_name
         job_dir.mkdir()
         (job_dir / "artifact_manifest.json").write_text(
-            json.dumps(
-                {
-                    "artifact_id": artifact_id,
-                    "created_at": "2026-08-26T10:01:00+08:00",
-                    "bundle": {"type_id": "generic.dataset_bundle/1"},
-                    "products": [{"product_schema": "qphase.dataset/1"}],
-                    "parents": [],
-                }
-            ),
+            json.dumps(_v4_artifact_manifest(artifact_id)),
             encoding="utf-8",
         )
     if legacy_metadata is not None:
@@ -521,3 +515,17 @@ def test_artifact_mutation_rejects_multiple_locations(tmp_path):
     service.reindex()
     tags = service.tag_artifact("art-1", add=["method:cam"])
     assert [tag.tag for tag in tags] == ["method:cam"]
+
+
+def test_location_issues_passthrough(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    (root / "sim" / "artifact_manifest.json").write_text(
+        "{not json", encoding="utf-8"
+    )
+    service = CatalogService(project, home=tmp_path / "home")
+
+    (issue,) = service.location_issues()
+    assert issue["kind"] == "corrupt"
+    assert issue["path"] == "2026/08/session-1/sim"
+    assert issue["message"]

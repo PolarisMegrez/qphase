@@ -43,7 +43,8 @@ def show() -> None:
 def reindex() -> None:
     """Rebuild the project object catalog read model from disk truth."""
     try:
-        stats = CatalogService(ProjectContext.discover()).reindex()
+        service = CatalogService(ProjectContext.discover())
+        stats = service.reindex()
     except QPhaseError as exc:
         typer.echo(f"Error: {exc}")
         raise typer.Exit(code=1) from exc
@@ -55,6 +56,11 @@ def reindex() -> None:
         f"{stats.effective_tags} effective tags "
         f"in {stats.duration_seconds:.2f}s"
     )
+    issues = service.location_issues()
+    if issues:
+        typer.echo(f"Location issues ({len(issues)}):")
+        for issue in issues:
+            typer.echo(f"  [{issue['kind']}] {issue['path']}: {issue['message']}")
 
 
 @app.command("migrate")

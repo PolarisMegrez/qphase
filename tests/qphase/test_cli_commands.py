@@ -245,12 +245,14 @@ def test_occurrence_tag_requires_job_when_ambiguous(temp_workspace):
     """'occurrence tag' refuses silent first-match; --job disambiguates."""
     import json
 
+    from tests.qphase.test_catalog import _v4_artifact_manifest
+
     root = _catalog_session(temp_workspace)
     for job in ("sim", "fit"):
         job_dir = root / job
         job_dir.mkdir()
         (job_dir / "artifact_manifest.json").write_text(
-            json.dumps({"artifact_id": "art-1", "bundle": {"type_id": "t/1"}}),
+            json.dumps(_v4_artifact_manifest("art-1")),
             encoding="utf-8",
         )
 

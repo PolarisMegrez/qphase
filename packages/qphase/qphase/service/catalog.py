@@ -87,6 +87,11 @@ class CatalogService:
         """Rebuild the catalog read model from disk truth."""
         return self.catalog.reindex()
 
+    def location_issues(self) -> list[dict[str, str]]:
+        """List artifact locations the catalog could not index."""
+        self._ensure_index()
+        return self.catalog.location_issues()
+
     def query(self, query: CatalogQuery) -> list[CatalogObject]:
         """List objects of one kind with their non-shadowed effective tags."""
         self._ensure_index()

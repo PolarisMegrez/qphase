@@ -645,12 +645,14 @@ def test_gui_api_private_tags_and_promote(temp_workspace, tmp_path):
         } == {"task:wip": "session_annotation"}
         assert (root / "session_annotations.json").exists()
 def test_gui_api_occurrence_tags_disambiguated_by_job(temp_workspace):
+    from tests.qphase.test_catalog import _v4_artifact_manifest
+
     root = _catalog_session(temp_workspace)
     for job in ("sim", "fit"):
         job_dir = root / job
         job_dir.mkdir()
         (job_dir / "artifact_manifest.json").write_text(
-            json.dumps({"artifact_id": "art-1"}), encoding="utf-8"
+            json.dumps(_v4_artifact_manifest("art-1")), encoding="utf-8"
         )
     with TestClient(create_app()) as client:
         ambiguous = client.post(

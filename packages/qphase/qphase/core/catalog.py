@@ -35,6 +35,42 @@ at write time. Cardinality-one namespaces shadow farther assignments when a
 nearer object sets the same namespace; ``inherit = false`` namespaces never
 flow downward. Lifecycle never inherits; retention inherits from session to
 occurrence when the policy allows it.
+
+Artifact scan contract (artifact schema ``qphase.artifact/4``):
+
+- every artifact manifest is read and fully validated through
+  :meth:`qphase.data.store.ArtifactManifest.read`;
+- an unreadable location (missing/corrupt manifest) and a manifest of an
+  unsupported schema version index **no** object rows; each is recorded in
+  the ``location_issues`` table (``corrupt`` / ``unsupported``) instead;
+- when two occurrences of one artifact identity disagree on identity facets
+  (created_at, bundle type, product schemas, quantities, parents), the
+  first occurrence wins the artifact row and the later location is recorded
+  as a ``conflict`` location issue;
+- ``product_schemas_json`` maps product name to the stable schema
+  fingerprint; ``quantities_json`` is the sorted set of non-empty physical
+  quantities across all products.
+
+Stale detection and reindexing:
+
+1. **Startup recovery** — a catalog file that is corrupt, has an
+   unexpected ``schema`` version, or belongs to a different ``project_id``
+   is rebuilt from disk truth on first use, never silently trusted.
+2. **Fingerprint probe** — read entry points compare a cheap filesystem
+   fingerprint (session/artifact manifest and execution record counts,
+   newest workflow file mtime, tag policy mtime) against the value stored
+   at index time; a mismatch triggers one automatic reindex.
+3. **Explicit lifecycle triggers** — the scheduler reindexes after session
+   initialization and job finalization, the execution service reindexes
+   after execution records are persisted, and every annotation write
+   through the service layer reindexes.
+
+Trigger boundary (documented contract): state flips of a *running* job do
+not themselves reindex; the catalog is not a real-time status source and
+interactive surfaces such as the GUI read state through the service layer.
+Artifact saves need no per-save hook: a published artifact manifest is
+immutable, so every new artifact adds a manifest file and flips the count
+probe.
 """
 
 from __future__ import annotations
@@ -43,6 +79,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import threading
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -51,9 +88,11 @@ from typing import Any
 
 from .annotations import ARTIFACT_ANNOTATIONS_FILENAME
 from .config import WorkflowSpec
+from .errors import QPhaseConfigError
 from .persistence import ProjectStateStore
 from .project import ProjectContext
 from .tags import (
+    TAG_POLICY_FILENAME,
     TagPolicy,
     canonicalize_tag_syntax,
     job_tag_assignment_id,
@@ -78,7 +117,7 @@ __all__ = [
 CATALOG_FILENAME = "object_catalog.sqlite"
 
 #: Read-model schema version; a mismatch forces a rebuild.
-CATALOG_SCHEMA = "qphase.catalog/2"
+CATALOG_SCHEMA = "qphase.catalog/3"
 
 _NAMESPACE_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
 
@@ -142,9 +181,9 @@ CREATE TABLE artifacts (
     created_at TEXT,
     bundle_type TEXT,
     product_schemas_json TEXT NOT NULL,
+    quantities_json TEXT NOT NULL,
     parents_json TEXT NOT NULL,
     path TEXT NOT NULL,
-    health TEXT NOT NULL,
     lifecycle TEXT,
     retention TEXT
 );
@@ -156,6 +195,11 @@ CREATE TABLE occurrences (
     path TEXT NOT NULL,
     retention TEXT,
     effective_retention TEXT
+);
+CREATE TABLE location_issues (
+    path TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    message TEXT NOT NULL
 );
 CREATE TABLE effective_tags (
     object_kind TEXT NOT NULL,
@@ -207,7 +251,6 @@ _FACETS: dict[str, tuple[str, ...]] = {
         "id",
         "created_at",
         "bundle_type",
-        "health",
         "lifecycle",
         "retention",
     ),
@@ -305,6 +348,18 @@ def _canonical_tags(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(canonicalize_tag_syntax(value) for value in values)
 
 
+def _try_canonical_tag(raw: str) -> str | None:
+    """Canonicalize one declared tag, dropping syntax-invalid declarations.
+
+    Invalid declared tags in legacy snapshots are a data-quality issue the
+    migration dry-run reports; they must never abort a catalog rebuild.
+    """
+    try:
+        return canonicalize_tag_syntax(raw)
+    except QPhaseConfigError:
+        return None
+
+
 @dataclass(frozen=True)
 class CatalogStats:
     """Row counts of one catalog rebuild."""
@@ -317,6 +372,7 @@ class CatalogStats:
     artifacts: int
     occurrences: int
     effective_tags: int
+    location_issues: int
     duration_seconds: float
 
 
@@ -332,7 +388,12 @@ class ProjectObjectCatalog:
 
     def reindex(self) -> CatalogStats:
         """Rebuild the whole read model from disk truth in one transaction."""
+        with _catalog_lock(self.path):
+            return self._reindex_locked()
+
+    def _reindex_locked(self) -> CatalogStats:
         started = time.monotonic()
+        fingerprint = self._fingerprint()
         policy = load_tag_policy(self.project)
         policy_revision = policy.revision if policy is not None else None
         scan = _Scanner(self.project, policy, policy_revision).collect()
@@ -372,6 +433,15 @@ class ProjectObjectCatalog:
                     "INSERT INTO effective_tags VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     scan["effective_tags"],
                 )
+                connection.executemany(
+                    "INSERT INTO location_issues VALUES (?, ?, ?)",
+                    scan["location_issues"],
+                )
+                connection.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES"
+                    " ('fingerprint', ?)",
+                    (json.dumps(fingerprint, sort_keys=True),),
+                )
         finally:
             connection.close()
         return CatalogStats(
@@ -383,11 +453,13 @@ class ProjectObjectCatalog:
             artifacts=len(scan["artifacts"]),
             occurrences=len(scan["occurrences"]),
             effective_tags=len(scan["effective_tags"]),
+            location_issues=len(scan["location_issues"]),
             duration_seconds=time.monotonic() - started,
         )
 
     def query(self, query: CatalogQuery) -> list[dict[str, Any]]:
         """List objects of one kind matching the query, stably sorted."""
+        self._ensure_fresh()
         table = f"{query.object_kind}s"
         where: list[str] = []
         params: list[Any] = []
@@ -436,6 +508,7 @@ class ProjectObjectCatalog:
         """Return the materialized effective tags of one object."""
         if object_kind not in OBJECT_KINDS:
             raise ValueError(f"unknown catalog object kind {object_kind!r}")
+        self._ensure_fresh()
         connection = self._connect()
         try:
             rows = connection.execute(
@@ -465,6 +538,7 @@ class ProjectObjectCatalog:
         same artifact may occur in several session job directories. The
         returned list is sorted and may be empty.
         """
+        self._ensure_fresh()
         connection = self._connect()
         try:
             rows = connection.execute(
@@ -475,6 +549,27 @@ class ProjectObjectCatalog:
         finally:
             connection.close()
         return [str(row[0]) for row in rows]
+
+    def location_issues(self) -> list[dict[str, str]]:
+        """List artifact locations the last scan could not index.
+
+        Each entry carries the session-relative ``path``, a ``kind``
+        (``unsupported`` schema, ``corrupt`` manifest, or ``conflict``
+        between occurrences of one artifact identity) and a human-readable
+        ``message``. The list is sorted by ``(path, kind)``.
+        """
+        self._ensure_fresh()
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT path, kind, message FROM location_issues ORDER BY path, kind"
+            ).fetchall()
+        finally:
+            connection.close()
+        return [
+            {"path": str(path), "kind": str(kind), "message": str(message)}
+            for path, kind, message in rows
+        ]
 
     @staticmethod
     def _require_column(query: CatalogQuery, facet: str) -> None:
@@ -533,33 +628,36 @@ class ProjectObjectCatalog:
             params.extend([query.object_kind, query.tag_namespace + ":%"])
 
     def _connect(self, *, fresh: bool = False) -> sqlite3.Connection:
-        path = self.path
         if fresh:
-            path.unlink(missing_ok=True)
-            connection = sqlite3.connect(path)
-            connection.execute("PRAGMA journal_mode=WAL")
-            connection.executescript(_SCHEMA_SQL)
-            self._stamp_meta(connection)
-            return connection
+            return self._create_database()
+        connection: sqlite3.Connection | None = None
         try:
-            connection = sqlite3.connect(path)
+            connection = sqlite3.connect(self.path)
             connection.execute("PRAGMA journal_mode=WAL")
-            version = connection.execute(
-                "SELECT value FROM meta WHERE key = 'schema'"
-            ).fetchone()
-            if version is None or version[0] != CATALOG_SCHEMA:
+            meta = dict(connection.execute("SELECT key, value FROM meta").fetchall())
+            if (
+                meta.get("schema") != CATALOG_SCHEMA
+                or meta.get("project_id") != self.project.project_id
+            ):
                 raise _CatalogStaleError
             return connection
         except (sqlite3.DatabaseError, _CatalogStaleError):
-            # Corrupt or outdated read model: rebuild the empty schema; the
-            # next reindex repopulates it from disk truth.
-            connection.close()
-            path.unlink(missing_ok=True)
-            connection = sqlite3.connect(path)
+            if connection is not None:
+                connection.close()
+            # Corrupt, outdated or foreign read model: rebuild from disk
+            # truth instead of serving empty results.
+            self.reindex()
+            connection = sqlite3.connect(self.path)
             connection.execute("PRAGMA journal_mode=WAL")
-            connection.executescript(_SCHEMA_SQL)
-            self._stamp_meta(connection)
             return connection
+
+    def _create_database(self) -> sqlite3.Connection:
+        self.path.unlink(missing_ok=True)
+        connection = sqlite3.connect(self.path)
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.executescript(_SCHEMA_SQL)
+        self._stamp_meta(connection)
+        return connection
 
     def _stamp_meta(self, connection: sqlite3.Connection) -> None:
         connection.executemany(
@@ -568,9 +666,84 @@ class ProjectObjectCatalog:
         )
         connection.commit()
 
+    def _fingerprint(self) -> dict[str, int]:
+        """Cheap disk-state probe: manifest/record counts and policy mtimes.
+
+        Session and artifact manifests are immutable once published and
+        execution records are append-only files, so counting them detects
+        every lifecycle write; workflow edits and tag-policy edits are caught
+        by the newest mtime of their files.
+        """
+        sessions = 0
+        artifacts = 0
+        session_root = self.project.session_root
+        if session_root.exists():
+            for manifest in session_root.rglob("session_manifest.json"):
+                if ".trash" not in manifest.parts:
+                    sessions += 1
+            for manifest in session_root.rglob("artifact_manifest.json"):
+                if ".trash" not in manifest.parts:
+                    artifacts += 1
+        executions_dir = self.project.root / ".qphase" / "executions"
+        executions = (
+            sum(1 for _ in executions_dir.glob("*.json"))
+            if executions_dir.exists()
+            else 0
+        )
+        workflows = 0
+        workflows_mtime_ns = 0
+        workflow_root = self.project.workflow_root
+        if workflow_root.exists():
+            for pattern in ("*.yaml", "*.yml"):
+                for workflow in workflow_root.rglob(pattern):
+                    workflows += 1
+                    workflows_mtime_ns = max(
+                        workflows_mtime_ns, workflow.stat().st_mtime_ns
+                    )
+        tag_policy = self.project.defaults_path.parent / TAG_POLICY_FILENAME
+        tag_policy_mtime_ns = (
+            tag_policy.stat().st_mtime_ns if tag_policy.exists() else 0
+        )
+        return {
+            "sessions": sessions,
+            "artifacts": artifacts,
+            "executions": executions,
+            "workflows": workflows,
+            "workflows_mtime_ns": workflows_mtime_ns,
+            "tag_policy_mtime_ns": tag_policy_mtime_ns,
+        }
+
+    def _ensure_fresh(self) -> None:
+        """Reindex once when the stored fingerprint no longer matches disk."""
+        if not self.path.exists():
+            return  # _connect rebuilds from scratch on first use
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT value FROM meta WHERE key = 'fingerprint'"
+            ).fetchone()
+        finally:
+            connection.close()
+        current = json.dumps(self._fingerprint(), sort_keys=True)
+        if row is None or row[0] != current:
+            self.reindex()
+
 
 class _CatalogStaleError(Exception):
     """The on-disk catalog predates the current read-model schema."""
+
+
+#: Reindexing deletes and recreates the database file, so concurrent
+#: rebuilds of the same project (e.g. scheduler thread plus execution
+#: service) must be serialized per catalog path; Windows also refuses to
+#: unlink a database file while another connection holds it open.
+_CATALOG_LOCKS: dict[Path, threading.RLock] = {}
+_CATALOG_LOCKS_GUARD = threading.Lock()
+
+
+def _catalog_lock(path: Path) -> threading.RLock:
+    with _CATALOG_LOCKS_GUARD:
+        return _CATALOG_LOCKS.setdefault(path, threading.RLock())
 
 
 #: One tag level in the inheritance chain: (tag, assignment_id, policy_revision)
@@ -754,7 +927,7 @@ class _Scanner:
         self.policy = policy
         self.policy_revision = policy_revision
         self.store = ProjectStateStore(project)
-        self._seen_artifacts: set[str] = set()
+        self._artifact_facets: dict[str, tuple[tuple[Any, ...], str]] = {}
         self._revisions: dict[str, _RevisionEntry] = {}
         self.rows: dict[str, list[tuple[Any, ...]]] = {
             "projects": [],
@@ -765,6 +938,7 @@ class _Scanner:
             "artifacts": [],
             "occurrences": [],
             "effective_tags": [],
+            "location_issues": [],
         }
 
     def collect(self) -> dict[str, list[tuple[Any, ...]]]:
@@ -804,6 +978,9 @@ class _Scanner:
                 )
             )
 
+    def _location_issue(self, path: str, kind: str, message: str) -> None:
+        self.rows["location_issues"].append((path, kind, message))
+
     def _scan_project(self) -> None:
         # The project object is a single addressable row. There is no project
         # annotation document format yet, so it carries no effective tags.
@@ -841,8 +1018,11 @@ class _Scanner:
             return entry.revision_id
         workflow_pairs: list[tuple[str, str | None]] = []
         for raw_tag in payload.get("tags") or []:
-            tag = canonicalize_tag_syntax(str(raw_tag))
-            workflow_pairs.append((tag, workflow_tag_assignment_id(workflow_id, tag)))
+            tag = _try_canonical_tag(str(raw_tag))
+            if tag is not None:
+                workflow_pairs.append(
+                    (tag, workflow_tag_assignment_id(workflow_id, tag))
+                )
         job_rows: list[tuple[Any, ...]] = []
         job_tags: dict[str, list[tuple[str, str | None]]] = {}
         jobs = payload.get("jobs")
@@ -864,8 +1044,9 @@ class _Scanner:
             )
             pairs: list[tuple[str, str | None]] = []
             for raw_tag in job.get("tags") or []:
-                tag = canonicalize_tag_syntax(str(raw_tag))
-                pairs.append((tag, job_tag_assignment_id(workflow_id, name, tag)))
+                tag = _try_canonical_tag(str(raw_tag))
+                if tag is not None:
+                    pairs.append((tag, job_tag_assignment_id(workflow_id, name, tag)))
             job_tags[name] = pairs
         self._revisions[f"{workflow_id}@{revision}"] = _RevisionEntry(
             workflow_id=workflow_id,
@@ -1122,14 +1303,17 @@ class _Scanner:
                     payload,
                 )
         workflow_tags: list[tuple[str, str | None]] = [
-            (canonicalize_tag_syntax(str(tag)), None) for tag in payload.get("tags", [])
+            (tag, None)
+            for raw_tag in payload.get("tags", [])
+            if (tag := _try_canonical_tag(str(raw_tag))) is not None
         ]
         job_tags: dict[str, list[tuple[str, str | None]]] = {}
         for job in payload.get("jobs", []):
             if isinstance(job, Mapping) and job.get("name"):
                 job_tags[str(job["name"])] = [
-                    (canonicalize_tag_syntax(str(tag)), None)
-                    for tag in job.get("tags", [])
+                    (tag, None)
+                    for raw_tag in job.get("tags", [])
+                    if (tag := _try_canonical_tag(str(raw_tag))) is not None
                 ]
         return _SessionSnapshot(workflow_tags, job_tags, None, payload)
 
@@ -1143,18 +1327,23 @@ class _Scanner:
         snapshot: _SessionSnapshot,
         occurrence_annotations: Mapping[str, Any],
     ) -> None:
+        # Late import: qphase.data imports qphase.core at module level.
+        from ..data.errors import ArtifactError, ArtifactUnsupportedError
+        from ..data.store import ArtifactManifest
+
+        relative_path = artifact_dir.relative_to(self.project.session_root).as_posix()
         try:
-            payload = json.loads(
-                (artifact_dir / "artifact_manifest.json").read_text(encoding="utf-8")
-            )
-            artifact_id = str(payload["artifact_id"])
-            health = "ok"
-        except (OSError, ValueError, KeyError):
-            # A corrupt manifest still indexes the occurrence so the damage is
-            # visible in queries; the id falls back to the directory name.
-            artifact_id = artifact_dir.name
-            payload = {}
-            health = "corrupt"
+            manifest = ArtifactManifest.read(artifact_dir)
+        except ArtifactUnsupportedError as exc:
+            self._location_issue(relative_path, "unsupported", str(exc))
+            return
+        except ArtifactError as exc:
+            # A missing/corrupt manifest or invalid adapter payload indexes no
+            # rows at all; the damage is surfaced as a location issue instead
+            # of a fabricated identity.
+            self._location_issue(relative_path, "corrupt", str(exc))
+            return
+        artifact_id = manifest.artifact_id
         job_name = artifact_dir.relative_to(session_dir).as_posix()
         annotations = self._load_artifact_annotations(artifact_dir)
         occurrence = ArtifactOccurrence(
@@ -1166,29 +1355,37 @@ class _Scanner:
             occurrence_annotations.get(f"{job_name}:{artifact_id}") or {}
         )
 
-        bundle = payload.get("bundle")
-        product_schemas = sorted(
+        product_schemas = {
+            entry.name: entry.product_schema.fingerprint()
+            for entry in manifest.products
+        }
+        quantities = sorted(
             {
-                str(entry.get("product_schema"))
-                for entry in payload.get("products", [])
-                if isinstance(entry, dict)
+                variable.quantity
+                for entry in manifest.products
+                for variable in entry.product_schema.variables
+                if variable.quantity
             }
         )
+        facets: tuple[Any, ...] = (
+            manifest.created_at,
+            manifest.bundle.type_id,
+            json.dumps(product_schemas, sort_keys=True),
+            json.dumps(quantities),
+            json.dumps(manifest.parents),
+        )
         # The artifact row is identity-scoped: the first occurrence wins and
-        # later occurrences of the same artifact add only occurrence rows.
-        # TODO(Wave B): occurrences of one artifact whose facets disagree
-        # (health, bundle, products) are not yet surfaced as diagnostics.
-        if artifact_id not in self._seen_artifacts:
-            self._seen_artifacts.add(artifact_id)
+        # later occurrences of the same artifact add only occurrence rows. A
+        # later occurrence whose identity facets disagree is a conflict: the
+        # row stays first-seen and the divergent location is reported.
+        known = self._artifact_facets.get(artifact_id)
+        if known is None:
+            self._artifact_facets[artifact_id] = (facets, relative_path)
             self.rows["artifacts"].append(
                 (
                     artifact_id,
-                    payload.get("created_at"),
-                    bundle.get("type_id") if isinstance(bundle, dict) else None,
-                    json.dumps(product_schemas),
-                    json.dumps(payload.get("parents", [])),
-                    artifact_dir.relative_to(self.project.session_root).as_posix(),
-                    health,
+                    *facets,
+                    relative_path,
                     annotations.get("lifecycle"),
                     annotations.get("retention"),
                 )
@@ -1207,6 +1404,13 @@ class _Scanner:
                     self.policy,
                 ),
             )
+        elif known[0] != facets:
+            self._location_issue(
+                relative_path,
+                "conflict",
+                f"artifact {artifact_id!r} facets disagree with the first "
+                f"occurrence at {known[1]}",
+            )
         own_retention = occurrence_annotation.get("retention")
         self.rows["occurrences"].append(
             (
@@ -1214,7 +1418,7 @@ class _Scanner:
                 artifact_id,
                 session_id,
                 job_name,
-                artifact_dir.relative_to(self.project.session_root).as_posix(),
+                relative_path,
                 own_retention,
                 own_retention or session_retention,
             )

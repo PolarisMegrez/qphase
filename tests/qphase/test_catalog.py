@@ -31,6 +31,60 @@ def _write_policy(project: ProjectContext, body: str) -> None:
     (project.defaults_path.parent / "tags.yaml").write_text(body, encoding="utf-8")
 
 
+def _v4_artifact_manifest(artifact_id: str, quantities: tuple[str, ...] = ()) -> dict:
+    """Minimal valid ``qphase.artifact/4`` manifest for scan fixtures."""
+    products = [
+        {
+            "name": f"product_{index}",
+            "product_schema": {
+                "schema_version": "qphase.product/1",
+                "kind": "time_series",
+                "axes": [{"name": "time", "role": "coordinate", "size": 4}],
+                "variables": [
+                    {
+                        "name": "x",
+                        "dtype": "float64",
+                        "value_domain": "real",
+                        "dims": ["time"],
+                        "quantity": quantity,
+                    }
+                ],
+            },
+            "storage": {
+                # An unregistered adapter skips descriptor validation while
+                # the generic summary is still cross-checked.
+                "adapter": "none/1",
+                "descriptor_schema": "none/1",
+                "summary": {
+                    "x": {
+                        "full_shape": [4],
+                        "dtype": "<f8",
+                        "nbytes": 32,
+                        "chunk_count": 1,
+                    }
+                },
+                "descriptor": {},
+            },
+        }
+        for index, quantity in enumerate(quantities)
+    ]
+    return {
+        "schema_version": "qphase.artifact/4",
+        "artifact_id": artifact_id,
+        "created_at": "2026-08-26T10:01:00+08:00",
+        "bundle": {
+            "type_id": "generic.dataset_bundle/1",
+            "adapter_id": "test-unregistered/1",
+            "descriptor_schema": "test.bundle/1",
+            "descriptor": {},
+            "product_roles": {},
+        },
+        "products": products,
+        "provenance": {},
+        "parents": [],
+    }
+
+
 def _session(
     project: ProjectContext,
     session_id: str,
@@ -84,15 +138,7 @@ def _session(
         job_dir = root / job_name
         job_dir.mkdir()
         (job_dir / "artifact_manifest.json").write_text(
-            json.dumps(
-                {
-                    "artifact_id": artifact_id,
-                    "created_at": "2026-08-26T10:01:00+08:00",
-                    "bundle": {"type_id": "generic.dataset_bundle/1"},
-                    "products": [{"product_schema": "qphase.dataset/1"}],
-                    "parents": [],
-                }
-            ),
+            json.dumps(_v4_artifact_manifest(artifact_id)),
             encoding="utf-8",
         )
     if annotations is not None:
@@ -380,9 +426,10 @@ def test_corrupt_catalog_rebuilds_from_disk_truth(tmp_path):
 
     catalog.path.write_bytes(b"corrupt sqlite payload")
 
-    # The read model detects corruption, resets to an empty schema and the
-    # next reindex restores identical content from disk truth.
-    assert catalog.query(CatalogQuery(object_kind="session")) == []
+    # The read model detects corruption and rebuilds from disk truth on the
+    # next read instead of serving empty results.
+    rows = catalog.query(CatalogQuery(object_kind="session"))
+    assert [row["id"] for row in rows] == ["session-1"]
     rebuilt = catalog.reindex()
     assert rebuilt.sessions == 1
     assert rebuilt.artifacts == 1
@@ -565,3 +612,121 @@ def test_execution_links_workflow_revision_and_freezes_provenance(tmp_path):
     assert [(tag.tag, tag.policy_revision) for tag in tags] == [
         ("task:urgent", "rev-at-submit")
     ]
+
+
+def test_artifact_facets_extracted_from_v4_manifest(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    root = _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    (root / "sim" / "artifact_manifest.json").write_text(
+        json.dumps(
+            _v4_artifact_manifest(
+                "art-1", quantities=("power_spectral_density", "amplitude")
+            )
+        ),
+        encoding="utf-8",
+    )
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    (row,) = catalog.query(CatalogQuery(object_kind="artifact"))
+    assert row["id"] == "art-1"
+    assert row["created_at"] == "2026-08-26T10:01:00+08:00"
+    assert row["bundle_type"] == "generic.dataset_bundle/1"
+    schemas = json.loads(row["product_schemas_json"])
+    assert sorted(schemas) == ["product_0", "product_1"]
+    assert all(len(fingerprint) == 64 for fingerprint in schemas.values())
+    # Quantities are the sorted set of non-empty variable quantities.
+    assert json.loads(row["quantities_json"]) == [
+        "amplitude",
+        "power_spectral_density",
+    ]
+    assert json.loads(row["parents_json"]) == []
+    assert catalog.location_issues() == []
+
+
+def test_unreadable_artifact_locations_become_issues(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    corrupt = _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    (corrupt / "sim" / "artifact_manifest.json").write_text(
+        "{not json", encoding="utf-8"
+    )
+    legacy = _session(project, "session-2", artifacts=(("sim", "art-2"),))
+    manifest = _v4_artifact_manifest("art-2")
+    manifest["schema_version"] = "qphase.artifact/3"
+    (legacy / "sim" / "artifact_manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    catalog = ProjectObjectCatalog(project)
+    stats = catalog.reindex()
+
+    # Unreadable locations index no artifact/occurrence rows at all.
+    assert stats.artifacts == 0
+    assert stats.occurrences == 0
+    assert stats.location_issues == 2
+    issues = {(issue["path"], issue["kind"]) for issue in catalog.location_issues()}
+    assert issues == {
+        ("2026/08/session-1/sim", "corrupt"),
+        ("2026/08/session-2/sim", "unsupported"),
+    }
+
+
+def test_conflicting_occurrences_keep_first_row_and_report(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    divergent = _session(project, "session-2", artifacts=(("sim", "art-1"),))
+    (divergent / "sim" / "artifact_manifest.json").write_text(
+        json.dumps(_v4_artifact_manifest("art-1", quantities=("amplitude",))),
+        encoding="utf-8",
+    )
+    catalog = ProjectObjectCatalog(project)
+    stats = catalog.reindex()
+
+    # Both occurrences stay indexed; the artifact row keeps the first
+    # location's facets and the divergent location is a conflict issue.
+    assert stats.artifacts == 1
+    assert stats.occurrences == 2
+    (row,) = catalog.query(CatalogQuery(object_kind="artifact"))
+    assert row["path"] == "2026/08/session-1/sim"
+    assert json.loads(row["quantities_json"]) == []
+    (issue,) = catalog.location_issues()
+    assert issue["kind"] == "conflict"
+    assert issue["path"] == "2026/08/session-2/sim"
+    assert "session-1/sim" in issue["message"]
+
+
+def test_foreign_project_id_catalog_rebuilds(tmp_path):
+    import sqlite3
+
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    connection = sqlite3.connect(catalog.path)
+    with connection:
+        connection.execute(
+            "UPDATE meta SET value = 'qp_foreign' WHERE key = 'project_id'"
+        )
+    connection.close()
+
+    # A catalog stamped with another project id is never trusted: the next
+    # read rebuilds it from disk truth instead of serving stale rows.
+    rows = catalog.query(CatalogQuery(object_kind="session"))
+    assert [row["id"] for row in rows] == ["session-1"]
+
+
+def test_query_reindexes_when_disk_changes(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(project, "session-1")
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    # A new session flips the fingerprint probe; the next query reindexes.
+    _session(project, "session-2")
+    rows = catalog.query(CatalogQuery(object_kind="session"))
+    assert [row["id"] for row in rows] == ["session-1", "session-2"]

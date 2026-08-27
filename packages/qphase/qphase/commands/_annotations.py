@@ -69,7 +69,7 @@ def format_object(kind: str, item: CatalogObject) -> str:
         )
     elif kind == "artifact":
         summary = (
-            f"health={facets.get('health')} lifecycle={facets.get('lifecycle')} "
+            f"bundle={facets.get('bundle_type')} lifecycle={facets.get('lifecycle')} "
             f"retention={facets.get('retention')}"
         )
     else:
