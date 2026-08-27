@@ -713,3 +713,168 @@ def test_private_tags_overlay_and_promote_on_new_kinds(tmp_path):
         mine = [tag for tag in promoted if tag.tag == "task:mine"]
         assert [tag.source for tag in mine] == [expected_sources[kind]]
         assert service.private.list_private_tags(kind, object_id) == []
+
+
+def test_migration_dry_run_occurrence_key_preview(tmp_path):
+    """Legacy bare-artifact occurrence keys are classified for conversion."""
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(
+        project,
+        "session-1",
+        artifacts=(("sim", "art-1"), ("fit", "art-2"), ("fit2", "art-2")),
+    )
+    (root / "session_annotations.json").write_text(
+        json.dumps(
+            {
+                "schema": "qphase.session-annotations/1",
+                "project_id": project.project_id,
+                "session_id": "session-1",
+                "revision": 0,
+                "occurrences": {
+                    "art-1": {"assignments": []},
+                    "art-2": {"assignments": []},
+                    "sim:art-1": {"assignments": []},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = CatalogService(project, home=tmp_path / "home").migration_dry_run()
+
+    assert [
+        (item.old_key, item.new_key) for item in report.convertible_occurrence_keys
+    ] == [("art-1", "sim:art-1")]
+    (ambiguous,) = report.ambiguous_occurrence_keys
+    assert ambiguous.session_id == "session-1"
+    assert ambiguous.old_key == "art-2"
+    assert ambiguous.locations == ["fit", "fit2"]
+
+
+def test_migration_dry_run_duplicate_artifacts(tmp_path):
+    """One artifact identity at two locations is listed; facet drift conflicts."""
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1", artifacts=(("sim", "art-dup"),))
+    second = _session(project, "session-2", artifacts=(("sim", "art-dup"),))
+    # Same id but divergent identity facets -> conflict location issue.
+    manifest_path = second / "sim" / "artifact_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["created_at"] = "2026-08-27T00:00:00+08:00"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    report = CatalogService(project, home=tmp_path / "home").migration_dry_run()
+
+    (duplicate,) = report.duplicate_artifacts
+    assert duplicate.artifact_id == "art-dup"
+    assert duplicate.locations == [
+        "2026/08/session-1/sim",
+        "2026/08/session-2/sim",
+    ]
+    assert duplicate.conflict
+    assert report.location_issues_by_kind == {"conflict": 1}
+
+
+def test_migration_dry_run_provenance_counts(tmp_path):
+    """Assignments frozen without a policy revision are counted per scope."""
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    (root / "session_annotations.json").write_text(
+        json.dumps(
+            {
+                "schema": "qphase.session-annotations/1",
+                "project_id": project.project_id,
+                "session_id": "session-1",
+                "revision": 0,
+                "assignments": [
+                    {"tag": "task:a", "policy_revision": "rev-1"},
+                    {"tag": "task:b"},
+                ],
+                "occurrences": {"sim:art-1": {"assignments": [{"tag": "task:c"}]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "sim" / "artifact_annotations.json").write_text(
+        json.dumps(
+            {
+                "schema": "qphase.artifact-annotations/1",
+                "project_id": project.project_id,
+                "artifact_id": "art-1",
+                "revision": 0,
+                "assignments": [{"tag": "method:cam"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    qphase_dir = project.root / ".qphase"
+    qphase_dir.mkdir(exist_ok=True)
+    (qphase_dir / "project_annotations.json").write_text(
+        json.dumps(
+            {
+                "schema": "qphase.project-annotations/1",
+                "project_id": project.project_id,
+                "revision": 0,
+                "assignments": [{"tag": "task:p"}],
+                "objects": {
+                    "example@deadbeef": {"assignments": [{"tag": "task:w"}]},
+                    "example@deadbeef:sim": {"assignments": [{"tag": "task:j"}]},
+                    "exec-1": {"assignments": [{"tag": "task:e"}]},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = CatalogService(project, home=tmp_path / "home").migration_dry_run()
+
+    assert report.assignments_without_policy_revision == {
+        "session": 1,
+        "occurrence": 1,
+        "artifact": 1,
+        "project": 1,
+        "workflow": 1,
+        "job": 1,
+        "execution": 1,
+    }
+
+
+def test_migration_dry_run_reindex_parity_and_zero_writes(tmp_path):
+    """Parity reports absent, then in sync; the project gains no files."""
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    service = CatalogService(project, home=tmp_path / "home")
+
+    report = service.migration_dry_run()
+
+    assert report.catalog_drift is None
+    assert report.rebuildable_workflow_revisions == 1
+    assert report.rebuildable_jobs == 1
+    assert report.object_counts == {
+        "project": 1,
+        "workflow": 1,
+        "job": 1,
+        "execution": 0,
+        "session": 1,
+        "artifact": 1,
+        "occurrence": 1,
+    }
+
+    service.reindex()
+    before = _snapshot_files(project.root)
+    report = service.migration_dry_run()
+    assert report.catalog_drift is False
+    assert _snapshot_files(project.root) == before
+
+
+def test_migration_dry_run_detects_catalog_drift(tmp_path):
+    """Disk truth newer than the on-disk catalog is reported as drift."""
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1")
+    service = CatalogService(project, home=tmp_path / "home")
+    service.reindex()
+    _session(project, "session-2")  # disk truth moved; catalog not rebuilt
+
+    report = service.migration_dry_run()
+
+    assert report.catalog_drift is True

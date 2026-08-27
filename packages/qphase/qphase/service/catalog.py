@@ -17,11 +17,17 @@ private is the nearest level).
 
 from __future__ import annotations
 
+import json
+import shutil
+import sqlite3
+import tempfile
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
 from qphase.core.annotations import (
+    ARTIFACT_ANNOTATIONS_FILENAME,
+    PROJECT_ANNOTATIONS_FILENAME,
     SESSION_ANNOTATIONS_FILENAME,
     ArtifactAnnotationDocument,
     Lifecycle,
@@ -33,6 +39,8 @@ from qphase.core.annotations import (
     TagAssignment,
 )
 from qphase.core.catalog import (
+    CATALOG_FILENAME,
+    OBJECT_KINDS,
     CatalogQuery,
     CatalogStats,
     EffectiveTag,
@@ -53,11 +61,14 @@ from qphase.core.utils import load_yaml
 from qphase.data.errors import ArtifactAmbiguousError, ArtifactNotFoundError
 
 from .models import (
+    AmbiguousOccurrenceKey,
     CatalogObject,
+    DuplicateArtifact,
     EffectiveTagInfo,
     InvalidSnapshotTag,
     LegacyMetadataImport,
     MigrationReport,
+    OccurrenceKeyConversion,
     SessionSummary,
     TagPolicyInfo,
 )
@@ -241,41 +252,202 @@ class CatalogService:
         Reports sessions whose legacy ``session_metadata.json`` would seed a
         new annotation document, counts sessions needing no action, and lists
         declared tags in session workflow snapshots that fail validation
-        against the current tag policy. Never reindexes the catalog.
+        against the current tag policy. On top of that it previews the
+        workflow revisions and jobs a rebuild can recover, classifies legacy
+        bare-artifact occurrence keys, lists duplicate artifact identities,
+        counts annotation assignments frozen without policy provenance,
+        rebuilds the catalog into a temporary database outside the project
+        to check reindex parity, summarizes the user's private store, and
+        collects the per-kind object totals and location issues the Phase 4
+        action manifest needs. Never reindexes the project's own catalog and
+        never writes into the project directory.
         """
         policy = load_tag_policy(self.project)
         report = MigrationReport()
         root = self.project.session_root
-        if not root.exists():
-            return report
-        for manifest_path in sorted(root.rglob("session_manifest.json")):
-            if ".trash" in manifest_path.parts:
-                continue
-            report.sessions_total += 1
-            session_dir = manifest_path.parent
-            manifest = self.state_store.load_session_manifest(session_dir)
-            session_id = str(manifest.get("session_id") or session_dir.name)
-            if not (session_dir / SESSION_ANNOTATIONS_FILENAME).exists():
-                # Seed the document exactly the way the migration will, so the
-                # preview matches the future import by construction.
-                seeded = self.project_service.new_session_annotations(
-                    session_dir, session_id
-                )
-                if seeded.alias is not None or seeded.note is not None:
-                    report.legacy_metadata_imports.append(
-                        LegacyMetadataImport(
-                            session_id=session_id,
-                            path=session_dir.relative_to(root).as_posix(),
-                            alias=seeded.alias,
-                            note=seeded.note,
-                        )
+        if root.exists():
+            for manifest_path in sorted(root.rglob("session_manifest.json")):
+                if ".trash" in manifest_path.parts:
+                    continue
+                report.sessions_total += 1
+                session_dir = manifest_path.parent
+                manifest = self.state_store.load_session_manifest(session_dir)
+                session_id = str(manifest.get("session_id") or session_dir.name)
+                if not (session_dir / SESSION_ANNOTATIONS_FILENAME).exists():
+                    # Seed the document exactly the way the migration will, so
+                    # the preview matches the future import by construction.
+                    seeded = self.project_service.new_session_annotations(
+                        session_dir, session_id
                     )
-                else:
-                    report.untouched_sessions += 1
-            report.invalid_snapshot_tags.extend(
-                self._invalid_snapshot_tags(session_dir, session_id, policy)
-            )
+                    if seeded.alias is not None or seeded.note is not None:
+                        report.legacy_metadata_imports.append(
+                            LegacyMetadataImport(
+                                session_id=session_id,
+                                path=session_dir.relative_to(root).as_posix(),
+                                alias=seeded.alias,
+                                note=seeded.note,
+                            )
+                        )
+                    else:
+                        report.untouched_sessions += 1
+                report.invalid_snapshot_tags.extend(
+                    self._invalid_snapshot_tags(session_dir, session_id, policy)
+                )
+                self._occurrence_key_preview(session_dir, session_id, report)
+        self._annotation_provenance(report)
+        self._rebuild_parity(report)
+        self._private_summary(report)
         return report
+
+    def _occurrence_key_preview(
+        self, session_dir: Path, session_id: str, report: MigrationReport
+    ) -> None:
+        """Classify legacy bare-artifact occurrence keys of one session.
+
+        Keys written before the ``job_name:artifact_id`` convention are bare
+        artifact ids. A key converts unambiguously when the artifact occurs
+        in exactly one job of the session; otherwise the migration needs a
+        human decision and the key is reported as ambiguous.
+        """
+        path = session_dir / SESSION_ANNOTATIONS_FILENAME
+        if not path.exists():
+            return
+        payload = _read_json_document(path)
+        if payload is None:
+            return
+        occurrences = payload.get("occurrences")
+        if not isinstance(occurrences, dict):
+            return
+        legacy = sorted(str(key) for key in occurrences if ":" not in str(key))
+        if not legacy:
+            return
+        jobs_by_artifact: dict[str, list[str]] = {}
+        for manifest_file in sorted(session_dir.rglob("artifact_manifest.json")):
+            artifact_id = _manifest_artifact_id(manifest_file)
+            if artifact_id is None:
+                continue
+            job_name = manifest_file.parent.relative_to(session_dir).as_posix()
+            jobs_by_artifact.setdefault(artifact_id, []).append(job_name)
+        for artifact_id in legacy:
+            jobs = jobs_by_artifact.get(artifact_id, [])
+            if len(jobs) == 1:
+                report.convertible_occurrence_keys.append(
+                    OccurrenceKeyConversion(
+                        session_id=session_id,
+                        old_key=artifact_id,
+                        new_key=f"{jobs[0]}:{artifact_id}",
+                    )
+                )
+            else:
+                report.ambiguous_occurrence_keys.append(
+                    AmbiguousOccurrenceKey(
+                        session_id=session_id, old_key=artifact_id, locations=jobs
+                    )
+                )
+
+    def _annotation_provenance(self, report: MigrationReport) -> None:
+        """Count assignments frozen without a policy revision, per scope."""
+        counts: dict[str, int] = {}
+
+        def add(scope: str, assignments: Any) -> None:
+            if not isinstance(assignments, list):
+                return
+            missing = sum(
+                1
+                for item in assignments
+                if isinstance(item, dict) and item.get("policy_revision") is None
+            )
+            if missing:
+                counts[scope] = counts.get(scope, 0) + missing
+
+        root = self.project.session_root
+        if root.exists():
+            for path in sorted(root.rglob(SESSION_ANNOTATIONS_FILENAME)):
+                if ".trash" in path.parts:
+                    continue
+                payload = _read_json_document(path)
+                if payload is None:
+                    continue
+                add("session", payload.get("assignments"))
+                occurrences = payload.get("occurrences")
+                if isinstance(occurrences, dict):
+                    for entry in occurrences.values():
+                        if isinstance(entry, dict):
+                            add("occurrence", entry.get("assignments"))
+            for path in sorted(root.rglob(ARTIFACT_ANNOTATIONS_FILENAME)):
+                if ".trash" in path.parts:
+                    continue
+                payload = _read_json_document(path)
+                if payload is not None:
+                    add("artifact", payload.get("assignments"))
+        payload = _read_json_document(
+            self.project.root / ".qphase" / PROJECT_ANNOTATIONS_FILENAME
+        )
+        if payload is not None:
+            add("project", payload.get("assignments"))
+            objects = payload.get("objects")
+            if isinstance(objects, dict):
+                for object_id, entry in objects.items():
+                    if isinstance(entry, dict):
+                        add(
+                            _project_object_scope(str(object_id)),
+                            entry.get("assignments"),
+                        )
+        report.assignments_without_policy_revision = counts
+
+    def _rebuild_parity(self, report: MigrationReport) -> None:
+        """Rebuild the catalog into a temp database and compare with on-disk.
+
+        The throwaway rebuild also yields the rebuildable workflow/job
+        counts, duplicate artifact identities, per-kind object totals and
+        location issues. Parity compares per-table row counts; an unreadable
+        on-disk catalog counts as drift.
+        """
+        with tempfile.TemporaryDirectory(prefix="qphase-migration-") as tmp:
+            rebuilt = ProjectObjectCatalog(
+                self.project, db_path=Path(tmp) / CATALOG_FILENAME
+            )
+            stats = rebuilt.reindex()
+            report.rebuildable_workflow_revisions = stats.workflows
+            report.rebuildable_jobs = stats.jobs
+            rebuilt_counts = {
+                "projects": stats.projects,
+                "workflows": stats.workflows,
+                "jobs": stats.jobs,
+                "executions": stats.executions,
+                "sessions": stats.sessions,
+                "artifacts": stats.artifacts,
+                "occurrences": stats.occurrences,
+                "effective_tags": stats.effective_tags,
+            }
+            report.object_counts = {
+                kind: rebuilt_counts[f"{kind}s"] for kind in OBJECT_KINDS
+            }
+            issues = rebuilt.location_issues()
+            by_kind: dict[str, int] = {}
+            for issue in issues:
+                by_kind[issue["kind"]] = by_kind.get(issue["kind"], 0) + 1
+            report.location_issues_by_kind = by_kind
+            report.duplicate_artifacts = _duplicate_artifacts(rebuilt.path, issues)
+            current = self.catalog.path
+            if not current.exists():
+                report.catalog_drift = None
+                return
+            try:
+                current_counts = _catalog_table_counts(current, Path(tmp))
+            except sqlite3.DatabaseError:
+                current_counts = None
+            report.catalog_drift = current_counts != rebuilt_counts
+
+    def _private_summary(self, report: MigrationReport) -> None:
+        """Record informational counts of the current user's private store."""
+        report.private_tag_count = sum(
+            len(self.private.list_private_tags(kind)) for kind in OBJECT_KINDS
+        )
+        report.saved_view_count = len(self.private.list_views())
+        report.private_annotation_count = sum(
+            len(self.private.list_private_annotations(kind)) for kind in OBJECT_KINDS
+        )
 
     @staticmethod
     def _invalid_snapshot_tags(
@@ -798,6 +970,111 @@ class CatalogService:
             private_alias=alias,
             private_note=note,
         )
+
+
+#: Tables compared between the on-disk catalog and a throwaway rebuild.
+_CATALOG_TABLES = (
+    "projects",
+    "workflows",
+    "jobs",
+    "executions",
+    "sessions",
+    "artifacts",
+    "occurrences",
+    "effective_tags",
+)
+
+
+def _read_json_document(path: Path) -> dict[str, Any] | None:
+    """Read one annotation document as raw JSON, tolerating corruption."""
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _manifest_artifact_id(manifest_path: Path) -> str | None:
+    """Read the artifact id of one manifest, tolerating corrupt files."""
+    payload = _read_json_document(manifest_path)
+    if payload is None or payload.get("artifact_id") is None:
+        return None
+    return str(payload["artifact_id"])
+
+
+def _project_object_scope(object_id: str) -> str:
+    """Classify one project-document object key by id shape."""
+    if ":" in object_id:
+        return "job"
+    if "@" in object_id:
+        return "workflow"
+    return "execution"
+
+
+def _duplicate_artifacts(
+    catalog_path: Path, issues: list[dict[str, str]]
+) -> list[DuplicateArtifact]:
+    """List artifact identities materialized at more than one location."""
+    connection = sqlite3.connect(catalog_path)
+    try:
+        artifact_ids = [
+            str(row[0])
+            for row in connection.execute(
+                "SELECT artifact_id FROM occurrences GROUP BY artifact_id"
+                " HAVING COUNT(DISTINCT path) > 1 ORDER BY artifact_id"
+            ).fetchall()
+        ]
+        duplicates = []
+        for artifact_id in artifact_ids:
+            locations = [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT DISTINCT path FROM occurrences"
+                    " WHERE artifact_id = ? ORDER BY path",
+                    (artifact_id,),
+                ).fetchall()
+            ]
+            conflict = any(
+                issue["kind"] == "conflict" and f"'{artifact_id}'" in issue["message"]
+                for issue in issues
+            )
+            duplicates.append(
+                DuplicateArtifact(
+                    artifact_id=artifact_id, locations=locations, conflict=conflict
+                )
+            )
+    finally:
+        connection.close()
+    return duplicates
+
+
+def _catalog_table_counts(catalog_path: Path, work_dir: Path) -> dict[str, int]:
+    """Count rows of every catalog table without touching the original file.
+
+    The catalog is WAL-mode, so even a read-only open could create ``-shm``
+    sidecar files next to it. Copying the database (plus WAL/SHM sidecars)
+    into a scratch directory keeps the project directory untouched.
+    """
+    copy = work_dir / "current_catalog.sqlite"
+    shutil.copy2(catalog_path, copy)
+    for suffix in ("-wal", "-shm"):
+        sidecar = catalog_path.with_name(catalog_path.name + suffix)
+        if sidecar.exists():
+            shutil.copy2(sidecar, copy.with_name(copy.name + suffix))
+    connection = sqlite3.connect(copy)
+    try:
+        return {
+            table: int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM {table}"  # noqa: S608 - fixed names
+                ).fetchone()[0]
+            )
+            for table in _CATALOG_TABLES
+        }
+    finally:
+        connection.close()
 
 
 def _tag_info(tag: EffectiveTag) -> EffectiveTagInfo:

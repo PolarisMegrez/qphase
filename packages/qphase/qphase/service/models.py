@@ -384,6 +384,34 @@ class InvalidSnapshotTag(ServiceModel):
     error: str
 
 
+class OccurrenceKeyConversion(ServiceModel):
+    """One legacy bare-artifact occurrence key that converts unambiguously."""
+
+    session_id: str
+    old_key: str
+    new_key: str
+
+
+class AmbiguousOccurrenceKey(ServiceModel):
+    """One legacy occurrence key whose producing job cannot be determined."""
+
+    session_id: str
+    old_key: str
+    locations: list[str] = Field(default_factory=list)
+
+
+class DuplicateArtifact(ServiceModel):
+    """One artifact identity materialized at more than one location.
+
+    ``conflict`` is true when the locations disagree on identity facets
+    (the catalog reports a ``conflict`` location issue for them).
+    """
+
+    artifact_id: str
+    locations: list[str] = Field(default_factory=list)
+    conflict: bool = False
+
+
 class MigrationReport(ServiceModel):
     """Pure-read preview of the Phase 4 history migration."""
 
@@ -393,3 +421,25 @@ class MigrationReport(ServiceModel):
     )
     untouched_sessions: int = 0
     invalid_snapshot_tags: list[InvalidSnapshotTag] = Field(default_factory=list)
+    rebuildable_workflow_revisions: int = 0
+    rebuildable_jobs: int = 0
+    convertible_occurrence_keys: list[OccurrenceKeyConversion] = Field(
+        default_factory=list
+    )
+    ambiguous_occurrence_keys: list[AmbiguousOccurrenceKey] = Field(
+        default_factory=list
+    )
+    duplicate_artifacts: list[DuplicateArtifact] = Field(default_factory=list)
+    #: Annotation assignments lacking policy provenance, per object scope
+    #: (only scopes with at least one such assignment are present).
+    assignments_without_policy_revision: dict[str, int] = Field(default_factory=dict)
+    #: Whether the on-disk catalog differs from a fresh rebuild; ``None``
+    #: means the project has no catalog yet.
+    catalog_drift: bool | None = None
+    #: Freshly rebuilt per-kind object totals (Phase 4 manifest input).
+    object_counts: dict[str, int] = Field(default_factory=dict)
+    #: Location issue counts grouped by kind (unsupported/corrupt/conflict).
+    location_issues_by_kind: dict[str, int] = Field(default_factory=dict)
+    private_tag_count: int = 0
+    saved_view_count: int = 0
+    private_annotation_count: int = 0

@@ -396,13 +396,21 @@ class CatalogStats:
 
 
 class ProjectObjectCatalog:
-    """Rebuildable SQLite index of all addressable objects in one project."""
+    """Rebuildable SQLite index of all addressable objects in one project.
 
-    def __init__(self, project: ProjectContext) -> None:
+    ``db_path`` overrides the database location; the migration dry-run uses
+    it to rebuild a throwaway copy in a temporary directory without touching
+    the project's own catalog.
+    """
+
+    def __init__(self, project: ProjectContext, *, db_path: Path | None = None) -> None:
         self.project = project
+        self._db_path = db_path
 
     @property
     def path(self) -> Path:
+        if self._db_path is not None:
+            return self._db_path
         return self.project.root / ".qphase" / CATALOG_FILENAME
 
     def reindex(self) -> CatalogStats:

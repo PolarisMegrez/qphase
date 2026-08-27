@@ -22,6 +22,9 @@ from ._annotations import (
 app = typer.Typer(help="Initialize and inspect QPhase projects")
 _PATH_ARGUMENT = typer.Argument(Path("."))
 
+#: Maximum number of preview entries printed per migration report list.
+_MIGRATE_LIST_LIMIT = 10
+
 
 @app.command("init")
 def initialize(
@@ -150,3 +153,58 @@ def migrate(
         typer.echo(
             f"  {entry.session_id}  {entry.source} tag {entry.tag!r}: {entry.error}"
         )
+    typer.echo(
+        f"Rebuildable: {report.rebuildable_workflow_revisions} workflow revisions, "
+        f"{report.rebuildable_jobs} jobs"
+    )
+    convertible = report.convertible_occurrence_keys
+    ambiguous = report.ambiguous_occurrence_keys
+    typer.echo(
+        f"Legacy occurrence keys: {len(convertible)} convertible, "
+        f"{len(ambiguous)} ambiguous"
+    )
+    for conv in convertible[:_MIGRATE_LIST_LIMIT]:
+        typer.echo(f"  {conv.session_id}  {conv.old_key} -> {conv.new_key}")
+    if len(convertible) > _MIGRATE_LIST_LIMIT:
+        typer.echo(f"  ... and {len(convertible) - _MIGRATE_LIST_LIMIT} more")
+    for amb in ambiguous[:_MIGRATE_LIST_LIMIT]:
+        typer.echo(
+            f"  {amb.session_id}  {amb.old_key} ambiguous"
+            f" (locations: {', '.join(amb.locations) or 'none'})"
+        )
+    if len(ambiguous) > _MIGRATE_LIST_LIMIT:
+        typer.echo(f"  ... and {len(ambiguous) - _MIGRATE_LIST_LIMIT} more")
+    duplicates = report.duplicate_artifacts
+    typer.echo(f"Duplicate artifact identities ({len(duplicates)}):")
+    for dup in duplicates[:_MIGRATE_LIST_LIMIT]:
+        flag = " [conflict]" if dup.conflict else ""
+        typer.echo(f"  {dup.artifact_id}{flag}: {', '.join(dup.locations)}")
+    if len(duplicates) > _MIGRATE_LIST_LIMIT:
+        typer.echo(f"  ... and {len(duplicates) - _MIGRATE_LIST_LIMIT} more")
+    provenance = report.assignments_without_policy_revision
+    if provenance:
+        summary = ", ".join(f"{scope}={count}" for scope, count in provenance.items())
+        typer.echo(f"Assignments without policy provenance: {summary}")
+    else:
+        typer.echo("Assignments without policy provenance: none")
+    if report.catalog_drift is None:
+        typer.echo("Catalog reindex parity: absent (no catalog yet)")
+    elif report.catalog_drift:
+        typer.echo("Catalog reindex parity: drift (run `qphase project reindex`)")
+    else:
+        typer.echo("Catalog reindex parity: in sync")
+    counts = ", ".join(
+        f"{kind}={count}" for kind, count in report.object_counts.items()
+    )
+    typer.echo(f"Object counts: {counts}")
+    issues = report.location_issues_by_kind
+    if issues:
+        summary = ", ".join(f"{kind}={count}" for kind, count in issues.items())
+        typer.echo(f"Location issues: {summary}")
+    else:
+        typer.echo("Location issues: none")
+    typer.echo(
+        f"Private store: {report.private_tag_count} tags, "
+        f"{report.saved_view_count} saved views, "
+        f"{report.private_annotation_count} private annotations"
+    )

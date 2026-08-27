@@ -410,3 +410,18 @@ def test_session_list_supports_full_query_flags(temp_workspace):
     assert "session-1" not in excluded.stdout
     paged = runner.invoke(app, ["session", "list", "--limit", "1", "--offset", "1"])
     assert "session-1" not in paged.stdout
+
+
+def test_project_migrate_dry_run_extended_sections(temp_workspace):
+    """'project migrate --dry-run' prints all extended report sections."""
+    _catalog_session(temp_workspace, "session-1")
+
+    result = runner.invoke(app, ["project", "migrate", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Rebuildable:" in result.stdout
+    assert "Legacy occurrence keys:" in result.stdout
+    assert "Duplicate artifact identities" in result.stdout
+    assert "Catalog reindex parity:" in result.stdout
+    assert "Object counts:" in result.stdout
+    assert "Private store:" in result.stdout
