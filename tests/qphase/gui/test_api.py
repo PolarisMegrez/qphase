@@ -677,3 +677,111 @@ def test_gui_api_occurrence_tags_disambiguated_by_job(temp_workspace):
             "/catalog/occurrence/art-1:catalog-session:sim/tags"
         ).json()["effective_tags"]
         assert all(tag["tag"] != "task:scan" for tag in sim)
+
+
+def _workflow_file(workspace):
+    path = workspace / "configs" / "workflows" / "example.yaml"
+    path.write_text(
+        "schema: qphase.workflow/2\n"
+        "id: example\n"
+        "title: Example\n"
+        "jobs:\n"
+        "  - name: sim\n"
+        "    engine:\n"
+        "      dummy: {}\n",
+        encoding="utf-8",
+    )
+
+
+def test_gui_api_catalog_query_full_filters(temp_workspace):
+    _catalog_session(temp_workspace)
+    with TestClient(create_app()) as client:
+        tagged = client.post(
+            "/sessions/catalog-session/tags", json={"add": ["task:scan"]}
+        )
+        assert tagged.status_code == 200
+
+        hit = client.get("/catalog/session", params={"tag_any": "task:scan"})
+        assert [item["id"] for item in hit.json()["objects"]] == ["catalog-session"]
+        excluded = client.get(
+            "/catalog/session", params={"tag_without": "task:scan"}
+        )
+        assert excluded.json()["objects"] == []
+        direct = client.get(
+            "/catalog/session", params={"tag": "task:scan", "direct": True}
+        )
+        assert [item["id"] for item in direct.json()["objects"]] == [
+            "catalog-session"
+        ]
+        facet = client.get("/catalog/session", params={"facet": "status=completed"})
+        assert len(facet.json()["objects"]) == 1
+        bad = client.get("/catalog/session", params={"facet": "noequals"})
+        assert bad.status_code == 400
+
+
+def test_gui_api_generic_tag_routes_cover_all_kinds(temp_workspace):
+    _workflow_file(temp_workspace)
+    _catalog_session(temp_workspace)
+    with TestClient(create_app()) as client:
+        project_id = client.get("/project").json()["project_id"]
+        tagged = client.post(
+            f"/catalog/project/{project_id}/tags", json={"add": ["task:paper"]}
+        )
+        assert tagged.status_code == 200
+        assert {
+            tag["tag"]: tag["source"] for tag in tagged.json()["effective_tags"]
+        } == {"task:paper": "project_annotation"}
+
+        workflows = client.get("/catalog/workflow").json()["objects"]
+        assert len(workflows) == 1
+        revision_id = workflows[0]["id"]
+        workflow = client.post(
+            f"/catalog/workflow/{revision_id}/tags", json={"add": ["task:reviewed"]}
+        )
+        assert workflow.status_code == 200
+        job_id = f"{revision_id}:sim"
+        job = client.post(
+            f"/catalog/job/{job_id}/tags", json={"add": ["method:cam"]}
+        )
+        assert job.status_code == 200
+        unknown = client.post("/catalog/nope/x/tags", json={"add": ["task:x"]})
+        assert unknown.status_code == 400
+
+
+def test_gui_api_project_alias_note_and_location_issues(temp_workspace):
+    with TestClient(create_app()) as client:
+        updated = client.patch("/project", json={"alias": "paper", "note": "results"})
+        assert updated.status_code == 200
+        assert updated.json()["alias"] == "paper"
+        assert updated.json()["note"] == "results"
+        assert client.get("/project").json()["alias"] == "paper"
+
+        private = client.patch("/project", json={"alias": "mine", "private": True})
+        assert private.status_code == 200
+        # The private alias never overwrites the shared one.
+        assert client.get("/project").json()["alias"] == "paper"
+        listed = client.get("/catalog/project").json()["objects"]
+        assert listed[0]["private_alias"] == "mine"
+
+        issues = client.get("/catalog/issues")
+        assert issues.status_code == 200
+        assert issues.json()["issues"] == []
+
+
+def test_gui_api_private_annotations_and_recent_projects(temp_workspace):
+    _catalog_session(temp_workspace)
+    with TestClient(create_app()) as client:
+        annotated = client.patch(
+            "/catalog/session/catalog-session/private",
+            json={"alias": "mine", "note": "private note"},
+        )
+        assert annotated.status_code == 200
+        assert annotated.json()["alias"] == "mine"
+        listed = client.get("/catalog/session").json()["objects"]
+        assert listed[0]["private_alias"] == "mine"
+        assert listed[0]["private_note"] == "private note"
+
+        recent = client.get("/projects/recent")
+        assert recent.status_code == 200
+        project_ids = {entry["project_id"] for entry in recent.json()["projects"]}
+        assert "test-project" in project_ids

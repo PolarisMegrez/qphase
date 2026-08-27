@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib.resources as resources
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from typing import Any
 
@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from qphase.core.annotations import Lifecycle, RetentionPolicy
-from qphase.core.catalog import CatalogQuery
+from qphase.core.catalog import OBJECT_KINDS, CatalogQuery
 from qphase.core.errors import QPhaseError, QPhaseIOError
 from qphase.core.system_config import load_system_config
 from qphase.data.errors import ArtifactError
@@ -24,6 +24,8 @@ from qphase.service import (
     RegistryService,
     SchedulerService,
 )
+from qphase.service.catalog import parse_facet_filters, parse_range_filters
+from qphase.service.private import UserPrivateStore
 
 from .application import ApplicationContext
 
@@ -91,7 +93,24 @@ class ExecutionTagsRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class ProjectUpdateRequest(BaseModel):
+    alias: str | None = None
+    note: str | None = None
+    private: bool = False
+
+
+class PrivateAnnotationRequest(BaseModel):
+    alias: str | None = None
+    note: str | None = None
+
+
 _TAGS_QUERY = Query([])
+# Distinct Query instances per parameter: a shared instance shares its default
+# list across fields, which leaks one parameter's values into the others.
+_TAG_ANY_QUERY = Query([])
+_TAG_WITHOUT_QUERY = Query([])
+_FACET_QUERY = Query([])
+_RANGE_QUERY = Query([], alias="range")
 
 
 def create_app(
@@ -154,6 +173,11 @@ def create_app(
     app = FastAPI(title="QPhase Local GUI API", version="2.0.0", lifespan=lifespan)
     app.state.context = context
 
+    # Record the project location for the recent-project list; private
+    # bookkeeping must never break app startup.
+    with suppress(Exception):
+        context.catalog.private.record_location(context.project.root)
+
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         return _dashboard_html()
@@ -162,14 +186,27 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/projects/recent")
+    def list_recent_projects() -> dict[str, Any]:
+        entries = UserPrivateStore.list_recent_projects(context.catalog.private.home)
+        return {
+            "projects": [
+                {"project_id": project_id, "root": root, "last_seen": last_seen}
+                for project_id, root, last_seen in entries
+            ]
+        }
+
     @app.get("/project")
     def get_project() -> dict[str, Any]:
         project = context.project
+        annotations = context.catalog.project_annotations()
         return {
             "schema": project.manifest.schema_,
             "project_id": project.project_id,
             "name": project.manifest.name,
             "root": str(project.root),
+            "alias": annotations.alias,
+            "note": annotations.note,
             "paths": {
                 "workflows": str(project.workflow_root),
                 "defaults": str(project.defaults_path),
@@ -177,6 +214,34 @@ def create_app(
                 "sessions": str(project.session_root),
             },
         }
+
+    @app.patch("/project")
+    def update_project(request: ProjectUpdateRequest) -> dict[str, Any]:
+        fields = request.model_dump(exclude_unset=True)
+        fields.pop("private", None)
+        if not fields:
+            raise HTTPException(status_code=400, detail="no fields to update")
+        try:
+            if request.private:
+                object_id = context.project.project_id
+                if "alias" in fields:
+                    context.catalog.private.set_private_alias(
+                        "project", object_id, fields["alias"]
+                    )
+                if "note" in fields:
+                    context.catalog.private.set_private_note(
+                        "project", object_id, fields["note"]
+                    )
+            else:
+                if "alias" in fields:
+                    context.catalog.set_project_alias(fields["alias"])
+                if "note" in fields:
+                    context.catalog.set_project_note(fields["note"])
+        except RuntimeError as exc:
+            raise _http_error(exc, status_code=409) from exc
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return get_project()
 
     @app.get("/workflows")
     def list_workflows(
@@ -481,12 +546,26 @@ def create_app(
             raise _http_error(exc) from exc
         return Response(status_code=204)
 
+    @app.get("/catalog/issues")
+    def list_location_issues() -> dict[str, Any]:
+        try:
+            return {"issues": context.catalog.location_issues()}
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
     @app.get("/catalog/{kind}")
     def list_catalog_objects(
         kind: str,
         tag: list[str] = _TAGS_QUERY,
+        tag_any: list[str] = _TAG_ANY_QUERY,
+        tag_without: list[str] = _TAG_WITHOUT_QUERY,
+        tag_descendant: str | None = None,
+        tag_namespace: str | None = None,
+        facet: list[str] = _FACET_QUERY,
+        range_: list[str] = _RANGE_QUERY,
         lifecycle: str | None = None,
         retention: str | None = None,
+        direct: bool = False,
         limit: int = 100,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -494,9 +573,16 @@ def create_app(
             objects = context.catalog.query(
                 CatalogQuery(
                     object_kind=kind,
+                    facets=parse_facet_filters(facet),
+                    ranges=parse_range_filters(range_),
                     tags_all=tuple(tag),
+                    tags_any=tuple(tag_any),
+                    tags_without=tuple(tag_without),
+                    tag_descendant_of=tag_descendant,
+                    tag_namespace=tag_namespace,
                     lifecycle=lifecycle,
                     retention=retention,
+                    effective=not direct,
                     limit=limit,
                     offset=offset,
                 )
@@ -512,6 +598,42 @@ def create_app(
         except Exception as exc:
             raise _http_error(exc) from exc
         return {"effective_tags": [tag.model_dump(mode="json") for tag in tags]}
+
+    @app.post("/catalog/{kind}/{object_id:path}/tags")
+    def update_catalog_tags(
+        kind: str, object_id: str, request: TagsUpdateRequest
+    ) -> dict[str, Any]:
+        """Add or remove tags on any catalog object kind."""
+        try:
+            return _update_catalog_tags(context.catalog, kind, object_id, request)
+        except RuntimeError as exc:
+            raise _http_error(exc, status_code=409) from exc
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @app.patch("/catalog/{kind}/{object_id:path}/private")
+    def update_private_annotation(
+        kind: str, object_id: str, request: PrivateAnnotationRequest
+    ) -> dict[str, Any]:
+        """Set the user-private alias/note of one catalog object."""
+        fields = request.model_dump(exclude_unset=True)
+        if not fields:
+            raise HTTPException(status_code=400, detail="no fields to update")
+        if kind not in OBJECT_KINDS:
+            raise HTTPException(
+                status_code=404, detail=f"unknown catalog object kind {kind!r}"
+            )
+        if "alias" in fields:
+            context.catalog.private.set_private_alias(kind, object_id, fields["alias"])
+        if "note" in fields:
+            context.catalog.private.set_private_note(kind, object_id, fields["note"])
+        alias, note = context.catalog.private.get_private_annotation(kind, object_id)
+        return {
+            "object_kind": kind,
+            "object_id": object_id,
+            "alias": alias,
+            "note": note,
+        }
 
     @app.post("/sessions/{session_id}/tags")
     def update_session_tags(
@@ -703,6 +825,41 @@ def _http_error(exc: Exception, status_code: int = 400) -> HTTPException:
     if isinstance(exc, QPhaseError):
         return HTTPException(status_code=status_code, detail=str(exc))
     return HTTPException(status_code=status_code, detail=str(exc))
+
+
+def _update_catalog_tags(
+    catalog: CatalogService, kind: str, object_id: str, request: TagsUpdateRequest
+) -> dict[str, Any]:
+    """Dispatch a tag mutation to the service method of the object kind."""
+    add, remove, private = request.add, request.remove, request.private
+    tags: Any
+    if kind == "project":
+        tags = catalog.tag_project(add=add, remove=remove, private=private)
+    elif kind == "workflow":
+        tags = catalog.tag_workflow(object_id, add=add, remove=remove, private=private)
+    elif kind == "job":
+        tags = catalog.tag_job(object_id, add=add, remove=remove, private=private)
+    elif kind == "execution":
+        tags = catalog.tag_execution(object_id, add=add, remove=remove, private=private)
+    elif kind == "session":
+        return catalog.tag_session(
+            object_id, add=add, remove=remove, private=private
+        ).model_dump(mode="json")
+    elif kind == "artifact":
+        tags = catalog.tag_artifact(object_id, add=add, remove=remove, private=private)
+    elif kind == "occurrence":
+        artifact_id, session_id, job_name = object_id.split(":", 2)
+        tags = catalog.tag_occurrence(
+            session_id,
+            artifact_id,
+            job_name=job_name,
+            add=add,
+            remove=remove,
+            private=private,
+        )
+    else:
+        raise ValueError(f"unknown catalog object kind {kind!r}")
+    return {"effective_tags": [tag.model_dump(mode="json") for tag in tags]}
 
 
 def _execution_action(action: Any, execution_id: str) -> dict[str, Any]:
