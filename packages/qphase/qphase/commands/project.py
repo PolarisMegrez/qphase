@@ -191,6 +191,8 @@ def migrate(
         typer.echo("Catalog reindex parity: absent (no catalog yet)")
     elif report.catalog_drift:
         typer.echo("Catalog reindex parity: drift (run `qphase project reindex`)")
+        for table, count in report.catalog_drift_tables.items():
+            typer.echo(f"  {table}: {count} differing rows")
     else:
         typer.echo("Catalog reindex parity: in sync")
     counts = ", ".join(

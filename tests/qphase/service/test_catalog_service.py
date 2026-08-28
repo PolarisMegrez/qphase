@@ -864,6 +864,7 @@ def test_migration_dry_run_reindex_parity_and_zero_writes(tmp_path):
     before = _snapshot_files(project.root)
     report = service.migration_dry_run()
     assert report.catalog_drift is False
+    assert report.catalog_drift_tables == {}
     assert _snapshot_files(project.root) == before
 
 
@@ -878,3 +879,59 @@ def test_migration_dry_run_detects_catalog_drift(tmp_path):
     report = service.migration_dry_run()
 
     assert report.catalog_drift is True
+
+
+def test_catalog_fresh_after_direct_session_alias_write(tmp_path):
+    """A ProjectService alias write (no service reindex) shows in the next query."""
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1")
+    service = CatalogService(project, home=tmp_path / "home")
+    (row,) = service.query(CatalogQuery(object_kind="session"))
+    assert row.facets["alias"] is None
+
+    ProjectService(project).update_session("session-1", alias="direct-alias")
+
+    (row,) = service.query(CatalogQuery(object_kind="session"))
+    assert row.facets["alias"] == "direct-alias"
+
+
+def test_catalog_fresh_after_project_move(tmp_path):
+    """A moved project (same project_id) refreshes the root facet."""
+    import shutil
+
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1")
+    service = CatalogService(project, home=tmp_path / "home")
+    (row,) = service.query(CatalogQuery(object_kind="project"))
+    assert row.facets["root"] == str(project.root)
+
+    moved_root = tmp_path / "moved"
+    shutil.copytree(project.root, moved_root)
+    moved = ProjectContext.load(moved_root)
+    moved_service = CatalogService(moved, home=tmp_path / "home")
+
+    (row,) = moved_service.query(CatalogQuery(object_kind="project"))
+
+    assert row.id == project.project_id
+    assert row.facets["root"] == str(moved.root)
+
+
+def test_migration_dry_run_locates_drift_table(tmp_path):
+    """A tampered catalog row is drift, attributed to its table."""
+    import sqlite3
+
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1")
+    service = CatalogService(project, home=tmp_path / "home")
+    service.reindex()
+    connection = sqlite3.connect(service.catalog.path)
+    with connection:
+        connection.execute(
+            "UPDATE sessions SET alias = 'tampered' WHERE id = 'session-1'"
+        )
+    connection.close()
+
+    report = service.migration_dry_run()
+
+    assert report.catalog_drift is True
+    assert report.catalog_drift_tables == {"sessions": 2}

@@ -50,13 +50,18 @@ contracts themselves require a schema or read-model version bump.
   execution records, workflow files, the tag policy and the annotation
   documents. It may be deleted at any time and rebuilt with
   `qphase project reindex`.
-- Reads probe a cheap fingerprint (manifest/record counts plus policy and
-  workflow mtimes); a mismatch triggers one rebuild before serving.
+- Reads probe a cheap fingerprint (project root; manifest/record counts and
+  newest mtimes; annotation document counts and newest mtime; workflow file
+  count and mtime; tag policy mtime); a mismatch triggers one rebuild before
+  serving. State flips of a running job therefore surface on the *next*
+  catalog query — the accepted cost of a derived read model.
 - A corrupt, schema-mismatched or foreign database is rebuilt from disk
   truth instead of serving empty results. The `meta` table binds the database
   to `project_id`, so a copied project never reads another project's catalog.
-- Concurrent rebuilds of the same project are serialized by a per-path lock;
-  the database file is deleted and recreated atomically per rebuild.
+- Concurrent rebuilds of the same project are serialized by a cross-process
+  sibling lock file (plus an in-process per-path lock); each rebuild
+  populates a temporary database that atomically replaces the live one, so
+  a failed rebuild never deletes the previous read model.
 
 ## Annotation Documents and Locking
 

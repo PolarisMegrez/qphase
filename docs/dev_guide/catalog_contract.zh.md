@@ -48,13 +48,15 @@ description: Catalog、identity 与 annotation 开发契约
   `qphase.catalog/3`）是磁盘真值的纯函数：manifest、snapshot、execution
   记录、workflow 文件、tag policy 和 annotation 文档。任何时候都可以删除并
   用 `qphase project reindex` 重建。
-- 读取前用轻量 fingerprint(manifest/记录计数加上 policy 与 workflow 的
-  mtime）探测；不匹配则先重建再服务。
+- 读取前用轻量 fingerprint（项目根目录；manifest/记录计数与最新 mtime;
+  annotation 文档计数与最新 mtime;workflow 文件计数与 mtime;tag policy
+  mtime）探测；不匹配则先重建再服务。运行中 job 的状态翻转因此会在*下一次*
+  catalog 查询时体现——这是派生 read model 的既定代价。
 - 数据库损坏、schema 不匹配或属于其他项目时，从磁盘真值重建，而不是返回空
   结果。`meta` 表把数据库绑定到 `project_id`，因此复制来的项目不会读到别的
   项目的 catalog。
-- 同一项目的并发重建由按路径的锁串行化；每次重建原子地删除并重建数据库
-  文件。
+- 同一项目的并发重建由跨进程兄弟锁文件（外加进程内按路径锁）串行化；每次
+  重建先填充临时数据库再原子替换正式库，重建失败绝不删除旧的 read model。
 
 ## Annotation 文档与锁
 

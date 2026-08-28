@@ -434,8 +434,11 @@ class MigrationReport(ServiceModel):
     #: (only scopes with at least one such assignment are present).
     assignments_without_policy_revision: dict[str, int] = Field(default_factory=dict)
     #: Whether the on-disk catalog differs from a fresh rebuild; ``None``
-    #: means the project has no catalog yet.
+    #: means the project has no catalog yet. ``True`` with an empty
+    #: ``catalog_drift_tables`` means the on-disk catalog was unreadable.
     catalog_drift: bool | None = None
+    #: Per-table differing row counts (both EXCEPT directions combined).
+    catalog_drift_tables: dict[str, int] = Field(default_factory=dict)
     #: Freshly rebuilt per-kind object totals (Phase 4 manifest input).
     object_counts: dict[str, int] = Field(default_factory=dict)
     #: Location issue counts grouped by kind (unsupported/corrupt/conflict).

@@ -400,8 +400,9 @@ class CatalogService:
 
         The throwaway rebuild also yields the rebuildable workflow/job
         counts, duplicate artifact identities, per-kind object totals and
-        location issues. Parity compares per-table row counts; an unreadable
-        on-disk catalog counts as drift.
+        location issues. Parity compares the full row content of every
+        catalog table (bidirectional EXCEPT); an unreadable on-disk catalog
+        counts as drift.
         """
         with tempfile.TemporaryDirectory(prefix="qphase-migration-") as tmp:
             rebuilt = ProjectObjectCatalog(
@@ -434,10 +435,12 @@ class CatalogService:
                 report.catalog_drift = None
                 return
             try:
-                current_counts = _catalog_table_counts(current, Path(tmp))
+                drift = _catalog_drift(current, rebuilt.path, Path(tmp))
             except sqlite3.DatabaseError:
-                current_counts = None
-            report.catalog_drift = current_counts != rebuilt_counts
+                report.catalog_drift = True
+                return
+            report.catalog_drift_tables = drift
+            report.catalog_drift = bool(drift)
 
     def _private_summary(self, report: MigrationReport) -> None:
         """Record informational counts of the current user's private store."""
@@ -972,8 +975,9 @@ class CatalogService:
         )
 
 
-#: Tables compared between the on-disk catalog and a throwaway rebuild.
-_CATALOG_TABLES = (
+#: Tables compared between the on-disk catalog and a throwaway rebuild
+#: (every content table; the ``meta`` bookkeeping table is excluded).
+_PARITY_TABLES = (
     "projects",
     "workflows",
     "jobs",
@@ -982,6 +986,7 @@ _CATALOG_TABLES = (
     "artifacts",
     "occurrences",
     "effective_tags",
+    "location_issues",
 )
 
 
@@ -1050,29 +1055,45 @@ def _duplicate_artifacts(
     return duplicates
 
 
-def _catalog_table_counts(catalog_path: Path, work_dir: Path) -> dict[str, int]:
-    """Count rows of every catalog table without touching the original file.
+def _catalog_drift(
+    catalog_path: Path, rebuilt_path: Path, work_dir: Path
+) -> dict[str, int]:
+    """Diff two catalog databases table by table, comparing full row content.
 
-    The catalog is WAL-mode, so even a read-only open could create ``-shm``
-    sidecar files next to it. Copying the database (plus WAL/SHM sidecars)
-    into a scratch directory keeps the project directory untouched.
+    Returns per-table differing row counts (both directions of ``EXCEPT``,
+    which is set semantics and therefore order-independent); an empty dict
+    means no drift. The on-disk catalog is WAL-mode, so even opening it
+    could create ``-shm`` sidecar files next to it: it is copied (with
+    WAL/SHM sidecars) into ``work_dir`` first, keeping the project
+    directory untouched.
     """
-    copy = work_dir / "current_catalog.sqlite"
-    shutil.copy2(catalog_path, copy)
+    current = work_dir / "current_catalog.sqlite"
+    shutil.copy2(catalog_path, current)
     for suffix in ("-wal", "-shm"):
         sidecar = catalog_path.with_name(catalog_path.name + suffix)
         if sidecar.exists():
-            shutil.copy2(sidecar, copy.with_name(copy.name + suffix))
-    connection = sqlite3.connect(copy)
+            shutil.copy2(sidecar, current.with_name(current.name + suffix))
+    connection = sqlite3.connect(":memory:")
     try:
-        return {
-            table: int(
+        connection.execute("ATTACH DATABASE ? AS current", (str(current),))
+        connection.execute("ATTACH DATABASE ? AS rebuilt", (str(rebuilt_path),))
+        drift: dict[str, int] = {}
+        for table in _PARITY_TABLES:
+            forward = int(
                 connection.execute(
-                    f"SELECT COUNT(*) FROM {table}"  # noqa: S608 - fixed names
+                    f"SELECT COUNT(*) FROM (SELECT * FROM current.{table}"  # noqa: S608
+                    f" EXCEPT SELECT * FROM rebuilt.{table})"
                 ).fetchone()[0]
             )
-            for table in _CATALOG_TABLES
-        }
+            backward = int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM (SELECT * FROM rebuilt.{table}"  # noqa: S608
+                    f" EXCEPT SELECT * FROM current.{table})"
+                ).fetchone()[0]
+            )
+            if forward or backward:
+                drift[table] = forward + backward
+        return drift
     finally:
         connection.close()
 
