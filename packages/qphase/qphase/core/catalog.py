@@ -146,7 +146,7 @@ __all__ = [
 CATALOG_FILENAME = "object_catalog.sqlite"
 
 #: Read-model schema version; a mismatch forces a rebuild.
-CATALOG_SCHEMA = "qphase.catalog/3"
+CATALOG_SCHEMA = "qphase.catalog/4"
 
 _NAMESPACE_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
 
@@ -196,6 +196,7 @@ CREATE TABLE executions (
 CREATE TABLE sessions (
     id TEXT PRIMARY KEY,
     workflow_id TEXT,
+    workflow_revision_id TEXT,
     status TEXT NOT NULL,
     start_time TEXT,
     path TEXT NOT NULL,
@@ -223,7 +224,17 @@ CREATE TABLE occurrences (
     job_name TEXT NOT NULL,
     path TEXT NOT NULL,
     retention TEXT,
-    effective_retention TEXT
+    effective_retention TEXT,
+    engine TEXT,
+    model TEXT
+);
+CREATE TABLE job_plugins (
+    job_id TEXT NOT NULL,
+    plugin TEXT NOT NULL
+);
+CREATE TABLE artifact_quantities (
+    artifact_id TEXT NOT NULL,
+    quantity TEXT NOT NULL
 );
 CREATE TABLE location_issues (
     path TEXT NOT NULL,
@@ -246,6 +257,9 @@ CREATE INDEX idx_occurrences_artifact ON occurrences (artifact_id);
 CREATE INDEX idx_occurrences_session ON occurrences (session_id);
 CREATE INDEX idx_workflows_workflow_id ON workflows (workflow_id);
 CREATE INDEX idx_jobs_revision ON jobs (workflow_revision_id);
+CREATE INDEX idx_sessions_revision ON sessions (workflow_revision_id);
+CREATE INDEX idx_job_plugins_plugin ON job_plugins (plugin);
+CREATE INDEX idx_artifact_quantities_quantity ON artifact_quantities (quantity);
 """
 
 #: Facet columns queries may filter on, per object kind.
@@ -290,6 +304,8 @@ _FACETS: dict[str, tuple[str, ...]] = {
         "job_name",
         "retention",
         "effective_retention",
+        "engine",
+        "model",
     ),
 }
 
@@ -337,6 +353,12 @@ class CatalogQuery:
 
     Tag predicates match canonical tags; ``effective=False`` restricts the
     match to tags assigned directly on the object (not inherited).
+
+    Facet shortcuts: ``plugin`` (job objects, matches any declared plugin),
+    ``quantity`` (artifact objects, matches any produced quantity) and
+    ``model``/``engine``/``has_model`` (session objects, resolved through
+    the jobs of the session's workflow revision). Using one of them with
+    any other object kind raises ``ValueError``.
     """
 
     object_kind: str
@@ -349,6 +371,11 @@ class CatalogQuery:
     tag_namespace: str | None = None
     lifecycle: str | None = None
     retention: str | None = None
+    plugin: str | None = None
+    quantity: str | None = None
+    model: str | None = None
+    engine: str | None = None
+    has_model: bool = False
     effective: bool = True
     limit: int = 100
     offset: int = 0
@@ -361,6 +388,14 @@ class CatalogQuery:
             raise ValueError(f"offset must be non-negative, got {self.offset}")
         if not 1 <= self.limit <= 10000:
             raise ValueError(f"limit must be within 1..10000, got {self.limit}")
+        if self.plugin is not None and self.object_kind != "job":
+            raise ValueError("the plugin filter only applies to job objects")
+        if self.quantity is not None and self.object_kind != "artifact":
+            raise ValueError("the quantity filter only applies to artifact objects")
+        if (
+            self.model is not None or self.engine is not None or self.has_model
+        ) and self.object_kind != "session":
+            raise ValueError("model/engine filters only apply to session objects")
         object.__setattr__(self, "tags_all", _canonical_tags(self.tags_all))
         object.__setattr__(self, "tags_any", _canonical_tags(self.tags_any))
         object.__setattr__(self, "tags_without", _canonical_tags(self.tags_without))
@@ -479,7 +514,7 @@ class ProjectObjectCatalog:
                         scan["executions"],
                     )
                     connection.executemany(
-                        "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         scan["sessions"],
                     )
                     connection.executemany(
@@ -487,8 +522,16 @@ class ProjectObjectCatalog:
                         scan["artifacts"],
                     )
                     connection.executemany(
-                        "INSERT INTO occurrences VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO occurrences VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         scan["occurrences"],
+                    )
+                    connection.executemany(
+                        "INSERT INTO job_plugins VALUES (?, ?)",
+                        scan["job_plugins"],
+                    )
+                    connection.executemany(
+                        "INSERT INTO artifact_quantities VALUES (?, ?)",
+                        scan["artifact_quantities"],
                     )
                     connection.executemany(
                         "INSERT INTO effective_tags VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -568,6 +611,38 @@ class ProjectObjectCatalog:
             self._require_column(query, column)
             where.append(f"o.{column} = ?")
             params.append(query.retention)
+        if query.plugin is not None:
+            where.append(
+                "EXISTS (SELECT 1 FROM job_plugins jp"
+                " WHERE jp.job_id = o.id AND jp.plugin = ?)"
+            )
+            params.append(query.plugin)
+        if query.quantity is not None:
+            where.append(
+                "EXISTS (SELECT 1 FROM artifact_quantities aq"
+                " WHERE aq.artifact_id = o.id AND aq.quantity = ?)"
+            )
+            params.append(query.quantity)
+        if query.model is not None:
+            where.append(
+                "EXISTS (SELECT 1 FROM jobs j"
+                " WHERE j.workflow_revision_id = o.workflow_revision_id"
+                " AND j.model = ?)"
+            )
+            params.append(query.model)
+        if query.engine is not None:
+            where.append(
+                "EXISTS (SELECT 1 FROM jobs j"
+                " WHERE j.workflow_revision_id = o.workflow_revision_id"
+                " AND j.engine = ?)"
+            )
+            params.append(query.engine)
+        if query.has_model:
+            where.append(
+                "EXISTS (SELECT 1 FROM jobs j"
+                " WHERE j.workflow_revision_id = o.workflow_revision_id"
+                " AND j.model IS NOT NULL)"
+            )
         self._tag_predicates(query, where, params)
         sort_column, tiebreaker = _SORT[query.object_kind]
         sql = f"SELECT o.* FROM {table} o "  # built from whitelisted names
@@ -1113,6 +1188,8 @@ class _Scanner:
             "occurrences": [],
             "effective_tags": [],
             "location_issues": [],
+            "job_plugins": [],
+            "artifact_quantities": [],
         }
 
     def collect(self) -> dict[str, list[tuple[Any, ...]]]:
@@ -1138,6 +1215,9 @@ class _Scanner:
                 )
             )
             self.rows["jobs"].extend(entry.job_rows)
+            for job_row in entry.job_rows:
+                for plugin in json.loads(job_row[6]):
+                    self.rows["job_plugins"].append((job_row[0], plugin))
         return self.rows
 
     def _tags(self, object_kind: str, object_id: str, tags: list[EffectiveTag]) -> None:
@@ -1465,9 +1545,10 @@ class _Scanner:
             for tag in manifest.get("submission_tags", [])
         ]
         snapshot = self._snapshot_truth(session_dir)
+        revision_id: str | None = None
         if snapshot.workflow_payload is not None:
             session_path = session_dir.relative_to(self.project.session_root).as_posix()
-            self._register_revision(
+            revision_id = self._register_revision(
                 snapshot.workflow_payload,
                 source=f"session:{session_path}",
                 relative_path=None,
@@ -1478,6 +1559,7 @@ class _Scanner:
             (
                 session_id,
                 manifest.get("workflow_id"),
+                revision_id,
                 str(manifest.get("status", "unknown")),
                 manifest.get("start_time"),
                 session_dir.relative_to(self.project.session_root).as_posix(),
@@ -1702,6 +1784,8 @@ class _Scanner:
                     document.retention if document is not None else None,
                 )
             )
+            for quantity in quantities:
+                self.rows["artifact_quantities"].append((artifact_id, quantity))
             self._tags(
                 "artifact",
                 artifact_id,
@@ -1731,6 +1815,15 @@ class _Scanner:
             if occurrence_annotation is not None
             else None
         )
+        # The producing job's engine/model come from the session's frozen
+        # workflow snapshot, not from the live workflow file.
+        engine: str | None = None
+        model: str | None = None
+        if snapshot.workflow_payload is not None:
+            for job in snapshot.workflow_payload.get("jobs", []):
+                if isinstance(job, Mapping) and str(job.get("name")) == job_name:
+                    engine, model, _plugins = _job_facets(job)
+                    break
         self.rows["occurrences"].append(
             (
                 occurrence.object_id,
@@ -1740,6 +1833,8 @@ class _Scanner:
                 relative_path,
                 own_retention,
                 own_retention or session_retention,
+                engine,
+                model,
             )
         )
         occurrence_chain: list[TagLevel] = [

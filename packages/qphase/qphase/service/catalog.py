@@ -68,6 +68,7 @@ from .models import (
     DuplicateArtifact,
     EffectiveTagInfo,
     IdSeparatorViolation,
+    InvalidAnnotation,
     InvalidSnapshotTag,
     LegacyMetadataImport,
     MigrationReport,
@@ -280,12 +281,12 @@ class CatalogService:
         bare-artifact occurrence keys, lists duplicate artifact identities,
         lists existing job names and artifact ids containing the reserved
         ``:`` separator, counts annotation assignments frozen without policy
-        provenance,
-        rebuilds the catalog into a temporary database outside the project
-        to check reindex parity, summarizes the user's private store, and
-        collects the per-kind object totals and location issues the Phase 4
-        action manifest needs. Never reindexes the project's own catalog and
-        never writes into the project directory.
+        provenance, rebuilds the catalog into a temporary database outside
+        the project to check reindex parity (which also surfaces the
+        annotation documents it could not load), summarizes the user's
+        private store, and collects the per-kind object totals and location
+        issues the Phase 4 action manifest needs. Never reindexes the
+        project's own catalog and never writes into the project directory.
         """
         policy = load_tag_policy(self.project)
         report = MigrationReport()
@@ -499,6 +500,11 @@ class CatalogService:
             for issue in issues:
                 by_kind[issue["kind"]] = by_kind.get(issue["kind"], 0) + 1
             report.location_issues_by_kind = by_kind
+            report.invalid_annotations = [
+                InvalidAnnotation(path=issue["path"], error=issue["message"])
+                for issue in issues
+                if issue["kind"] == "annotation"
+            ]
             report.duplicate_artifacts = _duplicate_artifacts(rebuilt.path, issues)
             current = self.catalog.path
             if not current.exists():
@@ -560,9 +566,9 @@ class CatalogService:
     def virtual_folder(self, name: str) -> list[CatalogObject]:
         """Return the session objects of one built-in virtual folder."""
         if name == "by-model":
-            return self.query(
-                CatalogQuery(object_kind="session", tag_namespace="model")
-            )
+            # Sessions whose workflow revision declares any model plugin;
+            # filter by a concrete model with the ``model`` query filter.
+            return self.query(CatalogQuery(object_kind="session", has_model=True))
         if name == "paper-evidence":
             return self.query(
                 CatalogQuery(object_kind="session", retention="evidence")
@@ -1063,6 +1069,8 @@ _PARITY_TABLES = (
     "occurrences",
     "effective_tags",
     "location_issues",
+    "job_plugins",
+    "artifact_quantities",
 )
 
 

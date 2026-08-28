@@ -425,6 +425,13 @@ class IdSeparatorViolation(ServiceModel):
     path: str
 
 
+class InvalidAnnotation(ServiceModel):
+    """One annotation document a catalog rebuild could not load."""
+
+    path: str
+    error: str
+
+
 class MigrationReport(ServiceModel):
     """Pure-read preview of the Phase 4 history migration."""
 
@@ -448,6 +455,10 @@ class MigrationReport(ServiceModel):
     id_separator_violations: list[IdSeparatorViolation] = Field(
         default_factory=list
     )
+    #: Annotation documents the throwaway rebuild could not load (corrupt
+    #: JSON or foreign identity), taken from its ``annotation`` location
+    #: issues without a second scan.
+    invalid_annotations: list[InvalidAnnotation] = Field(default_factory=list)
     #: Annotation assignments lacking policy provenance, per object scope
     #: (only scopes with at least one such assignment are present).
     assignments_without_policy_revision: dict[str, int] = Field(default_factory=dict)

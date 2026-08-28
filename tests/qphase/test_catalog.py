@@ -93,6 +93,7 @@ def _session(
     snapshot_tags: tuple[str, ...] = (),
     job_tags: dict[str, tuple[str, ...]] | None = None,
     artifacts: tuple[tuple[str, str], ...] = (),
+    artifact_quantities: dict[str, tuple[str, ...]] | None = None,
     annotations: dict | None = None,
     start_time: str = "2026-08-26T10:00:00+08:00",
     frozen: dict | None = None,
@@ -138,7 +139,12 @@ def _session(
         job_dir = root / job_name
         job_dir.mkdir()
         (job_dir / "artifact_manifest.json").write_text(
-            json.dumps(_v4_artifact_manifest(artifact_id)),
+            json.dumps(
+                _v4_artifact_manifest(
+                    artifact_id,
+                    quantities=(artifact_quantities or {}).get(artifact_id, ()),
+                )
+            ),
             encoding="utf-8",
         )
     if annotations is not None:
@@ -1244,3 +1250,90 @@ def test_effective_tags_for_objects_matches_per_object_reads(tmp_path):
     assert catalog.effective_tags_for_objects("session", []) == {}
     with pytest.raises(ValueError, match="unknown catalog object kind"):
         catalog.effective_tags_for_objects("bogus", ["x"])
+
+
+
+def test_derived_facets_and_kind_specific_filters(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    root = _session(
+        project,
+        "session-1",
+        artifacts=(("sim", "art-1"),),
+        artifact_quantities={"art-1": ("position",)},
+    )
+    snapshot = {
+        "schema": "qphase.workflow/2",
+        "id": "example",
+        "title": "Example",
+        "jobs": [
+            {
+                "name": "sim",
+                "engine": {"dummy": {}},
+                "plugins": {"model": {"vdp": {}}, "backend": {"cpu": {}}},
+            }
+        ],
+    }
+    (root / "workflow_snapshot.yaml").write_text(
+        json.dumps(snapshot), encoding="utf-8"
+    )
+    _session(project, "session-2", artifacts=(("sim", "art-2"),))
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    # The session links its workflow revision; the occurrence derives the
+    # producing job's engine/model from the frozen snapshot.
+    sessions = {
+        row["id"]: row for row in catalog.query(CatalogQuery(object_kind="session"))
+    }
+    (workflow,) = [
+        row
+        for row in catalog.query(CatalogQuery(object_kind="workflow"))
+        if row["id"] == sessions["session-1"]["workflow_revision_id"]
+    ]
+    # session-2 froze a different revision of the same workflow (no model
+    # plugin), so its occurrence derives the engine but no model.
+    assert sessions["session-2"]["workflow_revision_id"] is not None
+    assert (
+        sessions["session-2"]["workflow_revision_id"]
+        != sessions["session-1"]["workflow_revision_id"]
+    )
+    occurrences = {
+        row["id"]: row
+        for row in catalog.query(CatalogQuery(object_kind="occurrence"))
+    }
+    assert occurrences["art-1:session-1:sim"]["engine"] == "dummy"
+    assert occurrences["art-1:session-1:sim"]["model"] == "vdp"
+    assert occurrences["art-2:session-2:sim"]["engine"] == "dummy"
+    assert occurrences["art-2:session-2:sim"]["model"] is None
+
+    # Job plugin and artifact quantity filter through the new side tables.
+    revision_id = workflow["id"]
+    rows = catalog.query(CatalogQuery(object_kind="job", plugin="model:vdp"))
+    assert [row["id"] for row in rows] == [f"{revision_id}:sim"]
+    assert catalog.query(CatalogQuery(object_kind="job", plugin="model:other")) == []
+    rows = catalog.query(CatalogQuery(object_kind="artifact", quantity="position"))
+    assert [row["id"] for row in rows] == ["art-1"]
+    assert catalog.query(
+        CatalogQuery(object_kind="artifact", quantity="momentum")
+    ) == []
+
+    # Session model/engine filters resolve through the revision's jobs.
+    rows = catalog.query(CatalogQuery(object_kind="session", model="vdp"))
+    assert [row["id"] for row in rows] == ["session-1"]
+    # Both revisions declare the dummy engine; only session-1 has a model.
+    rows = catalog.query(CatalogQuery(object_kind="session", engine="dummy"))
+    assert [row["id"] for row in rows] == ["session-1", "session-2"]
+    rows = catalog.query(CatalogQuery(object_kind="session", has_model=True))
+    assert [row["id"] for row in rows] == ["session-1"]
+    assert catalog.query(CatalogQuery(object_kind="session", model="other")) == []
+
+    # Kind-specific filters reject the wrong object kind.
+    with pytest.raises(ValueError, match="plugin filter"):
+        CatalogQuery(object_kind="session", plugin="model:vdp")
+    with pytest.raises(ValueError, match="quantity filter"):
+        CatalogQuery(object_kind="session", quantity="position")
+    with pytest.raises(ValueError, match="model/engine filters"):
+        CatalogQuery(object_kind="artifact", model="vdp")
+    with pytest.raises(ValueError, match="model/engine filters"):
+        CatalogQuery(object_kind="job", has_model=True)

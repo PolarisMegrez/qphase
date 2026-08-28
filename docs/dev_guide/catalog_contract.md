@@ -21,6 +21,10 @@ contracts themselves require a schema or read-model version bump.
   `job_name:artifact_id`, so two occurrences of one artifact in a session
   never collide. Legacy bare-artifact keys are migration input, flagged by
   `qphase project migrate --dry-run`.
+- `:` is the reserved identity separator: `JobConfig.name` and the manifest
+  `artifact_id` reject it at validation time. Existing job names or artifact
+  ids containing it are migration input, listed by
+  `qphase project migrate --dry-run`.
 - **Workflow revision** identity is `workflow_id@revision` where `revision`
   is a content hash of the workflow document; **job** identity extends it to
   `workflow_id@revision:job_name`. Revisions are rebuilt deterministically
@@ -37,19 +41,33 @@ contracts themselves require a schema or read-model version bump.
   the workflow file or the policy never rewrite a past session's provenance.
 - Submission tags are frozen on the execution record together with
   `tag_policy_revision`; they are mutable only while the execution is queued.
-- Every annotation `TagAssignment` freezes `policy_revision` at write time.
-  Assignments are immutable: editing a tag removes one assignment and adds a
-  new one, so an effective tag can always cite a stable `assignment_id`.
+- Every annotation `TagAssignment` freezes `policy_revision` **and the
+  minimal namespace rule** (`inherit`/`cardinality`/`objects`) at write time.
+  Effective-tag resolution prefers the frozen rule; assignments without one
+  (legacy documents, rule-less namespaces, private tags) fall back to the
+  policy current at read time. Assignments are immutable: editing a tag
+  removes one assignment and adds a new one, so an effective tag can always
+  cite a stable `assignment_id`.
 - Declared tags have no annotation document; their assignment ids are derived
-  deterministically (`sha256` over the declaration identity).
+  deterministically (`sha256` over the declaration identity, including the
+  workflow revision computed by the shared
+  `qphase.core.workflow.workflow_revision`). A workflow edit therefore yields
+  fresh assignment ids instead of colliding with the previous revision's;
+  historical sidecar ids are trusted as-is.
 
 ## The Catalog Is a Rebuildable Read Model
 
 - The catalog (`<project>/.qphase/object_catalog.sqlite`, read-model schema
-  `qphase.catalog/3`) is a pure function of disk truth: manifests, snapshots,
+  `qphase.catalog/4`) is a pure function of disk truth: manifests, snapshots,
   execution records, workflow files, the tag policy and the annotation
   documents. It may be deleted at any time and rebuilt with
   `qphase project reindex`.
+- Derived facet tables keep common filters in SQL: the `job_plugins` and
+  `artifact_quantities` side tables, `sessions.workflow_revision_id`, and
+  per-occurrence `engine`/`model` taken from the session's frozen workflow
+  snapshot. `CatalogQuery` exposes them as kind-checked filters (`plugin`,
+  `quantity`, `model`/`engine`/`has_model`); a filter used with the wrong
+  object kind raises `ValueError`.
 - Reads probe a cheap fingerprint (project root; manifest/record counts and
   newest mtimes; annotation document counts and newest mtime; workflow file
   count and mtime; tag policy mtime); a mismatch triggers one rebuild before

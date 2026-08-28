@@ -153,6 +153,12 @@ def migrate(
         typer.echo(
             f"  {entry.session_id}  {entry.source} tag {entry.tag!r}: {entry.error}"
         )
+    annotations = report.invalid_annotations
+    typer.echo(f"Invalid annotation documents ({len(annotations)}):")
+    for annotation in annotations[:_MIGRATE_LIST_LIMIT]:
+        typer.echo(f"  {annotation.path}: {annotation.error}")
+    if len(annotations) > _MIGRATE_LIST_LIMIT:
+        typer.echo(f"  ... and {len(annotations) - _MIGRATE_LIST_LIMIT} more")
     typer.echo(
         f"Rebuildable: {report.rebuildable_workflow_revisions} workflow revisions, "
         f"{report.rebuildable_jobs} jobs"

@@ -293,16 +293,31 @@ def test_saved_views_roundtrip(tmp_path):
 
 def test_virtual_folders(tmp_path):
     project = ProjectContext.create(tmp_path / "project")
-    _session(project, "s-model")
+    model_root = _session(project, "s-model")
     _session(project, "s-evidence")
     _session(project, "s-pinned")
     _session(project, "s-diag")
     _session(project, "s-superseded")
     _session(project, "s-archived")
     _session(project, "s-plain")
+    # by-model follows the workflow revision's model plugin, not tags.
+    snapshot = {
+        "schema": "qphase.workflow/2",
+        "id": "example",
+        "title": "Example",
+        "jobs": [
+            {
+                "name": "sim",
+                "engine": {"dummy": {}},
+                "plugins": {"model": {"cam": {}}},
+            }
+        ],
+    }
+    (model_root / "workflow_snapshot.yaml").write_text(
+        json.dumps(snapshot), encoding="utf-8"
+    )
     service = CatalogService(project, home=tmp_path / "home")
 
-    service.tag_session("s-model", add=["model:cam"])
     service.set_session_retention("s-evidence", "evidence")
     service.set_session_retention("s-pinned", "pinned")
     service.tag_session("s-diag", add=["task:diagnostics"])
@@ -318,6 +333,9 @@ def test_virtual_folders(tmp_path):
         "cold-storage": 1,
     }
     assert [row.id for row in service.virtual_folder("by-model")] == ["s-model"]
+    # A concrete model resolves through the ``model`` query filter.
+    rows = service.query(CatalogQuery(object_kind="session", model="cam"))
+    assert [row.id for row in rows] == ["s-model"]
     assert [row.id for row in service.virtual_folder("paper-evidence")] == [
         "s-evidence",
         "s-pinned",
@@ -1044,3 +1062,18 @@ def test_private_query_paginates_candidates_in_batches(tmp_path, monkeypatch):
         )
     )
     assert [row.id for row in rows] == ["session-4"]
+
+
+
+def test_migration_dry_run_lists_invalid_annotations(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(project, "session-1")
+    (root / "session_annotations.json").write_text("{not json", encoding="utf-8")
+    service = CatalogService(project, home=tmp_path / "home")
+
+    report = service.migration_dry_run()
+
+    assert [item.path for item in report.invalid_annotations] == [
+        "2026/08/session-1/session_annotations.json"
+    ]
+    assert "invalid annotation document" in report.invalid_annotations[0].error

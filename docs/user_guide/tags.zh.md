@@ -27,6 +27,9 @@ Artifact 是 identity,Occurrence 是这个 identity 被产出的一处位置。�
 Artifact 可以出现在多个 Session 中——Artifact 上的 annotation 跟随
 identity,Occurrence 上的 annotation 只属于该产出上下文。
 
+由于 `:` 用于拼接上述 identity,job 名与 artifact id 绝不能包含它;新写入
+会在校验时直接拒绝,既有数据由 `qphase project migrate --dry-run` 标出。
+
 ## Tag 语法与 Namespace
 
 Tag 形如 `namespace:value` 或 `namespace:path/to/value`，全部小写。
@@ -72,8 +75,11 @@ retention_inherits_to_occurrences: true
 
 没有 policy 文件时没有任何治理：tag 只做语法规范化。Policy 有一个基于内容
 hash 的 **revision**；每个 tag assignment 都会冻结验证它时的 revision，因此
-之后修改 policy 不会改写历史 provenance。用 `qphase tag policy show` 查看
-policy，用 `qphase tag policy validate` 校验。
+之后修改 policy 不会改写历史 provenance。每个 assignment 还会冻结治理它的
+最小 namespace 规则(`inherit`、`cardinality`、`objects`):历史 assignment
+的 effective tag 解析按写入时的规则进行;在规则冻结之前写入的 assignment
+（或没有治理规则的，例如私有 tag）则回退到读取时的当前 policy。用
+`qphase tag policy show` 查看 policy，用 `qphase tag policy validate` 校验。
 
 ## 四种 Tag Scope
 
@@ -97,7 +103,9 @@ Tag 从四个 scope 进入系统，按由远到近排列：
 
 Tag 沿层级向下传递：project → workflow revision → job，以及
 workflow/execution → session → artifact occurrence。标记为
-`inherit: false` 的 namespace 只留在声明它的对象上。
+`inherit: false` 的 namespace 只留在声明它的对象上。一条历史 assignment
+是否继承、是否 shadow，由冻结在它上面的 namespace 规则决定（见 *Tag
+Policy*)，绝不会因之后的 policy 修改而被重新裁决。
 
 在同一对象上，`cardinality: one` 的 namespace 中更近的 scope 胜出：session
 annotation 会 shadow 同 namespace 的 workflow declared 取值，私有 tag 则
@@ -145,6 +153,11 @@ qphase session list --tag task:scan --tag-without task:wip \
   均可留空）。
 - `--direct` 忽略继承来的 tag，只匹配直接 assignment。
 
+在 API 层(`CatalogQuery`）还有按对象种类划分的 facet 快捷过滤：job 的
+`plugin`（命中任一声明的 plugin)、artifact 的 `quantity`（命中任一产出
+quantity)，以及 session 的 `model`/`engine`/`has_model`（经由该 session
+workflow revision 的 job 解析）。用在错误的对象种类上会抛出 `ValueError`。
+
 各对象命令组：
 
 ```bash
@@ -173,8 +186,9 @@ qphase tag promote <kind> <object-id> <tag>
 ## 虚拟目录与 Saved View
 
 内建虚拟目录按语义分组 session:`by-model`、`paper-evidence`、
-`diagnostics`、`superseded`、`cold-storage`。Saved view 是用户私有的命名
-过滤器：
+`diagnostics`、`superseded`、`cold-storage`。`by-model` 列出 workflow
+revision 声明了任意 model plugin 的 session；要筛选某个具体 model，改用
+`model` 查询过滤器。Saved view 是用户私有的命名过滤器：
 
 ```bash
 qphase view save review --kind session --tag task:scan --lifecycle active
@@ -202,5 +216,6 @@ qphase project migrate --dry-run
 
 报告覆盖：legacy alias/note 导入、非法 snapshot tag、可重建的 workflow
 revision 与 job 数、旧式 occurrence 键转换（可转换 vs 有歧义）、重复
-artifact identity、缺少 policy provenance 的 annotation assignment、catalog
-reindex 一致性、私有库摘要，以及迁移所需的各类对象计数。
+artifact identity、包含保留分隔符 `:` 的既有 job 名与 artifact id、无法
+加载的 annotation 文档、缺少 policy provenance 的 annotation assignment、
+catalog reindex 一致性、私有库摘要，以及迁移所需的各类对象计数。

@@ -20,6 +20,9 @@ description: Catalog、identity 与 annotation 开发契约
   `job_name:artifact_id`，因此同一 session 中同一 artifact 的两个
   occurrence 永不碰撞。旧式的裸 artifact 键属于迁移输入，由
   `qphase project migrate --dry-run` 标出。
+- `:` 是保留的 identity 分隔符:`JobConfig.name` 与 manifest 的
+  `artifact_id` 在校验时直接拒绝它。既有的含 `:` 的 job 名或 artifact
+  id 属于迁移输入，由 `qphase project migrate --dry-run` 列出。
 - **Workflow revision** 的 identity 是 `workflow_id@revision`，其中
   `revision` 是 workflow 文档的内容 hash;**job** 的 identity 扩展为
   `workflow_id@revision:job_name`。revision 由 `configs/workflows` 文件、
@@ -36,18 +39,30 @@ description: Catalog、identity 与 annotation 开发契约
   session 的 provenance。
 - Submission tag 连同 `tag_policy_revision` 冻结在 execution 记录上；只有
   execution 仍在排队时才可修改。
-- 每个 annotation `TagAssignment` 在写入时冻结 `policy_revision`。
-  Assignment 不可变：编辑一个 tag 是删除旧 assignment 并新增一个，因此任何
-  effective tag 都能引用稳定的 `assignment_id`。
+- 每个 annotation `TagAssignment` 在写入时冻结 `policy_revision` **以及最小
+  namespace 规则**(`inherit`/`cardinality`/`objects`)。Effective tag 解析
+  优先使用冻结的规则；没有冻结规则的 assignment（旧文档、无治理规则的
+  namespace、私有 tag）回退到读取时的当前 policy。Assignment 不可变：编辑
+  一个 tag 是删除旧 assignment 并新增一个，因此任何 effective tag 都能引用
+  稳定的 `assignment_id`。
 - Declared tag 没有 annotation 文档；其 assignment id 由声明的 identity 经
-  `sha256` 确定性导出。
+  `sha256` 确定性导出，其中包含由共享的
+  `qphase.core.workflow.workflow_revision` 计算的 workflow revision。因此
+  修改 workflow 会得到全新的 assignment id，而不会与上一 revision 的 id
+  碰撞；历史 sidecar 中的旧 id 按原样信任。
 
 ## Catalog 是可重建的 Read Model
 
 - Catalog(`<project>/.qphase/object_catalog.sqlite`,read-model schema
-  `qphase.catalog/3`）是磁盘真值的纯函数：manifest、snapshot、execution
+  `qphase.catalog/4`）是磁盘真值的纯函数：manifest、snapshot、execution
   记录、workflow 文件、tag policy 和 annotation 文档。任何时候都可以删除并
   用 `qphase project reindex` 重建。
+- 派生 facet 表让常用过滤留在 SQL 层:`job_plugins` 与
+  `artifact_quantities` 侧表、`sessions.workflow_revision_id`，以及取自
+  session 冻结 workflow snapshot 的 per-occurrence `engine`/`model`。
+  `CatalogQuery` 把它们暴露为按对象种类校验的过滤器（`plugin`、
+  `quantity`、`model`/`engine`/`has_model`)；用在错误的对象种类上会抛出
+  `ValueError`。
 - 读取前用轻量 fingerprint（项目根目录；manifest/记录计数与最新 mtime;
   annotation 文档计数与最新 mtime;workflow 文件计数与 mtime;tag policy
   mtime）探测；不匹配则先重建再服务。运行中 job 的状态翻转因此会在*下一次*

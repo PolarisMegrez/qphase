@@ -29,6 +29,10 @@ produced. The same artifact may occur in several sessions — annotations on the
 artifact follow the identity, annotations on an occurrence stay local to that
 producing context.
 
+Because `:` joins these identity shapes, job names and artifact ids must
+never contain it; new writes are rejected at validation time and existing
+data is flagged by `qphase project migrate --dry-run`.
+
 ## Tag Syntax and Namespaces
 
 A tag has the form `namespace:value` or `namespace:path/to/value`, all
@@ -77,7 +81,12 @@ Per-namespace rules:
 Without a policy file there is no governance: tags are only
 syntax-canonicalized. The policy has a content-hash **revision**; every
 tag assignment freezes the revision that validated it, so historical
-provenance survives later policy edits. Inspect the policy with
+provenance survives later policy edits. Each assignment also freezes the
+minimal namespace rule that governs it (`inherit`, `cardinality`,
+`objects`): effective-tag resolution of a historical assignment follows the
+rule as it was at write time, while assignments written before rule
+freezing (or without a governing rule, such as private tags) fall back to
+the current policy. Inspect the policy with
 `qphase tag policy show` and check it with `qphase tag policy validate`.
 
 ## The Four Tag Scopes
@@ -104,7 +113,9 @@ Tags enter the system through four scopes, listed from farthest to nearest:
 
 Tags flow down the hierarchy: project → workflow revision → job, and
 workflow/execution → session → artifact occurrence. Namespaces marked
-`inherit: false` stay on the object where they were declared.
+`inherit: false` stay on the object where they were declared. Whether one
+historical assignment inherits or shadows is decided by the namespace rule
+frozen on it (see *Tag Policy*), never re-decided by a later policy edit.
 
 Within one object, nearer scopes win in `cardinality: one` namespaces: a
 session annotation shadows the workflow-declared value of the same namespace,
@@ -154,6 +165,13 @@ qphase session list --tag task:scan --tag-without task:wip \
   (either bound may be empty).
 - `--direct` ignores inherited tags and matches only direct assignments.
 
+At the API level (`CatalogQuery`), kind-specific facet shortcuts complement
+the shared filters: `plugin` for jobs (matches any declared plugin),
+`quantity` for artifacts (matches any produced quantity), and
+`model`/`engine`/`has_model` for sessions, resolved through the jobs of the
+session's workflow revision. Each rejects the wrong object kind with a
+`ValueError`.
+
 The object groups:
 
 ```bash
@@ -182,8 +200,10 @@ qphase tag promote <kind> <object-id> <tag>
 ## Virtual Folders and Saved Views
 
 Built-in virtual folders group sessions by meaning: `by-model`,
-`paper-evidence`, `diagnostics`, `superseded`, `cold-storage`. Saved views are
-user-private named filters:
+`paper-evidence`, `diagnostics`, `superseded`, `cold-storage`. `by-model`
+lists sessions whose workflow revision declares any model plugin; to narrow
+down to one concrete model, use the `model` query filter instead. Saved
+views are user-private named filters:
 
 ```bash
 qphase view save review --kind session --tag task:scan --lifecycle active
@@ -213,6 +233,8 @@ qphase project migrate --dry-run
 
 The report covers legacy alias/note imports, invalid snapshot tags,
 rebuildable workflow revisions and jobs, legacy occurrence-key conversion
-(convertible vs. ambiguous), duplicate artifact identities, annotation
-assignments missing policy provenance, catalog reindex parity, a private-store
-summary, and the per-kind object counts the migration will act on.
+(convertible vs. ambiguous), duplicate artifact identities, existing job
+names and artifact ids containing the reserved `:` separator, invalid
+annotation documents, annotation assignments missing policy provenance,
+catalog reindex parity, a private-store summary, and the per-kind object
+counts the migration will act on.
