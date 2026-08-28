@@ -92,7 +92,6 @@ probe.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -115,13 +114,13 @@ from .annotations import (
     SessionAnnotationDocument,
     TagAssignment,
 )
-from .config import WorkflowSpec
 from .errors import QPhaseConfigError
 from .locking import file_lock
 from .persistence import ProjectStateStore
 from .project import ProjectContext
 from .tags import (
     TAG_POLICY_FILENAME,
+    FrozenNamespaceRule,
     ObjectKind,
     TagPolicy,
     canonicalize_tag_syntax,
@@ -129,8 +128,8 @@ from .tags import (
     load_tag_policy,
     workflow_tag_assignment_id,
 )
-from .utils import canonical_json, load_yaml
-from .workflow import WorkflowCatalog, load_workflow
+from .utils import load_yaml
+from .workflow import WorkflowCatalog, load_workflow, workflow_revision
 
 __all__ = [
     "CATALOG_FILENAME",
@@ -848,9 +847,16 @@ def _catalog_lock(path: Path) -> threading.RLock:
         return _CATALOG_LOCKS.setdefault(path, threading.RLock())
 
 
-#: One tag level in the inheritance chain: (tag, assignment_id, policy_revision)
-#: triples per assignment.
-TagLevel = tuple[str, list[tuple[str, str | None, str | None]], bool]
+#: One tag level in the inheritance chain: (tag, assignment_id,
+#: policy_revision, frozen_rule) quadruples per assignment.
+TagLevel = tuple[
+    str,
+    list[tuple[str, str | None, str | None, FrozenNamespaceRule | None]],
+    bool,
+]
+
+#: Declared-tag pairs as read from snapshots: (tag, assignment_id, frozen_rule).
+DeclaredPairs = list[tuple[str, str | None, FrozenNamespaceRule | None]]
 
 
 def compute_effective_tags(
@@ -861,26 +867,40 @@ def compute_effective_tags(
     """Merge far-to-near tag levels into effective tags with provenance.
 
     ``levels`` is an ordered list of ``(source, [(tag, assignment_id,
-    policy_revision)], is_self)`` triples. Each assignment carries the revision
-    of the policy that validated it (frozen at compile or write time);
-    ``None`` marks assignments that predate provenance tracking. Tags from
-    levels other than the object's own are marked inherited and skipped when
-    their namespace disables inheritance or when the policy declares the
-    namespace inapplicable to ``target_kind``; cardinality-one namespaces
-    shadow all farther assignments. The object's own level is never filtered:
-    it was validated at write time.
+    policy_revision, frozen_rule)], is_self)`` triples. Each assignment
+    carries the revision of the policy that validated it (frozen at compile
+    or write time) plus the minimal namespace rule frozen alongside it;
+    ``None`` marks assignments that predate provenance/rule tracking, which
+    fall back to the policy current at read time. Tags from levels other
+    than the object's own are marked inherited and skipped when their
+    namespace disables inheritance or does not apply to ``target_kind``;
+    cardinality-one namespaces shadow all farther assignments. The object's
+    own level is never filtered: it was validated at write time.
     """
     effective: list[EffectiveTag] = []
     for source, items, is_self in levels:
-        for tag, assignment_id, policy_revision in items:
+        for tag, assignment_id, policy_revision, frozen_rule in items:
             namespace = tag.split(":", 1)[0]
             rule = policy.namespaces.get(namespace) if policy is not None else None
+            inherit = (
+                frozen_rule.inherit
+                if frozen_rule is not None
+                else (rule.inherit if rule is not None else True)
+            )
+            cardinality = (
+                frozen_rule.cardinality
+                if frozen_rule is not None
+                else (rule.cardinality if rule is not None else "many")
+            )
             if not is_self:
-                if rule is not None and not rule.inherit:
+                if not inherit:
                     continue
-                if policy is not None and not policy.tag_applies_to(tag, target_kind):
+                if frozen_rule is not None:
+                    if frozen_rule.objects and target_kind not in frozen_rule.objects:
+                        continue
+                elif policy is not None and not policy.tag_applies_to(tag, target_kind):
                     continue
-            if rule is not None and rule.cardinality == "one":
+            if cardinality == "one":
                 for prior in effective:
                     if prior.tag.split(":", 1)[0] == namespace:
                         prior.shadowed = True
@@ -894,30 +914,6 @@ def compute_effective_tags(
                 )
             )
     return effective
-
-
-def _normalized_workflow(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Canonical workflow payload for revision identity.
-
-    The ``tag_snapshot`` sidecar key never participates in identity. Payloads
-    that fail strict ``qphase.workflow/2`` validation (legacy or partial
-    snapshots) hash as-is so they still get a stable revision.
-    """
-    body = {key: value for key, value in payload.items() if key != "tag_snapshot"}
-    try:
-        return WorkflowSpec.model_validate(body).model_dump(mode="json", by_alias=True)
-    except Exception:  # noqa: BLE001 - identity fallback for legacy payloads
-        return dict(body)
-
-
-def _workflow_revision(payload: Mapping[str, Any]) -> str:
-    """Content-hash revision of one workflow payload."""
-    normalized = _normalized_workflow(payload)
-    try:
-        canonical = canonical_json(normalized)
-    except (TypeError, ValueError):
-        canonical = repr(sorted(normalized.items()))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
 def _job_facets(
@@ -942,47 +938,85 @@ def _job_facets(
     return engine_name, model_name, plugin_names
 
 
-def _frozen_assignment_pairs(
-    raw_assignments: Any, tags: Any
-) -> list[tuple[str, str | None]]:
+def _frozen_assignment_pairs(raw_assignments: Any, tags: Any) -> DeclaredPairs:
     """Merge frozen assignment entries with their tag list.
 
     The ``assignments`` section of a frozen tag snapshot supplies the stable
-    ids; tags listed without an assignment entry (older snapshots) keep a
-    ``None`` assignment id.
+    ids and the frozen namespace rule; tags listed without an assignment
+    entry (older snapshots) keep a ``None`` assignment id and rule.
     """
-    pairs: list[tuple[str, str | None]] = []
+    pairs: DeclaredPairs = []
     seen: set[str] = set()
     if isinstance(raw_assignments, list):
         for item in raw_assignments:
             if isinstance(item, Mapping) and item.get("tag"):
                 tag = str(item["tag"])
                 assignment_id = item.get("assignment_id")
-                pairs.append((tag, str(assignment_id) if assignment_id else None))
+                pairs.append(
+                    (
+                        tag,
+                        str(assignment_id) if assignment_id else None,
+                        _parse_frozen_rule(item),
+                    )
+                )
                 seen.add(tag)
     if isinstance(tags, list):
         for raw_tag in tags:
             tag = str(raw_tag)
             if tag not in seen:
-                pairs.append((tag, None))
+                pairs.append((tag, None, None))
     return pairs
+
+
+def _parse_frozen_rule(item: Mapping[str, Any]) -> FrozenNamespaceRule | None:
+    """Parse the frozen namespace rule of one snapshot assignment entry."""
+    inherit = item.get("inherit")
+    if inherit is None:
+        return None
+    cardinality = item.get("cardinality")
+    objects = item.get("objects")
+    return FrozenNamespaceRule(
+        inherit=bool(inherit),
+        cardinality="one" if cardinality == "one" else "many",
+        objects=tuple(str(value) for value in objects) if objects else (),
+    )
 
 
 def _assignment_triples(
     assignments: Iterable[TagAssignment],
-) -> list[tuple[str, str | None, str | None]]:
-    """Flatten annotation assignments into ``(tag, id, policy_revision)``."""
+) -> list[tuple[str, str | None, str | None, FrozenNamespaceRule | None]]:
+    """Flatten annotation assignments into ``(tag, id, revision, rule)``."""
     return [
-        (assignment.tag, assignment.id, assignment.policy_revision)
+        (
+            assignment.tag,
+            assignment.id,
+            assignment.policy_revision,
+            _frozen_rule_of(assignment),
+        )
         for assignment in assignments
     ]
 
 
+def _frozen_rule_of(assignment: TagAssignment) -> FrozenNamespaceRule | None:
+    """Rebuild the namespace rule frozen on one annotation assignment."""
+    if assignment.inherit is None:
+        return None
+    return FrozenNamespaceRule(
+        inherit=assignment.inherit,
+        cardinality=assignment.cardinality or "many",
+        objects=tuple(assignment.objects or ()),
+    )
+
+
 def _declared_triples(
-    pairs: list[tuple[str, str | None]], policy_revision: str | None
-) -> list[tuple[str, str | None, str | None]]:
-    """Attach one frozen policy revision to ``(tag, assignment_id)`` pairs."""
-    return [(tag, assignment_id, policy_revision) for tag, assignment_id in pairs]
+    pairs: DeclaredPairs,
+    policy_revision: str | None,
+) -> list[tuple[str, str | None, str | None, FrozenNamespaceRule | None]]:
+    """Attach one frozen policy revision to ``(tag, assignment_id, rule)``."""
+    return [
+        (tag, assignment_id, policy_revision, rule)
+        for tag, assignment_id, rule in pairs
+    ]
 
 
 @dataclass
@@ -1006,8 +1040,8 @@ class _RevisionEntry:
 class _SessionSnapshot:
     """Declared-tag truth frozen in one session's snapshot files."""
 
-    workflow_tags: list[tuple[str, str | None]]
-    job_tags: dict[str, list[tuple[str, str | None]]]
+    workflow_tags: DeclaredPairs
+    job_tags: dict[str, DeclaredPairs]
     policy_revision: str | None
     workflow_payload: dict[str, Any] | None
 
@@ -1166,21 +1200,21 @@ class _Scanner:
         workflow_id = str(payload.get("id") or "")
         if not workflow_id:
             return None
-        revision = _workflow_revision(payload)
+        revision = workflow_revision(payload)
         entry = self._revisions.get(f"{workflow_id}@{revision}")
         if entry is not None:
             if source not in entry.sources:
                 entry.sources.append(source)
             return entry.revision_id
-        workflow_pairs: list[tuple[str, str | None]] = []
+        workflow_pairs: list[tuple[str, str | None, FrozenNamespaceRule | None]] = []
         for raw_tag in payload.get("tags") or []:
             tag = _try_canonical_tag(str(raw_tag))
             if tag is not None:
                 workflow_pairs.append(
-                    (tag, workflow_tag_assignment_id(workflow_id, tag))
+                    (tag, workflow_tag_assignment_id(workflow_id, revision, tag), None)
                 )
         job_rows: list[tuple[Any, ...]] = []
-        job_tags: dict[str, list[tuple[str, str | None]]] = {}
+        job_tags: dict[str, DeclaredPairs] = {}
         jobs = payload.get("jobs")
         for job in jobs if isinstance(jobs, list) else []:
             if not isinstance(job, Mapping) or not job.get("name"):
@@ -1198,11 +1232,17 @@ class _Scanner:
                     json.dumps(plugins),
                 )
             )
-            pairs: list[tuple[str, str | None]] = []
+            pairs: DeclaredPairs = []
             for raw_tag in job.get("tags") or []:
                 tag = _try_canonical_tag(str(raw_tag))
                 if tag is not None:
-                    pairs.append((tag, job_tag_assignment_id(workflow_id, name, tag)))
+                    pairs.append(
+                        (
+                            tag,
+                            job_tag_assignment_id(workflow_id, revision, name, tag),
+                            None,
+                        )
+                    )
             job_tags[name] = pairs
         self._revisions[f"{workflow_id}@{revision}"] = _RevisionEntry(
             workflow_id=workflow_id,
@@ -1335,7 +1375,12 @@ class _Scanner:
                         (
                             "execution_submission",
                             [
-                                (tag, None, str(tag_revision) if tag_revision else None)
+                                (
+                                    tag,
+                                    None,
+                                    str(tag_revision) if tag_revision else None,
+                                    None,
+                                )
                                 for tag in tags
                             ],
                             True,
@@ -1367,11 +1412,14 @@ class _Scanner:
         session_id = str(manifest.get("session_id") or session_dir.name)
         document = self._load_session_annotations(session_dir, session_id)
         submission_revision = manifest.get("submission_tag_policy_revision")
-        submission_tags: list[tuple[str, str | None, str | None]] = [
+        submission_tags: list[
+            tuple[str, str | None, str | None, FrozenNamespaceRule | None]
+        ] = [
             (
                 str(tag),
                 None,
                 str(submission_revision) if submission_revision else None,
+                None,
             )
             for tag in manifest.get("submission_tags", [])
         ]
@@ -1506,7 +1554,7 @@ class _Scanner:
                 jobs_assignments = (
                     jobs_assignments if isinstance(jobs_assignments, Mapping) else {}
                 )
-                frozen_job_tags: dict[str, list[tuple[str, str | None]]] = {}
+                frozen_job_tags: dict[str, DeclaredPairs] = {}
                 raw_job_tags = frozen.get("job_tags")
                 if isinstance(raw_job_tags, Mapping):
                     for name, tags in raw_job_tags.items():
@@ -1525,16 +1573,16 @@ class _Scanner:
                     ),
                     payload,
                 )
-        workflow_tags: list[tuple[str, str | None]] = [
-            (tag, None)
+        workflow_tags: DeclaredPairs = [
+            (tag, None, None)
             for raw_tag in payload.get("tags", [])
             if (tag := _try_canonical_tag(str(raw_tag))) is not None
         ]
-        job_tags: dict[str, list[tuple[str, str | None]]] = {}
+        job_tags: dict[str, DeclaredPairs] = {}
         for job in payload.get("jobs", []):
             if isinstance(job, Mapping) and job.get("name"):
                 job_tags[str(job["name"])] = [
-                    (tag, None)
+                    (tag, None, None)
                     for raw_tag in job.get("tags", [])
                     if (tag := _try_canonical_tag(str(raw_tag))) is not None
                 ]

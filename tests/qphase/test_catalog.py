@@ -1119,3 +1119,104 @@ def test_project_annotation_identity_mismatch(tmp_path):
     assert [issue["path"] for issue in issues] == [
         ".qphase/project_annotations.json"
     ]
+
+
+
+def test_frozen_snapshot_rule_governs_inheritance(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\nnamespaces:\n  stage:\n    open: true\n",
+    )
+    _workflow_file(project)
+    _session(
+        project,
+        "session-1",
+        frozen={
+            "raw_tags": ["stage:q1"],
+            "canonical_tags": ["stage:q1"],
+            "job_tags": {},
+            "policy_revision": None,
+            "assignments": {
+                "workflow": [
+                    {
+                        "tag": "stage:q1",
+                        "assignment_id": "wf-a1",
+                        "inherit": False,
+                        "cardinality": "many",
+                        "objects": None,
+                    }
+                ],
+                "jobs": {},
+            },
+        },
+        artifacts=(("sim", "art-1"),),
+    )
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    # The frozen rule disables inheritance even though the current policy
+    # (defaults) would allow it: neither the session nor its occurrence
+    # receive the workflow-declared tag.
+    assert catalog.effective_tags("session", "session-1") == []
+    assert catalog.effective_tags("occurrence", "art-1:session-1:sim") == []
+
+    # Legacy snapshot entries without rule fields fall back to the current
+    # policy, which allows the inheritance.
+    _session(
+        project,
+        "session-2",
+        frozen={
+            "raw_tags": ["stage:q1"],
+            "canonical_tags": ["stage:q1"],
+            "job_tags": {},
+            "policy_revision": None,
+            "assignments": {
+                "workflow": [{"tag": "stage:q1", "assignment_id": "wf-a2"}],
+                "jobs": {},
+            },
+        },
+        artifacts=(("sim", "art-2"),),
+    )
+    catalog.reindex()
+    session_tags = catalog.effective_tags("session", "session-2")
+    assert [tag.tag for tag in session_tags] == ["stage:q1"]
+    inherited = catalog.effective_tags("occurrence", "art-2:session-2:sim")
+    assert [tag.tag for tag in inherited] == ["stage:q1"]
+
+
+def test_declared_assignment_ids_embed_the_workflow_revision(tmp_path):
+    from qphase.core.tags import workflow_tag_assignment_id
+    from qphase.core.workflow import load_workflow, workflow_revision
+
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project, tags=("task:scan",))
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    workflow = load_workflow(project.workflow_root / "example.yaml")
+    revision = workflow_revision(workflow.model_dump(mode="json", by_alias=True))
+    (row,) = catalog.query(CatalogQuery(object_kind="workflow"))
+    assert row["id"] == f"example@{revision}"
+    (tag,) = catalog.effective_tags("workflow", row["id"])
+    assert tag.assignment_id == workflow_tag_assignment_id(
+        "example", revision, "task:scan"
+    )
+
+    # Editing the workflow derives a new revision and fresh assignment ids;
+    # the file-backed revision row is replaced (the old content is gone).
+    path = project.workflow_root / "example.yaml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("title: Example", "title: v2"),
+        encoding="utf-8",
+    )
+    catalog.reindex()
+    (new_row,) = catalog.query(CatalogQuery(object_kind="workflow"))
+    new_revision = new_row["id"].split("@", 1)[1]
+    assert new_row["id"] != row["id"]
+    assert new_revision != revision
+    (new_tag,) = catalog.effective_tags("workflow", new_row["id"])
+    assert new_tag.assignment_id == workflow_tag_assignment_id(
+        "example", new_revision, "task:scan"
+    )
+    assert new_tag.assignment_id != tag.assignment_id

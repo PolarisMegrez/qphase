@@ -71,7 +71,10 @@ class TagAssignment(BaseModel):
 
     ``policy_revision`` freezes the tag policy revision that validated the
     assignment at write time, so historical provenance survives later policy
-    edits. Assignments written before provenance tracking carry ``None``.
+    edits. ``inherit``/``cardinality``/``objects`` freeze the minimal
+    namespace rule governing effective-tag resolution at write time;
+    assignments written before rule freezing (or without a governing
+    namespace rule) carry ``None`` and fall back to the current policy.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -80,6 +83,9 @@ class TagAssignment(BaseModel):
     tag: str
     created_at: str = Field(default_factory=_utc_now)
     policy_revision: str | None = None
+    inherit: bool | None = None
+    cardinality: Literal["one", "many"] | None = None
+    objects: tuple[str, ...] | None = None
 
     @field_validator("tag")
     @classmethod

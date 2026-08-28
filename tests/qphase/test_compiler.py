@@ -219,3 +219,46 @@ def test_compiler_validates_declared_tags_against_policy(tmp_path):
 
     with pytest.raises(QPhaseConfigError, match="not an allowed value"):
         compiler.compile(_tagged_workflow([], ["model:other"]))
+
+
+
+def test_compiler_freezes_revision_scoped_ids_and_rules(tmp_path):
+    from qphase.core.tags import (
+        job_tag_assignment_id,
+        workflow_tag_assignment_id,
+    )
+    from qphase.core.workflow import workflow_revision
+
+    project = ProjectContext.create(tmp_path / "project")
+    _write_tag_policy(project)
+    workflow = _tagged_workflow(["task:scan"], ["model:vdp"])
+
+    compiled = WorkflowCompiler(project, SystemConfig()).compile(workflow)
+
+    snapshot = compiled.tag_snapshot
+    assert snapshot is not None
+    revision = workflow_revision(workflow.model_dump(mode="json", by_alias=True))
+    assert snapshot["workflow_revision"] == revision
+    (workflow_entry,) = snapshot["assignments"]["workflow"]
+    assert workflow_entry["assignment_id"] == workflow_tag_assignment_id(
+        "tagged", revision, "task:scan"
+    )
+    # An open namespace with default governance freezes the default rule.
+    assert workflow_entry["inherit"] is True
+    assert workflow_entry["cardinality"] == "many"
+    assert workflow_entry["objects"] == []
+    (job_entry,) = snapshot["assignments"]["jobs"]["sim"]
+    assert job_entry["assignment_id"] == job_tag_assignment_id(
+        "tagged", revision, "sim", "model:vdp"
+    )
+    assert job_entry["cardinality"] == "one"
+
+    # A workflow edit derives a new revision and fresh assignment ids.
+    edited = workflow.model_copy(update={"title": "Tagged v2"})
+    recompiled = WorkflowCompiler(project, SystemConfig()).compile(edited)
+    assert recompiled.tag_snapshot is not None
+    assert recompiled.tag_snapshot["workflow_revision"] != revision
+    assert (
+        recompiled.tag_snapshot["assignments"]["workflow"][0]["assignment_id"]
+        != workflow_entry["assignment_id"]
+    )

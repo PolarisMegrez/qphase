@@ -935,3 +935,53 @@ def test_migration_dry_run_locates_drift_table(tmp_path):
 
     assert report.catalog_drift is True
     assert report.catalog_drift_tables == {"sessions": 2}
+
+
+
+def test_assignments_freeze_the_namespace_rule(tmp_path):
+    from qphase.core.catalog import ProjectObjectCatalog
+
+    project = ProjectContext.create(tmp_path / "project")
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\nnamespaces:\n  stage:\n    open: true\n",
+    )
+    root = _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.tag_session("session-1", add=["stage:q1"])
+
+    document = json.loads(
+        (root / "session_annotations.json").read_text(encoding="utf-8")
+    )
+    (assignment,) = document["assignments"]
+    assert assignment["inherit"] is True
+    assert assignment["cardinality"] == "many"
+    assert assignment["objects"] == []
+
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+    occurrence_tags = catalog.effective_tags("occurrence", "art-1:session-1:sim")
+    assert [tag.tag for tag in occurrence_tags] == ["stage:q1"]
+
+    # Disabling inheritance in the policy does not rewrite the frozen rule:
+    # the occurrence still inherits the historical assignment.
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\nnamespaces:\n"
+        "  stage:\n    open: true\n    inherit: false\n",
+    )
+    catalog.reindex()
+    occurrence_tags = catalog.effective_tags("occurrence", "art-1:session-1:sim")
+    assert [tag.tag for tag in occurrence_tags] == ["stage:q1"]
+
+    # A legacy assignment without frozen rule fields falls back to the
+    # current policy and stops inheriting.
+    for entry in document["assignments"]:
+        for key in ("inherit", "cardinality", "objects"):
+            entry.pop(key, None)
+    (root / "session_annotations.json").write_text(
+        json.dumps(document), encoding="utf-8"
+    )
+    catalog.reindex()
+    assert catalog.effective_tags("occurrence", "art-1:session-1:sim") == []

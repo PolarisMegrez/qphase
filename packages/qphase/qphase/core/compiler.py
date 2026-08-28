@@ -26,11 +26,13 @@ from .registry import RegistryView, registry
 from .scan import ParameterGrid
 from .system_config import SystemConfig
 from .tags import (
+    freeze_namespace_rule,
     job_tag_assignment_id,
     load_tag_policy,
     validate_declared_tags,
     workflow_tag_assignment_id,
 )
+from .workflow import workflow_revision
 
 __all__ = ["CompiledJob", "CompiledWorkflow", "WorkflowCompiler"]
 
@@ -214,7 +216,10 @@ class WorkflowCompiler:
         The snapshot carries canonical workflow/job tags, the policy revision
         that validated them, and deterministic assignment ids so every
         declared tag can cite a stable provenance anchor without an
-        annotation document.
+        annotation document. Assignment ids embed the workflow revision
+        (derived with the scanner-shared :func:`workflow_revision`), and each
+        assignment freezes the minimal namespace rule (inherit/cardinality/
+        objects) that governs its effective-tag resolution.
         """
         policy = load_tag_policy(self.project)
         canonical_tags = validate_declared_tags(
@@ -224,29 +229,41 @@ class WorkflowCompiler:
             job.name: validate_declared_tags(list(job.tags), "job", policy)
             for job in workflow.jobs
         }
+        revision = workflow_revision(
+            workflow.model_dump(mode="json", by_alias=True)
+        )
+
+        def _entry(scope_id: str, tag: str, job_name: str | None) -> dict[str, Any]:
+            rule = freeze_namespace_rule(policy, tag)
+            if job_name is None:
+                assignment_id = workflow_tag_assignment_id(scope_id, revision, tag)
+            else:
+                assignment_id = job_tag_assignment_id(
+                    scope_id, revision, job_name, tag
+                )
+            return {
+                "tag": tag,
+                "assignment_id": assignment_id,
+                "inherit": rule.inherit if rule is not None else None,
+                "cardinality": rule.cardinality if rule is not None else None,
+                "objects": (
+                    list(rule.objects) if rule is not None else None
+                ),
+            }
+
         snapshot = {
             "raw_tags": list(workflow.tags),
             "canonical_tags": canonical_tags,
             "job_tags": job_tags,
             "policy_revision": policy.revision if policy is not None else None,
+            "workflow_revision": revision,
             "assignments": {
                 "workflow": [
-                    {
-                        "tag": tag,
-                        "assignment_id": workflow_tag_assignment_id(
-                            workflow.id, tag
-                        ),
-                    }
-                    for tag in canonical_tags
+                    _entry(workflow.id, tag, None) for tag in canonical_tags
                 ],
                 "jobs": {
                     job.name: [
-                        {
-                            "tag": tag,
-                            "assignment_id": job_tag_assignment_id(
-                                workflow.id, job.name, tag
-                            ),
-                        }
+                        _entry(workflow.id, tag, job.name)
                         for tag in job_tags[job.name]
                     ]
                     for job in workflow.jobs

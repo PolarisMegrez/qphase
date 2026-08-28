@@ -181,3 +181,117 @@ def test_annotation_documents_forbid_extra_fields():
                 "unexpected": 1,
             }
         )
+
+
+
+def test_freeze_namespace_rule_snapshots_minimal_governance():
+    from qphase.core.tags import freeze_namespace_rule
+
+    policy = _policy()
+    rule = freeze_namespace_rule(policy, "stage:q1")
+    assert rule is not None
+    assert rule.inherit is True
+    assert rule.cardinality == "one"
+    assert rule.objects == ("session", "workflow")
+    # Undeclared namespaces and absent policies freeze no rule.
+    assert freeze_namespace_rule(policy, "system:internal") is None
+    assert freeze_namespace_rule(None, "task:bifurcation") is None
+
+
+def test_compute_effective_tags_prefers_frozen_rule_over_current_policy():
+    from qphase.core.catalog import compute_effective_tags
+    from qphase.core.tags import FrozenNamespaceRule
+
+    frozen = FrozenNamespaceRule(inherit=False, cardinality="many", objects=())
+    levels = [
+        ("workflow_declared", [("task:bifurcation", "a1", "rev", frozen)], False),
+        ("session_annotation", [("task:diagnostics", "a2", "rev", None)], True),
+    ]
+    # The current policy allows inheritance; the frozen rule still wins.
+    tags = compute_effective_tags(levels, _policy(), "session")
+    assert [tag.tag for tag in tags] == ["task:diagnostics"]
+
+    # Frozen object applicability likewise overrides the current policy.
+    scoped = FrozenNamespaceRule(
+        inherit=True, cardinality="many", objects=("workflow",)
+    )
+    tags = compute_effective_tags(
+        [
+            ("workflow_declared", [("task:bifurcation", "a1", "rev", scoped)], False),
+            ("session_annotation", [], True),
+        ],
+        _policy(),
+        "session",
+    )
+    assert tags == []
+
+    # Legacy assignments (no frozen rule) fall back to the current policy.
+    tags = compute_effective_tags(
+        [
+            ("workflow_declared", [("task:bifurcation", "a1", "rev", None)], False),
+            ("session_annotation", [], True),
+        ],
+        _policy(),
+        "session",
+    )
+    assert [tag.tag for tag in tags] == ["task:bifurcation"]
+    assert tags[0].inherited
+
+
+def test_frozen_cardinality_overrides_current_policy_shadowing():
+    from qphase.core.catalog import compute_effective_tags
+    from qphase.core.tags import FrozenNamespaceRule
+
+    # The current policy makes "stage" cardinality-one, but both assignments
+    # froze cardinality "many": nothing is shadowed.
+    frozen_many = FrozenNamespaceRule(inherit=True, cardinality="many", objects=())
+    tags = compute_effective_tags(
+        [
+            ("workflow_declared", [("stage:q1", "a1", "rev", frozen_many)], False),
+            ("session_annotation", [("stage:q2", "a2", "rev", frozen_many)], True),
+        ],
+        _policy(),
+        "session",
+    )
+    assert [tag.tag for tag in tags] == ["stage:q1", "stage:q2"]
+    assert not any(tag.shadowed for tag in tags)
+
+    # Legacy assignments resolve cardinality from the current policy instead.
+    tags = compute_effective_tags(
+        [
+            ("workflow_declared", [("stage:q1", "a1", "rev", None)], False),
+            ("session_annotation", [("stage:q2", "a2", "rev", None)], True),
+        ],
+        _policy(),
+        "session",
+    )
+    assert {tag.tag: tag.shadowed for tag in tags} == {
+        "stage:q1": True,
+        "stage:q2": False,
+    }
+
+
+def test_tag_assignment_freezes_minimal_namespace_rule():
+    assignment = TagAssignment(
+        tag="task:bifurcation",
+        policy_revision="rev",
+        inherit=False,
+        cardinality="many",
+        objects=("session",),
+    )
+    document = SessionAnnotationDocument(
+        project_id="p", session_id="s", assignments=[assignment]
+    )
+    payload = document.model_dump(mode="json", by_alias=True)
+    restored = SessionAnnotationDocument.model_validate(payload)
+    (restored_assignment,) = restored.assignments
+    assert restored_assignment.inherit is False
+    assert restored_assignment.cardinality == "many"
+    assert restored_assignment.objects == ("session",)
+
+    # Legacy assignments without rule fields still load; their resolution
+    # falls back to the current policy.
+    legacy = TagAssignment(tag="task:bifurcation")
+    assert legacy.inherit is None
+    assert legacy.cardinality is None
+    assert legacy.objects is None

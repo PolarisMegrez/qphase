@@ -51,9 +51,11 @@ from qphase.core.persistence import ProjectStateStore
 from qphase.core.project import ProjectContext
 from qphase.core.tags import (
     TAG_POLICY_FILENAME,
+    FrozenNamespaceRule,
     ObjectKind,
     TagPolicy,
     canonicalize_tag_syntax,
+    freeze_namespace_rule,
     load_tag_policy,
     validate_declared_tags,
 )
@@ -518,14 +520,14 @@ class CatalogService:
         private: bool = False,
     ) -> SessionSummary:
         """Add/remove session tag assignments; returns the session summary."""
-        added, policy_revision = self._validate_tags(add, "session")
+        added, policy_revision, rules = self._validate_tags(add, "session")
         removed = _canonical_set(remove)
         root = self.project_service.session_dir(session_id)
         if private:
             self._edit_private_tags("session", session_id, added, removed)
             return self.project_service.get_session(session_id)
         document, expected = self._session_document(root, session_id)
-        _apply_tag_edits(document.assignments, added, removed, policy_revision)
+        _apply_tag_edits(document.assignments, added, removed, policy_revision, rules)
         self._save_session_document(root, document, expected)
         return self.project_service.get_session(session_id)
 
@@ -558,7 +560,7 @@ class CatalogService:
         private: bool = False,
     ) -> list[EffectiveTagInfo]:
         """Add/remove artifact tag assignments; returns its effective tags."""
-        added, policy_revision = self._validate_tags(add, "artifact")
+        added, policy_revision, rules = self._validate_tags(add, "artifact")
         removed = _canonical_set(remove)
         if private:
             self._require_artifact(artifact_id)
@@ -566,7 +568,7 @@ class CatalogService:
             return self.effective_tags("artifact", artifact_id)
         artifact_dir = self._artifact_dir(artifact_id)
         document, expected = self._artifact_document(artifact_dir, artifact_id)
-        _apply_tag_edits(document.assignments, added, removed, policy_revision)
+        _apply_tag_edits(document.assignments, added, removed, policy_revision, rules)
         self._save_artifact_document(artifact_dir, document, expected)
         return self.effective_tags("artifact", artifact_id)
 
@@ -607,7 +609,7 @@ class CatalogService:
         """
         row = self._resolve_occurrence(session_id, artifact_id, job_name)
         occurrence_id = str(row["id"])
-        added, policy_revision = self._validate_tags(add, "occurrence")
+        added, policy_revision, rules = self._validate_tags(add, "occurrence")
         removed = _canonical_set(remove)
         if private:
             self._edit_private_tags("occurrence", occurrence_id, added, removed)
@@ -616,7 +618,7 @@ class CatalogService:
         document, expected = self._session_document(root, session_id)
         key = f"{row['job_name']}:{artifact_id}"
         occurrence = document.occurrences.setdefault(key, OccurrenceAnnotations())
-        _apply_tag_edits(occurrence.assignments, added, removed, policy_revision)
+        _apply_tag_edits(occurrence.assignments, added, removed, policy_revision, rules)
         self._save_session_document(root, document, expected)
         return self.effective_tags("occurrence", occurrence_id)
 
@@ -647,14 +649,14 @@ class CatalogService:
         private: bool = False,
     ) -> list[EffectiveTagInfo]:
         """Add/remove project tag assignments; returns its effective tags."""
-        added, policy_revision = self._validate_tags(add, "project")
+        added, policy_revision, rules = self._validate_tags(add, "project")
         removed = _canonical_set(remove)
         object_id = self.project.project_id
         if private:
             self._edit_private_tags("project", object_id, added, removed)
             return self.effective_tags("project", object_id)
         document, expected = self._project_document()
-        _apply_tag_edits(document.assignments, added, removed, policy_revision)
+        _apply_tag_edits(document.assignments, added, removed, policy_revision, rules)
         self._save_project_document(document, expected)
         return self.effective_tags("project", object_id)
 
@@ -740,14 +742,14 @@ class CatalogService:
         private: bool,
     ) -> list[EffectiveTagInfo]:
         """Edit the tag assignments of one project-document-scoped object."""
-        added, policy_revision = self._validate_tags(add, object_kind)
+        added, policy_revision, rules = self._validate_tags(add, object_kind)
         removed = _canonical_set(remove)
         if private:
             self._edit_private_tags(object_kind, object_id, added, removed)
             return self.effective_tags(object_kind, object_id)
         document, expected = self._project_document()
         entry = document.objects.setdefault(object_id, ObjectAnnotations())
-        _apply_tag_edits(entry.assignments, added, removed, policy_revision)
+        _apply_tag_edits(entry.assignments, added, removed, policy_revision, rules)
         self._save_project_document(document, expected)
         return self.effective_tags(object_kind, object_id)
 
@@ -804,11 +806,17 @@ class CatalogService:
 
     def _validate_tags(
         self, values: list[str] | tuple[str, ...], object_kind: ObjectKind
-    ) -> tuple[list[str], str | None]:
-        """Validate tags against the current policy; return its revision too."""
+    ) -> tuple[list[str], str | None, dict[str, FrozenNamespaceRule | None]]:
+        """Validate tags against the current policy; freeze its provenance.
+
+        Returns the canonical tags, the policy revision, and the minimal
+        namespace rule frozen per tag (``None`` when no rule governs it, in
+        which case resolution falls back to the current policy).
+        """
         policy = load_tag_policy(self.project)
         tags = validate_declared_tags(list(values), object_kind, policy)
-        return tags, (policy.revision if policy is not None else None)
+        rules = {tag: freeze_namespace_rule(policy, tag) for tag in tags}
+        return tags, (policy.revision if policy is not None else None), rules
 
     def _session_document(
         self, root: Path, session_id: str
@@ -1159,16 +1167,32 @@ def _apply_tag_edits(
     added: list[str],
     removed: set[str],
     policy_revision: str | None = None,
+    rules: dict[str, FrozenNamespaceRule | None] | None = None,
 ) -> None:
     """Apply immutable-assignment edits in place on an assignment list.
 
-    New assignments freeze the revision of the policy that validated them.
+    New assignments freeze the revision of the policy that validated them
+    plus the minimal namespace rule governing their resolution.
     """
     kept = [assignment for assignment in assignments if assignment.tag not in removed]
     existing = {assignment.tag for assignment in kept}
     kept.extend(
-        TagAssignment(tag=tag, policy_revision=policy_revision)
+        _new_assignment(tag, policy_revision, (rules or {}).get(tag))
         for tag in added
         if tag not in existing
     )
     assignments[:] = kept
+
+
+def _new_assignment(
+    tag: str,
+    policy_revision: str | None,
+    rule: FrozenNamespaceRule | None,
+) -> TagAssignment:
+    return TagAssignment(
+        tag=tag,
+        policy_revision=policy_revision,
+        inherit=rule.inherit if rule is not None else None,
+        cardinality=rule.cardinality if rule is not None else None,
+        objects=rule.objects if rule is not None else None,
+    )

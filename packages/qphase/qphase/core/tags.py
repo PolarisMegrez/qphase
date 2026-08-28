@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,11 +31,13 @@ from .utils import canonical_json, load_yaml
 __all__ = [
     "TAG_POLICY_FILENAME",
     "TAG_POLICY_SCHEMA",
+    "FrozenNamespaceRule",
     "ObjectKind",
     "TagNamespacePolicy",
     "TagPolicy",
     "canonicalize_tag_list",
     "canonicalize_tag_syntax",
+    "freeze_namespace_rule",
     "job_tag_assignment_id",
     "load_tag_policy",
     "parse_tag",
@@ -115,21 +118,63 @@ def canonicalize_tag_list(values: list[str]) -> list[str]:
     return canonical
 
 
-def workflow_tag_assignment_id(workflow_id: str, tag: str) -> str:
+def workflow_tag_assignment_id(workflow_id: str, revision: str, tag: str) -> str:
     """Deterministic assignment id of one workflow-declared tag.
 
     Declared tags have no annotation document to host a mutable assignment
     id, so the id is derived from the stable identity of the declaration
-    itself: the same workflow id and tag always produce the same id.
+    itself: the same workflow id, workflow revision and tag always produce
+    the same id, and a workflow edit yields fresh ids instead of silently
+    colliding with the previous revision's assignments.
     """
-    digest = hashlib.sha256(f"workflow:{workflow_id}:{tag}".encode())
+    digest = hashlib.sha256(f"workflow:{workflow_id}@{revision}:{tag}".encode())
     return digest.hexdigest()[:16]
 
 
-def job_tag_assignment_id(workflow_id: str, job_name: str, tag: str) -> str:
+def job_tag_assignment_id(
+    workflow_id: str, revision: str, job_name: str, tag: str
+) -> str:
     """Deterministic assignment id of one job-declared tag."""
-    digest = hashlib.sha256(f"job:{workflow_id}:{job_name}:{tag}".encode())
+    digest = hashlib.sha256(
+        f"job:{workflow_id}@{revision}:{job_name}:{tag}".encode()
+    )
     return digest.hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class FrozenNamespaceRule:
+    """Minimal namespace rule frozen onto one tag assignment at write time.
+
+    Only the fields that govern effective-tag resolution are snapshotted:
+    whether the namespace inherits, its cardinality, and the object kinds it
+    applies to (empty means all kinds, matching ``TagPolicy.tag_applies_to``).
+    """
+
+    inherit: bool
+    cardinality: Literal["one", "many"]
+    objects: tuple[str, ...]
+
+
+def freeze_namespace_rule(
+    policy: TagPolicy | None, tag: str
+) -> FrozenNamespaceRule | None:
+    """Snapshot the minimal rule of the tag's namespace for freezing.
+
+    Returns ``None`` when there is no governing rule — no policy, or the
+    namespace is undeclared — in which case resolution falls back to the
+    policy current at read time.
+    """
+    if policy is None:
+        return None
+    namespace = tag.split(":", 1)[0]
+    rule = policy.namespaces.get(namespace)
+    if rule is None:
+        return None
+    return FrozenNamespaceRule(
+        inherit=rule.inherit,
+        cardinality=rule.cardinality,
+        objects=tuple(rule.objects),
+    )
 
 
 class TagNamespacePolicy(BaseModel):

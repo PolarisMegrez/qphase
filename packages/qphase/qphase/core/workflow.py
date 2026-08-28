@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .config import JobConfig, WorkflowSpec
 from .errors import QPhaseConfigError, QPhaseIOError
 from .project import ProjectContext
 from .tags import canonicalize_tag_list
-from .utils import deep_merge_dicts, load_yaml
+from .utils import canonical_json, deep_merge_dicts, load_yaml
 
 
 @dataclass(frozen=True)
@@ -185,6 +188,35 @@ class WorkflowCatalog:
             tags=tuple(tags),
             job_count=len(jobs),
         )
+
+
+def normalized_workflow_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Canonical workflow payload for revision identity.
+
+    The ``tag_snapshot`` sidecar key never participates in identity. Payloads
+    that fail strict ``qphase.workflow/2`` validation (legacy or partial
+    snapshots) hash as-is so they still get a stable revision.
+    """
+    body = {key: value for key, value in payload.items() if key != "tag_snapshot"}
+    try:
+        return WorkflowSpec.model_validate(body).model_dump(mode="json", by_alias=True)
+    except Exception:  # noqa: BLE001 - identity fallback for legacy payloads
+        return dict(body)
+
+
+def workflow_revision(payload: Mapping[str, Any]) -> str:
+    """Content-hash revision of one workflow payload.
+
+    Single source of truth shared by the compiler (freezing declared-tag
+    assignment ids) and the catalog scanner (revision identity), so both
+    sides derive the same revision for the same workflow content.
+    """
+    normalized = normalized_workflow_payload(payload)
+    try:
+        canonical = canonical_json(normalized)
+    except (TypeError, ValueError):
+        canonical = repr(sorted(normalized.items()))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
 def _load_job(raw: object, path: Path) -> JobConfig:
