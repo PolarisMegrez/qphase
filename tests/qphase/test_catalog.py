@@ -975,3 +975,147 @@ def test_workflow_annotation_shadows_declared_in_cardinality_one(tmp_path):
         len(catalog.query(CatalogQuery(object_kind="workflow", tags_all=("stage:q2",))))
         == 1
     )
+
+
+def test_concurrent_reindex_is_consistent(tmp_path):
+    """Concurrent rebuilds serialize on the locks and agree on content."""
+    import threading
+
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    catalog = ProjectObjectCatalog(project)
+    results: list = []
+    errors: list = []
+
+    def worker() -> None:
+        try:
+            results.append(catalog.reindex())
+        except Exception as exc:  # noqa: BLE001 - collected for the assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    assert len(results) == 4
+    assert {stats.sessions for stats in results} == {1}
+    rows = catalog.query(CatalogQuery(object_kind="session"))
+    assert [row["id"] for row in rows] == ["session-1"]
+
+
+def test_failed_reindex_keeps_previous_catalog(tmp_path, monkeypatch):
+    """A failing rebuild leaves the old read model readable and unchanged."""
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1")
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+    before = catalog.query(CatalogQuery(object_kind="session"))
+
+    def fail_meta(self, connection) -> None:
+        raise RuntimeError("boom during populate")
+
+    monkeypatch.setattr(ProjectObjectCatalog, "_stamp_meta", fail_meta)
+    with pytest.raises(RuntimeError, match="boom"):
+        catalog.reindex()
+
+    build_path = catalog.path.with_name(catalog.path.name + ".build")
+    assert not build_path.exists()
+    assert catalog.query(CatalogQuery(object_kind="session")) == before
+
+
+def test_session_annotation_typed_validation(tmp_path):
+    """Corrupt/schema-wrong/foreign session annotations index only an issue."""
+    project = ProjectContext.create(tmp_path / "project")
+    _session(
+        project,
+        "session-1",
+        annotations={
+            "session_id": "someone-else",
+            "assignments": [{"tag": "task:bad"}],
+        },
+    )
+    _session(project, "session-2", annotations={"schema": "qphase.unknown/9"})
+    root = _session(project, "session-3")
+    (root / "session_annotations.json").write_text("{not json", encoding="utf-8")
+    catalog = ProjectObjectCatalog(project)
+
+    catalog.reindex()
+
+    rows = catalog.query(CatalogQuery(object_kind="session", limit=10))
+    assert {row["id"] for row in rows} == {"session-1", "session-2", "session-3"}
+    assert catalog.effective_tags("session", "session-1") == []
+    issues = [
+        issue for issue in catalog.location_issues() if issue["kind"] == "annotation"
+    ]
+    assert len(issues) == 3
+    assert {
+        "2026/08/session-1/session_annotations.json",
+        "2026/08/session-2/session_annotations.json",
+        "2026/08/session-3/session_annotations.json",
+    } == {issue["path"] for issue in issues}
+
+
+def test_artifact_annotation_identity_mismatch(tmp_path):
+    """A foreign artifact annotation drops the tag layer, keeps the object."""
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    (root / "sim" / "artifact_annotations.json").write_text(
+        json.dumps(
+            {
+                "schema": "qphase.artifact-annotations/1",
+                "project_id": project.project_id,
+                "artifact_id": "art-other",
+                "revision": 0,
+                "assignments": [{"tag": "method:cam"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    catalog = ProjectObjectCatalog(project)
+
+    catalog.reindex()
+
+    rows = catalog.query(CatalogQuery(object_kind="artifact"))
+    assert [row["id"] for row in rows] == ["art-1"]
+    assert catalog.effective_tags("artifact", "art-1") == []
+    issues = [
+        issue for issue in catalog.location_issues() if issue["kind"] == "annotation"
+    ]
+    assert [issue["path"] for issue in issues] == [
+        "2026/08/session-1/sim/artifact_annotations.json"
+    ]
+
+
+def test_project_annotation_identity_mismatch(tmp_path):
+    """A foreign project annotation document indexes no project tags."""
+    project = ProjectContext.create(tmp_path / "project")
+    qphase_dir = project.root / ".qphase"
+    qphase_dir.mkdir(exist_ok=True)
+    (qphase_dir / "project_annotations.json").write_text(
+        json.dumps(
+            {
+                "schema": "qphase.project-annotations/1",
+                "project_id": "foreign-project",
+                "revision": 0,
+                "assignments": [{"tag": "task:bad"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    catalog = ProjectObjectCatalog(project)
+
+    catalog.reindex()
+
+    rows = catalog.query(CatalogQuery(object_kind="project"))
+    assert [row["id"] for row in rows] == [project.project_id]
+    assert catalog.effective_tags("project", project.project_id) == []
+    issues = [
+        issue for issue in catalog.location_issues() if issue["kind"] == "annotation"
+    ]
+    assert [issue["path"] for issue in issues] == [
+        ".qphase/project_annotations.json"
+    ]

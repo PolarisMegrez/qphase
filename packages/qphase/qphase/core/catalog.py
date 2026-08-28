@@ -56,6 +56,11 @@ Artifact scan contract (artifact schema ``qphase.artifact/4``):
   (created_at, bundle type, product schemas, quantities, parents), the
   first occurrence wins the artifact row and the later location is recorded
   as a ``conflict`` location issue;
+- annotation documents are validated against their typed schemas
+  (``SessionAnnotationDocument`` / ``ArtifactAnnotationDocument`` /
+  ``ProjectAnnotationDocument``) including location identity; a corrupt
+  document or identity mismatch indexes no annotation layer at all and is
+  recorded as an ``annotation`` location issue;
 - ``product_schemas_json`` maps product name to the stable schema
   fingerprint; ``quantities_json`` is the sorted set of non-empty physical
   quantities across all products.
@@ -66,17 +71,20 @@ Stale detection and reindexing:
    unexpected ``schema`` version, or belongs to a different ``project_id``
    is rebuilt from disk truth on first use, never silently trusted.
 2. **Fingerprint probe** — read entry points compare a cheap filesystem
-   fingerprint (session/artifact manifest and execution record counts,
-   newest workflow file mtime, tag policy mtime) against the value stored
-   at index time; a mismatch triggers one automatic reindex.
+   fingerprint (project root; session/artifact manifest and execution
+   record counts with newest mtimes; annotation document counts with newest
+   mtime; workflow file count with newest mtime; tag policy mtime) against
+   the value stored at index time; a mismatch triggers one automatic
+   reindex.
 3. **Explicit lifecycle triggers** — the scheduler reindexes after session
    initialization and job finalization, the execution service reindexes
    after execution records are persisted, and every annotation write
    through the service layer reindexes.
 
 Trigger boundary (documented contract): state flips of a *running* job do
-not themselves reindex; the catalog is not a real-time status source and
-interactive surfaces such as the GUI read state through the service layer.
+not themselves reindex eagerly; their manifest mtime flips the fingerprint
+probe, so the *next* catalog query rebuilds — the accepted cost of the
+catalog being a derived read model, not a real-time status source.
 Artifact saves need no per-save hook: a published artifact manifest is
 immutable, so every new artifact adds a manifest file and flips the count
 probe.
@@ -86,18 +94,30 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .annotations import ARTIFACT_ANNOTATIONS_FILENAME
+from .annotations import (
+    ARTIFACT_ANNOTATIONS_FILENAME,
+    PROJECT_ANNOTATIONS_FILENAME,
+    SESSION_ANNOTATIONS_FILENAME,
+    ArtifactAnnotationDocument,
+    ObjectAnnotations,
+    OccurrenceAnnotations,
+    ProjectAnnotationDocument,
+    SessionAnnotationDocument,
+    TagAssignment,
+)
 from .config import WorkflowSpec
 from .errors import QPhaseConfigError
+from .locking import file_lock
 from .persistence import ProjectStateStore
 from .project import ProjectContext
 from .tags import (
@@ -414,8 +434,16 @@ class ProjectObjectCatalog:
         return self.project.root / ".qphase" / CATALOG_FILENAME
 
     def reindex(self) -> CatalogStats:
-        """Rebuild the whole read model from disk truth in one transaction."""
-        with _catalog_lock(self.path):
+        """Rebuild the whole read model from disk truth in one transaction.
+
+        The rebuild holds a cross-process sibling-file lock and populates a
+        temporary database that atomically replaces the live one, so a
+        failed rebuild never deletes the previous read model. A state flip
+        of a running job (manifest/record mtime) makes the next catalog
+        query trigger a rebuild — the accepted cost of keeping the catalog
+        a derived read model instead of a live state source.
+        """
+        with _catalog_lock(self.path), file_lock(self.path):
             return self._reindex_locked()
 
     def _reindex_locked(self) -> CatalogStats:
@@ -425,52 +453,64 @@ class ProjectObjectCatalog:
         policy_revision = policy.revision if policy is not None else None
         scan = _Scanner(self.project, policy, policy_revision).collect()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = self._connect(fresh=True)
+        build_path = self.path.with_name(self.path.name + ".build")
+        build_path.unlink(missing_ok=True)
         try:
-            with connection:
-                connection.executemany(
-                    "INSERT INTO projects VALUES (?, ?, ?)",
-                    scan["projects"],
-                )
-                connection.executemany(
-                    "INSERT INTO workflows VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    scan["workflows"],
-                )
-                connection.executemany(
-                    "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    scan["jobs"],
-                )
-                connection.executemany(
-                    "INSERT INTO executions VALUES (?, ?, ?, ?, ?)",
-                    scan["executions"],
-                )
-                connection.executemany(
-                    "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    scan["sessions"],
-                )
-                connection.executemany(
-                    "INSERT INTO artifacts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    scan["artifacts"],
-                )
-                connection.executemany(
-                    "INSERT INTO occurrences VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    scan["occurrences"],
-                )
-                connection.executemany(
-                    "INSERT INTO effective_tags VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    scan["effective_tags"],
-                )
-                connection.executemany(
-                    "INSERT INTO location_issues VALUES (?, ?, ?)",
-                    scan["location_issues"],
-                )
-                connection.execute(
-                    "INSERT OR REPLACE INTO meta (key, value) VALUES"
-                    " ('fingerprint', ?)",
-                    (json.dumps(fingerprint, sort_keys=True),),
-                )
-        finally:
-            connection.close()
+            # Default (delete) journal mode: a WAL build would leave live
+            # rows in the -wal sidecar that os.replace would not carry over.
+            connection = sqlite3.connect(build_path)
+            try:
+                connection.executescript(_SCHEMA_SQL)
+                self._stamp_meta(connection)
+                with connection:
+                    connection.executemany(
+                        "INSERT INTO projects VALUES (?, ?, ?)",
+                        scan["projects"],
+                    )
+                    connection.executemany(
+                        "INSERT INTO workflows VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        scan["workflows"],
+                    )
+                    connection.executemany(
+                        "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        scan["jobs"],
+                    )
+                    connection.executemany(
+                        "INSERT INTO executions VALUES (?, ?, ?, ?, ?)",
+                        scan["executions"],
+                    )
+                    connection.executemany(
+                        "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        scan["sessions"],
+                    )
+                    connection.executemany(
+                        "INSERT INTO artifacts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        scan["artifacts"],
+                    )
+                    connection.executemany(
+                        "INSERT INTO occurrences VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        scan["occurrences"],
+                    )
+                    connection.executemany(
+                        "INSERT INTO effective_tags VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        scan["effective_tags"],
+                    )
+                    connection.executemany(
+                        "INSERT INTO location_issues VALUES (?, ?, ?)",
+                        scan["location_issues"],
+                    )
+                    connection.execute(
+                        "INSERT OR REPLACE INTO meta (key, value) VALUES"
+                        " ('fingerprint', ?)",
+                        (json.dumps(fingerprint, sort_keys=True),),
+                    )
+            finally:
+                connection.close()
+            os.replace(build_path, self.path)
+        except BaseException:
+            build_path.unlink(missing_ok=True)
+            raise
+        self._verify_meta()
         return CatalogStats(
             projects=len(scan["projects"]),
             workflows=len(scan["workflows"]),
@@ -483,6 +523,20 @@ class ProjectObjectCatalog:
             location_issues=len(scan["location_issues"]),
             duration_seconds=time.monotonic() - started,
         )
+
+    def _verify_meta(self) -> None:
+        """Re-open the replaced database and check its identity stamps."""
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            meta = dict(connection.execute("SELECT key, value FROM meta").fetchall())
+        finally:
+            connection.close()
+        if (
+            meta.get("schema") != CATALOG_SCHEMA
+            or meta.get("project_id") != self.project.project_id
+        ):
+            raise RuntimeError(f"rebuilt catalog failed meta verification: {self.path}")
 
     def query(self, query: CatalogQuery) -> list[dict[str, Any]]:
         """List objects of one kind matching the query, stably sorted."""
@@ -581,8 +635,9 @@ class ProjectObjectCatalog:
         """List artifact locations the last scan could not index.
 
         Each entry carries the session-relative ``path``, a ``kind``
-        (``unsupported`` schema, ``corrupt`` manifest, or ``conflict``
-        between occurrences of one artifact identity) and a human-readable
+        (``unsupported`` schema, ``corrupt`` manifest, ``conflict``
+        between occurrences of one artifact identity, or ``annotation``
+        for a corrupt/foreign annotation document) and a human-readable
         ``message``. The list is sorted by ``(path, kind)``.
         """
         self._ensure_fresh()
@@ -653,9 +708,7 @@ class ProjectObjectCatalog:
             )
             params.extend([query.object_kind, _like_escape(query.tag_namespace) + ":%"])
 
-    def _connect(self, *, fresh: bool = False) -> sqlite3.Connection:
-        if fresh:
-            return self._create_database()
+    def _connect(self) -> sqlite3.Connection:
         connection: sqlite3.Connection | None = None
         try:
             connection = sqlite3.connect(self.path)
@@ -677,14 +730,6 @@ class ProjectObjectCatalog:
             connection.execute("PRAGMA journal_mode=WAL")
             return connection
 
-    def _create_database(self) -> sqlite3.Connection:
-        self.path.unlink(missing_ok=True)
-        connection = sqlite3.connect(self.path)
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.executescript(_SCHEMA_SQL)
-        self._stamp_meta(connection)
-        return connection
-
     def _stamp_meta(self, connection: sqlite3.Connection) -> None:
         connection.executemany(
             "INSERT INTO meta (key, value) VALUES (?, ?)",
@@ -692,30 +737,56 @@ class ProjectObjectCatalog:
         )
         connection.commit()
 
-    def _fingerprint(self) -> dict[str, int]:
-        """Cheap disk-state probe: manifest/record counts and policy mtimes.
+    def _fingerprint(self) -> dict[str, Any]:
+        """Cheap disk-state probe: counts and newest mtimes of every input.
 
-        Session and artifact manifests are immutable once published and
-        execution records are append-only files, so counting them detects
-        every lifecycle write; workflow edits and tag-policy edits are caught
-        by the newest mtime of their files.
+        Covers the project root (a moved project must refresh its root
+        facet), session manifests, artifact manifests, execution records,
+        all three annotation document kinds, workflow files and the tag
+        policy. Session manifests and execution records are rewritten on
+        lifecycle transitions, so a state flip is caught by the mtime and
+        makes the next query rebuild the read model.
         """
         sessions = 0
+        sessions_mtime_ns = 0
         artifacts = 0
+        annotation_docs = 0
+        annotations_mtime_ns = 0
         session_root = self.project.session_root
         if session_root.exists():
             for manifest in session_root.rglob("session_manifest.json"):
                 if ".trash" not in manifest.parts:
                     sessions += 1
+                    sessions_mtime_ns = max(
+                        sessions_mtime_ns, manifest.stat().st_mtime_ns
+                    )
             for manifest in session_root.rglob("artifact_manifest.json"):
                 if ".trash" not in manifest.parts:
                     artifacts += 1
+            for name in (SESSION_ANNOTATIONS_FILENAME, ARTIFACT_ANNOTATIONS_FILENAME):
+                for document in session_root.rglob(name):
+                    if ".trash" not in document.parts:
+                        annotation_docs += 1
+                        annotations_mtime_ns = max(
+                            annotations_mtime_ns, document.stat().st_mtime_ns
+                        )
+        executions = 0
+        executions_mtime_ns = 0
         executions_dir = self.project.root / ".qphase" / "executions"
-        executions = (
-            sum(1 for _ in executions_dir.glob("*.json"))
-            if executions_dir.exists()
-            else 0
+        if executions_dir.exists():
+            for record in executions_dir.glob("*.json"):
+                executions += 1
+                executions_mtime_ns = max(
+                    executions_mtime_ns, record.stat().st_mtime_ns
+                )
+        project_annotations = (
+            self.project.root / ".qphase" / PROJECT_ANNOTATIONS_FILENAME
         )
+        if project_annotations.exists():
+            annotation_docs += 1
+            annotations_mtime_ns = max(
+                annotations_mtime_ns, project_annotations.stat().st_mtime_ns
+            )
         workflows = 0
         workflows_mtime_ns = 0
         workflow_root = self.project.workflow_root
@@ -731,9 +802,14 @@ class ProjectObjectCatalog:
             tag_policy.stat().st_mtime_ns if tag_policy.exists() else 0
         )
         return {
+            "project_root": str(self.project.root),
             "sessions": sessions,
+            "sessions_mtime_ns": sessions_mtime_ns,
             "artifacts": artifacts,
             "executions": executions,
+            "executions_mtime_ns": executions_mtime_ns,
+            "annotation_docs": annotation_docs,
+            "annotations_mtime_ns": annotations_mtime_ns,
             "workflows": workflows,
             "workflows_mtime_ns": workflows_mtime_ns,
             "tag_policy_mtime_ns": tag_policy_mtime_ns,
@@ -759,10 +835,10 @@ class _CatalogStaleError(Exception):
     """The on-disk catalog predates the current read-model schema."""
 
 
-#: Reindexing deletes and recreates the database file, so concurrent
-#: rebuilds of the same project (e.g. scheduler thread plus execution
-#: service) must be serialized per catalog path; Windows also refuses to
-#: unlink a database file while another connection holds it open.
+#: Reindexing replaces the database file, so concurrent rebuilds of the
+#: same project (e.g. scheduler thread plus execution service) must be
+#: serialized per catalog path in-process; cross-process writers are
+#: serialized by the sibling lock file (see ``core.locking.file_lock``).
 _CATALOG_LOCKS: dict[Path, threading.RLock] = {}
 _CATALOG_LOCKS_GUARD = threading.Lock()
 
@@ -892,24 +968,14 @@ def _frozen_assignment_pairs(
     return pairs
 
 
-def _assignment_triples(raw: Any) -> list[tuple[str, str | None, str | None]]:
+def _assignment_triples(
+    assignments: Iterable[TagAssignment],
+) -> list[tuple[str, str | None, str | None]]:
     """Flatten annotation assignments into ``(tag, id, policy_revision)``."""
-    if not isinstance(raw, list):
-        return []
-    triples = []
-    for item in raw:
-        if not isinstance(item, Mapping) or not item.get("tag"):
-            continue
-        assignment_id = item.get("id")
-        revision = item.get("policy_revision")
-        triples.append(
-            (
-                str(item["tag"]),
-                str(assignment_id) if assignment_id else None,
-                str(revision) if revision else None,
-            )
-        )
-    return triples
+    return [
+        (assignment.tag, assignment.id, assignment.policy_revision)
+        for assignment in assignments
+    ]
 
 
 def _declared_triples(
@@ -961,7 +1027,7 @@ class _Scanner:
         self.store = ProjectStateStore(project)
         self._artifact_facets: dict[str, tuple[tuple[Any, ...], str]] = {}
         self._revisions: dict[str, _RevisionEntry] = {}
-        self._project_annotations: dict[str, Any] = {}
+        self._project_annotations: ProjectAnnotationDocument | None = None
         self.rows: dict[str, list[tuple[Any, ...]]] = {
             "projects": [],
             "workflows": [],
@@ -977,7 +1043,7 @@ class _Scanner:
     def collect(self) -> dict[str, list[tuple[Any, ...]]]:
         # The project annotation document is read once per scan so the
         # project, workflow, job and execution levels stay consistent.
-        self._project_annotations = self.store.load_project_annotations() or {}
+        self._project_annotations = self._load_project_annotations()
         self._scan_project()
         self._scan_workflows()
         self._scan_executions()
@@ -1027,6 +1093,7 @@ class _Scanner:
                 str(self.project.root),
             )
         )
+        document = self._project_annotations
         self._tags(
             "project",
             self.project.project_id,
@@ -1035,7 +1102,7 @@ class _Scanner:
                     (
                         "project_annotation",
                         _assignment_triples(
-                            self._project_annotations.get("assignments")
+                            document.assignments if document is not None else []
                         ),
                         True,
                     )
@@ -1045,13 +1112,41 @@ class _Scanner:
             ),
         )
 
-    def _object_annotations(self, object_id: str) -> Mapping[str, Any]:
-        """Return the raw per-object annotation entry of the project document."""
-        objects = self._project_annotations.get("objects")
-        if not isinstance(objects, Mapping):
-            return {}
-        entry = objects.get(object_id)
-        return entry if isinstance(entry, Mapping) else {}
+    def _load_project_annotations(self) -> ProjectAnnotationDocument | None:
+        """Typed-load the project annotation document, or report an issue.
+
+        Corruption or a foreign ``project_id`` drops the whole annotation
+        layer of the project document and records an ``annotation``
+        location issue.
+        """
+        path = self.project.root / ".qphase" / PROJECT_ANNOTATIONS_FILENAME
+        if not path.exists():
+            return None
+        issue_path = f".qphase/{PROJECT_ANNOTATIONS_FILENAME}"
+        try:
+            document = ProjectAnnotationDocument.model_validate(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+        except (OSError, ValueError) as exc:
+            self._location_issue(
+                issue_path, "annotation", f"invalid annotation document: {exc}"
+            )
+            return None
+        if document.project_id != self.project.project_id:
+            self._location_issue(
+                issue_path,
+                "annotation",
+                f"annotation identity mismatch: project_id={document.project_id!r}",
+            )
+            return None
+        return document
+
+    def _object_annotations(self, object_id: str) -> ObjectAnnotations:
+        """Return the per-object annotation entry of the project document."""
+        document = self._project_annotations
+        if document is None:
+            return ObjectAnnotations()
+        return document.objects.get(object_id, ObjectAnnotations())
 
     def _register_revision(
         self,
@@ -1136,7 +1231,7 @@ class _Scanner:
                     (
                         "workflow_annotation",
                         _assignment_triples(
-                            self._object_annotations(revision_id).get("assignments")
+                            self._object_annotations(revision_id).assignments
                         ),
                         True,
                     ),
@@ -1165,7 +1260,7 @@ class _Scanner:
                         (
                             "job_annotation",
                             _assignment_triples(
-                                self._object_annotations(job_id).get("assignments")
+                                self._object_annotations(job_id).assignments
                             ),
                             True,
                         ),
@@ -1248,9 +1343,7 @@ class _Scanner:
                         (
                             "execution_annotation",
                             _assignment_triples(
-                                self._object_annotations(execution_id).get(
-                                    "assignments"
-                                )
+                                self._object_annotations(execution_id).assignments
                             ),
                             True,
                         ),
@@ -1272,7 +1365,7 @@ class _Scanner:
     def _scan_session(self, session_dir: Path) -> None:
         manifest = self.store.load_session_manifest(session_dir)
         session_id = str(manifest.get("session_id") or session_dir.name)
-        annotations = self.store.load_session_annotations(session_dir) or {}
+        document = self._load_session_annotations(session_dir, session_id)
         submission_revision = manifest.get("submission_tag_policy_revision")
         submission_tags: list[tuple[str, str | None, str | None]] = [
             (
@@ -1299,16 +1392,18 @@ class _Scanner:
                 str(manifest.get("status", "unknown")),
                 manifest.get("start_time"),
                 session_dir.relative_to(self.project.session_root).as_posix(),
-                annotations.get("lifecycle"),
-                annotations.get("retention"),
-                annotations.get("alias"),
-                annotations.get("note"),
+                document.lifecycle if document is not None else None,
+                document.retention if document is not None else None,
+                document.alias if document is not None else None,
+                document.note if document is not None else None,
                 str(submission_revision) if submission_revision else None,
             )
         )
         # The session's declared levels read its own frozen snapshot, so a
         # later policy edit never rewrites this session's provenance.
-        session_annotation = _assignment_triples(annotations.get("assignments"))
+        session_annotation = _assignment_triples(
+            document.assignments if document is not None else []
+        )
         inherited_chain: list[TagLevel] = [
             (
                 "workflow_declared",
@@ -1328,13 +1423,13 @@ class _Scanner:
             compute_effective_tags(session_chain, self.policy, "session"),
         )
 
-        retention = annotations.get("retention")
+        retention = document.retention if document is not None else None
         inherit_retention = (
             self.policy.retention_inherits_to_occurrences
             if self.policy is not None
             else True
         )
-        occurrence_annotations = annotations.get("occurrences") or {}
+        occurrence_annotations = document.occurrences if document is not None else {}
         for manifest_file in sorted(session_dir.rglob("artifact_manifest.json")):
             self._scan_artifact(
                 manifest_file.parent,
@@ -1345,6 +1440,45 @@ class _Scanner:
                 snapshot,
                 occurrence_annotations,
             )
+
+    def _load_session_annotations(
+        self, session_dir: Path, session_id: str
+    ) -> SessionAnnotationDocument | None:
+        """Typed-load the session annotation document, or report an issue.
+
+        A corrupt document or one whose identity does not match its
+        location indexes no annotation layer at all (session facets fall
+        back to ``None``) and is recorded as an ``annotation`` location
+        issue; everything else about the session still indexes.
+        """
+        path = session_dir / SESSION_ANNOTATIONS_FILENAME
+        if not path.exists():
+            return None
+        issue_path = (
+            f"{session_dir.relative_to(self.project.session_root).as_posix()}"
+            f"/{SESSION_ANNOTATIONS_FILENAME}"
+        )
+        try:
+            document = SessionAnnotationDocument.model_validate(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+        except (OSError, ValueError) as exc:
+            self._location_issue(
+                issue_path, "annotation", f"invalid annotation document: {exc}"
+            )
+            return None
+        if (
+            document.project_id != self.project.project_id
+            or document.session_id != session_id
+        ):
+            self._location_issue(
+                issue_path,
+                "annotation",
+                f"annotation identity mismatch: project_id="
+                f"{document.project_id!r}, session_id={document.session_id!r}",
+            )
+            return None
+        return document
 
     @staticmethod
     def _snapshot_truth(session_dir: Path) -> _SessionSnapshot:
@@ -1414,7 +1548,7 @@ class _Scanner:
         inherited_chain: list[TagLevel],
         session_retention: str | None,
         snapshot: _SessionSnapshot,
-        occurrence_annotations: Mapping[str, Any],
+        occurrence_annotations: Mapping[str, OccurrenceAnnotations],
     ) -> None:
         # Late import: qphase.data imports qphase.core at module level.
         from ..data.errors import ArtifactError, ArtifactUnsupportedError
@@ -1434,15 +1568,15 @@ class _Scanner:
             return
         artifact_id = manifest.artifact_id
         job_name = artifact_dir.relative_to(session_dir).as_posix()
-        annotations = self._load_artifact_annotations(artifact_dir)
+        document = self._load_artifact_annotations(
+            artifact_dir, relative_path, artifact_id
+        )
         occurrence = ArtifactOccurrence(
             artifact_id=artifact_id, session_id=session_id, job_name=job_name
         )
         # Occurrence annotations are keyed by "job_name:artifact_id" so two
         # occurrences of one artifact inside a session never collide.
-        occurrence_annotation = (
-            occurrence_annotations.get(f"{job_name}:{artifact_id}") or {}
-        )
+        occurrence_annotation = occurrence_annotations.get(f"{job_name}:{artifact_id}")
 
         product_schemas = {
             entry.name: entry.product_schema.fingerprint()
@@ -1475,8 +1609,8 @@ class _Scanner:
                     artifact_id,
                     *facets,
                     relative_path,
-                    annotations.get("lifecycle"),
-                    annotations.get("retention"),
+                    document.lifecycle if document is not None else None,
+                    document.retention if document is not None else None,
                 )
             )
             self._tags(
@@ -1486,7 +1620,9 @@ class _Scanner:
                     [
                         (
                             "artifact_annotation",
-                            _assignment_triples(annotations.get("assignments")),
+                            _assignment_triples(
+                                document.assignments if document is not None else []
+                            ),
                             True,
                         )
                     ],
@@ -1501,7 +1637,11 @@ class _Scanner:
                 f"artifact {artifact_id!r} facets disagree with the first "
                 f"occurrence at {known[1]}",
             )
-        own_retention = occurrence_annotation.get("retention")
+        own_retention = (
+            occurrence_annotation.retention
+            if occurrence_annotation is not None
+            else None
+        )
         self.rows["occurrences"].append(
             (
                 occurrence.object_id,
@@ -1524,7 +1664,11 @@ class _Scanner:
             ),
             (
                 "occurrence_annotation",
-                _assignment_triples(occurrence_annotation.get("assignments")),
+                _assignment_triples(
+                    occurrence_annotation.assignments
+                    if occurrence_annotation is not None
+                    else []
+                ),
                 True,
             ),
         ]
@@ -1534,10 +1678,37 @@ class _Scanner:
             compute_effective_tags(occurrence_chain, self.policy, "occurrence"),
         )
 
-    @staticmethod
-    def _load_artifact_annotations(artifact_dir: Path) -> dict[str, Any]:
+    def _load_artifact_annotations(
+        self, artifact_dir: Path, relative_path: str, artifact_id: str
+    ) -> ArtifactAnnotationDocument | None:
+        """Typed-load the artifact annotation document, or report an issue.
+
+        Same contract as the session document: corruption or an identity
+        mismatch drops the whole annotation layer and records an
+        ``annotation`` location issue.
+        """
         path = artifact_dir / ARTIFACT_ANNOTATIONS_FILENAME
         if not path.exists():
-            return {}
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return dict(payload) if isinstance(payload, dict) else {}
+            return None
+        issue_path = f"{relative_path}/{ARTIFACT_ANNOTATIONS_FILENAME}"
+        try:
+            document = ArtifactAnnotationDocument.model_validate(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+        except (OSError, ValueError) as exc:
+            self._location_issue(
+                issue_path, "annotation", f"invalid annotation document: {exc}"
+            )
+            return None
+        if (
+            document.project_id != self.project.project_id
+            or document.artifact_id != artifact_id
+        ):
+            self._location_issue(
+                issue_path,
+                "annotation",
+                f"annotation identity mismatch: project_id="
+                f"{document.project_id!r}, artifact_id={document.artifact_id!r}",
+            )
+            return None
+        return document
