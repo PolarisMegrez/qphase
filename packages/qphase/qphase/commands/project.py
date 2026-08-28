@@ -181,6 +181,12 @@ def migrate(
         typer.echo(f"  {dup.artifact_id}{flag}: {', '.join(dup.locations)}")
     if len(duplicates) > _MIGRATE_LIST_LIMIT:
         typer.echo(f"  ... and {len(duplicates) - _MIGRATE_LIST_LIMIT} more")
+    violations = report.id_separator_violations
+    typer.echo(f"Id separator violations ({len(violations)}):")
+    for violation in violations[:_MIGRATE_LIST_LIMIT]:
+        typer.echo(f"  {violation.object_kind} {violation.value!r} at {violation.path}")
+    if len(violations) > _MIGRATE_LIST_LIMIT:
+        typer.echo(f"  ... and {len(violations) - _MIGRATE_LIST_LIMIT} more")
     provenance = report.assignments_without_policy_revision
     if provenance:
         summary = ", ".join(f"{scope}={count}" for scope, count in provenance.items())

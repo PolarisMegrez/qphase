@@ -611,6 +611,47 @@ class ProjectObjectCatalog:
             for row in rows
         ]
 
+    def effective_tags_for_objects(
+        self, object_kind: str, object_ids: Iterable[str]
+    ) -> dict[str, list[EffectiveTag]]:
+        """Return the effective tags of many objects of one kind at once.
+
+        One ``IN`` query replaces the per-object round trips of batched
+        callers. Only ids with at least one tag appear in the result;
+        callers treat missing ids as tag-less.
+        """
+        if object_kind not in OBJECT_KINDS:
+            raise ValueError(f"unknown catalog object kind {object_kind!r}")
+        ids = [str(object_id) for object_id in object_ids]
+        if not ids:
+            return {}
+        self._ensure_fresh()
+        placeholders = ", ".join("?" for _ in ids)
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT object_id, tag, source, assignment_id, policy_revision,"
+                " inherited, shadowed FROM effective_tags"
+                f" WHERE object_kind = ? AND object_id IN ({placeholders})"
+                " ORDER BY rowid",
+                (object_kind, *ids),
+            ).fetchall()
+        finally:
+            connection.close()
+        tags: dict[str, list[EffectiveTag]] = {}
+        for row in rows:
+            tags.setdefault(str(row[0]), []).append(
+                EffectiveTag(
+                    tag=row[1],
+                    source=row[2],
+                    assignment_id=row[3],
+                    policy_revision=row[4],
+                    inherited=bool(row[5]),
+                    shadowed=bool(row[6]),
+                )
+            )
+        return tags
+
     def locate_artifact_paths(self, artifact_id: str) -> list[str]:
         """Return every indexed session-relative occurrence path of one artifact.
 

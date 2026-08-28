@@ -67,6 +67,7 @@ from .models import (
     CatalogObject,
     DuplicateArtifact,
     EffectiveTagInfo,
+    IdSeparatorViolation,
     InvalidSnapshotTag,
     LegacyMetadataImport,
     MigrationReport,
@@ -92,6 +93,9 @@ VIRTUAL_FOLDERS = (
     "superseded",
     "cold-storage",
 )
+
+#: Candidate page size of private-tag queries (batch tag load per page).
+_PRIVATE_QUERY_PAGE_SIZE = 1000
 
 
 class CatalogService:
@@ -143,7 +147,13 @@ class CatalogService:
         )
 
     def _query_with_private(self, query: CatalogQuery) -> list[CatalogObject]:
-        """Evaluate tag predicates over merged shared+private tags."""
+        """Evaluate tag predicates over merged shared+private tags.
+
+        Candidates stream through the shared query in pages; each page's
+        effective tags load in one batch query, so no fixed candidate cap
+        and no per-object round trips remain. The caller's offset/limit
+        apply after the merged filtering.
+        """
         shared_only = replace(
             query,
             tags_all=(),
@@ -151,7 +161,7 @@ class CatalogService:
             tags_without=(),
             tag_descendant_of=None,
             tag_namespace=None,
-            limit=10000,
+            limit=_PRIVATE_QUERY_PAGE_SIZE,
             offset=0,
         )
         private_by_object: dict[str, list[str]] = {}
@@ -159,40 +169,51 @@ class CatalogService:
             private_by_object.setdefault(object_id, []).append(tag)
         policy = load_tag_policy(self.project)
         matched: list[dict[str, Any]] = []
-        for row in self.catalog.query(shared_only):
-            object_id = str(row["id"])
-            merged = _merge_private(
-                [
-                    _tag_info(tag)
-                    for tag in self.catalog.effective_tags(query.object_kind, object_id)
-                ],
-                [
-                    EffectiveTagInfo(tag=tag, source="user_private")
-                    for tag in private_by_object.get(object_id, [])
-                ],
-                policy,
+        page_offset = 0
+        while True:
+            page = self.catalog.query(replace(shared_only, offset=page_offset))
+            if not page:
+                break
+            tags_by_object = self.catalog.effective_tags_for_objects(
+                query.object_kind, [str(row["id"]) for row in page]
             )
-            visible = [tag for tag in merged if not tag.shadowed]
-            if not query.effective:
-                visible = [tag for tag in visible if not tag.inherited]
-            tags = {tag.tag for tag in visible}
-            if not all(tag in tags for tag in query.tags_all):
-                continue
-            if query.tags_any and not any(tag in tags for tag in query.tags_any):
-                continue
-            if any(tag in tags for tag in query.tags_without):
-                continue
-            if query.tag_descendant_of is not None and not any(
-                tag == query.tag_descendant_of
-                or tag.startswith(query.tag_descendant_of + "/")
-                for tag in tags
-            ):
-                continue
-            if query.tag_namespace is not None and not any(
-                tag.split(":", 1)[0] == query.tag_namespace for tag in tags
-            ):
-                continue
-            matched.append(row)
+            for row in page:
+                object_id = str(row["id"])
+                merged = _merge_private(
+                    [
+                        _tag_info(tag)
+                        for tag in tags_by_object.get(object_id, [])
+                    ],
+                    [
+                        EffectiveTagInfo(tag=tag, source="user_private")
+                        for tag in private_by_object.get(object_id, [])
+                    ],
+                    policy,
+                )
+                visible = [tag for tag in merged if not tag.shadowed]
+                if not query.effective:
+                    visible = [tag for tag in visible if not tag.inherited]
+                tags = {tag.tag for tag in visible}
+                if not all(tag in tags for tag in query.tags_all):
+                    continue
+                if query.tags_any and not any(tag in tags for tag in query.tags_any):
+                    continue
+                if any(tag in tags for tag in query.tags_without):
+                    continue
+                if query.tag_descendant_of is not None and not any(
+                    tag == query.tag_descendant_of
+                    or tag.startswith(query.tag_descendant_of + "/")
+                    for tag in tags
+                ):
+                    continue
+                if query.tag_namespace is not None and not any(
+                    tag.split(":", 1)[0] == query.tag_namespace for tag in tags
+                ):
+                    continue
+                matched.append(row)
+            if len(page) < _PRIVATE_QUERY_PAGE_SIZE:
+                break
+            page_offset += len(page)
         private = self._private_annotations(query.object_kind)
         return [
             self._catalog_object(query.object_kind, row, private)
@@ -257,7 +278,9 @@ class CatalogService:
         against the current tag policy. On top of that it previews the
         workflow revisions and jobs a rebuild can recover, classifies legacy
         bare-artifact occurrence keys, lists duplicate artifact identities,
-        counts annotation assignments frozen without policy provenance,
+        lists existing job names and artifact ids containing the reserved
+        ``:`` separator, counts annotation assignments frozen without policy
+        provenance,
         rebuilds the catalog into a temporary database outside the project
         to check reindex parity, summarizes the user's private store, and
         collects the per-kind object totals and location issues the Phase 4
@@ -295,11 +318,56 @@ class CatalogService:
                 report.invalid_snapshot_tags.extend(
                     self._invalid_snapshot_tags(session_dir, session_id, policy)
                 )
+                report.id_separator_violations.extend(
+                    self._id_separator_violations(session_dir, root)
+                )
                 self._occurrence_key_preview(session_dir, session_id, report)
         self._annotation_provenance(report)
         self._rebuild_parity(report)
         self._private_summary(report)
         return report
+
+    @staticmethod
+    def _id_separator_violations(
+        session_dir: Path, session_root: Path
+    ) -> list[IdSeparatorViolation]:
+        """List job names and artifact ids containing the ``:`` separator.
+
+        ``:`` joins catalog object ids (``artifact_id:session_id:job_name``)
+        and occurrence annotation keys (``job_name:artifact_id``), so new
+        writes reject it; existing data is surfaced here for the migration.
+        """
+        violations: list[IdSeparatorViolation] = []
+        relative = session_dir.relative_to(session_root).as_posix()
+        snapshot_path = session_dir / "workflow_snapshot.yaml"
+        if snapshot_path.exists():
+            payload = load_yaml(snapshot_path)
+            if isinstance(payload, dict):
+                for job in payload.get("jobs", []):
+                    if not isinstance(job, dict) or not job.get("name"):
+                        continue
+                    name = str(job["name"])
+                    if ":" in name:
+                        violations.append(
+                            IdSeparatorViolation(
+                                object_kind="job",
+                                value=name,
+                                path=f"{relative}/workflow_snapshot.yaml",
+                            )
+                        )
+        for manifest_file in sorted(session_dir.rglob("artifact_manifest.json")):
+            artifact_id = _manifest_artifact_id(manifest_file)
+            if artifact_id is not None and ":" in artifact_id:
+                violations.append(
+                    IdSeparatorViolation(
+                        object_kind="artifact",
+                        value=artifact_id,
+                        path=manifest_file.parent.relative_to(
+                            session_root
+                        ).as_posix(),
+                    )
+                )
+        return violations
 
     def _occurrence_key_preview(
         self, session_dir: Path, session_id: str, report: MigrationReport

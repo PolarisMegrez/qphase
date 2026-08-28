@@ -275,6 +275,16 @@ class ArtifactManifest(BaseModel):
     provenance: dict[str, Any] = Field(default_factory=dict)
     parents: list[str] = Field(default_factory=list)
 
+    @field_validator("artifact_id")
+    @classmethod
+    def _check_artifact_id(cls, value: str) -> str:
+        if ":" in value:
+            raise ValueError(
+                f"artifact_id {value!r} must not contain ':'; it is reserved "
+                "as the catalog object-id separator"
+            )
+        return value
+
     @field_validator("created_at")
     @classmethod
     def _check_created_at(cls, value: str) -> str:

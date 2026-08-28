@@ -996,3 +996,16 @@ def test_interrupted_manifest_publish_keeps_old_artifact(tmp_path, monkeypatch):
         if "__r" in name
     ]
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_manifest_rejects_separator_in_artifact_id(tmp_path):
+    save_products(tmp_path, {"trajectories": _dataset()})
+
+    def bad_id(raw):
+        raw["artifact_id"] = "art:1"
+
+    _mutate_manifest(tmp_path, bad_id)
+    _rewrite_manifest(tmp_path)
+
+    with pytest.raises(ArtifactCorruptError, match="must not contain ':'"):
+        ArtifactManifest.read(tmp_path)

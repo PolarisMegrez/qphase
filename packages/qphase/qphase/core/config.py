@@ -191,6 +191,22 @@ class JobConfig(BaseModel):
         # Validate plugins after initialization
         self._validate_plugins()
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate that the job name avoids the catalog id separator.
+
+        ``:`` joins catalog object ids (``artifact_id:session_id:job_name``)
+        and occurrence annotation keys (``job_name:artifact_id``), so job
+        names must never contain it.
+        """
+        if ":" in v:
+            raise ValueError(
+                f"job name {v!r} must not contain ':'; it is reserved as the "
+                "catalog object-id separator"
+            )
+        return v
+
     @field_validator("engine")
     @classmethod
     def validate_engine(cls, v: dict[str, Any]) -> dict[str, Any]:

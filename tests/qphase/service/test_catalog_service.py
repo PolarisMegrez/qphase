@@ -985,3 +985,62 @@ def test_assignments_freeze_the_namespace_rule(tmp_path):
     )
     catalog.reindex()
     assert catalog.effective_tags("occurrence", "art-1:session-1:sim") == []
+
+
+
+def test_migration_dry_run_lists_id_separator_violations(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(project, "session-1", artifacts=(("sim", "art:1"),))
+    snapshot = {
+        "schema": "qphase.workflow/2",
+        "id": "example",
+        "title": "Example",
+        "jobs": [{"name": "sim:bad", "engine": {"dummy": {}}}],
+    }
+    (root / "workflow_snapshot.yaml").write_text(
+        json.dumps(snapshot), encoding="utf-8"
+    )
+    service = CatalogService(project, home=tmp_path / "home")
+
+    report = service.migration_dry_run()
+
+    violations = {
+        (item.object_kind, item.value) for item in report.id_separator_violations
+    }
+    assert ("job", "sim:bad") in violations
+    assert ("artifact", "art:1") in violations
+
+
+
+def test_private_query_paginates_candidates_in_batches(tmp_path, monkeypatch):
+    project = ProjectContext.create(tmp_path / "project")
+    for index in range(5):
+        _session(project, f"session-{index}")
+    service = CatalogService(project, home=tmp_path / "home")
+    service.tag_session("session-3", add=["task:scan"], private=True)
+    service.tag_session("session-4", add=["task:scan"], private=True)
+
+    from qphase.service import catalog as catalog_module
+
+    # Three candidate pages of two, each with one batched tag load.
+    monkeypatch.setattr(catalog_module, "_PRIVATE_QUERY_PAGE_SIZE", 2)
+    batches: list[int] = []
+    original = service.catalog.effective_tags_for_objects
+
+    def spy(kind, ids):
+        ids = list(ids)
+        batches.append(len(ids))
+        return original(kind, ids)
+
+    monkeypatch.setattr(service.catalog, "effective_tags_for_objects", spy)
+
+    rows = service.query(CatalogQuery(object_kind="session", tags_all=("task:scan",)))
+    assert [row.id for row in rows] == ["session-3", "session-4"]
+    assert batches == [2, 2, 1]
+    # The caller's offset/limit apply after the merged filtering.
+    rows = service.query(
+        CatalogQuery(
+            object_kind="session", tags_all=("task:scan",), offset=1, limit=1
+        )
+    )
+    assert [row.id for row in rows] == ["session-4"]

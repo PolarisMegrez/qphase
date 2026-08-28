@@ -217,3 +217,10 @@ def test_scheduler_validation_still_reports_missing_required_plugin(
 
     with pytest.raises(QPhaseConfigError, match="missing required plugins"):
         scheduler._validate_jobs(job_list)
+
+
+def test_job_name_rejects_catalog_id_separator():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="must not contain ':'"):
+        JobConfig(name="sim:bad", engine={"dummy": {}})

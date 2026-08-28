@@ -1220,3 +1220,27 @@ def test_declared_assignment_ids_embed_the_workflow_revision(tmp_path):
         "example", new_revision, "task:scan"
     )
     assert new_tag.assignment_id != tag.assignment_id
+
+
+
+def test_effective_tags_for_objects_matches_per_object_reads(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(
+        project,
+        "session-1",
+        snapshot_tags=("task:scan",),
+        artifacts=(("sim", "art-1"),),
+    )
+    _session(project, "session-2", snapshot_tags=("task:scan",))
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    ids = ["session-1", "session-2", "session-missing"]
+    batched = catalog.effective_tags_for_objects("session", ids)
+    assert set(batched) == {"session-1", "session-2"}
+    for object_id in ids[:2]:
+        assert batched[object_id] == catalog.effective_tags("session", object_id)
+    assert catalog.effective_tags_for_objects("session", []) == {}
+    with pytest.raises(ValueError, match="unknown catalog object kind"):
+        catalog.effective_tags_for_objects("bogus", ["x"])

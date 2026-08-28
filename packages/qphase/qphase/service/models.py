@@ -412,6 +412,19 @@ class DuplicateArtifact(ServiceModel):
     conflict: bool = False
 
 
+class IdSeparatorViolation(ServiceModel):
+    """One existing id containing the reserved ``:`` separator.
+
+    New writes reject ``:`` in job names and artifact ids (it joins catalog
+    object ids and occurrence annotation keys); existing data is listed here
+    so the migration can rename it.
+    """
+
+    object_kind: str
+    value: str
+    path: str
+
+
 class MigrationReport(ServiceModel):
     """Pure-read preview of the Phase 4 history migration."""
 
@@ -430,6 +443,11 @@ class MigrationReport(ServiceModel):
         default_factory=list
     )
     duplicate_artifacts: list[DuplicateArtifact] = Field(default_factory=list)
+    #: Existing job names / artifact ids containing the reserved ``:``
+    #: separator (new writes reject them; these need migration renames).
+    id_separator_violations: list[IdSeparatorViolation] = Field(
+        default_factory=list
+    )
     #: Annotation assignments lacking policy provenance, per object scope
     #: (only scopes with at least one such assignment are present).
     assignments_without_policy_revision: dict[str, int] = Field(default_factory=dict)
