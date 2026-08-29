@@ -17,11 +17,13 @@ private is the nearest level).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sqlite3
 import tempfile
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
@@ -57,10 +59,13 @@ from qphase.core.tags import (
     TagPolicy,
     canonicalize_tag_syntax,
     freeze_namespace_rule,
+    job_tag_assignment_id,
     load_tag_policy,
     validate_declared_tags,
+    workflow_tag_assignment_id,
 )
-from qphase.core.utils import load_yaml
+from qphase.core.utils import load_yaml, save_yaml
+from qphase.core.workflow import workflow_revision
 from qphase.data.errors import ArtifactAmbiguousError, ArtifactNotFoundError
 
 from .models import (
@@ -339,6 +344,161 @@ class CatalogService:
         self._private_summary(report)
         return report
 
+    def apply_metadata_migration(self, manifest: Mapping[str, Any]) -> dict[str, int]:
+        """Apply one approved Phase 4A metadata action manifest.
+
+        The operation deliberately supports only the two Wave A mutations:
+        frozen legacy tag sidecars and typed Session lifecycle/retention.
+        Every action is checked before the first write, then the Catalog is
+        rebuilt once after the batch.
+        """
+        if manifest.get("schema") != "qphase.phase4a-metadata-actions/1":
+            raise ValueError("unsupported metadata migration manifest")
+        if manifest.get("project_id") != self.project.project_id:
+            raise ValueError("metadata migration manifest belongs to another project")
+        if not manifest.get("external_snapshot"):
+            raise ValueError("metadata migration requires an external snapshot")
+        actions = manifest.get("actions")
+        if not isinstance(actions, list):
+            raise ValueError("metadata migration actions must be a list")
+
+        prepared: list[tuple[str, Path, Any]] = []
+        for action in actions:
+            if not isinstance(action, Mapping):
+                raise ValueError("metadata migration action must be an object")
+            kind = action.get("action")
+            session_id = str(action.get("session_id") or "")
+            root = self.project_service.session_dir(session_id)
+            expected_path = action.get("session_path")
+            if expected_path and root.relative_to(self.project.root).as_posix() != str(
+                expected_path
+            ):
+                raise ValueError(f"Session path changed for {session_id}")
+            if kind == "freeze_legacy_tag_snapshot":
+                target = root / "tag_snapshot.yaml"
+                if target.exists():
+                    raise ValueError(f"tag snapshot already exists for {session_id}")
+                source = root / "workflow_snapshot.yaml"
+                expected = str(action.get("expected_source_sha256") or "")
+                actual = hashlib.sha256(source.read_bytes()).hexdigest()
+                if actual != expected:
+                    raise ValueError(f"workflow snapshot changed for {session_id}")
+                prepared.append((kind, root, self._legacy_tag_snapshot(source, action)))
+            elif kind == "set_session_policy":
+                lifecycle = action.get("lifecycle")
+                retention = action.get("retention")
+                if lifecycle not in {"active", "reference", "superseded", "archived"}:
+                    raise ValueError(f"invalid lifecycle for {session_id}")
+                if retention not in {"transient", "preserve", "evidence", "pinned"}:
+                    raise ValueError(f"invalid retention for {session_id}")
+                prepared.append((kind, root, (lifecycle, retention)))
+            else:
+                raise ValueError(f"unsupported metadata migration action {kind!r}")
+
+        counts: Counter[str] = Counter()
+        policy = load_tag_policy(self.project)
+        for kind, root, payload in prepared:
+            if kind == "freeze_legacy_tag_snapshot":
+                temporary = root / "tag_snapshot.yaml.tmp"
+                save_yaml(payload, temporary)
+                temporary.replace(root / "tag_snapshot.yaml")
+            else:
+                current = self.state_store.load_session_annotations(root)
+                if current is None:
+                    document = self.project_service.new_session_annotations(
+                        root, root.name
+                    )
+                    expected_revision = None
+                else:
+                    document = SessionAnnotationDocument.model_validate(current)
+                    expected_revision = document.revision
+                document.lifecycle, document.retention = payload
+                document.retention_inherits_to_occurrences = (
+                    policy.retention_inherits_to_occurrences
+                    if policy is not None
+                    else True
+                )
+                self.state_store.save_session_annotations(
+                    root,
+                    document.model_dump(mode="json", by_alias=True),
+                    expected_revision=expected_revision,
+                )
+            counts[kind] += 1
+        self.catalog.reindex()
+        return dict(counts)
+
+    def _legacy_tag_snapshot(
+        self, source: Path, action: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Compile one immutable legacy Workflow tag snapshot."""
+        payload = load_yaml(source)
+        if not isinstance(payload, dict):
+            raise ValueError(f"workflow snapshot must be an object: {source}")
+        workflow_id = str(payload.get("id") or "")
+        if not workflow_id:
+            raise ValueError(f"workflow snapshot has no id: {source}")
+        revision = workflow_revision(payload)
+        replacements = action.get("replacements")
+        if not isinstance(replacements, list):
+            raise ValueError("legacy tag replacements must be a list")
+        mapping = {
+            str(item["raw"]): item.get("canonical_tag")
+            for item in replacements
+            if isinstance(item, Mapping) and item.get("raw")
+        }
+        policy = load_tag_policy(self.project)
+
+        def canonical(values: Any, object_kind: ObjectKind) -> list[str]:
+            result: list[str] = []
+            for raw in values if isinstance(values, list) else []:
+                value = str(raw)
+                if value in mapping:
+                    replacement = mapping[value]
+                    if replacement is not None:
+                        result.append(str(replacement))
+                else:
+                    result.extend(validate_declared_tags([value], object_kind, policy))
+            return validate_declared_tags(result, object_kind, policy)
+
+        workflow_tags = canonical(payload.get("tags"), "workflow")
+        jobs = payload.get("jobs")
+        job_items = jobs if isinstance(jobs, list) else []
+        job_tags = {
+            str(job["name"]): canonical(job.get("tags"), "job")
+            for job in job_items
+            if isinstance(job, dict) and job.get("name")
+        }
+
+        def entry(tag: str, job_name: str | None) -> dict[str, Any]:
+            rule = freeze_namespace_rule(policy, tag)
+            assignment_id = (
+                workflow_tag_assignment_id(workflow_id, revision, tag)
+                if job_name is None
+                else job_tag_assignment_id(workflow_id, revision, job_name, tag)
+            )
+            return {
+                "tag": tag,
+                "assignment_id": assignment_id,
+                "inherit": rule.inherit,
+                "cardinality": rule.cardinality,
+                "objects": list(rule.objects),
+            }
+
+        return {
+            "raw_tags": list(payload.get("tags") or []),
+            "canonical_tags": workflow_tags,
+            "job_tags": job_tags,
+            "policy_revision": policy.revision if policy is not None else None,
+            "workflow_revision": revision,
+            "assignments": {
+                "workflow": [entry(tag, None) for tag in workflow_tags],
+                "jobs": {
+                    name: [entry(tag, name) for tag in tags]
+                    for name, tags in job_tags.items()
+                },
+            },
+        }
+
     @staticmethod
     def _id_separator_violations(
         session_dir: Path, session_root: Path
@@ -544,6 +704,11 @@ class CatalogService:
         session_dir: Path, session_id: str, policy: TagPolicy | None
     ) -> list[InvalidSnapshotTag]:
         """List declared snapshot tags failing the current validation rules."""
+        # A frozen sidecar is the canonical historical declaration. The
+        # Catalog validates its structure; migration must not re-judge the
+        # immutable raw Workflow tags against a later policy.
+        if (session_dir / "tag_snapshot.yaml").exists():
+            return []
         path = session_dir / "workflow_snapshot.yaml"
         if not path.exists():
             return []

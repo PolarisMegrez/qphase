@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
+import yaml
 from qphase.core.catalog import CatalogQuery
 from qphase.core.errors import QPhaseConfigError
 from qphase.core.project import ProjectContext
@@ -54,6 +56,106 @@ def _session(
 
 def _write_policy(project: ProjectContext, body: str) -> None:
     (project.defaults_path.parent / "tags.yaml").write_text(body, encoding="utf-8")
+
+
+def _legacy_workflow_snapshot(root: Path) -> Path:
+    path = root / "workflow_snapshot.yaml"
+    path.write_text(
+        "schema: qphase.workflow/2\n"
+        "id: example\n"
+        "title: Example\n"
+        "tags: [legacy_model]\n"
+        "jobs:\n"
+        "  - name: sim\n"
+        "    engine: {dummy: {}}\n"
+        "    tags: [temporary]\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_metadata_migration_freezes_tags_and_session_policy(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(project, "session-1")
+    source = _legacy_workflow_snapshot(root)
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\n"
+        "namespaces:\n"
+        "  model: {open: true}\n",
+    )
+    service = CatalogService(project, home=tmp_path / "home")
+    manifest = {
+        "schema": "qphase.phase4a-metadata-actions/1",
+        "project_id": project.project_id,
+        "external_snapshot": "snapshot-1",
+        "actions": [
+            {
+                "action": "freeze_legacy_tag_snapshot",
+                "session_id": "session-1",
+                "session_path": root.relative_to(project.root).as_posix(),
+                "expected_source_sha256": hashlib.sha256(
+                    source.read_bytes()
+                ).hexdigest(),
+                "replacements": [
+                    {"raw": "legacy_model", "canonical_tag": "model:legacy"},
+                    {"raw": "temporary", "canonical_tag": None},
+                ],
+            },
+            {
+                "action": "set_session_policy",
+                "session_id": "session-1",
+                "session_path": root.relative_to(project.root).as_posix(),
+                "lifecycle": "superseded",
+                "retention": "transient",
+            },
+        ],
+    }
+
+    counts = service.apply_metadata_migration(manifest)
+
+    assert counts == {"freeze_legacy_tag_snapshot": 1, "set_session_policy": 1}
+    frozen = yaml.safe_load((root / "tag_snapshot.yaml").read_text(encoding="utf-8"))
+    assert frozen["canonical_tags"] == ["model:legacy"]
+    assert frozen["job_tags"] == {"sim": []}
+    annotations = service.state_store.load_session_annotations(root)
+    assert annotations["lifecycle"] == "superseded"
+    assert annotations["retention"] == "transient"
+    assert service.migration_dry_run().invalid_snapshot_tags == []
+
+
+def test_metadata_migration_checks_all_actions_before_writing(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(project, "session-1")
+    _legacy_workflow_snapshot(root)
+    service = CatalogService(project, home=tmp_path / "home")
+    manifest = {
+        "schema": "qphase.phase4a-metadata-actions/1",
+        "project_id": project.project_id,
+        "external_snapshot": "snapshot-1",
+        "actions": [
+            {
+                "action": "set_session_policy",
+                "session_id": "session-1",
+                "session_path": root.relative_to(project.root).as_posix(),
+                "lifecycle": "reference",
+                "retention": "pinned",
+            },
+            {
+                "action": "freeze_legacy_tag_snapshot",
+                "session_id": "session-1",
+                "session_path": root.relative_to(project.root).as_posix(),
+                "expected_source_sha256": "wrong",
+                "replacements": [],
+            },
+        ],
+    }
+
+    with pytest.raises(ValueError, match="workflow snapshot changed"):
+        service.apply_metadata_migration(manifest)
+
+    assert not (root / "tag_snapshot.yaml").exists()
+    assert service.state_store.load_session_annotations(root) is None
 
 
 def test_tag_session_roundtrip_visible_in_query(tmp_path):

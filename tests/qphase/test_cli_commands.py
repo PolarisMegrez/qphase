@@ -214,6 +214,42 @@ def test_project_migrate_requires_dry_run(temp_workspace):
     assert "Phase 4" in result.stdout
 
 
+def test_project_migrate_applies_approved_metadata_manifest(temp_workspace, tmp_path):
+    import json
+
+    import yaml
+
+    root = _catalog_session(temp_workspace, "metadata-session")
+    manifest = {
+        "schema": "qphase.phase4a-metadata-actions/1",
+        "project_id": "test-project",
+        "external_snapshot": "snapshot-1",
+        "actions": [
+            {
+                "action": "set_session_policy",
+                "session_id": "metadata-session",
+                "session_path": root.relative_to(temp_workspace).as_posix(),
+                "lifecycle": "reference",
+                "retention": "pinned",
+            }
+        ],
+    }
+    path = tmp_path / "migration.yaml"
+    path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+    result = runner.invoke(
+        app, ["project", "migrate", "--apply-manifest", str(path)]
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "set_session_policy=1" in result.stdout
+    annotations = json.loads(
+        (root / "session_annotations.json").read_text(encoding="utf-8")
+    )
+    assert annotations["lifecycle"] == "reference"
+    assert annotations["retention"] == "pinned"
+
+
 def test_project_migrate_dry_run(temp_workspace):
     """'project migrate --dry-run' previews legacy imports without writing."""
     import json

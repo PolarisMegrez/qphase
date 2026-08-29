@@ -8,6 +8,7 @@ from qphase.core.config_loader import construct_plugins_config, save_project_def
 from qphase.core.errors import QPhaseError
 from qphase.core.project import ProjectContext
 from qphase.core.registry import discovery, registry
+from qphase.core.utils import load_yaml
 from qphase.service import CatalogService
 
 from ._annotations import (
@@ -21,6 +22,9 @@ from ._annotations import (
 
 app = typer.Typer(help="Initialize and inspect QPhase projects")
 _PATH_ARGUMENT = typer.Argument(Path("."))
+_APPLY_MANIFEST_OPTION = typer.Option(
+    None, "--apply-manifest", help="Apply an approved Phase 4 metadata manifest"
+)
 
 #: Maximum number of preview entries printed per migration report list.
 _MIGRATE_LIST_LIMIT = 10
@@ -124,12 +128,32 @@ def reindex() -> None:
 @app.command("migrate")
 def migrate(
     dry_run: bool = typer.Option(False, "--dry-run", help="Report only"),
+    apply_manifest: Path | None = _APPLY_MANIFEST_OPTION,
 ) -> None:
-    """Preview the history migration (the real migration lands in Phase 4)."""
+    """Preview or apply the approved Phase 4 history migration."""
+    if dry_run and apply_manifest is not None:
+        typer.echo("Error: choose either --dry-run or --apply-manifest")
+        raise typer.Exit(code=1)
+    if apply_manifest is not None:
+        try:
+            payload = load_yaml(apply_manifest)
+            if not isinstance(payload, dict):
+                raise ValueError("migration manifest must contain an object")
+            apply_counts = CatalogService(
+                ProjectContext.discover()
+            ).apply_metadata_migration(payload)
+        except (QPhaseError, OSError, ValueError) as exc:
+            typer.echo(f"Error: {exc}")
+            raise typer.Exit(code=1) from exc
+        summary = ", ".join(
+            f"{name}={count}" for name, count in sorted(apply_counts.items())
+        )
+        typer.echo(f"Migration applied: {summary}")
+        return
     if not dry_run:
         typer.echo(
-            "Error: the formal history migration will be provided in Phase 4; "
-            "use --dry-run to preview what it will do"
+            "Error: Phase 4 migration requires --dry-run to preview or "
+            "--apply-manifest to apply an approved metadata batch"
         )
         raise typer.Exit(code=1)
     try:
