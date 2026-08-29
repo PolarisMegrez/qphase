@@ -89,7 +89,8 @@ Tag 从四个 scope 进入系统，按由远到近排列：
    Workflow 运行时，解析后的 declared tag 会冻结进 session 的
    `workflow_snapshot.yaml` / `tag_snapshot.yaml`——之后再改 workflow 文件
    不会改写历史。
-2. **Submission tag**(execution)：提交时给定并冻结在 execution 记录上。
+2. **Submission tag**(execution)：提交时给定并连同每个 tag 的最小
+   namespace 规则一起冻结在 execution 记录上。
    只有 execution 仍在排队时才能编辑（`qphase execution tag`)。
 3. **共享 annotation**：写进项目内的 annotation 文档
    (`session_annotations.json`、`artifact_annotations.json`、
@@ -113,7 +114,9 @@ shadow 两者。被 shadow 的 tag 在 API 中仍带 provenance 可见，但默�
 显示，也不参与查询匹配。
 
 `lifecycle` 从不继承——它描述对象本身。policy 允许时 `retention` 从
-session 传给 occurrence,occurrence 也可以在本地覆盖。
+session 传给 occurrence,occurrence 也可以在本地覆盖。设置 session 的
+retention 时会把 policy 的继承开关一并冻结，之后的 policy 修改不会重新
+裁决历史；在此契约之前写入的 session 回退当前 policy，由 Phase 4 迁移回填。
 
 ## Lifecycle 与 Retention
 
@@ -153,10 +156,11 @@ qphase session list --tag task:scan --tag-without task:wip \
   均可留空）。
 - `--direct` 忽略继承来的 tag，只匹配直接 assignment。
 
-在 API 层(`CatalogQuery`）还有按对象种类划分的 facet 快捷过滤：job 的
-`plugin`（命中任一声明的 plugin)、artifact 的 `quantity`（命中任一产出
-quantity)，以及 session 的 `model`/`engine`/`has_model`（经由该 session
-workflow revision 的 job 解析）。用在错误的对象种类上会抛出 `ValueError`。
+list 命令还把派生 facet 快捷过滤暴露为按对象种类校验的旗标：job 的
+`--plugin`（命中任一声明的 plugin)、artifact 的 `--quantity`（命中任一产出
+quantity)，以及 session 的 `--model`/`--engine`/`--has-model`（经由该 session
+workflow revision 的 job 解析）。同样的过滤器也存在于 `CatalogQuery` 与 GUI
+catalog 路由的 HTTP query 参数上；用在错误的对象种类上会被拒绝。
 
 各对象命令组：
 
@@ -218,4 +222,5 @@ qphase project migrate --dry-run
 revision 与 job 数、旧式 occurrence 键转换（可转换 vs 有歧义）、重复
 artifact identity、包含保留分隔符 `:` 的既有 job 名与 artifact id、无法
 加载的 annotation 文档、缺少 policy provenance 的 annotation assignment、
-catalog reindex 一致性、私有库摘要，以及迁移所需的各类对象计数。
+catalog reindex 一致性（按表做完整行的 multiset 比较，而不只是计数）、
+私有库摘要，以及迁移所需的各类对象计数。

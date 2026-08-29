@@ -98,8 +98,9 @@ Tags enter the system through four scopes, listed from farthest to nearest:
    into the session's `workflow_snapshot.yaml` / `tag_snapshot.yaml` — later
    edits to the workflow file never rewrite history.
 2. **Submission tags** (execution): supplied at submit time and frozen on the
-   execution record. They can only be edited while the execution is still
-   queued (`qphase execution tag`).
+   execution record together with their minimal namespace rules. They can
+   only be edited while the execution is still queued (`qphase execution
+   tag`).
 3. **Shared annotations**: written to annotation documents inside the project
    (`session_annotations.json`, `artifact_annotations.json`,
    `.qphase/project_annotations.json`). They are shared with everyone who
@@ -124,7 +125,10 @@ in the API but are hidden from default listings and do not match queries.
 
 `lifecycle` never inherits — it describes the object itself. `retention`
 flows from session to occurrence when the policy allows it, and an occurrence
-can override it locally.
+can override it locally. Setting a session's retention freezes the policy's
+inherit switch with it, so later policy edits never re-decide history;
+sessions written before this contract fall back to the current policy until
+the Phase 4 migration backfills them.
 
 ## Lifecycle and Retention
 
@@ -165,12 +169,12 @@ qphase session list --tag task:scan --tag-without task:wip \
   (either bound may be empty).
 - `--direct` ignores inherited tags and matches only direct assignments.
 
-At the API level (`CatalogQuery`), kind-specific facet shortcuts complement
-the shared filters: `plugin` for jobs (matches any declared plugin),
-`quantity` for artifacts (matches any produced quantity), and
-`model`/`engine`/`has_model` for sessions, resolved through the jobs of the
-session's workflow revision. Each rejects the wrong object kind with a
-`ValueError`.
+List commands also expose the derived-facet shortcuts as kind-checked flags:
+`--plugin` for jobs (matches any declared plugin), `--quantity` for artifacts
+(matches any produced quantity), and `--model`/`--engine`/`--has-model` for
+sessions, resolved through the jobs of the session's workflow revision. The
+same filters exist on `CatalogQuery` and as HTTP query parameters on the GUI
+catalog route; each rejects the wrong object kind.
 
 The object groups:
 
@@ -236,5 +240,6 @@ rebuildable workflow revisions and jobs, legacy occurrence-key conversion
 (convertible vs. ambiguous), duplicate artifact identities, existing job
 names and artifact ids containing the reserved `:` separator, invalid
 annotation documents, annotation assignments missing policy provenance,
-catalog reindex parity, a private-store summary, and the per-kind object
+catalog reindex parity (a full-row multiset comparison per table, not just
+counts), a private-store summary, and the per-kind object
 counts the migration will act on.

@@ -37,14 +37,20 @@ description: Catalog、identity 与 annotation 开发契约
   和 `tag_snapshot.yaml`（规范化 tag、稳定 assignment id、验证它们的
   policy revision)。之后修改 workflow 文件或 policy 都不会改写历史
   session 的 provenance。
-- Submission tag 连同 `tag_policy_revision` 冻结在 execution 记录上；只有
-  execution 仍在排队时才可修改。
+- Submission tag 连同 `tag_policy_revision` 与每个 tag 的最小 namespace 规则
+  （`submission_tag_rules`）冻结在 execution 记录上；session manifest 携带同一份
+  快照。只有 execution 仍在排队时才可修改。没有 policy 时冻结默认规则
+  （`inherit=True`、`cardinality="many"`、适用全部对象种类），因此之后才引入
+  policy 不会让历史失效。
 - 每个 annotation `TagAssignment` 在写入时冻结 `policy_revision` **以及最小
   namespace 规则**(`inherit`/`cardinality`/`objects`)。Effective tag 解析
-  优先使用冻结的规则；没有冻结规则的 assignment（旧文档、无治理规则的
-  namespace、私有 tag）回退到读取时的当前 policy。Assignment 不可变：编辑
+  优先使用冻结的规则；只有早于规则冻结的 assignment（旧文档）与用户私有 tag
+  回退到读取时的当前 policy。Assignment 不可变：编辑
   一个 tag 是删除旧 assignment 并新增一个，因此任何 effective tag 都能引用
   稳定的 `assignment_id`。
+- 设置 session 的 `retention` 时，policy 的 `retention_inherits_to_occurrences`
+  开关会同时冻结进 annotation 文档。缺该字段的旧文档回退当前 policy;Phase 4
+  迁移负责回填（dry-run 会列出数量）。
 - Declared tag 没有 annotation 文档；其 assignment id 由声明的 identity 经
   `sha256` 确定性导出，其中包含由共享的
   `qphase.core.workflow.workflow_revision` 计算的 workflow revision。因此

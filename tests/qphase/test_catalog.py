@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -1400,3 +1403,54 @@ def test_legacy_manifest_without_rules_falls_back_to_current_policy(tmp_path):
 
     assert catalog.effective_tags("session", "session-1") == []
     assert catalog.effective_tags("occurrence", "art-1:session-1:sim") == []
+
+
+_REINDEX_WORKER = """
+import sys
+from pathlib import Path
+from qphase.core.catalog import ProjectObjectCatalog
+from qphase.core.project import ProjectContext
+
+project = ProjectContext.load(Path(sys.argv[1]))
+catalog = ProjectObjectCatalog(project)
+for _ in range(10):
+    catalog.reindex()
+"""
+
+
+def test_concurrent_reindex_across_processes(tmp_path):
+    """Two OS processes plus this one reindex one project concurrently.
+
+    The sibling file lock must serialize them: the final catalog is readable
+    and correct, and no temporary build database is left behind.
+    """
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project, tags=("task:scan",))
+    _session(
+        project,
+        "session-1",
+        snapshot_tags=("task:scan",),
+        artifacts=(("sim", "art-1"),),
+    )
+    env = {key: value for key, value in os.environ.items() if key != "QPHASE_PROJECT"}
+    workers = [
+        subprocess.Popen(
+            [sys.executable, "-c", _REINDEX_WORKER, str(project.root)],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for _ in range(2)
+    ]
+    catalog = ProjectObjectCatalog(project)
+    for _ in range(10):
+        catalog.reindex()
+    for worker in workers:
+        _out, err = worker.communicate(timeout=120)
+        assert worker.returncode == 0, err.decode()
+
+    rows = catalog.query(CatalogQuery(object_kind="session"))
+    assert [row["id"] for row in rows] == ["session-1"]
+    artifacts = catalog.query(CatalogQuery(object_kind="artifact"))
+    assert [row["id"] for row in artifacts] == ["art-1"]
+    assert list(project.root.glob(".qphase/*.build")) == []

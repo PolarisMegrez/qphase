@@ -47,7 +47,9 @@ qphase workflow tag WORKFLOW_ID@REVISION [--add TAG] [--remove TAG] [--private]
 Session、Artifact、Occurrence、Job 和 Execution 通过对象 catalog 列出与注解。
 所有 `list` 命令接受同一组过滤器：`--tag`、`--tag-any`、`--tag-without`、
 `--tag-descendant`、`--tag-namespace`、`--facet k=v`、`--range k=low..high`、
-`--lifecycle`、`--retention`、`--direct`、`--limit` 与 `--offset`。
+`--lifecycle`、`--retention`、`--direct`、`--limit` 与 `--offset`。此外还有按
+对象种类校验的派生 facet 过滤：`--plugin`（job）、`--quantity`（artifact）、
+`--model`/`--engine`/`--has-model`（session）。
 
 ```bash
 qphase session list|tag|lifecycle|retention ...

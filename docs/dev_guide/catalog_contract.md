@@ -40,14 +40,22 @@ contracts themselves require a schema or read-model version bump.
   assignment ids, the policy revision that validated them). Later edits to
   the workflow file or the policy never rewrite a past session's provenance.
 - Submission tags are frozen on the execution record together with
-  `tag_policy_revision`; they are mutable only while the execution is queued.
+  `tag_policy_revision` and the minimal namespace rule of each tag
+  (`submission_tag_rules`); the session manifest carries the same snapshot.
+  They are mutable only while the execution is queued. Without a policy the
+  default rule (`inherit=True`, `cardinality="many"`, all object kinds) is
+  frozen, so history stays stable if a policy is introduced later.
 - Every annotation `TagAssignment` freezes `policy_revision` **and the
   minimal namespace rule** (`inherit`/`cardinality`/`objects`) at write time.
-  Effective-tag resolution prefers the frozen rule; assignments without one
-  (legacy documents, rule-less namespaces, private tags) fall back to the
-  policy current at read time. Assignments are immutable: editing a tag
+  Effective-tag resolution prefers the frozen rule; only assignments that
+  predate rule freezing (legacy documents) and user-private tags fall back to
+  the policy current at read time. Assignments are immutable: editing a tag
   removes one assignment and adds a new one, so an effective tag can always
   cite a stable `assignment_id`.
+- Setting a session's `retention` freezes the policy's
+  `retention_inherits_to_occurrences` switch into the annotation document at
+  the same time. Legacy documents without the field fall back to the current
+  policy; the Phase 4 migration backfills them (the dry-run lists the count).
 - Declared tags have no annotation document; their assignment ids are derived
   deterministically (`sha256` over the declaration identity, including the
   workflow revision computed by the shared

@@ -53,7 +53,9 @@ Sessions, artifacts, occurrences, jobs, and executions are listed and
 annotated through the object catalog. Every `list` command accepts the same
 filters: `--tag`, `--tag-any`, `--tag-without`, `--tag-descendant`,
 `--tag-namespace`, `--facet k=v`, `--range k=low..high`, `--lifecycle`,
-`--retention`, `--direct`, `--limit`, and `--offset`.
+`--retention`, `--direct`, `--limit`, and `--offset`. Kind-checked derived
+facet filters complement them: `--plugin` (jobs), `--quantity` (artifacts),
+and `--model`/`--engine`/`--has-model` (sessions).
 
 ```bash
 qphase session list|tag|lifecycle|retention ...
