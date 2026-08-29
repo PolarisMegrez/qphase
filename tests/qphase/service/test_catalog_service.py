@@ -543,6 +543,30 @@ def test_virtual_folders(tmp_path):
         service.virtual_folder("nope")
 
 
+def test_virtual_folder_is_not_limited_to_default_query_page(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    snapshot = {
+        "schema": "qphase.workflow/2",
+        "id": "example",
+        "title": "Example",
+        "jobs": [
+            {
+                "name": "sim",
+                "engine": {"dummy": {}},
+                "plugins": {"model": {"cam": {}}},
+            }
+        ],
+    }
+    for index in range(105):
+        root = _session(project, f"session-{index:03d}")
+        (root / "workflow_snapshot.yaml").write_text(
+            json.dumps(snapshot), encoding="utf-8"
+        )
+    service = CatalogService(project, home=tmp_path / "home")
+
+    assert len(service.virtual_folder("by-model")) == 105
+
+
 def _snapshot_files(root: Path) -> dict[Path, bytes]:
     return {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
 

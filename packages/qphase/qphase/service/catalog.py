@@ -739,26 +739,45 @@ class CatalogService:
         """Return ``(name, object count)`` for every built-in folder."""
         return [(name, len(self.virtual_folder(name))) for name in VIRTUAL_FOLDERS]
 
+    def _query_all(self, query: CatalogQuery) -> list[CatalogObject]:
+        """Read every page of one built-in virtual-folder query."""
+        rows: list[CatalogObject] = []
+        offset = 0
+        while True:
+            page = self.query(
+                replace(query, limit=_PRIVATE_QUERY_PAGE_SIZE, offset=offset)
+            )
+            rows.extend(page)
+            if len(page) < _PRIVATE_QUERY_PAGE_SIZE:
+                return rows
+            offset += len(page)
+
     def virtual_folder(self, name: str) -> list[CatalogObject]:
         """Return the session objects of one built-in virtual folder."""
         if name == "by-model":
             # Sessions whose workflow revision declares any model plugin;
             # filter by a concrete model with the ``model`` query filter.
-            return self.query(CatalogQuery(object_kind="session", has_model=True))
+            return self._query_all(
+                CatalogQuery(object_kind="session", has_model=True)
+            )
         if name == "paper-evidence":
-            return self.query(
+            return self._query_all(
                 CatalogQuery(object_kind="session", retention="evidence")
-            ) + self.query(CatalogQuery(object_kind="session", retention="pinned"))
+            ) + self._query_all(
+                CatalogQuery(object_kind="session", retention="pinned")
+            )
         if name == "diagnostics":
-            return self.query(
+            return self._query_all(
                 CatalogQuery(object_kind="session", tags_all=("task:diagnostics",))
             )
         if name == "superseded":
-            return self.query(
+            return self._query_all(
                 CatalogQuery(object_kind="session", lifecycle="superseded")
             )
         if name == "cold-storage":
-            return self.query(CatalogQuery(object_kind="session", lifecycle="archived"))
+            return self._query_all(
+                CatalogQuery(object_kind="session", lifecycle="archived")
+            )
         raise KeyError(f"unknown virtual folder: {name!r}")
 
     def tag_session(
