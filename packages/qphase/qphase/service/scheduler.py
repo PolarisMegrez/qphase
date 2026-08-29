@@ -113,6 +113,7 @@ class SchedulerService:
         compiled_workflow: CompiledWorkflow | None = None,
         submission_tags: list[str] | None = None,
         submission_tag_policy_revision: str | None = None,
+        submission_tag_rules: dict[str, dict[str, Any]] | None = None,
     ) -> list[JobResult]:
         scheduler = Scheduler(
             system_config=self.system_config,
@@ -142,6 +143,8 @@ class SchedulerService:
                 if policy is not None
                 else None
             )
+            if submission_tag_rules is not None:
+                run_kwargs["submission_tag_rules"] = submission_tag_rules
         results = scheduler.run(workflow, **run_kwargs)
         statuses = {result.status for result in results}
         self.last_session_handle = SessionHandle(

@@ -462,11 +462,16 @@ class MigrationReport(ServiceModel):
     #: Annotation assignments lacking policy provenance, per object scope
     #: (only scopes with at least one such assignment are present).
     assignments_without_policy_revision: dict[str, int] = Field(default_factory=dict)
+    #: Sessions whose annotation document sets a retention but lacks the
+    #: frozen ``retention_inherits_to_occurrences`` flag (pre-freeze writes;
+    #: the migration backfills the flag from the current policy).
+    sessions_missing_retention_inheritance: int = 0
     #: Whether the on-disk catalog differs from a fresh rebuild; ``None``
     #: means the project has no catalog yet. ``True`` with an empty
     #: ``catalog_drift_tables`` means the on-disk catalog was unreadable.
     catalog_drift: bool | None = None
-    #: Per-table differing row counts (both EXCEPT directions combined).
+    #: Per-table differing row counts (multiset symmetric difference, so
+    #: duplicated rows count as drift).
     catalog_drift_tables: dict[str, int] = Field(default_factory=dict)
     #: Freshly rebuilt per-kind object totals (Phase 4 manifest input).
     object_counts: dict[str, int] = Field(default_factory=dict)

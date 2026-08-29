@@ -21,6 +21,7 @@ import json
 import shutil
 import sqlite3
 import tempfile
+from collections import Counter
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
@@ -281,8 +282,9 @@ class CatalogService:
         bare-artifact occurrence keys, lists duplicate artifact identities,
         lists existing job names and artifact ids containing the reserved
         ``:`` separator, counts annotation assignments frozen without policy
-        provenance, rebuilds the catalog into a temporary database outside
-        the project to check reindex parity (which also surfaces the
+        provenance, counts sessions whose retention predates the frozen
+        inheritance flag, rebuilds the catalog into a temporary database
+        outside the project to check reindex parity (which also surfaces the
         annotation documents it could not load), summarizes the user's
         private store, and collects the per-kind object totals and location
         issues the Phase 4 action manifest needs. Never reindexes the
@@ -299,7 +301,8 @@ class CatalogService:
                 session_dir = manifest_path.parent
                 manifest = self.state_store.load_session_manifest(session_dir)
                 session_id = str(manifest.get("session_id") or session_dir.name)
-                if not (session_dir / SESSION_ANNOTATIONS_FILENAME).exists():
+                annotations_path = session_dir / SESSION_ANNOTATIONS_FILENAME
+                if not annotations_path.exists():
                     # Seed the document exactly the way the migration will, so
                     # the preview matches the future import by construction.
                     seeded = self.project_service.new_session_annotations(
@@ -316,6 +319,14 @@ class CatalogService:
                         )
                     else:
                         report.untouched_sessions += 1
+                else:
+                    payload = _read_json_document(annotations_path)
+                    if (
+                        payload is not None
+                        and payload.get("retention") is not None
+                        and payload.get("retention_inherits_to_occurrences") is None
+                    ):
+                        report.sessions_missing_retention_inheritance += 1
                 report.invalid_snapshot_tags.extend(
                     self._invalid_snapshot_tags(session_dir, session_id, policy)
                 )
@@ -618,10 +629,25 @@ class CatalogService:
     def set_session_retention(
         self, session_id: str, retention: RetentionPolicy | None
     ) -> SessionSummary:
-        """Set or clear the session retention policy."""
+        """Set or clear the session retention policy.
+
+        Setting a retention also freezes whether it inherits to occurrences
+        (from the current tag policy, defaulting to ``True``), so a later
+        policy edit never rewrites historical sessions. Clearing the
+        retention clears the frozen flag as well.
+        """
         root = self.project_service.session_dir(session_id)
         document, expected = self._session_document(root, session_id)
         document.retention = retention
+        if retention is None:
+            document.retention_inherits_to_occurrences = None
+        else:
+            policy = load_tag_policy(self.project)
+            document.retention_inherits_to_occurrences = (
+                policy.retention_inherits_to_occurrences
+                if policy is not None
+                else True
+            )
         self._save_session_document(root, document, expected)
         return self.project_service.get_session(session_id)
 
@@ -880,12 +906,12 @@ class CatalogService:
 
     def _validate_tags(
         self, values: list[str] | tuple[str, ...], object_kind: ObjectKind
-    ) -> tuple[list[str], str | None, dict[str, FrozenNamespaceRule | None]]:
+    ) -> tuple[list[str], str | None, dict[str, FrozenNamespaceRule]]:
         """Validate tags against the current policy; freeze its provenance.
 
         Returns the canonical tags, the policy revision, and the minimal
-        namespace rule frozen per tag (``None`` when no rule governs it, in
-        which case resolution falls back to the current policy).
+        namespace rule frozen per tag (default rules when no policy governs
+        the namespace, so history stays stable if a policy appears later).
         """
         policy = load_tag_policy(self.project)
         tags = validate_declared_tags(list(values), object_kind, policy)
@@ -1142,13 +1168,13 @@ def _duplicate_artifacts(
 def _catalog_drift(
     catalog_path: Path, rebuilt_path: Path, work_dir: Path
 ) -> dict[str, int]:
-    """Diff two catalog databases table by table, comparing full row content.
+    """Diff two catalog databases table by table as multisets of full rows.
 
-    Returns per-table differing row counts (both directions of ``EXCEPT``,
-    which is set semantics and therefore order-independent); an empty dict
-    means no drift. The on-disk catalog is WAL-mode, so even opening it
-    could create ``-shm`` sidecar files next to it: it is copied (with
-    WAL/SHM sidecars) into ``work_dir`` first, keeping the project
+    Returns per-table differing row counts (multiset symmetric difference,
+    so a duplicated row counts as drift even when the row set is identical);
+    an empty dict means no drift. The on-disk catalog is WAL-mode, so even
+    opening it could create ``-shm`` sidecar files next to it: it is copied
+    (with WAL/SHM sidecars) into ``work_dir`` first, keeping the project
     directory untouched.
     """
     current = work_dir / "current_catalog.sqlite"
@@ -1163,20 +1189,22 @@ def _catalog_drift(
         connection.execute("ATTACH DATABASE ? AS rebuilt", (str(rebuilt_path),))
         drift: dict[str, int] = {}
         for table in _PARITY_TABLES:
-            forward = int(
+            # Full rows are str/int/None tuples, safe to count as multisets.
+            current_rows = Counter(
                 connection.execute(
-                    f"SELECT COUNT(*) FROM (SELECT * FROM current.{table}"  # noqa: S608
-                    f" EXCEPT SELECT * FROM rebuilt.{table})"
-                ).fetchone()[0]
+                    f"SELECT * FROM current.{table}"  # noqa: S608
+                ).fetchall()
             )
-            backward = int(
+            rebuilt_rows = Counter(
                 connection.execute(
-                    f"SELECT COUNT(*) FROM (SELECT * FROM rebuilt.{table}"  # noqa: S608
-                    f" EXCEPT SELECT * FROM current.{table})"
-                ).fetchone()[0]
+                    f"SELECT * FROM rebuilt.{table}"  # noqa: S608
+                ).fetchall()
             )
-            if forward or backward:
-                drift[table] = forward + backward
+            differing = sum((current_rows - rebuilt_rows).values()) + sum(
+                (rebuilt_rows - current_rows).values()
+            )
+            if differing:
+                drift[table] = differing
         return drift
     finally:
         connection.close()
@@ -1243,7 +1271,7 @@ def _apply_tag_edits(
     added: list[str],
     removed: set[str],
     policy_revision: str | None = None,
-    rules: dict[str, FrozenNamespaceRule | None] | None = None,
+    rules: dict[str, FrozenNamespaceRule] | None = None,
 ) -> None:
     """Apply immutable-assignment edits in place on an assignment list.
 

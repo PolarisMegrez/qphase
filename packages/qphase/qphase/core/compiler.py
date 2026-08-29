@@ -244,11 +244,9 @@ class WorkflowCompiler:
             return {
                 "tag": tag,
                 "assignment_id": assignment_id,
-                "inherit": rule.inherit if rule is not None else None,
-                "cardinality": rule.cardinality if rule is not None else None,
-                "objects": (
-                    list(rule.objects) if rule is not None else None
-                ),
+                "inherit": rule.inherit,
+                "cardinality": rule.cardinality,
+                "objects": list(rule.objects),
             }
 
         snapshot = {

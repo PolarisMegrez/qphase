@@ -96,6 +96,90 @@ def test_session_lifecycle_and_retention_roundtrip(tmp_path):
     ) == []
 
 
+def test_session_retention_freezes_inheritance_flag(tmp_path):
+    from qphase.core.catalog import ProjectObjectCatalog
+
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    service = CatalogService(project, home=tmp_path / "home")
+
+    service.set_session_retention("session-1", "evidence")
+
+    # Frozen at write time with the default (no policy yet: inherit).
+    (row,) = service.query(CatalogQuery(object_kind="occurrence"))
+    assert row.facets["effective_retention"] == "evidence"
+
+    # A policy introduced later disabling inheritance must not rewrite the
+    # historical session's frozen flag.
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\nretention_inherits_to_occurrences: false\n",
+    )
+    ProjectObjectCatalog(project).reindex()
+    (row,) = service.query(CatalogQuery(object_kind="occurrence"))
+    assert row.facets["effective_retention"] == "evidence"
+
+    # Clearing the retention clears the frozen flag with it.
+    service.set_session_retention("session-1", None)
+    (row,) = service.query(CatalogQuery(object_kind="occurrence"))
+    assert row.facets["effective_retention"] is None
+
+
+def test_legacy_retention_document_falls_back_to_current_policy(tmp_path):
+    from qphase.core.catalog import ProjectObjectCatalog
+
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(project, "session-1", artifacts=(("sim", "art-1"),))
+    # Pre-freeze document: retention set, no inheritance flag recorded.
+    (root / "session_annotations.json").write_text(
+        json.dumps(
+            {
+                "schema": "qphase.session-annotations/1",
+                "project_id": project.project_id,
+                "session_id": "session-1",
+                "revision": 0,
+                "retention": "evidence",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\nretention_inherits_to_occurrences: false\n",
+    )
+    service = CatalogService(project, home=tmp_path / "home")
+    ProjectObjectCatalog(project).reindex()
+
+    (row,) = service.query(CatalogQuery(object_kind="occurrence"))
+    assert row.facets["effective_retention"] is None
+
+
+def test_migration_dry_run_counts_missing_retention_inheritance(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    root = _session(project, "session-1")
+    (root / "session_annotations.json").write_text(
+        json.dumps(
+            {
+                "schema": "qphase.session-annotations/1",
+                "project_id": project.project_id,
+                "session_id": "session-1",
+                "revision": 0,
+                "retention": "evidence",
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = CatalogService(project, home=tmp_path / "home")
+
+    report = service.migration_dry_run()
+    assert report.sessions_missing_retention_inheritance == 1
+
+    # Rewriting the retention through the service freezes the flag.
+    service.set_session_retention("session-1", "evidence")
+    report = service.migration_dry_run()
+    assert report.sessions_missing_retention_inheritance == 0
+
+
 def test_policy_rejects_illegal_tag_value(tmp_path):
     project = ProjectContext.create(tmp_path / "project")
     _write_policy(
@@ -953,6 +1037,30 @@ def test_migration_dry_run_locates_drift_table(tmp_path):
 
     assert report.catalog_drift is True
     assert report.catalog_drift_tables == {"sessions": 2}
+
+
+def test_migration_dry_run_detects_duplicate_rows(tmp_path):
+    """A duplicated catalog row is drift even under set semantics."""
+    import sqlite3
+
+    project = ProjectContext.create(tmp_path / "project")
+    _session(project, "session-1")
+    service = CatalogService(project, home=tmp_path / "home")
+    service.tag_session("session-1", add=["task:scan"])
+    connection = sqlite3.connect(service.catalog.path)
+    with connection:
+        row = connection.execute(
+            "SELECT * FROM effective_tags LIMIT 1"
+        ).fetchone()
+        connection.execute(
+            "INSERT INTO effective_tags VALUES (?, ?, ?, ?, ?, ?, ?, ?)", row
+        )
+    connection.close()
+
+    report = service.migration_dry_run()
+
+    assert report.catalog_drift is True
+    assert report.catalog_drift_tables == {"effective_tags": 1}
 
 
 

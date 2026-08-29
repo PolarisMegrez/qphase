@@ -47,7 +47,7 @@ from .protocols import ResultProtocol
 from .registry import RegistryCenter, registry
 from .result_router import ResultRouter
 from .system_config import SystemConfig, load_system_config
-from .tags import load_tag_policy
+from .tags import freeze_tag_rules, load_tag_policy
 from .utils import save_yaml
 
 log = get_logger()
@@ -65,6 +65,7 @@ class SessionManifest(TypedDict):
     status: str
     submission_tags: list[str]
     submission_tag_policy_revision: str | None
+    submission_tag_rules: dict[str, dict[str, Any]]
     jobs: dict[str, dict[str, Any]]
 
 
@@ -131,6 +132,7 @@ class Scheduler:
         workflow: WorkflowSpec,
         submission_tags: list[str] | None = None,
         submission_tag_policy_revision: str | None = None,
+        submission_tag_rules: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """Initialize a new execution session."""
         # Generate session ID
@@ -152,6 +154,11 @@ class Scheduler:
             submission_tag_policy_revision = (
                 policy.revision if policy is not None else None
             )
+        if submission_tag_rules is None:
+            # Direct Scheduler callers (no execution record) freeze the rules
+            # from the current policy at session initialization time.
+            policy = load_tag_policy(self.project)
+            submission_tag_rules = freeze_tag_rules(policy, submission_tags or [])
 
         # Attach the per-session log file (full DEBUG content). A failure here
         # surfaces one explicit warning and never blocks the run.
@@ -168,6 +175,7 @@ class Scheduler:
             "status": "running",
             "submission_tags": list(submission_tags or []),
             "submission_tag_policy_revision": submission_tag_policy_revision,
+            "submission_tag_rules": dict(submission_tag_rules or {}),
             "jobs": {},
         }
         self._save_manifest()
@@ -314,6 +322,7 @@ class Scheduler:
         compiled_workflow: CompiledWorkflow | None = None,
         submission_tags: list[str] | None = None,
         submission_tag_policy_revision: str | None = None,
+        submission_tag_rules: dict[str, dict[str, Any]] | None = None,
     ) -> list[JobResult]:
         """Execute all jobs in the workflow serially.
 
@@ -335,6 +344,10 @@ class Scheduler:
             Revision of the tag policy that validated ``submission_tags`` at
             submit time. When omitted, the current policy revision is recorded
             at session initialization.
+        submission_tag_rules : dict[str, dict[str, Any]] | None, optional
+            Frozen minimal namespace rules (inherit/cardinality/objects) of
+            ``submission_tags``, snapshotted at submit time. When omitted, the
+            rules are frozen from the current policy at session initialization.
 
         Returns
         -------
@@ -403,7 +416,10 @@ class Scheduler:
             self._resume_session(resume_from, workflow)
         else:
             self._initialize_session(
-                workflow, submission_tags, submission_tag_policy_revision
+                workflow,
+                submission_tags,
+                submission_tag_policy_revision,
+                submission_tag_rules,
             )
 
         # Seed per-Session Job statuses from the manifest so that Jobs depending

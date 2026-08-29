@@ -425,3 +425,55 @@ def test_project_migrate_dry_run_extended_sections(temp_workspace):
     assert "Catalog reindex parity:" in result.stdout
     assert "Object counts:" in result.stdout
     assert "Private store:" in result.stdout
+
+
+def test_derived_facet_flags_on_list_commands(temp_workspace):
+    """--plugin/--quantity/--model/--engine/--has-model reach the catalog."""
+    import json
+
+    from tests.qphase.test_catalog import _v4_artifact_manifest
+
+    workflow = (
+        "schema: qphase.workflow/2\n"
+        "id: example\n"
+        "title: Example\n"
+        "jobs:\n"
+        "  - name: sim\n"
+        "    engine:\n"
+        "      dummy: {}\n"
+        "    plugins:\n"
+        "      model:\n"
+        "        cam: {}\n"
+    )
+    (temp_workspace / "configs" / "workflows" / "example.yaml").write_text(
+        workflow, encoding="utf-8"
+    )
+    root = _catalog_session(temp_workspace)
+    (root / "workflow_snapshot.yaml").write_text(workflow, encoding="utf-8")
+    job_dir = root / "sim"
+    job_dir.mkdir()
+    (job_dir / "artifact_manifest.json").write_text(
+        json.dumps(_v4_artifact_manifest("art-1", quantities=("position",))),
+        encoding="utf-8",
+    )
+
+    jobs = runner.invoke(app, ["job", "list", "--plugin", "model:cam"])
+    assert jobs.exit_code == 0
+    assert ":sim" in jobs.stdout
+    missing = runner.invoke(app, ["job", "list", "--plugin", "model:other"])
+    assert ":sim" not in missing.stdout
+
+    artifacts = runner.invoke(app, ["artifact", "list", "--quantity", "position"])
+    assert artifacts.exit_code == 0
+    assert "art-1" in artifacts.stdout
+    missing = runner.invoke(app, ["artifact", "list", "--quantity", "velocity"])
+    assert "art-1" not in missing.stdout
+
+    by_model = runner.invoke(app, ["session", "list", "--model", "cam"])
+    assert "session-1" in by_model.stdout
+    by_engine = runner.invoke(app, ["session", "list", "--engine", "dummy"])
+    assert "session-1" in by_engine.stdout
+    has_model = runner.invoke(app, ["session", "list", "--has-model"])
+    assert "session-1" in has_model.stdout
+    no_model = runner.invoke(app, ["session", "list", "--model", "other"])
+    assert "session-1" not in no_model.stdout

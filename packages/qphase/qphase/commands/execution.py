@@ -17,6 +17,7 @@ from qphase.core.persistence import ProjectStateStore
 from qphase.core.project import ProjectContext
 from qphase.core.tags import (
     canonicalize_tag_syntax,
+    freeze_tag_rules,
     load_tag_policy,
     validate_declared_tags,
 )
@@ -78,6 +79,9 @@ def tag_execution(
             [*kept, *add], "execution", policy
         )
         record["tag_policy_revision"] = policy.revision if policy is not None else None
+        record["submission_tag_rules"] = freeze_tag_rules(
+            policy, record["submission_tags"]
+        )
         store.save_execution(record)
         ProjectObjectCatalog(project).reindex()
     except (QPhaseError, RuntimeError, ValueError) as exc:

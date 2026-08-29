@@ -189,13 +189,32 @@ def test_freeze_namespace_rule_snapshots_minimal_governance():
 
     policy = _policy()
     rule = freeze_namespace_rule(policy, "stage:q1")
-    assert rule is not None
     assert rule.inherit is True
     assert rule.cardinality == "one"
     assert rule.objects == ("session", "workflow")
-    # Undeclared namespaces and absent policies freeze no rule.
-    assert freeze_namespace_rule(policy, "system:internal") is None
-    assert freeze_namespace_rule(None, "task:bifurcation") is None
+    # Undeclared namespaces and absent policies freeze the default rule so
+    # historical tags stay stable when a policy is introduced later.
+    default = freeze_namespace_rule(policy, "system:internal")
+    assert default.inherit is True
+    assert default.cardinality == "many"
+    assert default.objects == ()
+    assert freeze_namespace_rule(None, "task:bifurcation") == default
+
+
+def test_freeze_tag_rules_returns_json_ready_mapping():
+    from qphase.core.tags import freeze_tag_rules
+
+    policy = _policy()
+    rules = freeze_tag_rules(policy, ["stage:q1", "task:bifurcation"])
+    assert rules == {
+        "stage:q1": {
+            "inherit": True,
+            "cardinality": "one",
+            "objects": ["session", "workflow"],
+        },
+        "task:bifurcation": {"inherit": True, "cardinality": "many", "objects": []},
+    }
+    assert freeze_tag_rules(None, []) == {}
 
 
 def test_compute_effective_tags_prefers_frozen_rule_over_current_policy():

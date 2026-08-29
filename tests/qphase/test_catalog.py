@@ -90,6 +90,7 @@ def _session(
     session_id: str,
     *,
     submission_tags: tuple[str, ...] = (),
+    submission_tag_rules: dict | None = None,
     snapshot_tags: tuple[str, ...] = (),
     job_tags: dict[str, tuple[str, ...]] | None = None,
     artifacts: tuple[tuple[str, str], ...] = (),
@@ -110,6 +111,8 @@ def _session(
         "submission_tags": list(submission_tags),
         "jobs": {},
     }
+    if submission_tag_rules is not None:
+        manifest["submission_tag_rules"] = submission_tag_rules
     (root / "session_manifest.json").write_text(
         json.dumps(manifest), encoding="utf-8"
     )
@@ -1337,3 +1340,63 @@ def test_derived_facets_and_kind_specific_filters(tmp_path):
         CatalogQuery(object_kind="artifact", model="vdp")
     with pytest.raises(ValueError, match="model/engine filters"):
         CatalogQuery(object_kind="job", has_model=True)
+
+
+def test_frozen_submission_tag_rules_survive_later_policy(tmp_path):
+    """A session frozen before the policy keeps its submission tags.
+
+    Rules are frozen even when no policy exists (defaults: inherit), so
+    introducing an ``inherit: false`` namespace later must not strip the
+    historical submission tag from the session or its occurrences.
+    """
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(
+        project,
+        "session-1",
+        submission_tags=("task:urgent",),
+        submission_tag_rules={
+            "task:urgent": {"inherit": True, "cardinality": "many", "objects": []}
+        },
+        artifacts=(("sim", "art-1"),),
+    )
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\n"
+        "namespaces:\n"
+        "  task:\n"
+        "    inherit: false\n"
+        "    open: true\n",
+    )
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    session_tags = catalog.effective_tags("session", "session-1")
+    assert [tag.tag for tag in session_tags] == ["task:urgent"]
+    occurrence_tags = catalog.effective_tags("occurrence", "art-1:session-1:sim")
+    assert [tag.tag for tag in occurrence_tags] == ["task:urgent"]
+
+
+def test_legacy_manifest_without_rules_falls_back_to_current_policy(tmp_path):
+    """Manifests written before rule freezing resolve against the policy."""
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    _session(
+        project,
+        "session-1",
+        submission_tags=("task:urgent",),
+        artifacts=(("sim", "art-1"),),
+    )
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\n"
+        "namespaces:\n"
+        "  task:\n"
+        "    inherit: false\n"
+        "    open: true\n",
+    )
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    assert catalog.effective_tags("session", "session-1") == []
+    assert catalog.effective_tags("occurrence", "art-1:session-1:sim") == []

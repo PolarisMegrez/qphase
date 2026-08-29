@@ -32,6 +32,17 @@ DIRECT_OPTION = typer.Option(
 )
 LIFECYCLE_OPTION = typer.Option(None, "--lifecycle", help="Filter by lifecycle")
 RETENTION_OPTION = typer.Option(None, "--retention", help="Filter by retention")
+PLUGIN_OPTION = typer.Option(
+    None, "--plugin", help="Filter jobs by configured plugin (namespace:name)"
+)
+QUANTITY_OPTION = typer.Option(
+    None, "--quantity", help="Filter artifacts by product quantity"
+)
+MODEL_OPTION = typer.Option(None, "--model", help="Filter by model plugin")
+ENGINE_OPTION = typer.Option(None, "--engine", help="Filter by engine plugin")
+HAS_MODEL_OPTION = typer.Option(
+    False, "--has-model", help="Keep only objects with a model plugin"
+)
 LIMIT_OPTION = typer.Option(100, "--limit", help="Maximum number of objects")
 OFFSET_OPTION = typer.Option(0, "--offset", help="Pagination offset")
 ADD_OPTION = typer.Option([], "--add", help="Tag to add (repeatable)")
@@ -87,6 +98,11 @@ def make_query(
     range_: list[str] | tuple[str, ...] = (),
     lifecycle: str | None = None,
     retention: str | None = None,
+    plugin: str | None = None,
+    quantity: str | None = None,
+    model: str | None = None,
+    engine: str | None = None,
+    has_model: bool = False,
     direct: bool = False,
     limit: int = 100,
     offset: int = 0,
@@ -103,6 +119,11 @@ def make_query(
         tag_namespace=tag_namespace,
         lifecycle=lifecycle,
         retention=retention,
+        plugin=plugin,
+        quantity=quantity,
+        model=model,
+        engine=engine,
+        has_model=has_model,
         effective=not direct,
         limit=limit,
         offset=offset,

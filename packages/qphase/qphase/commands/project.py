@@ -199,6 +199,10 @@ def migrate(
         typer.echo(f"Assignments without policy provenance: {summary}")
     else:
         typer.echo("Assignments without policy provenance: none")
+    typer.echo(
+        "Sessions missing frozen retention inheritance: "
+        f"{report.sessions_missing_retention_inheritance}"
+    )
     if report.catalog_drift is None:
         typer.echo("Catalog reindex parity: absent (no catalog yet)")
     elif report.catalog_drift:

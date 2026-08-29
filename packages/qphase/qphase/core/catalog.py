@@ -1084,8 +1084,10 @@ def _frozen_assignment_pairs(raw_assignments: Any, tags: Any) -> DeclaredPairs:
     return pairs
 
 
-def _parse_frozen_rule(item: Mapping[str, Any]) -> FrozenNamespaceRule | None:
-    """Parse the frozen namespace rule of one snapshot assignment entry."""
+def _parse_frozen_rule(item: Any) -> FrozenNamespaceRule | None:
+    """Parse the frozen namespace rule of one snapshot entry, if present."""
+    if not isinstance(item, Mapping):
+        return None
     inherit = item.get("inherit")
     if inherit is None:
         return None
@@ -1096,6 +1098,28 @@ def _parse_frozen_rule(item: Mapping[str, Any]) -> FrozenNamespaceRule | None:
         cardinality="one" if cardinality == "one" else "many",
         objects=tuple(str(value) for value in objects) if objects else (),
     )
+
+
+def _submission_tag_items(
+    document: Mapping[str, Any], revision: Any
+) -> list[tuple[str, str | None, str | None, FrozenNamespaceRule | None]]:
+    """Tag-level items of one document's frozen submission layer.
+
+    ``submission_tag_rules`` carries the minimal namespace rule frozen at
+    submit time; documents written before rule freezing have no such key and
+    fall back to ``None`` rules, which resolve against the current policy.
+    """
+    rules = document.get("submission_tag_rules")
+    revision_text = str(revision) if revision else None
+    return [
+        (
+            str(tag),
+            None,
+            revision_text,
+            _parse_frozen_rule(rules.get(tag) if isinstance(rules, Mapping) else None),
+        )
+        for tag in document.get("submission_tags", [])
+    ]
 
 
 def _assignment_triples(
@@ -1454,7 +1478,6 @@ class _Scanner:
         for payload in self.store.load_executions():
             workflow = payload.get("workflow") or {}
             workflow_id = str(workflow.get("id", ""))
-            tags = [str(tag) for tag in payload.get("submission_tags", [])]
             tag_revision = payload.get("tag_policy_revision")
             compiled = payload.get("compiled_workflow")
             revision_id: str | None = None
@@ -1495,15 +1518,7 @@ class _Scanner:
                     [
                         (
                             "execution_submission",
-                            [
-                                (
-                                    tag,
-                                    None,
-                                    str(tag_revision) if tag_revision else None,
-                                    None,
-                                )
-                                for tag in tags
-                            ],
+                            _submission_tag_items(payload, tag_revision),
                             True,
                         ),
                         (
@@ -1533,17 +1548,7 @@ class _Scanner:
         session_id = str(manifest.get("session_id") or session_dir.name)
         document = self._load_session_annotations(session_dir, session_id)
         submission_revision = manifest.get("submission_tag_policy_revision")
-        submission_tags: list[
-            tuple[str, str | None, str | None, FrozenNamespaceRule | None]
-        ] = [
-            (
-                str(tag),
-                None,
-                str(submission_revision) if submission_revision else None,
-                None,
-            )
-            for tag in manifest.get("submission_tags", [])
-        ]
+        submission_tags = _submission_tag_items(manifest, submission_revision)
         snapshot = self._snapshot_truth(session_dir)
         revision_id: str | None = None
         if snapshot.workflow_payload is not None:
@@ -1595,8 +1600,15 @@ class _Scanner:
         )
 
         retention = document.retention if document is not None else None
+        frozen_inherit = (
+            document.retention_inherits_to_occurrences
+            if document is not None
+            else None
+        )
         inherit_retention = (
-            self.policy.retention_inherits_to_occurrences
+            frozen_inherit
+            if frozen_inherit is not None
+            else self.policy.retention_inherits_to_occurrences
             if self.policy is not None
             else True
         )

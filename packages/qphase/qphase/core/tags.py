@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +39,7 @@ __all__ = [
     "canonicalize_tag_list",
     "canonicalize_tag_syntax",
     "freeze_namespace_rule",
+    "freeze_tag_rules",
     "job_tag_assignment_id",
     "load_tag_policy",
     "parse_tag",
@@ -157,24 +159,39 @@ class FrozenNamespaceRule:
 
 def freeze_namespace_rule(
     policy: TagPolicy | None, tag: str
-) -> FrozenNamespaceRule | None:
+) -> FrozenNamespaceRule:
     """Snapshot the minimal rule of the tag's namespace for freezing.
 
-    Returns ``None`` when there is no governing rule — no policy, or the
-    namespace is undeclared — in which case resolution falls back to the
-    policy current at read time.
+    Always returns a rule: without a policy, or when the namespace has no
+    declared rule, the defaults apply — ``inherit=True``,
+    ``cardinality="many"``, ``objects=()`` (empty covers every object kind,
+    matching ``TagPolicy.tag_applies_to``). Freezing the defaults is what
+    keeps historical tags stable when a policy is first introduced later.
     """
-    if policy is None:
-        return None
-    namespace = tag.split(":", 1)[0]
-    rule = policy.namespaces.get(namespace)
-    if rule is None:
-        return None
-    return FrozenNamespaceRule(
-        inherit=rule.inherit,
-        cardinality=rule.cardinality,
-        objects=tuple(rule.objects),
-    )
+    if policy is not None:
+        rule = policy.namespaces.get(tag.split(":", 1)[0])
+        if rule is not None:
+            return FrozenNamespaceRule(
+                inherit=rule.inherit,
+                cardinality=rule.cardinality,
+                objects=tuple(rule.objects),
+            )
+    return FrozenNamespaceRule(inherit=True, cardinality="many", objects=())
+
+
+def freeze_tag_rules(
+    policy: TagPolicy | None, tags: Iterable[str]
+) -> dict[str, dict[str, Any]]:
+    """JSON-ready frozen minimal rules keyed by tag (never ``None`` values)."""
+    rules: dict[str, dict[str, Any]] = {}
+    for tag in tags:
+        rule = freeze_namespace_rule(policy, tag)
+        rules[tag] = {
+            "inherit": rule.inherit,
+            "cardinality": rule.cardinality,
+            "objects": list(rule.objects),
+        }
+    return rules
 
 
 class TagNamespacePolicy(BaseModel):

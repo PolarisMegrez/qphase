@@ -118,6 +118,9 @@ class SessionAnnotationDocument(BaseModel):
     assignments: list[TagAssignment] = Field(default_factory=list)
     lifecycle: Lifecycle | None = None
     retention: RetentionPolicy | None = None
+    # Frozen at retention-set time; ``None`` on legacy documents falls back
+    # to the current policy (and to ``True`` without a policy).
+    retention_inherits_to_occurrences: bool | None = None
     alias: str | None = None
     note: str | None = None
     occurrences: dict[str, OccurrenceAnnotations] = Field(default_factory=dict)

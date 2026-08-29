@@ -785,3 +785,70 @@ def test_gui_api_private_annotations_and_recent_projects(temp_workspace):
         assert recent.status_code == 200
         project_ids = {entry["project_id"] for entry in recent.json()["projects"]}
         assert "test-project" in project_ids
+
+
+def test_gui_api_catalog_derived_facet_filters(temp_workspace):
+    """plugin/quantity/model/engine/has_model pass through to CatalogQuery."""
+    from tests.qphase.test_catalog import _v4_artifact_manifest
+
+    workflow = (
+        "schema: qphase.workflow/2\n"
+        "id: example\n"
+        "title: Example\n"
+        "jobs:\n"
+        "  - name: sim\n"
+        "    engine:\n"
+        "      dummy: {}\n"
+        "    plugins:\n"
+        "      model:\n"
+        "        cam: {}\n"
+    )
+    (temp_workspace / "configs" / "workflows" / "example.yaml").write_text(
+        workflow, encoding="utf-8"
+    )
+    root = _catalog_session(temp_workspace)
+    (root / "workflow_snapshot.yaml").write_text(workflow, encoding="utf-8")
+    job_dir = root / "sim"
+    job_dir.mkdir()
+    (job_dir / "artifact_manifest.json").write_text(
+        json.dumps(_v4_artifact_manifest("art-1", quantities=("position",))),
+        encoding="utf-8",
+    )
+
+    with TestClient(create_app()) as client:
+        jobs = client.get("/catalog/job", params={"plugin": "model:cam"})
+        assert [item["facets"]["name"] for item in jobs.json()["objects"]] == ["sim"]
+        assert (
+            client.get("/catalog/job", params={"plugin": "model:other"}).json()[
+                "objects"
+            ]
+            == []
+        )
+
+        artifacts = client.get("/catalog/artifact", params={"quantity": "position"})
+        assert [item["id"] for item in artifacts.json()["objects"]] == ["art-1"]
+        assert (
+            client.get("/catalog/artifact", params={"quantity": "velocity"}).json()[
+                "objects"
+            ]
+            == []
+        )
+
+        by_model = client.get("/catalog/session", params={"model": "cam"})
+        assert [item["id"] for item in by_model.json()["objects"]] == [
+            "catalog-session"
+        ]
+        by_engine = client.get("/catalog/session", params={"engine": "dummy"})
+        assert [item["id"] for item in by_engine.json()["objects"]] == [
+            "catalog-session"
+        ]
+        has_model = client.get("/catalog/session", params={"has_model": True})
+        assert [item["id"] for item in has_model.json()["objects"]] == [
+            "catalog-session"
+        ]
+        assert (
+            client.get("/catalog/session", params={"model": "other"}).json()[
+                "objects"
+            ]
+            == []
+        )
