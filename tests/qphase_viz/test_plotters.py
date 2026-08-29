@@ -72,9 +72,7 @@ def test_time_series_plotter_renders(tmp_path):
 
 
 def test_phase_plane_plotter_renders_hist2d(tmp_path):
-    plotter = PhasePlanePlotter(
-        plots=[{"channel_x": 0, "mode": "hist2d", "bins": 8}]
-    )
+    plotter = PhasePlanePlotter(plots=[{"channel_x": 0, "mode": "hist2d", "bins": 8}])
     files = plotter.plot(_trajectory(), tmp_path, "png")
     _assert_files_generated(files, tmp_path)
 

@@ -263,9 +263,7 @@ def test_collective_loss_bogoliubov_block_matches_wirtinger_linearization():
     np.testing.assert_allclose(
         normal_block, hamiltonian + interaction, rtol=2e-9, atol=2e-9
     )
-    np.testing.assert_allclose(
-        anomalous_block, interaction, rtol=2e-9, atol=2e-9
-    )
+    np.testing.assert_allclose(anomalous_block, interaction, rtol=2e-9, atol=2e-9)
 
 
 def test_explicit_reservoir_preserves_main_mode_exchange_symmetry():

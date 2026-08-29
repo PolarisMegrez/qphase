@@ -92,9 +92,7 @@ def _ou_phase_diffusion_trajectory(
 ):
     """Unit-amplitude trajectories with Brownian phase: |g1| = exp(-d_phi*tau)."""
     rng = np.random.default_rng(seed)
-    increments = rng.normal(
-        0.0, np.sqrt(2.0 * d_phi * dt), size=(n_traj, n_time - 1)
-    )
+    increments = rng.normal(0.0, np.sqrt(2.0 * d_phi * dt), size=(n_traj, n_time - 1))
     phase = np.concatenate(
         (np.zeros((n_traj, 1)), np.cumsum(increments, axis=1)), axis=1
     )
@@ -102,9 +100,7 @@ def _ou_phase_diffusion_trajectory(
     return TrajectorySet(data=data, dt=dt)
 
 
-def _static_disorder_trajectory(
-    sigma=0.8, *, n_traj=512, n_time=256, dt=0.05, seed=23
-):
+def _static_disorder_trajectory(sigma=0.8, *, n_traj=512, n_time=256, dt=0.05, seed=23):
     """Constant per-trajectory Gaussian frequency offsets: ensemble g1 ~ Gaussian."""
     rng = np.random.default_rng(seed)
     offsets = rng.normal(0.0, sigma, size=n_traj)
@@ -197,9 +193,7 @@ def test_block_spectrum_recovers_tone_features():
     assert np.all(hwhm > 0.0)
     assert np.all(hwhm <= 1.5 * resolution)
     assert np.all(entry["resolution_limited"])
-    np.testing.assert_allclose(
-        entry["integrated_power"], amplitude**2, rtol=1e-12
-    )
+    np.testing.assert_allclose(entry["integrated_power"], amplitude**2, rtol=1e-12)
     wing = entry["wing_fraction"]
     assert np.all(wing >= 0.0)
     assert np.all(wing <= 1.0)
@@ -503,13 +497,11 @@ def test_stationarity_details_detects_level_shift():
     shifted = base.data.copy()
     shifted[:, 512:, 0] += 3.0  # level shift at the block-16 boundary
     stationary = _stationarity_entry(base)["entries"][0]
-    detected = _stationarity_entry(TrajectorySet(data=shifted, dt=base.dt))[
-        "entries"
-    ][0]
+    detected = _stationarity_entry(TrajectorySet(data=shifted, dt=base.dt))["entries"][
+        0
+    ]
 
-    np.testing.assert_array_equal(
-        detected["change_point"]["block_index"], [16, 16]
-    )
+    np.testing.assert_array_equal(detected["change_point"]["block_index"], [16, 16])
     assert np.all(
         detected["change_point"]["score"] > 5.0 * stationary["change_point"]["score"]
     )

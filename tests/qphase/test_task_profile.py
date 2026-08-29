@@ -33,12 +33,8 @@ def test_requirement_set_namespace_validation():
 
 def test_requirement_set_storage_is_order_independent():
     """Sets are stored sorted so fingerprints never depend on YAML order."""
-    left = PluginRequirementSet(
-        required=["model", "backend"], optional=["observer"]
-    )
-    right = PluginRequirementSet(
-        required=["backend", "model"], optional=["observer"]
-    )
+    left = PluginRequirementSet(required=["model", "backend"], optional=["observer"])
+    right = PluginRequirementSet(required=["backend", "model"], optional=["observer"])
     assert left == right
     assert left.required == ["backend", "model"]
     assert left.model_dump(mode="json") == right.model_dump(mode="json")
@@ -49,9 +45,7 @@ def test_resolution_context_is_extra_forbid_and_carries_schemas():
     with pytest.raises(ValidationError):
         TaskProfileResolutionContext(normalized_job_config={}, bogus=1)
     with pytest.raises(ValidationError, match="JSON-serializable"):
-        TaskProfileResolutionContext(
-            normalized_job_config={"runtime_handle": object()}
-        )
+        TaskProfileResolutionContext(normalized_job_config={"runtime_handle": object()})
 
     schema = ProductSchema(
         kind=DataKind.SPECTRAL,
@@ -60,7 +54,9 @@ def test_resolution_context_is_extra_forbid_and_carries_schemas():
         ],
         variables=[
             VariableSchema(
-                name="power", dtype="float64", value_domain="real",
+                name="power",
+                dtype="float64",
+                value_domain="real",
                 dims=("frequency",),
             )
         ],
@@ -86,9 +82,7 @@ def test_resolve_without_resolver_returns_defaults():
         id="simulate",
         requirements=PluginRequirementSet(required=["model", "backend"]),
     )
-    resolved = resolve_plugin_requirements(
-        profile, TaskProfileResolutionContext()
-    )
+    resolved = resolve_plugin_requirements(profile, TaskProfileResolutionContext())
     assert resolved == profile.requirements
 
 
@@ -96,9 +90,7 @@ def test_resolver_replaces_defaults_completely():
     """Resolver output replaces the defaults wholesale — no implicit merge."""
     profile = EngineTaskProfile(
         id="analyze",
-        requirements=PluginRequirementSet(
-            required=["analyser"], forbidden=["model"]
-        ),
+        requirements=PluginRequirementSet(required=["analyser"], forbidden=["model"]),
         resolver="fake.module:resolve",
     )
     seen = {}

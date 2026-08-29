@@ -259,9 +259,7 @@ def _fake_estimator(*, backend_native, fft_chunk_trajectories=None):
 
 
 def test_planner_workspace_relieves_device_for_host_side_estimator():
-    native = _workspace_plan(
-        _fake_estimator(backend_native=True), FakeBackend()
-    ).memory
+    native = _workspace_plan(_fake_estimator(backend_native=True), FakeBackend()).memory
     host_side = _workspace_plan(
         _fake_estimator(backend_native=False), FakeBackend()
     ).memory

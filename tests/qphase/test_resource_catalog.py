@@ -24,30 +24,40 @@ def _descriptors() -> list[EntryPointDescriptor]:
     """Build a mixed group with SDE, CAM, backend and third-party plugins."""
     descriptors = [
         EntryPointDescriptor(
-            "resource.sde", "qphase_sde.manifest:RESOURCE_MANIFEST",
-            "qphase-sde", "2.0.0",
+            "resource.sde",
+            "qphase_sde.manifest:RESOURCE_MANIFEST",
+            "qphase-sde",
+            "2.0.0",
         ),
         EntryPointDescriptor(
             "engine.sde", "qphase_sde.engine:Engine", "qphase-sde", "2.0.0"
         ),
         EntryPointDescriptor(
-            "analyser.spectrum", "qphase_sde.analyser.spectrum:Spectrum",
-            "qphase-sde", "2.0.0",
+            "analyser.spectrum",
+            "qphase_sde.analyser.spectrum:Spectrum",
+            "qphase-sde",
+            "2.0.0",
         ),
         EntryPointDescriptor(
-            "resource.cam", "qphase_cam.manifest:RESOURCE_MANIFEST",
-            "qphase-cam", "2.0.0",
+            "resource.cam",
+            "qphase_cam.manifest:RESOURCE_MANIFEST",
+            "qphase-cam",
+            "2.0.0",
         ),
         EntryPointDescriptor(
             "engine.cam", "qphase_cam.engine:Engine", "qphase-cam", "2.0.0"
         ),
         EntryPointDescriptor(
-            "solver.homotopy", "qphase_cam.solver.homotopy:Homotopy",
-            "qphase-cam", "2.0.0",
+            "solver.homotopy",
+            "qphase_cam.solver.homotopy:Homotopy",
+            "qphase-cam",
+            "2.0.0",
         ),
         # Backend plugin and third-party extension from other distributions.
         EntryPointDescriptor(
-            "backend.cuda", "qphase_backend_cuda:Cuda", "qphase-backend-cuda",
+            "backend.cuda",
+            "qphase_backend_cuda:Cuda",
+            "qphase-backend-cuda",
             "0.3",
         ),
         EntryPointDescriptor(
@@ -103,7 +113,10 @@ def test_catalog_attributes_assets_by_ownership():
     all_owned = [a for v in catalog.packages for a in v.package_assets]
     assert all(a.origin is AssetOrigin.PACKAGE for a in all_owned)
     assert {a.namespace for a in all_owned} <= {
-        "resource", "engine", "analyser", "solver"
+        "resource",
+        "engine",
+        "analyser",
+        "solver",
     }
 
 
@@ -142,8 +155,10 @@ def test_package_version_mismatch_is_an_issue():
     """A manifest version drifting from its distribution is reported."""
     descriptors = [
         EntryPointDescriptor(
-            "resource.sde", "qphase_sde.manifest:RESOURCE_MANIFEST",
-            "qphase-sde", "9.9.9",
+            "resource.sde",
+            "qphase_sde.manifest:RESOURCE_MANIFEST",
+            "qphase-sde",
+            "9.9.9",
         ),
         EntryPointDescriptor(
             "engine.sde", "qphase_sde.engine:Engine", "qphase-sde", "9.9.9"
@@ -162,8 +177,10 @@ def test_manifest_load_failure_and_id_mismatch_are_issues():
     """Broken resource entry points degrade to issues, not exceptions."""
     descriptors = [
         EntryPointDescriptor(
-            "resource.broken", "no_such_module:RESOURCE_MANIFEST",
-            "broken-pkg", "0.1",
+            "resource.broken",
+            "no_such_module:RESOURCE_MANIFEST",
+            "broken-pkg",
+            "0.1",
         ),
         EntryPointDescriptor(
             "engine.broken", "broken.engine:Engine", "broken-pkg", "0.1"
@@ -175,9 +192,7 @@ def test_manifest_load_failure_and_id_mismatch_are_issues():
 
     wrong_id = ResourcePackageCatalog.from_descriptors(
         [
-            EntryPointDescriptor(
-                "resource.wrong", "unused:target", "wrong-pkg", "1.0"
-            ),
+            EntryPointDescriptor("resource.wrong", "unused:target", "wrong-pkg", "1.0"),
             EntryPointDescriptor(
                 "engine.wrong", "wrong.engine:Engine", "wrong-pkg", "1.0"
             ),

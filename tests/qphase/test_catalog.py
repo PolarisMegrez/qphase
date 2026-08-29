@@ -122,9 +122,7 @@ def _session(
         manifest["execution_id"] = execution_id
     if submission_tag_assignments is not None:
         manifest["submission_tag_assignments"] = submission_tag_assignments
-    (root / "session_manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (root / "session_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     # The snapshot mirrors the current workflow file (job "sim", dummy
     # engine) so an unchanged session rebuilds the same workflow revision.
     snapshot = {
@@ -140,13 +138,9 @@ def _session(
             }
         ],
     }
-    (root / "workflow_snapshot.yaml").write_text(
-        json.dumps(snapshot), encoding="utf-8"
-    )
+    (root / "workflow_snapshot.yaml").write_text(json.dumps(snapshot), encoding="utf-8")
     if frozen is not None:
-        (root / "tag_snapshot.yaml").write_text(
-            json.dumps(frozen), encoding="utf-8"
-        )
+        (root / "tag_snapshot.yaml").write_text(json.dumps(frozen), encoding="utf-8")
     for job_name, artifact_id in artifacts:
         job_dir = root / job_name
         job_dir.mkdir()
@@ -279,14 +273,18 @@ def test_cardinality_one_shadows_farther_assignment(tmp_path):
     assert by_tag["stage:q1"].shadowed
     assert not by_tag["stage:q2"].shadowed
     # Shadowed tags do not match queries.
-    assert catalog.query(
-        CatalogQuery(object_kind="occurrence", tags_all=("stage:q1",))
-    ) == []
-    assert len(
-        catalog.query(
-            CatalogQuery(object_kind="occurrence", tags_all=("stage:q2",))
+    assert (
+        catalog.query(CatalogQuery(object_kind="occurrence", tags_all=("stage:q1",)))
+        == []
+    )
+    assert (
+        len(
+            catalog.query(
+                CatalogQuery(object_kind="occurrence", tags_all=("stage:q2",))
+            )
         )
-    ) == 1
+        == 1
+    )
 
 
 def test_inherit_false_namespace_does_not_flow_down(tmp_path):
@@ -411,7 +409,10 @@ def test_retention_inherits_to_occurrences(tmp_path):
     _session(
         project,
         "session-1",
-        artifacts=(("sim", "art-1"), ("fit", "art-2"),),
+        artifacts=(
+            ("sim", "art-1"),
+            ("fit", "art-2"),
+        ),
         annotations={
             "retention": "evidence",
             "occurrences": {"fit:art-2": {"retention": "pinned"}},
@@ -591,9 +592,7 @@ def test_frozen_snapshot_provenance_survives_policy_change(tmp_path):
     assert load_tag_policy(project).revision != revision_v1
     catalog.reindex()
 
-    again = {
-        tag.tag: tag for tag in catalog.effective_tags("session", "session-1")
-    }
+    again = {tag.tag: tag for tag in catalog.effective_tags("session", "session-1")}
     assert again["stage:q1"].policy_revision == revision_v1
     assert again["stage:q1"].assignment_id == "wf-a1"
 
@@ -824,8 +823,7 @@ def test_inheritance_respects_object_applicability(tmp_path):
     assert "wfonly:alpha" not in session_tags
 
     occurrence_tags = {
-        tag.tag
-        for tag in catalog.effective_tags("occurrence", "art-1:session-1:sim")
+        tag.tag for tag in catalog.effective_tags("occurrence", "art-1:session-1:sim")
     }
     assert "task:scan" in occurrence_tags
     assert "wfonly:alpha" not in occurrence_tags
@@ -940,9 +938,7 @@ def test_project_document_annotations_never_flow_downward(tmp_path):
         assignments=[{"id": "p1", "tag": "task:paper"}],
         objects={
             revision_id: {"assignments": [{"id": "w1", "tag": "task:reviewed"}]},
-            f"{revision_id}:sim": {
-                "assignments": [{"id": "j1", "tag": "method:cam"}]
-            },
+            f"{revision_id}:sim": {"assignments": [{"id": "j1", "tag": "method:cam"}]},
             "exec-1": {"assignments": [{"id": "e1", "tag": "task:rerun"}]},
         },
     )
@@ -952,13 +948,9 @@ def test_project_document_annotations_never_flow_downward(tmp_path):
     # only; they are not new levels of the inheritance chain.
     assert catalog.effective_tags("session", "session-1") == []
     assert catalog.effective_tags("occurrence", "art-1:session-1:sim") == []
-    workflow_tags = {
-        tag.tag for tag in catalog.effective_tags("workflow", revision_id)
-    }
+    workflow_tags = {tag.tag for tag in catalog.effective_tags("workflow", revision_id)}
     assert workflow_tags == {"task:reviewed"}
-    job_tags = {
-        tag.tag for tag in catalog.effective_tags("job", f"{revision_id}:sim")
-    }
+    job_tags = {tag.tag for tag in catalog.effective_tags("job", f"{revision_id}:sim")}
     assert job_tags == {"method:cam"}
 
 
@@ -1136,10 +1128,7 @@ def test_project_annotation_identity_mismatch(tmp_path):
     issues = [
         issue for issue in catalog.location_issues() if issue["kind"] == "annotation"
     ]
-    assert [issue["path"] for issue in issues] == [
-        ".qphase/project_annotations.json"
-    ]
-
+    assert [issue["path"] for issue in issues] == [".qphase/project_annotations.json"]
 
 
 def test_frozen_snapshot_rule_governs_inheritance(tmp_path):
@@ -1242,7 +1231,6 @@ def test_declared_assignment_ids_embed_the_workflow_revision(tmp_path):
     assert new_tag.assignment_id != tag.assignment_id
 
 
-
 def test_effective_tags_for_objects_matches_per_object_reads(tmp_path):
     project = ProjectContext.create(tmp_path / "project")
     _workflow_file(project)
@@ -1266,7 +1254,6 @@ def test_effective_tags_for_objects_matches_per_object_reads(tmp_path):
         catalog.effective_tags_for_objects("bogus", ["x"])
 
 
-
 def test_derived_facets_and_kind_specific_filters(tmp_path):
     project = ProjectContext.create(tmp_path / "project")
     _workflow_file(project)
@@ -1288,9 +1275,7 @@ def test_derived_facets_and_kind_specific_filters(tmp_path):
             }
         ],
     }
-    (root / "workflow_snapshot.yaml").write_text(
-        json.dumps(snapshot), encoding="utf-8"
-    )
+    (root / "workflow_snapshot.yaml").write_text(json.dumps(snapshot), encoding="utf-8")
     _session(project, "session-2", artifacts=(("sim", "art-2"),))
     catalog = ProjectObjectCatalog(project)
     catalog.reindex()
@@ -1313,8 +1298,7 @@ def test_derived_facets_and_kind_specific_filters(tmp_path):
         != sessions["session-1"]["workflow_revision_id"]
     )
     occurrences = {
-        row["id"]: row
-        for row in catalog.query(CatalogQuery(object_kind="occurrence"))
+        row["id"]: row for row in catalog.query(CatalogQuery(object_kind="occurrence"))
     }
     assert occurrences["art-1:session-1:sim"]["engine"] == "dummy"
     assert occurrences["art-1:session-1:sim"]["model"] == "vdp"
@@ -1328,9 +1312,9 @@ def test_derived_facets_and_kind_specific_filters(tmp_path):
     assert catalog.query(CatalogQuery(object_kind="job", plugin="model:other")) == []
     rows = catalog.query(CatalogQuery(object_kind="artifact", quantity="position"))
     assert [row["id"] for row in rows] == ["art-1"]
-    assert catalog.query(
-        CatalogQuery(object_kind="artifact", quantity="momentum")
-    ) == []
+    assert (
+        catalog.query(CatalogQuery(object_kind="artifact", quantity="momentum")) == []
+    )
 
     # Session model/engine filters resolve through the revision's jobs.
     rows = catalog.query(CatalogQuery(object_kind="session", model="vdp"))
@@ -1511,15 +1495,13 @@ def test_submission_assignment_ids_follow_execution_identity(tmp_path):
     catalog.reindex()
 
     execution_tags = {
-        tag.tag: tag
-        for tag in catalog.effective_tags("execution", execution_id)
+        tag.tag: tag for tag in catalog.effective_tags("execution", execution_id)
     }
     assert execution_tags["task:urgent"].assignment_id == assignment
     assert execution_tags["task:urgent"].source == "execution_submission"
     for session_id in ("session-1", "session-2"):
         session_tags = {
-            tag.tag: tag
-            for tag in catalog.effective_tags("session", session_id)
+            tag.tag: tag for tag in catalog.effective_tags("session", session_id)
         }
         tag = session_tags["task:urgent"]
         assert tag.source == "execution_submission"
@@ -1645,9 +1627,7 @@ def test_conflicting_snapshots_fall_back_to_raw_syntax(tmp_path):
     )
     # The sessions keep their own frozen declarations; only the revision
     # object falls back.
-    session_tags = {
-        tag.tag for tag in catalog.effective_tags("session", "session-2")
-    }
+    session_tags = {tag.tag for tag in catalog.effective_tags("session", "session-2")}
     assert "task:other" in session_tags
 
 
@@ -1680,9 +1660,7 @@ def test_snapshot_governance_conflicts_are_order_independent(tmp_path, rules_dif
 
         row = catalog.query(CatalogQuery(object_kind="workflow"))[0]
         tags = catalog.effective_tags("workflow", row["id"])
-        assert [(tag.tag, tag.policy_revision) for tag in tags] == [
-            ("task:old", None)
-        ]
+        assert [(tag.tag, tag.policy_revision) for tag in tags] == [("task:old", None)]
 
 
 def test_live_file_wins_over_divergent_frozen_snapshot(tmp_path):

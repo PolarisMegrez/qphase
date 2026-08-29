@@ -123,9 +123,9 @@ def test_save_load_roundtrip_single_product(tmp_path):
     assert "content_hash" not in raw
     assert "loader" not in raw  # manifests name adapter ids, never code paths
     assert {entry["storage"]["adapter"] for entry in raw["products"]} == {"npz/3"}
-    assert {
-        entry["storage"]["descriptor_schema"] for entry in raw["products"]
-    } == {"npz.product/3"}
+    assert {entry["storage"]["descriptor_schema"] for entry in raw["products"]} == {
+        "npz.product/3"
+    }
     files = {
         chunk["file"]
         for entry in raw["products"]
@@ -147,9 +147,7 @@ def test_save_load_roundtrip_single_product(tmp_path):
     np.testing.assert_array_equal(
         restored.handle("x").materialize(), dataset.handle("x").materialize()
     )
-    np.testing.assert_array_equal(
-        restored.handle("count").materialize(), np.arange(5)
-    )
+    np.testing.assert_array_equal(restored.handle("count").materialize(), np.arange(5))
 
     # The product reference resolves through the adapter registry.
     ref = manifest.product_ref("trajectories")
@@ -345,9 +343,7 @@ def test_manifest_rejects_unsafe_paths(tmp_path):
     save_products(tmp_path, {"trajectories": dataset})
 
     def set_chunk_file(raw, value):
-        chunks = raw["products"][0]["storage"]["descriptor"]["variables"]["x"][
-            "chunks"
-        ]
+        chunks = raw["products"][0]["storage"]["descriptor"]["variables"]["x"]["chunks"]
         chunks[0]["file"] = value
 
     for bad in (
@@ -378,9 +374,7 @@ def test_manifest_rejects_duplicate_products_and_parents(tmp_path):
         ArtifactManifest.read(tmp_path)
 
     save_products(tmp_path / "second", {"trajectories": dataset})
-    _mutate_manifest(
-        tmp_path / "second", lambda raw: raw.update(parents=["a", "a"])
-    )
+    _mutate_manifest(tmp_path / "second", lambda raw: raw.update(parents=["a", "a"]))
     with pytest.raises(ArtifactCorruptError, match="unique"):
         ArtifactManifest.read(tmp_path / "second")
 
@@ -388,9 +382,7 @@ def test_manifest_rejects_duplicate_products_and_parents(tmp_path):
 def test_manifest_rejects_naive_created_at(tmp_path):
     dataset = _dataset()
     save_products(tmp_path, {"trajectories": dataset})
-    _mutate_manifest(
-        tmp_path, lambda raw: raw.update(created_at="2026-08-25T12:00:00")
-    )
+    _mutate_manifest(tmp_path, lambda raw: raw.update(created_at="2026-08-25T12:00:00"))
     with pytest.raises(ArtifactCorruptError, match="timezone"):
         ArtifactManifest.read(tmp_path)
 
@@ -401,9 +393,7 @@ def test_manifest_rejects_shared_chunk_files(tmp_path):
 
     def share_file(raw):
         variables = raw["products"][0]["storage"]["descriptor"]["variables"]
-        variables["count"]["chunks"][0]["file"] = variables["x"]["chunks"][0][
-            "file"
-        ]
+        variables["count"]["chunks"][0]["file"] = variables["x"]["chunks"][0]["file"]
 
     _mutate_manifest(tmp_path, share_file)
     _rewrite_manifest(tmp_path)
@@ -462,9 +452,9 @@ def test_manifest_rejects_removed_hash_fields(tmp_path):
     save_products(tmp_path / "second", {"trajectories": dataset})
     _mutate_manifest(
         tmp_path / "second",
-        lambda raw: raw["products"][0]["storage"]["descriptor"][
-            "variables"
-        ]["x"]["chunks"][0].update(sha256="removed"),
+        lambda raw: raw["products"][0]["storage"]["descriptor"]["variables"]["x"][
+            "chunks"
+        ][0].update(sha256="removed"),
     )
     with pytest.raises(ArtifactCorruptError, match="sha256"):
         ArtifactManifest.read(tmp_path / "second")
@@ -480,9 +470,7 @@ def test_manifest_rejects_bad_chunk_ranges(tmp_path):
     save_products(tmp_path, {"trajectories": dataset}, shard_target_bytes=640)
 
     def mutate_ranges(raw, ranges):
-        chunks = raw["products"][0]["storage"]["descriptor"]["variables"]["x"][
-            "chunks"
-        ]
+        chunks = raw["products"][0]["storage"]["descriptor"]["variables"]["x"]["chunks"]
         for chunk, logical_range in zip(chunks, ranges, strict=True):
             chunk["logical_range"] = logical_range
 
@@ -665,7 +653,6 @@ def test_manifest_rejects_summary_mismatch(tmp_path):
             ArtifactManifest.read(target)
 
 
-
 def test_storage_descriptor_must_be_json():
     with pytest.raises(ValidationError, match="JSON-serializable"):
         ProductStorage(
@@ -703,12 +690,12 @@ def test_load_rejects_descriptor_schema_inconsistencies(tmp_path):
         "unknown chunk axis": lambda raw: descriptor_variables(raw)["x"].update(
             chunk_axis="ghost"
         ),
-        "logical_range": lambda raw: descriptor_variables(raw)["count"][
-            "chunks"
-        ][0].update(logical_range=[0, 5]),
-        "full shape": lambda raw: descriptor_variables(raw)["x"]["chunks"][
+        "logical_range": lambda raw: descriptor_variables(raw)["count"]["chunks"][
             0
-        ].update(shape=[5, 1]),
+        ].update(logical_range=[0, 5]),
+        "full shape": lambda raw: descriptor_variables(raw)["x"]["chunks"][0].update(
+            shape=[5, 1]
+        ),
     }
     for index, (label, mutate) in enumerate(cases.items()):
         target = tmp_path / f"case_{index}"
@@ -729,9 +716,7 @@ def test_single_layout_writes_one_multikey_file_per_product(tmp_path):
     raw = json.loads((tmp_path / "artifact_manifest.json").read_text())
     variables = raw["products"][0]["storage"]["descriptor"]["variables"]
     files = {
-        chunk["file"]
-        for variable in variables.values()
-        for chunk in variable["chunks"]
+        chunk["file"] for variable in variables.values() for chunk in variable["chunks"]
     }
     assert files == {"00_trajectories.npz"}
     keys = {
@@ -745,9 +730,7 @@ def test_single_layout_writes_one_multikey_file_per_product(tmp_path):
     np.testing.assert_array_equal(
         restored.handle("x").materialize(), dataset.handle("x").materialize()
     )
-    np.testing.assert_array_equal(
-        restored.handle("count").materialize(), np.arange(5)
-    )
+    np.testing.assert_array_equal(restored.handle("count").materialize(), np.arange(5))
 
 
 def test_single_layout_ignores_shard_target(tmp_path):
@@ -757,12 +740,14 @@ def test_single_layout_ignores_shard_target(tmp_path):
         _schema(40), {"x": x, "count": np.arange(40)}, owner="engine.fake"
     )
     save_products(
-        tmp_path, {"trajectories": dataset}, layout="single",
+        tmp_path,
+        {"trajectories": dataset},
+        layout="single",
         shard_target_bytes=64,
     )
-    summary = json.loads((tmp_path / "artifact_manifest.json").read_text())[
-        "products"
-    ][0]["storage"]["summary"]
+    summary = json.loads((tmp_path / "artifact_manifest.json").read_text())["products"][
+        0
+    ]["storage"]["summary"]
     assert summary["x"]["chunk_count"] == 1
 
 
@@ -883,9 +868,7 @@ def test_save_products_refuses_overwrite_by_default(tmp_path):
 
     replaced = save_products(tmp_path, {"trajectories": dataset}, replace=True)
     restored = load_products(tmp_path)["trajectories"]
-    np.testing.assert_array_equal(
-        restored.handle("count").materialize(), np.arange(5)
-    )
+    np.testing.assert_array_equal(restored.handle("count").materialize(), np.arange(5))
     # Replacement wrote fresh file names and removed the old payload.
     files = {path.name for path in tmp_path.glob("*.npz")}
     assert files and all("__r" in name for name in files)
@@ -904,17 +887,13 @@ def test_failed_replace_keeps_old_artifact_readable(tmp_path, monkeypatch):
         real_write(*args, **kwargs)
         raise RuntimeError("injected write failure")
 
-    monkeypatch.setattr(
-        NpzStorageAdapter, "write_product", failing_write
-    )
+    monkeypatch.setattr(NpzStorageAdapter, "write_product", failing_write)
     with pytest.raises(RuntimeError, match="injected"):
         save_products(tmp_path, {"trajectories": _dataset()}, replace=True)
 
     # The old manifest and payload are untouched; staging is cleaned up.
     restored = load_products(tmp_path)["trajectories"]
-    np.testing.assert_array_equal(
-        restored.handle("count").materialize(), np.arange(5)
-    )
+    np.testing.assert_array_equal(restored.handle("count").materialize(), np.arange(5))
     assert {path.name for path in tmp_path.glob("*.npz")} == old_files
     assert not list(tmp_path.glob(".staging-*"))
     assert not list(tmp_path.glob("*.tmp"))
@@ -931,9 +910,7 @@ def test_replace_removes_stale_payload_files(tmp_path):
     assert len(files) == 1  # single payload file replaces the shard set
     assert not files & old_files
     restored = load_products(tmp_path)["trajectories"]
-    np.testing.assert_array_equal(
-        restored.handle("count").materialize(), np.arange(5)
-    )
+    np.testing.assert_array_equal(restored.handle("count").materialize(), np.arange(5))
 
 
 def test_interrupted_chunk_rename_keeps_old_artifact(tmp_path, monkeypatch):
@@ -960,9 +937,7 @@ def test_interrupted_chunk_rename_keeps_old_artifact(tmp_path, monkeypatch):
     # The old artifact is still fully readable; no half-published chunk or
     # staging/tmp file survives.
     restored = load_products(tmp_path)["trajectories"]
-    np.testing.assert_array_equal(
-        restored.handle("count").materialize(), np.arange(5)
-    )
+    np.testing.assert_array_equal(restored.handle("count").materialize(), np.arange(5))
     assert {path.name for path in tmp_path.glob("*.npz")} == old_files
     assert not list(tmp_path.glob(".staging-*"))
     assert not list(tmp_path.glob("*.tmp"))
@@ -986,14 +961,10 @@ def test_interrupted_manifest_publish_keeps_old_artifact(tmp_path, monkeypatch):
         save_products(tmp_path, {"trajectories": _dataset()}, replace=True)
 
     restored = load_products(tmp_path)["trajectories"]
-    np.testing.assert_array_equal(
-        restored.handle("count").materialize(), np.arange(5)
-    )
+    np.testing.assert_array_equal(restored.handle("count").materialize(), np.arange(5))
     # New chunks published before the crash are rolled back as well.
     assert not [
-        name
-        for name in (p.name for p in tmp_path.glob("*.npz"))
-        if "__r" in name
+        name for name in (p.name for p in tmp_path.glob("*.npz")) if "__r" in name
     ]
     assert not list(tmp_path.glob("*.tmp"))
 

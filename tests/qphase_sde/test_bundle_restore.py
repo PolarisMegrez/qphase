@@ -294,9 +294,7 @@ def test_single_point_bundle_restores_from_v3_artifact(tmp_path):
             "model": _ScanModel(),
         },
     )
-    bundle = engine.run(
-        context=SimpleNamespace(parameter_grid=None, progress=None)
-    )
+    bundle = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
     job_dir = tmp_path / "single"
     job_dir.mkdir()
     ArtifactStore(job_dir, SimpleNamespace(shard_target_mib=1)).save_result(

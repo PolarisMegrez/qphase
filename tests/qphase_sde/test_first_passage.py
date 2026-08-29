@@ -177,9 +177,9 @@ def _engine(model, observer, *, integrator=None, n_traj=2, ic=None, **config):
         "model": model,
     }
     if observer is not None:
-        plugins["observer"] = observer if isinstance(observer, dict) else {
-            "first_passage": observer
-        }
+        plugins["observer"] = (
+            observer if isinstance(observer, dict) else {"first_passage": observer}
+        )
     return Engine(
         config=EngineConfig(n_traj=n_traj, ic=ic, **config),
         plugins=plugins,
@@ -251,9 +251,7 @@ def test_direction_below_with_negative_rate():
         direction="below",
         check_interval_steps=3,
     )
-    payload, _ = _growth_payload_with_model(
-        LinearGrowthModel(rates=(-1.0,)), observer
-    )
+    payload, _ = _growth_payload_with_model(LinearGrowthModel(rates=(-1.0,)), observer)
 
     # alpha(k) = 1 - 0.1*k; checks at k=0 (1.0) and k=3 (0.7 < 0.75).
     np.testing.assert_array_equal(payload["first_hit_step"], [3, 3])
@@ -356,15 +354,9 @@ def test_matrix_projection_population_with_reference():
     np.testing.assert_array_equal(payload["first_hit_step"], [6, 6])
     np.testing.assert_allclose(payload["value_before_hit"], [-0.16, -0.16])
     np.testing.assert_allclose(payload["value_at_hit"], [0.11, 0.11])
-    assert (
-        payload["observable"] == "left_vector . (vec(R) - vec(reference))"
-    )
-    np.testing.assert_allclose(
-        payload["left_vector"], [1.0, 0.0, 0.0, 0.0]
-    )
-    np.testing.assert_allclose(
-        payload["reference_vector"], [0.25, 0.0, 0.0, 0.0]
-    )
+    assert payload["observable"] == "left_vector . (vec(R) - vec(reference))"
+    np.testing.assert_allclose(payload["left_vector"], [1.0, 0.0, 0.0, 0.0])
+    np.testing.assert_allclose(payload["reference_vector"], [0.25, 0.0, 0.0, 0.0])
 
 
 def test_matrix_projection_requires_perfect_square_vectors():
@@ -386,16 +378,12 @@ def test_debounce_rejects_single_check_blip():
         check_interval_steps=1,
         debounce_checks=2,
     )
-    payload, _ = _growth_payload_with_model(
-        PulseDriftModel(), observer, ic=[[0.0]]
-    )
+    payload, _ = _growth_payload_with_model(PulseDriftModel(), observer, ic=[[0.0]])
 
     # The one-check blip at k=6 never confirms; the sustained drift confirms
     # at k=13 with the first-hit time of the run start at k=12.
     np.testing.assert_array_equal(payload["first_hit_step"], [12, 12])
-    np.testing.assert_allclose(
-        payload["first_hit_time"], [1.2, 1.2], atol=1e-12
-    )
+    np.testing.assert_allclose(payload["first_hit_time"], [1.2, 1.2], atol=1e-12)
     np.testing.assert_allclose(payload["value_before_hit"], [0.1, 0.1])
     np.testing.assert_allclose(payload["value_at_hit"], [0.3, 0.3])
 
@@ -408,9 +396,7 @@ def test_debounce_one_confirms_the_blip():
         check_interval_steps=1,
         debounce_checks=1,
     )
-    payload, _ = _growth_payload_with_model(
-        PulseDriftModel(), observer, ic=[[0.0]]
-    )
+    payload, _ = _growth_payload_with_model(PulseDriftModel(), observer, ic=[[0.0]])
 
     np.testing.assert_array_equal(payload["first_hit_step"], [6, 6])
     np.testing.assert_allclose(payload["value_at_hit"], [1.0, 1.0])
@@ -436,12 +422,8 @@ def test_multiple_observers_compose_mixed_cadences():
     ).run()
 
     # Each observer fires exactly on its own cadence multiples.
-    np.testing.assert_array_equal(
-        _payload(result, "fast")["first_hit_step"], [4, 4]
-    )
-    np.testing.assert_array_equal(
-        _payload(result, "slow")["first_hit_step"], [6, 6]
-    )
+    np.testing.assert_array_equal(_payload(result, "fast")["first_hit_step"], [4, 4])
+    np.testing.assert_array_equal(_payload(result, "slow")["first_hit_step"], [6, 6])
 
 
 def test_record_observer_preserves_trajectories_bitwise():
@@ -472,9 +454,7 @@ def test_chunked_and_stepwise_hits_match():
 
     # Cadence 3 is not a divisor of chunk_steps 8; chunk clamping must keep
     # the checks on exact cadence multiples (6 rather than the boundary 8).
-    np.testing.assert_array_equal(
-        chunked_payload["hit"], stepwise_payload["hit"]
-    )
+    np.testing.assert_array_equal(chunked_payload["hit"], stepwise_payload["hit"])
     np.testing.assert_array_equal(
         chunked_payload["censored"], stepwise_payload["censored"]
     )
@@ -501,9 +481,7 @@ def test_stop_batch_truncates_output():
 
 
 def test_fail_job_raises_with_trajectory_ids_and_times():
-    engine = _engine(
-        LinearGrowthModel(), _observer(action="fail_job"), ic=[[0.0]]
-    )
+    engine = _engine(LinearGrowthModel(), _observer(action="fail_job"), ic=[[0.0]])
 
     with pytest.raises(FirstPassageTriggeredError) as excinfo:
         engine.run()
@@ -551,9 +529,7 @@ def test_cupy_matches_numpy_hits():
     cupy_payload = run(CuPyBackend())
 
     np.testing.assert_array_equal(cupy_payload["hit"], numpy_payload["hit"])
-    np.testing.assert_array_equal(
-        cupy_payload["censored"], numpy_payload["censored"]
-    )
+    np.testing.assert_array_equal(cupy_payload["censored"], numpy_payload["censored"])
     np.testing.assert_array_equal(
         cupy_payload["first_hit_step"], numpy_payload["first_hit_step"]
     )
@@ -577,9 +553,7 @@ def test_trajectory_batching_merges_observer_payloads():
             ic=ic,
             **config,
         )
-        engine.plugins["analyser"] = {
-            "psd": PsdAnalyzer(kind="complex", modes=[0])
-        }
+        engine.plugins["analyser"] = {"psd": PsdAnalyzer(kind="complex", modes=[0])}
         return engine.run()
 
     reference = _payload(run(keep_traj=False))
@@ -589,16 +563,10 @@ def test_trajectory_batching_merges_observer_payloads():
     assert merged["hit"].shape == (8,)
     assert merged["n_traj"] == 8
     np.testing.assert_array_equal(merged["hit"], reference["hit"])
-    np.testing.assert_array_equal(
-        merged["first_hit_step"], reference["first_hit_step"]
-    )
-    np.testing.assert_allclose(
-        merged["first_hit_time"], reference["first_hit_time"]
-    )
+    np.testing.assert_array_equal(merged["first_hit_step"], reference["first_hit_step"])
+    np.testing.assert_allclose(merged["first_hit_time"], reference["first_hit_time"])
     # threshold 0.45 on 0.0625*i + 0.125*k, checked at even steps.
-    np.testing.assert_array_equal(
-        merged["first_hit_step"], [4, 4, 4, 4, 2, 2, 2, 2]
-    )
+    np.testing.assert_array_equal(merged["first_hit_step"], [4, 4, 4, 4, 2, 2, 2, 2])
     assert merged["n_hit"] == int(np.count_nonzero(reference["hit"]))
 
 
@@ -620,9 +588,7 @@ def test_scan_fused_payload_exposes_per_point_observer_views():
         check_interval_steps=1,
     )
     engine = Engine(
-        config=EngineConfig(
-            t0=0.0, t1=0.2, dt=0.01, n_traj=2, seed=7, ic=[[1.0]]
-        ),
+        config=EngineConfig(t0=0.0, t1=0.2, dt=0.01, n_traj=2, seed=7, ic=[[1.0]]),
         plugins={
             "backend": NumpyBackend(),
             "integrator": EulerMaruyama(),
@@ -634,15 +600,12 @@ def test_scan_fused_payload_exposes_per_point_observer_views():
     result = engine.run(context=SimpleNamespace(parameter_grid=grid, progress=None))
 
     payloads = [
-        _payload(result.point_view((index,)))
-        for index in range(result.scan_size)
+        _payload(result.point_view((index,))) for index in range(result.scan_size)
     ]
     assert [payload["n_traj"] for payload in payloads] == [2, 2]
     assert all(payload["hit"].shape == (2,) for payload in payloads)
     # rate=1 crosses 0.9 at k=11 (0.99^k), rate=2 at k=6 (0.98^k).
-    np.testing.assert_array_equal(
-        payloads[0]["first_hit_step"], [11, 11]
-    )
+    np.testing.assert_array_equal(payloads[0]["first_hit_step"], [11, 11])
     np.testing.assert_array_equal(payloads[1]["first_hit_step"], [6, 6])
     assert _payload(result.point_view((0,)))["n_traj"] == 2
 

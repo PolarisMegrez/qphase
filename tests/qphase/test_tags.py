@@ -182,7 +182,6 @@ def test_annotation_documents_forbid_extra_fields():
         )
 
 
-
 def test_freeze_namespace_rule_snapshots_minimal_governance():
     from qphase.core.tags import freeze_namespace_rule
 

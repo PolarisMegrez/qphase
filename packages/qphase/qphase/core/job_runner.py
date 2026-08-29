@@ -110,9 +110,7 @@ def make_tracker(system_config: Any) -> ProgressTracker:
     )
 
 
-def build_plugins(
-    registry: RegistryCenter, config: dict[str, Any]
-) -> dict[str, Any]:
+def build_plugins(registry: RegistryCenter, config: dict[str, Any]) -> dict[str, Any]:
     """Instantiate the resolved plugin selection from one registry source."""
     plugins: dict[str, Any] = {}
     for plugin_type, config_data in config.items():
@@ -139,9 +137,7 @@ def build_plugins(
             flat_config = dict(plugin_config)
             flat_config["name"] = plugin_name
             try:
-                instance = registry.create_plugin_instance(
-                    plugin_type, flat_config
-                )
+                instance = registry.create_plugin_instance(plugin_type, flat_config)
             except Exception as exc:
                 raise QPhasePluginError(
                     f"Failed to create plugin '{plugin_type}.{plugin_name}': {exc}"
@@ -537,9 +533,7 @@ def _run_job_inner(
             meta={"source": job.input.from_, "mode": "map"},
         )
     else:
-        output_result = invoke_engine(
-            engine, input_result, context, legacy_cb
-        )
+        output_result = invoke_engine(engine, input_result, context, legacy_cb)
 
     if not isinstance(output_result, ResultProtocol):
         raise QPhaseRuntimeError(

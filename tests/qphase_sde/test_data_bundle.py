@@ -44,9 +44,7 @@ def _traj_bundle(scan_size=1, n_traj=2, n_time=5, n_channel=1, analysis=None):
         analysis=analysis or {},
         meta={"label": "test"},
     )
-    return bundle_from_result(
-        result, provenance=_provenance(), n_traj_per_point=n_traj
-    )
+    return bundle_from_result(result, provenance=_provenance(), n_traj_per_point=n_traj)
 
 
 def test_trajectory_product_structure():
@@ -111,10 +109,7 @@ def test_analysis_product_flattens_nested_dicts():
 
 
 def test_analysis_product_scan_stacks_per_point_payloads():
-    payload = [
-        {"axis": np.arange(3.0), "psd": np.full(3, index)}
-        for index in range(3)
-    ]
+    payload = [{"axis": np.arange(3.0), "psd": np.full(3, index)} for index in range(3)]
     product = _analysis_product("psd", payload, scan_size=3)
     assert product is not None
     psd = product.handle("psd").materialize()
@@ -181,9 +176,7 @@ def _grid(**axes) -> ParameterGrid:
 
 def test_scan_bundle_axes_shape_and_point_view():
     grid = _grid(kappa=[1.0, 2.0, 3.0])
-    result = SDEResult(
-        trajectory=_Trajectory(np.zeros((6, 5, 1), dtype=np.complex128))
-    )
+    result = SDEResult(trajectory=_Trajectory(np.zeros((6, 5, 1), dtype=np.complex128)))
     bundle = bundle_from_result(
         _ScanResultLike(grid, result, n_traj_per_point=2),
         provenance=_provenance(),
@@ -220,9 +213,7 @@ def test_bundle_save_and_load_roundtrip(tmp_path):
 
 def test_bundle_save_dataset_report(tmp_path):
     bundle = _traj_bundle()
-    report = bundle.save_dataset(
-        tmp_path, layout="single", shard_target_bytes=1 << 20
-    )
+    report = bundle.save_dataset(tmp_path, layout="single", shard_target_bytes=1 << 20)
     assert report.layout == "single"
     assert any(path.name == "artifact_manifest.json" for path in report.files)
 
@@ -298,9 +289,7 @@ def test_engine_run_returns_bundle():
             return np.ones((y.shape[0], 1, 1))
 
     engine = Engine(
-        config=EngineConfig(
-            dt=0.01, t0=0.0, t1=0.05, n_traj=2, seed=3, ic=[[0.0]]
-        ),
+        config=EngineConfig(dt=0.01, t0=0.0, t1=0.05, n_traj=2, seed=3, ic=[[0.0]]),
         plugins={
             "backend": NumpyBackend(),
             "integrator": EulerMaruyama(),

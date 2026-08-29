@@ -100,13 +100,9 @@ class ProductGraph(BaseModel):
         known = set(node_ids)
         for edge in self.edges:
             if edge.producer not in known:
-                raise ValueError(
-                    f"edge references unknown producer {edge.producer!r}"
-                )
+                raise ValueError(f"edge references unknown producer {edge.producer!r}")
             if edge.consumer not in known:
-                raise ValueError(
-                    f"edge references unknown consumer {edge.consumer!r}"
-                )
+                raise ValueError(f"edge references unknown consumer {edge.consumer!r}")
         self._check_acyclic(node_ids)
         return self
 

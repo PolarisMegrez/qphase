@@ -293,9 +293,12 @@ def test_scheduler_service_lists_manifest_artifact_as_one_item(tmp_path):
     assert items[0].file_ref is None
     assert items[0].path == job_dir
     assert items[0].job_name == "job1"
-    assert service.describe_artifact_by_id(
-        manifest.artifact_id, session_dir=session_root
-    ).artifact_id == manifest.artifact_id
+    assert (
+        service.describe_artifact_by_id(
+            manifest.artifact_id, session_dir=session_root
+        ).artifact_id
+        == manifest.artifact_id
+    )
 
 
 def test_scheduler_service_reports_duplicate_artifact_identity(tmp_path):

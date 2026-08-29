@@ -19,9 +19,7 @@ from pathlib import Path
 from qphase.resources import ResourcePackageManifest, validate_manifest
 from qphase_sde.manifest import MANIFEST
 
-SDE_PACKAGE_ROOT = (
-    Path(__file__).resolve().parents[2] / "packages" / "qphase_sde"
-)
+SDE_PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "packages" / "qphase_sde"
 SDE_ROOT = SDE_PACKAGE_ROOT / "qphase_sde"
 CONTRACTS_DIR = SDE_ROOT / "contracts"
 

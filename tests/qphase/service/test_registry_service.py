@@ -153,9 +153,7 @@ def test_local_plugin_discovery_propagates_project_errors(monkeypatch):
         ("plugins:\n  - type: model.example\n", "requires a string 'target'"),
     ],
 )
-def test_local_plugin_discovery_rejects_malformed_manifests(
-    tmp_path, payload, message
-):
+def test_local_plugin_discovery_rejects_malformed_manifests(tmp_path, payload, message):
     project = ProjectContext.create(tmp_path / "project")
     manifest = project.root / "models" / ".qphase_plugins.yaml"
     manifest.write_text(payload, encoding="utf-8")

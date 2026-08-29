@@ -271,9 +271,7 @@ def build_execution_plan(
         else analyzer_host_workspace * trajectory_batch // n_traj
     )
     retained_analysis_workspace = (
-        analyzer_device_retained
-        if backend_name == "cupy"
-        else analyzer_host_retained
+        analyzer_device_retained if backend_name == "cupy" else analyzer_host_retained
     )
     fixed = reserve + retained_analysis_workspace
     if trajectory_batch_count > 1:
@@ -314,9 +312,7 @@ def build_execution_plan(
         retained_host_trajectory = (
             trajectory_per_point * scan_size if should_keep else 0
         )
-        host_peak = (
-            host_reserve + analyzer_host_retained + retained_host_trajectory
-        )
+        host_peak = host_reserve + analyzer_host_retained + retained_host_trajectory
     else:
         device_peak = 0
         host_peak = peak
@@ -331,9 +327,7 @@ def build_execution_plan(
         trajectory_bytes_per_point=trajectory_per_point,
         state_bytes_per_point=state_per_point,
         noise_workspace_bytes_per_point=noise_per_point,
-        analyzer_workspace_bytes=(
-            analyzer_device_retained + analyzer_host_retained
-        ),
+        analyzer_workspace_bytes=(analyzer_device_retained + analyzer_host_retained),
         analyzer_device_workspace_bytes=analyzer_device_retained,
         analyzer_host_workspace_bytes=analyzer_host_retained,
         reserve_bytes=reserve,

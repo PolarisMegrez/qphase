@@ -211,9 +211,7 @@ def test_submission_tags_update_while_queued_and_freeze_on_start() -> None:
         assert scheduler.first_started.wait(1.0)
 
         second = manager.submit("ignored", tags=["task:queued"])
-        updated = manager.update_submission_tags(
-            second.execution_id, ["task:revised"]
-        )
+        updated = manager.update_submission_tags(second.execution_id, ["task:revised"])
         assert updated.submission_tags == ["task:revised"]
         with pytest.raises(ValueError, match="while queued"):
             manager.update_submission_tags(first.execution_id, ["task:late"])

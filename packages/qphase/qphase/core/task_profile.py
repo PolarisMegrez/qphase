@@ -73,9 +73,7 @@ class PluginRequirementSet(BaseModel):
     def _check_namespaces(cls, value: list[str]) -> list[str]:
         for namespace in value:
             if not _NAMESPACE_PATTERN.match(namespace):
-                raise ValueError(
-                    f"invalid plugin-class namespace: {namespace!r}"
-                )
+                raise ValueError(f"invalid plugin-class namespace: {namespace!r}")
         if len(set(value)) != len(value):
             raise ValueError("duplicate plugin-class namespace in one set")
         return sorted(value)
@@ -110,9 +108,7 @@ class PluginRequirementSet(BaseModel):
 
 def validate_requirement_set(requirements: PluginRequirementSet) -> None:
     """Re-validate a requirement set (used on resolver outputs)."""
-    PluginRequirementSet.model_validate(
-        requirements.model_dump(mode="json")
-    )
+    PluginRequirementSet.model_validate(requirements.model_dump(mode="json"))
 
 
 class TaskProfileResolutionContext(BaseModel):
@@ -126,9 +122,7 @@ class TaskProfileResolutionContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     normalized_job_config: dict[str, Any] = Field(default_factory=dict)
-    named_input_product_schemas: dict[str, ProductSchema] = Field(
-        default_factory=dict
-    )
+    named_input_product_schemas: dict[str, ProductSchema] = Field(default_factory=dict)
 
     @field_validator("normalized_job_config")
     @classmethod
@@ -136,9 +130,7 @@ class TaskProfileResolutionContext(BaseModel):
         try:
             canonical_json(value)
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "normalized job config must be JSON-serializable"
-            ) from exc
+            raise ValueError("normalized job config must be JSON-serializable") from exc
         return value
 
 
@@ -177,9 +169,7 @@ class EngineTaskProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    requirements: PluginRequirementSet = Field(
-        default_factory=PluginRequirementSet
-    )
+    requirements: PluginRequirementSet = Field(default_factory=PluginRequirementSet)
     inputs: list[InputProductRequirement] = Field(default_factory=list)
     outputs: list[OutputProductDeclaration] = Field(default_factory=list)
     resolver: str | None = Field(

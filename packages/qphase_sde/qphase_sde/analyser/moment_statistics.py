@@ -92,30 +92,17 @@ class MomentStatisticsAnalyzer(Analyzer):
     ) -> AnalyzerWorkspaceEstimate:
         config = cast(MomentStatisticsConfig, self.config)
         n_modes = (
-            len(config.modes)
-            if config.modes is not None
-            else request.n_record_modes
+            len(config.modes) if config.modes is not None else request.n_record_modes
         )
         chunk = min(config.time_chunk_samples, request.saved_samples)
         # Selected complex values, real intensities, and conservative contraction
         # workspace. These arrays are bounded by time_chunk_samples.
-        backend_workspace = (
-            request.n_traj
-            * chunk
-            * n_modes
-            * request.real_itemsize
-            * 4
-        )
+        backend_workspace = request.n_traj * chunk * n_modes * request.real_itemsize * 4
         summaries = (
-            request.n_traj
-            * (n_modes + n_modes * n_modes)
-            * request.real_itemsize
-            * 2
+            request.n_traj * (n_modes + n_modes * n_modes) * request.real_itemsize * 2
         )
         blocks = (
-            config.time_blocks
-            * (n_modes + n_modes * n_modes)
-            * request.real_itemsize
+            config.time_blocks * (n_modes + n_modes * n_modes) * request.real_itemsize
         )
         host_bytes = summaries + blocks
         if request.backend_name == "cupy":
@@ -178,15 +165,11 @@ class MomentStatisticsAnalyzer(Analyzer):
                 np.asarray(convert_to_numpy(backend.mean(block_sum, axis=0))) / count
             )
             block_product.append(
-                np.asarray(
-                    convert_to_numpy(backend.mean(block_product_sum, axis=0))
-                )
+                np.asarray(convert_to_numpy(backend.mean(block_product_sum, axis=0)))
                 / count
             )
 
-        per_trajectory = np.asarray(convert_to_numpy(trajectory_sum)) / float(
-            n_samples
-        )
+        per_trajectory = np.asarray(convert_to_numpy(trajectory_sum)) / float(n_samples)
         per_trajectory_product = np.asarray(
             convert_to_numpy(trajectory_product_sum)
         ) / float(n_samples)
@@ -243,17 +226,13 @@ class MomentStatisticsAnalyzer(Analyzer):
         occupation = np.mean(per_trajectory, axis=0)
         product = _symmetric(np.mean(per_trajectory_product, axis=0))
         covariance = _symmetric(product - np.outer(occupation, occupation))
-        g2 = _normalized_product(
-            product, occupation, config.denominator_tolerance
-        )
+        g2 = _normalized_product(product, occupation, config.denominator_tolerance)
 
         if n_traj > 1:
-            occupation_sem = np.std(per_trajectory, axis=0, ddof=1) / math.sqrt(
+            occupation_sem = np.std(per_trajectory, axis=0, ddof=1) / math.sqrt(n_traj)
+            product_sem = np.std(per_trajectory_product, axis=0, ddof=1) / math.sqrt(
                 n_traj
             )
-            product_sem = np.std(
-                per_trajectory_product, axis=0, ddof=1
-            ) / math.sqrt(n_traj)
             g2_sem = _g2_jackknife_sem(
                 per_trajectory,
                 per_trajectory_product,
@@ -524,12 +503,8 @@ def _g2_jackknife_sem(
     tolerance: float,
 ) -> np.ndarray:
     count = int(per_trajectory.shape[0])
-    leave_occupation = (
-        count * occupation[None, :] - per_trajectory
-    ) / (count - 1)
-    leave_product = (
-        count * product[None, :, :] - per_trajectory_product
-    ) / (count - 1)
+    leave_occupation = (count * occupation[None, :] - per_trajectory) / (count - 1)
+    leave_product = (count * product[None, :, :] - per_trajectory_product) / (count - 1)
     values = np.asarray(
         [
             _normalized_product(item, leave_occupation[index], tolerance)

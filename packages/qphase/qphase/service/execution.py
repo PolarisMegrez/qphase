@@ -518,9 +518,12 @@ class ExecutionManager:
     def _execution_payload(self, record: _ExecutionRecord) -> dict[str, Any]:
         session_dir: str | None = None
         if record.scheduler is not None and record.scheduler.session_dir is not None:
-            session_dir = Path(record.scheduler.session_dir).resolve().relative_to(
-                self.scheduler.project.session_root.resolve()
-            ).as_posix()
+            session_dir = (
+                Path(record.scheduler.session_dir)
+                .resolve()
+                .relative_to(self.scheduler.project.session_root.resolve())
+                .as_posix()
+            )
         payload = initial_execution_payload(
             execution_id=record.execution_id,
             workflow=record.workflow,
@@ -625,9 +628,7 @@ class ExecutionManager:
             tag_policy_revision=payload.get("tag_policy_revision"),
             submission_tag_rules={
                 str(tag): dict(rule)
-                for tag, rule in dict(
-                    payload.get("submission_tag_rules") or {}
-                ).items()
+                for tag, rule in dict(payload.get("submission_tag_rules") or {}).items()
             },
         )
         session_dir = payload.get("session_dir")

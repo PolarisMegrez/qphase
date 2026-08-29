@@ -111,13 +111,17 @@ def test_psd_default_maps_decreasing_phase_to_positive_frequency(method):
     data = TrajectorySet(data=np.repeat(values, 3, axis=0), t0=0.0, dt=dt)
     kwargs = {"nperseg": 1024} if method == "welch" else {}
 
-    payload = PsdAnalyzer(
-        kind="complex",
-        modes=[0],
-        convention="symmetric",
-        method=method,
-        **kwargs,
-    ).analyze(data, BACKEND).data_dict
+    payload = (
+        PsdAnalyzer(
+            kind="complex",
+            modes=[0],
+            convention="symmetric",
+            method=method,
+            **kwargs,
+        )
+        .analyze(data, BACKEND)
+        .data_dict
+    )
 
     peak = float(payload["axis"][np.argmax(payload["psd"][:, 0])])
     assert peak == pytest.approx(omega, abs=0.04)
@@ -132,12 +136,16 @@ def test_psd_phase_increasing_preserves_forward_fft_axis():
     values = np.exp(-1j * omega * time)[None, :, None]
     data = TrajectorySet(data=np.repeat(values, 2, axis=0), t0=0.0, dt=dt)
 
-    payload = PsdAnalyzer(
-        kind="complex",
-        modes=[0],
-        convention="symmetric",
-        orientation="phase_increasing",
-    ).analyze(data, BACKEND).data_dict
+    payload = (
+        PsdAnalyzer(
+            kind="complex",
+            modes=[0],
+            convention="symmetric",
+            orientation="phase_increasing",
+        )
+        .analyze(data, BACKEND)
+        .data_dict
+    )
 
     peak = float(payload["axis"][np.argmax(payload["psd"][:, 0])])
     assert peak == pytest.approx(-omega, abs=0.04)
@@ -298,9 +306,7 @@ def test_psd_accumulator_matches_full_trajectory_analysis(method):
         method=method,
         nperseg=64 if method == "welch" else None,
     )
-    full = analyzer.analyze(
-        TrajectorySet(values, t0=0.0, dt=0.1), BACKEND
-    ).data_dict
+    full = analyzer.analyze(TrajectorySet(values, t0=0.0, dt=0.1), BACKEND).data_dict
     accumulator = analyzer.create_result_accumulator()
     for start, stop in ((0, 3), (3, 8), (8, 11)):
         partial = analyzer.analyze(
@@ -372,9 +378,7 @@ def test_psd_estimator_subplugins_are_discoverable_and_constructed():
     assert analyzer.estimator.name == "welch"
     assert analyzer.estimator.config.nperseg == 64
 
-    template = service.build_template(
-        "analyser.psd", selections={"estimator": "welch"}
-    )
+    template = service.build_template("analyser.psd", selections={"estimator": "welch"})
     assert template["estimator"]["welch"]["nperseg"] is None
     assert "method" not in template
     assert "nperseg" not in template
@@ -438,12 +442,8 @@ def test_periodogram_fft_chunk_matches_full_batch_estimate():
         np.testing.assert_allclose(
             estimate.mean, reference.mean, rtol=1e-12, atol=1e-30
         )
-        np.testing.assert_allclose(
-            estimate.std, reference.std, rtol=1e-9, atol=1e-30
-        )
-        np.testing.assert_allclose(
-            estimate.sem, reference.sem, rtol=1e-9, atol=1e-30
-        )
+        np.testing.assert_allclose(estimate.std, reference.std, rtol=1e-9, atol=1e-30)
+        np.testing.assert_allclose(estimate.sem, reference.sem, rtol=1e-9, atol=1e-30)
 
 
 def test_periodogram_fft_chunk_config_reaches_estimator():

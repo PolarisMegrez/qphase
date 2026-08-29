@@ -101,7 +101,11 @@ def tag_occurrence(
     """Add or remove annotation tags on one producing occurrence."""
     try:
         tags = catalog_service().tag_occurrence(
-            session_id, artifact_id, job_name=job, add=add, remove=remove,
+            session_id,
+            artifact_id,
+            job_name=job,
+            add=add,
+            remove=remove,
             private=private,
         )
     except (QPhaseError, RuntimeError, ValueError, FileNotFoundError) as exc:

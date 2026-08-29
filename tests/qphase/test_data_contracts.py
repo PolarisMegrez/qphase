@@ -39,8 +39,13 @@ def _time_series_schema() -> ProductSchema:
         kind=DataKind.TIME_SERIES,
         axes=[
             AxisSchema(
-                name="time", role=AxisRole.COORDINATE, size=1024,
-                coordinate="regular", start=0.0, step=0.01, units="s",
+                name="time",
+                role=AxisRole.COORDINATE,
+                size=1024,
+                coordinate="regular",
+                start=0.0,
+                step=0.01,
+                units="s",
             ),
             AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=64),
             AxisSchema(name="channel", role=AxisRole.COMPONENT, size=2),
@@ -75,7 +80,9 @@ def _spectral_schema() -> ProductSchema:
         axes=[
             AxisSchema(name="scan", role=AxisRole.PARAMETER),
             AxisSchema(
-                name="frequency", role=AxisRole.COORDINATE, size=513,
+                name="frequency",
+                role=AxisRole.COORDINATE,
+                size=513,
                 units="Hz",
             ),
             AxisSchema(name="channel", role=AxisRole.COMPONENT, size=2),
@@ -138,9 +145,7 @@ def test_schema_fingerprint_golden():
 def test_schema_is_extra_forbid():
     """Unknown fields are rejected at every level."""
     with pytest.raises(ValidationError):
-        ProductSchema.model_validate(
-            {"kind": "spectral", "variables": [], "bogus": 1}
-        )
+        ProductSchema.model_validate({"kind": "spectral", "variables": [], "bogus": 1})
     with pytest.raises(ValidationError):
         AxisSchema.model_validate({"name": "t", "bogus": 1})
 
@@ -148,25 +153,17 @@ def test_schema_is_extra_forbid():
 def test_variable_dtype_validation():
     """Object dtypes are forbidden; dtype names are normalized."""
     with pytest.raises(ValidationError, match="object dtype"):
-        VariableSchema(
-            name="bad", dtype="object", value_domain="real", dims=()
-        )
-    variable = VariableSchema(
-        name="x", dtype="float64", value_domain="real", dims=()
-    )
+        VariableSchema(name="bad", dtype="object", value_domain="real", dims=())
+    variable = VariableSchema(name="x", dtype="float64", value_domain="real", dims=())
     assert variable.dtype == "<f8"
 
 
 def test_variable_domain_dtype_bidirectional():
     """Real forbids complex dtypes; complex requires complex dtypes."""
     with pytest.raises(ValidationError, match="value_domain"):
-        VariableSchema(
-            name="x", dtype="complex128", value_domain="real", dims=()
-        )
+        VariableSchema(name="x", dtype="complex128", value_domain="real", dims=())
     with pytest.raises(ValidationError, match="value_domain"):
-        VariableSchema(
-            name="x", dtype="float64", value_domain="complex", dims=()
-        )
+        VariableSchema(name="x", dtype="float64", value_domain="complex", dims=())
 
 
 def test_nonnegative_requires_real_numeric():
@@ -301,9 +298,7 @@ def test_real_uncertainty_uses_real_covariance():
         ProductSchema(
             kind=DataKind.STATISTICS,
             variables=[
-                VariableSchema(
-                    name="m1", dtype="float64", value_domain="real", dims=()
-                )
+                VariableSchema(name="m1", dtype="float64", value_domain="real", dims=())
             ],
             uncertainties=[
                 UncertaintySchema(
@@ -331,9 +326,7 @@ def test_uncertainty_sampling_basis_separates_retained_and_reduced_axes():
             axes=axes,
             variables=[variable],
             uncertainties=[
-                UncertaintySchema(
-                    target="x", kind="sem", sampling_basis="trajectory"
-                )
+                UncertaintySchema(target="x", kind="sem", sampling_basis="trajectory")
             ],
         )
     with pytest.raises(ValidationError, match="must reference a sampling basis"):
@@ -381,9 +374,7 @@ def test_sampling_basis_source_and_count_contracts():
         ProductSchema(
             kind=DataKind.STATISTICS,
             axes=[AxisSchema(name="scan", role=AxisRole.PARAMETER, size=2)],
-            sampling_bases=[
-                SamplingBasisSchema(name="trajectory", source_axis="scan")
-            ],
+            sampling_bases=[SamplingBasisSchema(name="trajectory", source_axis="scan")],
             variables=[
                 VariableSchema(
                     name="mean", dtype="float64", value_domain="real", dims=("scan",)
@@ -395,9 +386,7 @@ def test_sampling_basis_source_and_count_contracts():
         kind=DataKind.STATISTICS,
         axes=[AxisSchema(name="scan", role=AxisRole.PARAMETER, size=2)],
         sampling_bases=[
-            SamplingBasisSchema(
-                name="trajectory", count_variable="independent_count"
-            )
+            SamplingBasisSchema(name="trajectory", count_variable="independent_count")
         ],
         variables=[
             VariableSchema(
@@ -430,9 +419,7 @@ def test_uncertainty_data_variable_must_be_typed_variable():
         ProductSchema(
             kind=DataKind.STATISTICS,
             variables=[
-                VariableSchema(
-                    name="m1", dtype="float64", value_domain="real", dims=()
-                )
+                VariableSchema(name="m1", dtype="float64", value_domain="real", dims=())
             ],
             uncertainties=[
                 UncertaintySchema(
@@ -451,9 +438,7 @@ def test_uncertainty_target_must_exist():
         ProductSchema(
             kind=DataKind.STATISTICS,
             variables=[
-                VariableSchema(
-                    name="m1", dtype="float64", value_domain="real", dims=()
-                )
+                VariableSchema(name="m1", dtype="float64", value_domain="real", dims=())
             ],
             uncertainties=[UncertaintySchema(target="nope", kind="sem")],
         )
@@ -543,9 +528,7 @@ def test_moment_family_removed_from_core():
         ProductSchema(
             kind=DataKind.STATISTICS,
             variables=[
-                VariableSchema(
-                    name="m", dtype="float64", value_domain="real", dims=()
-                )
+                VariableSchema(name="m", dtype="float64", value_domain="real", dims=())
             ],
             moment_family={"family_id": "x"},
         )
@@ -644,17 +627,13 @@ def test_task_profile_roundtrip_and_resolver_validation():
         inputs=[
             InputProductRequirement(
                 name="spectrum",
-                requirement=ProductRequirement(
-                    name="spectrum", kind=DataKind.SPECTRAL
-                ),
+                requirement=ProductRequirement(name="spectrum", kind=DataKind.SPECTRAL),
             )
         ],
         outputs=[
             OutputProductDeclaration(
                 name="peaks",
-                declaration=ProductDeclaration(
-                    name="peaks", kind=DataKind.STATISTICS
-                ),
+                declaration=ProductDeclaration(name="peaks", kind=DataKind.STATISTICS),
             )
         ],
         resolver="qphase_sde.config:resolve_analyze_profile",
@@ -855,9 +834,7 @@ def test_validate_backing_rejects_mismatches():
     with pytest.raises(ValueError, match="variable_schema"):
         validate_backing(
             schema,
-            _FakeBacking(
-                {"alpha": _FakeHandle(wrong_schema, "complex128", (8,))}
-            ),
+            _FakeBacking({"alpha": _FakeHandle(wrong_schema, "complex128", (8,))}),
         )
 
 

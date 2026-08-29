@@ -49,9 +49,7 @@ def test_petermann_postprocessor_emits_aligned_spectra():
         solution_count=np.asarray(1),
         params=model.params,
     )
-    output = PetermannSpectrum(chunk_size=1).process(
-        result, model, NumpyBackend()
-    )
+    output = PetermannSpectrum(chunk_size=1).process(result, model, NumpyBackend())
     assert output["hamiltonian_eigenvalues"].shape == (1, 2)
     assert output["bogoliubov_eigenvalues"].shape == (1, 4)
     assert output["monodromy_eigenvalues"].shape == (1, 4)

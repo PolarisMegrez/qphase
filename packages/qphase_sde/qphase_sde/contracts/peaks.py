@@ -152,9 +152,7 @@ class PeakPathResult(BaseModel):
     @model_validator(mode="after")
     def _check_path(self) -> PeakPathResult:
         if len(self.candidate_rows) != len(self.scan_positions):
-            raise ValueError(
-                "candidate_rows and scan_positions must have equal length"
-            )
+            raise ValueError("candidate_rows and scan_positions must have equal length")
         if any(row < 0 for row in self.candidate_rows):
             raise ValueError("candidate_rows must be nonnegative")
         if any(position < 0 for position in self.scan_positions):
@@ -400,9 +398,7 @@ def validate_candidate_table(
 
     for required in ("location", "intensity", "status_code"):
         if required not in columns:
-            raise ValueError(
-                f"candidate table misses required column {required!r}"
-            )
+            raise ValueError(f"candidate table misses required column {required!r}")
     for name, values in columns.items():
         column = np.asarray(values)
         if column.ndim != 1 or len(column) != candidate_count:
@@ -420,12 +416,11 @@ def validate_candidate_table(
                 f"{mask_name!r} mask column; NaN is not a valid mask"
             )
         mask = np.asarray(columns[mask_name])
-        if not np.issubdtype(mask.dtype, np.integer) or not set(
-            np.unique(mask)
-        ) <= {0, 1}:
-            raise ValueError(
-                f"mask column {mask_name!r} must hold only 0/1 values"
-            )
+        if not np.issubdtype(mask.dtype, np.integer) or not set(np.unique(mask)) <= {
+            0,
+            1,
+        }:
+            raise ValueError(f"mask column {mask_name!r} must hold only 0/1 values")
 
 
 def validate_path_table(
@@ -455,9 +450,7 @@ def validate_path_table(
     if not np.issubdtype(rows.dtype, np.integer):
         raise ValueError("candidate_row must have an integer dtype")
     if len(rows) != len(positions):
-        raise ValueError(
-            "candidate_row and scan_position must have equal length"
-        )
+        raise ValueError("candidate_row and scan_position must have equal length")
     if int(offsets[-1]) != len(rows):
         raise ValueError(
             f"the terminal path offset ({int(offsets[-1])}) must equal the "

@@ -57,6 +57,4 @@ def promote_tag(
         tags = catalog_service().promote_tag(kind, object_id, tag)
     except (QPhaseError, RuntimeError, ValueError) as exc:
         fail(exc)
-    typer.echo(
-        f"{kind} {object_id} tags=[{', '.join(item.tag for item in tags)}]"
-    )
+    typer.echo(f"{kind} {object_id} tags=[{', '.join(item.tag for item in tags)}]")

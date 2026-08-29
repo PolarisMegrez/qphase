@@ -15,9 +15,11 @@ def _analyzer(**kwargs):
 def test_coherence_matrix_reports_rank_one_modal_purity():
     vector = np.asarray([1.0 + 1.0j, 2.0 - 0.5j])
     data = np.broadcast_to(vector, (6, 64, 2)).copy()
-    payload = _analyzer(time_blocks=4).analyze(
-        TrajectorySet(data, t0=10.0, dt=0.5), NumpyBackend()
-    ).data_dict
+    payload = (
+        _analyzer(time_blocks=4)
+        .analyze(TrajectorySet(data, t0=10.0, dt=0.5), NumpyBackend())
+        .data_dict
+    )
 
     expected = np.outer(vector, vector.conj())
     np.testing.assert_allclose(payload["matrix"], expected)
@@ -32,9 +34,11 @@ def test_coherence_matrix_distinguishes_incoherent_modal_mixture():
     data = np.zeros((8, 32, 2), dtype=complex)
     data[:4, :, 0] = 1.0
     data[4:, :, 1] = 1.0
-    payload = _analyzer(time_blocks=4, min_block_samples=4).analyze(
-        TrajectorySet(data), NumpyBackend()
-    ).data_dict
+    payload = (
+        _analyzer(time_blocks=4, min_block_samples=4)
+        .analyze(TrajectorySet(data), NumpyBackend())
+        .data_dict
+    )
 
     np.testing.assert_allclose(payload["matrix"], 0.5 * np.eye(2))
     np.testing.assert_allclose(payload["normalized_eigenvalues"], [0.5, 0.5])

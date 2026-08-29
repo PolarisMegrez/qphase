@@ -373,9 +373,7 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
                 row[fit_name] = exponent
 
     def _add_petermann_exponents(self, rows: list[dict[str, Any]]) -> None:
-        values = np.asarray(
-            [float(row["hamiltonian_petermann_max"]) for row in rows]
-        )
+        values = np.asarray([float(row["hamiltonian_petermann_max"]) for row in rows])
         epsilon = np.asarray([float(row["abs_epsilon"]) for row in rows])
         valid = (
             np.isfinite(values)
@@ -432,10 +430,7 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
                 rayleigh_fits
             )
             petermann_fits = np.asarray(
-                [
-                    float(row["hamiltonian_petermann_fit_exponent"])
-                    for row in selected
-                ],
+                [float(row["hamiltonian_petermann_fit_exponent"]) for row in selected],
                 dtype=float,
             )
             petermann_fit_min, petermann_fit_max = (
@@ -472,12 +467,10 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
                         float(row["rayleigh_visibility"]) for row in selected
                     ),
                     "minimum_hamiltonian_petermann_max": min(
-                        float(row["hamiltonian_petermann_max"])
-                        for row in selected
+                        float(row["hamiltonian_petermann_max"]) for row in selected
                     ),
                     "maximum_hamiltonian_petermann_max": max(
-                        float(row["hamiltonian_petermann_max"])
-                        for row in selected
+                        float(row["hamiltonian_petermann_max"]) for row in selected
                     ),
                     "minimum_hamiltonian_petermann_fit_exponent": petermann_fit_min,
                     "maximum_hamiltonian_petermann_fit_exponent": petermann_fit_max,

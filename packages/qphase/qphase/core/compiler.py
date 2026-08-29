@@ -105,9 +105,7 @@ class CompiledJob:
             explicit_plugins=tuple(payload["explicit_plugins"]),
             inherited_plugins={
                 str(namespace): tuple(names)
-                for namespace, names in dict(
-                    payload["inherited_plugins"]
-                ).items()
+                for namespace, names in dict(payload["inherited_plugins"]).items()
             },
             input_source=payload.get("input_source"),
             input_mode=payload.get("input_mode"),
@@ -161,9 +159,7 @@ class CompiledWorkflow:
         if payload.get("schema") != "qphase.compiled_workflow/1":
             raise ValueError("unsupported compiled workflow schema")
         workflow = WorkflowSpec.model_validate(payload["workflow"])
-        jobs = tuple(
-            CompiledJob.from_payload(item) for item in payload["jobs"]
-        )
+        jobs = tuple(CompiledJob.from_payload(item) for item in payload["jobs"])
         tag_snapshot = payload.get("tag_snapshot")
         return cls(
             workflow=workflow,
@@ -222,25 +218,19 @@ class WorkflowCompiler:
         objects) that governs its effective-tag resolution.
         """
         policy = load_tag_policy(self.project)
-        canonical_tags = validate_declared_tags(
-            list(workflow.tags), "workflow", policy
-        )
+        canonical_tags = validate_declared_tags(list(workflow.tags), "workflow", policy)
         job_tags = {
             job.name: validate_declared_tags(list(job.tags), "job", policy)
             for job in workflow.jobs
         }
-        revision = workflow_revision(
-            workflow.model_dump(mode="json", by_alias=True)
-        )
+        revision = workflow_revision(workflow.model_dump(mode="json", by_alias=True))
 
         def _entry(scope_id: str, tag: str, job_name: str | None) -> dict[str, Any]:
             rule = freeze_namespace_rule(policy, tag)
             if job_name is None:
                 assignment_id = workflow_tag_assignment_id(scope_id, revision, tag)
             else:
-                assignment_id = job_tag_assignment_id(
-                    scope_id, revision, job_name, tag
-                )
+                assignment_id = job_tag_assignment_id(scope_id, revision, job_name, tag)
             return {
                 "tag": tag,
                 "assignment_id": assignment_id,
@@ -256,13 +246,10 @@ class WorkflowCompiler:
             "policy_revision": policy.revision if policy is not None else None,
             "workflow_revision": revision,
             "assignments": {
-                "workflow": [
-                    _entry(workflow.id, tag, None) for tag in canonical_tags
-                ],
+                "workflow": [_entry(workflow.id, tag, None) for tag in canonical_tags],
                 "jobs": {
                     job.name: [
-                        _entry(workflow.id, tag, job.name)
-                        for tag in job_tags[job.name]
+                        _entry(workflow.id, tag, job.name) for tag in job_tags[job.name]
                     ]
                     for job in workflow.jobs
                 },
@@ -270,9 +257,7 @@ class WorkflowCompiler:
         }
         return _freeze_mapping(snapshot)
 
-    def _compile_job(
-        self, job: JobConfig, workflow: WorkflowSpec
-    ) -> CompiledJob:
+    def _compile_job(self, job: JobConfig, workflow: WorkflowSpec) -> CompiledJob:
         engine_name = job.get_engine_name()
         if not engine_name:
             raise QPhaseConfigError(
@@ -343,7 +328,8 @@ class WorkflowCompiler:
         inherited = {
             namespace: tuple(sorted(config))
             for namespace, config in selected.items()
-            if namespace in required and namespace not in explicit
+            if namespace in required
+            and namespace not in explicit
             and isinstance(config, Mapping)
         }
         forbidden_explicit = sorted(
@@ -395,9 +381,7 @@ class WorkflowCompiler:
     def _explicit_namespaces(job: JobConfig, namespaces: set[str]) -> set[str]:
         explicit = set(job.plugins)
         extra = job.model_extra or {}
-        explicit.update(
-            key for key in namespaces if key in extra
-        )
+        explicit.update(key for key in namespaces if key in extra)
         return explicit
 
     def _engine_config(

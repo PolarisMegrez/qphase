@@ -103,6 +103,7 @@ class NpzChunkRecord(BaseModel):
     def _check_file(cls, value: str) -> str:
         return validate_artifact_relative_path(value)
 
+
 class NpzVariableDescriptor(BaseModel):
     """NPZ storage layout of one variable.
 
@@ -158,9 +159,7 @@ def _read_chunk(
                 )
             array = np.asarray(npz[record.key])
     except FileNotFoundError:
-        raise ArtifactNotFoundError(
-            f"artifact chunk file is missing: {path}"
-        ) from None
+        raise ArtifactNotFoundError(f"artifact chunk file is missing: {path}") from None
     except (ArtifactCorruptError, ArtifactNotFoundError):
         raise
     except Exception as exc:
@@ -272,8 +271,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         for _path, record in chunks:
             if record.logical_range is None:
                 raise ValueError(
-                    f"sharded handle chunk {record.file!r} misses its "
-                    "logical_range"
+                    f"sharded handle chunk {record.file!r} misses its logical_range"
                 )
             start, stop = record.logical_range
             if start != expected:
@@ -358,9 +356,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
         selector = indexers[axis]
         prefix = indexers[:axis]
         suffix = indexers[axis + 1 :]
-        if isinstance(selector, (int, np.integer)) and not isinstance(
-            selector, bool
-        ):
+        if isinstance(selector, (int, np.integer)) and not isinstance(selector, bool):
             row = int(selector)
             if row < 0:
                 row += axis_size
@@ -368,9 +364,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
                 zip(self._chunks, self._ranges, strict=True)
             ):
                 if start <= row < stop:
-                    return self.read_chunk(index)[
-                        (*prefix, row - start, *suffix)
-                    ]
+                    return self.read_chunk(index)[(*prefix, row - start, *suffix)]
             raise IndexError(
                 f"index {selector} out of bounds for axis of size {axis_size}"
             )
@@ -397,9 +391,7 @@ class ShardedNpzArrayHandle(_ArrayHandleBase):
                 ):
                     if c0 < stop and c1 > start:
                         local = slice(max(start, c0) - c0, min(stop, c1) - c0)
-                        parts.append(
-                            self.read_chunk(index)[(*prefix, local, *suffix)]
-                        )
+                        parts.append(self.read_chunk(index)[(*prefix, local, *suffix)])
                 if len(parts) == 1:
                     return parts[0]
                 return np.concatenate(parts, axis=concat_axis)
@@ -515,8 +507,7 @@ class NpzStorageAdapter:
             descriptor = NpzProductDescriptor.model_validate(storage.descriptor)
         except ValidationError as exc:
             raise ArtifactCorruptError(
-                f"NPZ storage descriptor of product {entry.name!r} is "
-                f"invalid: {exc}"
+                f"NPZ storage descriptor of product {entry.name!r} is invalid: {exc}"
             ) from exc
         self._validate_descriptor(entry, descriptor)
         return descriptor
@@ -717,7 +708,9 @@ class NpzStorageAdapter:
                     )
         for variable in entry.product_schema.variables:
             _validate_variable_descriptor(
-                entry.name, variable, entry.product_schema,
+                entry.name,
+                variable,
+                entry.product_schema,
                 descriptor.variables[variable.name],
             )
 
@@ -778,9 +771,7 @@ def _validate_variable_descriptor(
     if not variable.dims:
         raise ArtifactCorruptError(f"{label} is scalar but has multiple chunks")
     if descriptor.chunk_axis is None:
-        raise ArtifactCorruptError(
-            f"{label} is sharded but declares no chunk_axis"
-        )
+        raise ArtifactCorruptError(f"{label} is sharded but declares no chunk_axis")
     if descriptor.chunk_axis not in variable.dims:
         raise ArtifactCorruptError(
             f"{label} declares unknown chunk axis {descriptor.chunk_axis!r}"

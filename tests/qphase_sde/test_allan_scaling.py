@@ -87,8 +87,7 @@ def test_allan_scaling_recovers_white_fm_normal_form(tmp_path):
     assert summary["normal_form"]["allan_match"] is True
     assert summary["orientation"] == "phase_increasing"
     assert all(
-        row["orientation"] == "phase_increasing"
-        for row in result.data_dict["rows"]
+        row["orientation"] == "phase_increasing" for row in result.data_dict["rows"]
     )
     assert all(row["accepted"] for row in result.data_dict["rows"])
     assert (tmp_path / "allan_points.csv").exists()

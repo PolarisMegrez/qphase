@@ -246,9 +246,7 @@ class TrajectoryDiagnostics(Analyzer):
         materialization = (
             request.trajectory_bytes if request.backend_name == "cupy" else 0
         )
-        coordinate_bytes = (
-            request.trajectory_bytes * request.n_record_modes // 2
-        )
+        coordinate_bytes = request.trajectory_bytes * request.n_record_modes // 2
         scratch = request.trajectory_bytes
         return AnalyzerWorkspaceEstimate(
             host_bytes=materialization + coordinate_bytes + scratch
@@ -884,9 +882,7 @@ def _block_spectrum_features(
     psd = np.abs(transformed) ** 2 * (dt / (2.0 * np.pi * n_samples))
     psd = np.fft.fftshift(psd, axes=-1)
     frequencies = 2.0 * np.pi * np.fft.fftshift(np.fft.fftfreq(n_samples, d=dt))
-    frequencies, psd = orient_spectrum(
-        frequencies, psd, orientation=orientation
-    )
+    frequencies, psd = orient_spectrum(frequencies, psd, orientation=orientation)
     integrated = np.mean(np.abs(blocks) ** 2, axis=-1)
 
     shape = (n_traj, n_blocks)
@@ -971,9 +967,7 @@ def _block_spectrum(
         else:
             trimmed = series[:, : n_blocks * block_samples]
             blocks = trimmed.reshape(n_traj, n_blocks, block_samples)
-            entry.update(
-                _block_spectrum_features(blocks, dt, wing_factor, orientation)
-            )
+            entry.update(_block_spectrum_features(blocks, dt, wing_factor, orientation))
         entries.append(entry)
     return {"status": "ok", "entries": entries}
 
@@ -1082,9 +1076,7 @@ def _stationarity_details(
             entry["status"] = "insufficient_data"
         else:
             trimmed = coordinates[:, : n_blocks * block_samples]
-            blocks = trimmed.reshape(
-                n_traj, n_blocks, block_samples, n_coordinates
-            )
+            blocks = trimmed.reshape(n_traj, n_blocks, block_samples, n_coordinates)
             features = np.mean(blocks, axis=2)
             entry.update(_stationarity_features(features))
         entries.append(entry)

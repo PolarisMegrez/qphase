@@ -217,9 +217,7 @@ class Scheduler:
             else None
         )
         if tag_snapshot is not None:
-            save_yaml(
-                dict(tag_snapshot), self.session_dir / "tag_snapshot.yaml"
-            )
+            save_yaml(dict(tag_snapshot), self.session_dir / "tag_snapshot.yaml")
 
     @staticmethod
     def _workflow_hash(payload: dict[str, Any]) -> str:
@@ -422,9 +420,7 @@ class Scheduler:
         # Compile before creating a Session or starting a worker.
         compiled = compiled_workflow or self._validate_jobs(workflow)
         if compiled.project_id != self.project.project_id:
-            raise QPhaseConfigError(
-                "compiled workflow belongs to a different project"
-            )
+            raise QPhaseConfigError("compiled workflow belongs to a different project")
         if compiled.workflow.id != workflow.id:
             raise QPhaseConfigError(
                 "compiled workflow does not match the requested workflow"
@@ -907,6 +903,7 @@ class Scheduler:
             system_config=self.system_config,
             registry_view=self._registry.view(),
         ).compile(revised)
+
 
 def execute_workflow(
     workflow: WorkflowSpec,

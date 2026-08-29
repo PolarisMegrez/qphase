@@ -1235,6 +1235,7 @@ class _RevisionTagView:
         self,
     ) -> tuple[Any, ...]:
         """Canonical assignments and frozen governance for agreement checks."""
+
         def pairs_signature(pairs: DeclaredPairs) -> tuple[Any, ...]:
             return tuple(
                 sorted(
@@ -1837,9 +1838,7 @@ class _Scanner:
 
         retention = document.retention if document is not None else None
         frozen_inherit = (
-            document.retention_inherits_to_occurrences
-            if document is not None
-            else None
+            document.retention_inherits_to_occurrences if document is not None else None
         )
         inherit_retention = (
             frozen_inherit

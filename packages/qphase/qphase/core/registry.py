@@ -498,9 +498,7 @@ class RegistryView:
         """Read one plugin configuration schema."""
         return self._source.get_plugin_schema(namespace, name)
 
-    def validate_plugin_config(
-        self, namespace: str, config: dict[str, Any]
-    ) -> Any:
+    def validate_plugin_config(self, namespace: str, config: dict[str, Any]) -> Any:
         """Validate plugin configuration without constructing the plugin."""
         return self._source.validate_plugin_config(namespace, config)
 

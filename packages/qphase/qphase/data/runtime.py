@@ -132,9 +132,7 @@ class _ArrayHandleBase:
         """Identifier of the component owning the buffer's lifetime."""
         return self._owner
 
-    def acquire(
-        self, consumer: str, scope: LeaseScope = "execution"
-    ) -> DataLease:
+    def acquire(self, consumer: str, scope: LeaseScope = "execution") -> DataLease:
         """Acquire a lease on this handle for one consumer."""
         self._check_live()
         lease = DataLease(self, consumer, scope)
@@ -310,8 +308,7 @@ class BackendArrayHandle(_ArrayHandleBase):
         if target_device == "cpu":
             if copy_policy == "never":
                 raise RuntimeError(
-                    "payload does not reside on 'cpu' and copy policy is "
-                    "'never'"
+                    "payload does not reside on 'cpu' and copy policy is 'never'"
                 )
             return convert_to_numpy(self._array)
         raise RuntimeError(
@@ -369,9 +366,7 @@ class ReadOnlyArrayView:
         """Identifier of the component owning the buffer's lifetime."""
         return self._inner.owner
 
-    def acquire(
-        self, consumer: str, scope: LeaseScope = "execution"
-    ) -> DataLease:
+    def acquire(self, consumer: str, scope: LeaseScope = "execution") -> DataLease:
         """Acquire a lease on this view for one consumer."""
         self._check_live()
         lease = DataLease(self, consumer, scope)

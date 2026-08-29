@@ -62,8 +62,15 @@ def _make_model(model_name):
     from models.kerr_3mode import Kerr3ModeModel
 
     return Kerr3ModeModel(
-        omega_a=0.5, omega_b=0.3, omega_c=0.2, chi=0.01,
-        gamma_a=1.0, gamma_b=0.5, gamma_c=1.0, g_ab=0.1, g_ac=0.05,
+        omega_a=0.5,
+        omega_b=0.3,
+        omega_c=0.2,
+        chi=0.01,
+        gamma_a=1.0,
+        gamma_b=0.5,
+        gamma_c=1.0,
+        g_ab=0.1,
+        g_ac=0.05,
     )
 
 
@@ -135,9 +142,9 @@ def _cayley_step_worker(model_name, dtype_name, queue):
             rng.standard_normal((n, model.n_modes))
             + 1j * rng.standard_normal((n, model.n_modes))
         ).astype(dtype)
-        noise_numpy = (
-            rng.standard_normal((n, model.noise_dim)).astype(real_dtype) * np.sqrt(dt)
-        )
+        noise_numpy = rng.standard_normal((n, model.noise_dim)).astype(
+            real_dtype
+        ) * np.sqrt(dt)
         omega_a = np.linspace(0.1, 0.5, n, dtype=real_dtype)
         model.params["omega_a"] = omega_a
         expected = CayleyMaruyama(fused="off").step(
@@ -245,9 +252,7 @@ def test_cayley_fused_step(model_name, dtype_name):
 def test_cayley_fused_chunk(model_name):
     context = multiprocessing.get_context("spawn")
     queue = context.Queue()
-    process = context.Process(
-        target=_cayley_chunk_worker, args=(model_name, queue)
-    )
+    process = context.Process(target=_cayley_chunk_worker, args=(model_name, queue))
     process.start()
     process.join(timeout=90)
 

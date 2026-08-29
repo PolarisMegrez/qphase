@@ -71,6 +71,7 @@ class ArtifactRef(BaseModel):
             )
         return value
 
+
 @runtime_checkable
 class DataMaterializerProtocol(Protocol):
     """Conversion contract between runtime backings and artifact references.
@@ -79,9 +80,7 @@ class DataMaterializerProtocol(Protocol):
     store as a session cache.
     """
 
-    def to_artifact(
-        self, product: DataProduct, **kwargs: Any
-    ) -> ArtifactRef:
+    def to_artifact(self, product: DataProduct, **kwargs: Any) -> ArtifactRef:
         """Persist a product and return its durable reference."""
         ...
 

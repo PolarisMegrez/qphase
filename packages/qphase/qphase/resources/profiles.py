@@ -86,9 +86,7 @@ def _collect(
 
 def profile_required_modules(profiles: set[ResourceProfile]) -> tuple[str, ...]:
     """Return root-level module files required by the given profiles."""
-    return _collect(
-        profiles, _BASE_MODULES, _COMPUTE_MODULES, _SIMULATION_MODULES
-    )
+    return _collect(profiles, _BASE_MODULES, _COMPUTE_MODULES, _SIMULATION_MODULES)
 
 
 def profile_required_directories(profiles: set[ResourceProfile]) -> tuple[str, ...]:

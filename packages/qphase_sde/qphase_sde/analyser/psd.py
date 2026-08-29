@@ -285,9 +285,7 @@ class PsdAnalyzer(Analyzer):
         """Expose the selected estimator's real execution contract."""
         capabilities = self.estimator.capabilities()
         return AnalyzerExecutionCapabilities(
-            execution_location=(
-                "backend" if capabilities.backend_native else "host"
-            ),
+            execution_location=("backend" if capabilities.backend_native else "host"),
             requires_full_trajectory=capabilities.requires_full_trajectory,
             supports_trajectory_batching=capabilities.trajectory_batching,
             supports_time_streaming=capabilities.time_streaming,

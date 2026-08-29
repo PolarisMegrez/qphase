@@ -107,9 +107,7 @@ class EngineDeclaration(BaseModel):
     @classmethod
     def _check_entry_point(cls, value: str) -> str:
         if not value.startswith("engine.") or len(value) <= len("engine."):
-            raise ValueError(
-                "engine entry point must use the 'engine.<id>' namespace"
-            )
+            raise ValueError("engine entry point must use the 'engine.<id>' namespace")
         return value
 
     @field_validator("target")
@@ -180,9 +178,7 @@ class DataProductDeclaration(BaseModel):
     kind: Literal["time_series", "spectral", "statistics"] = Field(
         description="Core data kind of the product."
     )
-    schema_ref: str = Field(
-        description="Dotted path to the product schema provider."
-    )
+    schema_ref: str = Field(description="Dotted path to the product schema provider.")
     description: str = ""
 
 
@@ -305,9 +301,7 @@ class ResourcePackageManifest(BaseModel):
         """Return the declared plugin-class namespaces in declaration order."""
         return tuple(pc.namespace for pc in self.plugin_classes)
 
-    def fingerprint(
-        self, entry_points: Iterable[EntryPointDescriptor] = ()
-    ) -> str:
+    def fingerprint(self, entry_points: Iterable[EntryPointDescriptor] = ()) -> str:
         """Return the deterministic asset fingerprint of this manifest."""
         return manifest_fingerprint(self, entry_points)
 

@@ -43,8 +43,10 @@ def _load_fixture(name: str) -> ResourcePackageManifest:
 def _sde_entry_points() -> list[EntryPointDescriptor]:
     descriptors = [
         EntryPointDescriptor(
-            "resource.sde", "qphase_sde.manifest:RESOURCE_MANIFEST",
-            "qphase-sde", "2.0.0",
+            "resource.sde",
+            "qphase_sde.manifest:RESOURCE_MANIFEST",
+            "qphase-sde",
+            "2.0.0",
         ),
         EntryPointDescriptor(
             "engine.sde", "qphase_sde.engine:Engine", "qphase-sde", "2.0.0"
@@ -65,15 +67,19 @@ def _sde_entry_points() -> list[EntryPointDescriptor]:
 def _cam_owned_entry_points() -> list[EntryPointDescriptor]:
     return [
         EntryPointDescriptor(
-            "resource.cam", "qphase_cam.manifest:RESOURCE_MANIFEST",
-            "qphase-cam", "2.0.0",
+            "resource.cam",
+            "qphase_cam.manifest:RESOURCE_MANIFEST",
+            "qphase-cam",
+            "2.0.0",
         ),
         EntryPointDescriptor(
             "engine.cam", "qphase_cam.engine:Engine", "qphase-cam", "2.0.0"
         ),
         EntryPointDescriptor(
-            "solver.homotopy", "qphase_cam.solver.homotopy:Homotopy",
-            "qphase-cam", "2.0.0",
+            "solver.homotopy",
+            "qphase_cam.solver.homotopy:Homotopy",
+            "qphase-cam",
+            "2.0.0",
         ),
     ]
 
@@ -114,9 +120,7 @@ def test_sde_manifest_fixture_roundtrip_and_validation():
     assert validate_manifest(manifest) == []
 
     dumped = manifest.model_dump(mode="json")
-    reparsed = ResourcePackageManifest.model_validate(
-        json.loads(json.dumps(dumped))
-    )
+    reparsed = ResourcePackageManifest.model_validate(json.loads(json.dumps(dumped)))
     assert reparsed == manifest
 
 
@@ -132,9 +136,7 @@ def test_cam_minimal_manifest_fixture_is_valid():
 
 def test_manifest_rejects_unknown_fields():
     """The manifest schema is strictly extra-forbid."""
-    data = json.loads(
-        (FIXTURE_DIR / "cam_minimal.json").read_text(encoding="utf-8")
-    )
+    data = json.loads((FIXTURE_DIR / "cam_minimal.json").read_text(encoding="utf-8"))
     data["unexpected"] = True
     with pytest.raises(ValidationError):
         ResourcePackageManifest.model_validate(data)
@@ -142,9 +144,7 @@ def test_manifest_rejects_unknown_fields():
 
 def test_manifest_requires_valid_identifiers():
     """Resource ids and plugin namespaces are lowercase identifiers."""
-    data = json.loads(
-        (FIXTURE_DIR / "cam_minimal.json").read_text(encoding="utf-8")
-    )
+    data = json.loads((FIXTURE_DIR / "cam_minimal.json").read_text(encoding="utf-8"))
     data["resource_id"] = "CAM Upper"
     with pytest.raises(ValidationError):
         ResourcePackageManifest.model_validate(data)
@@ -173,8 +173,10 @@ def test_fingerprint_golden_value():
     manifest = _load_fixture("cam_minimal.json")
     descriptors = [
         EntryPointDescriptor(
-            "resource.cam", "qphase_cam.manifest:RESOURCE_MANIFEST",
-            "qphase-cam", "2.0.0",
+            "resource.cam",
+            "qphase_cam.manifest:RESOURCE_MANIFEST",
+            "qphase-cam",
+            "2.0.0",
         ),
         EntryPointDescriptor(
             "engine.cam", "qphase_cam.engine:Engine", "qphase-cam", "2.0.0"
@@ -187,8 +189,10 @@ def test_fingerprint_distinguishes_overlay_provenance():
     """Package-owned and third-party descriptors produce different fingerprints."""
     manifest = _load_fixture("cam_minimal.json")
     package = EntryPointDescriptor(
-        "solver.homotopy", "qphase_cam.solver.homotopy:Homotopy",
-        "qphase-cam", "2.0.0",
+        "solver.homotopy",
+        "qphase_cam.solver.homotopy:Homotopy",
+        "qphase-cam",
+        "2.0.0",
     )
     third_party = EntryPointDescriptor(
         "solver.homotopy", "other_pkg.solvers:Homotopy", "other-pkg", "0.1"

@@ -317,9 +317,7 @@ def test_bifurcation_scan_records_case_failure(tmp_path):
     assert result.case_metadata[1]["case_status"] == "complete"
     target = tmp_path / "recorded_failure.npz"
     result.save(target)
-    rows = target.with_name("recorded_failure_cases.csv").read_text(
-        encoding="utf-8"
-    )
+    rows = target.with_name("recorded_failure_cases.csv").read_text(encoding="utf-8")
     assert "case_status,case_error_type,case_error_message" in rows
     assert "error,ValueError,outside numerical chart" in rows
 

@@ -164,9 +164,7 @@ class SchedulerService:
             results = scheduler.run(workflow, **run_kwargs)
         except Exception as exc:
             if execution_payload is not None:
-                self._close_execution(
-                    execution_payload, scheduler, "failed", str(exc)
-                )
+                self._close_execution(execution_payload, scheduler, "failed", str(exc))
             raise
         statuses = {result.status for result in results}
         if execution_payload is not None:
@@ -248,7 +246,8 @@ class SchedulerService:
         from datetime import datetime
 
         session_dir = (
-            Path(scheduler.session_dir).resolve()
+            Path(scheduler.session_dir)
+            .resolve()
             .relative_to(self.project.session_root.resolve())
             .as_posix()
             if scheduler.session_dir is not None
@@ -392,9 +391,7 @@ class SchedulerService:
                     content_type="text/plain",
                 )
             else:
-                payload.update(
-                    content=None, content_type="application/octet-stream"
-                )
+                payload.update(content=None, content_type="application/octet-stream")
             return payload
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise QPhaseIOError(
@@ -558,9 +555,7 @@ class SchedulerService:
     def load_session_manifest(self, session_dir: str | Path) -> dict[str, Any]:
         from qphase.core.persistence import ProjectStateStore
 
-        return ProjectStateStore(self.project).load_session_manifest(
-            Path(session_dir)
-        )
+        return ProjectStateStore(self.project).load_session_manifest(Path(session_dir))
 
     def _plan_job(
         self, job: JobConfig, compiled: CompiledJob | None = None

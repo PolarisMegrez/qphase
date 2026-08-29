@@ -111,9 +111,7 @@ def test_engine_run():
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_numpy_randn_into_preserves_legacy_seeded_stream(dtype):
     backend = NumpyBackend()
-    expected = backend.randn(
-        backend.rng(17), (7, 3), dtype=np.dtype(dtype)
-    )
+    expected = backend.randn(backend.rng(17), (7, 3), dtype=np.dtype(dtype))
     actual = np.empty((7, 3), dtype=dtype)
 
     returned = backend.randn_into(backend.rng(17), actual)

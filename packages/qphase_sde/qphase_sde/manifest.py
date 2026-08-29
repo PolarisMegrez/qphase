@@ -72,9 +72,7 @@ MANIFEST = ResourcePackageManifest(
         ),
         PluginClassDeclaration(
             namespace="spectral_estimator",
-            protocol=(
-                "qphase_sde.analyser.spectral_estimator.base:SpectralEstimator"
-            ),
+            protocol=("qphase_sde.analyser.spectral_estimator.base:SpectralEstimator"),
             description="Replaceable spectral estimators (periodogram, Welch, "
             "multitaper); hosted under analyser/ until Phase 2.",
         ),
@@ -103,11 +101,8 @@ MANIFEST = ResourcePackageManifest(
         DataProductDeclaration(
             name="coherence_frequency",
             kind="statistics",
-            schema_ref=(
-                "qphase_sde.contracts.coherence:COHERENCE_FREQUENCY_PRODUCT"
-            ),
-            description="Coherence-frequency estimates with lag/bandwidth "
-            "diagnostics.",
+            schema_ref=("qphase_sde.contracts.coherence:COHERENCE_FREQUENCY_PRODUCT"),
+            description="Coherence-frequency estimates with lag/bandwidth diagnostics.",
         ),
         DataProductDeclaration(
             name="allan_variance",
@@ -144,8 +139,7 @@ MANIFEST = ResourcePackageManifest(
             path="math",
             kind="directory",
             visibility="public",
-            purpose="Backend-neutral numerical operations (coordinates, "
-            "transforms).",
+            purpose="Backend-neutral numerical operations (coordinates, transforms).",
         ),
     ],
 )

@@ -21,9 +21,7 @@ def _make_session(project: ProjectContext, session_id: str = "session-1") -> Pat
         "status": "completed",
         "jobs": {},
     }
-    (root / "session_manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (root / "session_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
 
 

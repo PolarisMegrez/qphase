@@ -73,9 +73,7 @@ class SDEProvenance(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["qphase_sde.provenance/1"] = (
-        "qphase_sde.provenance/1"
-    )
+    schema_version: Literal["qphase_sde.provenance/1"] = "qphase_sde.provenance/1"
     t0: float = 0.0
     dt: float | None = Field(
         default=None,

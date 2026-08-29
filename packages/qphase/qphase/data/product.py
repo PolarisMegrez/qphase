@@ -37,6 +37,7 @@ __all__ = [
     "validate_backing",
 ]
 
+
 @runtime_checkable
 class RuntimeProductBacking(Protocol):
     """Runtime backing of a data product: one handle per schema variable."""
@@ -77,9 +78,7 @@ class DataProduct(Protocol):
 DataBacking = RuntimeProductBacking | ArtifactRef
 
 
-def validate_backing(
-    schema: ProductSchema, backing: RuntimeProductBacking
-) -> None:
+def validate_backing(schema: ProductSchema, backing: RuntimeProductBacking) -> None:
     """Check that a runtime backing matches a product schema exactly.
 
     Every schema variable must correspond to exactly one handle whose dtype

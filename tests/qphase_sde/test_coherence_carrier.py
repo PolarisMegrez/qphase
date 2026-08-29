@@ -121,9 +121,7 @@ def test_coherent_channel_uses_same_weight_matrix_as_cam():
 
 def test_trajectory_batch_accumulator_recomputes_ratio_and_uncertainty():
     trajectories = _oscillator_trajectories([0.2, 0.8], [3, 2])
-    analyzer = CoherenceCarrierAnalyzer(
-        CoherenceCarrierConfig(maximum_lag_points=8)
-    )
+    analyzer = CoherenceCarrierAnalyzer(CoherenceCarrierConfig(maximum_lag_points=8))
     backend = NumpyBackend()
     complete = analyzer.analyze(trajectories, backend).data_dict
     accumulator = analyzer.create_result_accumulator()

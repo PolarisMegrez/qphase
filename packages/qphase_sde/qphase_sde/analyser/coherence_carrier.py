@@ -120,13 +120,9 @@ class CoherenceCarrierConfig(PluginConfigBase):
         ):
             raise ValueError("modes must contain unique non-negative indices")
         if self.minimum_lag_points < self.polynomial_order + 1:
-            raise ValueError(
-                "minimum_lag_points must exceed polynomial_order"
-            )
+            raise ValueError("minimum_lag_points must exceed polynomial_order")
         if self.maximum_lag_points < self.minimum_lag_points:
-            raise ValueError(
-                "maximum_lag_points must be at least minimum_lag_points"
-            )
+            raise ValueError("maximum_lag_points must be at least minimum_lag_points")
         return self
 
     @field_serializer("channels")
@@ -134,8 +130,7 @@ class CoherenceCarrierConfig(PluginConfigBase):
         self, channels: dict[str, list[complex]]
     ) -> dict[str, list[str]]:
         return {
-            name: [str(value) for value in values]
-            for name, values in channels.items()
+            name: [str(value) for value in values] for name, values in channels.items()
         }
 
 
@@ -202,9 +197,7 @@ def _jackknife_sem(
     if not np.all(np.isfinite(estimates)):
         return math.nan
     center = float(np.mean(estimates))
-    return float(
-        np.sqrt((n_traj - 1.0) / n_traj * np.sum((estimates - center) ** 2))
-    )
+    return float(np.sqrt((n_traj - 1.0) / n_traj * np.sum((estimates - center) ** 2)))
 
 
 def _consistent(
@@ -216,8 +209,10 @@ def _consistent(
         combined = math.hypot(candidate.frequency_sem, reference.frequency_sem)
         if not np.isfinite(combined):
             return False
-        numerical = 64.0 * np.finfo(float).eps * max(
-            1.0, abs(candidate.frequency), abs(reference.frequency)
+        numerical = (
+            64.0
+            * np.finfo(float).eps
+            * max(1.0, abs(candidate.frequency), abs(reference.frequency))
         )
         if (
             abs(candidate.frequency - reference.frequency)
@@ -262,9 +257,7 @@ def estimate_coherence_carrier(
 
     available = values.shape[1] - 1
     maximum = (
-        available
-        if maximum_lag_points is None
-        else min(available, maximum_lag_points)
+        available if maximum_lag_points is None else min(available, maximum_lag_points)
     )
     minimum = max(minimum_lag_points, polynomial_order + 1)
     if maximum < minimum:
@@ -274,9 +267,7 @@ def estimate_coherence_carrier(
     candidates: list[_CandidateFit] = []
     for lag_points in range(minimum, maximum + 1):
         slope, residual = _phase_slope(correlation, dt, lag_points, polynomial_order)
-        sem = _jackknife_sem(
-            values, dt, lag_points, polynomial_order, sign
-        )
+        sem = _jackknife_sem(values, dt, lag_points, polynomial_order, sign)
         candidates.append(
             _CandidateFit(
                 lag_points=lag_points,
@@ -397,17 +388,13 @@ class CoherenceCarrierAnalyzer(Analyzer):
         self, request: AnalyzerWorkspaceRequest
     ) -> AnalyzerWorkspaceEstimate:
         config = cast(CoherenceCarrierConfig, self.config)
-        n_measurements = len(config.modes) + len(config.channels) + int(
-            config.include_trace
+        n_measurements = (
+            len(config.modes) + len(config.channels) + int(config.include_trace)
         )
         chunk = min(config.time_chunk_samples, request.saved_samples)
         complex_itemsize = 2 * request.real_itemsize
         chunk_bytes = (
-            2
-            * request.n_traj
-            * chunk
-            * request.n_record_modes
-            * complex_itemsize
+            2 * request.n_traj * chunk * request.n_record_modes * complex_itemsize
         )
         retained_bytes = (
             request.n_traj
@@ -560,15 +547,11 @@ class CoherenceCarrierAnalyzer(Analyzer):
             "selected_lag_time": np.asarray(
                 [item.selected_lag_time for item in estimates]
             ),
-            "phase_fit_rms": np.asarray(
-                [item.phase_fit_rms for item in estimates]
-            ),
+            "phase_fit_rms": np.asarray([item.phase_fit_rms for item in estimates]),
             "first_lag_coherence": np.asarray(
                 [item.first_lag_coherence for item in estimates]
             ),
-            "first_lag_phase": np.asarray(
-                [item.first_lag_phase for item in estimates]
-            ),
+            "first_lag_phase": np.asarray([item.first_lag_phase for item in estimates]),
             "nyquist_fraction": np.asarray(
                 [item.nyquist_fraction for item in estimates]
             ),
@@ -707,9 +690,7 @@ class CoherenceCarrierResultAccumulator:
                         "coherence-carrier batches used incompatible measurements"
                     )
             if not math.isclose(float(first["dt"]), float(payload["dt"])):
-                raise ValueError(
-                    "coherence-carrier batches used different time grids"
-                )
+                raise ValueError("coherence-carrier batches used different time grids")
             if not np.array_equal(
                 first["measurement_matrices"], payload["measurement_matrices"]
             ):

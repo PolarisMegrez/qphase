@@ -132,9 +132,7 @@ class CAMResult:
                 ],
                 dtype=float,
             )
-            local_order = np.argsort(
-                -values if descending else values, kind="stable"
-            )
+            local_order = np.argsort(-values if descending else values, kind="stable")
             order[grid_index][: slots.size] = slots[local_order]
         return order
 

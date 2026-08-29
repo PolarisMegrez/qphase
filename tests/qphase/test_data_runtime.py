@@ -21,7 +21,8 @@ from qphase.data import (
 
 def _variable(name="alpha", dtype="complex128", dims=("time",)):
     return VariableSchema(
-        name=name, dtype=dtype,
+        name=name,
+        dtype=dtype,
         value_domain="complex" if dtype.startswith("complex") else "real",
         dims=dims,
     )
@@ -30,9 +31,7 @@ def _variable(name="alpha", dtype="complex128", dims=("time",)):
 def test_host_handle_protocol_and_materialize():
     """Host handles satisfy the protocol and materialize on cpu only."""
     array = np.arange(8, dtype=np.float64)
-    handle = HostArrayHandle(
-        array, _variable("x", "float64"), owner="engine.fake"
-    )
+    handle = HostArrayHandle(array, _variable("x", "float64"), owner="engine.fake")
     assert isinstance(handle, DataHandleProtocol)
     assert handle.device == "cpu"
     assert handle.dtype == "<f8"
@@ -148,8 +147,11 @@ def test_handles_validate_against_product_backing():
     other = HostArrayHandle(
         np.zeros(4),
         VariableSchema(
-            name="x", dtype="float64", value_domain="real",
-            dims=("time",), units="Hz",
+            name="x",
+            dtype="float64",
+            value_domain="real",
+            dims=("time",),
+            units="Hz",
         ),
         owner="o",
     )
@@ -159,9 +161,7 @@ def test_handles_validate_against_product_backing():
 
 def test_data_lease_is_context_manager():
     """Leases work as context managers."""
-    handle = HostArrayHandle(
-        np.zeros(2), _variable("x", "float64"), owner="o"
-    )
+    handle = HostArrayHandle(np.zeros(2), _variable("x", "float64"), owner="o")
     with handle.acquire("consumer") as lease:
         assert isinstance(lease, DataLease)
         assert handle.lease_count == 1

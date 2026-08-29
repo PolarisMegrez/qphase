@@ -33,9 +33,9 @@ def build_bogoliubov_matrix(
     output[..., :n_modes, :n_modes] = hamiltonian + interaction
     output[..., :n_modes, n_modes:] = interaction
     output[..., n_modes:, :n_modes] = -np.conjugate(interaction)
-    output[..., n_modes:, n_modes:] = -np.conjugate(
-        hamiltonian
-    ) - np.conjugate(interaction)
+    output[..., n_modes:, n_modes:] = -np.conjugate(hamiltonian) - np.conjugate(
+        interaction
+    )
     return output
 
 

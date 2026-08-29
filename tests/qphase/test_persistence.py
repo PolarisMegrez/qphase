@@ -173,9 +173,7 @@ def test_annotation_writes_serialize_concurrent_writers(tmp_path):
         else:
             outcomes.append("ok")
 
-    threads = [
-        threading.Thread(target=write, args=(alias,)) for alias in ("a", "b")
-    ]
+    threads = [threading.Thread(target=write, args=(alias,)) for alias in ("a", "b")]
     for thread in threads:
         thread.start()
     for thread in threads:

@@ -288,9 +288,7 @@ class UncertaintySchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     target: str = Field(description="Name of the variable being described.")
-    kind: Literal[
-        "sample_std", "sem", "confidence_interval", "covariance", "other"
-    ]
+    kind: Literal["sample_std", "sem", "confidence_interval", "covariance", "other"]
     sampling_basis: str = Field(
         default="",
         description="Sampling basis the uncertainty counts over.",
@@ -345,8 +343,7 @@ class SpectralAttributes(BaseModel):
     normalization: str = Field(min_length=1)
     window: str = Field(
         min_length=1,
-        description="Window identifier; use 'rectangular' when no window is "
-        "applied.",
+        description="Window identifier; use 'rectangular' when no window is applied.",
     )
     estimator: str = Field(min_length=1)
     effective_degrees_of_freedom: float | None = None
@@ -372,9 +369,7 @@ class ProductSchema(BaseModel):
         try:
             canonical_json(value)
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "product attributes must be JSON-serializable"
-            ) from exc
+            raise ValueError("product attributes must be JSON-serializable") from exc
         return value
 
     @model_validator(mode="after")
@@ -401,8 +396,7 @@ class ProductSchema(BaseModel):
                 tensor_dims = [
                     dim
                     for dim in variable.dims
-                    if axis_roles[dim]
-                    in {AxisRole.COMPONENT, AxisRole.INDEX}
+                    if axis_roles[dim] in {AxisRole.COMPONENT, AxisRole.INDEX}
                 ]
                 if len(tensor_dims) < 2:
                     raise ValueError(

@@ -86,9 +86,7 @@ def parse_tag(value: str) -> tuple[str, str]:
             f"tag namespace {namespace!r} must match [a-z][a-z0-9_]*",
             code=ErrorCode.CONFIG,
         )
-    segments = tuple(
-        segment.lower() for segment in path.split("/") if segment.strip()
-    )
+    segments = tuple(segment.lower() for segment in path.split("/") if segment.strip())
     if not segments or "/".join(segments) != path.strip().lower():
         raise QPhaseConfigError(
             f"tag {value!r} contains empty or padded path segments",
@@ -151,9 +149,7 @@ def job_tag_assignment_id(
     workflow_id: str, revision: str, job_name: str, tag: str
 ) -> str:
     """Deterministic assignment id of one job-declared tag."""
-    digest = hashlib.sha256(
-        f"job:{workflow_id}@{revision}:{job_name}:{tag}".encode()
-    )
+    digest = hashlib.sha256(f"job:{workflow_id}@{revision}:{job_name}:{tag}".encode())
     return digest.hexdigest()[:16]
 
 
@@ -171,9 +167,7 @@ class FrozenNamespaceRule:
     objects: tuple[str, ...]
 
 
-def freeze_namespace_rule(
-    policy: TagPolicy | None, tag: str
-) -> FrozenNamespaceRule:
+def freeze_namespace_rule(policy: TagPolicy | None, tag: str) -> FrozenNamespaceRule:
     """Snapshot the minimal rule of the tag's namespace for freezing.
 
     Always returns a rule: without a policy, or when the namespace has no
@@ -285,8 +279,7 @@ class TagPolicy(BaseModel):
                 )
             if not rule.open and not self._value_allowed(rule, path):
                 raise QPhaseConfigError(
-                    f"tag {tag!r} is not an allowed value of namespace "
-                    f"{namespace!r}",
+                    f"tag {tag!r} is not an allowed value of namespace {namespace!r}",
                     code=ErrorCode.CONFIG,
                 )
             canonical.append(tag)

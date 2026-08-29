@@ -15,12 +15,16 @@ def _analyzer(**kwargs):
 def test_moment_statistics_matches_direct_reduction():
     rng = np.random.default_rng(20260810)
     data = rng.normal(size=(7, 31, 3)) + 1j * rng.normal(size=(7, 31, 3))
-    payload = _analyzer(
-        modes=[0, 2],
-        time_blocks=4,
-        min_block_samples=4,
-        time_chunk_samples=7,
-    ).analyze(TrajectorySet(data, t0=4.0, dt=0.25), NumpyBackend()).data_dict
+    payload = (
+        _analyzer(
+            modes=[0, 2],
+            time_blocks=4,
+            min_block_samples=4,
+            time_chunk_samples=7,
+        )
+        .analyze(TrajectorySet(data, t0=4.0, dt=0.25), NumpyBackend())
+        .data_dict
+    )
 
     intensity = np.abs(data[:, :, [0, 2]]) ** 2
     per_trajectory = np.mean(intensity, axis=1)
@@ -30,9 +34,7 @@ def test_moment_statistics_matches_direct_reduction():
 
     np.testing.assert_allclose(payload["occupation"], expected_occupation)
     np.testing.assert_allclose(payload["occupation_product"], expected_product)
-    np.testing.assert_allclose(
-        payload["fourth_moment"], np.diag(expected_product)
-    )
+    np.testing.assert_allclose(payload["fourth_moment"], np.diag(expected_product))
     np.testing.assert_allclose(
         payload["occupation_covariance"],
         expected_product - np.outer(expected_occupation, expected_occupation),
@@ -41,18 +43,16 @@ def test_moment_statistics_matches_direct_reduction():
         payload["g2"],
         expected_product / np.outer(expected_occupation, expected_occupation),
     )
-    np.testing.assert_allclose(
-        payload["per_trajectory_occupation"], per_trajectory
-    )
+    np.testing.assert_allclose(payload["per_trajectory_occupation"], per_trajectory)
     assert payload["ordering_correction"] == "none"
 
 
 def test_moment_statistics_constant_amplitudes_have_unit_g2():
     vector = np.asarray([1.0 + 2.0j, 3.0 - 1.0j])
     data = np.broadcast_to(vector, (5, 64, 2)).copy()
-    payload = _analyzer(time_blocks=4).analyze(
-        TrajectorySet(data), NumpyBackend()
-    ).data_dict
+    payload = (
+        _analyzer(time_blocks=4).analyze(TrajectorySet(data), NumpyBackend()).data_dict
+    )
 
     np.testing.assert_allclose(payload["occupation"], np.abs(vector) ** 2)
     np.testing.assert_allclose(payload["g2"], np.ones((2, 2)))
@@ -83,9 +83,7 @@ def test_moment_statistics_resolves_physical_recorded_modes():
 def test_moment_statistics_accumulator_matches_full_ensemble():
     rng = np.random.default_rng(12345)
     data = rng.normal(size=(11, 48, 3)) + 1j * rng.normal(size=(11, 48, 3))
-    analyzer = _analyzer(
-        time_blocks=6, min_block_samples=4, time_chunk_samples=11
-    )
+    analyzer = _analyzer(time_blocks=6, min_block_samples=4, time_chunk_samples=11)
     full = analyzer.analyze(
         TrajectorySet(data, t0=5.0, dt=0.25), NumpyBackend()
     ).data_dict

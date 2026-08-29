@@ -55,9 +55,7 @@ class EventStoreProtocol(Protocol):
         """Append JSON-safe events to a Session journal."""
         ...
 
-    def read_events(
-        self, session_dir: Path, *, after: int = 0
-    ) -> list[dict[str, Any]]:
+    def read_events(self, session_dir: Path, *, after: int = 0) -> list[dict[str, Any]]:
         """Read events whose sequence is greater than ``after``."""
         ...
 
@@ -255,9 +253,7 @@ class ProjectStateStore(
         try:
             with target.open("a", encoding="utf-8") as handle:
                 for event in records:
-                    handle.write(
-                        json.dumps(dict(event), allow_nan=False) + "\n"
-                    )
+                    handle.write(json.dumps(dict(event), allow_nan=False) + "\n")
         except (OSError, TypeError, ValueError) as exc:
             raise QPhaseIOError(
                 f"failed to append session events: {target}",
@@ -265,9 +261,7 @@ class ProjectStateStore(
                 context={"path": str(target)},
             ) from exc
 
-    def read_events(
-        self, session_dir: Path, *, after: int = 0
-    ) -> list[dict[str, Any]]:
+    def read_events(self, session_dir: Path, *, after: int = 0) -> list[dict[str, Any]]:
         """Read valid event records after a sequence cursor."""
         target = self._session_file(session_dir, "events.jsonl")
         if not target.exists():

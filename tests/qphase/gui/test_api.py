@@ -184,9 +184,7 @@ def test_gui_api_reads_session_file_by_reference(temp_workspace, sample_job_file
         session_id = _execute_workflow(client)["session_id"]
         artifacts = client.get(f"/sessions/{session_id}/artifacts").json()["artifacts"]
         manifest = next(item for item in artifacts if item["kind"] == "manifest")
-        response = client.get(
-            f"/sessions/{session_id}/files/{manifest['file_ref']}"
-        )
+        response = client.get(f"/sessions/{session_id}/files/{manifest['file_ref']}")
 
     assert response.status_code == 200
     assert response.json()["content"]["session_id"] == session_id
@@ -198,9 +196,7 @@ def test_gui_api_preserves_session_note_when_alias_changes(
     with TestClient(create_app()) as client:
         session_id = _execute_workflow(client)["session_id"]
         client.patch(f"/sessions/{session_id}", json={"note": "keep this"})
-        response = client.patch(
-            f"/sessions/{session_id}", json={"alias": "reference"}
-        )
+        response = client.patch(f"/sessions/{session_id}", json={"alias": "reference"})
 
     assert response.status_code == 200
     assert response.json()["alias"] == "reference"
@@ -442,9 +438,7 @@ def _catalog_session(workspace, session_id="catalog-session"):
         "start_time": "2026-08-26T10:00:00+08:00",
         "jobs": {},
     }
-    (root / "session_manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (root / "session_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
 
 
@@ -453,9 +447,7 @@ def test_gui_api_catalog_query_and_session_tags(temp_workspace):
     with TestClient(create_app()) as client:
         listing = client.get("/catalog/session")
         assert listing.status_code == 200
-        assert [item["id"] for item in listing.json()["objects"]] == [
-            "catalog-session"
-        ]
+        assert [item["id"] for item in listing.json()["objects"]] == ["catalog-session"]
 
         tagged = client.post(
             "/sessions/catalog-session/tags", json={"add": ["task:scan"]}
@@ -610,9 +602,7 @@ def test_gui_api_virtual_folders(temp_workspace, tmp_path):
 
         detail = client.get("/folders/cold-storage")
         assert detail.status_code == 200
-        assert [item["id"] for item in detail.json()["objects"]] == [
-            "catalog-session"
-        ]
+        assert [item["id"] for item in detail.json()["objects"]] == ["catalog-session"]
         assert client.get("/folders/nope").status_code == 404
 
 
@@ -630,9 +620,9 @@ def test_gui_api_private_tags_and_promote(temp_workspace, tmp_path):
         assert not (root / "session_annotations.json").exists()
 
         tags = client.get("/catalog/session/catalog-session/tags").json()
-        assert {
-            tag["tag"]: tag["source"] for tag in tags["effective_tags"]
-        } == {"task:wip": "user_private"}
+        assert {tag["tag"]: tag["source"] for tag in tags["effective_tags"]} == {
+            "task:wip": "user_private"
+        }
 
         promoted = client.post(
             "/catalog/session/catalog-session/tags/promote",
@@ -640,10 +630,11 @@ def test_gui_api_private_tags_and_promote(temp_workspace, tmp_path):
         )
         assert promoted.status_code == 200
         assert {
-            tag["tag"]: tag["source"]
-            for tag in promoted.json()["effective_tags"]
+            tag["tag"]: tag["source"] for tag in promoted.json()["effective_tags"]
         } == {"task:wip": "session_annotation"}
         assert (root / "session_annotations.json").exists()
+
+
 def test_gui_api_occurrence_tags_disambiguated_by_job(temp_workspace):
     from tests.qphase.test_catalog import _v4_artifact_manifest
 
@@ -669,13 +660,13 @@ def test_gui_api_occurrence_tags_disambiguated_by_job(temp_workspace):
         )
         assert resolved.status_code == 200
 
-        fit = client.get(
-            "/catalog/occurrence/art-1:catalog-session:fit/tags"
-        ).json()["effective_tags"]
+        fit = client.get("/catalog/occurrence/art-1:catalog-session:fit/tags").json()[
+            "effective_tags"
+        ]
         assert any(tag["tag"] == "task:scan" for tag in fit)
-        sim = client.get(
-            "/catalog/occurrence/art-1:catalog-session:sim/tags"
-        ).json()["effective_tags"]
+        sim = client.get("/catalog/occurrence/art-1:catalog-session:sim/tags").json()[
+            "effective_tags"
+        ]
         assert all(tag["tag"] != "task:scan" for tag in sim)
 
 
@@ -703,16 +694,12 @@ def test_gui_api_catalog_query_full_filters(temp_workspace):
 
         hit = client.get("/catalog/session", params={"tag_any": "task:scan"})
         assert [item["id"] for item in hit.json()["objects"]] == ["catalog-session"]
-        excluded = client.get(
-            "/catalog/session", params={"tag_without": "task:scan"}
-        )
+        excluded = client.get("/catalog/session", params={"tag_without": "task:scan"})
         assert excluded.json()["objects"] == []
         direct = client.get(
             "/catalog/session", params={"tag": "task:scan", "direct": True}
         )
-        assert [item["id"] for item in direct.json()["objects"]] == [
-            "catalog-session"
-        ]
+        assert [item["id"] for item in direct.json()["objects"]] == ["catalog-session"]
         facet = client.get("/catalog/session", params={"facet": "status=completed"})
         assert len(facet.json()["objects"]) == 1
         bad = client.get("/catalog/session", params={"facet": "noequals"})
@@ -740,9 +727,7 @@ def test_gui_api_generic_tag_routes_cover_all_kinds(temp_workspace):
         )
         assert workflow.status_code == 200
         job_id = f"{revision_id}:sim"
-        job = client.post(
-            f"/catalog/job/{job_id}/tags", json={"add": ["method:cam"]}
-        )
+        job = client.post(f"/catalog/job/{job_id}/tags", json={"add": ["method:cam"]})
         assert job.status_code == 200
         unknown = client.post("/catalog/nope/x/tags", json={"add": ["task:x"]})
         assert unknown.status_code == 400
@@ -847,8 +832,6 @@ def test_gui_api_catalog_derived_facet_filters(temp_workspace):
             "catalog-session"
         ]
         assert (
-            client.get("/catalog/session", params={"model": "other"}).json()[
-                "objects"
-            ]
+            client.get("/catalog/session", params={"model": "other"}).json()["objects"]
             == []
         )

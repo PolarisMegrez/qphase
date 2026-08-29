@@ -764,9 +764,7 @@ def create_app(
         except Exception as exc:
             raise _http_error(exc) from exc
         return {
-            "views": [
-                {"name": name, "query": asdict(query)} for name, query in views
-            ]
+            "views": [{"name": name, "query": asdict(query)} for name, query in views]
         }
 
     @app.put("/views/{name}")
@@ -800,11 +798,7 @@ def create_app(
             folders = context.catalog.virtual_folders()
         except Exception as exc:
             raise _http_error(exc) from exc
-        return {
-            "folders": [
-                {"name": name, "count": count} for name, count in folders
-            ]
-        }
+        return {"folders": [{"name": name, "count": count} for name, count in folders]}
 
     @app.get("/folders/{name}")
     def get_virtual_folder(name: str) -> dict[str, Any]:

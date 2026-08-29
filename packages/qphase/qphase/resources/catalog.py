@@ -268,7 +268,7 @@ class ResourcePackageCatalog:
             d for d in descriptors if d.name.startswith(RESOURCE_ENTRY_POINT_PREFIX)
         ]
         for resource_ep in resource_descriptors:
-            resource_id = resource_ep.name[len(RESOURCE_ENTRY_POINT_PREFIX):]
+            resource_id = resource_ep.name[len(RESOURCE_ENTRY_POINT_PREFIX) :]
             distribution = resource_ep.distribution
             partition = partition_entry_points(descriptors, distribution)
 
@@ -289,9 +289,7 @@ class ResourcePackageCatalog:
                     continue
             else:
                 try:
-                    manifest = load_manifest_object(
-                        _import_target(resource_ep.value)
-                    )
+                    manifest = load_manifest_object(_import_target(resource_ep.value))
                 except Exception as exc:  # noqa: BLE001
                     issues.append(
                         ValidationIssue(
@@ -331,9 +329,7 @@ class ResourcePackageCatalog:
                     manifest=manifest,
                     distribution=distribution,
                     package_version=resource_ep.version,
-                    fingerprint=manifest_fingerprint(
-                        manifest, partition.package_owned
-                    ),
+                    fingerprint=manifest_fingerprint(manifest, partition.package_owned),
                     package_assets=owned,
                     overlay_assets=attributed,
                 )
@@ -360,9 +356,7 @@ class ResourcePackageCatalog:
                 )
 
         return cls(
-            packages=tuple(
-                sorted(views, key=lambda view: view.resource_id)
-            ),
+            packages=tuple(sorted(views, key=lambda view: view.resource_id)),
             overlays=tuple(overlays),
             issues=tuple(issues),
         )
@@ -429,9 +423,7 @@ class ResourcePackageCatalog:
                     "distribution": view.distribution,
                     "package_version": view.package_version,
                     "fingerprint": view.fingerprint,
-                    "plugin_classes": list(
-                        view.manifest.plugin_class_namespaces
-                    ),
+                    "plugin_classes": list(view.manifest.plugin_class_namespaces),
                     "package_assets": [
                         asset.as_dict() for asset in view.package_assets
                     ],
@@ -447,11 +439,15 @@ class ResourcePackageCatalog:
                 if not any(asset in view.overlay_assets for view in self._packages)
             ],
             "issues": [
-                {"code": issue.code, "message": issue.message,
-                 "location": issue.location}
+                {
+                    "code": issue.code,
+                    "message": issue.message,
+                    "location": issue.location,
+                }
                 for issue in self._issues
             ],
         }
+
 
 def _attribute_overlays(
     manifest: ResourcePackageManifest,
@@ -459,9 +455,7 @@ def _attribute_overlays(
 ) -> tuple[CatalogAsset, ...]:
     """Attribute overlays to a package by declared plugin-class namespace."""
     declared = set(manifest.plugin_class_namespaces)
-    return tuple(
-        overlay for overlay in overlays if overlay.namespace in declared
-    )
+    return tuple(overlay for overlay in overlays if overlay.namespace in declared)
 
 
 def _check_compatibility(

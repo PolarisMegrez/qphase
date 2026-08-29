@@ -169,9 +169,7 @@ def _write_tag_policy(project: ProjectContext) -> None:
     )
 
 
-def _tagged_workflow(
-    workflow_tags: list[str], job_tags: list[str]
-) -> WorkflowSpec:
+def _tagged_workflow(workflow_tags: list[str], job_tags: list[str]) -> WorkflowSpec:
     return WorkflowSpec(
         schema_="qphase.workflow/2",
         id="tagged",
@@ -219,7 +217,6 @@ def test_compiler_validates_declared_tags_against_policy(tmp_path):
 
     with pytest.raises(QPhaseConfigError, match="not an allowed value"):
         compiler.compile(_tagged_workflow([], ["model:other"]))
-
 
 
 def test_compiler_freezes_revision_scoped_ids_and_rules(tmp_path):

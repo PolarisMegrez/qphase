@@ -104,12 +104,8 @@ def test_workflow_catalog_filters_collection_tag_and_query(tmp_path: Path):
     assert [item.id for item in catalog.search(collection="models")] == [
         "stable-example"
     ]
-    assert [item.id for item in catalog.search(tag="engine:sde")] == [
-        "stable-example"
-    ]
-    assert [item.id for item in catalog.search(query="EXAMPLE")] == [
-        "stable-example"
-    ]
+    assert [item.id for item in catalog.search(tag="engine:sde")] == ["stable-example"]
+    assert [item.id for item in catalog.search(query="EXAMPLE")] == ["stable-example"]
     assert catalog.search(tag="engine:cam") == []
 
 
@@ -158,9 +154,7 @@ def test_session_persists_frozen_tag_snapshot(tmp_path: Path):
     assert frozen["policy_revision"] is None
     assert frozen["assignments"] == {"workflow": [], "jobs": {"example": []}}
     manifest = json.loads(
-        (scheduler.session_dir / "session_manifest.json").read_text(
-            encoding="utf-8"
-        )
+        (scheduler.session_dir / "session_manifest.json").read_text(encoding="utf-8")
     )
     assert "submission_tag_policy_revision" in manifest
 
@@ -201,8 +195,6 @@ def test_session_manifest_records_submission_tags(tmp_path: Path):
 
     assert scheduler.session_dir is not None
     manifest = json.loads(
-        (scheduler.session_dir / "session_manifest.json").read_text(
-            encoding="utf-8"
-        )
+        (scheduler.session_dir / "session_manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["submission_tags"] == ["task:urgent"]

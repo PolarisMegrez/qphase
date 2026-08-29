@@ -38,9 +38,7 @@ class _FakeAdapter:
     def open_product(self, *args, **kwargs):
         raise NotImplementedError
 
-    def open_ref(
-        self, ref: ArtifactRef, *, resolver=None
-    ) -> DictProductBacking:
+    def open_ref(self, ref: ArtifactRef, *, resolver=None) -> DictProductBacking:
         del resolver
         handles = {}
         for variable in ref.product_schema.variables:
@@ -89,9 +87,7 @@ def _spectral_schema() -> ProductSchema:
     return ProductSchema(
         kind=DataKind.SPECTRAL,
         axes=[
-            AxisSchema(
-                name="frequency", role=AxisRole.COORDINATE, size=4, units="Hz"
-            ),
+            AxisSchema(name="frequency", role=AxisRole.COORDINATE, size=4, units="Hz"),
             AxisSchema(name="i", role=AxisRole.COMPONENT, size=2),
             AxisSchema(name="j", role=AxisRole.COMPONENT, size=2),
         ],
@@ -308,15 +304,11 @@ def test_slice_view_on_open_axis_uses_handle_shape():
             ),
         ],
     )
-    dataset = TimeSeriesDataset.from_arrays(
-        schema, {"x": np.arange(6.0)}, owner="o"
-    )
+    dataset = TimeSeriesDataset.from_arrays(schema, {"x": np.arange(6.0)}, owner="o")
     assert dataset.shape == {"x": (6,)}  # runtime shape is concrete
     view = dataset.slice_view(time=slice(2, 5))
     assert view.axis("time").size == 3
-    np.testing.assert_array_equal(
-        view.handle("x").materialize(), [2.0, 3.0, 4.0]
-    )
+    np.testing.assert_array_equal(view.handle("x").materialize(), [2.0, 3.0, 4.0])
 
 
 def test_point_view_sampling_basis_rules():
@@ -346,9 +338,7 @@ def test_point_view_sampling_basis_rules():
             ),
         ],
     )
-    dataset = TimeSeriesDataset.from_arrays(
-        schema, {"x": np.zeros((3, 4))}, owner="o"
-    )
+    dataset = TimeSeriesDataset.from_arrays(schema, {"x": np.zeros((3, 4))}, owner="o")
 
     # Dropping the basis' source axis would orphan the uncertainty.
     with pytest.raises(ValueError, match="sampling basis"):
@@ -427,9 +417,7 @@ def test_from_arrays_validates_coverage_and_metadata():
     with pytest.raises(ValueError, match="missing arrays"):
         TimeSeriesDataset.from_arrays(schema, {}, owner="o")
     with pytest.raises(ValueError, match="without schema variables"):
-        TimeSeriesDataset.from_arrays(
-            schema, {"x": x, "y": np.zeros(1)}, owner="o"
-        )
+        TimeSeriesDataset.from_arrays(schema, {"x": x, "y": np.zeros(1)}, owner="o")
     with pytest.raises(ValueError, match="dtype"):
         TimeSeriesDataset.from_arrays(schema, {"x": np.zeros((3, 5))}, owner="o")
     with pytest.raises(ValueError, match="JSON"):

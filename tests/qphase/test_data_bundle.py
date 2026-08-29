@@ -418,9 +418,7 @@ def test_project_resolver_indexes_repeated_identity_as_occurrences(tmp_path):
     project = ProjectContext.create(tmp_path / "project")
     dataset = _scan_dataset()
     first = project.session_root / "session-a" / "job1"
-    manifest = save_products(
-        first, {"scan": dataset}, artifact_id="shared-artifact"
-    )
+    manifest = save_products(first, {"scan": dataset}, artifact_id="shared-artifact")
     ref = manifest.product_ref("scan")
     second = project.session_root / "session-b" / "job1"
     save_products(second, {"scan": dataset}, artifact_id="shared-artifact")
@@ -488,9 +486,10 @@ def test_project_resolver_survives_project_move(tmp_path):
     moved_project = ProjectContext.load(moved / "qphase.toml")
 
     assert moved_project.project_id == project.project_id
-    assert ProjectArtifactResolver(moved_project).resolve(ref) == (
-        moved_project.session_root / "session" / "job1"
-    ).resolve()
+    assert (
+        ProjectArtifactResolver(moved_project).resolve(ref)
+        == (moved_project.session_root / "session" / "job1").resolve()
+    )
 
 
 def test_coordinates_roundtrip_in_clean_subprocess(tmp_path):

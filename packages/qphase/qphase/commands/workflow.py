@@ -125,9 +125,7 @@ def tag_workflow(
         )
     except (QPhaseError, RuntimeError, ValueError) as exc:
         fail(exc)
-    typer.echo(
-        f"workflow {revision_id} tags=[{', '.join(item.tag for item in tags)}]"
-    )
+    typer.echo(f"workflow {revision_id} tags=[{', '.join(item.tag for item in tags)}]")
 
 
 @app.command("show")

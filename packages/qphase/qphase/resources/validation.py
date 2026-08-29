@@ -121,9 +121,7 @@ def validate_manifest(manifest: ResourcePackageManifest) -> list[ValidationIssue
     )
 
     namespaces = [pc.namespace for pc in manifest.plugin_classes]
-    issues += _check_duplicates(
-        namespaces, "duplicate-plugin-class", "plugin_classes"
-    )
+    issues += _check_duplicates(namespaces, "duplicate-plugin-class", "plugin_classes")
     for pc in manifest.plugin_classes:
         if pc.directory is not None and pc.directory != pc.namespace:
             issues.append(
@@ -253,9 +251,7 @@ def validate_source_layout(
             )
 
     allowed_directories = set(profile_required_directories(profiles))
-    allowed_directories.update(
-        pc.resolved_directory for pc in manifest.plugin_classes
-    )
+    allowed_directories.update(pc.resolved_directory for pc in manifest.plugin_classes)
     allowed_directories.update(
         path for path in declared_asset_paths if (root / path).is_dir()
     )

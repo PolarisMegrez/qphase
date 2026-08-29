@@ -137,9 +137,7 @@ def _two_mode_grid():
     ).compile()
 
 
-def _run(
-    model, analysers, *, scan=False, t1=0.2, n_traj=8, keep_traj=False
-):
+def _run(model, analysers, *, scan=False, t1=0.2, n_traj=8, keep_traj=False):
     n_modes = model.n_modes
     engine = Engine(
         config=EngineConfig(
@@ -162,9 +160,7 @@ def _run(
     if scan:
         grid = _two_mode_grid() if n_modes == 2 else _grid()
     return engine.run(
-        context=SimpleNamespace(
-            parameter_grid=grid, progress=None, cancellation=None
-        )
+        context=SimpleNamespace(parameter_grid=grid, progress=None, cancellation=None)
     )
 
 
@@ -191,9 +187,7 @@ def test_psd_product_is_graph_ready_spectral():
     assert psd.dims == ("frequency", "channel")
     assert psd.quantity == "power_spectral_density"
     assert psd.constraints.nonnegative
-    uncertainties = {
-        (u.target, u.kind): u for u in product.schema.uncertainties
-    }
+    uncertainties = {(u.target, u.kind): u for u in product.schema.uncertainties}
     assert uncertainties[("psd", "sample_std")].data_variable == "psd_std"
     assert uncertainties[("psd", "sem")].data_variable == "psd_sem"
     for uncertainty in uncertainties.values():
@@ -287,12 +281,9 @@ def test_psd_peak_bridge_restores_per_scan_point():
 
     for index, expected in enumerate((0.25, 0.5)):
         point_products = {
-            name: product.point_view(scan=index)
-            for name, product in products.items()
+            name: product.point_view(scan=index) for name, product in products.items()
         }
-        restored = legacy_view_from_products(
-            point_products, meta={"scan_index": index}
-        )
+        restored = legacy_view_from_products(point_products, meta={"scan_index": index})
         assert restored.analysis["psd"]["peaks"]["0"]["center"] == expected
 
 
@@ -320,13 +311,11 @@ def test_allan_product_is_graph_ready_statistics():
     assert variance.dims == ("tau",)
     assert variance.quantity == SDEQuantity.ALLAN_VARIANCE.value
     assert variance.constraints.nonnegative
-    assert (
-        product.schema.variable("mode_results.0.allan.per_trajectory").dims
-        == ("trajectory", "tau")
+    assert product.schema.variable("mode_results.0.allan.per_trajectory").dims == (
+        "trajectory",
+        "tau",
     )
-    uncertainties = {
-        (u.target, u.kind): u for u in product.schema.uncertainties
-    }
+    uncertainties = {(u.target, u.kind): u for u in product.schema.uncertainties}
     sem = uncertainties[("mode_results.0.allan.angular_frequency_variance", "sem")]
     assert sem.data_variable == "mode_results.0.allan.angular_frequency_variance_sem"
     assert sem.sampling_basis == "trajectory"
@@ -370,8 +359,7 @@ def test_moment_and_coherence_products_are_typed_over_scan():
     assert roles["order"] is AxisRole.INDEX
     assert quadratic.axis("order").coordinate == "regular"
     assert (
-        quadratic.schema.variable("raw_moments").quantity
-        == SDEQuantity.MOMENTS.value
+        quadratic.schema.variable("raw_moments").quantity == SDEQuantity.MOMENTS.value
     )
     families = quadratic.attributes["moment_families"]
     assert families["raw_moments"]["moment_kind"] == "raw"
@@ -382,9 +370,7 @@ def test_moment_and_coherence_products_are_typed_over_scan():
     assert statistics.attributes["graph_ready"] is True
     assert statistics.attributes["moment_family"]["orders"] == [1, 2, 4]
     assert statistics.attributes["normalized_variables"] == ["g2"]
-    assert (
-        statistics.schema.variable("g2").quantity == SDEQuantity.MOMENTS.value
-    )
+    assert statistics.schema.variable("g2").quantity == SDEQuantity.MOMENTS.value
     assert statistics.schema.variable("g2").dims == (
         "scan",
         "channel",
@@ -454,9 +440,5 @@ def test_analyser_products_must_be_graph_ready_and_match_declaration():
     with np.testing.assert_raises_regex(TypeError, "declared 'spectral'"):
         _run(
             _OneModeModel(),
-            {
-                "bad": _ProductBuilderAnalyzer(
-                    "bad", declared_kind=DataKind.SPECTRAL
-                )
-            },
+            {"bad": _ProductBuilderAnalyzer("bad", declared_kind=DataKind.SPECTRAL)},
         )

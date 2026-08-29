@@ -34,6 +34,7 @@ from ._annotations import (
 
 app = typer.Typer(help="List and annotate artifacts")
 
+
 @app.command("list")
 def list_artifacts(
     tag: list[str] = TAG_OPTION,

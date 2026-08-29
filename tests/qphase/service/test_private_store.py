@@ -74,9 +74,7 @@ def test_project_locations_roundtrip(tmp_path):
     store.record_location(tmp_path / "elsewhere")
 
     locations = store.list_locations()
-    assert [root for _pid, root, _seen in locations] == [
-        str(tmp_path / "elsewhere")
-    ]
+    assert [root for _pid, root, _seen in locations] == [str(tmp_path / "elsewhere")]
     assert all(pid == "project-a" for pid, _root, _seen in locations)
 
 

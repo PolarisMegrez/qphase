@@ -99,29 +99,13 @@ class CoherenceMatrixAnalyzer(Analyzer):
     ) -> AnalyzerWorkspaceEstimate:
         config = cast(CoherenceMatrixConfig, self.config)
         n_modes = (
-            len(config.modes)
-            if config.modes is not None
-            else request.n_record_modes
+            len(config.modes) if config.modes is not None else request.n_record_modes
         )
         chunk = min(config.time_chunk_samples, request.saved_samples)
-        chunk_bytes = (
-            request.n_traj
-            * chunk
-            * n_modes
-            * 4
-            * request.real_itemsize
-        )
-        matrix_bytes = (
-            request.n_traj * n_modes * n_modes * 2 * request.real_itemsize
-        )
+        chunk_bytes = request.n_traj * chunk * n_modes * 4 * request.real_itemsize
+        matrix_bytes = request.n_traj * n_modes * n_modes * 2 * request.real_itemsize
         amplitude_bytes = request.n_traj * n_modes * 2 * request.real_itemsize
-        block_bytes = (
-            config.time_blocks
-            * n_modes
-            * n_modes
-            * 2
-            * request.real_itemsize
-        )
+        block_bytes = config.time_blocks * n_modes * n_modes * 2 * request.real_itemsize
         retained = 2 * matrix_bytes + amplitude_bytes + block_bytes
         if request.backend_name == "cupy":
             return AnalyzerWorkspaceEstimate(
@@ -148,9 +132,7 @@ class CoherenceMatrixAnalyzer(Analyzer):
         modes = _resolve_modes(data, config.modes, int(values.shape[2]))
         columns = resolve_mode_columns(data, modes)
         n_modes = len(modes)
-        matrix_sum = backend.zeros(
-            (n_traj, n_modes, n_modes), dtype=values.dtype
-        )
+        matrix_sum = backend.zeros((n_traj, n_modes, n_modes), dtype=values.dtype)
         amplitude_sum = backend.zeros((n_traj, n_modes), dtype=values.dtype)
 
         boundaries = _block_boundaries(
@@ -158,16 +140,12 @@ class CoherenceMatrixAnalyzer(Analyzer):
         )
         block_matrices = []
         for start, stop in zip(boundaries[:-1], boundaries[1:], strict=True):
-            block_sum = backend.zeros(
-                (n_traj, n_modes, n_modes), dtype=values.dtype
-            )
+            block_sum = backend.zeros((n_traj, n_modes, n_modes), dtype=values.dtype)
             for chunk_start in range(start, stop, config.time_chunk_samples):
                 chunk_stop = min(stop, chunk_start + config.time_chunk_samples)
                 selected = values[:, chunk_start:chunk_stop, columns]
                 amplitude_sum += backend.einsum("rti->ri", selected)
-                block_sum += backend.einsum(
-                    "rti,rtj->rij", selected, selected.conj()
-                )
+                block_sum += backend.einsum("rti,rtj->rij", selected, selected.conj())
             matrix_sum += block_sum
             matrix = backend.mean(block_sum, axis=0) / float(stop - start)
             block_matrices.append(convert_to_numpy(matrix))
@@ -340,8 +318,7 @@ class CoherenceMatrixAnalyzer(Analyzer):
                 "trace": block_trace,
                 "relative_matrix_distance": block_distance,
                 "first_last_matrix_distance": float(
-                    np.linalg.norm(block_matrices[-1] - block_matrices[0])
-                    / matrix_norm
+                    np.linalg.norm(block_matrices[-1] - block_matrices[0]) / matrix_norm
                 ),
                 "purity_range": float(
                     np.nanmax(block_purity) - np.nanmin(block_purity)

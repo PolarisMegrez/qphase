@@ -134,9 +134,7 @@ def validate_artifact_relative_path(value: str) -> str:
     if not value or "\x00" in value:
         raise ValueError("artifact paths must be non-empty and NUL-free")
     if "\\" in value:
-        raise ValueError(
-            f"artifact paths must use POSIX separators, got {value!r}"
-        )
+        raise ValueError(f"artifact paths must use POSIX separators, got {value!r}")
     if value.startswith("/"):
         raise ValueError(f"absolute artifact paths are not allowed: {value!r}")
     parts = value.split("/")
@@ -145,9 +143,7 @@ def validate_artifact_relative_path(value: str) -> str:
             f"artifact paths must not contain empty/'.'/'..' parts: {value!r}"
         )
     if ":" in parts[0] or _DRIVE_PATTERN.match(parts[0]):
-        raise ValueError(
-            f"drive/UNC artifact paths are not allowed: {value!r}"
-        )
+        raise ValueError(f"drive/UNC artifact paths are not allowed: {value!r}")
     return value
 
 
@@ -210,9 +206,7 @@ class ProductStorage(BaseModel):
         try:
             json.dumps(value)
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "storage descriptor must be JSON-serializable"
-            ) from exc
+            raise ValueError("storage descriptor must be JSON-serializable") from exc
         return value
 
 
@@ -344,10 +338,7 @@ class ArtifactManifest(BaseModel):
         self._cross_validate()
         path = Path(directory) / MANIFEST_FILENAME
         path.write_text(
-            json.dumps(
-                self.model_dump(mode="json"), indent=2, allow_nan=False
-            )
-            + "\n",
+            json.dumps(self.model_dump(mode="json"), indent=2, allow_nan=False) + "\n",
             encoding="utf-8",
         )
         return path
@@ -730,8 +721,7 @@ def save_products(
         for index, (name, dataset) in enumerate(products.items()):
             if not isinstance(dataset, Dataset):
                 raise TypeError(
-                    f"product {name!r} must be a Dataset, got "
-                    f"{type(dataset).__name__}"
+                    f"product {name!r} must be a Dataset, got {type(dataset).__name__}"
                 )
             if dataset.is_artifact_backed:
                 dataset = dataset.materialize()
@@ -801,9 +791,7 @@ def save_products(
             os.replace(staging / file, directory / file)
             moved.append(file)
         tmp_manifest.write_text(
-            json.dumps(
-                manifest.model_dump(mode="json"), indent=2, allow_nan=False
-            )
+            json.dumps(manifest.model_dump(mode="json"), indent=2, allow_nan=False)
             + "\n",
             encoding="utf-8",
         )
@@ -853,8 +841,7 @@ def _load_products(manifest: ArtifactManifest, directory: Path) -> dict[str, Dat
             previous = files.setdefault(file, owner)
             if previous != owner:
                 raise ArtifactCorruptError(
-                    f"chunk file {file!r} is referenced by both {previous} "
-                    f"and {owner}"
+                    f"chunk file {file!r} is referenced by both {previous} and {owner}"
                 )
         backing = adapter.open_product(entry, directory)
         dataset_class = _DATASET_BY_KIND[entry.product_schema.kind]
@@ -913,9 +900,7 @@ class _GenericBundleAdapter:
         if descriptor.descriptor:
             raise ArtifactCorruptError("generic bundle descriptor must be empty")
 
-    def build(
-        self, manifest: ArtifactManifest, products: dict[str, Dataset]
-    ) -> Any:
+    def build(self, manifest: ArtifactManifest, products: dict[str, Dataset]) -> Any:
         from .bundle import GenericDataBundle
 
         return GenericDataBundle(

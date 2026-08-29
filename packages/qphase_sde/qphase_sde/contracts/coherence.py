@@ -47,9 +47,7 @@ class CoherenceFrequencyEstimate(BaseModel):
     lag: float | None = Field(
         default=None, description="Delay/lag the estimate was computed at."
     )
-    estimator: str = Field(
-        description="Estimator identifier, e.g. 'band_limited'."
-    )
+    estimator: str = Field(description="Estimator identifier, e.g. 'band_limited'.")
     conditional_std: float | None = None
     sampling_std: float | None = None
     confidence_lower: float | None = None

@@ -139,9 +139,7 @@ class AllanVarianceAnalyzer(Analyzer):
         frequency_meta = orientation_metadata(config.orientation)
         mode_results: dict[int, dict[str, Any]] = {}
         for mode, column in zip(config.modes, columns, strict=True):
-            series = _copy_mode_to_host(
-                array, column, config.transfer_chunk_samples
-            )
+            series = _copy_mode_to_host(array, column, config.transfer_chunk_samples)
             allan = calculate_allan_variance(
                 series,
                 dt,
@@ -300,9 +298,7 @@ def _build_allan_products(
     return {label: dataset}
 
 
-def _copy_mode_to_host(
-    array: Any, column: int, chunk_samples: int
-) -> np.ndarray:
+def _copy_mode_to_host(array: Any, column: int, chunk_samples: int) -> np.ndarray:
     if isinstance(array, np.ndarray):
         return np.asarray(array[:, :, column])
     n_traj, n_samples = int(array.shape[0]), int(array.shape[1])

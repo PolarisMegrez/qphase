@@ -59,17 +59,25 @@ def test_allan_frequency_uses_configured_phase_orientation():
         np.repeat(values, 2, axis=0), dt=dt, meta={"mode_indices": [0]}
     )
 
-    phase_decreasing = AllanVarianceAnalyzer(
-        AllanVarianceConfig(modes=[0], points=4, min_independent_windows=2)
-    ).analyze(trajectory, NumpyBackend()).data_dict
-    legacy = AllanVarianceAnalyzer(
-        AllanVarianceConfig(
-            modes=[0],
-            points=4,
-            min_independent_windows=2,
-            orientation="phase_increasing",
+    phase_decreasing = (
+        AllanVarianceAnalyzer(
+            AllanVarianceConfig(modes=[0], points=4, min_independent_windows=2)
         )
-    ).analyze(trajectory, NumpyBackend()).data_dict
+        .analyze(trajectory, NumpyBackend())
+        .data_dict
+    )
+    legacy = (
+        AllanVarianceAnalyzer(
+            AllanVarianceConfig(
+                modes=[0],
+                points=4,
+                min_independent_windows=2,
+                orientation="phase_increasing",
+            )
+        )
+        .analyze(trajectory, NumpyBackend())
+        .data_dict
+    )
 
     decreasing_frequency = phase_decreasing["mode_results"][0]["phase_increment"][
         "mean_angular_frequency_per_trajectory"

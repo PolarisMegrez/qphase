@@ -141,8 +141,7 @@ class Dataset:
         if isinstance(backing, ArtifactRef):
             if backing.product_schema != schema:
                 raise ValueError(
-                    "artifact ref product schema does not match the dataset "
-                    "schema"
+                    "artifact ref product schema does not match the dataset schema"
                 )
             self._backing: RuntimeProductBacking | ArtifactRef = backing
         elif isinstance(backing, RuntimeProductBacking):
@@ -256,9 +255,7 @@ class Dataset:
                 for name, handle in self._runtime_handles().items()
             }
         return {
-            variable.name: tuple(
-                self._schema.axis(dim).size for dim in variable.dims
-            )
+            variable.name: tuple(self._schema.axis(dim).size for dim in variable.dims)
             for variable in self._schema.variables
         }
 
@@ -270,9 +267,7 @@ class Dataset:
         (artifact backings); never triggers device synchronization.
         """
         if self.is_runtime_backed:
-            return sum(
-                handle.nbytes for handle in self._runtime_handles().values()
-            )
+            return sum(handle.nbytes for handle in self._runtime_handles().values())
         total = 0
         for variable in self._schema.variables:
             size = 1
@@ -374,9 +369,7 @@ class Dataset:
             )
             if target_device in (None, "cpu"):
                 return host
-            return host.materialize(
-                target_device, copy_policy, resolver=resolver
-            )
+            return host.materialize(target_device, copy_policy, resolver=resolver)
         handles = dict(backing.variables)
         if target_device is None or (
             target_device == "cpu"
@@ -431,9 +424,7 @@ class Dataset:
                     f"selector for axis {name!r} must be an int or slice, "
                     f"got {type(selector).__name__}"
                 )
-        spanned = {
-            dim for variable in self._schema.variables for dim in variable.dims
-        }
+        spanned = {dim for variable in self._schema.variables for dim in variable.dims}
         unspanned = set(selection) - spanned
         if unspanned:
             raise ValueError(
@@ -497,9 +488,7 @@ class Dataset:
                     and axis.start is not None
                     and axis.step is not None
                 ):
-                    start_index, _stop_index, slice_step = selector.indices(
-                        axis.size
-                    )
+                    start_index, _stop_index, slice_step = selector.indices(axis.size)
                     updates["start"] = axis.start + start_index * axis.step
                     updates["step"] = axis.step * slice_step
                 axis = axis.model_copy(update=updates)

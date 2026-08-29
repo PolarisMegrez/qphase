@@ -131,9 +131,7 @@ SPECTRUM_PRODUCT = ProductSchema(
     kind=DataKind.SPECTRAL,
     axes=[
         AxisSchema(name="scan", role=AxisRole.PARAMETER),
-        AxisSchema(
-            name="frequency", role=AxisRole.COORDINATE, units="inverse_time"
-        ),
+        AxisSchema(name="frequency", role=AxisRole.COORDINATE, units="inverse_time"),
         AxisSchema(name="channel", role=AxisRole.COMPONENT),
     ],
     sampling_bases=[SamplingBasisSchema(name="trajectory")],
