@@ -503,6 +503,63 @@ class CatalogService:
         self.catalog.reindex()
         return {"relocated_sessions": len(moved)}
 
+    def apply_session_deletion(
+        self, manifest: Mapping[str, Any]
+    ) -> dict[str, int]:
+        """Permanently delete one explicitly approved Session batch."""
+        if manifest.get("schema") != "qphase.phase4d-session-deletion/1":
+            raise ValueError("unsupported Session deletion manifest")
+        if manifest.get("project_id") != self.project.project_id:
+            raise ValueError("Session deletion manifest belongs to another project")
+        if not manifest.get("external_snapshot"):
+            raise ValueError("Session deletion requires an external snapshot")
+        actions = manifest.get("actions")
+        if not isinstance(actions, list):
+            raise ValueError("Session deletion actions must be a list")
+
+        prepared: list[Path] = []
+        session_root = self.project.session_root.resolve()
+        for action in actions:
+            if not isinstance(action, Mapping):
+                raise ValueError("Session deletion action must be an object")
+            session_id = str(action.get("session_id") or "")
+            path = (self.project.root / str(action.get("path") or "")).resolve()
+            if not path.is_relative_to(session_root) or path.name != session_id:
+                raise ValueError(f"Session deletion path mismatch: {session_id}")
+            if not path.is_dir():
+                raise ValueError(f"Session deletion source is missing: {session_id}")
+            annotations = self.state_store.load_session_annotations(path)
+            retention = annotations.get("retention") if annotations else None
+            if retention in {"pinned", "evidence", "preserve"}:
+                raise ValueError(f"Session retention forbids deletion: {session_id}")
+            if self.project_service._owner_alive(path / "session.lock"):
+                raise ValueError(f"Session is active: {session_id}")
+            manifest_path = path / "session_manifest.json"
+            payload = self.state_store.load_session_manifest(path)
+            if str(payload.get("session_id") or path.name) != session_id:
+                raise ValueError(f"Session manifest identity mismatch: {session_id}")
+            files = [item for item in path.rglob("*") if item.is_file()]
+            if len(files) != int(action.get("expected_file_count", -1)):
+                raise ValueError(f"Session file count changed: {session_id}")
+            if sum(item.stat().st_size for item in files) != int(
+                action.get("expected_byte_count", -1)
+            ):
+                raise ValueError(f"Session byte count changed: {session_id}")
+            if hashlib.sha256(manifest_path.read_bytes()).hexdigest() != str(
+                action.get("expected_manifest_sha256") or ""
+            ):
+                raise ValueError(f"Session manifest changed: {session_id}")
+            prepared.append(path)
+
+        deleted_bytes = 0
+        for path in prepared:
+            deleted_bytes += sum(
+                item.stat().st_size for item in path.rglob("*") if item.is_file()
+            )
+            shutil.rmtree(path)
+        self.catalog.reindex()
+        return {"deleted_sessions": len(prepared), "deleted_bytes": deleted_bytes}
+
     def _legacy_tag_snapshot(
         self, source: Path, action: Mapping[str, Any]
     ) -> dict[str, Any]:

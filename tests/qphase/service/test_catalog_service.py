@@ -232,6 +232,43 @@ def test_session_relocation_preflights_all_targets_before_moving(tmp_path):
     assert source.exists()
 
 
+def test_session_deletion_rejects_retained_and_deletes_approved(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    approved = _session(project, "session-approved")
+    retained = _session(project, "session-retained")
+    service = CatalogService(project, home=tmp_path / "home")
+    service.set_session_retention("session-retained", "pinned")
+
+    def action(path: Path) -> dict:
+        files = [item for item in path.rglob("*") if item.is_file()]
+        return {
+            "session_id": path.name,
+            "path": path.relative_to(project.root).as_posix(),
+            "expected_manifest_sha256": hashlib.sha256(
+                (path / "session_manifest.json").read_bytes()
+            ).hexdigest(),
+            "expected_file_count": len(files),
+            "expected_byte_count": sum(item.stat().st_size for item in files),
+        }
+
+    base = {
+        "schema": "qphase.phase4d-session-deletion/1",
+        "project_id": project.project_id,
+        "external_snapshot": "snapshot-1",
+    }
+    with pytest.raises(ValueError, match="retention forbids deletion"):
+        service.apply_session_deletion({**base, "actions": [action(retained)]})
+    assert retained.exists()
+
+    result = service.apply_session_deletion(
+        {**base, "actions": [action(approved)]}
+    )
+    assert result["deleted_sessions"] == 1
+    assert result["deleted_bytes"] > 0
+    assert not approved.exists()
+    assert retained.exists()
+
+
 def test_tag_session_roundtrip_visible_in_query(tmp_path):
     project = ProjectContext.create(tmp_path / "project")
     _session(project, "session-1")

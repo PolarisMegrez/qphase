@@ -142,6 +142,8 @@ def migrate(
             service = CatalogService(ProjectContext.discover())
             if payload.get("schema") == "qphase.phase4c-session-relocation/1":
                 apply_counts = service.apply_session_relocation(payload)
+            elif payload.get("schema") == "qphase.phase4d-session-deletion/1":
+                apply_counts = service.apply_session_deletion(payload)
             else:
                 apply_counts = service.apply_metadata_migration(payload)
         except (QPhaseError, OSError, ValueError) as exc:
