@@ -20,6 +20,7 @@ from qphase.core.persistence import ProjectStateStore
 from qphase.core.progress import ProgressSnapshot
 from qphase.core.scheduler import Scheduler
 from qphase.core.tags import (
+    execution_tag_assignment_id,
     freeze_tag_rules,
     load_tag_policy,
     validate_declared_tags,
@@ -38,6 +39,58 @@ log = logging.getLogger(__name__)
 
 def _now() -> datetime:
     return datetime.now().astimezone()
+
+
+def initial_execution_payload(
+    *,
+    execution_id: str,
+    workflow: WorkflowSpec,
+    source_workflow: str,
+    submitted_at: datetime,
+    compiled_workflow: CompiledWorkflow | None,
+    submission_tags: list[str],
+    tag_policy_revision: str | None,
+    submission_tag_rules: dict[str, dict[str, Any]],
+    state: str = "queued",
+) -> dict[str, Any]:
+    """Build the initial ``qphase.execution/1`` record payload.
+
+    This is the single construction point shared by the queued
+    (:class:`ExecutionManager`) and the synchronous
+    (:meth:`SchedulerService.run`) entry paths, so both persist the same
+    record shape. Submission tag assignment ids derive deterministically
+    from the execution id, which lets the session manifest and the catalog
+    read model cite the same ids without reading this record back.
+    """
+    return {
+        "schema": "qphase.execution/1",
+        "execution_id": execution_id,
+        "source_workflow": source_workflow,
+        "submission_tags": list(submission_tags),
+        "submission_tag_assignments": {
+            tag: execution_tag_assignment_id(execution_id, tag)
+            for tag in submission_tags
+        },
+        "tag_policy_revision": tag_policy_revision,
+        "submission_tag_rules": dict(submission_tag_rules),
+        "workflow": workflow.model_dump(mode="json", by_alias=True),
+        "compiled_workflow": compiled_workflow.to_payload()
+        if compiled_workflow is not None
+        else None,
+        "submitted_at": submitted_at.isoformat(),
+        "state": state,
+        "session_id": None,
+        "session_dir": None,
+        "started_at": None,
+        "finished_at": None,
+        "current_job": None,
+        "current_stage": None,
+        "latest_message": "",
+        "error": None,
+        "pause_requested": False,
+        "started_jobs": [],
+        "revisions": {},
+    }
 
 
 @dataclass
@@ -354,6 +407,7 @@ class ExecutionManager:
                 submission_tags=list(record.submission_tags),
                 submission_tag_policy_revision=record.tag_policy_revision,
                 submission_tag_rules=record.submission_tag_rules,
+                execution_id=record.execution_id,
             )
             record.session_id = (
                 record.scheduler.session_id if record.scheduler is not None else None
@@ -467,38 +521,38 @@ class ExecutionManager:
             session_dir = Path(record.scheduler.session_dir).resolve().relative_to(
                 self.scheduler.project.session_root.resolve()
             ).as_posix()
-        return {
-            "schema": "qphase.execution/1",
-            "execution_id": record.execution_id,
-            "source_workflow": record.source_workflow,
-            "submission_tags": list(record.submission_tags),
-            "tag_policy_revision": record.tag_policy_revision,
-            "submission_tag_rules": dict(record.submission_tag_rules),
-            "workflow": record.workflow.model_dump(mode="json", by_alias=True),
-            "compiled_workflow": record.compiled_workflow.to_payload()
-            if record.compiled_workflow is not None
-            else None,
-            "submitted_at": record.submitted_at.isoformat(),
-            "state": record.state,
-            "session_id": record.session_id,
-            "session_dir": session_dir,
-            "started_at": record.started_at.isoformat()
+        payload = initial_execution_payload(
+            execution_id=record.execution_id,
+            workflow=record.workflow,
+            source_workflow=record.source_workflow,
+            submitted_at=record.submitted_at,
+            compiled_workflow=record.compiled_workflow,
+            submission_tags=record.submission_tags,
+            tag_policy_revision=record.tag_policy_revision,
+            submission_tag_rules=record.submission_tag_rules,
+            state=record.state,
+        )
+        payload.update(
+            session_id=record.session_id,
+            session_dir=session_dir,
+            started_at=record.started_at.isoformat()
             if record.started_at is not None
             else None,
-            "finished_at": record.finished_at.isoformat()
+            finished_at=record.finished_at.isoformat()
             if record.finished_at is not None
             else None,
-            "current_job": record.current_job,
-            "current_stage": record.current_stage,
-            "latest_message": record.latest_message,
-            "error": record.error,
-            "pause_requested": record.pause_requested,
-            "started_jobs": sorted(record.started_jobs),
-            "revisions": {
+            current_job=record.current_job,
+            current_stage=record.current_stage,
+            latest_message=record.latest_message,
+            error=record.error,
+            pause_requested=record.pause_requested,
+            started_jobs=sorted(record.started_jobs),
+            revisions={
                 name: job.model_dump(mode="json", by_alias=True)
                 for name, job in record.revisions.items()
             },
-        }
+        )
+        return payload
 
     def _restore_persisted(self) -> None:
         if self.state_store is None:

@@ -45,6 +45,14 @@ nearer object sets the same namespace; ``inherit = false`` namespaces never
 flow downward. Lifecycle never inherits; retention inherits from session to
 occurrence when the policy allows it.
 
+Workflow revision declared tags follow a source-priority rule, never
+first-source-wins: the live workflow file wins when present (its tags are
+canonicalized against the current policy); a revision seen only in frozen
+session/execution snapshots keeps the frozen canonical declaration of its
+snapshot, and when snapshots of the same document revision disagree (the
+policy changed between runs) the revision falls back to the raw syntax
+tags with no policy provenance.
+
 Artifact scan contract (artifact schema ``qphase.artifact/4``):
 
 - every artifact manifest is read and fully validated through
@@ -124,6 +132,7 @@ from .tags import (
     ObjectKind,
     TagPolicy,
     canonicalize_tag_syntax,
+    execution_tag_assignment_id,
     job_tag_assignment_id,
     load_tag_policy,
     workflow_tag_assignment_id,
@@ -146,7 +155,7 @@ __all__ = [
 CATALOG_FILENAME = "object_catalog.sqlite"
 
 #: Read-model schema version; a mismatch forces a rebuild.
-CATALOG_SCHEMA = "qphase.catalog/4"
+CATALOG_SCHEMA = "qphase.catalog/5"
 
 _NAMESPACE_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
 
@@ -204,7 +213,8 @@ CREATE TABLE sessions (
     retention TEXT,
     alias TEXT,
     note TEXT,
-    submission_tag_policy_revision TEXT
+    submission_tag_policy_revision TEXT,
+    execution_id TEXT
 );
 CREATE TABLE artifacts (
     id TEXT PRIMARY KEY,
@@ -289,6 +299,7 @@ _FACETS: dict[str, tuple[str, ...]] = {
         "start_time",
         "lifecycle",
         "retention",
+        "execution_id",
     ),
     "artifact": (
         "id",
@@ -514,7 +525,8 @@ class ProjectObjectCatalog:
                         scan["executions"],
                     )
                     connection.executemany(
-                        "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO sessions VALUES"
+                        " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         scan["sessions"],
                     )
                     connection.executemany(
@@ -1100,6 +1112,37 @@ def _parse_frozen_rule(item: Any) -> FrozenNamespaceRule | None:
     )
 
 
+def _frozen_snapshot_pairs(
+    frozen: Mapping[str, Any],
+) -> tuple[DeclaredPairs, dict[str, DeclaredPairs], str | None]:
+    """Unpack one frozen tag snapshot into declared-tag pairs.
+
+    Returns the workflow-level pairs, the per-job pairs and the frozen
+    policy revision. Shared by the session ``tag_snapshot.yaml`` reader and
+    the execution record's compiled ``tag_snapshot`` payload; both carry
+    the structure written by the compiler's ``_freeze_tags``.
+    """
+    assignments = frozen.get("assignments")
+    assignments = assignments if isinstance(assignments, Mapping) else {}
+    jobs_assignments = assignments.get("jobs")
+    jobs_assignments = jobs_assignments if isinstance(jobs_assignments, Mapping) else {}
+    job_tags: dict[str, DeclaredPairs] = {}
+    raw_job_tags = frozen.get("job_tags")
+    if isinstance(raw_job_tags, Mapping):
+        for name, tags in raw_job_tags.items():
+            job_tags[str(name)] = _frozen_assignment_pairs(
+                jobs_assignments.get(name), tags
+            )
+    policy_revision = frozen.get("policy_revision")
+    return (
+        _frozen_assignment_pairs(
+            assignments.get("workflow"), frozen.get("canonical_tags")
+        ),
+        job_tags,
+        str(policy_revision) if policy_revision is not None else None,
+    )
+
+
 def _submission_tag_items(
     document: Mapping[str, Any], revision: Any
 ) -> list[tuple[str, str | None, str | None, FrozenNamespaceRule | None]]:
@@ -1108,18 +1151,34 @@ def _submission_tag_items(
     ``submission_tag_rules`` carries the minimal namespace rule frozen at
     submit time; documents written before rule freezing have no such key and
     fall back to ``None`` rules, which resolve against the current policy.
+    ``submission_tag_assignments`` carries the stable assignment id of each
+    tag; documents written before assignment-id persistence (but with an
+    ``execution_id``) derive the same ids deterministically from the
+    execution identity, and documents without any execution identity keep a
+    ``None`` assignment id.
     """
     rules = document.get("submission_tag_rules")
+    assignments = document.get("submission_tag_assignments")
+    assignments = assignments if isinstance(assignments, Mapping) else {}
+    execution_id = document.get("execution_id")
     revision_text = str(revision) if revision else None
-    return [
-        (
-            str(tag),
-            None,
-            revision_text,
-            _parse_frozen_rule(rules.get(tag) if isinstance(rules, Mapping) else None),
+    items: list[tuple[str, str | None, str | None, FrozenNamespaceRule | None]] = []
+    for raw_tag in document.get("submission_tags", []):
+        tag = str(raw_tag)
+        assignment_id = assignments.get(tag)
+        if assignment_id is None and execution_id:
+            assignment_id = execution_tag_assignment_id(str(execution_id), tag)
+        items.append(
+            (
+                tag,
+                str(assignment_id) if assignment_id else None,
+                revision_text,
+                _parse_frozen_rule(
+                    rules.get(tag) if isinstance(rules, Mapping) else None
+                ),
+            )
         )
-        for tag in document.get("submission_tags", [])
-    ]
+    return items
 
 
 def _assignment_triples(
@@ -1159,6 +1218,34 @@ def _declared_triples(
     ]
 
 
+@dataclass(frozen=True)
+class _RevisionTagView:
+    """One source's view of a workflow revision's declared tags.
+
+    ``is_file`` marks the live workflow file (current truth); every other
+    view is the frozen tag snapshot of one session or execution record.
+    """
+
+    is_file: bool
+    policy_revision: str | None
+    workflow_pairs: DeclaredPairs
+    job_tags: dict[str, DeclaredPairs]
+
+    def signature(
+        self,
+    ) -> tuple[tuple[str, ...], tuple[tuple[str, tuple[str, ...]], ...]]:
+        """Canonical tag sets, ignoring provenance, for agreement checks."""
+        return (
+            tuple(sorted(tag for tag, _, _ in self.workflow_pairs)),
+            tuple(
+                sorted(
+                    (name, tuple(sorted(tag for tag, _, _ in pairs)))
+                    for name, pairs in self.job_tags.items()
+                )
+            ),
+        )
+
+
 @dataclass
 class _RevisionEntry:
     """One workflow revision under construction during a scan."""
@@ -1170,6 +1257,9 @@ class _RevisionEntry:
     relative_path: str | None
     sources: list[str]
     job_rows: list[tuple[Any, ...]]
+    tag_views: list[_RevisionTagView] = field(default_factory=list)
+    raw_workflow_tags: list[str] = field(default_factory=list)
+    raw_job_tags: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def revision_id(self) -> str:
@@ -1242,6 +1332,7 @@ class _Scanner:
             for job_row in entry.job_rows:
                 for plugin in json.loads(job_row[6]):
                     self.rows["job_plugins"].append((job_row[0], plugin))
+            self._materialize_revision_tags(entry)
         return self.rows
 
     def _tags(self, object_kind: str, object_id: str, tags: list[EffectiveTag]) -> None:
@@ -1333,34 +1424,39 @@ class _Scanner:
         *,
         source: str,
         relative_path: str | None,
-        policy_revision: str | None,
+        frozen: tuple[DeclaredPairs, dict[str, DeclaredPairs], str | None] | None,
     ) -> str | None:
-        """Index one workflow revision; first writer wins for its own tags.
+        """Index one workflow revision and collect its declared-tag view.
 
-        The current workflow file is scanned first, so a revision's own
-        declared tags carry the current policy revision; a revision seen only
-        in a frozen session snapshot keeps the snapshot's frozen revision.
-        Later sources of the same revision only extend its source list.
+        Every source contributes one tag view; the effective tags of the
+        revision and its jobs are materialized after the scan (see
+        :meth:`_materialize_revision_tags`), where the live workflow file
+        wins and conflicting frozen snapshots fall back to raw syntax tags
+        instead of letting the first source win.
         """
         workflow_id = str(payload.get("id") or "")
         if not workflow_id:
             return None
         revision = workflow_revision(payload)
-        entry = self._revisions.get(f"{workflow_id}@{revision}")
+        revision_id = f"{workflow_id}@{revision}"
+        raw_workflow_tags = [str(tag) for tag in payload.get("tags") or []]
+        raw_job_tags: dict[str, list[str]] = {}
+        jobs = payload.get("jobs")
+        for job in jobs if isinstance(jobs, list) else []:
+            if isinstance(job, Mapping) and job.get("name"):
+                raw_job_tags[str(job["name"])] = [
+                    str(tag) for tag in job.get("tags") or []
+                ]
+        view = self._revision_tag_view(
+            workflow_id, revision, source, raw_workflow_tags, raw_job_tags, frozen
+        )
+        entry = self._revisions.get(revision_id)
         if entry is not None:
             if source not in entry.sources:
                 entry.sources.append(source)
+            entry.tag_views.append(view)
             return entry.revision_id
-        workflow_pairs: list[tuple[str, str | None, FrozenNamespaceRule | None]] = []
-        for raw_tag in payload.get("tags") or []:
-            tag = _try_canonical_tag(str(raw_tag))
-            if tag is not None:
-                workflow_pairs.append(
-                    (tag, workflow_tag_assignment_id(workflow_id, revision, tag), None)
-                )
         job_rows: list[tuple[Any, ...]] = []
-        job_tags: dict[str, DeclaredPairs] = {}
-        jobs = payload.get("jobs")
         for job in jobs if isinstance(jobs, list) else []:
             if not isinstance(job, Mapping) or not job.get("name"):
                 continue
@@ -1377,19 +1473,7 @@ class _Scanner:
                     json.dumps(plugins),
                 )
             )
-            pairs: DeclaredPairs = []
-            for raw_tag in job.get("tags") or []:
-                tag = _try_canonical_tag(str(raw_tag))
-                if tag is not None:
-                    pairs.append(
-                        (
-                            tag,
-                            job_tag_assignment_id(workflow_id, revision, name, tag),
-                            None,
-                        )
-                    )
-            job_tags[name] = pairs
-        self._revisions[f"{workflow_id}@{revision}"] = _RevisionEntry(
+        self._revisions[revision_id] = _RevisionEntry(
             workflow_id=workflow_id,
             revision=revision,
             title=str(payload.get("title") or workflow_id),
@@ -1401,8 +1485,135 @@ class _Scanner:
             relative_path=relative_path,
             sources=[source],
             job_rows=job_rows,
+            tag_views=[view],
+            raw_workflow_tags=raw_workflow_tags,
+            raw_job_tags=raw_job_tags,
         )
-        revision_id = f"{workflow_id}@{revision}"
+        return revision_id
+
+    def _revision_tag_view(
+        self,
+        workflow_id: str,
+        revision: str,
+        source: str,
+        raw_workflow_tags: list[str],
+        raw_job_tags: dict[str, list[str]],
+        frozen: tuple[DeclaredPairs, dict[str, DeclaredPairs], str | None] | None,
+    ) -> _RevisionTagView:
+        """Build one source's declared-tag view of a workflow revision.
+
+        A frozen snapshot is used verbatim (its canonical tags, assignment
+        ids and policy revision were fixed at compile time). The live
+        workflow file is canonicalized against the current policy. Anything
+        else (records/sessions predating snapshots) keeps raw syntax tags
+        with derived ids and no policy provenance.
+        """
+        if frozen is not None:
+            return _RevisionTagView(False, frozen[2], frozen[0], frozen[1])
+        if source.startswith("file:"):
+            return _RevisionTagView(
+                True,
+                self.policy_revision,
+                [
+                    (tag, workflow_tag_assignment_id(workflow_id, revision, tag), None)
+                    for raw in raw_workflow_tags
+                    if (tag := self._policy_canonical(raw, "workflow")) is not None
+                ],
+                {
+                    name: [
+                        (
+                            tag,
+                            job_tag_assignment_id(workflow_id, revision, name, tag),
+                            None,
+                        )
+                        for raw in raws
+                        if (tag := self._policy_canonical(raw, "job")) is not None
+                    ]
+                    for name, raws in raw_job_tags.items()
+                },
+            )
+        return _RevisionTagView(
+            False,
+            None,
+            [
+                (tag, workflow_tag_assignment_id(workflow_id, revision, tag), None)
+                for raw in raw_workflow_tags
+                if (tag := _try_canonical_tag(raw)) is not None
+            ],
+            {
+                name: [
+                    (tag, job_tag_assignment_id(workflow_id, revision, name, tag), None)
+                    for raw in raws
+                    if (tag := _try_canonical_tag(raw)) is not None
+                ]
+                for name, raws in raw_job_tags.items()
+            },
+        )
+
+    def _policy_canonical(self, raw: str, kind: ObjectKind) -> str | None:
+        """Canonicalize one live-file declared tag against the current policy.
+
+        The live workflow file is the current truth, so its tags follow the
+        current policy (aliases resolve). Tags the current policy rejects
+        keep their syntax-canonical spelling: the catalog is a read model
+        and never drops a declaration.
+        """
+        tag = _try_canonical_tag(raw)
+        if tag is None or self.policy is None:
+            return tag
+        try:
+            return self.policy.apply([tag], kind)[0]
+        except QPhaseConfigError:
+            return tag
+
+    def _resolve_revision_view(self, entry: _RevisionEntry) -> _RevisionTagView:
+        """Pick the declared-tag view of one revision.
+
+        The live workflow file wins when present. Otherwise every frozen
+        session/execution snapshot of the same document revision must
+        agree; conflicting snapshots mean no single canonical declaration
+        exists, so the revision falls back to raw syntax tags without
+        policy provenance instead of first-source-wins.
+        """
+        for view in entry.tag_views:
+            if view.is_file:
+                return view
+        first = entry.tag_views[0]
+        signature = first.signature()
+        if all(view.signature() == signature for view in entry.tag_views):
+            return first
+        return _RevisionTagView(
+            is_file=False,
+            policy_revision=None,
+            workflow_pairs=[
+                (
+                    tag,
+                    workflow_tag_assignment_id(entry.workflow_id, entry.revision, tag),
+                    None,
+                )
+                for raw in entry.raw_workflow_tags
+                if (tag := _try_canonical_tag(raw)) is not None
+            ],
+            job_tags={
+                name: [
+                    (
+                        tag,
+                        job_tag_assignment_id(
+                            entry.workflow_id, entry.revision, name, tag
+                        ),
+                        None,
+                    )
+                    for raw in raws
+                    if (tag := _try_canonical_tag(raw)) is not None
+                ]
+                for name, raws in entry.raw_job_tags.items()
+            },
+        )
+
+    def _materialize_revision_tags(self, entry: _RevisionEntry) -> None:
+        """Write the effective-tag rows of one revision and its jobs."""
+        view = self._resolve_revision_view(entry)
+        revision_id = entry.revision_id
         self._tags(
             "workflow",
             revision_id,
@@ -1410,7 +1621,7 @@ class _Scanner:
                 [
                     (
                         "workflow_declared",
-                        _declared_triples(workflow_pairs, policy_revision),
+                        _declared_triples(view.workflow_pairs, view.policy_revision),
                         True,
                     ),
                     (
@@ -1425,7 +1636,8 @@ class _Scanner:
                 "workflow",
             ),
         )
-        for name, pairs in job_tags.items():
+        for job_row in entry.job_rows:
+            name = str(job_row[3])
             job_id = f"{revision_id}:{name}"
             self._tags(
                 "job",
@@ -1434,12 +1646,16 @@ class _Scanner:
                     [
                         (
                             "workflow_declared",
-                            _declared_triples(workflow_pairs, policy_revision),
+                            _declared_triples(
+                                view.workflow_pairs, view.policy_revision
+                            ),
                             False,
                         ),
                         (
                             "job_declared",
-                            _declared_triples(pairs, policy_revision),
+                            _declared_triples(
+                                view.job_tags.get(name, []), view.policy_revision
+                            ),
                             True,
                         ),
                         (
@@ -1454,7 +1670,6 @@ class _Scanner:
                     "job",
                 ),
             )
-        return revision_id
 
     def _scan_workflows(self) -> None:
         catalog = WorkflowCatalog(self.project)
@@ -1471,7 +1686,7 @@ class _Scanner:
                 payload,
                 source=f"file:{reference.relative_path}",
                 relative_path=reference.relative_path,
-                policy_revision=self.policy_revision,
+                frozen=None,
             )
 
     def _scan_executions(self) -> None:
@@ -1488,17 +1703,14 @@ class _Scanner:
                 # snapshot frozen at compile time, not from the submission
                 # tag policy revision.
                 frozen = compiled.get("tag_snapshot")
-                frozen_revision = (
-                    frozen.get("policy_revision")
-                    if isinstance(frozen, Mapping)
-                    else None
-                )
                 revision_id = self._register_revision(
                     compiled["workflow"],
                     source=f"execution:{payload.get('execution_id', '')}",
                     relative_path=None,
-                    policy_revision=(
-                        str(frozen_revision) if frozen_revision is not None else None
+                    frozen=(
+                        _frozen_snapshot_pairs(frozen)
+                        if isinstance(frozen, Mapping)
+                        else None
                     ),
                 )
             self.rows["executions"].append(
@@ -1557,7 +1769,11 @@ class _Scanner:
                 snapshot.workflow_payload,
                 source=f"session:{session_path}",
                 relative_path=None,
-                policy_revision=snapshot.policy_revision,
+                frozen=(
+                    snapshot.workflow_tags,
+                    snapshot.job_tags,
+                    snapshot.policy_revision,
+                ),
             )
 
         self.rows["sessions"].append(
@@ -1573,6 +1789,11 @@ class _Scanner:
                 document.alias if document is not None else None,
                 document.note if document is not None else None,
                 str(submission_revision) if submission_revision else None,
+                (
+                    str(manifest["execution_id"])
+                    if manifest.get("execution_id")
+                    else None
+                ),
             )
         )
         # The session's declared levels read its own frozen snapshot, so a
@@ -1683,30 +1904,11 @@ class _Scanner:
         if tag_path.exists():
             frozen = load_yaml(tag_path)
             if isinstance(frozen, dict):
-                assignments = frozen.get("assignments")
-                assignments = assignments if isinstance(assignments, Mapping) else {}
-                jobs_assignments = assignments.get("jobs")
-                jobs_assignments = (
-                    jobs_assignments if isinstance(jobs_assignments, Mapping) else {}
+                workflow_pairs, job_pairs, frozen_revision = _frozen_snapshot_pairs(
+                    frozen
                 )
-                frozen_job_tags: dict[str, DeclaredPairs] = {}
-                raw_job_tags = frozen.get("job_tags")
-                if isinstance(raw_job_tags, Mapping):
-                    for name, tags in raw_job_tags.items():
-                        frozen_job_tags[str(name)] = _frozen_assignment_pairs(
-                            jobs_assignments.get(name), tags
-                        )
                 return _SessionSnapshot(
-                    _frozen_assignment_pairs(
-                        assignments.get("workflow"), frozen.get("canonical_tags")
-                    ),
-                    frozen_job_tags,
-                    (
-                        str(frozen["policy_revision"])
-                        if frozen.get("policy_revision") is not None
-                        else None
-                    ),
-                    payload,
+                    workflow_pairs, job_pairs, frozen_revision, payload
                 )
         workflow_tags: DeclaredPairs = [
             (tag, None, None)

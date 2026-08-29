@@ -38,6 +38,7 @@ __all__ = [
     "TagPolicy",
     "canonicalize_tag_list",
     "canonicalize_tag_syntax",
+    "execution_tag_assignment_id",
     "freeze_namespace_rule",
     "freeze_tag_rules",
     "job_tag_assignment_id",
@@ -130,6 +131,19 @@ def workflow_tag_assignment_id(workflow_id: str, revision: str, tag: str) -> str
     colliding with the previous revision's assignments.
     """
     digest = hashlib.sha256(f"workflow:{workflow_id}@{revision}:{tag}".encode())
+    return digest.hexdigest()[:16]
+
+
+def execution_tag_assignment_id(execution_id: str, tag: str) -> str:
+    """Deterministic assignment id of one execution submission tag.
+
+    Same derivation contract as the workflow/job declared ids: the id is a
+    pure function of the execution identity and the canonical tag, so the
+    execution record, the session manifest and the catalog read model all
+    agree on one id without a coordination step, and replacing a queued
+    execution's tags retires the old ids instead of reusing them.
+    """
+    digest = hashlib.sha256(f"execution:{execution_id}:{tag}".encode())
     return digest.hexdigest()[:16]
 
 

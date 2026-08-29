@@ -101,6 +101,8 @@ def _session(
     annotations: dict | None = None,
     start_time: str = "2026-08-26T10:00:00+08:00",
     frozen: dict | None = None,
+    execution_id: str | None = None,
+    submission_tag_assignments: dict | None = None,
 ) -> Path:
     root = project.session_root / "2026" / "08" / session_id
     root.mkdir(parents=True)
@@ -116,6 +118,10 @@ def _session(
     }
     if submission_tag_rules is not None:
         manifest["submission_tag_rules"] = submission_tag_rules
+    if execution_id is not None:
+        manifest["execution_id"] = execution_id
+    if submission_tag_assignments is not None:
+        manifest["submission_tag_assignments"] = submission_tag_assignments
     (root / "session_manifest.json").write_text(
         json.dumps(manifest), encoding="utf-8"
     )
@@ -1454,3 +1460,203 @@ def test_concurrent_reindex_across_processes(tmp_path):
     artifacts = catalog.query(CatalogQuery(object_kind="artifact"))
     assert [row["id"] for row in artifacts] == ["art-1"]
     assert list(project.root.glob(".qphase/*.build")) == []
+
+
+def test_submission_assignment_ids_follow_execution_identity(tmp_path):
+    """Submission tag assignment ids derive from the execution identity.
+
+    The record-persisted mapping, a manifest-persisted mapping and the
+    legacy derive-from-execution-id fallback must all materialize the same
+    assignment id, and the session row must link back to the execution.
+    """
+    from qphase.core.persistence import ProjectStateStore
+    from qphase.core.tags import execution_tag_assignment_id
+
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project)
+    execution_id = "exec01234567"
+    assignment = execution_tag_assignment_id(execution_id, "task:urgent")
+    ProjectStateStore(project).save_execution(
+        {
+            "schema": "qphase.execution/1",
+            "execution_id": execution_id,
+            "source_workflow": "example",
+            "submission_tags": ["task:urgent"],
+            "submission_tag_assignments": {"task:urgent": assignment},
+            "workflow": {"id": "example", "jobs": []},
+            "compiled_workflow": None,
+            "submitted_at": "2026-08-26T09:00:00+08:00",
+            "state": "completed",
+        }
+    )
+    # Current session: the manifest carries the mapping persisted at run time.
+    _session(
+        project,
+        "session-1",
+        submission_tags=("task:urgent",),
+        execution_id=execution_id,
+        submission_tag_assignments={"task:urgent": assignment},
+    )
+    # Legacy session: no persisted mapping; the id derives from the
+    # execution identity and matches the record's mapping exactly.
+    _session(
+        project,
+        "session-2",
+        submission_tags=("task:urgent",),
+        execution_id=execution_id,
+    )
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    execution_tags = {
+        tag.tag: tag
+        for tag in catalog.effective_tags("execution", execution_id)
+    }
+    assert execution_tags["task:urgent"].assignment_id == assignment
+    assert execution_tags["task:urgent"].source == "execution_submission"
+    for session_id in ("session-1", "session-2"):
+        session_tags = {
+            tag.tag: tag
+            for tag in catalog.effective_tags("session", session_id)
+        }
+        tag = session_tags["task:urgent"]
+        assert tag.source == "execution_submission"
+        assert tag.assignment_id == assignment
+        assert tag.inherited
+    rows = catalog.query(CatalogQuery(object_kind="session"))
+    assert {row["id"]: row["execution_id"] for row in rows} == {
+        "session-1": execution_id,
+        "session-2": execution_id,
+    }
+
+
+def test_live_file_tags_follow_current_policy_aliases(tmp_path):
+    """The live workflow file canonicalizes its tags against the policy."""
+    from qphase.core.tags import load_tag_policy, workflow_tag_assignment_id
+
+    project = ProjectContext.create(tmp_path / "project")
+    _write_policy(
+        project,
+        "schema: qphase.tag-policy/1\n"
+        "namespaces:\n"
+        "  task:\n"
+        "    open: true\n"
+        "    aliases:\n"
+        "      old: new\n",
+    )
+    _workflow_file(project, tags=("task:old",))
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    rows = catalog.query(CatalogQuery(object_kind="workflow"))
+    assert len(rows) == 1
+    tags = catalog.effective_tags("workflow", rows[0]["id"])
+    declared = {tag.tag: tag for tag in tags if tag.source == "workflow_declared"}
+    assert set(declared) == {"task:new"}
+    assert declared["task:new"].policy_revision == load_tag_policy(project).revision
+    assert declared["task:new"].assignment_id == workflow_tag_assignment_id(
+        "example", rows[0]["revision"], "task:new"
+    )
+
+
+def _frozen_snapshot(canonical: str, assignment_id: str, policy_revision: str) -> dict:
+    return {
+        "raw_tags": ["task:old"],
+        "canonical_tags": [canonical],
+        "job_tags": {},
+        "policy_revision": policy_revision,
+        "assignments": {
+            "workflow": [
+                {
+                    "tag": canonical,
+                    "assignment_id": assignment_id,
+                    "inherit": True,
+                    "cardinality": "many",
+                    "objects": [],
+                }
+            ],
+            "jobs": {},
+        },
+    }
+
+
+def test_session_only_revision_uses_frozen_snapshot(tmp_path):
+    """A revision seen only in a session keeps its frozen canonical tags."""
+    project = ProjectContext.create(tmp_path / "project")
+    _session(
+        project,
+        "session-1",
+        snapshot_tags=("task:old",),
+        frozen=_frozen_snapshot("task:new", "wf-a1", "pol-1"),
+    )
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    rows = catalog.query(CatalogQuery(object_kind="workflow"))
+    assert len(rows) == 1
+    tags = {tag.tag: tag for tag in catalog.effective_tags("workflow", rows[0]["id"])}
+    assert set(tags) == {"task:new"}
+    assert tags["task:new"].assignment_id == "wf-a1"
+    assert tags["task:new"].policy_revision == "pol-1"
+    assert not tags["task:new"].inherited
+
+
+def test_conflicting_snapshots_fall_back_to_raw_syntax(tmp_path):
+    """Divergent frozen snapshots of one revision never first-source-win.
+
+    Two sessions froze the same workflow document under different policies;
+    with no live file to arbitrate, the revision exposes only the raw
+    syntax tags without policy provenance.
+    """
+    from qphase.core.tags import workflow_tag_assignment_id
+
+    project = ProjectContext.create(tmp_path / "project")
+    _session(
+        project,
+        "session-1",
+        snapshot_tags=("task:old",),
+        frozen=_frozen_snapshot("task:new", "wf-a1", "pol-1"),
+    )
+    _session(
+        project,
+        "session-2",
+        snapshot_tags=("task:old",),
+        frozen=_frozen_snapshot("task:other", "wf-b2", "pol-2"),
+        start_time="2026-08-26T11:00:00+08:00",
+    )
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    rows = catalog.query(CatalogQuery(object_kind="workflow"))
+    assert len(rows) == 1
+    tags = {tag.tag: tag for tag in catalog.effective_tags("workflow", rows[0]["id"])}
+    assert set(tags) == {"task:old"}
+    assert tags["task:old"].policy_revision is None
+    assert tags["task:old"].assignment_id == workflow_tag_assignment_id(
+        "example", rows[0]["revision"], "task:old"
+    )
+    # The sessions keep their own frozen declarations; only the revision
+    # object falls back.
+    session_tags = {
+        tag.tag for tag in catalog.effective_tags("session", "session-2")
+    }
+    assert "task:other" in session_tags
+
+
+def test_live_file_wins_over_divergent_frozen_snapshot(tmp_path):
+    """A present workflow file arbitrates; no raw-syntax fallback happens."""
+    project = ProjectContext.create(tmp_path / "project")
+    _workflow_file(project, tags=("task:new",))
+    _session(
+        project,
+        "session-1",
+        snapshot_tags=("task:new",),
+        frozen=_frozen_snapshot("task:old", "wf-a1", "pol-1"),
+    )
+    catalog = ProjectObjectCatalog(project)
+    catalog.reindex()
+
+    rows = catalog.query(CatalogQuery(object_kind="workflow"))
+    assert len(rows) == 1
+    tags = {tag.tag: tag for tag in catalog.effective_tags("workflow", rows[0]["id"])}
+    assert set(tags) == {"task:new"}

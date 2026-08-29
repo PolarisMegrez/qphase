@@ -1,10 +1,11 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import numpy as np
 import pytest
 from pydantic import BaseModel
 from qphase.core.config import JobConfig, WorkflowSpec
+from qphase.core.project import ProjectContext
 from qphase.core.errors import QPhaseIOError
 from qphase.core.protocols import EngineManifest
 from qphase.core.registry import registry
@@ -77,7 +78,8 @@ def test_scheduler_service_builds_logical_plan_without_creating_session(tmp_path
 
 
 def test_scheduler_service_run_wraps_core_scheduler(tmp_path):
-    system_config = MagicMock(spec=SystemConfig)
+    system_config = _system_config(tmp_path)
+    project = ProjectContext.create(tmp_path / "project")
     job_list = WorkflowSpec(
         schema="qphase.workflow/2",
         id="test-workflow",
@@ -89,16 +91,19 @@ def test_scheduler_service_run_wraps_core_scheduler(tmp_path):
         scheduler = scheduler_cls.return_value
         scheduler.run.return_value = []
         scheduler.session_id = "test-session"
-        scheduler.session_dir = tmp_path / "runs" / "test-session"
+        scheduler.session_dir = project.session_root / "test-session"
 
-        results = SchedulerService(system_config).run(job_list)
+        results = SchedulerService(system_config, project=project).run(job_list)
 
     assert results == []
     scheduler_cls.assert_called_once()
-    scheduler.run.assert_called_once_with(job_list, resume_from=None)
+    scheduler.run.assert_called_once_with(
+        job_list, resume_from=None, compiled_workflow=ANY, execution_id=ANY
+    )
 
 
 def test_scheduler_service_reports_cancelled_session(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
     job_list = WorkflowSpec(
         schema="qphase.workflow/2",
         id="cancelled-workflow",
@@ -110,9 +115,9 @@ def test_scheduler_service_reports_cancelled_session(tmp_path):
         scheduler = scheduler_cls.return_value
         scheduler.run.return_value = [MagicMock(status="cancelled")]
         scheduler.session_id = "cancelled-session"
-        scheduler.session_dir = tmp_path / "runs" / "cancelled-session"
+        scheduler.session_dir = project.session_root / "cancelled-session"
 
-        service = SchedulerService(_system_config(tmp_path))
+        service = SchedulerService(_system_config(tmp_path), project=project)
         service.run(job_list)
 
     assert service.last_session_handle is not None

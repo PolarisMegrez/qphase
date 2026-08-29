@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from qphase.core.catalog import CatalogQuery, ProjectObjectCatalog
 from qphase.core.compiler import WorkflowCompiler
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.errors import QPhaseConfigError
@@ -13,8 +15,10 @@ from qphase.core.persistence import ProjectStateStore
 from qphase.core.progress import ProgressSnapshot
 from qphase.core.project import ProjectContext
 from qphase.core.system_config import SystemConfig
+from qphase.core.tags import execution_tag_assignment_id
 from qphase.service.execution import ExecutionManager
 from qphase.service.models import ExecutionPlan
+from qphase.service.scheduler import SchedulerService
 
 
 def _job(name: str, value: float) -> JobConfig:
@@ -261,5 +265,154 @@ def test_submission_tags_persist_in_execution_record(tmp_path) -> None:
             ]
         finally:
             restored.close()
+    finally:
+        manager.close()
+
+
+def _direct_workflow() -> WorkflowSpec:
+    return WorkflowSpec(
+        schema="qphase.workflow/2",
+        id="direct-run",
+        title="Direct Run",
+        jobs=[JobConfig(name="sim", engine={"dummy": {}})],
+    )
+
+
+def test_direct_run_opens_execution_record_and_links_session(tmp_path) -> None:
+    """A synchronous SchedulerService run owns a full execution record.
+
+    The record precedes the session, the session manifest links back to it,
+    and both persist the same deterministic submission-tag assignment ids.
+    """
+    project = ProjectContext.create(tmp_path / "project")
+    service = SchedulerService(SystemConfig(), project=project)
+    workflow = _direct_workflow()
+
+    results = service.run(workflow, submission_tags=["task:urgent"])
+
+    assert all(result.success for result in results)
+    records = service.state_store.load_executions()
+    assert len(records) == 1
+    record = records[0]
+    assert record["state"] == "completed"
+    handle = service.last_session_handle
+    assert handle is not None and handle.session_dir is not None
+    assert record["session_id"] == handle.session_id
+    manifest = service.state_store.load_session_manifest(Path(handle.session_dir))
+    assert manifest["execution_id"] == record["execution_id"]
+    expected = {
+        "task:urgent": execution_tag_assignment_id(
+            record["execution_id"], "task:urgent"
+        )
+    }
+    assert record["submission_tag_assignments"] == expected
+    assert manifest["submission_tag_assignments"] == expected
+
+    catalog = ProjectObjectCatalog(project)
+    sessions = catalog.query(CatalogQuery(object_kind="session"))
+    assert [row["execution_id"] for row in sessions] == [record["execution_id"]]
+    executions = catalog.query(CatalogQuery(object_kind="execution"))
+    assert [row["id"] for row in executions] == [record["execution_id"]]
+    execution_tags = {
+        tag.tag: tag
+        for tag in catalog.effective_tags("execution", record["execution_id"])
+    }
+    assert execution_tags["task:urgent"].assignment_id == expected["task:urgent"]
+    session_tags = {
+        tag.tag: tag
+        for tag in catalog.effective_tags("session", str(handle.session_id))
+    }
+    assert session_tags["task:urgent"].assignment_id == expected["task:urgent"]
+    assert session_tags["task:urgent"].inherited
+
+
+def test_plan_and_dry_run_create_no_execution_record(tmp_path) -> None:
+    project = ProjectContext.create(tmp_path / "project")
+    service = SchedulerService(SystemConfig(), project=project)
+    workflow = _direct_workflow()
+
+    service.build_plan(workflow)
+    service.dry_run(workflow)
+
+    assert service.state_store.load_executions() == []
+
+
+def test_queued_run_reuses_execution_identity(tmp_path) -> None:
+    """The queued path passes its record identity down to the session.
+
+    Exactly one record exists afterwards: the scheduler service must not
+    open a second execution for the same run.
+    """
+    project = ProjectContext.create(tmp_path / "project")
+    workflow_root = project.workflow_root
+    workflow_root.mkdir(parents=True, exist_ok=True)
+    (workflow_root / "example.yaml").write_text(
+        "schema: qphase.workflow/2\n"
+        "id: example\n"
+        "title: Example\n"
+        "jobs:\n"
+        "  - name: sim\n"
+        "    engine:\n"
+        "      dummy: {}\n",
+        encoding="utf-8",
+    )
+    service = SchedulerService(SystemConfig(), project=project)
+    manager = ExecutionManager(service)
+    try:
+        execution = manager.submit("example", tags=["task:queued"])
+        _wait_for_state(manager, execution.execution_id, "completed")
+    finally:
+        manager.close()
+
+    records = service.state_store.load_executions()
+    assert len(records) == 1
+    record = records[0]
+    assert record["execution_id"] == execution.execution_id
+    assert record["state"] == "completed"
+    assert record["session_dir"] is not None
+    manifest = service.state_store.load_session_manifest(
+        project.session_root / record["session_dir"]
+    )
+    assert manifest["execution_id"] == execution.execution_id
+    expected = {
+        "task:queued": execution_tag_assignment_id(
+            execution.execution_id, "task:queued"
+        )
+    }
+    assert manifest["submission_tag_assignments"] == expected
+    assert record["submission_tag_assignments"] == expected
+
+
+def test_update_submission_tags_regenerates_assignment_ids(tmp_path) -> None:
+    """Replacing queued tags retires old ids and derives fresh ones."""
+    project = ProjectContext.create(tmp_path / "project")
+    scheduler = _BoundaryScheduler()
+    scheduler.project = project
+    scheduler.state_store = ProjectStateStore(project)
+    scheduler.compile_workflow = lambda workflow: WorkflowCompiler(  # type: ignore[method-assign]
+        project, SystemConfig()
+    ).compile(workflow)
+    manager = ExecutionManager(scheduler)  # type: ignore[arg-type]
+    try:
+        blocker = manager.submit("ignored")
+        assert scheduler.first_started.wait(1.0)
+        # The worker is parked inside the first execution, so the queued
+        # record is stable on disk (Windows forbids replace-during-read).
+        execution = manager.submit("ignored", tags=["task:alpha"])
+        manager.update_submission_tags(execution.execution_id, ["task:beta"])
+        payload = next(
+            item
+            for item in scheduler.state_store.load_executions()
+            if item["execution_id"] == execution.execution_id
+        )
+        assert payload["submission_tags"] == ["task:beta"]
+        assert payload["submission_tag_assignments"] == {
+            "task:beta": execution_tag_assignment_id(
+                execution.execution_id, "task:beta"
+            )
+        }
+        scheduler.release_first.set()
+        _wait_for_state(manager, blocker.execution_id, "completed")
+        _wait_for_state(manager, execution.execution_id, "completed")
     finally:
         manager.close()

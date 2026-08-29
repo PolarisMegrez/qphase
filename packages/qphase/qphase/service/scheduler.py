@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -22,7 +23,11 @@ from qphase.core.project import ProjectContext
 from qphase.core.registry import DiscoveryService, RegistryCenter, registry
 from qphase.core.scheduler import JobResult, Scheduler
 from qphase.core.system_config import SystemConfig, load_system_config
-from qphase.core.tags import load_tag_policy, validate_declared_tags
+from qphase.core.tags import (
+    freeze_tag_rules,
+    load_tag_policy,
+    validate_declared_tags,
+)
 from qphase.core.workflow import WorkflowCatalog
 from qphase.data.errors import ArtifactCorruptError
 
@@ -114,6 +119,7 @@ class SchedulerService:
         submission_tags: list[str] | None = None,
         submission_tag_policy_revision: str | None = None,
         submission_tag_rules: dict[str, dict[str, Any]] | None = None,
+        execution_id: str | None = None,
     ) -> list[JobResult]:
         scheduler = Scheduler(
             system_config=self.system_config,
@@ -145,8 +151,36 @@ class SchedulerService:
             )
             if submission_tag_rules is not None:
                 run_kwargs["submission_tag_rules"] = submission_tag_rules
-        results = scheduler.run(workflow, **run_kwargs)
+        # Every real run owns an execution record: queued runs bring their
+        # existing identity, direct runs (CLI) open one here. Plan/dry-run
+        # and resume never create records.
+        execution_payload: dict[str, Any] | None = None
+        if execution_id is None and resume_from is None:
+            execution_payload = self._open_execution(workflow, run_kwargs)
+            execution_id = str(execution_payload["execution_id"])
+        if execution_id is not None:
+            run_kwargs["execution_id"] = execution_id
+        try:
+            results = scheduler.run(workflow, **run_kwargs)
+        except Exception as exc:
+            if execution_payload is not None:
+                self._close_execution(
+                    execution_payload, scheduler, "failed", str(exc)
+                )
+            raise
         statuses = {result.status for result in results}
+        if execution_payload is not None:
+            self._close_execution(
+                execution_payload,
+                scheduler,
+                "failed"
+                if "failed" in statuses
+                else "cancelled"
+                if "cancelled" in statuses
+                else "partial"
+                if "skipped_dependency" in statuses
+                else "completed",
+            )
         self.last_session_handle = SessionHandle(
             session_id=scheduler.session_id,
             session_dir=scheduler.session_dir,
@@ -159,6 +193,75 @@ class SchedulerService:
             else "completed",
         )
         return results
+
+    def _open_execution(
+        self, workflow: WorkflowSpec, run_kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Persist the initial execution record of a direct (non-queued) run.
+
+        Shares the record payload construction with the queued path
+        (:class:`~qphase.service.execution.ExecutionManager`) so both entry
+        points persist the same ``qphase.execution/1`` shape. Late import:
+        the execution service builds on this module.
+        """
+        from datetime import datetime
+
+        from .execution import initial_execution_payload
+
+        policy = load_tag_policy(self.project)
+        tags = run_kwargs.get("submission_tags")
+        if tags is None:
+            tags = validate_declared_tags([], "execution", policy)
+        policy_revision = run_kwargs.get("submission_tag_policy_revision")
+        if policy_revision is None:
+            policy_revision = policy.revision if policy is not None else None
+        rules = run_kwargs.get("submission_tag_rules")
+        if rules is None:
+            rules = freeze_tag_rules(policy, tags)
+        compiled = run_kwargs.get("compiled_workflow")
+        if compiled is None:
+            compiled = self.compile_workflow(workflow)
+            run_kwargs["compiled_workflow"] = compiled
+        payload = initial_execution_payload(
+            execution_id=uuid.uuid4().hex[:12],
+            workflow=workflow,
+            source_workflow=workflow.id,
+            submitted_at=datetime.now().astimezone(),
+            compiled_workflow=compiled,
+            submission_tags=list(tags),
+            tag_policy_revision=policy_revision,
+            submission_tag_rules=rules,
+            state="running",
+        )
+        payload["started_at"] = datetime.now().astimezone().isoformat()
+        self.state_store.save_execution(payload)
+        return payload
+
+    def _close_execution(
+        self,
+        payload: dict[str, Any],
+        scheduler: Scheduler,
+        state: str,
+        error: str | None = None,
+    ) -> None:
+        """Persist the terminal state of a direct run's execution record."""
+        from datetime import datetime
+
+        session_dir = (
+            Path(scheduler.session_dir).resolve()
+            .relative_to(self.project.session_root.resolve())
+            .as_posix()
+            if scheduler.session_dir is not None
+            else None
+        )
+        payload.update(
+            state=state,
+            finished_at=datetime.now().astimezone().isoformat(),
+            session_id=scheduler.session_id,
+            session_dir=session_dir,
+            error=error,
+        )
+        self.state_store.save_execution(payload)
 
     def dry_run(self, workflow: WorkflowSpec) -> ExecutionPlan:
         return self.build_plan(workflow)

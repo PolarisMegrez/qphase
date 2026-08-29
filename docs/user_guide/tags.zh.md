@@ -88,10 +88,19 @@ Tag 从四个 scope 进入系统，按由远到近排列：
 1. **Declared tag**(workflow/job）：写在 workflow YAML 或 job 定义中。
    Workflow 运行时，解析后的 declared tag 会冻结进 session 的
    `workflow_snapshot.yaml` / `tag_snapshot.yaml`——之后再改 workflow 文件
-   不会改写历史。
+   不会改写历史。在 catalog 中，workflow revision 的 declared tag 按来源
+   优先级裁决：当前 workflow 文件在场时胜出（按当前 policy
+   canonicalize）；仅存在于历史 session 中的 revision 保留其冻结 snapshot
+   的 canonical 声明；若同一 revision 的多个冻结 snapshot 互相矛盾，则
+   回退为不带 policy provenance 的原始语法 tag。
 2. **Submission tag**(execution)：提交时给定并连同每个 tag 的最小
-   namespace 规则一起冻结在 execution 记录上。
-   只有 execution 仍在排队时才能编辑（`qphase execution tag`)。
+   namespace 规则一起冻结在 execution 记录上。每次正式运行都拥有一个
+   execution 记录——排队运行（`qphase execution` / GUI）与直接 `qphase
+   run` 皆如此——session manifest 通过 `execution_id` 回链到它。每个
+   submission tag 携带从 execution id 确定性派生的稳定 assignment id，在
+   execution 记录、session manifest 与 catalog 三处一致。
+   只有 execution 仍在排队时才能编辑（`qphase execution tag`)；替换排队中
+   的 tag 会使旧 assignment id 作废。
 3. **共享 annotation**：写进项目内的 annotation 文档
    (`session_annotations.json`、`artifact_annotations.json`、
    `.qphase/project_annotations.json`)。所有打开该项目的人都可见，应当纳入

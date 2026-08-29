@@ -96,11 +96,21 @@ Tags enter the system through four scopes, listed from farthest to nearest:
 1. **Declared tags** (workflow/job): written in the workflow YAML or a job
    definition. When a workflow runs, the resolved declared tags are frozen
    into the session's `workflow_snapshot.yaml` / `tag_snapshot.yaml` — later
-   edits to the workflow file never rewrite history.
+   edits to the workflow file never rewrite history. In the catalog, a
+   workflow revision's declared tags follow a source-priority rule: the live
+   workflow file wins when present (canonicalized against the current
+   policy); a revision seen only in sessions keeps the frozen snapshot's
+   canonical declaration, and conflicting frozen snapshots of the same
+   revision fall back to the raw syntax tags without policy provenance.
 2. **Submission tags** (execution): supplied at submit time and frozen on the
-   execution record together with their minimal namespace rules. They can
-   only be edited while the execution is still queued (`qphase execution
-   tag`).
+   execution record together with their minimal namespace rules. Every real
+   run owns an execution record — queued runs (`qphase execution` / the GUI)
+   and direct `qphase run` invocations alike — and the session manifest
+   links back to it via `execution_id`. Each submission tag carries a stable
+   assignment id derived from the execution id, identical across the record,
+   the session manifest and the catalog. They can only be edited while the
+   execution is still queued (`qphase execution tag`); replacing a queued
+   tag retires its old assignment id.
 3. **Shared annotations**: written to annotation documents inside the project
    (`session_annotations.json`, `artifact_annotations.json`,
    `.qphase/project_annotations.json`). They are shared with everyone who

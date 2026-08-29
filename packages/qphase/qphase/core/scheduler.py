@@ -47,7 +47,7 @@ from .protocols import ResultProtocol
 from .registry import RegistryCenter, registry
 from .result_router import ResultRouter
 from .system_config import SystemConfig, load_system_config
-from .tags import freeze_tag_rules, load_tag_policy
+from .tags import execution_tag_assignment_id, freeze_tag_rules, load_tag_policy
 from .utils import save_yaml
 
 log = get_logger()
@@ -63,9 +63,11 @@ class SessionManifest(TypedDict):
     workflow_hash: str
     start_time: str
     status: str
+    execution_id: str | None
     submission_tags: list[str]
     submission_tag_policy_revision: str | None
     submission_tag_rules: dict[str, dict[str, Any]]
+    submission_tag_assignments: dict[str, str]
     jobs: dict[str, dict[str, Any]]
 
 
@@ -133,6 +135,7 @@ class Scheduler:
         submission_tags: list[str] | None = None,
         submission_tag_policy_revision: str | None = None,
         submission_tag_rules: dict[str, dict[str, Any]] | None = None,
+        execution_id: str | None = None,
     ) -> None:
         """Initialize a new execution session."""
         # Generate session ID
@@ -173,9 +176,21 @@ class Scheduler:
             "workflow_hash": workflow_hash,
             "start_time": datetime.now().isoformat(),
             "status": "running",
+            "execution_id": execution_id,
             "submission_tags": list(submission_tags or []),
             "submission_tag_policy_revision": submission_tag_policy_revision,
             "submission_tag_rules": dict(submission_tag_rules or {}),
+            # Assignment ids derive deterministically from the execution
+            # identity, so the manifest and the execution record always
+            # agree on the same ids without a coordination step.
+            "submission_tag_assignments": (
+                {
+                    tag: execution_tag_assignment_id(execution_id, tag)
+                    for tag in submission_tags or []
+                }
+                if execution_id is not None
+                else {}
+            ),
             "jobs": {},
         }
         self._save_manifest()
@@ -323,6 +338,7 @@ class Scheduler:
         submission_tags: list[str] | None = None,
         submission_tag_policy_revision: str | None = None,
         submission_tag_rules: dict[str, dict[str, Any]] | None = None,
+        execution_id: str | None = None,
     ) -> list[JobResult]:
         """Execute all jobs in the workflow serially.
 
@@ -348,6 +364,10 @@ class Scheduler:
             Frozen minimal namespace rules (inherit/cardinality/objects) of
             ``submission_tags``, snapshotted at submit time. When omitted, the
             rules are frozen from the current policy at session initialization.
+        execution_id : str | None, optional
+            Identity of the execution record that owns this run. Recorded in
+            the session manifest so the catalog can link Session to Execution;
+            submission tag assignment ids derive from it.
 
         Returns
         -------
@@ -420,6 +440,7 @@ class Scheduler:
                 submission_tags,
                 submission_tag_policy_revision,
                 submission_tag_rules,
+                execution_id,
             )
 
         # Seed per-Session Job statuses from the manifest so that Jobs depending
