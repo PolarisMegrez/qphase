@@ -17,12 +17,12 @@ parameters:
   kappa_bright: 1.0
   kappa_dark: 2.5057901369710232e-05
 source_workflows:
-  - collective_loss_kerr_3mode_acn_bcn_figure1_dt_audit.yaml
-  - collective_loss_kerr_3mode_acn_bcn_wmax_extended.yaml
-  - collective_loss_kerr_3mode_figure1_cam.yaml
-  - collective_loss_kerr_3mode_figure1_coherence.yaml
-  - collective_loss_kerr_3mode_figure1_full.yaml
-  - collective_loss_kerr_3mode_figure1b_cam.yaml
+  - reference/acn_bcn/collective_loss_kerr_3mode_acn_bcn_figure1_dt_audit.yaml
+  - reference/acn_bcn/collective_loss_kerr_3mode_acn_bcn_wmax_extended.yaml
+  - reference/acn_bcn/collective_loss_kerr_3mode_figure1_cam.yaml
+  - reference/acn_bcn/collective_loss_kerr_3mode_figure1_coherence.yaml
+  - reference/acn_bcn/collective_loss_kerr_3mode_figure1_full.yaml
+  - reference/acn_bcn/collective_loss_kerr_3mode_figure1b_cam.yaml
 retained_sessions:
   - 2026-08-10T11-49-59_49e039
   - 2026-08-10T13-53-39_d8591b

@@ -17,13 +17,13 @@ parameters:
   kappa_bright: 1.0
   kappa_dark: 0.1775148709287836
 source_workflows:
-  - collective_loss_kerr_3mode_refined_dark_cam_21.yaml
-  - collective_loss_kerr_3mode_refined_dark_medium_21.yaml
-  - collective_loss_kerr_3mode_refined_dark_q0.yaml
-  - collective_loss_kerr_3mode_refined_dark_signed_figure1.yaml
-  - collective_loss_kerr_3mode_refined_dark_signed_rerun.yaml
-  - collective_loss_kerr_3mode_refined_dark_signed_supplement.yaml
-  - collective_loss_kerr_3mode_ridge_psd_26.yaml
+  - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_cam_21.yaml
+  - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_medium_21.yaml
+  - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_q0.yaml
+  - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_signed_figure1.yaml
+  - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_signed_rerun.yaml
+  - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_signed_supplement.yaml
+  - reference/refined_dark/collective_loss_kerr_3mode_ridge_psd_26.yaml
 retained_sessions:
   - 2026-08-20T11-04-09_18d6a9
   - 2026-08-20T11-12-03_ea9bc5
