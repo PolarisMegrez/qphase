@@ -433,9 +433,32 @@ class WorkflowCompiler:
                         f"plugin config for {namespace}:{name} must be a mapping",
                         code=ErrorCode.CONFIG,
                     )
+                if namespace == "model":
+                    self._reject_implicit_model_scan(str(name), values)
                 self.registry.validate_plugin_config(
                     namespace,
                     {"name": str(name), **dict(values)},
+                )
+
+    def _reject_implicit_model_scan(
+        self, plugin_name: str, plugin_config: Mapping[str, Any]
+    ) -> None:
+        """Reject model-field lists that previously implied a scan."""
+        schema = self.registry.get_plugin_schema("model", plugin_name)
+        if schema is None:
+            return
+        for name, value in plugin_config.items():
+            field = schema.model_fields.get(name)
+            extra = field.json_schema_extra if field is not None else None
+            if (
+                isinstance(value, list)
+                and isinstance(extra, dict)
+                and extra.get("scanable")
+            ):
+                raise QPhaseConfigError(
+                    f"model parameter {plugin_name}.{name} uses the removed "
+                    "list-as-scan syntax; define a job scan axis targeting "
+                    f"model.{plugin_name}.{name}"
                 )
 
     def _validate_input(self, job: JobConfig, workflow: WorkflowSpec) -> str | None:

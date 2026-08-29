@@ -193,7 +193,9 @@ def test_reindex_counts_and_rebuild_parity(tmp_path):
     assert stats.artifacts == 2
     assert stats.occurrences == 2
     again = catalog.reindex()
-    assert again == stats.__class__(**{**stats.__dict__, "duration_seconds": again.duration_seconds})
+    assert again == stats.__class__(
+        **{**stats.__dict__, "duration_seconds": again.duration_seconds}
+    )
     rows = catalog.query(CatalogQuery(object_kind="session"))
     assert [row["id"] for row in rows] == ["session-1"]
     projects = catalog.query(CatalogQuery(object_kind="project"))
@@ -1559,7 +1561,13 @@ def test_live_file_tags_follow_current_policy_aliases(tmp_path):
     )
 
 
-def _frozen_snapshot(canonical: str, assignment_id: str, policy_revision: str) -> dict:
+def _frozen_snapshot(
+    canonical: str,
+    assignment_id: str,
+    policy_revision: str,
+    *,
+    inherit: bool = True,
+) -> dict:
     return {
         "raw_tags": ["task:old"],
         "canonical_tags": [canonical],
@@ -1570,7 +1578,7 @@ def _frozen_snapshot(canonical: str, assignment_id: str, policy_revision: str) -
                 {
                     "tag": canonical,
                     "assignment_id": assignment_id,
-                    "inherit": True,
+                    "inherit": inherit,
                     "cardinality": "many",
                     "objects": [],
                 }
@@ -1641,6 +1649,40 @@ def test_conflicting_snapshots_fall_back_to_raw_syntax(tmp_path):
         tag.tag for tag in catalog.effective_tags("session", "session-2")
     }
     assert "task:other" in session_tags
+
+
+@pytest.mark.parametrize("rules_differ", [False, True])
+def test_snapshot_governance_conflicts_are_order_independent(tmp_path, rules_differ):
+    """Policy provenance and frozen rules participate in conflict detection."""
+    for reverse in (False, True):
+        project = ProjectContext.create(tmp_path / f"project-{rules_differ}-{reverse}")
+        snapshots = [
+            _frozen_snapshot("task:new", "wf-a1", "pol-1", inherit=True),
+            _frozen_snapshot(
+                "task:new",
+                "wf-a1",
+                "pol-2",
+                inherit=not rules_differ,
+            ),
+        ]
+        if reverse:
+            snapshots.reverse()
+        for index, frozen in enumerate(snapshots, start=1):
+            _session(
+                project,
+                f"session-{index}",
+                snapshot_tags=("task:old",),
+                frozen=frozen,
+                start_time=f"2026-08-26T1{index}:00:00+08:00",
+            )
+        catalog = ProjectObjectCatalog(project)
+        catalog.reindex()
+
+        row = catalog.query(CatalogQuery(object_kind="workflow"))[0]
+        tags = catalog.effective_tags("workflow", row["id"])
+        assert [(tag.tag, tag.policy_revision) for tag in tags] == [
+            ("task:old", None)
+        ]
 
 
 def test_live_file_wins_over_divergent_frozen_snapshot(tmp_path):

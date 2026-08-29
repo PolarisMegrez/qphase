@@ -10,7 +10,6 @@ from qphase.core.annotations import (
 from qphase.core.errors import QPhaseConfigError
 from qphase.core.project import ProjectContext
 from qphase.core.tags import (
-    TagNamespacePolicy,
     TagPolicy,
     canonicalize_tag_list,
     canonicalize_tag_syntax,

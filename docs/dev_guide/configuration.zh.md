@@ -21,8 +21,13 @@ Project 插件默认值位于 `ProjectContext.defaults_path`。它只补全已�
 3. `load_workflow()` 拒绝旧文档并校验严格 wrapper；
 4. 顶层插件命名空间被提取到 `JobConfig.plugins`；
 5. 合并 Project 默认值与显式 Job 配置；
-6. registry schema 校验每个已选择插件；
-7. scheduler 校验 Engine manifest 与 Job 图。
+6. `WorkflowCompiler` 使用 Project 范围的 `RegistryView` 校验每个已选择插件与
+   Engine manifest；
+7. compiler 校验 Job 图并冻结 `CompiledWorkflow`。
+
+`JobConfig` 只校验版本化文档结构，不访问进程全局插件 registry。插件校验只属于
+`WorkflowCompiler`。因此，控制面新进程恢复已持久化的 `CompiledWorkflow` 时不需要
+再次导入科学插件。
 
 Workflow 禁止未知字段。Job 的 `extra="allow"` 只用于动态插件命名空间；未知的非插件
 字段不得被解释为新 core 行为。

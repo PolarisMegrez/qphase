@@ -211,8 +211,14 @@ def test_occurrence_annotations_are_isolated(tmp_path):
     service.tag_occurrence("session-1", "art-1", add=["purpose:paper/fig3"])
     service.set_occurrence_retention("session-2", "art-1", "pinned")
 
-    first = {tag.tag for tag in service.effective_tags("occurrence", "art-1:session-1:sim")}
-    second = {tag.tag for tag in service.effective_tags("occurrence", "art-1:session-2:sim")}
+    first = {
+        tag.tag
+        for tag in service.effective_tags("occurrence", "art-1:session-1:sim")
+    }
+    second = {
+        tag.tag
+        for tag in service.effective_tags("occurrence", "art-1:session-2:sim")
+    }
     assert "purpose:paper/fig3" in first
     assert "purpose:paper/fig3" not in second
     rows = {

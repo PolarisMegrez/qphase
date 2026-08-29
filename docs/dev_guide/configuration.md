@@ -22,8 +22,14 @@ not activate optional plugin namespaces.
 3. `load_workflow()` rejects legacy documents and validates the strict wrapper.
 4. Top-level plugin namespace blocks are extracted into `JobConfig.plugins`.
 5. Project defaults are merged with explicit Job configuration.
-6. Registry schemas validate each selected plugin.
-7. Scheduler validates the Engine manifest and Job graph.
+6. `WorkflowCompiler` uses its Project-scoped `RegistryView` to validate each
+   selected plugin and the Engine manifest.
+7. The compiler validates the Job graph and freezes a `CompiledWorkflow`.
+
+`JobConfig` validates only the versioned document structure; it never consults
+the process-global plugin registry. Plugin validation belongs exclusively to
+`WorkflowCompiler`. A persisted `CompiledWorkflow` can therefore be restored in
+a clean control-plane process without importing scientific plugins again.
 
 Unknown Workflow fields are forbidden. Job `extra="allow"` exists only because
 plugin namespaces are dynamic; unknown non-plugin fields must not be treated as

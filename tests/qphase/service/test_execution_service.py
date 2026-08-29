@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,7 +20,7 @@ from qphase.core.progress import ProgressSnapshot
 from qphase.core.project import ProjectContext
 from qphase.core.system_config import SystemConfig
 from qphase.core.tags import execution_tag_assignment_id
-from qphase.service.execution import ExecutionManager
+from qphase.service.execution import ExecutionManager, initial_execution_payload
 from qphase.service.models import ExecutionPlan
 from qphase.service.scheduler import SchedulerService
 
@@ -324,6 +328,46 @@ def test_direct_run_opens_execution_record_and_links_session(tmp_path) -> None:
     }
     assert session_tags["task:urgent"].assignment_id == expected["task:urgent"]
     assert session_tags["task:urgent"].inherited
+
+
+def test_gui_restores_cli_execution_in_clean_process(tmp_path) -> None:
+    """Compiled execution recovery must not require a populated global registry."""
+    project = ProjectContext.create(tmp_path / "project")
+    service = SchedulerService(SystemConfig(), project=project)
+    workflow = _direct_workflow()
+    execution_id = "direct-clean-process"
+    payload = initial_execution_payload(
+        execution_id=execution_id,
+        workflow=workflow,
+        source_workflow=workflow.id,
+        submitted_at=datetime.now().astimezone(),
+        compiled_workflow=service.compile_workflow(workflow),
+        submission_tags=[],
+        tag_policy_revision=None,
+        submission_tag_rules={},
+        state="completed",
+    )
+    service.state_store.save_execution(payload)
+
+    script = (
+        "from qphase.gui.application import ApplicationContext\n"
+        "app = ApplicationContext.create()\n"
+        "print(app.executions.list_executions()[0].execution_id)\n"
+        "app.close()\n"
+    )
+    env = dict(os.environ)
+    env["QPHASE_PROJECT"] = str(project.root)
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == execution_id
 
 
 def test_plan_and_dry_run_create_no_execution_record(tmp_path) -> None:

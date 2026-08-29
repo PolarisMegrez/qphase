@@ -4,10 +4,12 @@ from typing import Any
 import numpy as np
 import pytest
 from pydantic import BaseModel
+from qphase.core.compiler import WorkflowCompiler
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.dataset import DatasetSaveReport
 from qphase.core.errors import QPhaseConfigError
 from qphase.core.execution import CheckpointStore, plugin_fingerprint
+from qphase.core.project import ProjectContext
 from qphase.core.protocols import EngineManifest
 from qphase.core.registry import registry
 from qphase.core.scan import ScanSpec
@@ -129,13 +131,22 @@ def test_zipped_scan_rejects_mismatched_lengths():
         spec.compile()
 
 
-def test_job_rejects_legacy_list_scan_syntax():
+def test_job_rejects_legacy_list_scan_syntax(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    workflow = WorkflowSpec(
+        schema="qphase.workflow/2",
+        id="legacy-scan",
+        title="Legacy scan",
+        jobs=[
+            JobConfig(
+                name="legacy",
+                engine={"dummy": {}},
+                plugins={"model": {"dummy": {"param": [1.0, 2.0]}}},
+            )
+        ],
+    )
     with pytest.raises(Exception, match="list-as-scan syntax"):
-        JobConfig(
-            name="legacy",
-            engine={"dummy": {}},
-            plugins={"model": {"dummy": {"param": [1.0, 2.0]}}},
-        )
+        WorkflowCompiler(project, SystemConfig()).compile(workflow)
 
 
 def test_job_rejects_removed_string_input_syntax():

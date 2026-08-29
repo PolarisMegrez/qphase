@@ -222,7 +222,9 @@ def test_project_migrate_dry_run(temp_workspace):
     (root / "session_metadata.json").write_text(
         json.dumps({"alias": "old-run"}), encoding="utf-8"
     )
-    (root / "workflow_snapshot.yaml").write_text("tags: [vdp_2mode]\n", encoding="utf-8")
+    (root / "workflow_snapshot.yaml").write_text(
+        "tags: [vdp_2mode]\n", encoding="utf-8"
+    )
     before = {
         path: path.read_bytes()
         for path in temp_workspace.rglob("*")

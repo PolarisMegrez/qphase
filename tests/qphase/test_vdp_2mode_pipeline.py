@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,22 @@ def vdp_workflow_path():
     if not path.exists():
         pytest.skip("VDP smoke workflow config not found")
     return path
+
+
+@pytest.fixture
+def vdp_cli_project(vdp_workflow_path, temp_project, monkeypatch):
+    """Install the local workflow and models in an isolated CLI project."""
+    shutil.copy2(
+        vdp_workflow_path,
+        temp_project.workflow_root / vdp_workflow_path.name,
+    )
+    shutil.copytree(
+        _repo_root() / "models",
+        temp_project.root / "models",
+        dirs_exist_ok=True,
+    )
+    monkeypatch.setenv("QPHASE_PROJECT", str(temp_project.root))
+    return temp_project
 
 
 def _repo_root() -> Path:
@@ -121,7 +138,7 @@ def test_vdp_2mode_smoke_workflow_scheduler(vdp_workflow_path, temp_project):
             assert row["status"] in {"ok", "low_quality", "failed"}
 
 
-def test_vdp_2mode_smoke_cli_plan(vdp_workflow_path, tmp_path):
+def test_vdp_2mode_smoke_cli_plan(vdp_workflow_path, vdp_cli_project, tmp_path):
     """CLI --plan shows the expanded workflow including analyzer dependencies."""
     _discover_plugins()
     config_path = _write_system_config(tmp_path)
@@ -142,7 +159,7 @@ def test_vdp_2mode_smoke_cli_plan(vdp_workflow_path, tmp_path):
     assert "vdp_2mode_fit_mode1" in targets
 
 
-def test_vdp_2mode_smoke_cli_run(vdp_workflow_path, tmp_path):
+def test_vdp_2mode_smoke_cli_run(vdp_workflow_path, vdp_cli_project, tmp_path):
     """CLI run executes the full pipeline and reports all jobs successful."""
     _discover_plugins()
     config_path = _write_system_config(tmp_path)

@@ -1233,13 +1233,28 @@ class _RevisionTagView:
 
     def signature(
         self,
-    ) -> tuple[tuple[str, ...], tuple[tuple[str, tuple[str, ...]], ...]]:
-        """Canonical tag sets, ignoring provenance, for agreement checks."""
+    ) -> tuple[Any, ...]:
+        """Canonical assignments and frozen governance for agreement checks."""
+        def pairs_signature(pairs: DeclaredPairs) -> tuple[Any, ...]:
+            return tuple(
+                sorted(
+                    (
+                        tag,
+                        assignment_id,
+                        rule.inherit if rule is not None else None,
+                        rule.cardinality if rule is not None else None,
+                        rule.objects if rule is not None else (),
+                    )
+                    for tag, assignment_id, rule in pairs
+                )
+            )
+
         return (
-            tuple(sorted(tag for tag, _, _ in self.workflow_pairs)),
+            self.policy_revision,
+            pairs_signature(self.workflow_pairs),
             tuple(
                 sorted(
-                    (name, tuple(sorted(tag for tag, _, _ in pairs)))
+                    (name, pairs_signature(pairs))
                     for name, pairs in self.job_tags.items()
                 )
             ),

@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 from pydantic import BaseModel
 from qphase.core.config import JobConfig, WorkflowSpec
-from qphase.core.project import ProjectContext
 from qphase.core.errors import QPhaseIOError
+from qphase.core.project import ProjectContext
 from qphase.core.protocols import EngineManifest
 from qphase.core.registry import registry
 from qphase.core.system_config import SystemConfig
