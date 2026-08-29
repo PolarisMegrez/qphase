@@ -18,11 +18,9 @@ description: Catalog、identity 与 annotation 开发契约
 - **Occurrence** 的 identity 是三元组 `artifact_id:session_id:job_name`。
   `session_annotations.json` 内的 occurrence annotation 键为
   `job_name:artifact_id`，因此同一 session 中同一 artifact 的两个
-  occurrence 永不碰撞。旧式的裸 artifact 键属于迁移输入，由
-  `qphase project migrate --dry-run` 标出。
+  occurrence 永不碰撞。
 - `:` 是保留的 identity 分隔符:`JobConfig.name` 与 manifest 的
-  `artifact_id` 在校验时直接拒绝它。既有的含 `:` 的 job 名或 artifact
-  id 属于迁移输入，由 `qphase project migrate --dry-run` 列出。
+  `artifact_id` 在校验时直接拒绝它。
 - **Workflow revision** 的 identity 是 `workflow_id@revision`，其中
   `revision` 是 workflow 文档的内容 hash;**job** 的 identity 扩展为
   `workflow_id@revision:job_name`。revision 由 `configs/workflows` 文件、
@@ -49,8 +47,7 @@ description: Catalog、identity 与 annotation 开发契约
   一个 tag 是删除旧 assignment 并新增一个，因此任何 effective tag 都能引用
   稳定的 `assignment_id`。
 - 设置 session 的 `retention` 时，policy 的 `retention_inherits_to_occurrences`
-  开关会同时冻结进 annotation 文档。缺该字段的旧文档回退当前 policy;Phase 4
-  迁移负责回填（dry-run 会列出数量）。
+  开关会同时冻结进 annotation 文档。缺该字段的旧文档回退当前 policy。
 - Declared tag 没有 annotation 文档；其 assignment id 由声明的 identity 经
   `sha256` 确定性导出，其中包含由共享的
   `qphase.core.workflow.workflow_revision` 计算的 workflow revision。因此

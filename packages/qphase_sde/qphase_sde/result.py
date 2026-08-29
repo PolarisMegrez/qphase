@@ -1,9 +1,10 @@
 """qphase_sde: Simulation Result
 ---------------------------------------------------------
-Container for SDE simulation results, supporting serialization and deserialization.
+Container for SDE simulation results.
 
-``SDEResult`` is the legacy 1.x container, kept for 1.x reproduction and the
-one-way migration tool; the 2.x engine returns :class:`SDEDataBundle`, a
+``SDEResult`` is the legacy-shaped container used by the engine's private
+assembly paths and the ``legacy_result()`` consumption view; the 2.x engine
+returns :class:`SDEDataBundle`, a
 catalog of typed data products plus provenance that satisfies the core
 ``ResultProtocol``/``DatasetResultProtocol`` and the frozen
 :class:`~qphase_sde.contracts.bundle.SDEDataBundleProtocol`.
@@ -25,9 +26,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
-from qphase.backend.xputil import convert_to_numpy
 from qphase.core.dataset import DatasetSaveReport
-from qphase.core.errors import QPhaseError
 from qphase.data import (
     AxisRole,
     AxisSchema,
@@ -127,103 +126,6 @@ class SDEResult:
         if hasattr(self.trajectory, "times"):
             return self.trajectory.times
         return None
-
-    def save(self, path: str | Path) -> None:
-        """Save the result to a file.
-
-        Parameters
-        ----------
-        path : str | Path
-            Path to save the result to.
-
-        """
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Convert trajectory to numpy if possible for storage
-        data_to_save = None
-        if self.trajectory is not None:
-            if hasattr(self.trajectory, "data"):
-                data_to_save = convert_to_numpy(self.trajectory.data)
-            else:
-                data_to_save = convert_to_numpy(self.trajectory)
-
-        # Extract time info if available
-        t0 = getattr(self.trajectory, "t0", self.meta.get("t0", 0.0))
-        dt = getattr(self.trajectory, "dt", self.meta.get("dt", 1.0))
-
-        try:
-            # Wrap meta in object array to allow saving dict in npz
-            # np.savez expects arrays, so we wrap the dict
-            meta_arr = np.array(self.meta, dtype=object)
-            analysis_arr = np.array(self.analysis, dtype=object)
-
-            save_kwargs = {
-                "t0": t0,
-                "dt": dt,
-                "meta": meta_arr,
-                "analysis": analysis_arr,
-                "trajectory_meta": np.array(
-                    getattr(self.trajectory, "meta", {}), dtype=object
-                ),
-            }
-
-            if data_to_save is not None:
-                save_kwargs["data"] = data_to_save
-
-            np.savez_compressed(path, **save_kwargs)
-        except Exception as e:
-            raise QPhaseError(f"Failed to save SDEResult to {path}: {e}") from e
-
-    @classmethod
-    def load(cls, path: str | Path) -> "SDEResult":
-        """Load a result from a file.
-
-        Parameters
-        ----------
-        path : str | Path
-            Path to load the result from.
-
-        Returns
-        -------
-        SDEResult
-            Loaded result object.
-
-        """
-        path = Path(path)
-        if not path.exists():
-            raise QPhaseError(f"File not found: {path}")
-        try:
-            with np.load(path, allow_pickle=True) as npz:
-                data = npz["data"] if "data" in npz else None
-                t0 = float(npz["t0"]) if "t0" in npz else 0.0
-                dt = float(npz["dt"]) if "dt" in npz else 1.0
-                meta = npz["meta"].item() if "meta" in npz else {}
-                analysis = npz["analysis"].item() if "analysis" in npz else {}
-                trajectory_meta = (
-                    npz["trajectory_meta"].item() if "trajectory_meta" in npz else {}
-                )
-
-                traj = None
-                if data is not None:
-                    # Construct a minimal object that mimics TrajectorySet
-                    class MinimalTrajectory:
-                        def __init__(self, data, t0, dt, meta):
-                            self.data = data
-                            self.t0 = t0
-                            self.dt = dt
-                            self.meta = meta
-
-                    traj = MinimalTrajectory(data, t0, dt, trajectory_meta)
-
-                return cls(trajectory=traj, meta=meta, analysis=analysis)
-
-        except Exception as e:
-            raise QPhaseError(f"Failed to load SDEResult from {path}: {e}") from e
-
-
-# Alias for backward compatibility if needed
-SimulationResult = SDEResult
 
 
 # ---------------------------------------------------------------------------
@@ -387,9 +289,7 @@ class SDEDataBundle:
     @property
     def nbytes(self) -> int:
         """Total payload bytes across products (0 where unknown)."""
-        return sum(
-            product.nbytes or 0 for product in self._products.values()
-        )
+        return sum(product.nbytes or 0 for product in self._products.values())
 
     def point_view(self, index: tuple[int, ...]) -> "SDEDataBundle":
         """Per-scan-point view: products lose their scan axis.
@@ -506,9 +406,7 @@ class SDEDataBundle:
             layout=resolved,
             bundle=self.bundle_descriptor,
         )
-        files = tuple(
-            sorted(item for item in Path(path).rglob("*") if item.is_file())
-        )
+        files = tuple(sorted(item for item in Path(path).rglob("*") if item.is_file()))
         return DatasetSaveReport(
             resolved,
             files,
@@ -615,8 +513,11 @@ def _trajectory_product(
             if recorded_array.shape == (fused,):
                 valid = recorded_array.reshape(scan_size, n_traj)
         safe_meta, dropped_meta = _json_safe_meta(
-            {key: value for key, value in trajectory_meta.items()
-             if key not in ("valid_length", "valid_lengths")}
+            {
+                key: value
+                for key, value in trajectory_meta.items()
+                if key not in ("valid_length", "valid_lengths")
+            }
         )
         attributes.update(safe_meta)
         if dropped_meta:
@@ -628,9 +529,7 @@ def _trajectory_product(
         kind=DataKind.TIME_SERIES,
         axes=[
             AxisSchema(name="scan", role=AxisRole.PARAMETER, size=scan_size),
-            AxisSchema(
-                name="trajectory", role=AxisRole.REALIZATION, size=n_traj
-            ),
+            AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=n_traj),
             AxisSchema(
                 name="time",
                 role=AxisRole.COORDINATE,
@@ -677,8 +576,8 @@ def _trajectory_product(
 
     raw_device = getattr(alpha, "device", None)
     device_id = getattr(raw_device, "id", None)
-    device = f"cuda:{device_id}" if device_id is not None else str(
-        raw_device or "unknown"
+    device = (
+        f"cuda:{device_id}" if device_id is not None else str(raw_device or "unknown")
     )
     handles = {
         "alpha": BackendArrayHandle(
@@ -699,12 +598,11 @@ def _analysis_product(
 ) -> Dataset | None:
     """Bridge one legacy analyser payload into a statistics product.
 
-    Migration-only path (``bridge="legacy_analysis/1"``,
-    ``graph_ready=False``): numeric payload leaves become variables over a
+    Fallback path (``bridge="legacy_analysis/1"``, ``graph_ready=False``):
+    numeric payload leaves become variables over a
     parameter scan axis plus open positional index axes. Analysers with a
-    typed product builder never take this path in new 2.x runs; the bridge
-    remains for 1.x artifact migration and as a one-shot diagnostic for
-    analysers not yet migrated. Missing per-point payloads and inconsistent
+    typed product builder never take this path; the bridge covers analysers
+    without a builder. Missing per-point payloads and inconsistent
     per-point keys are rejected; nothing is ever pickled.
     """
     leaves = stack_payload_leaves(name, payload, scan_size=scan_size)
@@ -797,9 +695,7 @@ def legacy_view_from_products(
             )
         per_point = set(product.attributes.get("per_point_meta", ()))
         scan_index = (meta or {}).get("scan_index")
-        for meta_key, meta_value in product.attributes.get(
-            "payload_meta", {}
-        ).items():
+        for meta_key, meta_value in product.attributes.get("payload_meta", {}).items():
             if meta_key in per_point and scan_index is not None:
                 meta_value = list(meta_value)[int(scan_index)]
             _assign_nested(payload, meta_key, meta_value)
@@ -823,9 +719,7 @@ def legacy_view_from_products(
                 f"legacy peak bridge for {source!r} misses payload field {field!r}"
             )
         if field in analysis[source]:
-            raise ValueError(
-                f"legacy peak bridge would overwrite {source!r}.{field}"
-            )
+            raise ValueError(f"legacy peak bridge would overwrite {source!r}.{field}")
         analysis[source][field] = payload[field]
     return SDEResult(trajectory=trajectory, analysis=analysis, meta=dict(meta or {}))
 
@@ -839,23 +733,21 @@ def bundle_from_result(
 ) -> SDEDataBundle:
     """Adapt a legacy SDEResult/SDEScanResult into an SDEDataBundle.
 
-    Transitional Phase 1 adapter applied at the engine's public boundary:
-    private execution paths still assemble legacy results (they migrate fully
-    in Phase 2), while the engine's return value is always a bundle.
+    Adapter applied at the engine's public boundary: private execution paths
+    assemble legacy-shaped results, while the engine's return value is always
+    a bundle.
 
     ``analysers`` maps job-local analyser labels to the analyser instances
     that produced the payloads. An analyser implementing
     :class:`~qphase_sde.contracts.analyser.AnalyserProductBuilderProtocol`
     converts its own payload into graph-ready typed products; payloads of
-    analysers without the hook fall back to the migration-only
+    analysers without the hook fall back to the
     ``legacy_analysis/1`` bridge (``graph_ready=False``).
     """
     grid = getattr(result, "grid", None)
     combined = getattr(result, "combined", result)
     if not isinstance(combined, SDEResult):
-        raise TypeError(
-            f"cannot build an SDEDataBundle from {type(result).__name__}"
-        )
+        raise TypeError(f"cannot build an SDEDataBundle from {type(result).__name__}")
     if grid is not None:
         scan_size = int(grid.size)
         scan_shape = tuple(grid.shape)
@@ -907,11 +799,11 @@ def bundle_from_result(
                             f"analyser product {product_name!r} must be a Dataset"
                         )
                     graph_ready = product.attributes.get("graph_ready") is True
-                    migration_bridge = product.attributes.get("bridge") in {
+                    legacy_bridge = product.attributes.get("bridge") in {
                         "legacy_analysis/1",
                         "legacy_peaks/1",
                     }
-                    if not graph_ready and not migration_bridge:
+                    if not graph_ready and not legacy_bridge:
                         raise TypeError(
                             f"analyser product {product_name!r} is not graph-ready"
                         )
@@ -1080,9 +972,7 @@ class _SDEBundleAdapter:
                 "SDE scan dimension_order entries must be non-empty strings"
             )
         if any(not isinstance(name, str) or not name for name in axes):
-            raise ArtifactCorruptError(
-                "SDE scan axis names must be non-empty strings"
-            )
+            raise ArtifactCorruptError("SDE scan axis names must be non-empty strings")
         if len(set(order)) != len(order) or set(order) != set(axes):
             raise ArtifactCorruptError(
                 "SDE scan shape, dimension_order and axes are inconsistent"
@@ -1142,9 +1032,7 @@ class _SDEBundleAdapter:
                 )
 
         allowed_roles = {"trajectories", "primary_spectrum"}
-        unknown_roles = sorted(
-            set(manifest.bundle.product_roles) - allowed_roles
-        )
+        unknown_roles = sorted(set(manifest.bundle.product_roles) - allowed_roles)
         if unknown_roles:
             raise ArtifactCorruptError(
                 f"SDE bundle contains unknown stable roles {unknown_roles}"
@@ -1153,10 +1041,14 @@ class _SDEBundleAdapter:
         if trajectories is not None:
             schema = entries[trajectories].product_schema
             fields = {variable.name for variable in schema.variables}
-            if schema.kind is not DataKind.TIME_SERIES or not {
-                "alpha",
-                "valid_length",
-            } <= fields:
+            if (
+                schema.kind is not DataKind.TIME_SERIES
+                or not {
+                    "alpha",
+                    "valid_length",
+                }
+                <= fields
+            ):
                 raise ArtifactCorruptError(
                     "SDE trajectories role must reference a trajectory "
                     "time-series product"

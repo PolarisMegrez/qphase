@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
 import pytest
-import yaml
 from qphase.core.catalog import CatalogQuery
 from qphase.core.errors import QPhaseConfigError
 from qphase.core.project import ProjectContext
@@ -37,9 +35,7 @@ def _session(
         "start_time": "2026-08-26T10:00:00+08:00",
         "jobs": {},
     }
-    (root / "session_manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (root / "session_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     for job_name, artifact_id in artifacts:
         job_dir = root / job_name
         job_dir.mkdir()
@@ -58,217 +54,6 @@ def _write_policy(project: ProjectContext, body: str) -> None:
     (project.defaults_path.parent / "tags.yaml").write_text(body, encoding="utf-8")
 
 
-def _legacy_workflow_snapshot(root: Path) -> Path:
-    path = root / "workflow_snapshot.yaml"
-    path.write_text(
-        "schema: qphase.workflow/2\n"
-        "id: example\n"
-        "title: Example\n"
-        "tags: [legacy_model]\n"
-        "jobs:\n"
-        "  - name: sim\n"
-        "    engine: {dummy: {}}\n"
-        "    tags: [temporary]\n",
-        encoding="utf-8",
-    )
-    return path
-
-
-def test_metadata_migration_freezes_tags_and_session_policy(tmp_path):
-    project = ProjectContext.create(tmp_path / "project")
-    root = _session(project, "session-1")
-    source = _legacy_workflow_snapshot(root)
-    _write_policy(
-        project,
-        "schema: qphase.tag-policy/1\n"
-        "namespaces:\n"
-        "  model: {open: true}\n",
-    )
-    service = CatalogService(project, home=tmp_path / "home")
-    manifest = {
-        "schema": "qphase.phase4a-metadata-actions/1",
-        "project_id": project.project_id,
-        "external_snapshot": "snapshot-1",
-        "actions": [
-            {
-                "action": "freeze_legacy_tag_snapshot",
-                "session_id": "session-1",
-                "session_path": root.relative_to(project.root).as_posix(),
-                "expected_source_sha256": hashlib.sha256(
-                    source.read_bytes()
-                ).hexdigest(),
-                "replacements": [
-                    {"raw": "legacy_model", "canonical_tag": "model:legacy"},
-                    {"raw": "temporary", "canonical_tag": None},
-                ],
-            },
-            {
-                "action": "set_session_policy",
-                "session_id": "session-1",
-                "session_path": root.relative_to(project.root).as_posix(),
-                "lifecycle": "superseded",
-                "retention": "transient",
-            },
-        ],
-    }
-
-    counts = service.apply_metadata_migration(manifest)
-
-    assert counts == {"freeze_legacy_tag_snapshot": 1, "set_session_policy": 1}
-    frozen = yaml.safe_load((root / "tag_snapshot.yaml").read_text(encoding="utf-8"))
-    assert frozen["canonical_tags"] == ["model:legacy"]
-    assert frozen["job_tags"] == {"sim": []}
-    annotations = service.state_store.load_session_annotations(root)
-    assert annotations["lifecycle"] == "superseded"
-    assert annotations["retention"] == "transient"
-    assert service.migration_dry_run().invalid_snapshot_tags == []
-
-
-def test_metadata_migration_checks_all_actions_before_writing(tmp_path):
-    project = ProjectContext.create(tmp_path / "project")
-    root = _session(project, "session-1")
-    _legacy_workflow_snapshot(root)
-    service = CatalogService(project, home=tmp_path / "home")
-    manifest = {
-        "schema": "qphase.phase4a-metadata-actions/1",
-        "project_id": project.project_id,
-        "external_snapshot": "snapshot-1",
-        "actions": [
-            {
-                "action": "set_session_policy",
-                "session_id": "session-1",
-                "session_path": root.relative_to(project.root).as_posix(),
-                "lifecycle": "reference",
-                "retention": "pinned",
-            },
-            {
-                "action": "freeze_legacy_tag_snapshot",
-                "session_id": "session-1",
-                "session_path": root.relative_to(project.root).as_posix(),
-                "expected_source_sha256": "wrong",
-                "replacements": [],
-            },
-        ],
-    }
-
-    with pytest.raises(ValueError, match="workflow snapshot changed"):
-        service.apply_metadata_migration(manifest)
-
-    assert not (root / "tag_snapshot.yaml").exists()
-    assert service.state_store.load_session_annotations(root) is None
-
-
-def test_session_relocation_moves_complete_batch_and_reindexes(tmp_path):
-    project = ProjectContext.create(tmp_path / "project")
-    roots = []
-    for day in (1, 2):
-        created = _session(project, f"2026-08-0{day}T10-00-00_a{day}")
-        source = project.session_root / "by_model" / "dummy" / created.name
-        source.parent.mkdir(parents=True, exist_ok=True)
-        created.replace(source)
-        roots.append(source)
-    service = CatalogService(project, home=tmp_path / "home")
-    actions = []
-    for source in roots:
-        files = [path for path in source.rglob("*") if path.is_file()]
-        target = project.session_root / "2026" / "08" / source.name
-        actions.append(
-            {
-                "session_id": source.name,
-                "source": source.relative_to(project.root).as_posix(),
-                "target": target.relative_to(project.root).as_posix(),
-                "expected_manifest_sha256": hashlib.sha256(
-                    (source / "session_manifest.json").read_bytes()
-                ).hexdigest(),
-                "expected_file_count": len(files),
-                "expected_byte_count": sum(path.stat().st_size for path in files),
-            }
-        )
-    manifest = {
-        "schema": "qphase.phase4c-session-relocation/1",
-        "project_id": project.project_id,
-        "external_snapshot": "snapshot-1",
-        "actions": actions,
-    }
-
-    assert service.apply_session_relocation(manifest) == {"relocated_sessions": 2}
-    for action in actions:
-        assert not (project.root / action["source"]).exists()
-        assert (project.root / action["target"] / "session_manifest.json").exists()
-    assert len(service.query(CatalogQuery(object_kind="session"))) == 2
-
-
-def test_session_relocation_preflights_all_targets_before_moving(tmp_path):
-    project = ProjectContext.create(tmp_path / "project")
-    created = _session(project, "2026-08-01T10-00-00_a1")
-    source = project.session_root / "by_model" / "dummy" / created.name
-    source.parent.mkdir(parents=True, exist_ok=True)
-    created.replace(source)
-    target = project.session_root / "2026" / "08" / source.name
-    target.mkdir(parents=True)
-    files = [path for path in source.rglob("*") if path.is_file()]
-    service = CatalogService(project, home=tmp_path / "home")
-    manifest = {
-        "schema": "qphase.phase4c-session-relocation/1",
-        "project_id": project.project_id,
-        "external_snapshot": "snapshot-1",
-        "actions": [
-            {
-                "session_id": source.name,
-                "source": source.relative_to(project.root).as_posix(),
-                "target": target.relative_to(project.root).as_posix(),
-                "expected_manifest_sha256": hashlib.sha256(
-                    (source / "session_manifest.json").read_bytes()
-                ).hexdigest(),
-                "expected_file_count": len(files),
-                "expected_byte_count": sum(path.stat().st_size for path in files),
-            }
-        ],
-    }
-
-    with pytest.raises(ValueError, match="precondition failed"):
-        service.apply_session_relocation(manifest)
-
-    assert source.exists()
-
-
-def test_session_deletion_rejects_retained_and_deletes_approved(tmp_path):
-    project = ProjectContext.create(tmp_path / "project")
-    approved = _session(project, "session-approved")
-    retained = _session(project, "session-retained")
-    service = CatalogService(project, home=tmp_path / "home")
-    service.set_session_retention("session-retained", "pinned")
-
-    def action(path: Path) -> dict:
-        files = [item for item in path.rglob("*") if item.is_file()]
-        return {
-            "session_id": path.name,
-            "path": path.relative_to(project.root).as_posix(),
-            "expected_manifest_sha256": hashlib.sha256(
-                (path / "session_manifest.json").read_bytes()
-            ).hexdigest(),
-            "expected_file_count": len(files),
-            "expected_byte_count": sum(item.stat().st_size for item in files),
-        }
-
-    base = {
-        "schema": "qphase.phase4d-session-deletion/1",
-        "project_id": project.project_id,
-        "external_snapshot": "snapshot-1",
-    }
-    with pytest.raises(ValueError, match="retention forbids deletion"):
-        service.apply_session_deletion({**base, "actions": [action(retained)]})
-    assert retained.exists()
-
-    result = service.apply_session_deletion(
-        {**base, "actions": [action(approved)]}
-    )
-    assert result["deleted_sessions"] == 1
-    assert result["deleted_bytes"] > 0
-    assert not approved.exists()
-    assert retained.exists()
-
-
 def test_tag_session_roundtrip_visible_in_query(tmp_path):
     project = ProjectContext.create(tmp_path / "project")
     _session(project, "session-1")
@@ -284,9 +69,10 @@ def test_tag_session_roundtrip_visible_in_query(tmp_path):
 
     service.tag_session("session-1", remove=["task:scan"])
 
-    assert service.query(
-        CatalogQuery(object_kind="session", tags_all=("task:scan",))
-    ) == []
+    assert (
+        service.query(CatalogQuery(object_kind="session", tags_all=("task:scan",)))
+        == []
+    )
     assert service.effective_tags("session", "session-1") == []
 
 
@@ -304,9 +90,9 @@ def test_session_lifecycle_and_retention_roundtrip(tmp_path):
 
     service.set_session_lifecycle("session-1", None)
 
-    assert service.query(
-        CatalogQuery(object_kind="session", lifecycle="reference")
-    ) == []
+    assert (
+        service.query(CatalogQuery(object_kind="session", lifecycle="reference")) == []
+    )
 
 
 def test_session_retention_freezes_inheritance_flag(tmp_path):
@@ -367,40 +153,11 @@ def test_legacy_retention_document_falls_back_to_current_policy(tmp_path):
     assert row.facets["effective_retention"] is None
 
 
-def test_migration_dry_run_counts_missing_retention_inheritance(tmp_path):
-    project = ProjectContext.create(tmp_path / "project")
-    root = _session(project, "session-1")
-    (root / "session_annotations.json").write_text(
-        json.dumps(
-            {
-                "schema": "qphase.session-annotations/1",
-                "project_id": project.project_id,
-                "session_id": "session-1",
-                "revision": 0,
-                "retention": "evidence",
-            }
-        ),
-        encoding="utf-8",
-    )
-    service = CatalogService(project, home=tmp_path / "home")
-
-    report = service.migration_dry_run()
-    assert report.sessions_missing_retention_inheritance == 1
-
-    # Rewriting the retention through the service freezes the flag.
-    service.set_session_retention("session-1", "evidence")
-    report = service.migration_dry_run()
-    assert report.sessions_missing_retention_inheritance == 0
-
-
 def test_policy_rejects_illegal_tag_value(tmp_path):
     project = ProjectContext.create(tmp_path / "project")
     _write_policy(
         project,
-        "schema: qphase.tag-policy/1\n"
-        "namespaces:\n"
-        "  stage:\n"
-        "    values: [q1, q2]\n",
+        "schema: qphase.tag-policy/1\nnamespaces:\n  stage:\n    values: [q1, q2]\n",
     )
     _session(project, "session-1")
     service = CatalogService(project)
@@ -425,18 +182,15 @@ def test_occurrence_annotations_are_isolated(tmp_path):
     service.set_occurrence_retention("session-2", "art-1", "pinned")
 
     first = {
-        tag.tag
-        for tag in service.effective_tags("occurrence", "art-1:session-1:sim")
+        tag.tag for tag in service.effective_tags("occurrence", "art-1:session-1:sim")
     }
     second = {
-        tag.tag
-        for tag in service.effective_tags("occurrence", "art-1:session-2:sim")
+        tag.tag for tag in service.effective_tags("occurrence", "art-1:session-2:sim")
     }
     assert "purpose:paper/fig3" in first
     assert "purpose:paper/fig3" not in second
     rows = {
-        row.id: row
-        for row in service.query(CatalogQuery(object_kind="occurrence"))
+        row.id: row for row in service.query(CatalogQuery(object_kind="occurrence"))
     }
     assert rows["art-1:session-1:sim"].facets["retention"] is None
     assert rows["art-1:session-2:sim"].facets["retention"] == "pinned"
@@ -452,9 +206,7 @@ def test_artifact_tag_and_lifecycle_roundtrip(tmp_path):
 
     updated = service.set_artifact_lifecycle("art-1", "archived")
     assert updated.facets["lifecycle"] == "archived"
-    rows = service.query(
-        CatalogQuery(object_kind="artifact", lifecycle="archived")
-    )
+    rows = service.query(CatalogQuery(object_kind="artifact", lifecycle="archived"))
     assert [row.id for row in rows] == ["art-1"]
 
 
@@ -487,9 +239,7 @@ def test_revision_conflict_surfaces_as_runtime_error(tmp_path, monkeypatch):
         original(session_dir, document, expected_revision=expected_revision)
         return original(session_dir, document, expected_revision=expected_revision)
 
-    monkeypatch.setattr(
-        service.state_store, "save_session_annotations", interfering
-    )
+    monkeypatch.setattr(service.state_store, "save_session_annotations", interfering)
     with pytest.raises(RuntimeError, match="annotation revision conflict"):
         service.tag_session("session-1", add=["task:b"])
 
@@ -516,9 +266,9 @@ def test_private_tags_overlay_shared_without_reindex(tmp_path):
     assert [item["tag"] for item in document["assignments"]] == ["task:scan"]
 
     service.tag_session("session-1", remove=["task:wip"], private=True)
-    assert {
-        tag.tag for tag in service.effective_tags("session", "session-1")
-    } == {"task:scan"}
+    assert {tag.tag for tag in service.effective_tags("session", "session-1")} == {
+        "task:scan"
+    }
 
 
 def test_private_tag_shadows_shared_in_cardinality_one_namespace(tmp_path):
@@ -567,9 +317,7 @@ def test_promote_occurrence_tag(tmp_path):
     service = CatalogService(project, home=tmp_path / "home")
 
     service.tag_occurrence("session-1", "art-1", add=["purpose:draft"], private=True)
-    promoted = service.promote_tag(
-        "occurrence", "art-1:session-1:sim", "purpose:draft"
-    )
+    promoted = service.promote_tag("occurrence", "art-1:session-1:sim", "purpose:draft")
 
     tags = {tag.tag: tag for tag in promoted}
     assert tags["purpose:draft"].source == "occurrence_annotation"
@@ -586,9 +334,7 @@ def test_saved_views_roundtrip(tmp_path):
 
     views = service.list_views()
     assert [name for name, _ in views] == ["review"]
-    assert views[0][1] == CatalogQuery(
-        object_kind="session", tags_all=("task:scan",)
-    )
+    assert views[0][1] == CatalogQuery(object_kind="session", tags_all=("task:scan",))
 
     service.delete_view("review")
     assert service.list_views() == []
@@ -644,12 +390,8 @@ def test_virtual_folders(tmp_path):
         "s-pinned",
     ]
     assert [row.id for row in service.virtual_folder("diagnostics")] == ["s-diag"]
-    assert [row.id for row in service.virtual_folder("superseded")] == [
-        "s-superseded"
-    ]
-    assert [row.id for row in service.virtual_folder("cold-storage")] == [
-        "s-archived"
-    ]
+    assert [row.id for row in service.virtual_folder("superseded")] == ["s-superseded"]
+    assert [row.id for row in service.virtual_folder("cold-storage")] == ["s-archived"]
     with pytest.raises(KeyError, match="unknown virtual folder"):
         service.virtual_folder("nope")
 
@@ -680,85 +422,6 @@ def test_virtual_folder_is_not_limited_to_default_query_page(tmp_path):
 
 def _snapshot_files(root: Path) -> dict[Path, bytes]:
     return {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
-
-
-def test_migration_dry_run_writes_nothing(tmp_path):
-    project = ProjectContext.create(tmp_path / "project")
-    root = _session(
-        project,
-        "session-legacy",
-        legacy_metadata={"alias": "old-run", "note": "from v1"},
-    )
-    _session(project, "session-plain")
-    _session(project, "session-annotated")
-    (project.session_root / "2026" / "08" / "session-annotated"
-     / "session_annotations.json").write_text(
-        json.dumps(
-            {
-                "schema": "qphase.session-annotations/1",
-                "project_id": project.project_id,
-                "session_id": "session-annotated",
-                "revision": 0,
-            }
-        ),
-        encoding="utf-8",
-    )
-    before = _snapshot_files(project.root)
-
-    report = CatalogService(project, home=tmp_path / "home").migration_dry_run()
-
-    assert _snapshot_files(project.root) == before
-    assert not (root / "session_annotations.json").exists()
-    assert not (project.root / ".qphase").exists()
-    assert report.sessions_total == 3
-    assert [item.session_id for item in report.legacy_metadata_imports] == [
-        "session-legacy"
-    ]
-    assert report.untouched_sessions == 1
-
-
-def test_migration_dry_run_preview_matches_real_seed(tmp_path):
-    project = ProjectContext.create(tmp_path / "project")
-    root = _session(
-        project,
-        "session-legacy",
-        legacy_metadata={"alias": "old-run", "note": "from v1"},
-    )
-    service = CatalogService(project, home=tmp_path / "home")
-
-    (item,) = service.migration_dry_run().legacy_metadata_imports
-
-    seeded = ProjectService(project).new_session_annotations(root, "session-legacy")
-    assert item.alias == seeded.alias == "old-run"
-    assert item.note == seeded.note == "from v1"
-    assert item.path == "2026/08/session-legacy"
-
-
-def test_migration_dry_run_lists_invalid_snapshot_tags(tmp_path):
-    project = ProjectContext.create(tmp_path / "project")
-    root = _session(project, "session-1")
-    (root / "workflow_snapshot.yaml").write_text(
-        "schema: qphase.workflow/2\n"
-        "id: example\n"
-        "tags:\n"
-        "  - vdp_2mode\n"
-        "  - task:scan\n"
-        "jobs:\n"
-        "  - name: sim\n"
-        "    tags:\n"
-        "      - Cam\n"
-        "      - method:cam\n",
-        encoding="utf-8",
-    )
-    service = CatalogService(project, home=tmp_path / "home")
-
-    report = service.migration_dry_run()
-
-    invalid = {(item.tag, item.source) for item in report.invalid_snapshot_tags}
-    assert invalid == {("vdp_2mode", "workflow"), ("Cam", "sim")}
-    assert all(
-        item.session_id == "session-1" for item in report.invalid_snapshot_tags
-    )
 
 
 def test_tag_artifact_never_touches_manifest_or_payload(tmp_path):
@@ -822,18 +485,14 @@ def test_occurrence_mutation_requires_job_name_when_ambiguous(tmp_path):
     with pytest.raises(ValueError, match="ambiguous occurrence"):
         service.set_occurrence_retention("session-1", "art-1", "pinned")
 
-    service.tag_occurrence(
-        "session-1", "art-1", job_name="fit", add=["purpose:draft"]
-    )
+    service.tag_occurrence("session-1", "art-1", job_name="fit", add=["purpose:draft"])
     service.set_occurrence_retention("session-1", "art-1", "pinned", job_name="fit")
 
     sim_tags = {
-        tag.tag
-        for tag in service.effective_tags("occurrence", "art-1:session-1:sim")
+        tag.tag for tag in service.effective_tags("occurrence", "art-1:session-1:sim")
     }
     fit_tags = {
-        tag.tag
-        for tag in service.effective_tags("occurrence", "art-1:session-1:fit")
+        tag.tag for tag in service.effective_tags("occurrence", "art-1:session-1:fit")
     }
     assert "purpose:draft" not in sim_tags
     assert "purpose:draft" in fit_tags
@@ -865,9 +524,7 @@ def test_artifact_mutation_rejects_multiple_locations(tmp_path):
 def test_location_issues_passthrough(tmp_path):
     project = ProjectContext.create(tmp_path / "project")
     root = _session(project, "session-1", artifacts=(("sim", "art-1"),))
-    (root / "sim" / "artifact_manifest.json").write_text(
-        "{not json", encoding="utf-8"
-    )
+    (root / "sim" / "artifact_manifest.json").write_text("{not json", encoding="utf-8")
     service = CatalogService(project, home=tmp_path / "home")
 
     (issue,) = service.location_issues()
@@ -915,9 +572,9 @@ def test_private_query_respects_cardinality_one_shadowing(tmp_path):
     service.tag_session("session-1", add=["stage:q2"], private=True)
 
     # The private assignment shadows the shared one in this user's view.
-    assert service.query(
-        CatalogQuery(object_kind="session", tags_all=("stage:q1",))
-    ) == []
+    assert (
+        service.query(CatalogQuery(object_kind="session", tags_all=("stage:q1",))) == []
+    )
     rows = service.query(CatalogQuery(object_kind="session", tags_all=("stage:q2",)))
     assert [row.id for row in rows] == ["session-1"]
 
@@ -1060,172 +717,6 @@ def test_private_tags_overlay_and_promote_on_new_kinds(tmp_path):
         assert service.private.list_private_tags(kind, object_id) == []
 
 
-def test_migration_dry_run_occurrence_key_preview(tmp_path):
-    """Legacy bare-artifact occurrence keys are classified for conversion."""
-    project = ProjectContext.create(tmp_path / "project")
-    root = _session(
-        project,
-        "session-1",
-        artifacts=(("sim", "art-1"), ("fit", "art-2"), ("fit2", "art-2")),
-    )
-    (root / "session_annotations.json").write_text(
-        json.dumps(
-            {
-                "schema": "qphase.session-annotations/1",
-                "project_id": project.project_id,
-                "session_id": "session-1",
-                "revision": 0,
-                "occurrences": {
-                    "art-1": {"assignments": []},
-                    "art-2": {"assignments": []},
-                    "sim:art-1": {"assignments": []},
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    report = CatalogService(project, home=tmp_path / "home").migration_dry_run()
-
-    assert [
-        (item.old_key, item.new_key) for item in report.convertible_occurrence_keys
-    ] == [("art-1", "sim:art-1")]
-    (ambiguous,) = report.ambiguous_occurrence_keys
-    assert ambiguous.session_id == "session-1"
-    assert ambiguous.old_key == "art-2"
-    assert ambiguous.locations == ["fit", "fit2"]
-
-
-def test_migration_dry_run_duplicate_artifacts(tmp_path):
-    """One artifact identity at two locations is listed; facet drift conflicts."""
-    project = ProjectContext.create(tmp_path / "project")
-    _session(project, "session-1", artifacts=(("sim", "art-dup"),))
-    second = _session(project, "session-2", artifacts=(("sim", "art-dup"),))
-    # Same id but divergent identity facets -> conflict location issue.
-    manifest_path = second / "sim" / "artifact_manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["created_at"] = "2026-08-27T00:00:00+08:00"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-
-    report = CatalogService(project, home=tmp_path / "home").migration_dry_run()
-
-    (duplicate,) = report.duplicate_artifacts
-    assert duplicate.artifact_id == "art-dup"
-    assert duplicate.locations == [
-        "2026/08/session-1/sim",
-        "2026/08/session-2/sim",
-    ]
-    assert duplicate.conflict
-    assert report.location_issues_by_kind == {"conflict": 1}
-
-
-def test_migration_dry_run_provenance_counts(tmp_path):
-    """Assignments frozen without a policy revision are counted per scope."""
-    project = ProjectContext.create(tmp_path / "project")
-    root = _session(project, "session-1", artifacts=(("sim", "art-1"),))
-    (root / "session_annotations.json").write_text(
-        json.dumps(
-            {
-                "schema": "qphase.session-annotations/1",
-                "project_id": project.project_id,
-                "session_id": "session-1",
-                "revision": 0,
-                "assignments": [
-                    {"tag": "task:a", "policy_revision": "rev-1"},
-                    {"tag": "task:b"},
-                ],
-                "occurrences": {"sim:art-1": {"assignments": [{"tag": "task:c"}]}},
-            }
-        ),
-        encoding="utf-8",
-    )
-    (root / "sim" / "artifact_annotations.json").write_text(
-        json.dumps(
-            {
-                "schema": "qphase.artifact-annotations/1",
-                "project_id": project.project_id,
-                "artifact_id": "art-1",
-                "revision": 0,
-                "assignments": [{"tag": "method:cam"}],
-            }
-        ),
-        encoding="utf-8",
-    )
-    qphase_dir = project.root / ".qphase"
-    qphase_dir.mkdir(exist_ok=True)
-    (qphase_dir / "project_annotations.json").write_text(
-        json.dumps(
-            {
-                "schema": "qphase.project-annotations/1",
-                "project_id": project.project_id,
-                "revision": 0,
-                "assignments": [{"tag": "task:p"}],
-                "objects": {
-                    "example@deadbeef": {"assignments": [{"tag": "task:w"}]},
-                    "example@deadbeef:sim": {"assignments": [{"tag": "task:j"}]},
-                    "exec-1": {"assignments": [{"tag": "task:e"}]},
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    report = CatalogService(project, home=tmp_path / "home").migration_dry_run()
-
-    assert report.assignments_without_policy_revision == {
-        "session": 1,
-        "occurrence": 1,
-        "artifact": 1,
-        "project": 1,
-        "workflow": 1,
-        "job": 1,
-        "execution": 1,
-    }
-
-
-def test_migration_dry_run_reindex_parity_and_zero_writes(tmp_path):
-    """Parity reports absent, then in sync; the project gains no files."""
-    project = ProjectContext.create(tmp_path / "project")
-    _workflow_file(project)
-    _session(project, "session-1", artifacts=(("sim", "art-1"),))
-    service = CatalogService(project, home=tmp_path / "home")
-
-    report = service.migration_dry_run()
-
-    assert report.catalog_drift is None
-    assert report.rebuildable_workflow_revisions == 1
-    assert report.rebuildable_jobs == 1
-    assert report.object_counts == {
-        "project": 1,
-        "workflow": 1,
-        "job": 1,
-        "execution": 0,
-        "session": 1,
-        "artifact": 1,
-        "occurrence": 1,
-    }
-
-    service.reindex()
-    before = _snapshot_files(project.root)
-    report = service.migration_dry_run()
-    assert report.catalog_drift is False
-    assert report.catalog_drift_tables == {}
-    assert _snapshot_files(project.root) == before
-
-
-def test_migration_dry_run_detects_catalog_drift(tmp_path):
-    """Disk truth newer than the on-disk catalog is reported as drift."""
-    project = ProjectContext.create(tmp_path / "project")
-    _session(project, "session-1")
-    service = CatalogService(project, home=tmp_path / "home")
-    service.reindex()
-    _session(project, "session-2")  # disk truth moved; catalog not rebuilt
-
-    report = service.migration_dry_run()
-
-    assert report.catalog_drift is True
-
-
 def test_catalog_fresh_after_direct_session_alias_write(tmp_path):
     """A ProjectService alias write (no service reindex) shows in the next query."""
     project = ProjectContext.create(tmp_path / "project")
@@ -1259,52 +750,6 @@ def test_catalog_fresh_after_project_move(tmp_path):
 
     assert row.id == project.project_id
     assert row.facets["root"] == str(moved.root)
-
-
-def test_migration_dry_run_locates_drift_table(tmp_path):
-    """A tampered catalog row is drift, attributed to its table."""
-    import sqlite3
-
-    project = ProjectContext.create(tmp_path / "project")
-    _session(project, "session-1")
-    service = CatalogService(project, home=tmp_path / "home")
-    service.reindex()
-    connection = sqlite3.connect(service.catalog.path)
-    with connection:
-        connection.execute(
-            "UPDATE sessions SET alias = 'tampered' WHERE id = 'session-1'"
-        )
-    connection.close()
-
-    report = service.migration_dry_run()
-
-    assert report.catalog_drift is True
-    assert report.catalog_drift_tables == {"sessions": 2}
-
-
-def test_migration_dry_run_detects_duplicate_rows(tmp_path):
-    """A duplicated catalog row is drift even under set semantics."""
-    import sqlite3
-
-    project = ProjectContext.create(tmp_path / "project")
-    _session(project, "session-1")
-    service = CatalogService(project, home=tmp_path / "home")
-    service.tag_session("session-1", add=["task:scan"])
-    connection = sqlite3.connect(service.catalog.path)
-    with connection:
-        row = connection.execute(
-            "SELECT * FROM effective_tags LIMIT 1"
-        ).fetchone()
-        connection.execute(
-            "INSERT INTO effective_tags VALUES (?, ?, ?, ?, ?, ?, ?, ?)", row
-        )
-    connection.close()
-
-    report = service.migration_dry_run()
-
-    assert report.catalog_drift is True
-    assert report.catalog_drift_tables == {"effective_tags": 1}
-
 
 
 def test_assignments_freeze_the_namespace_rule(tmp_path):
@@ -1356,31 +801,6 @@ def test_assignments_freeze_the_namespace_rule(tmp_path):
     assert catalog.effective_tags("occurrence", "art-1:session-1:sim") == []
 
 
-
-def test_migration_dry_run_lists_id_separator_violations(tmp_path):
-    project = ProjectContext.create(tmp_path / "project")
-    root = _session(project, "session-1", artifacts=(("sim", "art:1"),))
-    snapshot = {
-        "schema": "qphase.workflow/2",
-        "id": "example",
-        "title": "Example",
-        "jobs": [{"name": "sim:bad", "engine": {"dummy": {}}}],
-    }
-    (root / "workflow_snapshot.yaml").write_text(
-        json.dumps(snapshot), encoding="utf-8"
-    )
-    service = CatalogService(project, home=tmp_path / "home")
-
-    report = service.migration_dry_run()
-
-    violations = {
-        (item.object_kind, item.value) for item in report.id_separator_violations
-    }
-    assert ("job", "sim:bad") in violations
-    assert ("artifact", "art:1") in violations
-
-
-
 def test_private_query_paginates_candidates_in_batches(tmp_path, monkeypatch):
     project = ProjectContext.create(tmp_path / "project")
     for index in range(5):
@@ -1408,23 +828,6 @@ def test_private_query_paginates_candidates_in_batches(tmp_path, monkeypatch):
     assert batches == [2, 2, 1]
     # The caller's offset/limit apply after the merged filtering.
     rows = service.query(
-        CatalogQuery(
-            object_kind="session", tags_all=("task:scan",), offset=1, limit=1
-        )
+        CatalogQuery(object_kind="session", tags_all=("task:scan",), offset=1, limit=1)
     )
     assert [row.id for row in rows] == ["session-4"]
-
-
-
-def test_migration_dry_run_lists_invalid_annotations(tmp_path):
-    project = ProjectContext.create(tmp_path / "project")
-    root = _session(project, "session-1")
-    (root / "session_annotations.json").write_text("{not json", encoding="utf-8")
-    service = CatalogService(project, home=tmp_path / "home")
-
-    report = service.migration_dry_run()
-
-    assert [item.path for item in report.invalid_annotations] == [
-        "2026/08/session-1/session_annotations.json"
-    ]
-    assert "invalid annotation document" in report.invalid_annotations[0].error

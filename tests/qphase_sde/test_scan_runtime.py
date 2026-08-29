@@ -5,15 +5,17 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.progress import ProgressReporter
 from qphase.core.scan import ScanSpec
+from qphase.data import load_bundle
 from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
 from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyzer
 from qphase_sde.analyser.lorentz_fitter import _load_input
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyzer
 from qphase_sde.analyser.result import AnalysisResult
+from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
-from qphase_sde.result import SDEResult
+from qphase_sde.result import SDEResult, bundle_from_result
 from qphase_sde.runtime.scan import SDEScanResult
 
 
@@ -106,9 +108,7 @@ def test_sde_engine_adapts_parameter_grid_to_existing_fused_path():
         },
     )
 
-    result = engine.run(
-        context=SimpleNamespace(parameter_grid=_grid(), progress=None)
-    )
+    result = engine.run(context=SimpleNamespace(parameter_grid=_grid(), progress=None))
 
     assert isinstance(result, DatasetResultProtocol)
     assert result.shape == (2,)
@@ -204,7 +204,7 @@ def test_sde_scan_rng_is_independent_of_tile_size():
     np.testing.assert_array_equal(means_one, means_two)
 
 
-def test_sde_scan_result_saves_finite_shards(tmp_path):
+def test_scan_bundle_saves_finite_shards(tmp_path):
     combined = SDEResult(
         trajectory=SimpleNamespace(
             data=np.zeros((8, 3, 1)),
@@ -224,29 +224,32 @@ def test_sde_scan_result_saves_finite_shards(tmp_path):
             }
         }
     ).compile()
-    result = SDEScanResult(combined, grid, {"rate": 1.0}, 2)
+    scan_result = SDEScanResult(combined, grid, {"rate": 1.0}, 2)
+    bundle = bundle_from_result(scan_result, provenance=SDEProvenance(dt=0.1))
 
-    report = result.save_dataset(
+    report = bundle.save_dataset(
         tmp_path / "sde",
         layout="sharded",
-        shard_target_bytes=result.nbytes // 2,
+        shard_target_bytes=1,
     )
 
     assert report.layout == "sharded"
-    assert len(report.files) == 2
-    loaded = SDEScanResult.load_dataset(tmp_path / "sde")
+    assert len(report.files) > 1
+    loaded = load_bundle(tmp_path / "sde")
     assert loaded.shape == (4,)
-    assert loaded.point_view((3,)).meta["params"]["rate"] == 4.0
+    assert loaded.point_view((3,)).metadata["scan_point"]["rate"] == 4.0
 
 
 def test_lorentz_loader_consumes_sde_dataset_views():
     combined = SDEResult(
         trajectory=None,
+        meta={"params": {"rate": 1.0}},
         analysis={"psd": [{"frequency": [0.0]}, {"frequency": [0.0]}]},
     )
     dataset = SDEScanResult(combined, _grid(), {"rate": 1.0}, 1)
+    bundle = bundle_from_result(dataset, provenance=SDEProvenance(dt=1.0))
 
-    loaded = _load_input(dataset, "*.npz")
+    loaded = _load_input(bundle)
 
     assert len(loaded) == 2
     assert [item.meta["params"]["rate"] for item in loaded] == [1.0, 2.0]
@@ -271,9 +274,7 @@ def test_trajectory_batch_size_does_not_change_psd_random_streams():
                 "backend": NumpyBackend(),
                 "integrator": EulerMaruyama(),
                 "model": model,
-                "analyser": {
-                    "psd": PsdAnalyzer(kind="complex", modes=[0])
-                },
+                "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
             },
         )
         result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
@@ -286,9 +287,7 @@ def test_trajectory_batch_size_does_not_change_psd_random_streams():
     assert plan_64["trajectory_batch_count"] == 4
     assert plan_128["trajectory_batch_count"] == 2
     np.testing.assert_allclose(batch_64["psd"], batch_128["psd"], rtol=1e-12)
-    np.testing.assert_allclose(
-        batch_64["psd_std"], batch_128["psd_std"], rtol=1e-12
-    )
+    np.testing.assert_allclose(batch_64["psd_std"], batch_128["psd_std"], rtol=1e-12)
 
 
 def test_scan_runs_trajectory_batches_inside_each_parameter_point():

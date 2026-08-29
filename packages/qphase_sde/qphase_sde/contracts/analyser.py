@@ -142,8 +142,8 @@ class AnalyserProductBuilderProtocol(Protocol):
     The bundle adapter discovers this hook by duck-typing — the engine never
     branches on analyser names. An analyser implementing it is authoritative
     for its payload: the returned mapping (usually one product under the
-    job-local ``label``) replaces the migration-only ``legacy_analysis/1``
-    bridge entirely, so builders must keep the legacy payload rebuildable
+    job-local ``label``) replaces the ``legacy_analysis/1`` fallback bridge
+    entirely, so builders must keep the legacy payload rebuildable
     (original leaf names as variables, strings and ragged leaves in
     ``payload_meta``) and must mark products ``graph_ready=True``.
     """

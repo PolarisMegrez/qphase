@@ -192,32 +192,6 @@ descriptor:
   the original `analysis["psd"]["peaks"]` field without treating it as a
   graph-ready peak product.
 
-## Migrating SDE 1.x results
-
-!!! warning "Temporary major-version transition tool"
-    These 1.x-to-2.x utilities are not stable 2.x APIs. Global Phase 4 removes
-    them after all retained project data has been migrated and verified. QPhase
-    2.x does not promise permanent old-major compatibility.
-
-`qphase_sde.runtime.migrate` converts existing results **one way** to v4:
-
-- `migrate_legacy_result(source, output_dir, *, adapter=None,
-  shard_target_bytes=None)` — one `sde_result/1` or `trajectory_set/1` file.
-- `migrate_scan_artifact(manifest_path, output_dir, *, adapter=None)` — an
-  `sde_scan/2` per-point artifact, streamed per point: each shard is read
-  twice (structure pass, chunk pass), every point contributes one chunk per
-  variable along the scan axis, and peak memory stays within one shard plus
-  one output chunk.
-
-Guarantees: source files are SHA-256 hashed (recorded in the output
-manifest's provenance) and **never modified**; the output directory must be
-empty and disjoint from the sources; unknown object payloads are rejected at
-the npy-header level unless an `adapter` maps them to bridge-compatible
-mappings. Migration provenance also records the real distribution versions
-of the converting environment. Both functions return a `MigrationReport`
-(with `MigrationWarning` entries) and raise `LegacyFormatError` for
-unrecognized inputs.
-
 ## Service and GUI access
 
 Listings never materialize payloads and never register artifact locations:

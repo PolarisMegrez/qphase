@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from .errors import QPhaseConfigError, get_logger
 from .utils import deep_merge_dicts, load_yaml, save_yaml
@@ -160,29 +160,6 @@ class SystemConfig(BaseModel):
     reporting: ReportingConfig = Field(default_factory=ReportingConfig)
 
     model_config = ConfigDict(frozen=False, extra="forbid")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_keys(cls, data: Any) -> Any:
-        """Map the removed ``progress_update_interval`` key onto reporting."""
-        if isinstance(data, dict) and "progress_update_interval" in data:
-            value = data.pop("progress_update_interval")
-            logger.warning(
-                "[992] DEPRECATED: system setting 'progress_update_interval' has "
-                "moved to 'reporting.progress.refresh_interval'; applying the "
-                "old value."
-            )
-            reporting = dict(data.get("reporting") or {})
-            progress = dict(reporting.get("progress") or {})
-            progress.setdefault("refresh_interval", value)
-            reporting["progress"] = progress
-            data["reporting"] = reporting
-        return data
-
-    @property
-    def progress_update_interval(self) -> float:
-        """Deprecated alias for ``reporting.progress.refresh_interval``."""
-        return self.reporting.progress.refresh_interval
 
 
 class SystemConfigStore:

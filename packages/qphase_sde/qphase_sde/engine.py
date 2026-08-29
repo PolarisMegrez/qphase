@@ -272,9 +272,13 @@ def _coerce_analysis_input(data: Any | None) -> Any | None:
     products: Any | None = None
     if isinstance(data, SDEDataBundle):
         products = data.products
-    elif isinstance(data, dict) and data and all(
-        hasattr(value, "schema") and hasattr(value, "handle")
-        for value in data.values()
+    elif (
+        isinstance(data, dict)
+        and data
+        and all(
+            hasattr(value, "schema") and hasattr(value, "handle")
+            for value in data.values()
+        )
     ):
         products = data
     if products is None:
@@ -455,7 +459,7 @@ class Engine(EngineBase):
             if plan.stream_analysis and (
                 plan.tile_count > 1 or plan.trajectory_batch_count > 1
             ):
-                combined: ResultProtocol = self._run_scan_tiled(
+                combined: SDEResult = self._run_scan_tiled(
                     data,
                     adapter=adapter,
                     plan=plan,
@@ -488,7 +492,7 @@ class Engine(EngineBase):
                 analysers=analysers,
             )
         if plan.trajectory_batch_count > 1:
-            result: ResultProtocol = self._run_trajectory_batched(
+            result: SDEResult = self._run_trajectory_batched(
                 data,
                 plan=plan,
                 reporter=reporter,
@@ -524,9 +528,7 @@ class Engine(EngineBase):
         warmup_samples = 0
         if config is not None:
             try:
-                time_grid = resolve_time_grid(
-                    t0=config.t0, t1=config.t1, dt=config.dt
-                )
+                time_grid = resolve_time_grid(t0=config.t0, t1=config.t1, dt=config.dt)
                 warmup_samples = int(time_grid.warmup_steps)
             except Exception:  # noqa: BLE001 - provenance must not break runs
                 warmup_samples = 0
@@ -642,7 +644,7 @@ class Engine(EngineBase):
                         raise RuntimeError(
                             "trajectory-batched SDE scans require one point per tile"
                         )
-                    tile_result: ResultProtocol = self._run_trajectory_batched(
+                    tile_result: SDEResult = self._run_trajectory_batched(
                         data,
                         plan=plan,
                         reporter=reporter,
@@ -902,7 +904,7 @@ class Engine(EngineBase):
             return
         raise TypeError(f"model {model.name!r} does not expose mutable parameters")
 
-    def _run_analyze(self, data: Any | None) -> ResultProtocol:
+    def _run_analyze(self, data: Any | None) -> SDEResult:
         """Run analysers on upstream input data without performing a simulation.
 
         This mode is used for cross-job postprocessing: the scheduler passes an
@@ -953,7 +955,7 @@ class Engine(EngineBase):
         progress_scale: int | None = None,
         progress_total: int | None = None,
         progress_label: str | None = None,
-    ) -> ResultProtocol:
+    ) -> SDEResult:
         """Execute SDE simulation and optional per-job analysis."""
         assert self.config is not None
 

@@ -5,11 +5,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase.data import load_bundle
 from qphase_sde.analyser.base import resolve_mode_columns
 from qphase_sde.analyser.dist import DistAnalyzer
 from qphase_sde.analyser.polar_dist import PolarDistAnalyzer
 from qphase_sde.analyser.psd import PsdAnalyzer
-from qphase_sde.result import SDEResult
+from qphase_sde.contracts.bundle import SDEProvenance
+from qphase_sde.result import SDEResult, bundle_from_result
 from qphase_sde.state import TrajectorySet
 
 pytestmark = pytest.mark.integration
@@ -46,9 +48,12 @@ def test_missing_recorded_mode_is_rejected():
 
 
 def test_result_round_trip_preserves_trajectory_mode_mapping(tmp_path):
-    path = tmp_path / "result.npz"
-    SDEResult(trajectory=_trajectory()).save(path)
+    bundle = bundle_from_result(
+        SDEResult(trajectory=_trajectory()),
+        provenance=SDEProvenance(dt=0.1),
+    )
+    bundle.save(tmp_path)
 
-    loaded = SDEResult.load(path)
+    loaded = load_bundle(tmp_path)
 
-    assert loaded.trajectory.meta["mode_indices"] == [3]
+    assert loaded.legacy_result().trajectory.meta["mode_indices"] == [3]

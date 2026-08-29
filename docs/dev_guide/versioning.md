@@ -14,10 +14,10 @@ formats. A new major is not required to read or migrate artifacts of an older
 major. Reproduction of an old major uses its archived release, environment or
 branch; compatibility code is not retained indefinitely in the new runtime.
 
-The current 1.x-to-2.x migration utilities are workspace-transition tools, not
-stable 2.x APIs. After Global Phase 4 has migrated and verified the project,
-their runtime entry points, dedicated fixtures and migration documentation are
-removed.
+The 1.x-to-2.x migration utilities were workspace-transition tools, never
+stable 2.x APIs. With the project migrated and verified at the 2.0.0 boundary,
+their runtime entry points, dedicated fixtures and migration documentation have
+been removed.
 
 ## Minor `y`
 

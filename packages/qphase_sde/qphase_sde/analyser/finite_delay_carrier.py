@@ -61,7 +61,6 @@ class FiniteDelayCarrierConfig(PluginConfigBase):
     )
     export: list[str] = Field(default_factory=lambda: ["finite_delay_carrier.csv"])
     output_dir: str | None = Field(None, description="Usually injected by the engine")
-    pattern: str = Field("*.npz", description="Glob for saved result inputs")
 
     @field_validator("detector_rates")
     @classmethod
@@ -199,7 +198,7 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         del backend
         config = cast(FiniteDelayCarrierConfig, self.config)
-        loaded = load_sde_results(data, config.pattern)
+        loaded = load_sde_results(data)
         if not loaded:
             raise QPhaseError("finite_delay_carrier received no input results")
         rows: list[dict[str, Any]] = []

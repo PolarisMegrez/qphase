@@ -12,7 +12,7 @@ mechanics they all share:
   axes and materializing the dataset.
 
 The legacy bridge (``bridge="legacy_analysis/1"``) uses the same mechanics
-with positional axes only, so migrated and graph-ready products round-trip
+with positional axes only, so bridged and graph-ready products round-trip
 through the legacy view identically. Builders never pickle payloads and
 never copy arrays beyond the scan stacking the engine already performed.
 """
@@ -284,8 +284,7 @@ def assemble_typed_product(
                 and coordinate.dims[:1] == (_SCAN_AXIS,)
                 and array.shape[:1] == (scan_size,)
                 and all(
-                    np.array_equal(array[0], row, equal_nan=True)
-                    for row in array[1:]
+                    np.array_equal(array[0], row, equal_nan=True) for row in array[1:]
                 )
             ):
                 arrays[coordinate.variable] = array[0]
@@ -305,11 +304,7 @@ def assemble_typed_product(
     variables: list[VariableSchema] = []
     clean_arrays: dict[str, np.ndarray] = {}
     for key, array in arrays.items():
-        leading = (
-            ()
-            if key in scan_independent or scan_size <= 1
-            else (_SCAN_AXIS,)
-        )
+        leading = () if key in scan_independent or scan_size <= 1 else (_SCAN_AXIS,)
         trailing_ndim = array.ndim - len(leading)
         declared = _resolve_declared_dims(key, declared_dims)
         if declared is None:
@@ -417,8 +412,7 @@ def add_scan_parameter_coordinates(
     from qphase.data.runtime import DictProductBacking, HostArrayHandle
 
     handles = {
-        variable.name: dataset.handle(variable.name)
-        for variable in dataset.variables
+        variable.name: dataset.handle(variable.name) for variable in dataset.variables
     }
     variables = list(dataset.variables)
     coordinate_specs = list(dataset.schema.coordinates)
@@ -438,16 +432,14 @@ def add_scan_parameter_coordinates(
                 f"expected {(scan_size,)}"
             )
         variable = VariableSchema(
-                name=variable_name,
-                dtype=values.dtype.str,
-                value_domain="complex" if values.dtype.kind == "c" else "real",
-                dims=("scan",),
-                quantity="scan_parameter",
-            )
-        variables.append(variable)
-        handles[variable_name] = HostArrayHandle(
-            values, variable, owner="engine.sde"
+            name=variable_name,
+            dtype=values.dtype.str,
+            value_domain="complex" if values.dtype.kind == "c" else "real",
+            dims=("scan",),
+            quantity="scan_parameter",
         )
+        variables.append(variable)
+        handles[variable_name] = HostArrayHandle(values, variable, owner="engine.sde")
         coordinate_name = (
             str(name) if str(name) not in coordinate_names else f"parameter.{name}"
         )

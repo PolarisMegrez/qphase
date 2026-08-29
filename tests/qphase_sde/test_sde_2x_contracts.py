@@ -1,9 +1,7 @@
 """Contract tests for the qphase_sde 2.0 contract package.
 
 These tests freeze the Phase 0 contract surface: the contracts package must
-stay declaration-only (no concrete plugin/model/CAM imports), the migration
-tables must cover every 1.x analyser entry point, and the one-shot config
-converter must produce explicit diffs, unmapped fields and review items.
+stay declaration-only (no concrete plugin/model/CAM imports).
 """
 
 import ast
@@ -18,7 +16,6 @@ from qphase_sde.contracts import (
     analyser,
     bundle,
     coherence,
-    migration,
     peaks,
     quantities,
     tasks,
@@ -27,10 +24,7 @@ from qphase_sde.contracts import (
 SDE_ROOT = Path(__file__).resolve().parents[2] / "packages" / "qphase_sde"
 CONTRACTS_DIR = SDE_ROOT / "qphase_sde" / "contracts"
 MANIFEST_FIXTURE = (
-    Path(__file__).resolve().parents[1]
-    / "fixtures"
-    / "resource_manifests"
-    / "sde.json"
+    Path(__file__).resolve().parents[1] / "fixtures" / "resource_manifests" / "sde.json"
 )
 
 #: Top-level packages the contracts package may import.
@@ -106,49 +100,6 @@ def test_contracts_never_reference_concrete_sde_plugins():
                 assert not node.module.startswith(forbidden_prefixes), (
                     f"{module.name} imports {node.module}"
                 )
-
-
-def test_migration_table_covers_all_1x_analyser_entry_points():
-    """Every 1.x analyser entry point has an explicit 2.x mapping."""
-    pyproject = tomllib.loads(
-        (SDE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )
-    entry_points = pyproject["project"]["entry-points"]["qphase"]
-    legacy_analysers = {
-        name.split(".", 1)[1]
-        for name in entry_points
-        if name.startswith("analyser.")
-    }
-    assert legacy_analysers, "expected analyser entry points in pyproject"
-    assert set(migration.ANALYSER_MIGRATION) == legacy_analysers
-
-
-def test_migration_targets_use_declared_plugin_classes():
-    """2.x targets only use plugin classes declared by the SDE manifest."""
-    manifest = json.loads(MANIFEST_FIXTURE.read_text(encoding="utf-8"))
-    declared = {pc["namespace"] for pc in manifest["plugin_classes"]}
-    for entry in migration.ANALYSER_MIGRATION.values():
-        assert "analyser" in declared
-        for slot, (namespace, _plugin) in entry.child_slots.items():
-            assert namespace in declared, (
-                f"{entry.legacy_name}: slot {slot!r} targets undeclared "
-                f"plugin class {namespace!r}"
-            )
-
-
-def test_root_module_migration_is_complete():
-    """Every current root module has an explicit move/split/delete decision."""
-    table = migration.ROOT_MODULE_MIGRATION
-    assert table["qphase_sde.batch"].target == "qphase_sde.runtime.batch"
-    assert table["qphase_sde.scan"].action == "move"
-    assert table["qphase_sde.ops"].target == "qphase_sde.math.ops"
-    # utils.py must never be moved wholesale.
-    assert table["qphase_sde.utils"].action == "split"
-    assert table["qphase_sde.utils"].target == ""
-    # Nested child-plugin classes migrate to root-level namespaces.
-    assert table["qphase_sde.analyser.peak_finding"].target.endswith(
-        "peak_finder"
-    )
 
 
 def test_frequency_orientation_single_canonical_source():
@@ -236,9 +187,7 @@ def test_coherence_frequency_estimate_roundtrip():
         diagnostics={"platform": "flat", "rayleigh": 0.001},
     )
     payload = json.loads(json.dumps(estimate.model_dump(mode="json")))
-    assert coherence.CoherenceFrequencyEstimate.model_validate(payload) == (
-        estimate
-    )
+    assert coherence.CoherenceFrequencyEstimate.model_validate(payload) == (estimate)
 
 
 def test_analyser_contract_is_structural():
@@ -273,64 +222,6 @@ def test_analyser_contract_is_structural():
     assert estimate.total is None  # heartbeat-only stage, no fake ETA
 
 
-def test_convert_psd_config_to_estimator_slot():
-    """Legacy psd method becomes the estimator child slot."""
-    report = migration.convert_analyser_config(
-        {"psd": {"method": "welch", "segment_length": 512, "overlap": 0.5}}
-    )
-    assert report.converted == {
-        "spectrum": {
-            "estimator": {"welch": {"segment_length": 512, "overlap": 0.5}}
-        }
-    }
-    assert report.unmapped == []
-    assert any("welch" in line for line in report.diff)
-    assert report.needs_review  # parameter split needs human confirmation
-
-
-def test_convert_spectral_ridge_splits_finder_and_tracker():
-    """spectral_ridge splits into scale_space finder + topk_huber tracker."""
-    report = migration.convert_analyser_config(
-        {
-            "spectral_ridge": {
-                "scan_param": "delta",
-                "psd_key": "psd",
-                "smoothing_scale_bins": [2.0, 4.0],
-                "tracking_enabled": True,
-            }
-        }
-    )
-    peaks_cfg = report.converted["spectral_peaks"]
-    assert peaks_cfg["scan_param"] == "delta"
-    assert peaks_cfg["finder"]["scale_space"] == {
-        "smoothing_scale_bins": [2.0, 4.0]
-    }
-    assert peaks_cfg["tracker"]["topk_huber"] == {"enabled": True}
-    assert any("tracking_enabled" in item for item in report.needs_review)
-
-
-def test_convert_coherence_carriers_to_estimator_slot():
-    """All three carriers become coherence_frequency estimator children."""
-    report = migration.convert_analyser_config(
-        {
-            "coherence_carrier": {"lag": 4.0},
-            "band_limited_carrier": {"min_points": 8},
-            "finite_delay_carrier": {"delay": 2.0},
-        }
-    )
-    estimators = report.converted["coherence_frequency"]["estimator"]
-    assert set(estimators) == {"short_delay", "band_limited", "finite_delay"}
-    # Three legacy analysers merge into one target — review is required.
-    assert report.needs_review
-
-
-def test_convert_unknown_analyser_is_unmapped_not_copied():
-    """Unknown analysers are reported, never silently copied."""
-    report = migration.convert_analyser_config({"mystery": {"x": 1}})
-    assert report.unmapped == ["mystery"]
-    assert "mystery" not in report.converted
-
-
 def test_peak_candidate_offsets_contract():
     """Candidate offsets: start 0, monotone, terminal count, scan+1 length."""
     import numpy as np
@@ -354,8 +245,11 @@ def test_peak_candidate_offsets_contract():
         peaks.validate_candidate_table(
             [0, 2, 2, 4],
             scan_count,
-            {"location": np.zeros(3), "intensity": np.zeros(3),
-             "status_code": np.zeros(3, dtype=np.int64)},
+            {
+                "location": np.zeros(3),
+                "intensity": np.zeros(3),
+                "status_code": np.zeros(3, dtype=np.int64),
+            },
         )
     with pytest.raises(ValueError, match="required column"):
         peaks.validate_candidate_table([0, 2, 2, 4], scan_count, {})
@@ -467,7 +361,9 @@ def test_moment_family_descriptor_is_sde_private_and_explicit():
         )
     with pytest.raises(ValidationError, match="unique"):
         quantities.SDEMomentFamilySchema(
-            family_id="f", moment_kind="raw", ordering="c_number",
+            family_id="f",
+            moment_kind="raw",
+            ordering="c_number",
             orders=[1, 1],
         )
 

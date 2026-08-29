@@ -26,7 +26,8 @@ from qphase_sde.analyser.lorentz_fitter import (
     _lorentzian_with_baseline as lorentzian_with_baseline,
 )
 from qphase_sde.analyser.result import AnalysisResult
-from qphase_sde.result import SDEResult
+from qphase_sde.contracts.bundle import SDEProvenance
+from qphase_sde.result import SDEResult, bundle_from_result
 
 pytestmark = pytest.mark.integration
 
@@ -221,8 +222,7 @@ def test_lorentz_fitter_config_clip_by_std(tmp_path):
     assert len(result.data_dict["fit_rows"]) == 2
     assert result.data_dict["orientation"] == "phase_increasing"
     assert all(
-        row["orientation"] == "phase_increasing"
-        for row in result.data_dict["fit_rows"]
+        row["orientation"] == "phase_increasing" for row in result.data_dict["fit_rows"]
     )
     for row in result.data_dict["fit_rows"]:
         assert row["status"] in {"ok", "low_quality"}
@@ -389,8 +389,9 @@ def _make_run_dir(tmp_path: Path, *, with_uncertainty: bool = False) -> Path:
             }
 
         result = SDEResult(
-            meta={"params": {"epsilon": epsilon}},
+            meta={"params": {"epsilon": epsilon}, "job_name": job_dir.name},
             analysis={"psd": psd_payload},
         )
-        result.save(job_dir / f"job_{index:03d}.npz")
+        bundle = bundle_from_result(result, provenance=SDEProvenance(dt=1.0))
+        bundle.save(job_dir)
     return run_dir

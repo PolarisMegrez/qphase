@@ -157,7 +157,6 @@ class BandLimitedCarrierConfig(PluginConfigBase):
         ]
     )
     output_dir: str | None = Field(None, description="Usually injected by the engine")
-    pattern: str = Field("*.npz", description="Glob for saved result inputs")
 
     @field_validator("bandwidth_multipliers")
     @classmethod
@@ -1165,7 +1164,7 @@ class BandLimitedCarrierAnalyzer(Analyzer):
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         config = cast(BandLimitedCarrierConfig, self.config)
         center_config = config.center
-        loaded_results = load_sde_results(data, config.pattern)
+        loaded_results = load_sde_results(data)
         if not loaded_results:
             raise QPhaseError("band_limited_carrier received no input results")
 
@@ -1190,7 +1189,6 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                     ),
                     "export": [],
                     "output_dir": None,
-                    "pattern": config.pattern,
                 }
             )
             ridge_result = cast(

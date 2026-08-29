@@ -163,7 +163,6 @@ class SpectralRidgeConfig(PluginConfigBase):
         ]
     )
     output_dir: str | None = Field(None, description="Usually injected by the engine")
-    pattern: str = Field("*.npz", description="Glob for saved result inputs")
 
     @field_validator("readouts")
     @classmethod
@@ -751,7 +750,7 @@ class SpectralRidgeAnalyzer(Analyzer):
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         del backend
         config = cast(SpectralRidgeConfig, self.config)
-        loaded = load_sde_results(data, config.pattern)
+        loaded = load_sde_results(data)
         if not loaded:
             raise QPhaseError("spectral_ridge received no input results")
         point_data: dict[str, list[tuple[float, Any, list[SpectralRidgeEstimate]]]] = {
@@ -987,9 +986,7 @@ class SpectralRidgeAnalyzer(Analyzer):
         if output_dir is not None:
             destination = Path(output_dir)
             if "spectral_ridge.csv" in config.export:
-                output_path = write_table_csv(
-                    rows, destination / "spectral_ridge.csv"
-                )
+                output_path = write_table_csv(rows, destination / "spectral_ridge.csv")
                 written["spectral_ridge"] = str(output_path)
             if "spectral_ridge_candidates.csv" in config.export:
                 output_path = write_table_csv(

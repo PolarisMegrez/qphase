@@ -6,8 +6,7 @@ description: Resource Package Contract
 
 !!! info "Phase 0 contract — qphase 2.0"
     The `qphase.resource/1` contract is approved and frozen for Phase 1 implementation
-    under `qphase.resources`. Production discovery and execution paths still change
-    only through the staged qphase 2.0 migration.
+    under `qphase.resources`.
 
 A **resource package** is the managed asset unit of QPhase: a Python distribution that
 bundles exactly one execution engine, its plugin classes, data products and public

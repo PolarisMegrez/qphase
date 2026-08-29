@@ -8,7 +8,6 @@ from qphase.core.config_loader import construct_plugins_config, save_project_def
 from qphase.core.errors import QPhaseError
 from qphase.core.project import ProjectContext
 from qphase.core.registry import discovery, registry
-from qphase.core.utils import load_yaml
 from qphase.service import CatalogService
 
 from ._annotations import (
@@ -22,12 +21,8 @@ from ._annotations import (
 
 app = typer.Typer(help="Initialize and inspect QPhase projects")
 _PATH_ARGUMENT = typer.Argument(Path("."))
-_APPLY_MANIFEST_OPTION = typer.Option(
-    None, "--apply-manifest", help="Apply an approved Phase 4 metadata manifest"
-)
 
 #: Maximum number of preview entries printed per migration report list.
-_MIGRATE_LIST_LIMIT = 10
 
 
 @app.command("init")
@@ -123,134 +118,3 @@ def reindex() -> None:
         typer.echo(f"Location issues ({len(issues)}):")
         for issue in issues:
             typer.echo(f"  [{issue['kind']}] {issue['path']}: {issue['message']}")
-
-
-@app.command("migrate")
-def migrate(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Report only"),
-    apply_manifest: Path | None = _APPLY_MANIFEST_OPTION,
-) -> None:
-    """Preview or apply the approved Phase 4 history migration."""
-    if dry_run and apply_manifest is not None:
-        typer.echo("Error: choose either --dry-run or --apply-manifest")
-        raise typer.Exit(code=1)
-    if apply_manifest is not None:
-        try:
-            payload = load_yaml(apply_manifest)
-            if not isinstance(payload, dict):
-                raise ValueError("migration manifest must contain an object")
-            service = CatalogService(ProjectContext.discover())
-            if payload.get("schema") == "qphase.phase4c-session-relocation/1":
-                apply_counts = service.apply_session_relocation(payload)
-            elif payload.get("schema") == "qphase.phase4d-session-deletion/1":
-                apply_counts = service.apply_session_deletion(payload)
-            else:
-                apply_counts = service.apply_metadata_migration(payload)
-        except (QPhaseError, OSError, ValueError) as exc:
-            typer.echo(f"Error: {exc}")
-            raise typer.Exit(code=1) from exc
-        summary = ", ".join(
-            f"{name}={count}" for name, count in sorted(apply_counts.items())
-        )
-        typer.echo(f"Migration applied: {summary}")
-        return
-    if not dry_run:
-        typer.echo(
-            "Error: Phase 4 migration requires --dry-run to preview or "
-            "--apply-manifest to apply an approved metadata batch"
-        )
-        raise typer.Exit(code=1)
-    try:
-        report = CatalogService(ProjectContext.discover()).migration_dry_run()
-    except QPhaseError as exc:
-        typer.echo(f"Error: {exc}")
-        raise typer.Exit(code=1) from exc
-    typer.echo(f"Migration dry-run: {report.sessions_total} sessions scanned")
-    imports = report.legacy_metadata_imports
-    typer.echo(f"Legacy metadata imports ({len(imports)}):")
-    for item in imports:
-        typer.echo(f"  {item.session_id}  alias={item.alias} note={item.note}")
-    typer.echo(
-        f"Sessions without annotations or legacy metadata: "
-        f"{report.untouched_sessions} (no action)"
-    )
-    invalid = report.invalid_snapshot_tags
-    affected = sorted({item.session_id for item in invalid})
-    typer.echo(f"Invalid snapshot tags ({len(invalid)} in {len(affected)} sessions):")
-    for entry in invalid:
-        typer.echo(
-            f"  {entry.session_id}  {entry.source} tag {entry.tag!r}: {entry.error}"
-        )
-    annotations = report.invalid_annotations
-    typer.echo(f"Invalid annotation documents ({len(annotations)}):")
-    for annotation in annotations[:_MIGRATE_LIST_LIMIT]:
-        typer.echo(f"  {annotation.path}: {annotation.error}")
-    if len(annotations) > _MIGRATE_LIST_LIMIT:
-        typer.echo(f"  ... and {len(annotations) - _MIGRATE_LIST_LIMIT} more")
-    typer.echo(
-        f"Rebuildable: {report.rebuildable_workflow_revisions} workflow revisions, "
-        f"{report.rebuildable_jobs} jobs"
-    )
-    convertible = report.convertible_occurrence_keys
-    ambiguous = report.ambiguous_occurrence_keys
-    typer.echo(
-        f"Legacy occurrence keys: {len(convertible)} convertible, "
-        f"{len(ambiguous)} ambiguous"
-    )
-    for conv in convertible[:_MIGRATE_LIST_LIMIT]:
-        typer.echo(f"  {conv.session_id}  {conv.old_key} -> {conv.new_key}")
-    if len(convertible) > _MIGRATE_LIST_LIMIT:
-        typer.echo(f"  ... and {len(convertible) - _MIGRATE_LIST_LIMIT} more")
-    for amb in ambiguous[:_MIGRATE_LIST_LIMIT]:
-        typer.echo(
-            f"  {amb.session_id}  {amb.old_key} ambiguous"
-            f" (locations: {', '.join(amb.locations) or 'none'})"
-        )
-    if len(ambiguous) > _MIGRATE_LIST_LIMIT:
-        typer.echo(f"  ... and {len(ambiguous) - _MIGRATE_LIST_LIMIT} more")
-    duplicates = report.duplicate_artifacts
-    typer.echo(f"Duplicate artifact identities ({len(duplicates)}):")
-    for dup in duplicates[:_MIGRATE_LIST_LIMIT]:
-        flag = " [conflict]" if dup.conflict else ""
-        typer.echo(f"  {dup.artifact_id}{flag}: {', '.join(dup.locations)}")
-    if len(duplicates) > _MIGRATE_LIST_LIMIT:
-        typer.echo(f"  ... and {len(duplicates) - _MIGRATE_LIST_LIMIT} more")
-    violations = report.id_separator_violations
-    typer.echo(f"Id separator violations ({len(violations)}):")
-    for violation in violations[:_MIGRATE_LIST_LIMIT]:
-        typer.echo(f"  {violation.object_kind} {violation.value!r} at {violation.path}")
-    if len(violations) > _MIGRATE_LIST_LIMIT:
-        typer.echo(f"  ... and {len(violations) - _MIGRATE_LIST_LIMIT} more")
-    provenance = report.assignments_without_policy_revision
-    if provenance:
-        summary = ", ".join(f"{scope}={count}" for scope, count in provenance.items())
-        typer.echo(f"Assignments without policy provenance: {summary}")
-    else:
-        typer.echo("Assignments without policy provenance: none")
-    typer.echo(
-        "Sessions missing frozen retention inheritance: "
-        f"{report.sessions_missing_retention_inheritance}"
-    )
-    if report.catalog_drift is None:
-        typer.echo("Catalog reindex parity: absent (no catalog yet)")
-    elif report.catalog_drift:
-        typer.echo("Catalog reindex parity: drift (run `qphase project reindex`)")
-        for table, count in report.catalog_drift_tables.items():
-            typer.echo(f"  {table}: {count} differing rows")
-    else:
-        typer.echo("Catalog reindex parity: in sync")
-    counts = ", ".join(
-        f"{kind}={count}" for kind, count in report.object_counts.items()
-    )
-    typer.echo(f"Object counts: {counts}")
-    issues = report.location_issues_by_kind
-    if issues:
-        summary = ", ".join(f"{kind}={count}" for kind, count in issues.items())
-        typer.echo(f"Location issues: {summary}")
-    else:
-        typer.echo("Location issues: none")
-    typer.echo(
-        f"Private store: {report.private_tag_count} tags, "
-        f"{report.saved_view_count} saved views, "
-        f"{report.private_annotation_count} private annotations"
-    )

@@ -21,13 +21,12 @@ qphase project tag [--add TAG] [--remove TAG] [--private]
 qphase project alias [TEXT] [--clear]
 qphase project note [TEXT] [--clear]
 qphase project reindex
-qphase project migrate --dry-run
 ```
 
 `init` 写入 `qphase.toml`，建立 Workflow、插件和 Session 目录，并生成 Project
 插件默认值。`show` 显示已解析的 Project ID 与各路径。`tag`/`alias`/`note`
 为 Project 本身添加注解。`reindex` 重建对象 catalog read model 并列出
-location issue。`migrate --dry-run` 零写入地预览 Phase 4 历史迁移。
+location issue。
 
 ## Workflow 目录
 

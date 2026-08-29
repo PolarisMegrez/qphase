@@ -23,15 +23,13 @@ qphase project tag [--add TAG] [--remove TAG] [--private]
 qphase project alias [TEXT] [--clear]
 qphase project note [TEXT] [--clear]
 qphase project reindex
-qphase project migrate --dry-run
 ```
 
 `init` writes `qphase.toml`, creates Workflow, plugin, and Session directories,
 and generates Project plugin defaults. `show` prints the resolved Project ID,
 root, Workflow root, Session root, and defaults path. `tag`/`alias`/`note`
 annotate the Project itself. `reindex` rebuilds the object catalog read model
-and lists location issues. `migrate --dry-run` previews the Phase 4 history
-migration without writing anything.
+and lists location issues.
 
 ## Workflow Catalog
 

@@ -152,29 +152,6 @@ Job 日志、配置快照和导出的 CSV 不属于 artifact payload，除非 ma
   `payload_field` 路由的 `legacy_peaks/1` bridge；`legacy_result()` 可还原原始
   `analysis["psd"]["peaks"]` 字段，但不会把它声明为 graph-ready peak 产品。
 
-## 迁移 SDE 1.x 结果
-
-!!! warning "临时 major 版本迁移工具"
-    这些1.x到2.x工具不属于稳定2.x API。Global Phase 4 在全部保留数据完成迁移和验证后删除它们；QPhase
-    2.x 不承诺永久兼容旧 major。
-
-`qphase_sde.runtime.migrate` 把既有结果**单向**转换为 v4：
-
-- `migrate_legacy_result(source, output_dir, *, adapter=None,
-  shard_target_bytes=None)` —— 单个 `sde_result/1` 或
-  `trajectory_set/1` 文件。
-- `migrate_scan_artifact(manifest_path, output_dir, *, adapter=None)` ——
-  `sde_scan/2` 逐点 artifact，按点流式转换：每个 shard 读两遍（结构遍、
-  chunk 遍），每个点沿 scan 轴为每个变量贡献一个 chunk，峰值内存保持在
-  一个 shard 加一个输出 chunk 以内。
-
-保证：源文件计算 SHA-256（记录在输出 manifest 的 provenance 中）且**绝
-不被修改**；输出目录必须为空且与源不相交；未知 object payload 在 npy 头
-部层级被拒绝，除非 `adapter` 把它们映射为可桥接的 mapping。迁移
-provenance 同时记录转换环境的真实 distribution 版本。两个函数都返回
-`MigrationReport`（含 `MigrationWarning` 条目），对无法识别的输入抛出
-`LegacyFormatError`。
-
 ## Service 与 GUI 访问
 
 列表访问永远不物化 payload，也永远不注册 artifact location：

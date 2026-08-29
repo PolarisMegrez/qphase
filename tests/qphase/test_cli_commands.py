@@ -103,9 +103,7 @@ def _catalog_session(workspace, session_id="session-1"):
         "start_time": "2026-08-26T10:00:00+08:00",
         "jobs": {},
     }
-    (root / "session_manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (root / "session_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
 
 
@@ -151,9 +149,10 @@ def test_session_tag_and_list_by_tag(temp_workspace):
         app, ["session", "tag", "session-1", "--remove", "task:scan"]
     )
     assert removed.exit_code == 0
-    assert "session-1" not in runner.invoke(
-        app, ["session", "list", "--tag", "task:scan"]
-    ).stdout
+    assert (
+        "session-1"
+        not in runner.invoke(app, ["session", "list", "--tag", "task:scan"]).stdout
+    )
 
 
 def test_session_lifecycle_command(temp_workspace):
@@ -207,78 +206,6 @@ def test_view_save_rejects_unknown_kind(temp_workspace, monkeypatch, tmp_path):
     assert result.exit_code == 1
 
 
-def test_project_migrate_requires_dry_run(temp_workspace):
-    """'project migrate' without --dry-run fails fast with a Phase 4 hint."""
-    result = runner.invoke(app, ["project", "migrate"])
-    assert result.exit_code == 1
-    assert "Phase 4" in result.stdout
-
-
-def test_project_migrate_applies_approved_metadata_manifest(temp_workspace, tmp_path):
-    import json
-
-    import yaml
-
-    root = _catalog_session(temp_workspace, "metadata-session")
-    manifest = {
-        "schema": "qphase.phase4a-metadata-actions/1",
-        "project_id": "test-project",
-        "external_snapshot": "snapshot-1",
-        "actions": [
-            {
-                "action": "set_session_policy",
-                "session_id": "metadata-session",
-                "session_path": root.relative_to(temp_workspace).as_posix(),
-                "lifecycle": "reference",
-                "retention": "pinned",
-            }
-        ],
-    }
-    path = tmp_path / "migration.yaml"
-    path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
-
-    result = runner.invoke(
-        app, ["project", "migrate", "--apply-manifest", str(path)]
-    )
-
-    assert result.exit_code == 0, result.stdout
-    assert "set_session_policy=1" in result.stdout
-    annotations = json.loads(
-        (root / "session_annotations.json").read_text(encoding="utf-8")
-    )
-    assert annotations["lifecycle"] == "reference"
-    assert annotations["retention"] == "pinned"
-
-
-def test_project_migrate_dry_run(temp_workspace):
-    """'project migrate --dry-run' previews legacy imports without writing."""
-    import json
-
-    root = _catalog_session(temp_workspace, "legacy-session")
-    (root / "session_metadata.json").write_text(
-        json.dumps({"alias": "old-run"}), encoding="utf-8"
-    )
-    (root / "workflow_snapshot.yaml").write_text(
-        "tags: [vdp_2mode]\n", encoding="utf-8"
-    )
-    before = {
-        path: path.read_bytes()
-        for path in temp_workspace.rglob("*")
-        if path.is_file()
-    }
-
-    result = runner.invoke(app, ["project", "migrate", "--dry-run"])
-
-    assert result.exit_code == 0
-    assert "legacy-session" in result.stdout
-    assert "old-run" in result.stdout
-    assert "vdp_2mode" in result.stdout
-    after = {
-        path: path.read_bytes()
-        for path in temp_workspace.rglob("*")
-        if path.is_file()
-    }
-    assert after == before
 def test_occurrence_tag_requires_job_when_ambiguous(temp_workspace):
     """'occurrence tag' refuses silent first-match; --job disambiguates."""
     import json
@@ -302,8 +229,16 @@ def test_occurrence_tag_requires_job_when_ambiguous(temp_workspace):
 
     resolved = runner.invoke(
         app,
-        ["occurrence", "tag", "session-1", "art-1", "--job", "fit",
-         "--add", "task:scan"],
+        [
+            "occurrence",
+            "tag",
+            "session-1",
+            "art-1",
+            "--job",
+            "fit",
+            "--add",
+            "task:scan",
+        ],
     )
     assert resolved.exit_code == 0
     assert "task:scan" in resolved.stdout
@@ -439,8 +374,13 @@ def test_session_list_supports_full_query_flags(temp_workspace):
     hit = runner.invoke(
         app,
         [
-            "session", "list", "--tag-any", "task:scan",
-            "--facet", "status=completed", "--direct",
+            "session",
+            "list",
+            "--tag-any",
+            "task:scan",
+            "--facet",
+            "status=completed",
+            "--direct",
         ],
     )
     assert "session-1" in hit.stdout
@@ -448,21 +388,6 @@ def test_session_list_supports_full_query_flags(temp_workspace):
     assert "session-1" not in excluded.stdout
     paged = runner.invoke(app, ["session", "list", "--limit", "1", "--offset", "1"])
     assert "session-1" not in paged.stdout
-
-
-def test_project_migrate_dry_run_extended_sections(temp_workspace):
-    """'project migrate --dry-run' prints all extended report sections."""
-    _catalog_session(temp_workspace, "session-1")
-
-    result = runner.invoke(app, ["project", "migrate", "--dry-run"])
-
-    assert result.exit_code == 0
-    assert "Rebuildable:" in result.stdout
-    assert "Legacy occurrence keys:" in result.stdout
-    assert "Duplicate artifact identities" in result.stdout
-    assert "Catalog reindex parity:" in result.stdout
-    assert "Object counts:" in result.stdout
-    assert "Private store:" in result.stdout
 
 
 def test_derived_facet_flags_on_list_commands(temp_workspace):

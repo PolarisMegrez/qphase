@@ -20,15 +20,12 @@ coherence
     Coherence-frequency estimate contracts.
 tasks
     Frozen SDE engine task profiles (approved design, Phase 2 enforcement).
-migration
-    1.x → 2.x migration tables and the one-shot config converter.
 """
 
 from . import (
     analyser,
     bundle,
     coherence,
-    migration,
     peaks,
     quantities,
     reducer,
@@ -39,7 +36,6 @@ __all__ = [
     "analyser",
     "bundle",
     "coherence",
-    "migration",
     "peaks",
     "quantities",
     "reducer",

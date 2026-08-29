@@ -19,12 +19,9 @@ contracts themselves require a schema or read-model version bump.
 - **Occurrence** identity is the triple `artifact_id:session_id:job_name`.
   Occurrence annotation keys inside `session_annotations.json` are
   `job_name:artifact_id`, so two occurrences of one artifact in a session
-  never collide. Legacy bare-artifact keys are migration input, flagged by
-  `qphase project migrate --dry-run`.
+  never collide.
 - `:` is the reserved identity separator: `JobConfig.name` and the manifest
-  `artifact_id` reject it at validation time. Existing job names or artifact
-  ids containing it are migration input, listed by
-  `qphase project migrate --dry-run`.
+  `artifact_id` reject it at validation time.
 - **Workflow revision** identity is `workflow_id@revision` where `revision`
   is a content hash of the workflow document; **job** identity extends it to
   `workflow_id@revision:job_name`. Revisions are rebuilt deterministically
@@ -55,7 +52,7 @@ contracts themselves require a schema or read-model version bump.
 - Setting a session's `retention` freezes the policy's
   `retention_inherits_to_occurrences` switch into the annotation document at
   the same time. Legacy documents without the field fall back to the current
-  policy; the Phase 4 migration backfills them (the dry-run lists the count).
+  policy.
 - Declared tags have no annotation document; their assignment ids are derived
   deterministically (`sha256` over the declaration identity, including the
   workflow revision computed by the shared

@@ -9,8 +9,6 @@ Public API
 ----------
 AggregateResult
     Container that wraps multiple ``ResultProtocol`` objects.
-iter_result_files
-    Discover result files under a directory or Session Job directory.
 write_table_csv
     Write a list of dict rows to a CSV file.
 write_columns_csv
@@ -25,7 +23,6 @@ from __future__ import annotations
 
 import csv
 import pickle
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -135,78 +132,6 @@ class DirectoryInputResult(ResultProtocol):
     def save(self, path: str | Path) -> None:
         """Directory input is read-only."""
         raise NotImplementedError("DirectoryInputResult is read-only")
-
-
-def iter_result_files(directory: str | Path, pattern: str = "*.npz") -> list[Path]:
-    """Discover result files under a directory.
-
-    The default discovery strategy mirrors the common layout produced by
-    parameter scans: ``directory/<job_name>/<result>.npz``. If no files are
-    found in subdirectories, the directory itself is scanned.
-
-    Parameters
-    ----------
-    directory : str | Path
-        Result directory or a single result file.
-    pattern : str, optional
-        Glob pattern for result files, by default ``"*.npz"``.
-
-    Returns
-    -------
-    list[Path]
-        Sorted list of discovered file paths.
-
-    Raises
-    ------
-    QPhaseError
-        If the directory does not exist or no files match the pattern.
-
-    """
-    root = Path(directory)
-    if root.is_file():
-        return [root]
-    if not root.exists():
-        raise QPhaseError(f"Result directory does not exist: {root}")
-
-    files = sorted(path for path in root.glob(f"*/{pattern}") if path.is_file())
-    if not files:
-        files = sorted(path for path in root.glob(pattern) if path.is_file())
-    if not files:
-        raise QPhaseError(f"No result files matching {pattern!r} found under {root}")
-    return files
-
-
-def load_result_files(
-    directory: str | Path,
-    loader: Callable[[Path], ResultProtocol] | None = None,
-    pattern: str = "*.npz",
-) -> dict[str, ResultProtocol] | dict[str, Path]:
-    """Discover and optionally load results under a directory.
-
-    Parameters
-    ----------
-    directory : str | Path
-        Result directory or single file.
-    loader : Callable[[Path], ResultProtocol] | None, optional
-        Loader to use for each discovered file. If ``None``, paths are returned.
-    pattern : str, optional
-        Glob pattern for result files.
-
-    Returns
-    -------
-    dict[str, ResultProtocol] | dict[str, Path]
-        Mapping from a derived result name to the loaded result or path.
-
-    """
-    paths = iter_result_files(directory, pattern)
-    if loader is None:
-        return {path.parent.name or path.stem: path for path in paths}
-
-    loaded: dict[str, ResultProtocol] = {}
-    for path in paths:
-        name = path.parent.name or path.stem
-        loaded[name] = loader(path)
-    return loaded
 
 
 def write_table_csv(

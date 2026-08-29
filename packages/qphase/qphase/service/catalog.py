@@ -17,21 +17,11 @@ private is the nearest level).
 
 from __future__ import annotations
 
-import hashlib
-import json
-import shutil
-import sqlite3
-import tempfile
-from collections import Counter
-from collections.abc import Mapping
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
 from qphase.core.annotations import (
-    ARTIFACT_ANNOTATIONS_FILENAME,
-    PROJECT_ANNOTATIONS_FILENAME,
-    SESSION_ANNOTATIONS_FILENAME,
     ArtifactAnnotationDocument,
     Lifecycle,
     ObjectAnnotations,
@@ -42,14 +32,11 @@ from qphase.core.annotations import (
     TagAssignment,
 )
 from qphase.core.catalog import (
-    CATALOG_FILENAME,
-    OBJECT_KINDS,
     CatalogQuery,
     CatalogStats,
     EffectiveTag,
     ProjectObjectCatalog,
 )
-from qphase.core.errors import QPhaseConfigError
 from qphase.core.persistence import ProjectStateStore
 from qphase.core.project import ProjectContext
 from qphase.core.tags import (
@@ -59,26 +46,14 @@ from qphase.core.tags import (
     TagPolicy,
     canonicalize_tag_syntax,
     freeze_namespace_rule,
-    job_tag_assignment_id,
     load_tag_policy,
     validate_declared_tags,
-    workflow_tag_assignment_id,
 )
-from qphase.core.utils import load_yaml, save_yaml
-from qphase.core.workflow import workflow_revision
 from qphase.data.errors import ArtifactAmbiguousError, ArtifactNotFoundError
 
 from .models import (
-    AmbiguousOccurrenceKey,
     CatalogObject,
-    DuplicateArtifact,
     EffectiveTagInfo,
-    IdSeparatorViolation,
-    InvalidAnnotation,
-    InvalidSnapshotTag,
-    LegacyMetadataImport,
-    MigrationReport,
-    OccurrenceKeyConversion,
     SessionSummary,
     TagPolicyInfo,
 )
@@ -187,10 +162,7 @@ class CatalogService:
             for row in page:
                 object_id = str(row["id"])
                 merged = _merge_private(
-                    [
-                        _tag_info(tag)
-                        for tag in tags_by_object.get(object_id, [])
-                    ],
+                    [_tag_info(tag) for tag in tags_by_object.get(object_id, [])],
                     [
                         EffectiveTagInfo(tag=tag, source="user_private")
                         for tag in private_by_object.get(object_id, [])
@@ -276,598 +248,6 @@ class CatalogService:
         """Delete one saved view from the private store."""
         self.private.delete_view(name)
 
-    def migration_dry_run(self) -> MigrationReport:
-        """Preview the Phase 4 history migration; pure read, writes nothing.
-
-        Reports sessions whose legacy ``session_metadata.json`` would seed a
-        new annotation document, counts sessions needing no action, and lists
-        declared tags in session workflow snapshots that fail validation
-        against the current tag policy. On top of that it previews the
-        workflow revisions and jobs a rebuild can recover, classifies legacy
-        bare-artifact occurrence keys, lists duplicate artifact identities,
-        lists existing job names and artifact ids containing the reserved
-        ``:`` separator, counts annotation assignments frozen without policy
-        provenance, counts sessions whose retention predates the frozen
-        inheritance flag, rebuilds the catalog into a temporary database
-        outside the project to check reindex parity (which also surfaces the
-        annotation documents it could not load), summarizes the user's
-        private store, and collects the per-kind object totals and location
-        issues the Phase 4 action manifest needs. Never reindexes the
-        project's own catalog and never writes into the project directory.
-        """
-        policy = load_tag_policy(self.project)
-        report = MigrationReport()
-        root = self.project.session_root
-        if root.exists():
-            for manifest_path in sorted(root.rglob("session_manifest.json")):
-                if ".trash" in manifest_path.parts:
-                    continue
-                report.sessions_total += 1
-                session_dir = manifest_path.parent
-                manifest = self.state_store.load_session_manifest(session_dir)
-                session_id = str(manifest.get("session_id") or session_dir.name)
-                annotations_path = session_dir / SESSION_ANNOTATIONS_FILENAME
-                if not annotations_path.exists():
-                    # Seed the document exactly the way the migration will, so
-                    # the preview matches the future import by construction.
-                    seeded = self.project_service.new_session_annotations(
-                        session_dir, session_id
-                    )
-                    if seeded.alias is not None or seeded.note is not None:
-                        report.legacy_metadata_imports.append(
-                            LegacyMetadataImport(
-                                session_id=session_id,
-                                path=session_dir.relative_to(root).as_posix(),
-                                alias=seeded.alias,
-                                note=seeded.note,
-                            )
-                        )
-                    else:
-                        report.untouched_sessions += 1
-                else:
-                    payload = _read_json_document(annotations_path)
-                    if (
-                        payload is not None
-                        and payload.get("retention") is not None
-                        and payload.get("retention_inherits_to_occurrences") is None
-                    ):
-                        report.sessions_missing_retention_inheritance += 1
-                report.invalid_snapshot_tags.extend(
-                    self._invalid_snapshot_tags(session_dir, session_id, policy)
-                )
-                report.id_separator_violations.extend(
-                    self._id_separator_violations(session_dir, root)
-                )
-                self._occurrence_key_preview(session_dir, session_id, report)
-        self._annotation_provenance(report)
-        self._rebuild_parity(report)
-        self._private_summary(report)
-        return report
-
-    def apply_metadata_migration(self, manifest: Mapping[str, Any]) -> dict[str, int]:
-        """Apply one approved Phase 4A metadata action manifest.
-
-        The operation deliberately supports only the two Wave A mutations:
-        frozen legacy tag sidecars and typed Session lifecycle/retention.
-        Every action is checked before the first write, then the Catalog is
-        rebuilt once after the batch.
-        """
-        if manifest.get("schema") != "qphase.phase4a-metadata-actions/1":
-            raise ValueError("unsupported metadata migration manifest")
-        if manifest.get("project_id") != self.project.project_id:
-            raise ValueError("metadata migration manifest belongs to another project")
-        if not manifest.get("external_snapshot"):
-            raise ValueError("metadata migration requires an external snapshot")
-        actions = manifest.get("actions")
-        if not isinstance(actions, list):
-            raise ValueError("metadata migration actions must be a list")
-
-        prepared: list[tuple[str, Path, Any]] = []
-        for action in actions:
-            if not isinstance(action, Mapping):
-                raise ValueError("metadata migration action must be an object")
-            kind = action.get("action")
-            session_id = str(action.get("session_id") or "")
-            root = self.project_service.session_dir(session_id)
-            expected_path = action.get("session_path")
-            if expected_path and root.relative_to(self.project.root).as_posix() != str(
-                expected_path
-            ):
-                raise ValueError(f"Session path changed for {session_id}")
-            if kind == "freeze_legacy_tag_snapshot":
-                target = root / "tag_snapshot.yaml"
-                if target.exists():
-                    raise ValueError(f"tag snapshot already exists for {session_id}")
-                source = root / "workflow_snapshot.yaml"
-                expected = str(action.get("expected_source_sha256") or "")
-                actual = hashlib.sha256(source.read_bytes()).hexdigest()
-                if actual != expected:
-                    raise ValueError(f"workflow snapshot changed for {session_id}")
-                prepared.append((kind, root, self._legacy_tag_snapshot(source, action)))
-            elif kind == "set_session_policy":
-                lifecycle = action.get("lifecycle")
-                retention = action.get("retention")
-                if lifecycle not in {"active", "reference", "superseded", "archived"}:
-                    raise ValueError(f"invalid lifecycle for {session_id}")
-                if retention not in {"transient", "preserve", "evidence", "pinned"}:
-                    raise ValueError(f"invalid retention for {session_id}")
-                prepared.append((kind, root, (lifecycle, retention)))
-            else:
-                raise ValueError(f"unsupported metadata migration action {kind!r}")
-
-        counts: Counter[str] = Counter()
-        policy = load_tag_policy(self.project)
-        for kind, root, payload in prepared:
-            if kind == "freeze_legacy_tag_snapshot":
-                temporary = root / "tag_snapshot.yaml.tmp"
-                save_yaml(payload, temporary)
-                temporary.replace(root / "tag_snapshot.yaml")
-            else:
-                current = self.state_store.load_session_annotations(root)
-                if current is None:
-                    document = self.project_service.new_session_annotations(
-                        root, root.name
-                    )
-                    expected_revision = None
-                else:
-                    document = SessionAnnotationDocument.model_validate(current)
-                    expected_revision = document.revision
-                document.lifecycle, document.retention = payload
-                document.retention_inherits_to_occurrences = (
-                    policy.retention_inherits_to_occurrences
-                    if policy is not None
-                    else True
-                )
-                self.state_store.save_session_annotations(
-                    root,
-                    document.model_dump(mode="json", by_alias=True),
-                    expected_revision=expected_revision,
-                )
-            counts[kind] += 1
-        self.catalog.reindex()
-        return dict(counts)
-
-    def apply_session_relocation(
-        self, manifest: Mapping[str, Any]
-    ) -> dict[str, int]:
-        """Relocate one approved batch into the canonical Session layout."""
-        if manifest.get("schema") != "qphase.phase4c-session-relocation/1":
-            raise ValueError("unsupported Session relocation manifest")
-        if manifest.get("project_id") != self.project.project_id:
-            raise ValueError("Session relocation manifest belongs to another project")
-        if not manifest.get("external_snapshot"):
-            raise ValueError("Session relocation requires an external snapshot")
-        actions = manifest.get("actions")
-        if not isinstance(actions, list):
-            raise ValueError("Session relocation actions must be a list")
-
-        prepared: list[tuple[Path, Path, int, int, str]] = []
-        session_root = self.project.session_root.resolve()
-        for action in actions:
-            if not isinstance(action, Mapping):
-                raise ValueError("Session relocation action must be an object")
-            session_id = str(action.get("session_id") or "")
-            source = (self.project.root / str(action.get("source") or "")).resolve()
-            target = (self.project.root / str(action.get("target") or "")).resolve()
-            if not source.is_relative_to(session_root) or not target.is_relative_to(
-                session_root
-            ):
-                raise ValueError(f"Session relocation escapes runs/: {session_id}")
-            if source.name != session_id or target.name != session_id:
-                raise ValueError(f"Session identity/path mismatch: {session_id}")
-            if not source.is_dir() or target.exists():
-                raise ValueError(
-                    f"Session source/target precondition failed: {session_id}"
-                )
-            manifest_path = source / "session_manifest.json"
-            payload = self.state_store.load_session_manifest(source)
-            if str(payload.get("session_id") or source.name) != session_id:
-                raise ValueError(f"Session manifest identity mismatch: {session_id}")
-            if self.project_service._owner_alive(source / "session.lock"):
-                raise ValueError(f"Session is active: {session_id}")
-            files = [path for path in source.rglob("*") if path.is_file()]
-            count = len(files)
-            size = sum(path.stat().st_size for path in files)
-            digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
-            if count != int(action.get("expected_file_count", -1)):
-                raise ValueError(f"Session file count changed: {session_id}")
-            if size != int(action.get("expected_byte_count", -1)):
-                raise ValueError(f"Session byte count changed: {session_id}")
-            if digest != str(action.get("expected_manifest_sha256") or ""):
-                raise ValueError(f"Session manifest changed: {session_id}")
-            prepared.append((source, target, count, size, digest))
-
-        moved: list[tuple[Path, Path]] = []
-        try:
-            for source, target, count, size, digest in prepared:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                source.replace(target)
-                files = [path for path in target.rglob("*") if path.is_file()]
-                if (
-                    len(files) != count
-                    or sum(path.stat().st_size for path in files) != size
-                    or hashlib.sha256(
-                        (target / "session_manifest.json").read_bytes()
-                    ).hexdigest()
-                    != digest
-                ):
-                    raise OSError(
-                        f"Session relocation verification failed: {target.name}"
-                    )
-                moved.append((source, target))
-        except Exception:
-            for source, target in reversed(moved):
-                source.parent.mkdir(parents=True, exist_ok=True)
-                target.replace(source)
-            raise
-        self.catalog.reindex()
-        return {"relocated_sessions": len(moved)}
-
-    def apply_session_deletion(
-        self, manifest: Mapping[str, Any]
-    ) -> dict[str, int]:
-        """Permanently delete one explicitly approved Session batch."""
-        if manifest.get("schema") != "qphase.phase4d-session-deletion/1":
-            raise ValueError("unsupported Session deletion manifest")
-        if manifest.get("project_id") != self.project.project_id:
-            raise ValueError("Session deletion manifest belongs to another project")
-        if not manifest.get("external_snapshot"):
-            raise ValueError("Session deletion requires an external snapshot")
-        actions = manifest.get("actions")
-        if not isinstance(actions, list):
-            raise ValueError("Session deletion actions must be a list")
-
-        prepared: list[Path] = []
-        session_root = self.project.session_root.resolve()
-        for action in actions:
-            if not isinstance(action, Mapping):
-                raise ValueError("Session deletion action must be an object")
-            session_id = str(action.get("session_id") or "")
-            path = (self.project.root / str(action.get("path") or "")).resolve()
-            if not path.is_relative_to(session_root) or path.name != session_id:
-                raise ValueError(f"Session deletion path mismatch: {session_id}")
-            if not path.is_dir():
-                raise ValueError(f"Session deletion source is missing: {session_id}")
-            annotations = self.state_store.load_session_annotations(path)
-            retention = annotations.get("retention") if annotations else None
-            if retention in {"pinned", "evidence", "preserve"}:
-                raise ValueError(f"Session retention forbids deletion: {session_id}")
-            if self.project_service._owner_alive(path / "session.lock"):
-                raise ValueError(f"Session is active: {session_id}")
-            manifest_path = path / "session_manifest.json"
-            payload = self.state_store.load_session_manifest(path)
-            if str(payload.get("session_id") or path.name) != session_id:
-                raise ValueError(f"Session manifest identity mismatch: {session_id}")
-            files = [item for item in path.rglob("*") if item.is_file()]
-            if len(files) != int(action.get("expected_file_count", -1)):
-                raise ValueError(f"Session file count changed: {session_id}")
-            if sum(item.stat().st_size for item in files) != int(
-                action.get("expected_byte_count", -1)
-            ):
-                raise ValueError(f"Session byte count changed: {session_id}")
-            if hashlib.sha256(manifest_path.read_bytes()).hexdigest() != str(
-                action.get("expected_manifest_sha256") or ""
-            ):
-                raise ValueError(f"Session manifest changed: {session_id}")
-            prepared.append(path)
-
-        deleted_bytes = 0
-        for path in prepared:
-            deleted_bytes += sum(
-                item.stat().st_size for item in path.rglob("*") if item.is_file()
-            )
-            shutil.rmtree(path)
-        self.catalog.reindex()
-        return {"deleted_sessions": len(prepared), "deleted_bytes": deleted_bytes}
-
-    def _legacy_tag_snapshot(
-        self, source: Path, action: Mapping[str, Any]
-    ) -> dict[str, Any]:
-        """Compile one immutable legacy Workflow tag snapshot."""
-        payload = load_yaml(source)
-        if not isinstance(payload, dict):
-            raise ValueError(f"workflow snapshot must be an object: {source}")
-        workflow_id = str(payload.get("id") or "")
-        if not workflow_id:
-            raise ValueError(f"workflow snapshot has no id: {source}")
-        revision = workflow_revision(payload)
-        replacements = action.get("replacements")
-        if not isinstance(replacements, list):
-            raise ValueError("legacy tag replacements must be a list")
-        mapping = {
-            str(item["raw"]): item.get("canonical_tag")
-            for item in replacements
-            if isinstance(item, Mapping) and item.get("raw")
-        }
-        policy = load_tag_policy(self.project)
-
-        def canonical(values: Any, object_kind: ObjectKind) -> list[str]:
-            result: list[str] = []
-            for raw in values if isinstance(values, list) else []:
-                value = str(raw)
-                if value in mapping:
-                    replacement = mapping[value]
-                    if replacement is not None:
-                        result.append(str(replacement))
-                else:
-                    result.extend(validate_declared_tags([value], object_kind, policy))
-            return validate_declared_tags(result, object_kind, policy)
-
-        workflow_tags = canonical(payload.get("tags"), "workflow")
-        jobs = payload.get("jobs")
-        job_items = jobs if isinstance(jobs, list) else []
-        job_tags = {
-            str(job["name"]): canonical(job.get("tags"), "job")
-            for job in job_items
-            if isinstance(job, dict) and job.get("name")
-        }
-
-        def entry(tag: str, job_name: str | None) -> dict[str, Any]:
-            rule = freeze_namespace_rule(policy, tag)
-            assignment_id = (
-                workflow_tag_assignment_id(workflow_id, revision, tag)
-                if job_name is None
-                else job_tag_assignment_id(workflow_id, revision, job_name, tag)
-            )
-            return {
-                "tag": tag,
-                "assignment_id": assignment_id,
-                "inherit": rule.inherit,
-                "cardinality": rule.cardinality,
-                "objects": list(rule.objects),
-            }
-
-        return {
-            "raw_tags": list(payload.get("tags") or []),
-            "canonical_tags": workflow_tags,
-            "job_tags": job_tags,
-            "policy_revision": policy.revision if policy is not None else None,
-            "workflow_revision": revision,
-            "assignments": {
-                "workflow": [entry(tag, None) for tag in workflow_tags],
-                "jobs": {
-                    name: [entry(tag, name) for tag in tags]
-                    for name, tags in job_tags.items()
-                },
-            },
-        }
-
-    @staticmethod
-    def _id_separator_violations(
-        session_dir: Path, session_root: Path
-    ) -> list[IdSeparatorViolation]:
-        """List job names and artifact ids containing the ``:`` separator.
-
-        ``:`` joins catalog object ids (``artifact_id:session_id:job_name``)
-        and occurrence annotation keys (``job_name:artifact_id``), so new
-        writes reject it; existing data is surfaced here for the migration.
-        """
-        violations: list[IdSeparatorViolation] = []
-        relative = session_dir.relative_to(session_root).as_posix()
-        snapshot_path = session_dir / "workflow_snapshot.yaml"
-        if snapshot_path.exists():
-            payload = load_yaml(snapshot_path)
-            if isinstance(payload, dict):
-                for job in payload.get("jobs", []):
-                    if not isinstance(job, dict) or not job.get("name"):
-                        continue
-                    name = str(job["name"])
-                    if ":" in name:
-                        violations.append(
-                            IdSeparatorViolation(
-                                object_kind="job",
-                                value=name,
-                                path=f"{relative}/workflow_snapshot.yaml",
-                            )
-                        )
-        for manifest_file in sorted(session_dir.rglob("artifact_manifest.json")):
-            artifact_id = _manifest_artifact_id(manifest_file)
-            if artifact_id is not None and ":" in artifact_id:
-                violations.append(
-                    IdSeparatorViolation(
-                        object_kind="artifact",
-                        value=artifact_id,
-                        path=manifest_file.parent.relative_to(
-                            session_root
-                        ).as_posix(),
-                    )
-                )
-        return violations
-
-    def _occurrence_key_preview(
-        self, session_dir: Path, session_id: str, report: MigrationReport
-    ) -> None:
-        """Classify legacy bare-artifact occurrence keys of one session.
-
-        Keys written before the ``job_name:artifact_id`` convention are bare
-        artifact ids. A key converts unambiguously when the artifact occurs
-        in exactly one job of the session; otherwise the migration needs a
-        human decision and the key is reported as ambiguous.
-        """
-        path = session_dir / SESSION_ANNOTATIONS_FILENAME
-        if not path.exists():
-            return
-        payload = _read_json_document(path)
-        if payload is None:
-            return
-        occurrences = payload.get("occurrences")
-        if not isinstance(occurrences, dict):
-            return
-        legacy = sorted(str(key) for key in occurrences if ":" not in str(key))
-        if not legacy:
-            return
-        jobs_by_artifact: dict[str, list[str]] = {}
-        for manifest_file in sorted(session_dir.rglob("artifact_manifest.json")):
-            artifact_id = _manifest_artifact_id(manifest_file)
-            if artifact_id is None:
-                continue
-            job_name = manifest_file.parent.relative_to(session_dir).as_posix()
-            jobs_by_artifact.setdefault(artifact_id, []).append(job_name)
-        for artifact_id in legacy:
-            jobs = jobs_by_artifact.get(artifact_id, [])
-            if len(jobs) == 1:
-                report.convertible_occurrence_keys.append(
-                    OccurrenceKeyConversion(
-                        session_id=session_id,
-                        old_key=artifact_id,
-                        new_key=f"{jobs[0]}:{artifact_id}",
-                    )
-                )
-            else:
-                report.ambiguous_occurrence_keys.append(
-                    AmbiguousOccurrenceKey(
-                        session_id=session_id, old_key=artifact_id, locations=jobs
-                    )
-                )
-
-    def _annotation_provenance(self, report: MigrationReport) -> None:
-        """Count assignments frozen without a policy revision, per scope."""
-        counts: dict[str, int] = {}
-
-        def add(scope: str, assignments: Any) -> None:
-            if not isinstance(assignments, list):
-                return
-            missing = sum(
-                1
-                for item in assignments
-                if isinstance(item, dict) and item.get("policy_revision") is None
-            )
-            if missing:
-                counts[scope] = counts.get(scope, 0) + missing
-
-        root = self.project.session_root
-        if root.exists():
-            for path in sorted(root.rglob(SESSION_ANNOTATIONS_FILENAME)):
-                if ".trash" in path.parts:
-                    continue
-                payload = _read_json_document(path)
-                if payload is None:
-                    continue
-                add("session", payload.get("assignments"))
-                occurrences = payload.get("occurrences")
-                if isinstance(occurrences, dict):
-                    for entry in occurrences.values():
-                        if isinstance(entry, dict):
-                            add("occurrence", entry.get("assignments"))
-            for path in sorted(root.rglob(ARTIFACT_ANNOTATIONS_FILENAME)):
-                if ".trash" in path.parts:
-                    continue
-                payload = _read_json_document(path)
-                if payload is not None:
-                    add("artifact", payload.get("assignments"))
-        payload = _read_json_document(
-            self.project.root / ".qphase" / PROJECT_ANNOTATIONS_FILENAME
-        )
-        if payload is not None:
-            add("project", payload.get("assignments"))
-            objects = payload.get("objects")
-            if isinstance(objects, dict):
-                for object_id, entry in objects.items():
-                    if isinstance(entry, dict):
-                        add(
-                            _project_object_scope(str(object_id)),
-                            entry.get("assignments"),
-                        )
-        report.assignments_without_policy_revision = counts
-
-    def _rebuild_parity(self, report: MigrationReport) -> None:
-        """Rebuild the catalog into a temp database and compare with on-disk.
-
-        The throwaway rebuild also yields the rebuildable workflow/job
-        counts, duplicate artifact identities, per-kind object totals and
-        location issues. Parity compares the full row content of every
-        catalog table (bidirectional EXCEPT); an unreadable on-disk catalog
-        counts as drift.
-        """
-        with tempfile.TemporaryDirectory(prefix="qphase-migration-") as tmp:
-            rebuilt = ProjectObjectCatalog(
-                self.project, db_path=Path(tmp) / CATALOG_FILENAME
-            )
-            stats = rebuilt.reindex()
-            report.rebuildable_workflow_revisions = stats.workflows
-            report.rebuildable_jobs = stats.jobs
-            rebuilt_counts = {
-                "projects": stats.projects,
-                "workflows": stats.workflows,
-                "jobs": stats.jobs,
-                "executions": stats.executions,
-                "sessions": stats.sessions,
-                "artifacts": stats.artifacts,
-                "occurrences": stats.occurrences,
-                "effective_tags": stats.effective_tags,
-            }
-            report.object_counts = {
-                kind: rebuilt_counts[f"{kind}s"] for kind in OBJECT_KINDS
-            }
-            issues = rebuilt.location_issues()
-            by_kind: dict[str, int] = {}
-            for issue in issues:
-                by_kind[issue["kind"]] = by_kind.get(issue["kind"], 0) + 1
-            report.location_issues_by_kind = by_kind
-            report.invalid_annotations = [
-                InvalidAnnotation(path=issue["path"], error=issue["message"])
-                for issue in issues
-                if issue["kind"] == "annotation"
-            ]
-            report.duplicate_artifacts = _duplicate_artifacts(rebuilt.path, issues)
-            current = self.catalog.path
-            if not current.exists():
-                report.catalog_drift = None
-                return
-            try:
-                drift = _catalog_drift(current, rebuilt.path, Path(tmp))
-            except sqlite3.DatabaseError:
-                report.catalog_drift = True
-                return
-            report.catalog_drift_tables = drift
-            report.catalog_drift = bool(drift)
-
-    def _private_summary(self, report: MigrationReport) -> None:
-        """Record informational counts of the current user's private store."""
-        report.private_tag_count = sum(
-            len(self.private.list_private_tags(kind)) for kind in OBJECT_KINDS
-        )
-        report.saved_view_count = len(self.private.list_views())
-        report.private_annotation_count = sum(
-            len(self.private.list_private_annotations(kind)) for kind in OBJECT_KINDS
-        )
-
-    @staticmethod
-    def _invalid_snapshot_tags(
-        session_dir: Path, session_id: str, policy: TagPolicy | None
-    ) -> list[InvalidSnapshotTag]:
-        """List declared snapshot tags failing the current validation rules."""
-        # A frozen sidecar is the canonical historical declaration. The
-        # Catalog validates its structure; migration must not re-judge the
-        # immutable raw Workflow tags against a later policy.
-        if (session_dir / "tag_snapshot.yaml").exists():
-            return []
-        path = session_dir / "workflow_snapshot.yaml"
-        if not path.exists():
-            return []
-        payload = load_yaml(path)
-        if not isinstance(payload, dict):
-            return []
-        declared: list[tuple[str, str, ObjectKind]] = [
-            (str(tag), "workflow", "workflow") for tag in payload.get("tags", [])
-        ]
-        for job in payload.get("jobs", []):
-            if isinstance(job, dict) and job.get("name"):
-                declared.extend(
-                    (str(tag), str(job["name"]), "job") for tag in job.get("tags", [])
-                )
-        invalid = []
-        for tag, source, kind in declared:
-            try:
-                validate_declared_tags([tag], kind, policy)
-            except QPhaseConfigError as exc:
-                invalid.append(
-                    InvalidSnapshotTag(
-                        session_id=session_id, tag=tag, source=source, error=str(exc)
-                    )
-                )
-        return invalid
-
     def virtual_folders(self) -> list[tuple[str, int]]:
         """Return ``(name, object count)`` for every built-in folder."""
         return [(name, len(self.virtual_folder(name))) for name in VIRTUAL_FOLDERS]
@@ -890,15 +270,11 @@ class CatalogService:
         if name == "by-model":
             # Sessions whose workflow revision declares any model plugin;
             # filter by a concrete model with the ``model`` query filter.
-            return self._query_all(
-                CatalogQuery(object_kind="session", has_model=True)
-            )
+            return self._query_all(CatalogQuery(object_kind="session", has_model=True))
         if name == "paper-evidence":
             return self._query_all(
                 CatalogQuery(object_kind="session", retention="evidence")
-            ) + self._query_all(
-                CatalogQuery(object_kind="session", retention="pinned")
-            )
+            ) + self._query_all(CatalogQuery(object_kind="session", retention="pinned"))
         if name == "diagnostics":
             return self._query_all(
                 CatalogQuery(object_kind="session", tags_all=("task:diagnostics",))
@@ -961,9 +337,7 @@ class CatalogService:
         else:
             policy = load_tag_policy(self.project)
             document.retention_inherits_to_occurrences = (
-                policy.retention_inherits_to_occurrences
-                if policy is not None
-                else True
+                policy.retention_inherits_to_occurrences if policy is not None else True
             )
         self._save_session_document(root, document, expected)
         return self.project_service.get_session(session_id)
@@ -1340,9 +714,7 @@ class CatalogService:
         facets = {"session_id": session_id, "artifact_id": artifact_id}
         if job_name is not None:
             facets["job_name"] = job_name
-        rows = self.catalog.query(
-            CatalogQuery(object_kind="occurrence", facets=facets)
-        )
+        rows = self.catalog.query(CatalogQuery(object_kind="occurrence", facets=facets))
         if not rows:
             raise ArtifactNotFoundError(
                 f"unknown occurrence: artifact {artifact_id} in session {session_id}"
@@ -1402,129 +774,6 @@ class CatalogService:
 
 #: Tables compared between the on-disk catalog and a throwaway rebuild
 #: (every content table; the ``meta`` bookkeeping table is excluded).
-_PARITY_TABLES = (
-    "projects",
-    "workflows",
-    "jobs",
-    "executions",
-    "sessions",
-    "artifacts",
-    "occurrences",
-    "effective_tags",
-    "location_issues",
-    "job_plugins",
-    "artifact_quantities",
-)
-
-
-def _read_json_document(path: Path) -> dict[str, Any] | None:
-    """Read one annotation document as raw JSON, tolerating corruption."""
-    if not path.exists():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
-def _manifest_artifact_id(manifest_path: Path) -> str | None:
-    """Read the artifact id of one manifest, tolerating corrupt files."""
-    payload = _read_json_document(manifest_path)
-    if payload is None or payload.get("artifact_id") is None:
-        return None
-    return str(payload["artifact_id"])
-
-
-def _project_object_scope(object_id: str) -> str:
-    """Classify one project-document object key by id shape."""
-    if ":" in object_id:
-        return "job"
-    if "@" in object_id:
-        return "workflow"
-    return "execution"
-
-
-def _duplicate_artifacts(
-    catalog_path: Path, issues: list[dict[str, str]]
-) -> list[DuplicateArtifact]:
-    """List artifact identities materialized at more than one location."""
-    connection = sqlite3.connect(catalog_path)
-    try:
-        artifact_ids = [
-            str(row[0])
-            for row in connection.execute(
-                "SELECT artifact_id FROM occurrences GROUP BY artifact_id"
-                " HAVING COUNT(DISTINCT path) > 1 ORDER BY artifact_id"
-            ).fetchall()
-        ]
-        duplicates = []
-        for artifact_id in artifact_ids:
-            locations = [
-                str(row[0])
-                for row in connection.execute(
-                    "SELECT DISTINCT path FROM occurrences"
-                    " WHERE artifact_id = ? ORDER BY path",
-                    (artifact_id,),
-                ).fetchall()
-            ]
-            conflict = any(
-                issue["kind"] == "conflict" and f"'{artifact_id}'" in issue["message"]
-                for issue in issues
-            )
-            duplicates.append(
-                DuplicateArtifact(
-                    artifact_id=artifact_id, locations=locations, conflict=conflict
-                )
-            )
-    finally:
-        connection.close()
-    return duplicates
-
-
-def _catalog_drift(
-    catalog_path: Path, rebuilt_path: Path, work_dir: Path
-) -> dict[str, int]:
-    """Diff two catalog databases table by table as multisets of full rows.
-
-    Returns per-table differing row counts (multiset symmetric difference,
-    so a duplicated row counts as drift even when the row set is identical);
-    an empty dict means no drift. The on-disk catalog is WAL-mode, so even
-    opening it could create ``-shm`` sidecar files next to it: it is copied
-    (with WAL/SHM sidecars) into ``work_dir`` first, keeping the project
-    directory untouched.
-    """
-    current = work_dir / "current_catalog.sqlite"
-    shutil.copy2(catalog_path, current)
-    for suffix in ("-wal", "-shm"):
-        sidecar = catalog_path.with_name(catalog_path.name + suffix)
-        if sidecar.exists():
-            shutil.copy2(sidecar, current.with_name(current.name + suffix))
-    connection = sqlite3.connect(":memory:")
-    try:
-        connection.execute("ATTACH DATABASE ? AS current", (str(current),))
-        connection.execute("ATTACH DATABASE ? AS rebuilt", (str(rebuilt_path),))
-        drift: dict[str, int] = {}
-        for table in _PARITY_TABLES:
-            # Full rows are str/int/None tuples, safe to count as multisets.
-            current_rows = Counter(
-                connection.execute(
-                    f"SELECT * FROM current.{table}"  # noqa: S608
-                ).fetchall()
-            )
-            rebuilt_rows = Counter(
-                connection.execute(
-                    f"SELECT * FROM rebuilt.{table}"  # noqa: S608
-                ).fetchall()
-            )
-            differing = sum((current_rows - rebuilt_rows).values()) + sum(
-                (rebuilt_rows - current_rows).values()
-            )
-            if differing:
-                drift[table] = differing
-        return drift
-    finally:
-        connection.close()
 
 
 def _tag_info(tag: EffectiveTag) -> EffectiveTagInfo:

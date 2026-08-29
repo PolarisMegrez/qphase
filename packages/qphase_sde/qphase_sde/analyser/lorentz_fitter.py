@@ -93,7 +93,6 @@ class LorentzFitterConfig(PluginConfigBase):
     output_dir: str | None = Field(
         None, description="Output directory; usually injected by the engine"
     )
-    pattern: str = Field("*.npz", description="Glob pattern for result files")
 
 
 @dataclass(frozen=True)
@@ -558,7 +557,7 @@ class LorentzFitter(Analyzer):
         if not isinstance(config, LorentzFitterConfig):
             raise RuntimeError("LorentzFitter config not initialized")
 
-        loaded_results = _load_input(data, config.pattern)
+        loaded_results = _load_input(data)
         if not loaded_results:
             raise QPhaseError("LorentzFitter received no input results")
 

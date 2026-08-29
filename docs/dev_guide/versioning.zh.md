@@ -11,8 +11,8 @@ QPhase 发布版本使用 `x.y.z`，同时区分但协调管理 Python/API 兼�
 major 版本可以破坏 API、Workflow schema、插件契约和持久化格式。新 major 不承担读取或迁移旧 major
 artifact 的义务；旧 major 的复现依靠其归档 release、环境或 branch，新 runtime 不永久保留兼容代码。
 
-当前1.x到2.x迁移工具只用于工作区过渡，不属于稳定2.x API。Global Phase 4 完成项目迁移与验证后，删除其
-runtime 入口、专用 fixtures 与迁移文档。
+1.x 到 2.x 的迁移工具只用于工作区过渡，不属于稳定 2.x API；项目已在 2.0.0 边界完成迁移与验证，其
+runtime 入口、专用 fixtures 与迁移文档已删除。
 
 ## Minor `y`
 

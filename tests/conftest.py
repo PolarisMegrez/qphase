@@ -9,8 +9,8 @@ import os
 from pathlib import Path
 
 import pytest
-from qphase.core.registry import registry
 from qphase.core.project import ProjectContext
+from qphase.core.registry import registry
 from qphase.core.system_config import load_system_config
 
 # Layer markers used for test selection (registered in pyproject.toml).

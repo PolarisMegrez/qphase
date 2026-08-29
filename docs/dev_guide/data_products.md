@@ -8,8 +8,7 @@ description: Data Product Contract
     This contract is approved and frozen for Phase 1 implementation under
     `qphase.data` and `qphase.core.task_profile`; the Phase 1 audit sync
     (coordinates as typed variables, registry-id artifact references) is a
-    draft under review. Production Result serialization still changes only
-    through the staged qphase 2.0 migration. The implemented on-disk
+    draft under review. The implemented on-disk
     formats are documented in [Artifact Formats](artifact_formats.md).
 
 QPhase 2.0 replaces the untyped `trajectory + dict[str, Any]` result shape with
