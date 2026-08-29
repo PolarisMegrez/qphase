@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from qphase.data import load_products
+from qphase.data import load_bundle, load_products
 from qphase_sde.runtime.migrate import (
     LegacyFormatError,
     migrate_legacy_result,
@@ -119,6 +119,86 @@ def test_migrate_scan_artifact_streams_per_point(tmp_path):
     assert _fixture_hashes() == before
 
 
+def test_migrate_fused_scan_result_uses_embedded_grid(tmp_path):
+    source = tmp_path / "fused.npz"
+    axis = np.asarray([0.5, 1.0])
+    analysis = {
+        "psd": [
+            {"axis": np.asarray([0.0, 1.0]), "psd": np.asarray([[value], [2 * value]])}
+            for value in axis
+        ]
+    }
+    meta = {
+        "scan": {
+            "combine": "cartesian",
+            "shape": (2,),
+            "axes": {"delta": axis},
+            "targets": {"delta": "model.test.delta"},
+            "base_params": {"delta": 0.0},
+            "n_traj_per_point": 4,
+            "dataset_meta": {},
+        }
+    }
+    np.savez(
+        source,
+        t0=0.0,
+        dt=0.1,
+        meta=np.array(meta, dtype=object),
+        analysis=np.array(analysis, dtype=object),
+        trajectory_meta=np.array({}, dtype=object),
+    )
+
+    report = migrate_legacy_result(source, tmp_path / "out")
+
+    assert report.products == ["psd"]
+    bundle = load_bundle(tmp_path / "out")
+    assert bundle.shape == (2,)
+    assert bundle.axes == {"delta": [0.5, 1.0]}
+    for index, value in enumerate(axis):
+        point = bundle.point_view((index,)).legacy_result()
+        np.testing.assert_array_equal(
+            point.analysis["psd"]["psd"], [[value], [2 * value]]
+        )
+
+
+def test_migrate_one_point_fused_scan_degrades_to_single_result(tmp_path):
+    source = tmp_path / "fused_single.npz"
+    analysis = {
+        "psd": [
+            {"axis": np.asarray([0.0, 1.0]), "psd": np.asarray([[1.0], [2.0]])}
+        ]
+    }
+    meta = {
+        "scan": {
+            "combine": "zipped",
+            "shape": (1,),
+            "axes": {"delta": np.asarray([0.5])},
+            "targets": {"delta": "model.test.delta"},
+            "base_params": {"delta": 0.0},
+            "n_traj_per_point": 4,
+            "dataset_meta": {},
+        }
+    }
+    np.savez(
+        source,
+        t0=0.0,
+        dt=0.1,
+        meta=np.array(meta, dtype=object),
+        analysis=np.array(analysis, dtype=object),
+        trajectory_meta=np.array({}, dtype=object),
+    )
+
+    report = migrate_legacy_result(source, tmp_path / "out")
+
+    assert report.products == ["psd"]
+    products = load_products(tmp_path / "out")
+    psd = products["psd"]
+    assert "scan" not in {axis.name for axis in psd.schema.axes}
+    np.testing.assert_array_equal(
+        psd.handle("psd").materialize(), [[1.0], [2.0]]
+    )
+
+
 def test_migrate_rejects_unknown_object_payload(tmp_path):
     source = tmp_path / "unknown_object.npz"
     np.savez(
@@ -151,7 +231,7 @@ def test_migrate_never_overwrites_output(tmp_path):
         )
 
 
-def test_migrate_scan_rejects_non_per_point_layout(tmp_path):
+def test_migrate_scan_rejects_non_pointwise_layout(tmp_path):
     manifest = tmp_path / "manifest.json"
     manifest.write_text(
         json.dumps(
@@ -163,7 +243,7 @@ def test_migrate_scan_rejects_non_per_point_layout(tmp_path):
             }
         )
     )
-    with pytest.raises(LegacyFormatError, match="per_point"):
+    with pytest.raises(LegacyFormatError, match="per-point or sharded"):
         migrate_scan_artifact(manifest, tmp_path / "out")
 
 

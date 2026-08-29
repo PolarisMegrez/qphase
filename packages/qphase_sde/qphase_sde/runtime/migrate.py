@@ -56,7 +56,7 @@ from uuid import uuid4
 
 import numpy as np
 from qphase.core.errors import QPhaseError
-from qphase.core.utils import canonical_json
+from qphase.core.scan import ParameterGrid
 from qphase.data import (
     ArtifactManifest,
     AxisRole,
@@ -73,13 +73,13 @@ from qphase.data.npz import (
     NpzVariableDescriptor,
     build_product_storage,
 )
-from qphase.data.store import (
-    GENERIC_BUNDLE_ADAPTER_ID,
-    GENERIC_BUNDLE_TYPE_ID,
-    BundleDescriptor,
-)
+from qphase.data.store import BundleDescriptor
 
-from qphase_sde.contracts.bundle import SDEProvenance
+from qphase_sde.contracts.bundle import (
+    SDE_BUNDLE_ADAPTER_ID,
+    SDE_BUNDLE_TYPE_ID,
+    SDEProvenance,
+)
 from qphase_sde.products import split_payload_leaves as _split_payload_leaves
 from qphase_sde.result import (
     SDEResult,
@@ -87,6 +87,7 @@ from qphase_sde.result import (
     bundle_from_result,
     recorded_distribution_versions,
 )
+from qphase_sde.runtime.scan import SDEScanResult
 
 __all__ = [
     "LegacyFormatError",
@@ -100,10 +101,32 @@ _LEGACY_RESULT_KEYS = {"data", "t0", "dt", "meta", "analysis", "trajectory_meta"
 _PICKLED_SCALARS = {"meta", "analysis", "trajectory_meta"}
 _RAW_TRAJECTORY_KEYS = {"trajectories", "valid_length", "t0", "dt"}
 _CHUNK_KEY = "data"
+_ATTACHMENT_BACKED_FIELDS = frozenset({"rows", "peaks", "candidates", "platforms"})
 
 #: Adapter for unknown payloads: receives (key, value) and returns a plain
 #: mapping the ``legacy_analysis/1`` bridge can split, or raises.
 PayloadAdapter = Callable[[str, Any], Mapping[str, Any]]
+
+
+def _without_attachment_fields(payload: Any) -> tuple[Any, list[str]]:
+    """Remove ragged tables preserved separately as CSV/JSON attachments."""
+    dropped: list[str] = []
+
+    def visit(value: Any, prefix: str = "") -> Any:
+        if isinstance(value, dict):
+            result = {}
+            for key, item in value.items():
+                name = f"{prefix}.{key}" if prefix else str(key)
+                if str(key) in _ATTACHMENT_BACKED_FIELDS:
+                    dropped.append(name)
+                else:
+                    result[key] = visit(item, name)
+            return result
+        if isinstance(value, list):
+            return [visit(item, prefix) for item in value]
+        return value
+
+    return visit(payload), dropped
 
 
 class LegacyFormatError(QPhaseError):
@@ -202,9 +225,7 @@ def _audit_npz(source: Path) -> set[str]:
                     member.read(1)  # minor version
                     length_bytes = member.read(2 if major == 1 else 4)
                     header_len = int.from_bytes(length_bytes, "little")
-                    header = ast.literal_eval(
-                        member.read(header_len).decode("latin1")
-                    )
+                    header = ast.literal_eval(member.read(header_len).decode("latin1"))
                 key = member_name.removesuffix(".npy")
                 keys.add(key)
                 if header["descr"] == "|O":
@@ -212,9 +233,7 @@ def _audit_npz(source: Path) -> set[str]:
     except LegacyFormatError:
         raise
     except Exception as exc:
-        raise LegacyFormatError(
-            f"cannot read legacy result {source}: {exc}"
-        ) from exc
+        raise LegacyFormatError(f"cannot read legacy result {source}: {exc}") from exc
     unknown_objects = object_keys - _PICKLED_SCALARS
     if unknown_objects:
         raise LegacyFormatError(
@@ -318,6 +337,7 @@ def migrate_legacy_result(
     keys = _audit_npz(source)
     sources = {source.name: _sha256_file(source)}
     warnings: list[MigrationWarning] = []
+    bundle_descriptor: BundleDescriptor | None = None
 
     if keys >= _RAW_TRAJECTORY_KEYS and "data" not in keys:
         products = {"trajectories": _raw_trajectory_product(source)}
@@ -327,8 +347,7 @@ def migrate_legacy_result(
         unknown = keys - _LEGACY_RESULT_KEYS
         if unknown:
             raise LegacyFormatError(
-                f"{source}: unknown keys {sorted(unknown)}; not an SDE 1.x "
-                "result file"
+                f"{source}: unknown keys {sorted(unknown)}; not an SDE 1.x result file"
             )
         result = SDEResult.load(source)
         if adapter is not None:
@@ -339,9 +358,66 @@ def migrate_legacy_result(
                 else:
                     analysis[name] = adapter(str(name), payload)
             result.analysis = analysis
+        for name, payload in list(result.analysis.items()):
+            cleaned, removed = _without_attachment_fields(payload)
+            result.analysis[name] = cleaned
+            if removed:
+                warnings.append(
+                    MigrationWarning(
+                        code="attachment-backed-fields-dropped",
+                        message=(
+                            f"analyser {name!r}: ragged fields are preserved "
+                            "as exported attachments, not manifest metadata"
+                        ),
+                        context={"product": str(name), "keys": removed},
+                    )
+                )
+        scan = result.meta.get("scan") if isinstance(result.meta, dict) else None
+        adapted: SDEResult | SDEScanResult = result
+        scan_grid: dict[str, list[float]] | None = None
+        if isinstance(scan, Mapping):
+            axes = {
+                str(name): np.asarray(values)
+                for name, values in dict(scan.get("axes") or {}).items()
+            }
+            targets = {
+                str(name): str(target)
+                for name, target in dict(scan.get("targets") or {}).items()
+            }
+            shape = tuple(int(value) for value in scan.get("shape") or ())
+            grid = ParameterGrid(
+                str(scan.get("combine") or "cartesian"),
+                axes,
+                targets,
+                shape,
+            )
+            if set(axes) != set(targets) or grid.size < 1:
+                raise LegacyFormatError(f"{source}: invalid fused scan metadata")
+            if grid.size > 1:
+                scan_grid = {
+                    name: [float(value) for value in values]
+                    for name, values in axes.items()
+                }
+                adapted = SDEScanResult(
+                    result,
+                    grid,
+                    dict(scan.get("base_params") or {}),
+                    int(scan.get("n_traj_per_point") or 0),
+                    meta=dict(scan.get("dataset_meta") or {}),
+                )
+            else:
+                # A one-point shard degrades to a plain single result: unwrap
+                # the per-point list wrappers instead of building a bundle.
+                for name, payload in list(result.analysis.items()):
+                    result.analysis[name] = _point_payload(payload, source, str(name))
         bundle = bundle_from_result(
-            result, provenance=_legacy_provenance(result)
+            adapted,
+            provenance=_legacy_provenance(result, scan_grid=scan_grid),
+            n_traj_per_point=(
+                adapted.n_traj_per_point if isinstance(adapted, SDEScanResult) else None
+            ),
         )
+        bundle_descriptor = bundle.bundle_descriptor
         products = bundle.products
         legacy_format = "sde_result/1"
         provenance_extra = {
@@ -371,6 +447,7 @@ def migrate_legacy_result(
             sources, legacy_format, warnings, provenance_extra
         ),
         parents=[sources[source.name]],
+        bundle=bundle_descriptor,
         **save_kwargs,
     )
     return MigrationReport(
@@ -397,36 +474,52 @@ def _scan_seed(point_metas: list[dict[str, Any]]) -> int | None:
     return seeds.pop() if len(seeds) == 1 else None
 
 
+def _point_payload(payload: Any, shard: Path, product_name: str) -> Any:
+    """Remove the legacy one-point scan wrapper from a per-point shard."""
+    if isinstance(payload, list):
+        if len(payload) != 1:
+            raise LegacyFormatError(
+                f"{shard}: analyser {product_name!r} contains {len(payload)} "
+                "scan points; expected exactly one"
+            )
+        payload = payload[0]
+    return _without_attachment_fields(payload)[0]
+
+
 def _read_v2_manifest(manifest_path: Path) -> tuple[dict[str, Any], list[Path]]:
-    """Read and validate an artifact-manifest v2 (per-point layout only)."""
+    """Read a v2 manifest whose NPZ shards each represent one scan point."""
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise LegacyFormatError(
             f"cannot read artifact manifest v2 {manifest_path}: {exc}"
         ) from exc
-    if manifest.get("schema_version") != "2.0":
+    if manifest.get("schema_version") not in {"1.0", "2.0"}:
         raise LegacyFormatError(
-            f"{manifest_path}: expected schema_version '2.0', got "
+            f"{manifest_path}: expected schema_version '1.0' or '2.0', got "
             f"{manifest.get('schema_version')!r}"
         )
-    if manifest.get("layout") != "per_point":
+    if manifest.get("layout") not in {"per_point", "sharded"}:
         raise LegacyFormatError(
-            f"{manifest_path}: only layout 'per_point' is supported, got "
+            f"{manifest_path}: expected per-point or sharded layout, got "
             f"{manifest.get('layout')!r}"
         )
-    files = manifest.get("files")
+    declared_files = manifest.get("files")
     shape = manifest.get("shape")
+    files = (
+        [str(name) for name in declared_files if str(name).lower().endswith(".npz")]
+        if isinstance(declared_files, list)
+        else []
+    )
     if (
-        not isinstance(files, list)
-        or not files
+        not files
         or not isinstance(shape, list)
         or len(shape) != 1
         or int(shape[0]) != len(files)
     ):
         raise LegacyFormatError(
-            f"{manifest_path}: expected shape [<n>] matching {len(files or [])} "
-            "per-point shard files"
+            f"{manifest_path}: expected one NPZ shard per scan point; shape "
+            f"{shape!r}, NPZ shards {len(files)}"
         )
     shards = [manifest_path.parent / str(name) for name in files]
     for shard in shards:
@@ -553,22 +646,16 @@ def _fused_analysis_schema(
     for key in sorted(meta_keys):
         payload_meta[key] = [split[1].get(key) for split in point_splits]
     for key in demoted:
-        values = [split[0][key].tolist() for split in point_splits]
-        try:
-            canonical_json(values)
-        except (TypeError, ValueError):
-            warnings.append(
-                MigrationWarning(
-                    code="payload-leaves-dropped",
-                    message=(
-                        f"analyser {name!r}: ragged leaf {key!r} is not "
-                        "JSON-safe and was not migrated"
-                    ),
-                    context={"product": name, "keys": [key]},
-                )
+        warnings.append(
+            MigrationWarning(
+                code="ragged-leaf-dropped",
+                message=(
+                    f"analyser {name!r}: ragged leaf {key!r} is not embedded "
+                    "in the Artifact manifest"
+                ),
+                context={"product": name, "keys": [key]},
             )
-            continue
-        payload_meta[key] = values
+        )
     schema = ProductSchema(
         kind=DataKind.STATISTICS,
         axes=[
@@ -581,7 +668,7 @@ def _fused_analysis_schema(
             "source_analyser": str(name),
             "dropped_keys": dropped,
             "payload_meta": payload_meta,
-            "per_point_meta": sorted([*meta_keys, *demoted]),
+            "per_point_meta": sorted(meta_keys),
         },
     )
     return schema, demoted
@@ -623,9 +710,7 @@ def migrate_scan_artifact(
                     result.analysis[name] = adapter(str(name), payload)
         point_metas.append(dict(result.meta))
         if result.trajectory is not None:
-            data = np.asarray(
-                getattr(result.trajectory, "data", result.trajectory)
-            )
+            data = np.asarray(getattr(result.trajectory, "data", result.trajectory))
             info = (
                 tuple(data.shape),
                 np.dtype(data.dtype).str,
@@ -641,13 +726,13 @@ def migrate_scan_artifact(
                     "requires uniform points"
                 )
         for name, payload in result.analysis.items():
+            payload = _point_payload(payload, shard, str(name))
             splits = analysers.setdefault(str(name), [])
             splits.append(_split_payload_leaves(payload))
     for name, splits in analysers.items():
         if len(splits) != n_points:
             raise LegacyFormatError(
-                f"analyser {name!r} appears in only {len(splits)} of "
-                f"{n_points} points"
+                f"analyser {name!r} appears in only {len(splits)} of {n_points} points"
             )
 
     # -- fused schemas --------------------------------------------------------
@@ -659,18 +744,12 @@ def migrate_scan_artifact(
     trajectory_schema: ProductSchema | None = None
     if trajectory_info is not None:
         first = SDEResult.load(shards[0]).trajectory
-        point_product = _trajectory_product(
-            first, scan_size=1, n_traj_per_point=None
-        )
-        trajectory_schema = _fused_trajectory_schema(
-            point_product.schema, n_points
-        )
+        point_product = _trajectory_product(first, scan_size=1, n_traj_per_point=None)
+        trajectory_schema = _fused_trajectory_schema(point_product.schema, n_points)
     analysis_schemas: dict[str, ProductSchema] = {}
     demoted_keys: dict[str, list[str]] = {}
     for name, splits in analysers.items():
-        schema, demoted = _fused_analysis_schema(
-            name, splits, n_points, warnings
-        )
+        schema, demoted = _fused_analysis_schema(name, splits, n_points, warnings)
         if schema is not None:
             analysis_schemas[name] = schema
             demoted_keys[name] = demoted
@@ -712,7 +791,10 @@ def migrate_scan_artifact(
                     )
             else:
                 schema = analysis_schemas[product_name]
-                split = _split_payload_leaves(result.analysis[product_name])
+                payload = _point_payload(
+                    result.analysis[product_name], shard, product_name
+                )
+                split = _split_payload_leaves(payload)
                 for variable in schema.variables:
                     array = np.asarray(split[0][variable.name])
                     records.setdefault(variable.name, []).append(
@@ -772,10 +854,20 @@ def migrate_scan_artifact(
     )
     artifact_id = uuid4().hex
     bundle = BundleDescriptor(
-        type_id=GENERIC_BUNDLE_TYPE_ID,
-        adapter_id=GENERIC_BUNDLE_ADAPTER_ID,
-        descriptor_schema=GENERIC_BUNDLE_TYPE_ID,
-        descriptor={},
+        type_id=SDE_BUNDLE_TYPE_ID,
+        adapter_id=SDE_BUNDLE_ADAPTER_ID,
+        descriptor_schema=SDE_BUNDLE_TYPE_ID,
+        descriptor={
+            "scan": {
+                "shape": list(v2["shape"]),
+                "dimension_order": list(scan_axes_meta),
+                "axes": scan_axes_meta,
+                "combine": "cartesian",
+                "n_traj_per_point": (
+                    trajectory_info[0][0] if trajectory_info is not None else None
+                ),
+            }
+        },
         product_roles=(
             {"trajectories": "trajectories"}
             if any(entry.name == "trajectories" for entry in entries)
