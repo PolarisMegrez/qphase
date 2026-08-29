@@ -1,0 +1,33 @@
+schema: qphase.tag-policy/1
+namespaces:
+  model:
+    open: true
+    cardinality: many
+    inherit: true
+  purpose:
+    open: true
+    hierarchical: true
+    cardinality: many
+    inherit: true
+  stage:
+    open: true
+    cardinality: one
+    inherit: true
+  task:
+    open: true
+    hierarchical: true
+    cardinality: many
+    inherit: true
+  method:
+    open: true
+    hierarchical: true
+    cardinality: many
+    inherit: true
+  candidate:
+    open: true
+    hierarchical: true
+    cardinality: many
+    inherit: true
+reserved_namespaces:
+  - system
+retention_inherits_to_occurrences: true

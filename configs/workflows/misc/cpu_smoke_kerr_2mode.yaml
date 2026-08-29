@@ -2,8 +2,6 @@ schema: qphase.workflow/2
 id: cpu_smoke_kerr_2mode
 title: Cpu Smoke Kerr 2Mode
 collection: misc
-tags:
-- group:misc
 jobs:
 - name: cpu_smoke_kerr_2mode
   save: true
