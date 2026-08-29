@@ -139,9 +139,11 @@ def migrate(
             payload = load_yaml(apply_manifest)
             if not isinstance(payload, dict):
                 raise ValueError("migration manifest must contain an object")
-            apply_counts = CatalogService(
-                ProjectContext.discover()
-            ).apply_metadata_migration(payload)
+            service = CatalogService(ProjectContext.discover())
+            if payload.get("schema") == "qphase.phase4c-session-relocation/1":
+                apply_counts = service.apply_session_relocation(payload)
+            else:
+                apply_counts = service.apply_metadata_migration(payload)
         except (QPhaseError, OSError, ValueError) as exc:
             typer.echo(f"Error: {exc}")
             raise typer.Exit(code=1) from exc

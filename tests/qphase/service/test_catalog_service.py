@@ -158,6 +158,80 @@ def test_metadata_migration_checks_all_actions_before_writing(tmp_path):
     assert service.state_store.load_session_annotations(root) is None
 
 
+def test_session_relocation_moves_complete_batch_and_reindexes(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    roots = []
+    for day in (1, 2):
+        created = _session(project, f"2026-08-0{day}T10-00-00_a{day}")
+        source = project.session_root / "by_model" / "dummy" / created.name
+        source.parent.mkdir(parents=True, exist_ok=True)
+        created.replace(source)
+        roots.append(source)
+    service = CatalogService(project, home=tmp_path / "home")
+    actions = []
+    for source in roots:
+        files = [path for path in source.rglob("*") if path.is_file()]
+        target = project.session_root / "2026" / "08" / source.name
+        actions.append(
+            {
+                "session_id": source.name,
+                "source": source.relative_to(project.root).as_posix(),
+                "target": target.relative_to(project.root).as_posix(),
+                "expected_manifest_sha256": hashlib.sha256(
+                    (source / "session_manifest.json").read_bytes()
+                ).hexdigest(),
+                "expected_file_count": len(files),
+                "expected_byte_count": sum(path.stat().st_size for path in files),
+            }
+        )
+    manifest = {
+        "schema": "qphase.phase4c-session-relocation/1",
+        "project_id": project.project_id,
+        "external_snapshot": "snapshot-1",
+        "actions": actions,
+    }
+
+    assert service.apply_session_relocation(manifest) == {"relocated_sessions": 2}
+    for action in actions:
+        assert not (project.root / action["source"]).exists()
+        assert (project.root / action["target"] / "session_manifest.json").exists()
+    assert len(service.query(CatalogQuery(object_kind="session"))) == 2
+
+
+def test_session_relocation_preflights_all_targets_before_moving(tmp_path):
+    project = ProjectContext.create(tmp_path / "project")
+    created = _session(project, "2026-08-01T10-00-00_a1")
+    source = project.session_root / "by_model" / "dummy" / created.name
+    source.parent.mkdir(parents=True, exist_ok=True)
+    created.replace(source)
+    target = project.session_root / "2026" / "08" / source.name
+    target.mkdir(parents=True)
+    files = [path for path in source.rglob("*") if path.is_file()]
+    service = CatalogService(project, home=tmp_path / "home")
+    manifest = {
+        "schema": "qphase.phase4c-session-relocation/1",
+        "project_id": project.project_id,
+        "external_snapshot": "snapshot-1",
+        "actions": [
+            {
+                "session_id": source.name,
+                "source": source.relative_to(project.root).as_posix(),
+                "target": target.relative_to(project.root).as_posix(),
+                "expected_manifest_sha256": hashlib.sha256(
+                    (source / "session_manifest.json").read_bytes()
+                ).hexdigest(),
+                "expected_file_count": len(files),
+                "expected_byte_count": sum(path.stat().st_size for path in files),
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="precondition failed"):
+        service.apply_session_relocation(manifest)
+
+    assert source.exists()
+
+
 def test_tag_session_roundtrip_visible_in_query(tmp_path):
     project = ProjectContext.create(tmp_path / "project")
     _session(project, "session-1")

@@ -427,6 +427,82 @@ class CatalogService:
         self.catalog.reindex()
         return dict(counts)
 
+    def apply_session_relocation(
+        self, manifest: Mapping[str, Any]
+    ) -> dict[str, int]:
+        """Relocate one approved batch into the canonical Session layout."""
+        if manifest.get("schema") != "qphase.phase4c-session-relocation/1":
+            raise ValueError("unsupported Session relocation manifest")
+        if manifest.get("project_id") != self.project.project_id:
+            raise ValueError("Session relocation manifest belongs to another project")
+        if not manifest.get("external_snapshot"):
+            raise ValueError("Session relocation requires an external snapshot")
+        actions = manifest.get("actions")
+        if not isinstance(actions, list):
+            raise ValueError("Session relocation actions must be a list")
+
+        prepared: list[tuple[Path, Path, int, int, str]] = []
+        session_root = self.project.session_root.resolve()
+        for action in actions:
+            if not isinstance(action, Mapping):
+                raise ValueError("Session relocation action must be an object")
+            session_id = str(action.get("session_id") or "")
+            source = (self.project.root / str(action.get("source") or "")).resolve()
+            target = (self.project.root / str(action.get("target") or "")).resolve()
+            if not source.is_relative_to(session_root) or not target.is_relative_to(
+                session_root
+            ):
+                raise ValueError(f"Session relocation escapes runs/: {session_id}")
+            if source.name != session_id or target.name != session_id:
+                raise ValueError(f"Session identity/path mismatch: {session_id}")
+            if not source.is_dir() or target.exists():
+                raise ValueError(
+                    f"Session source/target precondition failed: {session_id}"
+                )
+            manifest_path = source / "session_manifest.json"
+            payload = self.state_store.load_session_manifest(source)
+            if str(payload.get("session_id") or source.name) != session_id:
+                raise ValueError(f"Session manifest identity mismatch: {session_id}")
+            if self.project_service._owner_alive(source / "session.lock"):
+                raise ValueError(f"Session is active: {session_id}")
+            files = [path for path in source.rglob("*") if path.is_file()]
+            count = len(files)
+            size = sum(path.stat().st_size for path in files)
+            digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+            if count != int(action.get("expected_file_count", -1)):
+                raise ValueError(f"Session file count changed: {session_id}")
+            if size != int(action.get("expected_byte_count", -1)):
+                raise ValueError(f"Session byte count changed: {session_id}")
+            if digest != str(action.get("expected_manifest_sha256") or ""):
+                raise ValueError(f"Session manifest changed: {session_id}")
+            prepared.append((source, target, count, size, digest))
+
+        moved: list[tuple[Path, Path]] = []
+        try:
+            for source, target, count, size, digest in prepared:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                source.replace(target)
+                files = [path for path in target.rglob("*") if path.is_file()]
+                if (
+                    len(files) != count
+                    or sum(path.stat().st_size for path in files) != size
+                    or hashlib.sha256(
+                        (target / "session_manifest.json").read_bytes()
+                    ).hexdigest()
+                    != digest
+                ):
+                    raise OSError(
+                        f"Session relocation verification failed: {target.name}"
+                    )
+                moved.append((source, target))
+        except Exception:
+            for source, target in reversed(moved):
+                source.parent.mkdir(parents=True, exist_ok=True)
+                target.replace(source)
+            raise
+        self.catalog.reindex()
+        return {"relocated_sessions": len(moved)}
+
     def _legacy_tag_snapshot(
         self, source: Path, action: Mapping[str, Any]
     ) -> dict[str, Any]:
