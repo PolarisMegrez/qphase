@@ -59,12 +59,10 @@ jobs:
       record_modes: [0]
       keep_traj: false
       trajectory_batching: auto
-      max_state_norm: 220.0
-      state_check_interval_steps: 1024
   backend:
     cupy: {float_dtype: float64, device: cuda}
   integrator:
-    cayley_maruyama: {fused: required, chunk_steps: 512, max_modes: 16}
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
   model:
     collective_loss_kerr_3mode:
       omega_a: 0.0
@@ -77,14 +75,6 @@ jobs:
       pump_a: 0.07598771590146015
       kappa_bright: 1.0
       kappa_dark: 0.1775148709287836
-  observer:
-    first_passage:
-      rule: state_norm
-      threshold: 150.0
-      direction: above
-      action: record
-      check_interval_steps: 1024
-      debounce_checks: 2
   analyser:
     psd:
       modes: [0]
