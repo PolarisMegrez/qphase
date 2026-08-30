@@ -110,6 +110,28 @@ Job 日志、配置快照和导出的 CSV 不属于 artifact payload，除非 ma
   品 schema 与存储 adapter id；它不指名任何代码，也不指名任何
   文件系统位置。
 
+## 附件
+
+无法装入 typed product 的辅助文件（逐点 ragged 分析记录、配置快照等）
+可以作为**附件**随 artifact 目录保存。它们在 manifest 的自由 provenance
+中以 `"attachments"` 键声明，条目为 `{"name", "path", "media_type"}`：
+
+```json
+"provenance": {
+  "attachments": [
+    {"name": "analysis_sidecar", "path": "analysis_sidecar.json",
+     "media_type": "application/json"}
+  ]
+}
+```
+
+附件不是 payload：不携带 product schema，列表接口不报告其大小，
+artifact 目录中未登记的文件也无法通过 artifact 接口读取。已声明附件通
+过 `read_artifact_attachment(directory, name)` 读取：路径按与 payload
+相同的 artifact 相对规则校验（禁止逃逸）；`application/json` 附件返回
+解析后的对象，其他 media type 返回原始 `bytes`。读取未声明的名称会抛
+出 `ArtifactNotFoundError`。
+
 ## SDE 数据产品
 
 `qphase_sde` 在 `engine.run()` 的每个出口返回 typed `SDEDataBundle`，并

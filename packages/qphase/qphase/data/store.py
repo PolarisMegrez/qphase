@@ -50,6 +50,8 @@ load_products
     Reopen an artifact directory as lazily-backed datasets.
 load_bundle
     Restore an artifact directory as a (generic or adapted) bundle object.
+read_artifact_attachment
+    Read a manifest-declared auxiliary attachment file.
 register_adapter
     Register a storage adapter implementation.
 register_bundle_adapter
@@ -88,6 +90,7 @@ from .schema import ProductSchema, VariableSchema
 
 __all__ = [
     "ARTIFACT_SCHEMA_VERSION",
+    "ATTACHMENTS_PROVENANCE_KEY",
     "GENERIC_BUNDLE_ADAPTER_ID",
     "GENERIC_BUNDLE_TYPE_ID",
     "MANIFEST_FILENAME",
@@ -100,6 +103,7 @@ __all__ = [
     "StorageVariableSummary",
     "load_bundle",
     "load_products",
+    "read_artifact_attachment",
     "register_adapter",
     "register_bundle_adapter",
     "resolve_artifact_path",
@@ -957,3 +961,44 @@ def load_bundle(directory: Path | str) -> Any:
             metadata={"artifact_id": manifest.artifact_id},
         )
     return adapter.build(manifest, products)
+
+
+# -- attachments ----------------------------------------------------------------
+
+#: Provenance key under which artifact attachments are declared.
+ATTACHMENTS_PROVENANCE_KEY = "attachments"
+
+
+def read_artifact_attachment(directory: Path | str, name: str) -> Any:
+    """Read one manifest-declared attachment of the artifact at ``directory``.
+
+    Attachments are auxiliary files that do not fit a typed product (ragged
+    per-point analysis records, configuration snapshots, ...). They are
+    declared in the manifest's free-form provenance under ``"attachments"``
+    as ``{"name", "path", "media_type"}`` entries. Only declared files are
+    readable through this interface, and their paths go through the same
+    artifact-relative validation as payload files, so a declared attachment
+    can never escape the artifact root.
+
+    ``application/json`` attachments are returned parsed; every other media
+    type is returned as raw ``bytes``. Unknown names raise
+    :class:`ArtifactNotFoundError`.
+    """
+    directory = Path(directory)
+    manifest = ArtifactManifest.read(directory)
+    raw = manifest.provenance.get(ATTACHMENTS_PROVENANCE_KEY) or []
+    for entry in raw:
+        if isinstance(entry, Mapping) and entry.get("name") == name:
+            try:
+                path = resolve_artifact_path(directory, str(entry.get("path") or ""))
+            except ValueError as exc:
+                raise ArtifactCorruptError(
+                    f"attachment {name!r} declares an invalid path: {exc}"
+                ) from exc
+            data = path.read_bytes()
+            if str(entry.get("media_type") or "") == "application/json":
+                return json.loads(data.decode("utf-8"))
+            return data
+    raise ArtifactNotFoundError(
+        f"artifact at {directory} declares no attachment {name!r}"
+    )

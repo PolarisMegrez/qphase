@@ -138,6 +138,32 @@ example `dataset.materialize(resolver=ProjectArtifactResolver(project))`.
 There is no implicit process-global resolver on the normal materialization
 path; this prevents identical Artifact IDs from crossing Project boundaries.
 
+## Attachments
+
+Auxiliary files that do not fit a typed product (ragged per-point analysis
+records, configuration snapshots, ...) may travel inside the artifact
+directory as **attachments**. They are declared in the manifest's free-form
+provenance under the `"attachments"` key as `{"name", "path", "media_type"}`
+entries:
+
+```json
+"provenance": {
+  "attachments": [
+    {"name": "analysis_sidecar", "path": "analysis_sidecar.json",
+     "media_type": "application/json"}
+  ]
+}
+```
+
+Attachments are not payload: they carry no product schema, listings do not
+report their sizes, and unregistered files in the artifact directory are not
+readable through the artifact interface. Declared attachments are read with
+`read_artifact_attachment(directory, name)`: the path is validated with the
+same artifact-relative rules as payload paths (no escapes), and
+`application/json` attachments are returned parsed while every other media
+type yields raw `bytes`. Reading an undeclared name raises
+`ArtifactNotFoundError`.
+
 ## SDE data products
 
 `qphase_sde` returns typed `SDEDataBundle`s from every `engine.run()` exit
