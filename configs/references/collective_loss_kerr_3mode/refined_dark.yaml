@@ -19,6 +19,9 @@ parameters:
 source_workflows:
   - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_cam_21.yaml
   - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_medium_21.yaml
+  - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_a5000_long_21.yaml
+  - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_h200_long_21.yaml
+  - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_long_21.yaml
   - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_q0.yaml
   - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_signed_figure1.yaml
   - reference/refined_dark/collective_loss_kerr_3mode_refined_dark_signed_rerun.yaml
