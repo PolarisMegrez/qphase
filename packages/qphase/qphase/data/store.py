@@ -973,6 +973,68 @@ def load_bundle(directory: Path | str) -> Any:
 ATTACHMENTS_PROVENANCE_KEY = "attachments"
 
 
+class _AttachmentDescriptor(NamedTuple):
+    """One validated attachment declaration with its resolved on-disk path."""
+
+    name: str
+    path: Path
+    media_type: str
+
+
+def _attachment_descriptors(directory: Path) -> list[_AttachmentDescriptor]:
+    """Parse and validate the manifest's attachment declarations.
+
+    This is the disk boundary for attachment metadata: a malformed
+    declaration (not a list, non-mapping entries, missing/empty fields),
+    duplicate names, invalid paths and missing files all fail fast as
+    :class:`ArtifactCorruptError` instead of being silently skipped.
+    """
+    manifest = ArtifactManifest.read(directory)
+    raw = manifest.provenance.get(ATTACHMENTS_PROVENANCE_KEY)
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ArtifactCorruptError(
+            f"artifact at {directory} declares invalid attachments: "
+            f"expected a list, got {type(raw).__name__}"
+        )
+    descriptors: list[_AttachmentDescriptor] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            raise ArtifactCorruptError(
+                f"artifact at {directory} declares an invalid attachment entry: "
+                f"expected a mapping, got {entry!r}"
+            )
+        fields: dict[str, str] = {}
+        for field in ("name", "path", "media_type"):
+            value = entry.get(field)
+            if not isinstance(value, str) or not value:
+                raise ArtifactCorruptError(
+                    f"artifact at {directory} declares an attachment with an "
+                    f"invalid {field}: {value!r}"
+                )
+            fields[field] = value
+        name = fields["name"]
+        if name in seen:
+            raise ArtifactCorruptError(
+                f"artifact at {directory} declares duplicate attachment {name!r}"
+            )
+        seen.add(name)
+        try:
+            path = resolve_artifact_path(directory, fields["path"])
+        except ValueError as exc:
+            raise ArtifactCorruptError(
+                f"attachment {name!r} declares an invalid path: {exc}"
+            ) from exc
+        if not path.is_file():
+            raise ArtifactCorruptError(
+                f"attachment {name!r} file is missing: {fields['path']!r}"
+            )
+        descriptors.append(_AttachmentDescriptor(name, path, fields["media_type"]))
+    return descriptors
+
+
 def read_artifact_attachment(directory: Path | str, name: str) -> Any:
     """Read one manifest-declared attachment of the artifact at ``directory``.
 
@@ -986,22 +1048,20 @@ def read_artifact_attachment(directory: Path | str, name: str) -> Any:
 
     ``application/json`` attachments are returned parsed; every other media
     type is returned as raw ``bytes``. Unknown names raise
-    :class:`ArtifactNotFoundError`.
+    :class:`ArtifactNotFoundError`; malformed declarations, missing files
+    and invalid JSON raise :class:`ArtifactCorruptError`.
     """
     directory = Path(directory)
-    manifest = ArtifactManifest.read(directory)
-    raw = manifest.provenance.get(ATTACHMENTS_PROVENANCE_KEY) or []
-    for entry in raw:
-        if isinstance(entry, Mapping) and entry.get("name") == name:
-            try:
-                path = resolve_artifact_path(directory, str(entry.get("path") or ""))
-            except ValueError as exc:
-                raise ArtifactCorruptError(
-                    f"attachment {name!r} declares an invalid path: {exc}"
-                ) from exc
-            data = path.read_bytes()
-            if str(entry.get("media_type") or "") == "application/json":
-                return json.loads(data.decode("utf-8"))
+    for descriptor in _attachment_descriptors(directory):
+        if descriptor.name == name:
+            data = descriptor.path.read_bytes()
+            if descriptor.media_type == "application/json":
+                try:
+                    return json.loads(data.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise ArtifactCorruptError(
+                        f"attachment {name!r} is not valid JSON: {exc}"
+                    ) from exc
             return data
     raise ArtifactNotFoundError(
         f"artifact at {directory} declares no attachment {name!r}"
@@ -1020,27 +1080,16 @@ def list_artifact_attachments(directory: Path | str) -> list[ArtifactAttachmentI
     """List the declared attachments of the artifact at ``directory``.
 
     Metadata only: names, media types and byte sizes (via ``stat``), without
-    reading attachment contents. Entries with invalid paths raise
-    :class:`ArtifactCorruptError`, matching :func:`read_artifact_attachment`.
+    reading attachment contents. Malformed declarations, duplicate names,
+    invalid paths and missing files raise :class:`ArtifactCorruptError`,
+    matching :func:`read_artifact_attachment`.
     """
     directory = Path(directory)
-    manifest = ArtifactManifest.read(directory)
-    raw = manifest.provenance.get(ATTACHMENTS_PROVENANCE_KEY) or []
-    infos: list[ArtifactAttachmentInfo] = []
-    for entry in raw:
-        if not isinstance(entry, Mapping):
-            continue
-        try:
-            path = resolve_artifact_path(directory, str(entry.get("path") or ""))
-        except ValueError as exc:
-            raise ArtifactCorruptError(
-                f"attachment {entry.get('name')!r} declares an invalid path: {exc}"
-            ) from exc
-        infos.append(
-            ArtifactAttachmentInfo(
-                name=str(entry.get("name") or ""),
-                media_type=str(entry.get("media_type") or ""),
-                size=path.stat().st_size,
-            )
+    return [
+        ArtifactAttachmentInfo(
+            name=descriptor.name,
+            media_type=descriptor.media_type,
+            size=descriptor.path.stat().st_size,
         )
-    return infos
+        for descriptor in _attachment_descriptors(directory)
+    ]

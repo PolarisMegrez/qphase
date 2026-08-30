@@ -269,3 +269,90 @@ def test_list_artifact_attachments_rejects_invalid_path(tmp_path):
 
     with pytest.raises(ArtifactCorruptError, match="invalid path"):
         list_artifact_attachments(tmp_path)
+
+
+def test_attachment_declaration_must_be_a_list(tmp_path):
+    save_products(tmp_path, {}, provenance={"attachments": 42})
+
+    with pytest.raises(ArtifactCorruptError, match="expected a list"):
+        list_artifact_attachments(tmp_path)
+    with pytest.raises(ArtifactCorruptError, match="expected a list"):
+        read_artifact_attachment(tmp_path, "anything")
+
+
+def test_attachment_entry_must_be_a_mapping(tmp_path):
+    save_products(tmp_path, {}, provenance={"attachments": [42]})
+
+    with pytest.raises(ArtifactCorruptError, match="expected a mapping"):
+        list_artifact_attachments(tmp_path)
+    with pytest.raises(ArtifactCorruptError, match="expected a mapping"):
+        read_artifact_attachment(tmp_path, "anything")
+
+
+@pytest.mark.parametrize(
+    ("entry", "field"),
+    [
+        ({"name": "", "path": "a.csv", "media_type": "text/csv"}, "name"),
+        ({"name": 42, "path": "a.csv", "media_type": "text/csv"}, "name"),
+        ({"name": "a", "path": "", "media_type": "text/csv"}, "path"),
+        ({"name": "a", "path": None, "media_type": "text/csv"}, "path"),
+        ({"name": "a", "path": "a.csv", "media_type": ""}, "media_type"),
+        ({"name": "a", "path": "a.csv"}, "media_type"),
+    ],
+)
+def test_attachment_fields_must_be_non_empty_strings(tmp_path, entry, field):
+    save_products(tmp_path, {}, provenance={"attachments": [entry]})
+    (tmp_path / "a.csv").write_bytes(b"x\n")
+
+    with pytest.raises(ArtifactCorruptError, match=f"invalid {field}"):
+        list_artifact_attachments(tmp_path)
+
+
+def test_attachment_names_must_be_unique(tmp_path):
+    entry = {"name": "dup", "path": "a.csv", "media_type": "text/csv"}
+    save_products(tmp_path, {}, provenance={"attachments": [entry, dict(entry)]})
+    (tmp_path / "a.csv").write_bytes(b"x\n")
+
+    with pytest.raises(ArtifactCorruptError, match="duplicate attachment 'dup'"):
+        list_artifact_attachments(tmp_path)
+    with pytest.raises(ArtifactCorruptError, match="duplicate attachment 'dup'"):
+        read_artifact_attachment(tmp_path, "dup")
+
+
+def test_attachment_missing_file_fails_fast(tmp_path):
+    save_products(
+        tmp_path,
+        {},
+        provenance={
+            "attachments": [
+                {"name": "ghost", "path": "ghost.csv", "media_type": "text/csv"}
+            ]
+        },
+    )
+
+    with pytest.raises(ArtifactCorruptError, match="file is missing"):
+        list_artifact_attachments(tmp_path)
+    with pytest.raises(ArtifactCorruptError, match="file is missing"):
+        read_artifact_attachment(tmp_path, "ghost")
+
+
+def test_attachment_corrupt_json_fails_fast(tmp_path):
+    save_products(
+        tmp_path,
+        {},
+        provenance={
+            "attachments": [
+                {
+                    "name": "broken",
+                    "path": "broken.json",
+                    "media_type": "application/json",
+                }
+            ]
+        },
+    )
+    (tmp_path / "broken.json").write_bytes(b"{not json")
+
+    with pytest.raises(ArtifactCorruptError, match="not valid JSON"):
+        read_artifact_attachment(tmp_path, "broken")
+    # Listing stays metadata-only and does not parse contents.
+    assert [i.name for i in list_artifact_attachments(tmp_path)] == ["broken"]
