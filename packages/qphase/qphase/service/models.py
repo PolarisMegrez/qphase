@@ -227,11 +227,22 @@ class ProductSummary(ServiceModel):
     attributes: dict[str, Any] = Field(default_factory=dict)
 
 
+class ArtifactAttachmentSummary(ServiceModel):
+    """Metadata-only summary of one manifest-declared attachment."""
+
+    name: str
+    media_type: str = ""
+    size: int = 0
+
+
 class ArtifactProductCatalog(ServiceModel):
     """Read-only catalog of the typed products of a v4 artifact directory.
 
     ``size`` counts only payload files referenced by the manifest; job
     logs, exports and stale chunks left by replaced writes are excluded.
+    ``attachments`` lists the manifest-declared auxiliary files (config
+    snapshots, CSV/JSON exports, migration sidecars) without reading them;
+    contents are read through ``qphase.data.read_artifact_attachment``.
     """
 
     artifact_id: str
@@ -240,6 +251,7 @@ class ArtifactProductCatalog(ServiceModel):
     products: list[ProductSummary] = Field(default_factory=list)
     bundle: BundleSummary | None = None
     size: int = 0
+    attachments: list[ArtifactAttachmentSummary] = Field(default_factory=list)
 
 
 class ExecutionPlan(ServiceModel):

@@ -25,6 +25,7 @@ from qphase.data import (
     ProductEntry,
     ProductSchema,
     VariableSchema,
+    list_artifact_attachments,
     load_products,
     read_artifact_attachment,
     save_products,
@@ -220,3 +221,51 @@ def test_attachment_path_escape_is_rejected(tmp_path):
 
     with pytest.raises(ArtifactCorruptError, match="invalid path"):
         read_artifact_attachment(tmp_path, "evil")
+
+
+def test_list_artifact_attachments_is_metadata_only(tmp_path):
+    save_products(
+        tmp_path,
+        {},
+        provenance={
+            "attachments": [
+                {
+                    "name": "config_snapshot",
+                    "path": "config_snapshot.json",
+                    "media_type": "application/json",
+                },
+                {
+                    "name": "fit_results",
+                    "path": "exports/fit_results.csv",
+                    "media_type": "text/csv",
+                },
+            ]
+        },
+    )
+    (tmp_path / "config_snapshot.json").write_text('{"a": 1}', encoding="utf-8")
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    (exports / "fit_results.csv").write_bytes(b"x,y\n1,2\n")
+
+    infos = list_artifact_attachments(tmp_path)
+
+    assert [(i.name, i.media_type) for i in infos] == [
+        ("config_snapshot", "application/json"),
+        ("fit_results", "text/csv"),
+    ]
+    assert [i.size for i in infos] == [8, 8]
+
+
+def test_list_artifact_attachments_rejects_invalid_path(tmp_path):
+    save_products(
+        tmp_path,
+        {},
+        provenance={
+            "attachments": [
+                {"name": "evil", "path": "../outside.json", "media_type": "text/csv"}
+            ]
+        },
+    )
+
+    with pytest.raises(ArtifactCorruptError, match="invalid path"):
+        list_artifact_attachments(tmp_path)

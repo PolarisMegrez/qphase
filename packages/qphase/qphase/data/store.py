@@ -52,6 +52,8 @@ load_bundle
     Restore an artifact directory as a (generic or adapted) bundle object.
 read_artifact_attachment
     Read a manifest-declared auxiliary attachment file.
+list_artifact_attachments
+    List manifest-declared attachments (metadata only).
 register_adapter
     Register a storage adapter implementation.
 register_bundle_adapter
@@ -67,7 +69,7 @@ import shutil
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, NamedTuple, Protocol, runtime_checkable
 from uuid import uuid4
 
 import numpy as np
@@ -94,6 +96,7 @@ __all__ = [
     "GENERIC_BUNDLE_ADAPTER_ID",
     "GENERIC_BUNDLE_TYPE_ID",
     "MANIFEST_FILENAME",
+    "ArtifactAttachmentInfo",
     "ArtifactManifest",
     "BundleAdapterProtocol",
     "BundleDescriptor",
@@ -101,6 +104,7 @@ __all__ = [
     "ProductStorage",
     "StorageAdapterProtocol",
     "StorageVariableSummary",
+    "list_artifact_attachments",
     "load_bundle",
     "load_products",
     "read_artifact_attachment",
@@ -1002,3 +1006,41 @@ def read_artifact_attachment(directory: Path | str, name: str) -> Any:
     raise ArtifactNotFoundError(
         f"artifact at {directory} declares no attachment {name!r}"
     )
+
+
+class ArtifactAttachmentInfo(NamedTuple):
+    """Metadata-only summary of one manifest-declared attachment."""
+
+    name: str
+    media_type: str
+    size: int
+
+
+def list_artifact_attachments(directory: Path | str) -> list[ArtifactAttachmentInfo]:
+    """List the declared attachments of the artifact at ``directory``.
+
+    Metadata only: names, media types and byte sizes (via ``stat``), without
+    reading attachment contents. Entries with invalid paths raise
+    :class:`ArtifactCorruptError`, matching :func:`read_artifact_attachment`.
+    """
+    directory = Path(directory)
+    manifest = ArtifactManifest.read(directory)
+    raw = manifest.provenance.get(ATTACHMENTS_PROVENANCE_KEY) or []
+    infos: list[ArtifactAttachmentInfo] = []
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            continue
+        try:
+            path = resolve_artifact_path(directory, str(entry.get("path") or ""))
+        except ValueError as exc:
+            raise ArtifactCorruptError(
+                f"attachment {entry.get('name')!r} declares an invalid path: {exc}"
+            ) from exc
+        infos.append(
+            ArtifactAttachmentInfo(
+                name=str(entry.get("name") or ""),
+                media_type=str(entry.get("media_type") or ""),
+                size=path.stat().st_size,
+            )
+        )
+    return infos

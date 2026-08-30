@@ -388,6 +388,34 @@ def test_scheduler_service_describe_products_reports_generic_bundle_summary(
     assert bundle.n_traj_per_point is None
 
 
+def test_scheduler_service_describe_products_lists_declared_attachments(tmp_path):
+    session_root = tmp_path / "session"
+    job_dir = session_root / "job1"
+    save_products(
+        job_dir,
+        {},
+        provenance={
+            "attachments": [
+                {
+                    "name": "config_snapshot",
+                    "path": "config_snapshot.json",
+                    "media_type": "application/json",
+                }
+            ]
+        },
+    )
+    (job_dir / "config_snapshot.json").write_text('{"a": 1}', encoding="utf-8")
+
+    catalog = SchedulerService(_system_config(tmp_path)).describe_products(
+        "job1", session_dir=session_root
+    )
+
+    assert [(a.name, a.media_type, a.size) for a in catalog.attachments] == [
+        ("config_snapshot", "application/json", 8)
+    ]
+    json.dumps(catalog.model_dump(mode="json"))
+
+
 def test_scheduler_service_describe_products_unpacks_scan_bundle_summary(tmp_path):
     session_root = tmp_path / "session"
     descriptor = BundleDescriptor(

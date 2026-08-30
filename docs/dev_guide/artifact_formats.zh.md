@@ -125,12 +125,19 @@ Job 日志、配置快照和导出的 CSV 不属于 artifact payload，除非 ma
 }
 ```
 
-附件不是 payload：不携带 product schema，列表接口不报告其大小，
-artifact 目录中未登记的文件也无法通过 artifact 接口读取。已声明附件通
-过 `read_artifact_attachment(directory, name)` 读取：路径按与 payload
+附件不是 payload：不携带 product schema，artifact 目录中未登记的文件也无法
+通过 artifact 接口读取。已声明附件由 `list_artifact_attachments(directory)`
+按纯元数据（名称、media type、字节数）列出，并经 service 的
+`ArtifactProductCatalog.attachments` 摘要向 CLI/GUI 暴露；内容通过
+`read_artifact_attachment(directory, name)` 读取：路径按与 payload
 相同的 artifact 相对规则校验（禁止逃逸）；`application/json` 附件返回
 解析后的对象，其他 media type 返回原始 `bytes`。读取未声明的名称会抛
 出 `ArtifactNotFoundError`。
+
+附件是证据通道而不是数据通道：只承载配置快照、人类可读的导出表
+（CSV/JSON）和无法纳入当前 schema 的迁移证据。新 producer 必须输出
+typed product，不得借附件逃避 product schema——grouped peaks、carrier、
+ridge 等结构化结果已在 Phase 5 排期为 typed product。
 
 ## SDE 数据产品
 

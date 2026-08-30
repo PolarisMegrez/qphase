@@ -30,8 +30,10 @@ from qphase.core.tags import (
 )
 from qphase.core.workflow import WorkflowCatalog
 from qphase.data.errors import ArtifactCorruptError
+from qphase.data.store import list_artifact_attachments
 
 from .models import (
+    ArtifactAttachmentSummary,
     ArtifactProductCatalog,
     ArtifactSummary,
     AxisSummary,
@@ -550,6 +552,12 @@ class SchedulerService:
             products=products,
             bundle=_bundle_summary(manifest.bundle),
             size=size,
+            attachments=[
+                ArtifactAttachmentSummary(
+                    name=info.name, media_type=info.media_type, size=info.size
+                )
+                for info in list_artifact_attachments(artifact)
+            ],
         )
 
     def load_session_manifest(self, session_dir: str | Path) -> dict[str, Any]:

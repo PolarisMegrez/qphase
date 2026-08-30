@@ -91,6 +91,7 @@ from .schema import (
 )
 from .store import (
     ARTIFACT_SCHEMA_VERSION,
+    ArtifactAttachmentInfo,
     ArtifactManifest,
     BundleAdapterProtocol,
     BundleDescriptor,
@@ -98,6 +99,7 @@ from .store import (
     ProductStorage,
     StorageAdapterProtocol,
     StorageVariableSummary,
+    list_artifact_attachments,
     load_bundle,
     load_products,
     read_artifact_attachment,
@@ -113,6 +115,7 @@ __all__ = [
     "PRODUCT_SCHEMA_VERSION",
     "ArtifactAdapterError",
     "ArtifactAmbiguousError",
+    "ArtifactAttachmentInfo",
     "ArtifactCorruptError",
     "ArtifactError",
     "ArtifactManifest",
@@ -163,6 +166,7 @@ __all__ = [
     "VariableConstraints",
     "VariableSchema",
     "default_artifact_resolver",
+    "list_artifact_attachments",
     "load_bundle",
     "load_products",
     "read_artifact_attachment",

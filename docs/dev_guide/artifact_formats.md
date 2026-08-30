@@ -155,14 +155,23 @@ entries:
 }
 ```
 
-Attachments are not payload: they carry no product schema, listings do not
-report their sizes, and unregistered files in the artifact directory are not
-readable through the artifact interface. Declared attachments are read with
-`read_artifact_attachment(directory, name)`: the path is validated with the
-same artifact-relative rules as payload paths (no escapes), and
-`application/json` attachments are returned parsed while every other media
-type yields raw `bytes`. Reading an undeclared name raises
+Attachments are not payload: they carry no product schema, and unregistered
+files in the artifact directory are not readable through the artifact
+interface. Declared attachments are listed metadata-only (name, media type,
+byte size) by `list_artifact_attachments(directory)` and surfaced to CLI/GUI
+through the service `ArtifactProductCatalog.attachments` summary; contents
+are read with `read_artifact_attachment(directory, name)`. The path is
+validated with the same artifact-relative rules as payload paths (no
+escapes), `application/json` attachments are returned parsed, and every
+other media type yields raw `bytes`. Reading an undeclared name raises
 `ArtifactNotFoundError`.
+
+Attachments are an evidence channel, not a data channel: they carry
+configuration snapshots, human-readable export tables (CSV/JSON) and
+migration evidence that cannot be typed into the current schema. New
+producers must emit typed products instead of using attachments to evade
+product schemas — grouped peaks, carrier, ridge and similar structured
+results are scheduled as typed products in Phase 5.
 
 ## SDE data products
 
