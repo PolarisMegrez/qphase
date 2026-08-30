@@ -30,20 +30,21 @@ nav_order: 2
 
 **方法：**
 
-#### `run(...) -> SDEResult`
+#### `run(...) -> SDEDataBundle`
 
-执行已配置的 SDE 任务。引擎要求 `backend`、`model` 和 `integrator` 插件，并接受可选的 `analyser` 插件。
+执行已配置的 SDE 任务并返回其结果 bundle。引擎要求 `backend`、`model` 和 `integrator` 插件，并接受可选的 `analyser` 插件。
 
-### `class qphase_sde.result.SDEResult`
+### `class qphase_sde.result.SDEDataBundle`
 
-SDE 引擎返回并保存为 `.npz` 的结果容器。
+引擎返回的结果：一组命名 typed data products 加上 job 级 provenance。
 
-*   `trajectory`：`TrajectorySet`；如果分析后丢弃了原始数据，则为 `None`。
-*   `analysis`：按分析器名称索引的结果载荷，例如 `psd`、`coherence_matrix`、
-    `moment_statistics`、`quadratic_moments` 或 `trajectory_diagnostics`。
-*   `meta`：元数据，包括模型 `params`、`t0`、`dt`，以及可能存在的轨迹丢弃原因。
+*   `products`：命名 dataset——`trajectories` 时间序列 product，以及每个分析器载荷对应的 product（例如 `psd` 对应的 `spectral` product）。
+*   `provenance`：job 级 SDE provenance 记录。
+*   `axes` / `shape`：命名 scan 轴坐标与网格形状（单点 job 为空）。
+*   `point_view(index)`：单个扫描点的惰性视图；`metadata["params"]` 报告该点的扫参取值。
+*   `metadata`：job 元数据（模型 `params`、扫描点信息）以及 JSON provenance 记录。
 
-保存的归档包含 `t0`、`dt`、`meta`、`analysis` 和可选的 `data`。存在 `data` 时，其形状为 `(n_traj, n_time, n_modes)`。
+调度器通过 `qphase.data` 把 bundle 持久化为 Artifact v4 目录——`artifact_manifest.json` 加 `npz/3` payload 分块。`qphase.data.load_bundle(job_dir)` 以惰性 products 恢复 `SDEDataBundle`（不涉及 `allow_pickle`）；core 的 `load_result` 在 resume 时走同一 manifest 路径。
 
 ---
 

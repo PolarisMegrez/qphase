@@ -30,21 +30,21 @@ The main simulation driver. It orchestrates the integration loop, manages data s
 
 **Methods:**
 
-#### `run(...) -> SDEResult`
+#### `run(...) -> SDEDataBundle`
 
-Executes the configured SDE job. The engine requires `backend`, `model`, and `integrator` plugins and accepts optional `analyser` plugins.
+Executes the configured SDE job and returns its result bundle. The engine requires `backend`, `model`, and `integrator` plugins and accepts optional `analyser` plugins.
 
-### `class qphase_sde.result.SDEResult`
+### `class qphase_sde.result.SDEDataBundle`
 
-Container returned by the SDE engine and saved as `.npz`.
+Catalog of typed data products plus job provenance returned by the engine.
 
-*   `trajectory`: A `TrajectorySet` or `None` if raw data was dropped after analysis.
-*   `analysis`: Analyzer payloads keyed by analyzer name, for example `psd`,
-    `coherence_matrix`, `moment_statistics`, `quadratic_moments`, or
-    `trajectory_diagnostics`.
-*   `meta`: Metadata, including model `params`, `t0`, `dt`, and drop reason when applicable.
+*   `products`: named datasets — the `trajectories` time-series product plus one product per analyzer payload (for example a `spectral` product for `psd`).
+*   `provenance`: the job-level SDE provenance record.
+*   `axes` / `shape`: named scan-axis coordinates and grid shape (empty for single-point jobs).
+*   `point_view(index)`: lazily backed view of one scan point; `metadata["params"]` reports that point's swept values.
+*   `metadata`: job metadata (model `params`, scan point info) plus the JSON provenance record.
 
-Saved archives contain `t0`, `dt`, `meta`, `analysis`, and optional `data`. When present, `data` has shape `(n_traj, n_time, n_modes)`.
+The scheduler persists the bundle as an Artifact v4 directory — `artifact_manifest.json` plus `npz/3` payload chunks — through `qphase.data`. `qphase.data.load_bundle(job_dir)` restores the `SDEDataBundle` with lazily backed products (no `allow_pickle`); core's `load_result` uses the same manifest path on resume.
 
 ---
 

@@ -30,8 +30,7 @@ artifact follow the identity, annotations on an occurrence stay local to that
 producing context.
 
 Because `:` joins these identity shapes, job names and artifact ids must
-never contain it; new writes are rejected at validation time and existing
-data is flagged by `qphase project migrate --dry-run`.
+never contain it; new writes are rejected at validation time.
 
 ## Tag Syntax and Namespaces
 
@@ -238,18 +237,7 @@ artifact identity disagree on its facets). Issues are listed by
 
 ## Migration Boundary
 
-The formal history migration ships in Phase 4. Today you can preview it
-without writing anything:
-
-```bash
-qphase project migrate --dry-run
-```
-
-The report covers legacy alias/note imports, invalid snapshot tags,
-rebuildable workflow revisions and jobs, legacy occurrence-key conversion
-(convertible vs. ambiguous), duplicate artifact identities, existing job
-names and artifact ids containing the reserved `:` separator, invalid
-annotation documents, annotation assignments missing policy provenance,
-catalog reindex parity (a full-row multiset comparison per table, not just
-counts), a private-store summary, and the per-kind object
-counts the migration will act on.
+The 1.x-to-2.x major migration is complete: the migration commands and
+compatibility shims were removed at the 2.0.0 boundary. Reproducing data from
+an older major uses its archived release, environment or branch — see
+[Versioning and Migration Policy](../dev_guide/versioning.md).

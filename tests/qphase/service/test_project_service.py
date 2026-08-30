@@ -44,7 +44,8 @@ def test_update_session_writes_annotation_document(tmp_path):
     assert document["revision"] == 1
 
 
-def test_update_session_imports_legacy_metadata_once(tmp_path):
+def test_legacy_metadata_sidecar_is_ignored(tmp_path):
+    """The removed session_metadata.json fallback must not leak alias/note."""
     project = ProjectContext.create(tmp_path / "project")
     root = _make_session(project)
     (root / "session_metadata.json").write_text(
@@ -53,21 +54,19 @@ def test_update_session_imports_legacy_metadata_once(tmp_path):
     )
     service = ProjectService(project)
 
-    # Reads fall back to the legacy sidecar before annotations exist.
-    assert service.get_session("session-1").alias == "legacy-alias"
+    # Without an annotation document the legacy sidecar is not read.
+    summary = service.get_session("session-1")
+    assert summary.alias is None
+    assert summary.note is None
 
+    # Creating the annotation document does not import legacy values.
     summary = service.update_session("session-1", note="new note")
-
-    assert summary.alias == "legacy-alias"
+    assert summary.alias is None
     assert summary.note == "new note"
     document = json.loads(
         (root / "session_annotations.json").read_text(encoding="utf-8")
     )
-    assert document["alias"] == "legacy-alias"
-
-    # Clearing the alias now wins over the legacy sidecar.
-    summary = service.update_session("session-1", alias=None)
-    assert summary.alias is None
+    assert document["alias"] is None
 
 
 if __name__ == "__main__":

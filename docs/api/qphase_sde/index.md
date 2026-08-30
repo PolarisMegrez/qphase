@@ -24,10 +24,9 @@ This section documents `qphase_sde`-specific behavior. For the core framework
 
 ## Sections
 
-*   [Engine](./engine.md) — `EngineConfig`, `SDEResult`, `save_stride`, and
-    analyze mode.
+*   [Engine](./engine.md) — `EngineConfig`, `SDEDataBundle`, `save_stride`, and analyze mode.
 *   [Integrators](./integrators.md) — `Integrator` protocol and `GenericSRK`.
 *   [Models](./models.md) — built-in models and the `SDEModel` protocol.
 *   [Analyzers](./analyzers.md) — PSD, distribution, and Lorentzian-fitting
     analyzers.
-*   [Output Schemas](./output.md) — `.npz`, `.csv`, and merged bundle formats.
+*   [Output Schemas](./output.md) — the Artifact v4 layout, `.csv` exports, and merged tables.

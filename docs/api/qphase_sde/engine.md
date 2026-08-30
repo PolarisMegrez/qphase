@@ -109,16 +109,22 @@ post-processing, for example fitting Lorentzians to a logical scan dataset:
       mode: 0
 ```
 
-## `SDEResult`
+## `SDEDataBundle`
 
-The engine returns and saves an `SDEResult` as a NumPy `.npz` archive.
+Every `engine.run()` exit point returns an `SDEDataBundle`: a catalog of named,
+typed data products plus job provenance. The scheduler persists it through
+`qphase.data` as an Artifact v4 directory inside the job folder:
 
-*   `trajectory` — a `TrajectorySet` or `None` if raw data was dropped after
-    analysis.
-*   `analysis` — analyzer payloads keyed by analyzer name (`psd`, `dist`,
-    `pdist`, `trajectory_diagnostics`).
-*   `meta` — metadata including model `params`, `t0`, `dt`, and the drop reason
-    when applicable.
+*   `artifact_manifest.json` — the validated manifest (`qphase.artifact/4`):
+    full product schemas, the `sde.bundle/1` bundle descriptor (scan grid and
+    product roles), provenance, and per-variable payload references.
+*   payload files — NumPy `.npz` chunks written by the `npz/3` storage adapter
+    in native dtypes (never pickled objects). `storage_layout: single` writes
+    one `.npz` per product; `sharded` splits large variables into byte-bounded
+    chunk files.
 
-Saved archives contain `t0`, `dt`, `meta`, `analysis`, and, when retention is
-enabled, raw `data` with shape `(n_traj, n_time, n_modes)`.
+Restore with `qphase.data.load_bundle(job_dir)` (core's `load_result` uses the
+same path on resume): the manifest is fully validated, products reopen as
+lazily backed datasets, and the registered `sde/1` bundle adapter rebuilds the
+`SDEDataBundle` — including scan `axes`/`shape` and per-point
+`point_view(index)` views.

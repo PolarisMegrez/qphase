@@ -21,7 +21,7 @@ runs/YYYY/MM/<session-id>/
   simulate/                       # logical Job name
     config_snapshot.json
     artifact_manifest.json
-    result.npz
+    00_<product>.npz
   fit/
     config_snapshot.json
     artifact_manifest.json
@@ -54,28 +54,28 @@ document and start a new Execution instead.
 
 ## Artifact Manifests
 
-Every saved logical result has an `artifact_manifest.json` describing its result
-type, schema version, named axes, logical shape, storage layout, physical files,
-and loader. `system.scan_runtime.storage_layout` controls physical storage:
+Every saved logical result has an `artifact_manifest.json` (schema `qphase.artifact/4`) describing its product schemas, bundle descriptor, provenance, physical payload files, and the registered storage adapter id. `system.scan_runtime.storage_layout` controls physical storage:
 
-- `single`: one primary dataset file.
+- `single`: one payload file per product.
 - `sharded`: a bounded collection of chunk files in the same Job directory.
-- `per_point`: compatibility export; files still share one Job directory.
+- `per_point`: legacy alias resolved to byte-targeted sharding.
 - `auto`: select `single` or `sharded` from the configured size threshold.
 
 The packaged defaults use a 512 MiB automatic threshold and 128 MiB target
-shards. Resource-package loaders restore the same logical dataset independently
-of physical layout.
+shards. `qphase.data.load_bundle` restores the same logical bundle independently of the physical layout.
 
 ## SDE Artifacts
 
-The SDE engine stores NumPy `.npz` datasets. Common fields include `t0`, `t1`,
-`dt`, `meta`, and `analysis`; raw `data` with shape
-`(n_traj, n_time, n_modes)` is included only when trajectory retention is
-enabled. Analyser outputs are stored by key under `analysis`, for example PSD,
-Allan variance, coherence, distributions, or moment summaries.
+The SDE engine returns an `SDEDataBundle`, persisted as an Artifact v4
+directory: a validated `artifact_manifest.json` plus `npz/3` payload files.
+The `trajectories` product holds the complex amplitudes over
+`(scan, trajectory, time, channel)` axes together with per-trajectory
+`valid_length`; it is present only when trajectory retention is enabled.
+Analyzer payloads become their own named products — a `spectral` product for
+PSD, `statistics` products for Allan variance, coherence and moment families,
+and versioned bridge products for the remaining analyzers.
 
-When `engine.sde.keep_traj` is false, analysis results remain available while
+When `engine.sde.keep_traj` is false, analysis products remain available while
 raw trajectories are discarded after analysis. See the
 [SDE output reference](../api/qphase_sde/output.md) for its current schema.
 

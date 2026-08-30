@@ -1,6 +1,8 @@
 from pathlib import Path
 
+import pytest
 from qphase.core.config_loader import load_project_defaults
+from qphase.core.errors import QPhaseConfigError
 from qphase.core.system_config import (
     SystemConfig,
     SystemConfigStore,
@@ -78,6 +80,23 @@ def test_system_config_override_precedence(tmp_path):
 
     assert config.auto_save_results is False
     assert config.reporting.logging.console_level == "ERROR"
+
+
+def test_system_config_rejects_removed_parameter_scan_key(tmp_path):
+    """Removed keys fail fast against the closed system schema."""
+    package_path = tmp_path / "defaults.yaml"
+    package_path.write_text("auto_save_results: true\n", encoding="utf-8")
+    override_path = tmp_path / "override.yaml"
+    override_path.write_text("parameter_scan: {}\n", encoding="utf-8")
+    store = SystemConfigStore(
+        package_default_path=package_path,
+        site_path=tmp_path / "missing-site.yaml",
+        user_path=tmp_path / "missing-user.yaml",
+        environ={},
+    )
+
+    with pytest.raises(QPhaseConfigError, match="Extra inputs are not permitted"):
+        store.load(config_path=override_path)
 
 
 def test_silent_generation_project_defaults(tmp_path):

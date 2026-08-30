@@ -28,7 +28,7 @@ Artifact 可以出现在多个 Session 中——Artifact 上的 annotation 跟�
 identity,Occurrence 上的 annotation 只属于该产出上下文。
 
 由于 `:` 用于拼接上述 identity,job 名与 artifact id 绝不能包含它;新写入
-会在校验时直接拒绝,既有数据由 `qphase project migrate --dry-run` 标出。
+会在校验时直接拒绝。
 
 ## Tag 语法与 Namespace
 
@@ -221,15 +221,6 @@ identity 的两处 occurrence facet 不一致）。`qphase project reindex` 会�
 
 ## 迁移边界
 
-正式的历史迁移在 Phase 4 提供。现在可以零写入地预览：
-
-```bash
-qphase project migrate --dry-run
-```
-
-报告覆盖：legacy alias/note 导入、非法 snapshot tag、可重建的 workflow
-revision 与 job 数、旧式 occurrence 键转换（可转换 vs 有歧义）、重复
-artifact identity、包含保留分隔符 `:` 的既有 job 名与 artifact id、无法
-加载的 annotation 文档、缺少 policy provenance 的 annotation assignment、
-catalog reindex 一致性（按表做完整行的 multiset 比较，而不只是计数）、
-私有库摘要，以及迁移所需的各类对象计数。
+1.x 到 2.x 的 major 迁移已完成：迁移命令与兼容层已在 2.0.0 边界移除。
+复现旧 major 的数据需使用其归档发布、环境或分支——见
+[版本与迁移策略](../dev_guide/versioning.zh.md)。

@@ -8,7 +8,7 @@ nav_order: 4
 
 # Analyzers
 
-Analyzers run after the SDE integration loop and produce payloads stored in `SDEResult.analysis`. They can also be invoked in `mode: analyze` for post-processing.
+Analyzers run after the SDE integration loop; their payloads become named products of the job's `SDEDataBundle`. They can also be invoked in `mode: analyze` for post-processing.
 
 ## `psd`
 

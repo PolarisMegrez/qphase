@@ -616,9 +616,9 @@ class CatalogService:
         if current is not None:
             document = SessionAnnotationDocument.model_validate(current)
             return document, document.revision
-        # Creation goes through ProjectService so the legacy alias/note import
-        # stays in exactly one place.
-        return self.project_service.new_session_annotations(root, session_id), None
+        # Creation goes through ProjectService so document defaults stay in
+        # exactly one place.
+        return self.project_service.new_session_annotations(session_id), None
 
     def _artifact_document(
         self, artifact_dir: Path, artifact_id: str

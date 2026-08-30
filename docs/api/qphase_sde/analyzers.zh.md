@@ -8,7 +8,7 @@ nav_order: 4
 
 # 分析器
 
-分析器在 SDE 积分循环结束后运行，生成存储在 `SDEResult.analysis` 中的载荷。它们也可以在 `mode: analyze` 下调用，用于后处理。
+分析器在 SDE 积分循环结束后运行，其载荷成为该 job `SDEDataBundle` 的命名 product。它们也可以在 `mode: analyze` 下调用，用于后处理。
 
 ## `psd`
 

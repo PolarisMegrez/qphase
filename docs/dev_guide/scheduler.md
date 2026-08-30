@@ -114,14 +114,12 @@ runs/YYYY/MM/<session-id>/
   scan_job/
     config_snapshot.json
     artifact_manifest.json
-    result.npz                 # single layout
-    # or result/shard_*.npz    # sharded layout
+    00_<product>.npz                 # single layout: one file per product
+    # or 00_<product>__*__0000.npz   # sharded layout: chunk files
     .checkpoints/              # retained only when configured or on failure
 ```
 
-`artifact_manifest.json` describes the result type, schema, axes, shape,
-physical layout, files, and loader. `per_point` is an external compatibility
-layout only; all files remain under the same logical job directory.
+`artifact_manifest.json` describes the product schemas, bundle descriptor, provenance, physical layout, payload files, and storage adapter ids. `per_point` is a legacy alias resolved to byte-targeted sharding; all files remain under the same logical job directory.
 
 Checkpoint compatibility is tied to the configuration hash, plugin versions,
 backend, and dtype. Successful jobs remove checkpoints after the final dataset

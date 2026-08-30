@@ -8,29 +8,27 @@ nav_order: 5
 
 # Output Formats
 
-The SDE engine produces one logical result per job. A non-scan result is an
-`SDEResult`; a scan is an `SDEScanResult` dataset with named axes and lazy point
-views.
+The SDE engine produces one logical result per job: an `SDEDataBundle` of named, typed data products (trajectories plus analyzer products). A scan is one bundle whose products carry named parameter axes; `point_view(index)` yields lazily backed per-point views.
 
-## Single dataset archive (`.npz`)
+## Artifact directory
 
-With `storage_layout: single`, each SDE job writes one NumPy archive containing:
+Each saved SDE job writes one Artifact v4 directory:
 
-| Key | Type | Description |
-| :-- | :-- | :-- |
-| `t0` | `float` | Start time. |
-| `dt` | `float` | Saved sample spacing (`dt * save_stride`). |
-| `meta` | `object` | Metadata such as model parameters and discard reason. |
-| `analysis` | `object` | Analyzer payloads keyed by analyzer name. |
-| `data` | `ndarray` | Raw trajectory, shape `(n_traj, n_saved, n_modes)`. Present only if `keep_traj: true` or the analyzer requested it. |
+| Entry | Description |
+| :-- | :-- |
+| `artifact_manifest.json` | Validated manifest (`qphase.artifact/4`): full product schemas, the `sde.bundle/1` bundle descriptor (scan grid, product roles), provenance, and per-variable payload references. |
+| `<stem>.npz` | `storage_layout: single`: one file per product holding every variable as a declared key. |
+| `<stem>__<variable>.npz` / `<stem>__<variable>__<NNNN>.npz` | Default/sharded layout: one `"data"` key per file, variables split into byte-bounded chunks. |
 
-Load it from Python:
+Payload arrays are stored in native dtypes — restoring never needs
+`allow_pickle`. Load it from Python:
 
 ```python
-import numpy as np
-archive = np.load("run.npz", allow_pickle=True)
-meta = archive["meta"].item()
-psd = archive["analysis"].item().get("psd")
+from qphase.data import load_bundle
+
+bundle = load_bundle("runs/2026/08/<session-id>/sim")
+psd = bundle.products["psd"]      # lazily backed; no payload read yet
+point = bundle.point_view((0,))   # per-scan-point view of the bundle
 ```
 
 ## PSD output
@@ -44,13 +42,14 @@ The `psd` analyzer stores:
     frequency axis. Missing metadata identifies a legacy forward-FFT result and
     must be interpreted as `phase_increasing`.
 
-For a scan, PSD payloads remain attached to the named points of one logical SDE
-dataset. A downstream `mode: analyze` job consumes that dataset once with the
+For a scan, the PSD product carries the named scan axis of the logical SDE
+bundle. A downstream `mode: analyze` job consumes that bundle once with the
 `lorentz_fitter` analyzer.
 
 With `storage_layout: sharded`, the same logical dataset is split into bounded
-`shard_*.npz` files under one job directory. `artifact_manifest.json` records
-the shape and loader, and `SDEScanResult.load_dataset` restores the full view.
+chunk files under one job directory. The manifest records the chunk layout and
+the `npz/3` storage adapter id; `qphase.data.load_bundle` restores the full
+bundle lazily regardless of the physical layout.
 
 ## Lorentz fit output
 

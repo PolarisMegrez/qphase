@@ -97,13 +97,20 @@ Lorentz 拟合：
       mode: 0
 ```
 
-## `SDEResult`
+## `SDEDataBundle`
 
-引擎返回并保存 `SDEResult`，格式为 NumPy `.npz`：
+`engine.run()` 的每个返回路径都返回 `SDEDataBundle`：一组命名 typed data
+products 加上 job 级 provenance。调度器通过 `qphase.data` 将其持久化为 job
+目录内的 Artifact v4 目录：
 
-*   `trajectory` — `TrajectorySet`，若分析后丢弃原始数据则为 `None`。
-*   `analysis` — 以分析器名称为键的载荷，如 `psd`、`dist`、`pdist`、
-    `trajectory_diagnostics`。
-*   `meta` — 元数据，包括模型 `params`、`t0`、`dt` 以及丢弃原因。
+*   `artifact_manifest.json` — 经过完整校验的 manifest（`qphase.artifact/4`）：
+    完整 product schema、`sde.bundle/1` bundle 描述符（scan 网格与 product
+    角色）、provenance，以及逐变量的 payload 引用。
+*   payload 文件 — 由 `npz/3` 存储适配器写出的 NumPy `.npz` 分块，一律使用
+    原生 dtype（绝不使用 pickle 对象）。`storage_layout: single` 时每个
+    product 一个 `.npz`；`sharded` 时大变量拆分为按字节目标限定的分块文件。
 
-保存的归档包含 `t0`、`dt`、`meta`、`analysis`；在保留轨迹时还包括形状为 `(n_traj, n_time, n_modes)` 的 `data`。
+恢复使用 `qphase.data.load_bundle(job_dir)`（core 的 `load_result` 在 resume
+时走同一路径）：manifest 先被完整校验，product 以惰性方式重新打开，已注册的
+`sde/1` bundle 适配器重建 `SDEDataBundle`——包括 scan 的 `axes`/`shape` 和逐点
+的 `point_view(index)` 视图。

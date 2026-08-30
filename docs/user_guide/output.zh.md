@@ -20,7 +20,7 @@ runs/YYYY/MM/<session-id>/
   simulate/                       # 逻辑 Job 名称
     config_snapshot.json
     artifact_manifest.json
-    result.npz
+    00_<product>.npz
   fit/
     config_snapshot.json
     artifact_manifest.json
@@ -51,27 +51,27 @@ Project ID、Workflow ID 或 Workflow 内容哈希不匹配时，QPhase 会拒�
 
 ## Artifact Manifest
 
-每个已保存逻辑结果都有 `artifact_manifest.json`，记录 result 类型、schema、命名
-axes、逻辑 shape、存储布局、物理文件和 loader。物理布局由
+每个已保存逻辑结果都有 `artifact_manifest.json`（schema `qphase.artifact/4`），记录 product schema、bundle 描述符、provenance、物理 payload 文件和已注册的存储适配器 id。物理布局由
 `system.scan_runtime.storage_layout` 控制：
 
-- `single`：一个主要 dataset 文件。
+- `single`：每个 product 一个 payload 文件。
 - `sharded`：同一 Job 目录内数量有限的 chunk 文件。
-- `per_point`：兼容导出；文件仍位于同一 Job 目录。
+- `per_point`：遗留别名，解析为按字节目标分块。
 - `auto`：按配置阈值选择 `single` 或 `sharded`。
 
-内置默认值为 512 MiB 自动阈值和 128 MiB 目标 shard。资源包 loader 会恢复相同
-的逻辑 dataset，不受物理布局影响。
+内置默认值为 512 MiB 自动阈值和 128 MiB 目标 shard。`qphase.data.load_bundle` 恢复相同的逻辑 bundle，不受物理布局影响。
 
 ## SDE Artifact
 
-SDE engine 保存 NumPy `.npz` dataset。常见字段包括 `t0`、`t1`、`dt`、`meta`
-和 `analysis`；只有启用轨迹保留时才包含形状为
-`(n_traj, n_time, n_modes)` 的原始 `data`。PSD、Allan variance、coherence、
-distribution 和矩统计等 analyser 输出按键存放在 `analysis` 下。
+SDE engine 返回 `SDEDataBundle`，并持久化为 Artifact v4 目录：经过校验的
+`artifact_manifest.json` 加上 `npz/3` payload 文件。`trajectories` product 保存
+`(scan, trajectory, time, channel)` 轴上的复振幅以及逐轨迹的 `valid_length`，
+仅在启用轨迹保留时存在。分析器载荷成为各自的命名 product——PSD 对应
+`spectral` product，Allan variance、coherence 与矩统计对应 `statistics`
+product，其余分析器经版本化 bridge product 保存。
 
-当 `engine.sde.keep_traj` 为 false 时，analyser 结果仍会保存，原始轨迹在分析后
-释放。最新字段定义见 [SDE 输出参考](../api/qphase_sde/output.zh.md)。
+当 `engine.sde.keep_traj` 为 false 时，分析器 product 仍然保留，原始轨迹在
+分析后释放。最新字段定义见 [SDE 输出参考](../api/qphase_sde/output.zh.md)。
 
 ## 跨 Job 后处理
 

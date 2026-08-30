@@ -93,7 +93,7 @@ class MyModel:
 from typing import Any, ClassVar
 from qphase.backend.base import BackendBase
 from qphase.core.protocols import ResultProtocol
-from qphase_sde.result import SDEResult
+from qphase_sde.analyser.result import AnalysisResult
 
 class MyAnalyser:
     name: ClassVar[str] = "my_analyser"
@@ -115,9 +115,9 @@ class MyAnalyser:
             traj = data
 
         mean_val = backend.mean(traj, axis=0)
-        result_data = backend.abs(mean_val)**2
+        mean_power = backend.abs(mean_val) ** 2
 
-        return SDEResult(trajectory=result_data, kind="trajectory")
+        return AnalysisResult(data_dict={"mean_power": mean_power})
 ```
 
 ### 示例：带清单的引擎实现

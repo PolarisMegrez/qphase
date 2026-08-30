@@ -213,7 +213,6 @@ class SystemConfigStore:
                 payload = deep_merge_dicts(payload, self._load_mapping(path))
             elif path == (Path(config_path) if config_path is not None else None):
                 raise QPhaseConfigError(f"System config file not found: {path}")
-        payload.pop("parameter_scan", None)
         result = self._validate(payload)
         if config_path is None:
             self._cache = result

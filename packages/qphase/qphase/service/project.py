@@ -68,7 +68,7 @@ class ProjectService:
             document = SessionAnnotationDocument.model_validate(current)
             expected_revision: int | None = document.revision
         else:
-            document = self.new_session_annotations(root, session_id)
+            document = self.new_session_annotations(session_id)
             expected_revision = None
         if alias is not _UNSET:
             document.alias = cast("str | None", alias)
@@ -81,16 +81,11 @@ class ProjectService:
         )
         return self.get_session(session_id)
 
-    def new_session_annotations(
-        self, root: Path, session_id: str
-    ) -> SessionAnnotationDocument:
-        """Seed the first annotation document from legacy session metadata."""
-        legacy = self._read_json(root / "session_metadata.json")
+    def new_session_annotations(self, session_id: str) -> SessionAnnotationDocument:
+        """Create the initial (empty) annotation document for one session."""
         return SessionAnnotationDocument(
             project_id=self.project.project_id,
             session_id=session_id,
-            alias=legacy.get("alias"),
-            note=legacy.get("note"),
         )
 
     def trash_session(self, session_id: str) -> None:
@@ -164,17 +159,14 @@ class ProjectService:
 
     def _session_summary(self, root: Path) -> SessionSummary:
         manifest = self._read_json(root / "session_manifest.json")
-        # Annotation documents are the primary store for alias/note; once one
-        # exists it is authoritative (creation imports legacy values). The
-        # legacy session_metadata.json fallback is removed in Phase 4.
+        # Annotation documents are the only store for alias/note; once one
+        # exists it is authoritative.
         annotations = self.state_store.load_session_annotations(root)
         if annotations is not None:
             alias = annotations.get("alias")
             note = annotations.get("note")
         else:
-            metadata = self._read_json(root / "session_metadata.json")
-            alias = metadata.get("alias")
-            note = metadata.get("note")
+            alias = note = None
         status = str(manifest.get("status", "unknown"))
         if status == "running" and not self._owner_alive(root / "session.lock"):
             status = "interrupted"

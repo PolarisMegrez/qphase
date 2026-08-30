@@ -86,8 +86,8 @@ runs/YYYY/MM/<session-id>/
   <job-name>/
     config_snapshot.json
     artifact_manifest.json
-    result.npz
-    result/shard_*.npz
+    00_<product>.npz               # single layout: one file per product
+    00_<product>__<var>__0000.npz  # sharded layout: chunk files
 ```
 
 `single`、`sharded` 或兼容性 `per_point` 只改变物理布局，不改变逻辑 Dataset shape。

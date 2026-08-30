@@ -89,7 +89,7 @@ class GenericDataBundle:
 
     @property
     def data(self) -> dict[str, Dataset]:
-        """Product mapping (``GenericResult``-compatible access)."""
+        """Product mapping (ResultProtocol ``data`` access)."""
         return dict(self._products)
 
     @property

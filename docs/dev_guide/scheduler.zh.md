@@ -100,13 +100,12 @@ runs/<session-id>/
   scan_job/
     config_snapshot.json
     artifact_manifest.json
-    result.npz                 # single layout
-    # 或 result/shard_*.npz    # sharded layout
+    00_<product>.npz                 # single layout：每 product 一个文件
+    # 或 00_<product>__*__0000.npz   # sharded layout：分块文件
     .checkpoints/              # 失败时保留，或由配置要求保留
 ```
 
-`artifact_manifest.json` 记录 result 类型、schema、axes、shape、物理布局、文件与
-loader。`per_point` 只作为外部兼容布局，所有文件仍位于同一个逻辑 job 目录。
+`artifact_manifest.json` 记录 product schema、bundle 描述符、provenance、物理布局、payload 文件与存储适配器 id。`per_point` 是解析为按字节目标分块的遗留别名，所有文件仍位于同一个逻辑 job 目录。
 
 checkpoint 兼容性绑定配置 hash、插件版本、backend 与 dtype。最终 dataset 成功
 保存后，除非启用 `keep_on_success`，否则清理 checkpoint。当前 checkpoint 只覆盖

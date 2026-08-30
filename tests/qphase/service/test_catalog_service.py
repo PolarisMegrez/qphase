@@ -22,7 +22,6 @@ def _session(
     session_id: str,
     *,
     artifacts: tuple[tuple[str, str], ...] = (),
-    legacy_metadata: dict | None = None,
 ) -> Path:
     root = project.session_root / "2026" / "08" / session_id
     root.mkdir(parents=True)
@@ -42,10 +41,6 @@ def _session(
         (job_dir / "artifact_manifest.json").write_text(
             json.dumps(_v4_artifact_manifest(artifact_id)),
             encoding="utf-8",
-        )
-    if legacy_metadata is not None:
-        (root / "session_metadata.json").write_text(
-            json.dumps(legacy_metadata), encoding="utf-8"
         )
     return root
 
@@ -208,22 +203,6 @@ def test_artifact_tag_and_lifecycle_roundtrip(tmp_path):
     assert updated.facets["lifecycle"] == "archived"
     rows = service.query(CatalogQuery(object_kind="artifact", lifecycle="archived"))
     assert [row.id for row in rows] == ["art-1"]
-
-
-def test_tag_session_imports_legacy_alias_on_first_document(tmp_path):
-    project = ProjectContext.create(tmp_path / "project")
-    _session(
-        project,
-        "session-1",
-        legacy_metadata={"alias": "legacy-alias", "note": "legacy-note"},
-    )
-    service = CatalogService(project)
-
-    service.tag_session("session-1", add=["task:scan"])
-
-    summary = ProjectService(project).get_session("session-1")
-    assert summary.alias == "legacy-alias"
-    assert summary.note == "legacy-note"
 
 
 def test_revision_conflict_surfaces_as_runtime_error(tmp_path, monkeypatch):
