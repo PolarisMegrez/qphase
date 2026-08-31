@@ -24,7 +24,11 @@ from qphase.data import (
 
 from ..contracts.quantities import SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .allan_statistics import calculate_allan_variance, summarize_trajectories
+from .allan_statistics import (
+    calculate_allan_variance,
+    calculate_allan_variance_device,
+    summarize_trajectories,
+)
 from .base import (
     Analyzer,
     AnalyzerExecutionCapabilities,
@@ -73,6 +77,14 @@ class AllanVarianceConfig(PluginConfigBase):
         ge=1,
         description="Maximum saved samples copied from a device at once",
     )
+    device_chunk_trajectories: int = Field(
+        16,
+        ge=1,
+        description=(
+            "Trajectories analyzed per device chunk when the input is "
+            "device-resident; bounds the on-device analysis workspace"
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_values(self) -> AllanVarianceConfig:
@@ -103,20 +115,21 @@ class AllanVarianceAnalyzer(Analyzer):
     def estimate_workspace(
         self, request: AnalyzerWorkspaceRequest
     ) -> AnalyzerWorkspaceEstimate:
+        config = cast(AllanVarianceConfig, self.config)
         mode_bytes = request.trajectory_bytes // max(request.n_record_modes, 1)
-        chunk = min(
-            cast(AllanVarianceConfig, self.config).transfer_chunk_samples,
-            request.saved_samples,
-        )
-        transfer_bytes = (
-            request.n_traj * chunk * 2 * request.real_itemsize
-            if request.backend_name == "cupy"
-            else 0
-        )
-        return AnalyzerWorkspaceEstimate(
-            device_bytes=transfer_bytes,
-            host_bytes=5 * mode_bytes,
-        )
+        if request.backend_name == "cupy":
+            chunk_rows = min(config.device_chunk_trajectories, request.n_traj)
+            # Per-chunk device temporaries: amplitude/phase/increment buffers,
+            # validity tables and the per-tau second-difference slices.
+            device_bytes = (
+                chunk_rows * request.saved_samples * 8 * request.real_itemsize
+            )
+            # Only the per-trajectory tau tables are assembled on the host.
+            host_bytes = request.n_traj * 256 * 4 * 8
+            return AnalyzerWorkspaceEstimate(
+                device_bytes=device_bytes, host_bytes=host_bytes
+            )
+        return AnalyzerWorkspaceEstimate(host_bytes=5 * mode_bytes)
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         config = cast(AllanVarianceConfig, self.config)
@@ -137,28 +150,50 @@ class AllanVarianceAnalyzer(Analyzer):
             raise ValueError("trajectory sample spacing must be positive")
         columns = resolve_mode_columns(data, config.modes)
         frequency_meta = orientation_metadata(config.orientation)
+        on_device = backend.backend_name() == "cupy" and not isinstance(
+            array, np.ndarray
+        )
         mode_results: dict[int, dict[str, Any]] = {}
         for mode, column in zip(config.modes, columns, strict=True):
-            series = _copy_mode_to_host(array, column, config.transfer_chunk_samples)
-            allan = calculate_allan_variance(
-                series,
-                dt,
-                taus=config.taus,
-                points=config.points,
-                min_windows=config.min_windows,
-                min_independent_windows=config.min_independent_windows,
-                amplitude_floor=config.amplitude_floor,
-            )
-            allan.update(frequency_meta)
-            mode_results[mode] = {
-                "allan": allan,
-                "phase_increment": _phase_increment_summary(
+            if on_device:
+                allan = calculate_allan_variance_device(
+                    array[:, :, column],
+                    dt,
+                    taus=config.taus,
+                    points=config.points,
+                    min_windows=config.min_windows,
+                    min_independent_windows=config.min_independent_windows,
+                    amplitude_floor=config.amplitude_floor,
+                    chunk_trajectories=config.device_chunk_trajectories,
+                )
+                phase_summary = _phase_increment_summary_device(
+                    array[:, :, column],
+                    dt,
+                    config.amplitude_floor,
+                    config.orientation,
+                    config.device_chunk_trajectories,
+                )
+            else:
+                series = _copy_mode_to_host(
+                    array, column, config.transfer_chunk_samples
+                )
+                allan = calculate_allan_variance(
+                    series,
+                    dt,
+                    taus=config.taus,
+                    points=config.points,
+                    min_windows=config.min_windows,
+                    min_independent_windows=config.min_independent_windows,
+                    amplitude_floor=config.amplitude_floor,
+                )
+                phase_summary = _phase_increment_summary(
                     series,
                     dt,
                     config.amplitude_floor,
                     config.orientation,
-                ),
-            }
+                )
+            allan.update(frequency_meta)
+            mode_results[mode] = {"allan": allan, "phase_increment": phase_summary}
         payload = {
             "modes": list(config.modes),
             "t0": t0,
@@ -348,6 +383,51 @@ def _phase_increment_summary(
         "near_nyquist_fraction_per_trajectory": _masked_mean(
             (absolute >= 0.9 * np.pi).astype(float), valid, axis=1
         ),
+        "near_nyquist_threshold": 0.9 * np.pi,
+        **orientation_metadata(orientation),
+    }
+
+
+def _phase_increment_summary_device(
+    series: Any,
+    dt: float,
+    amplitude_floor: float,
+    orientation: FrequencyOrientation,
+    chunk_trajectories: int,
+) -> dict[str, Any]:
+    """Device-resident counterpart of :func:`_phase_increment_summary`."""
+    import cupy as cp
+
+    n_traj = int(series.shape[0])
+    sign = orientation_sign(orientation)
+    mean_frequency = np.full(n_traj, np.nan, dtype=float)
+    max_abs_step = np.full(n_traj, np.nan, dtype=float)
+    near_nyquist = np.full(n_traj, np.nan, dtype=float)
+    for start in range(0, n_traj, chunk_trajectories):
+        stop = min(n_traj, start + chunk_trajectories)
+        chunk = series[start:stop]
+        amplitude = cp.abs(chunk)
+        increments = cp.angle(chunk[:, 1:] * cp.conj(chunk[:, :-1]))
+        valid = (amplitude[:, 1:] > amplitude_floor) & (
+            amplitude[:, :-1] > amplitude_floor
+        )
+        absolute = cp.abs(increments)
+        count = cp.sum(valid, axis=1)
+        total = cp.sum(cp.where(valid, sign * increments / dt, 0.0), axis=1)
+        chunk_mean = cp.where(count > 0, total / cp.maximum(count, 1), cp.nan)
+        chunk_max = cp.max(cp.where(valid, absolute, cp.nan), axis=1)
+        indicator = (absolute >= 0.9 * np.pi).astype(cp.float64)
+        nyquist_total = cp.sum(cp.where(valid, indicator, 0.0), axis=1)
+        chunk_nyquist = cp.where(
+            count > 0, nyquist_total / cp.maximum(count, 1), cp.nan
+        )
+        mean_frequency[start:stop] = cp.asnumpy(chunk_mean)
+        max_abs_step[start:stop] = cp.asnumpy(chunk_max)
+        near_nyquist[start:stop] = cp.asnumpy(chunk_nyquist)
+    return {
+        "mean_angular_frequency_per_trajectory": mean_frequency,
+        "max_abs_phase_step_per_trajectory": max_abs_step,
+        "near_nyquist_fraction_per_trajectory": near_nyquist,
         "near_nyquist_threshold": 0.9 * np.pi,
         **orientation_metadata(orientation),
     }

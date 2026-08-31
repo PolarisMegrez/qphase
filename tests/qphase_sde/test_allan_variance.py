@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.allan_variance import (
     AllanVarianceAnalyzer,
@@ -6,6 +7,14 @@ from qphase_sde.analyser.allan_variance import (
 )
 from qphase_sde.analyser.base import AnalyzerWorkspaceRequest
 from qphase_sde.state import TrajectorySet
+
+
+def _cupy_available() -> bool:
+    try:
+        import cupy  # noqa: F401
+    except Exception:
+        return False
+    return True
 
 
 def _phase_diffusion_trajectory(n_traj: int = 9) -> TrajectorySet:
@@ -143,7 +152,7 @@ def test_allan_analyzer_advertises_trajectory_batching():
     assert capabilities.supports_time_streaming is False
 
 
-def test_allan_workspace_materializes_one_mode_at_a_time():
+def test_allan_workspace_is_host_resident_for_numpy_backend():
     analyzer = AllanVarianceAnalyzer(
         AllanVarianceConfig(modes=[0, 1, 2], transfer_chunk_samples=8192)
     )
@@ -154,12 +163,31 @@ def test_allan_workspace_materializes_one_mode_at_a_time():
         saved_samples=1_000_001,
         n_record_modes=3,
         real_itemsize=8,
-        backend_name="cupy",
+        backend_name="numpy",
     )
 
     estimate = analyzer.estimate_workspace(request)
     assert estimate.host_bytes == 5 * trajectory_bytes // 3
-    assert estimate.device_bytes < 8 * 1024**2
+    assert estimate.device_bytes == 0
+
+
+def test_allan_workspace_is_trajectory_chunked_on_device():
+    analyzer = AllanVarianceAnalyzer(
+        AllanVarianceConfig(modes=[0, 1, 2], device_chunk_trajectories=16)
+    )
+    request = AnalyzerWorkspaceRequest(
+        trajectory_bytes=60 * 1_000_001 * 3 * 16,
+        n_traj=60,
+        saved_samples=1_000_001,
+        n_record_modes=3,
+        real_itemsize=8,
+        backend_name="cupy",
+    )
+
+    estimate = analyzer.estimate_workspace(request)
+    assert estimate.device_bytes == 16 * 1_000_001 * 8 * 8
+    # Host memory no longer materializes full modes; only tau tables remain.
+    assert estimate.host_bytes == 60 * 256 * 4 * 8
 
 
 def test_allan_device_transfer_is_time_chunked():
@@ -211,3 +239,118 @@ class _DeviceLikeArray:
         selected = self.array[key]
         self.transfer_lengths.append(int(selected.shape[1]))
         return _DeviceLikeSlice(selected)
+
+
+_ALLAN_COMPARE_KEYS = (
+    "tau",
+    "angular_frequency_variance",
+    "angular_frequency_variance_sem",
+    "per_trajectory",
+    "valid_second_differences",
+    "nonoverlap_angular_frequency_variance",
+    "nonoverlap_angular_frequency_variance_sem",
+    "nonoverlap_per_trajectory",
+    "nonoverlap_valid_second_differences",
+    "nominal_independent_windows_per_trajectory",
+    "total_independent_window_count",
+)
+
+_PHASE_COMPARE_KEYS = (
+    "mean_angular_frequency_per_trajectory",
+    "max_abs_phase_step_per_trajectory",
+    "near_nyquist_fraction_per_trajectory",
+)
+
+
+def _assert_mode_results_equal(
+    device_payload: dict, host_payload: dict, mode: int
+) -> None:
+    device_mode = device_payload["mode_results"][mode]
+    host_mode = host_payload["mode_results"][mode]
+    for key in _ALLAN_COMPARE_KEYS:
+        np.testing.assert_allclose(
+            np.asarray(device_mode["allan"][key], dtype=float),
+            np.asarray(host_mode["allan"][key], dtype=float),
+            rtol=1e-10,
+            atol=1e-30,
+            err_msg=f"allan[{key}]",
+        )
+    for key in _PHASE_COMPARE_KEYS:
+        np.testing.assert_allclose(
+            np.asarray(device_mode["phase_increment"][key], dtype=float),
+            np.asarray(host_mode["phase_increment"][key], dtype=float),
+            rtol=1e-10,
+            atol=1e-30,
+            err_msg=f"phase_increment[{key}]",
+        )
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+def test_allan_device_path_matches_host():
+    import cupy as cp
+    from qphase.backend.cupy_backend import CuPyBackend
+
+    source = _phase_diffusion_trajectory()
+    # Odd chunking exercises the trailing partial chunk.
+    analyzer = AllanVarianceAnalyzer(
+        AllanVarianceConfig(
+            modes=[2],
+            taus=[1.0, 2.0, 4.0],
+            min_independent_windows=4,
+            device_chunk_trajectories=4,
+        )
+    )
+    reference = analyzer.analyze(source, NumpyBackend()).data_dict
+    device_trajectory = TrajectorySet(
+        cp.asarray(source.data),
+        t0=source.t0,
+        dt=source.dt,
+        meta=dict(source.meta),
+    )
+
+    payload = analyzer.analyze(device_trajectory, CuPyBackend()).data_dict
+
+    assert payload["n_traj"] == reference["n_traj"]
+    assert payload["n_samples"] == reference["n_samples"]
+    _assert_mode_results_equal(payload, reference, 2)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+def test_allan_device_path_matches_host_with_masked_windows():
+    import cupy as cp
+    from qphase.backend.cupy_backend import CuPyBackend
+
+    rng = np.random.default_rng(20260831)
+    n_traj, n_time = 5, 513
+    increments = 0.05 * rng.standard_normal((n_traj, n_time - 1))
+    phase = np.concatenate(
+        [np.zeros((n_traj, 1)), np.cumsum(increments, axis=1)], axis=1
+    )
+    amplitude = np.ones((n_traj, n_time))
+    amplitude[0, 100:140] = 0.0
+    amplitude[3, 300:] = 0.0
+    values = (amplitude * np.exp(1j * phase))[:, :, None]
+    trajectory = TrajectorySet(values, t0=0.0, dt=0.1, meta={"mode_indices": [0]})
+    analyzer = AllanVarianceAnalyzer(
+        AllanVarianceConfig(
+            modes=[0],
+            taus=[0.5, 1.0, 2.0, 4.0],
+            min_independent_windows=2,
+            amplitude_floor=0.5,
+            device_chunk_trajectories=3,
+        )
+    )
+
+    reference = analyzer.analyze(trajectory, NumpyBackend()).data_dict
+    device_trajectory = TrajectorySet(
+        cp.asarray(values), t0=0.0, dt=0.1, meta={"mode_indices": [0]}
+    )
+    payload = analyzer.analyze(device_trajectory, CuPyBackend()).data_dict
+
+    _assert_mode_results_equal(payload, reference, 0)
+    # Masked trajectories lose windows relative to unmasked ones.
+    valid = payload["mode_results"][0]["allan"]["valid_second_differences"]
+    assert np.any(valid[0] < valid[1])
+    assert np.any(valid[3] < valid[1])
