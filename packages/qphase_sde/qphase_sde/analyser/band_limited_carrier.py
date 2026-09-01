@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
@@ -1387,17 +1387,57 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         if output_dir is not None:
             destination = Path(output_dir)
             destination.mkdir(parents=True, exist_ok=True)
+            ridge_fieldnames = (
+                [
+                    "ridge_candidate_index",
+                    "ridge_order",
+                    "ridge_center",
+                    "ridge_center_std",
+                    "ridge_confidence_lower",
+                    "ridge_confidence_upper",
+                    "ridge_retention_tier",
+                    "ridge_tracking_path_ranks",
+                    "ridge_neighbor_distance",
+                    "ridge_bandwidth_max",
+                    "ridge_carrier_correction",
+                    "ridge_conditioned_uncertainty_upper",
+                    "ridge_platform_selection",
+                ]
+                if config.center is not None
+                else []
+            )
+            candidate_fieldnames = [
+                "job_name",
+                config.scan_param,
+                "readout",
+                *ridge_fieldnames,
+                *(field.name for field in fields(BandLimitedCarrierCandidate)),
+            ]
+            platform_fieldnames = [
+                "job_name",
+                config.scan_param,
+                "readout",
+                *ridge_fieldnames,
+                "platform_index",
+                *(field.name for field in fields(BandLimitedCarrierPlatform)),
+            ]
             if "carrier_results.csv" in config.export:
                 path = write_table_csv(rows, destination / "carrier_results.csv")
                 written["carrier_results"] = str(path)
+            # Candidate/platform audits are written even when empty so a
+            # requested export never vanishes silently.
             if "carrier_candidates.csv" in config.export:
                 path = write_table_csv(
-                    candidate_rows, destination / "carrier_candidates.csv"
+                    candidate_rows,
+                    destination / "carrier_candidates.csv",
+                    fieldnames=candidate_fieldnames,
                 )
                 written["carrier_candidates"] = str(path)
             if "carrier_platforms.csv" in config.export:
                 path = write_table_csv(
-                    platform_rows, destination / "carrier_platforms.csv"
+                    platform_rows,
+                    destination / "carrier_platforms.csv",
+                    fieldnames=platform_fieldnames,
                 )
                 written["carrier_platforms"] = str(path)
         metadata = orientation_metadata(

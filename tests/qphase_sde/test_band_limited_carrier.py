@@ -142,6 +142,48 @@ def test_analyzer_exports_trace_rows_and_bandwidth_audit(tmp_path):
     assert payload["orientation"] == "phase_decreasing"
 
 
+def test_analyzer_writes_header_only_csvs_when_no_candidates(tmp_path):
+    axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
+    results: dict[str, SDEResult] = {
+        "point_0": SDEResult(
+            analysis={
+                "psd": {
+                    "axis": axis,
+                    "psd": np.full((axis.size, 1), 0.03),
+                    "modes": [0],
+                    "orientation": "phase_decreasing",
+                }
+            },
+            meta={"params": {"epsilon": 0.1}},
+        )
+    }
+    analyzer = BandLimitedCarrierAnalyzer(
+        BandLimitedCarrierConfig(
+            scan_param="epsilon",
+            freq_min=-1.0,
+            freq_max=0.2,
+            maximum_lag=80.0,
+            output_dir=str(tmp_path),
+        )
+    )
+
+    payload = analyzer.analyze(results, NumpyBackend()).data_dict
+
+    assert payload["carrier_rows"]
+    assert payload["candidate_rows"] == []
+    assert payload["platform_rows"] == []
+    candidates_csv = (
+        (tmp_path / "carrier_candidates.csv").read_text(encoding="utf-8").splitlines()
+    )
+    platforms_csv = (
+        (tmp_path / "carrier_platforms.csv").read_text(encoding="utf-8").splitlines()
+    )
+    assert len(candidates_csv) == 1
+    assert "half_bandwidth" in candidates_csv[0]
+    assert len(platforms_csv) == 1
+    assert "platform_index" in platforms_csv[0]
+
+
 def test_analyzer_outputs_each_retained_ridge_candidate(tmp_path):
     axis = np.linspace(-3.0, 3.0, 8192, endpoint=False)
     results: dict[str, SDEResult] = {}
