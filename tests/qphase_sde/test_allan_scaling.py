@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase.core.artifacts import ArtifactStore
+from qphase.core.result_loader import load_result
+from qphase.core.scan import ScanSpec
+from qphase.data.resolver import default_artifact_resolver
 from qphase_sde.analyser.allan_scaling import (
     AllanScalingAnalyzer,
     AllanScalingConfig,
     NormalFormExpectation,
 )
-from qphase_sde.result import SDEResult
+from qphase_sde.contracts.bundle import SDEProvenance
+from qphase_sde.result import SDEResult, bundle_from_result
+from qphase_sde.runtime.scan import SDEScanResult
 
 
 def _result(
@@ -120,3 +127,62 @@ def test_normal_form_expectation_includes_observable_projection_order():
 
     assert expectation.frequency_exponent == pytest.approx(2.0 / 3.0)
     assert expectation.allan_exponent == pytest.approx(2.0 / 3.0)
+
+
+def _scan_bundle(epsilon: np.ndarray, trajectories: int = 24):
+    """In-memory v4 scan bundle holding synthetic per-point Allan payloads."""
+    results = [_result(float(value), trajectories=trajectories) for value in epsilon]
+    combined = SDEResult(
+        analysis={
+            "allan_variance": [result.analysis["allan_variance"] for result in results]
+        },
+        meta={"params": {"omega_c": 1.0}},
+    )
+    grid = ScanSpec.model_validate(
+        {
+            "axes": {
+                "omega_c": {
+                    "target": "model.scan.omega_c",
+                    "values": [1.0 + float(value) for value in epsilon],
+                }
+            }
+        }
+    ).compile()
+    dataset = SDEScanResult(combined, grid, {"omega_c": 1.0}, trajectories)
+    return bundle_from_result(dataset, provenance=SDEProvenance(dt=1.0))
+
+
+def test_allan_scaling_consumes_v4_scan_bundle(tmp_path):
+    """Regression: an in-memory upstream SDEDataBundle must yield its points."""
+    epsilon = np.geomspace(1e-3, 1e-1, 9)
+    bundle = _scan_bundle(epsilon)
+
+    result = AllanScalingAnalyzer(_config(tmp_path)).analyze(bundle, NumpyBackend())
+    summary = result.data_dict["summary"]
+
+    assert summary["status"] == "ok"
+    assert summary["accepted_points"] == epsilon.size
+    assert summary["noise_fit"]["exponent"] == pytest.approx(4.0 / 3.0)
+    assert summary["normal_form"]["allan_match"] is True
+    assert len(result.data_dict["rows"]) == epsilon.size
+
+
+def test_allan_scaling_consumes_restored_v4_artifact(tmp_path):
+    """Regression: a clean-process restored v4 artifact must yield its points."""
+    epsilon = np.geomspace(1e-3, 1e-1, 9)
+    job_dir = tmp_path / "upstream_sim"
+    job_dir.mkdir()
+    store = ArtifactStore(job_dir, SimpleNamespace(shard_target_mib=1))
+    store.save_result(_scan_bundle(epsilon), "sim")
+    # Simulate a clean process: drop every in-process artifact binding.
+    default_artifact_resolver().clear()
+    restored = load_result("sim", job_dir)
+
+    out_dir = tmp_path / "analysis"
+    result = AllanScalingAnalyzer(_config(out_dir)).analyze(restored, NumpyBackend())
+    summary = result.data_dict["summary"]
+
+    assert summary["status"] == "ok"
+    assert summary["accepted_points"] == epsilon.size
+    assert summary["noise_fit"]["exponent"] == pytest.approx(4.0 / 3.0)
+    assert (out_dir / "allan_points.csv").exists()

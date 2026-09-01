@@ -11,8 +11,7 @@ from typing import Any, ClassVar, Literal, cast
 import numpy as np
 from pydantic import BaseModel, Field, model_validator
 from qphase.backend.base import BackendBase
-from qphase.core.aggregation import AggregateResult, write_table_csv
-from qphase.core.dataset import DatasetResultProtocol
+from qphase.core.aggregation import write_table_csv
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase, ResultProtocol
 from scipy.optimize import curve_fit
@@ -25,6 +24,7 @@ from .frequency_orientation import (
     resolve_frequency_orientation,
 )
 from .result import AnalysisResult
+from .result_input import load_sde_results
 
 __all__ = [
     "AllanScalingAnalyzer",
@@ -214,24 +214,6 @@ def _estimate_legacy_independent_counts(
     allan["independent_window_count_source"] = "estimated_from_legacy_overlap_counts"
 
 
-def _iter_results(data: Any) -> list[SDEResult]:
-    if isinstance(data, DatasetResultProtocol):
-        return [
-            point
-            for index in np.ndindex(data.shape)
-            if isinstance((point := data.point_view(index)), SDEResult)
-        ]
-    if isinstance(data, AggregateResult):
-        data = data.results
-    if isinstance(data, dict):
-        return [value for value in data.values() if isinstance(value, SDEResult)]
-    if isinstance(data, SDEResult):
-        return [data]
-    raise QPhaseError(
-        f"AllanScalingAnalyzer received unsupported input type: {type(data).__name__}"
-    )
-
-
 def _epsilon(scan_value: float, config: AllanScalingConfig) -> float | None:
     signed = scan_value - config.critical_value
     if config.side == "positive" and signed <= 0.0:
@@ -243,7 +225,10 @@ def _epsilon(scan_value: float, config: AllanScalingConfig) -> float | None:
 
 def _collect_points(data: Any, config: AllanScalingConfig) -> list[_Point]:
     points: list[_Point] = []
-    for result in _iter_results(data):
+    # NOTE: load_sde_results bridges v4 bundles through legacy_result(); this
+    # consumer must be retyped and the bridge removed in Phase 5.
+    for loaded in load_sde_results(data):
+        result = loaded.result
         params = result.meta.get("params", {})
         if config.scan_param not in params:
             raise QPhaseError(
