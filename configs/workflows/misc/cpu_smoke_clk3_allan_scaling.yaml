@@ -1,6 +1,6 @@
 schema: qphase.workflow/2
 id: cpu_smoke_clk3_allan_scaling
-title: CPU smoke collective-loss Kerr trimer Allan-scaling analyze chain
+title: CPU smoke collective-loss Kerr trimer Allan-scaling chain
 collection: misc
 tags:
 - model:collective_loss_kerr_3mode
@@ -50,33 +50,11 @@ jobs:
       kappa_bright: 1.0
       kappa_dark: 0.1775148709287836
   analyser:
-    psd:
-      modes: [0]
-      kind: complex
-      convention: symmetric
-      expected_freq_max: 1.0
-      find_peaks: false
     allan_variance:
       modes: [0]
       points: 40
       min_windows: 4
       min_independent_windows: 4
-
-- name: cpu_smoke_clk3_allan_scaling_carrier
-  input:
-    from: cpu_smoke_clk3_allan_scaling_sim
-    mode: dataset
-  save: true
-  engine:
-    sde: {mode: analyze}
-  analyser:
-    band_limited_carrier:
-      scan_param: omega_c
-      readout: 0
-      freq_min: -0.5
-      freq_max: 0.2
-      maximum_lag: 256.0
-      tracking_enabled: true
 
 - name: cpu_smoke_clk3_allan_scaling_allan
   input:

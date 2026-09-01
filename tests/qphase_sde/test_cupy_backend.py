@@ -72,6 +72,19 @@ def test_cupy_backend_primitives():
     assert isinstance(edges, cupy.ndarray)
 
 
+def test_cupy_backend_construction_does_not_replace_global_allocator():
+    """Multiple backend instances must keep existing device arrays valid."""
+    allocator = cupy.cuda.get_allocator()
+    existing = cupy.arange(16, dtype=cupy.float64)
+
+    backends = (CuPyBackend(), CuPyBackend())
+
+    assert cupy.cuda.get_allocator() is allocator
+    assert [backend.backend_name() for backend in backends] == ["cupy", "cupy"]
+    backends[0].free_all_blocks()
+    np.testing.assert_array_equal(cupy.asnumpy(existing), np.arange(16))
+
+
 def test_cupy_contract_noise_matches_numpy():
     """SDE noise contraction on cupy matches numpy reference."""
     from qphase_sde.math import ops

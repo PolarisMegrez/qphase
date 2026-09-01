@@ -273,9 +273,9 @@ def calculate_allan_variance_device(
         phase_increments[~valid_increments] = 0.0
         phase = cp.empty((rows, n_time), dtype=cp.float64)
         phase[:, 0] = 0.0
-        # Accumulate in float64 regardless of the input precision so the
-        # device path matches the host path for complex64 long records.
-        cp.cumsum(phase_increments, axis=1, dtype=cp.float64, out=phase[:, 1:])
+        # Accumulate in float64 regardless of input precision. Do not pass the
+        # non-contiguous phase[:, 1:] view as a CuPy reduction output.
+        phase[:, 1:] = cp.cumsum(phase_increments, axis=1, dtype=cp.float64)
         valid_cumulative = cp.empty((rows, n_time), dtype=count_dtype)
         valid_cumulative[:, 0] = 0
         valid_cumulative[:, 1:] = cp.cumsum(valid_increments, axis=1, dtype=count_dtype)

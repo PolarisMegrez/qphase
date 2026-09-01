@@ -180,7 +180,13 @@ def test_allan_workspace_is_host_resident_for_numpy_backend():
     assert estimate.device_bytes == 0
 
 
-def test_allan_workspace_is_trajectory_chunked_on_device():
+@pytest.mark.parametrize(
+    ("real_itemsize", "bytes_per_sample"),
+    [(4, 56), (8, 80)],
+)
+def test_allan_workspace_is_trajectory_chunked_on_device(
+    real_itemsize, bytes_per_sample
+):
     analyzer = AllanVarianceAnalyzer(
         AllanVarianceConfig(modes=[0, 1, 2], device_chunk_trajectories=16)
     )
@@ -189,12 +195,12 @@ def test_allan_workspace_is_trajectory_chunked_on_device():
         n_traj=60,
         saved_samples=1_000_001,
         n_record_modes=3,
-        real_itemsize=8,
+        real_itemsize=real_itemsize,
         backend_name="cupy",
     )
 
     estimate = analyzer.estimate_workspace(request)
-    assert estimate.device_bytes == 16 * 1_000_001 * 8 * 8
+    assert estimate.device_bytes == 16 * 1_000_001 * bytes_per_sample
     # Host memory no longer materializes full modes; only tau tables remain.
     assert estimate.host_bytes == 60 * 256 * 4 * 8
 
@@ -301,18 +307,24 @@ def test_allan_device_path_matches_host_complex64_long_record():
 
     np.angle/cp.angle differ at the float32 ulp level, which sets a host/device
     noise floor near 5e-9 for this record length; accumulating the phase in
-    float32 (the regression guarded here) instead produces ~7e-8 relative
-    deviation. SEM keys amplify the floor to ~6e-8 by cancellation across
-    trajectories (float32 accumulation: ~5e-7 or worse), so they get a
-    looser 2e-7 tolerance while everything else uses 2e-8.
+    float32 produces a substantially larger deviation. SEM keys amplify the
+    floor by cancellation across trajectories, so they use a 2e-7 tolerance
+    while the primary estimates retain a 2e-8 tolerance.
 
-    Note: keep this test ahead of the complex128 device tests. On at least one
-    Windows/WDDM platform (T1000, CuPy 13.6/14.2), running the complex128
-    device pipeline first leaves the next complex64 kernel launch failing with
-    CUDA_ERROR_ILLEGAL_ADDRESS; the reverse order is stable.
+    The test first executes a complex128 analysis in the same process. This
+    guards mixed-precision sequencing instead of relying on pytest ordering.
     """
     import cupy as cp
     from qphase.backend.cupy_backend import CuPyBackend
+
+    complex128_source = _phase_diffusion_trajectory(n_traj=3)
+    complex128_device = TrajectorySet(
+        cp.asarray(complex128_source.data),
+        t0=complex128_source.t0,
+        dt=complex128_source.dt,
+        meta=dict(complex128_source.meta),
+    )
+    _analyzer().analyze(complex128_device, CuPyBackend())
 
     rng = np.random.default_rng(20260901)
     n_traj, n_time = 4, 500_001

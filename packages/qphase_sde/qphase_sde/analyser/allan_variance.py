@@ -121,11 +121,11 @@ class AllanVarianceAnalyzer(Analyzer):
         mode_bytes = request.trajectory_bytes // max(request.n_record_modes, 1)
         if request.backend_name == "cupy":
             chunk_rows = min(config.device_chunk_trajectories, request.n_traj)
-            # Per-chunk device temporaries: amplitude/phase/increment buffers,
-            # validity tables and the per-tau second-difference slices.
-            device_bytes = (
-                chunk_rows * request.saved_samples * 8 * request.real_itemsize
-            )
+            # The phase, second differences and cumsum output are float64 even
+            # for complex64 input. Include those fixed-width buffers instead
+            # of scaling every temporary with the backend's real dtype.
+            bytes_per_sample = 6 * request.real_itemsize + 32
+            device_bytes = chunk_rows * request.saved_samples * bytes_per_sample
             # Only the per-trajectory tau tables are assembled on the host.
             host_bytes = request.n_traj * 256 * 4 * 8
             return AnalyzerWorkspaceEstimate(

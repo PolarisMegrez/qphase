@@ -162,20 +162,22 @@ class CuPyBackend(Backend):
     def __init__(self, config: CuPyConfig | None = None, **kwargs: Any) -> None:
         """Initialize CuPy backend with configuration.
 
-        Enables a CuPy memory pool to reduce CUDA allocation overhead and
-        stores a stream handle for explicit synchronization. Device selection
-        is intentionally left to the environment (single-GPU setups); multi-GPU
-        switching is out of scope for this iteration.
+        Reuses CuPy's process-default memory pool and stores a stream handle
+        for explicit synchronization. A backend instance must not replace the
+        process-global allocator while arrays owned by another instance remain
+        alive. Device selection is intentionally left to the environment
+        (single-GPU setups); multi-GPU switching is out of scope here.
         """
         self.config = config or CuPyConfig()
         _ = kwargs
 
-        # Memory pool: speeds up repeated allocations of similar shapes.
+        # The default pool already provides allocation reuse. Installing one
+        # global allocator per backend breaks ownership when backend instances
+        # coexist with arrays allocated by an earlier pool.
         self._memory_pool: Any = None
         if _CUPY_AVAILABLE:
             try:
-                self._memory_pool = cp.cuda.MemoryPool()
-                cp.cuda.set_allocator(self._memory_pool.malloc)
+                self._memory_pool = cp.get_default_memory_pool()
             except Exception:
                 self._memory_pool = None
 
@@ -388,7 +390,12 @@ class CuPyBackend(Backend):
             cp.cuda.Device().synchronize()
 
     def free_all_blocks(self) -> None:
-        """Release all free blocks held by the CuPy memory pool."""
+        """Release free blocks held by CuPy's process-default memory pool.
+
+        The pool is shared by every CuPyBackend instance in this process.
+        Live device arrays remain valid, but cached free blocks used by other
+        instances are also released.
+        """
         if self._memory_pool is not None:
             self._memory_pool.free_all_blocks()
 

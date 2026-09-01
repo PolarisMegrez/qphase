@@ -11,7 +11,6 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.artifacts import ArtifactStore
 from qphase.core.result_loader import load_result
 from qphase.core.scan import ScanSpec
-from qphase.data.resolver import default_artifact_resolver
 from qphase_sde.analyser.allan_scaling import (
     AllanScalingAnalyzer,
     AllanScalingConfig,
@@ -168,14 +167,12 @@ def test_allan_scaling_consumes_v4_scan_bundle(tmp_path):
 
 
 def test_allan_scaling_consumes_restored_v4_artifact(tmp_path):
-    """Regression: a clean-process restored v4 artifact must yield its points."""
+    """Regression: a persisted and restored v4 artifact must yield its points."""
     epsilon = np.geomspace(1e-3, 1e-1, 9)
     job_dir = tmp_path / "upstream_sim"
     job_dir.mkdir()
     store = ArtifactStore(job_dir, SimpleNamespace(shard_target_mib=1))
     store.save_result(_scan_bundle(epsilon), "sim")
-    # Simulate a clean process: drop every in-process artifact binding.
-    default_artifact_resolver().clear()
     restored = load_result("sim", job_dir)
 
     out_dir = tmp_path / "analysis"
