@@ -542,6 +542,7 @@ analyser:
     min_windows: 8
     min_independent_windows: 4
     transfer_chunk_samples: 8192
+    device_chunk_trajectories: 16
 ```
 
 `orientation` controls the reported per-trajectory mean angular frequency.
@@ -558,9 +559,14 @@ means that the time blocks do not overlap; colored dynamics may still correlate
 adjacent blocks. Trajectory bootstrap is therefore preferred over treating all
 blocks as exchangeable samples.
 
-On device backends, modes are copied to the host one at a time in bounded
-`transfer_chunk_samples` blocks. This preserves the Allan definition while
-avoiding a simultaneous host copy of every recorded mode.
+On CuPy backends the analysis is device-native: trajectories are processed in
+chunks of `device_chunk_trajectories` rows, and only the per-trajectory tau
+tables and the final statistics are copied to the host. Phase is accumulated
+in float64 on device regardless of the input precision, so complex64 long
+records stay consistent with the host path. When the input is host-resident
+(for example reloaded artifacts), modes are instead copied one at a time in
+bounded `transfer_chunk_samples` blocks. Both paths preserve the Allan
+definition while avoiding a simultaneous host copy of every recorded mode.
 
 ## `allan_scaling`
 

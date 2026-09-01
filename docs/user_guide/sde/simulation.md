@@ -159,9 +159,13 @@ The focused `allan_variance` analyser also supports this path: it concatenates
 per-trajectory Allan statistics, recomputes ensemble SEM and valid
 non-overlapping window counts, and never writes the sampled trajectory when
 `keep_traj: false`.
-Device trajectories are transferred one mode at a time in bounded time chunks,
-so enabling several Allan modes does not require a simultaneous host copy of
-the complete multi-mode record.
+On CuPy the Allan analysis itself is device-native: trajectory chunks of
+`device_chunk_trajectories` rows are reduced on the GPU, phase is accumulated
+in float64 regardless of the input precision, and only the per-trajectory tau
+tables and final statistics are copied to the host. Host-resident inputs are
+instead transferred one mode at a time in bounded `transfer_chunk_samples`
+time chunks, so enabling several Allan modes never requires a simultaneous
+host copy of the complete multi-mode record.
 The `coherence_matrix`, `moment_statistics`, and `quadratic_moments` analysers
 use the same merge contract for compact first-order matrices and c-number
 moments. `quadratic_moments` evaluates named Hermitian forms in bounded time

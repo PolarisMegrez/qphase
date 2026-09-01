@@ -131,8 +131,10 @@ engine 在分配轨迹前验证时间网格与 analyser 带宽，并分别估算
 group 保证相同 seed 下结果不依赖 scan tile 和物理 trajectory batch 大小。
 专用 `allan_variance` analyser 也支持该路径：它拼接逐轨迹 Allan 统计量，重新计算系综
 SEM 与有效非重叠窗口数，并在 `keep_traj: false` 时不写出采样轨迹。
-设备轨迹会按模式、按有界时间块传输；启用多个 Allan 模式不会要求在主机端同时复制
-完整的多模式记录。
+在 CuPy 下 Allan 分析本身在设备端原生执行：按 `device_chunk_trajectories` 行分块的
+轨迹在 GPU 上归约，相位无论输入精度如何均以 float64 累积，仅逐轨迹 tau 表与最终
+统计量传回主机。位于主机端的输入则按模式、按 `transfer_chunk_samples` 有界时间块
+传输；启用多个 Allan 模式也不会要求在主机端同时复制完整的多模式记录。
 `coherence_matrix`、`moment_statistics` 与 `quadratic_moments` 也支持相同的
 trajectory batch 合并协议。`quadratic_moments` 在有界时间分块中计算命名
 Hermitian 二次型，并保留到四阶的逐轨迹矩摘要。

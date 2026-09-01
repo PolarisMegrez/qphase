@@ -463,6 +463,7 @@ analyser:
     min_windows: 8
     min_independent_windows: 4
     transfer_chunk_samples: 8192
+    device_chunk_trajectories: 16
 ```
 
 `orientation` 控制逐轨迹平均角频率的符号。Allan 方差本身不随该配置改变。
@@ -473,8 +474,12 @@ SEM、实际有效非重叠窗口数以及每条轨迹的名义窗口数。此�
 有色动力学仍可能使相邻块相关。因此，不应把所有块当作可交换样本，指数不确定度优先
 使用逐轨迹 bootstrap。
 
-使用设备后端时，插件按模式逐个传输，并用 `transfer_chunk_samples` 限制每次传输的
-时间块长度。这不会改变 Allan 定义，同时避免在主机端复制全部已记录模式。
+使用 CuPy 后端时，分析在设备端原生执行：轨迹按 `device_chunk_trajectories`
+行分块处理，仅逐轨迹 tau 表与最终统计量传回主机。无论输入精度如何，相位都在
+设备端以 float64 累积，因此 complex64 长记录与主机路径保持一致。当输入位于
+主机端（例如重新加载的 artifact）时，插件改为按模式逐个传输，并用
+`transfer_chunk_samples` 限制每次传输的时间块长度。两条路径都不改变 Allan
+定义，同时避免在主机端复制全部已记录模式。
 
 ## `allan_scaling`
 
