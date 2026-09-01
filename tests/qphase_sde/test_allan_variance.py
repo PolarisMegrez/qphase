@@ -146,10 +146,19 @@ def test_allan_accumulator_matches_full_trajectory_analysis():
 
 def test_allan_analyzer_advertises_trajectory_batching():
     capabilities = _analyzer().capabilities()
-    assert capabilities.execution_location == "host"
+    assert capabilities.execution_location == "backend"
     assert capabilities.requires_full_trajectory is True
     assert capabilities.supports_trajectory_batching is True
     assert capabilities.supports_time_streaming is False
+
+
+def test_allan_config_rejects_empty_taus():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        AllanVarianceConfig(modes=[0], taus=[])
+    with pytest.raises(ValidationError):
+        AllanVarianceConfig(modes=[0], taus=[0.0])
 
 
 def test_allan_workspace_is_host_resident_for_numpy_backend():
@@ -283,6 +292,87 @@ def _assert_mode_results_equal(
             atol=1e-30,
             err_msg=f"phase_increment[{key}]",
         )
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+def test_allan_device_path_matches_host_complex64_long_record():
+    """complex64 long records must accumulate phase in float64 on device.
+
+    np.angle/cp.angle differ at the float32 ulp level, which sets a host/device
+    noise floor near 5e-9 for this record length; accumulating the phase in
+    float32 (the regression guarded here) instead produces ~7e-8 relative
+    deviation. SEM keys amplify the floor to ~6e-8 by cancellation across
+    trajectories (float32 accumulation: ~5e-7 or worse), so they get a
+    looser 2e-7 tolerance while everything else uses 2e-8.
+
+    Note: keep this test ahead of the complex128 device tests. On at least one
+    Windows/WDDM platform (T1000, CuPy 13.6/14.2), running the complex128
+    device pipeline first leaves the next complex64 kernel launch failing with
+    CUDA_ERROR_ILLEGAL_ADDRESS; the reverse order is stable.
+    """
+    import cupy as cp
+    from qphase.backend.cupy_backend import CuPyBackend
+
+    rng = np.random.default_rng(20260901)
+    n_traj, n_time = 4, 500_001
+    dt = 0.1
+    increments = (0.1 * rng.standard_normal((n_traj, n_time - 1))).astype(np.float32)
+    phase = np.concatenate(
+        [
+            np.zeros((n_traj, 1), dtype=np.float32),
+            np.cumsum(increments, axis=1, dtype=np.float32),
+        ],
+        axis=1,
+    )
+    amplitude = np.ones((n_traj, n_time), dtype=np.float32)
+    amplitude[1, 100_000:105_000] = 0.0
+    amplitude[3, 400_000:] = 0.0
+    values = (amplitude * np.exp(1j * phase.astype(np.float64))).astype(np.complex64)[
+        :, :, None
+    ]
+    trajectory = TrajectorySet(values, t0=0.0, dt=dt, meta={"mode_indices": [0]})
+    analyzer = AllanVarianceAnalyzer(
+        AllanVarianceConfig(
+            modes=[0],
+            taus=[0.5, 1.0, 4.0, 16.0, 64.0],
+            min_independent_windows=2,
+            amplitude_floor=0.5,
+            device_chunk_trajectories=3,
+        )
+    )
+
+    reference = analyzer.analyze(trajectory, NumpyBackend()).data_dict
+    device_trajectory = TrajectorySet(
+        cp.asarray(values), t0=0.0, dt=dt, meta={"mode_indices": [0]}
+    )
+    payload = analyzer.analyze(device_trajectory, CuPyBackend()).data_dict
+
+    for key in _ALLAN_COMPARE_KEYS:
+        rtol = 2e-7 if key.endswith("_sem") else 2e-8
+        np.testing.assert_allclose(
+            np.asarray(payload["mode_results"][0]["allan"][key], dtype=float),
+            np.asarray(reference["mode_results"][0]["allan"][key], dtype=float),
+            rtol=rtol,
+            atol=1e-30,
+            err_msg=f"allan[{key}]",
+        )
+    for key in _PHASE_COMPARE_KEYS:
+        # Phase summaries are computed from increments (no accumulation), so
+        # the dtype regression does not affect them; only the float32 angle
+        # ulp noise matters, including for near-zero mean frequencies.
+        np.testing.assert_allclose(
+            np.asarray(payload["mode_results"][0]["phase_increment"][key], dtype=float),
+            np.asarray(
+                reference["mode_results"][0]["phase_increment"][key], dtype=float
+            ),
+            rtol=1e-6,
+            atol=1e-8,
+            err_msg=f"phase_increment[{key}]",
+        )
+    # Masked trajectories lose windows relative to unmasked ones.
+    valid = payload["mode_results"][0]["allan"]["valid_second_differences"]
+    assert np.any(valid[3] < valid[1])
 
 
 @pytest.mark.gpu

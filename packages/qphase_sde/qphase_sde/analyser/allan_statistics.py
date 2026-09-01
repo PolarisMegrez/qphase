@@ -70,8 +70,7 @@ def _resolve_averaging_samples(
     )
     if averaging_samples[-1] > max_m:
         raise ValueError(
-            "an Allan tau violates allan_min_windows or "
-            "allan_min_independent_windows"
+            "an Allan tau violates allan_min_windows or allan_min_independent_windows"
         )
     return averaging_samples
 
@@ -274,12 +273,12 @@ def calculate_allan_variance_device(
         phase_increments[~valid_increments] = 0.0
         phase = cp.empty((rows, n_time), dtype=cp.float64)
         phase[:, 0] = 0.0
-        phase[:, 1:] = cp.cumsum(phase_increments, axis=1)
+        # Accumulate in float64 regardless of the input precision so the
+        # device path matches the host path for complex64 long records.
+        cp.cumsum(phase_increments, axis=1, dtype=cp.float64, out=phase[:, 1:])
         valid_cumulative = cp.empty((rows, n_time), dtype=count_dtype)
         valid_cumulative[:, 0] = 0
-        valid_cumulative[:, 1:] = cp.cumsum(
-            valid_increments, axis=1, dtype=count_dtype
-        )
+        valid_cumulative[:, 1:] = cp.cumsum(valid_increments, axis=1, dtype=count_dtype)
         del amplitude, phase_increments, valid_increments
 
         chunk_per_tau = cp.full((rows, n_tau), cp.nan)
@@ -302,9 +301,7 @@ def calculate_allan_variance_device(
 
             starts = cp.arange(0, n_time - 2 * m, 2 * m, dtype=cp.int64)
             nonoverlap_delta = (
-                phase[:, starts + 2 * m]
-                - 2.0 * phase[:, starts + m]
-                + phase[:, starts]
+                phase[:, starts + 2 * m] - 2.0 * phase[:, starts + m] + phase[:, starts]
             )
             nonoverlap_valid = (
                 valid_cumulative[:, starts + 2 * m] - valid_cumulative[:, starts]

@@ -62,7 +62,9 @@ class AllanVarianceConfig(PluginConfigBase):
         json_schema_extra=orientation_schema_extra(),
     )
     taus: list[float] | None = Field(
-        None, description="Requested averaging times; None selects a logarithmic grid"
+        None,
+        min_length=1,
+        description="Requested averaging times; None selects a logarithmic grid",
     )
     points: int = Field(40, ge=2, le=256)
     min_windows: int = Field(8, ge=1)
@@ -106,7 +108,7 @@ class AllanVarianceAnalyzer(Analyzer):
 
     def capabilities(self) -> AnalyzerExecutionCapabilities:
         return AnalyzerExecutionCapabilities(
-            execution_location="host",
+            execution_location="backend",
             requires_full_trajectory=True,
             supports_trajectory_batching=True,
             supports_time_streaming=False,
