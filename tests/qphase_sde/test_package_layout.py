@@ -135,7 +135,9 @@ def test_manifest_plugin_namespaces_match_entry_points():
     # package entry point to keep overlay attribution working.
     assert "model" in declared
     assert "model" not in ep_namespaces
-    assert declared - ep_namespaces == {"model"}
+    # peak_tracker/coherence_frequency declare their plugin-class protocols
+    # ahead of the Wave 5B concrete implementations and entry points.
+    assert declared - ep_namespaces == {"model", "peak_tracker", "coherence_frequency"}
 
 
 def test_manifest_declared_targets_resolve():

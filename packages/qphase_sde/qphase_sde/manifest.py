@@ -33,8 +33,8 @@ __all__ = ["MANIFEST"]
 #: entry-point namespaces declared in ``pyproject.toml``, plus overlay-only
 #: namespaces (``model``: concrete models ship as project-local or
 #: third-party overlay plugins, never as package-owned entry points).
-#: Child-plugin namespaces whose root-level directories only land in
-#: Phase 2 point at the protocols hosted under ``analyser/`` until then.
+#: ``peak_tracker``/``coherence_frequency`` declare their root-level
+#: plugin-class protocols ahead of the Wave 5B concrete implementations.
 MANIFEST = ResourcePackageManifest(
     resource_id="sde",
     package_version="2.0.0.dev0",
@@ -72,15 +72,28 @@ MANIFEST = ResourcePackageManifest(
         ),
         PluginClassDeclaration(
             namespace="spectral_estimator",
-            protocol=("qphase_sde.analyser.spectral_estimator.base:SpectralEstimator"),
+            protocol="qphase_sde.spectral_estimator.base:SpectralEstimator",
             description="Replaceable spectral estimators (periodogram, Welch, "
-            "multitaper); hosted under analyser/ until Wave 5B.",
+            "multitaper).",
         ),
         PluginClassDeclaration(
             namespace="peak_finder",
-            protocol="qphase_sde.analyser.peak_finding.base:PeakFinder",
+            protocol="qphase_sde.peak_finder.base:PeakFinder",
             description="Peak-candidate finders returning unified PeakCandidate "
-            "results; hosted under analyser/ until Wave 5B.",
+            "results.",
+        ),
+        PluginClassDeclaration(
+            namespace="peak_tracker",
+            protocol="qphase_sde.peak_tracker.base:PeakTrackerProtocol",
+            description="Scan-axis peak-path trackers linking candidate rows "
+            "into paths; concrete trackers land in Wave 5B.",
+        ),
+        PluginClassDeclaration(
+            namespace="coherence_frequency",
+            protocol=("qphase_sde.coherence_frequency.base:CoherenceFrequencyProtocol"),
+            description="Coherence-frequency estimators (short-delay, "
+            "band-limited, finite-delay); concrete estimators land in "
+            "Wave 5B.",
         ),
     ],
     data_products=[

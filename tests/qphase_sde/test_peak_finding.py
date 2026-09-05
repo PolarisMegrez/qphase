@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-from qphase_sde.analyser.peak_finding import (
+from qphase_sde.peak_finder import (
     PeakInfo,
     RationalPeakFinder,
     RationalPeakFinderConfig,

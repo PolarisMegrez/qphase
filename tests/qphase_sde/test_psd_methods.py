@@ -407,7 +407,7 @@ def test_estimator_capabilities_do_not_overclaim_time_streaming():
     declaration stays ``time_streaming=False`` until a true overlap-buffer
     streaming implementation is cross-checked against the non-streaming path.
     """
-    from qphase_sde.analyser.spectral_estimator.builtin import (
+    from qphase_sde.spectral_estimator.builtin import (
         MultitaperEstimator,
         PeriodogramEstimator,
         WelchEstimator,
@@ -425,7 +425,7 @@ def test_estimator_capabilities_do_not_overclaim_time_streaming():
 
 def test_periodogram_fft_chunk_matches_full_batch_estimate():
     """Chunked trajectory FFT must reproduce the full-batch periodogram."""
-    from qphase_sde.analyser.spectral_estimator.builtin import (
+    from qphase_sde.spectral_estimator.builtin import (
         PeriodogramEstimator,
         PeriodogramEstimatorConfig,
     )

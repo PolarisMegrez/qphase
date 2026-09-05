@@ -51,12 +51,24 @@ from ..contracts.analyser import (
     AnalyserWorkspaceEstimate,
     AnalyserWorkspaceRequest,
 )
+from ..peak_finder import (
+    RationalPeakFinderConfig,
+    ScipyPeakFinderConfig,
+    create_peak_finder,
+)
 from ..products import (
     StackedLeaves,
     TypedAxisSpec,
     assemble_typed_product,
     json_safe_meta,
     stack_payload_leaves,
+)
+from ..spectral_estimator import (
+    PsdEstimate as _PsdEstimate,
+)
+from ..spectral_estimator import (
+    SpectralEstimator,
+    create_builtin_estimator,
 )
 from .base import Analyzer, resolve_mode_columns
 from .frequency_orientation import (
@@ -67,19 +79,7 @@ from .frequency_orientation import (
     orientation_metadata,
     orientation_schema_extra,
 )
-from .peak_finding import (
-    RationalPeakFinderConfig,
-    ScipyPeakFinderConfig,
-    create_peak_finder,
-)
 from .result import AnalysisResult
-from .spectral_estimator import (
-    PsdEstimate as _PsdEstimate,
-)
-from .spectral_estimator import (
-    SpectralEstimator,
-    create_builtin_estimator,
-)
 
 __all__ = [
     "PsdAnalyzer",
@@ -223,9 +223,7 @@ class PsdAnalyzer(Analyzer):
             "estimator": SubpluginSlot(
                 namespace="spectral_estimator",
                 default="periodogram",
-                protocol=(
-                    "qphase_sde.analyser.spectral_estimator.base:SpectralEstimator"
-                ),
+                protocol="qphase_sde.spectral_estimator.base:SpectralEstimator",
                 description="Algorithm used to estimate the PSD",
             )
         }

@@ -62,12 +62,12 @@ dependencies = [
 # Observer plugin
 "observer.first_passage" = "qphase_sde.observer.first_passage:FirstPassageObserver"
 # PSD estimator subplugins
-"spectral_estimator.periodogram" = "qphase_sde.analyser.spectral_estimator:PeriodogramEstimator"
-"spectral_estimator.welch" = "qphase_sde.analyser.spectral_estimator:WelchEstimator"
-"spectral_estimator.multitaper" = "qphase_sde.analyser.spectral_estimator:MultitaperEstimator"
+"spectral_estimator.periodogram" = "qphase_sde.spectral_estimator:PeriodogramEstimator"
+"spectral_estimator.welch" = "qphase_sde.spectral_estimator:WelchEstimator"
+"spectral_estimator.multitaper" = "qphase_sde.spectral_estimator:MultitaperEstimator"
 # Peak Finder plugins
-"peak_finder.scipy" = "qphase_sde.analyser.peak_finding.scipy:ScipyPeakFinder"
-"peak_finder.rational" = "qphase_sde.analyser.peak_finding.rational:RationalPeakFinder"
+"peak_finder.scipy" = "qphase_sde.peak_finder.scipy:ScipyPeakFinder"
+"peak_finder.rational" = "qphase_sde.peak_finder.rational:RationalPeakFinder"
 
 [tool.setuptools.packages.find]
 where = ["."]

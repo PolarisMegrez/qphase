@@ -2,10 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 from qphase.core.scan import ScanSpec
-from qphase_sde.analyser.spectral_estimator.base import SpectralEstimatorCapabilities
 from qphase_sde.analyser.trajectory_diagnostics import TrajectoryDiagnostics
 from qphase_sde.engine import EngineConfig
 from qphase_sde.planning import build_execution_plan
+from qphase_sde.spectral_estimator.base import SpectralEstimatorCapabilities
 
 
 class FakeBackend:
