@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.progress import ProgressReporter
@@ -14,6 +15,7 @@ from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyzer
 from qphase_sde.analyser.result import AnalysisResult
 from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.engine import Engine, EngineConfig
+from qphase_sde.errors import SDEExecutionError
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 from qphase_sde.result import SDEResult, bundle_from_result
 from qphase_sde.runtime.scan import SDEScanResult
@@ -84,6 +86,19 @@ def _four_point_grid():
                 "rate": {
                     "target": "model.scanned_dummy.rate",
                     "values": [1.0, 2.0, 3.0, 4.0],
+                }
+            }
+        }
+    ).compile()
+
+
+def _single_point_grid():
+    return ScanSpec.model_validate(
+        {
+            "axes": {
+                "rate": {
+                    "target": "model.scanned_dummy.rate",
+                    "values": [2.0],
                 }
             }
         }
@@ -515,3 +530,147 @@ def test_sde_progress_uses_stable_trajectory_step_units():
     )
     assert plan_status.importance == "normal"
     assert plan_status.metadata["execution_plan"]["trajectory_batch_count"] == 2
+
+
+def _psd_engine(**config_overrides):
+    """PSD-analysed engine over the deterministic scanned dummy model."""
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.08,
+            dt=0.01,
+            n_traj=128,
+            seed=23,
+            ic=[[1.0]],
+            keep_traj=config_overrides.pop("keep_traj", False),
+            **config_overrides,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": ScannedDummyModel(),
+            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+        },
+    )
+    return engine
+
+
+def test_singleton_scan_with_trajectory_batching_keeps_products():
+    """P0 regression: a 1-point scan routed through trajectory batching must
+    still produce every analyser product, with a size-1 scan axis.
+    """
+
+    def run(**config_overrides):
+        return _psd_engine(**config_overrides).run(
+            context=SimpleNamespace(
+                parameter_grid=_single_point_grid(),
+                progress=None,
+                cancellation=None,
+            )
+        )
+
+    batched = run(trajectory_batching="required", trajectory_batch_size=64)
+    reference = run()  # equivalent non-batched 1-point scan (fused path)
+
+    plan = batched.metadata["execution_plan"]
+    assert plan["trajectory_batch_count"] == 2
+    assert batched.shape == (1,)
+    assert "dropped_products" not in batched.metadata
+
+    product = batched.products["psd"]
+    assert product.axis("scan").size == 1
+    np.testing.assert_array_equal(product.coordinate("rate"), [2.0])
+    np.testing.assert_array_equal(
+        product.handle("uncertainty.n_independent").materialize(), [128]
+    )
+
+    # The deterministic model makes the batched and fused runs comparable:
+    # values agree to accumulator floating-point merge noise.
+    reference_product = reference.products["psd"]
+    assert reference_product.axis("scan").size == 1
+    np.testing.assert_allclose(
+        product.handle("psd").materialize(),
+        reference_product.handle("psd").materialize(),
+        rtol=1e-12,
+    )
+    for variable in ("psd_std", "psd_sem"):
+        np.testing.assert_allclose(
+            product.handle(variable).materialize(),
+            reference_product.handle(variable).materialize(),
+            atol=1e-15,
+        )
+
+    # The per-point view drops the scan axis and rebuilds the legacy payload.
+    legacy = batched.point_view((0,)).legacy_result()
+    payload = legacy.analysis["psd"]
+    assert payload["axis"].shape == payload["psd"].shape[:1]
+    assert payload["psd"].shape == payload["axis"].shape + (1,)
+
+
+def test_singleton_scan_without_batching_keeps_scan_axis():
+    """A fused 1-point scan keeps a size-1 scan axis on the analyser product
+    and on the retained trajectory product.
+    """
+    result = _psd_engine(keep_traj=True).run(
+        context=SimpleNamespace(
+            parameter_grid=_single_point_grid(),
+            progress=None,
+            cancellation=None,
+        )
+    )
+
+    assert result.shape == (1,)
+    assert result.products["psd"].axis("scan").size == 1
+    trajectories = result.products["trajectories"]
+    assert trajectories.axis("scan").size == 1
+    alpha = trajectories.handle("alpha").materialize()
+    assert alpha.shape[0] == 1
+    assert alpha.shape[1] == 128
+    point = result.point_view((0,))
+    assert point.metadata["scan_point"]["rate"] == pytest.approx(2.0)
+    assert point.products["trajectories"].handle("alpha").materialize().ndim == 3
+
+
+def test_no_grid_run_products_stay_non_scan():
+    """Without a parameter grid the analyser product carries no scan axis;
+    the trajectory product keeps its single fused scan point (as before).
+    """
+    result = _psd_engine(keep_traj=True).run(
+        context=SimpleNamespace(parameter_grid=None, progress=None)
+    )
+
+    assert result.shape == ()
+    assert "scan" not in {axis.name for axis in result.products["psd"].axes}
+    trajectories = result.products["trajectories"]
+    assert trajectories.axis("scan").size == 1
+    assert "dropped_products" not in result.metadata
+
+
+def test_engine_fails_when_analyser_builds_no_product(monkeypatch):
+    """A registered analyser whose builder produces nothing fails the job."""
+    analyser = PsdAnalyzer(kind="complex", modes=[0])
+    monkeypatch.setattr(
+        analyser,
+        "build_products",
+        lambda payload, *, scan_size, label: None,
+    )
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.08,
+            dt=0.01,
+            n_traj=16,
+            seed=23,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": ScannedDummyModel(),
+            "analyser": {"psd": analyser},
+        },
+    )
+
+    with pytest.raises(SDEExecutionError, match="'psd'"):
+        engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))

@@ -158,16 +158,20 @@ class AnalyserProductBuilderProtocol(Protocol):
         self,
         payload: Any,
         *,
-        scan_size: int,
+        scan_size: int | None,
         label: str,
     ) -> Mapping[str, Dataset] | None:
         """Build typed products from one ``analyze()`` payload.
 
-        ``payload`` is a single per-point mapping (``scan_size == 1``) or the
-        list of ``scan_size`` per-point payloads of a scan job; ``label`` is
-        the job-local analyser label used as the default product name.
-        Returning ``None`` or an empty mapping means "no products" (the
-        payload's meta is reported through the bundle's ``dropped_products``
-        metadata); invalid payloads raise, never silently degrade.
+        ``scan_size`` is ``None`` when the job had no parameter grid (the
+        payload is the bare per-point mapping and products carry no scan
+        axis) and the exact scan size of a genuine scan otherwise — a
+        1-point scan keeps a scan axis of size 1. Scan payloads are the bare
+        per-point mapping for ``scan_size == 1`` and the list of
+        ``scan_size`` per-point payloads for larger scans; ``label`` is the
+        job-local analyser label used as the default product name.
+        Returning ``None`` or an empty mapping is a producer failure: the
+        bundle adapter raises and the job ends failed. Invalid payloads
+        raise, never silently degrade.
         """
         ...

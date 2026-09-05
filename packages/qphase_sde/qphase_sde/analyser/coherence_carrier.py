@@ -469,7 +469,7 @@ class CoherenceCarrierAnalyzer(Analyzer):
         self,
         payload: Any,
         *,
-        scan_size: int,
+        scan_size: int | None,
         label: str,
     ) -> Mapping[str, Dataset] | None:
         """Build the graph-ready typed product of one ``analyze()`` payload."""
@@ -586,7 +586,7 @@ class CoherenceCarrierAnalyzer(Analyzer):
 def _build_coherence_carrier_products(
     payload: Any,
     *,
-    scan_size: int,
+    scan_size: int | None,
     label: str,
 ) -> dict[str, Dataset] | None:
     """Assemble the typed coherence-carrier product of one analyser payload."""
@@ -599,7 +599,7 @@ def _build_coherence_carrier_products(
         method = method[0] if method else "short_delay"
     coordinates: list[CoordinateSchema] = []
     if "lag" in leaves.arrays:
-        leading = ("scan",) if scan_size > 1 else ()
+        leading = ("scan",) if scan_size is not None else ()
         coordinates.append(
             CoordinateSchema(
                 name="lag",

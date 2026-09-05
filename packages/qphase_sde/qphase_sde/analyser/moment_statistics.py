@@ -198,7 +198,7 @@ class MomentStatisticsAnalyzer(Analyzer):
         self,
         payload: Any,
         *,
-        scan_size: int,
+        scan_size: int | None,
         label: str,
     ) -> Mapping[str, Dataset] | None:
         """Build the graph-ready typed product of one ``analyze()`` payload."""
@@ -317,7 +317,7 @@ class MomentStatisticsAnalyzer(Analyzer):
 def _build_moment_statistics_products(
     payload: Any,
     *,
-    scan_size: int,
+    scan_size: int | None,
     label: str,
 ) -> dict[str, Dataset] | None:
     """Assemble the typed moment-statistics product of one analyser payload."""

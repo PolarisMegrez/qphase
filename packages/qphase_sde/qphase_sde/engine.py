@@ -721,7 +721,16 @@ class Engine(EngineBase):
         )
         for name, payloads in accumulated_observers.items():
             accumulated[name] = payloads
-        return SDEResult(trajectory=None, analysis=accumulated, meta=result_meta)
+        analysis: dict[str, Any] = accumulated
+        if plan.scan_size == 1:
+            # Payload wrapping convention: list-wrapped per-point payloads
+            # exist iff scan_size > 1. A 1-point scan stores the bare
+            # per-point payload, exactly like a non-scan run.
+            analysis = {
+                name: payloads[0] if payloads else None
+                for name, payloads in accumulated.items()
+            }
+        return SDEResult(trajectory=None, analysis=analysis, meta=result_meta)
 
     def _run_trajectory_batched(
         self,

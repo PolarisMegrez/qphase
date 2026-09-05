@@ -178,7 +178,7 @@ class CoherenceMatrixAnalyzer(Analyzer):
         self,
         payload: Any,
         *,
-        scan_size: int,
+        scan_size: int | None,
         label: str,
     ) -> Mapping[str, Dataset] | None:
         """Build the graph-ready typed product of one ``analyze()`` payload."""
@@ -337,7 +337,7 @@ class CoherenceMatrixAnalyzer(Analyzer):
 def _build_coherence_matrix_products(
     payload: Any,
     *,
-    scan_size: int,
+    scan_size: int | None,
     label: str,
 ) -> dict[str, Dataset] | None:
     """Assemble the typed coherence-matrix product of one analyser payload."""

@@ -9,11 +9,13 @@ from qphase.core.dataset import DatasetResultProtocol, ResultProtocol
 from qphase.core.scan import ParameterGrid
 from qphase.data import DataKind, load_products
 from qphase_sde.contracts.bundle import SDEDataBundleProtocol, SDEProvenance
+from qphase_sde.errors import SDEExecutionError
 from qphase_sde.result import (
     SDEDataBundle,
     SDEResult,
     _analysis_product,
     bundle_from_result,
+    legacy_view_from_products,
 )
 
 pytestmark = pytest.mark.integration
@@ -81,7 +83,7 @@ def test_analysis_product_single_point_dict_payload():
         "orientation": "phase_decreasing",
         "uncertainty": {"field": "psd_sem"},
     }
-    product = _analysis_product("psd", payload, scan_size=1)
+    product = _analysis_product("psd", payload, scan_size=None)
     assert product is not None
     assert product.kind is DataKind.STATISTICS
     assert product.attributes["bridge"] == "legacy_analysis/1"
@@ -100,7 +102,7 @@ def test_analysis_product_flattens_nested_dicts():
         },
         "bins": 16,
     }
-    product = _analysis_product("dist", payload, scan_size=1)
+    product = _analysis_product("dist", payload, scan_size=None)
     assert product is not None
     names = {variable.name for variable in product.variables}
     assert "distributions.0.hist" in names
@@ -138,8 +140,133 @@ def test_analysis_product_scan_rejects_inconsistent_keys():
 
 
 def test_analysis_product_skips_none_and_empty():
-    assert _analysis_product("none", None, scan_size=1) is None
-    assert _analysis_product("empty", {}, scan_size=1) is None
+    assert _analysis_product("none", None, scan_size=None) is None
+    assert _analysis_product("empty", {}, scan_size=None) is None
+
+
+def test_analysis_product_singleton_scan_keeps_size_one_scan_axis():
+    """Cardinality freeze: a genuine 1-point scan keeps a scan axis of
+    exactly size 1 instead of being demoted to a non-scan product.
+    """
+    payload = {
+        "axis": np.arange(4.0),
+        "psd": np.ones(4),
+        "orientation": "phase_decreasing",
+    }
+    product = _analysis_product("psd", payload, scan_size=1)
+    assert product is not None
+    assert product.axis("scan").size == 1
+    assert product.schema.variable("psd").dims == ("scan", "psd.dim0")
+    np.testing.assert_array_equal(product.handle("psd").materialize(), np.ones((1, 4)))
+    # Scan products keep meta leaves as per-point lists, like larger scans.
+    assert product.attributes["payload_meta"]["orientation"] == ["phase_decreasing"]
+    assert "orientation" in product.attributes["per_point_meta"]
+    # The per-point view drops the scan axis and rebuilds the bare payload.
+    point = product.point_view(scan=0)
+    restored = legacy_view_from_products({"psd": point}, meta={"scan_index": 0})
+    assert restored.analysis["psd"]["orientation"] == "phase_decreasing"
+    np.testing.assert_array_equal(restored.analysis["psd"]["psd"], np.ones(4))
+
+
+def test_bundle_fail_fast_when_registered_analyser_builds_nothing():
+    """A registered analyser payload that builds no product fails the bundle
+    instead of being silently dropped.
+    """
+
+    class _NoneBuilder:
+        def build_products(self, payload, *, scan_size, label):
+            del payload, scan_size, label
+            return None
+
+    class _EmptyBuilder:
+        def build_products(self, payload, *, scan_size, label):
+            del payload, scan_size, label
+            return {}
+
+    result = SDEResult(analysis={"bad": {"value": np.ones(2)}})
+    for analyser in (_NoneBuilder(), _EmptyBuilder()):
+        with pytest.raises(SDEExecutionError, match="'bad'"):
+            bundle_from_result(
+                result, provenance=_provenance(), analysers={"bad": analyser}
+            )
+
+    # A builder-less analyser whose payload has no numeric leaves fails too.
+    metadata_only = SDEResult(analysis={"bad": {"note": "no numbers"}})
+    with pytest.raises(SDEExecutionError, match="'bad'"):
+        bundle_from_result(
+            metadata_only,
+            provenance=_provenance(),
+            analysers={"bad": object()},
+        )
+
+    # A registered analyser that produced no payload at all fails as well.
+    empty_payload = SDEResult(analysis={"bad": None})
+    with pytest.raises(SDEExecutionError, match="'bad'"):
+        bundle_from_result(
+            empty_payload,
+            provenance=_provenance(),
+            analysers={"bad": object()},
+        )
+
+
+def test_bundle_fail_fast_on_scan_cardinality_mismatch():
+    """A built product whose scan axis contradicts the job scan size fails."""
+
+    class _FixedProductBuilder:
+        def __init__(self, product):
+            self._product = product
+
+        def build_products(self, payload, *, scan_size, label):
+            del payload, scan_size
+            return {label: self._product}
+
+    two_point = _analysis_product("bad", [{"value": 1.0}, {"value": 2.0}], scan_size=2)
+    assert two_point is not None
+    # No parameter grid, yet the builder emitted a scan product.
+    with pytest.raises(SDEExecutionError, match="scan axis"):
+        bundle_from_result(
+            SDEResult(analysis={"bad": {"value": 1.0}}),
+            provenance=_provenance(),
+            analysers={"bad": _FixedProductBuilder(two_point)},
+        )
+    # A 2-point scan whose builder emitted a 3-point scan product.
+    three_point = _analysis_product(
+        "bad", [{"value": 1.0}, {"value": 2.0}, {"value": 3.0}], scan_size=3
+    )
+    assert three_point is not None
+    grid = _grid(kappa=[1.0, 2.0])
+    with pytest.raises(SDEExecutionError, match="scan axis"):
+        bundle_from_result(
+            _ScanResultLike(grid, SDEResult(analysis={"bad": [{"value": 1.0}] * 2}), 1),
+            provenance=_provenance(),
+            analysers={"bad": _FixedProductBuilder(three_point)},
+        )
+
+
+def test_observer_payload_without_numeric_leaves_lands_in_metadata():
+    """Observer/metadata payloads (names outside the analysers mapping) are
+    not products, but they are kept in the bundle metadata under their
+    plugin name instead of being dropped.
+    """
+    result = SDEResult(
+        analysis={
+            "first_passage": {"orientation": "below", "rule": "state_norm"},
+        }
+    )
+    bundle = bundle_from_result(result, provenance=_provenance(), analysers={})
+
+    assert "first_passage" not in bundle.products
+    assert "dropped_products" not in bundle.metadata
+    routed = bundle.metadata["observer_payloads"]["first_passage"]
+    assert routed == {"orientation": "below", "rule": "state_norm"}
+    provenance_meta = bundle.manifest_provenance["meta"]
+    assert provenance_meta["observer_payloads"]["first_passage"] == routed
+
+    # Unregistered payloads also route when no analysers mapping is given.
+    bundle = bundle_from_result(result, provenance=_provenance())
+    assert "first_passage" not in bundle.products
+    assert "dropped_products" not in bundle.metadata
+    assert bundle.metadata["observer_payloads"]["first_passage"] == routed
 
 
 def test_bundle_satisfies_all_protocols():

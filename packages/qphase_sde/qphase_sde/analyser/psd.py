@@ -441,7 +441,7 @@ class PsdAnalyzer(Analyzer):
         self,
         payload: Any,
         *,
-        scan_size: int,
+        scan_size: int | None,
         label: str,
     ) -> Mapping[str, Dataset] | None:
         """Build the graph-ready typed spectral product of one payload."""
@@ -905,7 +905,7 @@ def _estimator_window(analyser: PsdAnalyzer) -> str:
 def _build_psd_products(
     payload: Any,
     *,
-    scan_size: int,
+    scan_size: int | None,
     label: str,
     analyser: PsdAnalyzer,
 ) -> dict[str, Dataset] | None:
@@ -915,8 +915,13 @@ def _build_psd_products(
     leaves stay in ``payload_meta``) so the legacy view rebuilds the exact
     ``analyze()`` payload; typed axes, the PSD quantity and the
     trajectory-sampling uncertainties are layered on top.
+
+    ``scan_size`` is ``None`` for a job without a parameter grid, otherwise
+    the exact scan size — a 1-point scan keeps a size-1 scan axis and its
+    payload arrives as the bare per-point mapping.
     """
-    points = payload if scan_size > 1 else [payload]
+    multi_point = scan_size is not None and scan_size > 1
+    points = payload if multi_point else [payload]
     cleaned_points: list[Any] = []
     peak_points: list[Any] = []
     for point in points:
@@ -927,7 +932,7 @@ def _build_psd_products(
         else:
             peak_points.append({})
             cleaned_points.append(point)
-    cleaned_payload = cleaned_points if scan_size > 1 else cleaned_points[0]
+    cleaned_payload = cleaned_points if multi_point else cleaned_points[0]
     leaves = stack_payload_leaves(label, cleaned_payload, scan_size=scan_size)
     if leaves is None:
         return None
@@ -940,7 +945,7 @@ def _build_psd_products(
         if "uncertainty.n_independent" in leaves.arrays
         else [SamplingBasisSchema(name="trajectory")]
     )
-    leading = ("scan",) if scan_size > 1 else ()
+    leading = ("scan",) if scan_size is not None else ()
     coordinates = [
         CoordinateSchema(
             name="frequency",
@@ -1013,11 +1018,11 @@ def _build_psd_products(
         return None
     products: dict[str, Dataset] = {label: dataset}
     if any(bool(peaks) for peaks in peak_points):
-        peak_value: Any = peak_points if scan_size > 1 else peak_points[0]
+        peak_value: Any = peak_points if scan_size is not None else peak_points[0]
         peak_meta, dropped = json_safe_meta({"peaks": peak_value})
         marker = (
             _np.ones(scan_size, dtype=_np.int8)
-            if scan_size > 1
+            if scan_size is not None
             else _np.asarray(1, dtype=_np.int8)
         )
         legacy = assemble_typed_product(
@@ -1025,7 +1030,7 @@ def _build_psd_products(
             StackedLeaves(
                 arrays={"present": marker},
                 payload_meta=peak_meta,
-                per_point_meta=["peaks"] if scan_size > 1 else [],
+                per_point_meta=["peaks"] if scan_size is not None else [],
                 dropped=dropped,
             ),
             scan_size=scan_size,

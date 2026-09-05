@@ -143,32 +143,39 @@ def stack_payload_leaves(
     name: str,
     payload: Any,
     *,
-    scan_size: int,
+    scan_size: int | None,
 ) -> StackedLeaves | None:
     """Stack one analyser payload over the scan axis.
 
-    ``payload`` is a single per-point mapping (``scan_size == 1``) or a list
-    of ``scan_size`` per-point mappings. Ragged leaves that cannot be stacked
-    (e.g. variable-length peak lists) are demoted to per-point metadata;
-    missing per-point payloads and inconsistent per-point keys are rejected.
-    Returns ``None`` for a ``None`` payload.
+    ``scan_size`` is ``None`` when the job had no parameter grid: the payload
+    is the bare per-point mapping and no scan axis exists. Otherwise
+    ``scan_size`` is the exact size of a genuine scan — including 1 — and the
+    payload is the bare per-point mapping for ``scan_size == 1`` or a list of
+    ``scan_size`` per-point mappings for larger scans (list wrapping exists
+    iff ``scan_size > 1``). Scan payloads are stacked over a scan axis of
+    exactly ``scan_size`` and their meta leaves become per-point lists.
+    Ragged leaves that cannot be stacked (e.g. variable-length peak lists)
+    are demoted to per-point metadata; missing per-point payloads and
+    inconsistent per-point keys are rejected. Returns ``None`` for a ``None``
+    payload.
     """
     if payload is None:
         return None
-    if scan_size <= 1:
+    if scan_size is None:
         single_arrays, single_meta, single_dropped = split_payload_leaves(payload)
         return StackedLeaves(single_arrays, single_meta, [], single_dropped)
-    if not (isinstance(payload, list) and len(payload) == scan_size):
+    points = [payload] if scan_size == 1 else payload
+    if not (isinstance(points, list) and len(points) == scan_size):
         raise TypeError(
             f"analysis product {name!r}: expected a list of {scan_size} "
             f"per-point payloads, got {type(payload).__name__}"
         )
-    missing = [i for i, point in enumerate(payload) if point is None]
+    missing = [i for i, point in enumerate(points) if point is None]
     if missing:
         raise TypeError(
             f"analysis product {name!r}: missing payloads for scan points {missing}"
         )
-    splits = [split_payload_leaves(point) for point in payload]
+    splits = [split_payload_leaves(point) for point in points]
     key_sets = [set(split[0]) for split in splits]
     if any(keys != key_sets[0] for keys in key_sets[1:]):
         raise TypeError(
@@ -244,7 +251,7 @@ def assemble_typed_product(
     name: str,
     leaves: StackedLeaves,
     *,
-    scan_size: int,
+    scan_size: int | None,
     kind: DataKind,
     declared_dims: Mapping[str, tuple[str, ...]] | None = None,
     axis_specs: Mapping[str, TypedAxisSpec] | None = None,
@@ -259,14 +266,17 @@ def assemble_typed_product(
     """Assemble one typed product from stacked payload leaves.
 
     Every numeric leaf becomes a variable: its dims are the leading ``scan``
-    axis (when ``scan_size > 1``) plus the trailing dims declared for it
-    (exact key or ``fnmatch`` glob, for per-mode dotted keys). Leaves without
-    a declaration fall back to positional ``dim<N>`` index axes, matching
-    the legacy bridge layout. String and ragged leaves stay in
+    axis (present iff ``scan_size is not None``, of exactly that size — a
+    1-point scan keeps a size-1 scan axis) plus the trailing dims declared
+    for it (exact key or ``fnmatch`` glob, for per-mode dotted keys). Leaves
+    without a declaration fall back to positional ``dim<N>`` index axes,
+    matching the legacy bridge layout. String and ragged leaves stay in
     ``payload_meta`` so legacy views rebuild the original payload.
 
     Returns ``None`` when the payload has no numeric leaf (a product schema
-    requires at least one variable).
+    requires at least one variable); the bundle adapter treats that as a
+    producer failure for registered analysers and routes observer/metadata
+    payloads into the bundle metadata instead.
     """
     declared_dims = declared_dims or {}
     axis_specs = axis_specs or {}
@@ -276,7 +286,7 @@ def assemble_typed_product(
     arrays = dict(leaves.arrays)
     coordinate_specs = list(coordinates)
     scan_independent = set(leaves.scan_independent)
-    if scan_size > 1:
+    if scan_size is not None:
         for coordinate in list(coordinate_specs):
             array = arrays.get(coordinate.variable)
             if (
@@ -295,7 +305,7 @@ def assemble_typed_product(
                     )
                 )
     axes: list[AxisSchema] = []
-    if scan_size > 1:
+    if scan_size is not None:
         axes.append(
             AxisSchema(name=_SCAN_AXIS, role=AxisRole.PARAMETER, size=scan_size)
         )
@@ -304,7 +314,7 @@ def assemble_typed_product(
     variables: list[VariableSchema] = []
     clean_arrays: dict[str, np.ndarray] = {}
     for key, array in arrays.items():
-        leading = () if key in scan_independent or scan_size <= 1 else (_SCAN_AXIS,)
+        leading = () if key in scan_independent or scan_size is None else (_SCAN_AXIS,)
         trailing_ndim = array.ndim - len(leading)
         declared = _resolve_declared_dims(key, declared_dims)
         if declared is None:
@@ -362,8 +372,9 @@ def assemble_typed_product(
         clean_arrays[key] = array
     if not variables:
         # ProductSchema requires at least one variable; payloads without any
-        # numeric leaf cannot form a product (their meta is reported through
-        # the bundle's ``dropped_products`` metadata by the caller).
+        # numeric leaf cannot form a product (the bundle adapter fails the
+        # job for registered analysers and routes observer/metadata payloads
+        # into the bundle metadata instead).
         return None
 
     for resolved in trailing.values():

@@ -269,7 +269,7 @@ class QuadraticMomentAnalyzer(Analyzer):
         self,
         payload: Any,
         *,
-        scan_size: int,
+        scan_size: int | None,
         label: str,
     ) -> Mapping[str, Dataset] | None:
         """Build the graph-ready typed product of one ``analyze()`` payload."""
@@ -377,7 +377,7 @@ def _moment_orders(leaves_arrays: dict[str, np.ndarray]) -> list[int]:
 def _build_quadratic_moments_products(
     payload: Any,
     *,
-    scan_size: int,
+    scan_size: int | None,
     label: str,
 ) -> dict[str, Dataset] | None:
     """Assemble the typed quadratic-moments product of one analyser payload."""

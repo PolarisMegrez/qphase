@@ -212,7 +212,7 @@ class AllanVarianceAnalyzer(Analyzer):
         self,
         payload: Any,
         *,
-        scan_size: int,
+        scan_size: int | None,
         label: str,
     ) -> Mapping[str, Dataset] | None:
         """Build the graph-ready typed statistics product of one payload."""
@@ -268,7 +268,7 @@ def _variance_leaf_keys(arrays: Mapping[str, np.ndarray]) -> list[str]:
 def _build_allan_products(
     payload: Any,
     *,
-    scan_size: int,
+    scan_size: int | None,
     label: str,
 ) -> dict[str, Dataset] | None:
     """Assemble the typed statistics product of one Allan analyser payload.
@@ -287,7 +287,7 @@ def _build_allan_products(
         key for key in leaves.arrays if fnmatchcase(key, "mode_results.*.allan.tau")
     )
     if tau_keys:
-        leading = ("scan",) if scan_size > 1 else ()
+        leading = ("scan",) if scan_size is not None else ()
         coordinates = [
             CoordinateSchema(
                 name="tau",

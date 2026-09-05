@@ -245,7 +245,7 @@ def test_psd_peak_metadata_isolated_from_graph_ready_spectrum():
         "uncertainty": {"n_independent": 4},
         "peaks": {0: {"center": 0.25, "linewidth": 0.1}},
     }
-    products = analyser.build_products(payload, scan_size=1, label="psd")
+    products = analyser.build_products(payload, scan_size=None, label="psd")
     assert products is not None
     spectrum = products["psd"]
     assert "peaks" not in spectrum.attributes["payload_meta"]
