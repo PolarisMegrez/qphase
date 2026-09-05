@@ -19,15 +19,14 @@ from qphase.data import (
     UncertaintySchema,
 )
 
+from ..contracts.analyser import (
+    AnalyserExecutionCapabilities,
+    AnalyserWorkspaceEstimate,
+    AnalyserWorkspaceRequest,
+)
 from ..contracts.quantities import SDEMomentFamilySchema, SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .base import (
-    Analyzer,
-    AnalyzerExecutionCapabilities,
-    AnalyzerWorkspaceEstimate,
-    AnalyzerWorkspaceRequest,
-    resolve_mode_columns,
-)
+from .base import Analyzer, resolve_mode_columns
 from .result import AnalysisResult
 
 __all__ = [
@@ -130,17 +129,16 @@ class QuadraticMomentAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[QuadraticMomentConfig]] = QuadraticMomentConfig
 
-    def capabilities(self) -> AnalyzerExecutionCapabilities:
-        return AnalyzerExecutionCapabilities(
-            execution_location="backend",
-            requires_full_trajectory=True,
+    def capabilities(self) -> AnalyserExecutionCapabilities:
+        return AnalyserExecutionCapabilities(
+            preferred_location="backend",
             supports_trajectory_batching=True,
             supports_time_streaming=False,
         )
 
     def estimate_workspace(
-        self, request: AnalyzerWorkspaceRequest
-    ) -> AnalyzerWorkspaceEstimate:
+        self, request: AnalyserWorkspaceRequest
+    ) -> AnalyserWorkspaceEstimate:
         config = cast(QuadraticMomentConfig, self.config)
         n_observables = len(config.observables)
         n_modes = (
@@ -166,11 +164,11 @@ class QuadraticMomentAnalyzer(Analyzer):
         )
         host_bytes = summaries + blocks + matrices
         if request.backend_name == "cupy":
-            return AnalyzerWorkspaceEstimate(
+            return AnalyserWorkspaceEstimate(
                 device_bytes=chunk_values + summaries + matrices,
                 host_bytes=host_bytes,
             )
-        return AnalyzerWorkspaceEstimate(
+        return AnalyserWorkspaceEstimate(
             host_bytes=chunk_values + 2 * summaries + blocks + matrices
         )
 

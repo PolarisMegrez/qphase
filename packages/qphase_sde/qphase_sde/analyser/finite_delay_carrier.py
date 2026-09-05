@@ -13,7 +13,8 @@ from qphase.backend.base import BackendBase
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase, ResultProtocol
 
-from .base import Analyzer, AnalyzerExecutionCapabilities
+from ..contracts.analyser import AnalyserExecutionCapabilities
+from .base import Analyzer
 from .frequency_orientation import (
     FrequencyOrientation,
     orientation_metadata,
@@ -190,10 +191,8 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
     description: ClassVar[str] = "Finite-delay coherence-weighted carrier"
     config_schema: ClassVar[type[FiniteDelayCarrierConfig]] = FiniteDelayCarrierConfig
 
-    def capabilities(self) -> AnalyzerExecutionCapabilities:
-        return AnalyzerExecutionCapabilities(
-            execution_location="host", requires_full_trajectory=False
-        )
+    def capabilities(self) -> AnalyserExecutionCapabilities:
+        return AnalyserExecutionCapabilities(preferred_location="host")
 
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         del backend

@@ -5,7 +5,7 @@ from qphase_sde.analyser.allan_variance import (
     AllanVarianceAnalyzer,
     AllanVarianceConfig,
 )
-from qphase_sde.analyser.base import AnalyzerWorkspaceRequest
+from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
 from qphase_sde.state import TrajectorySet
 
 
@@ -146,8 +146,7 @@ def test_allan_accumulator_matches_full_trajectory_analysis():
 
 def test_allan_analyzer_advertises_trajectory_batching():
     capabilities = _analyzer().capabilities()
-    assert capabilities.execution_location == "backend"
-    assert capabilities.requires_full_trajectory is True
+    assert capabilities.preferred_location == "backend"
     assert capabilities.supports_trajectory_batching is True
     assert capabilities.supports_time_streaming is False
 
@@ -166,7 +165,7 @@ def test_allan_workspace_is_host_resident_for_numpy_backend():
         AllanVarianceConfig(modes=[0, 1, 2], transfer_chunk_samples=8192)
     )
     trajectory_bytes = 60 * 1_000_001 * 3 * 16
-    request = AnalyzerWorkspaceRequest(
+    request = AnalyserWorkspaceRequest(
         trajectory_bytes=trajectory_bytes,
         n_traj=60,
         saved_samples=1_000_001,
@@ -190,7 +189,7 @@ def test_allan_workspace_is_trajectory_chunked_on_device(
     analyzer = AllanVarianceAnalyzer(
         AllanVarianceConfig(modes=[0, 1, 2], device_chunk_trajectories=16)
     )
-    request = AnalyzerWorkspaceRequest(
+    request = AnalyserWorkspaceRequest(
         trajectory_bytes=60 * 1_000_001 * 3 * 16,
         n_traj=60,
         saved_samples=1_000_001,

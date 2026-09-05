@@ -3,6 +3,13 @@
 Numerical analysis utilities for simulated data, including power spectral
 density (PSD) computation and phase space distribution.
 
+The engine-facing contract types (``AnalyserExecutionCapabilities``,
+``AnalyserWorkspaceRequest``, ``AnalyserWorkspaceEstimate`` and
+``AnalyserContract``) are re-exported lazily from
+``qphase_sde.contracts.analyser`` — the single source of truth — so that
+importing this package never pulls the contracts package before the core
+schema packages are fully initialized.
+
 Registry integration
 --------------------
 On import, register available analysis routines into the central registry
@@ -16,6 +23,8 @@ Public API
 ``DistAnalyzerConfig`` : Configuration for Distribution analyzer.
 """
 
+from typing import TYPE_CHECKING, Any
+
 from .allan_scaling import (
     AllanScalingAnalyzer,
     AllanScalingConfig,
@@ -27,13 +36,7 @@ from .band_limited_carrier import (
     BandLimitedCarrierConfig,
     RidgeConditionedCenterConfig,
 )
-from .base import (
-    Analyzer,
-    AnalyzerExecutionCapabilities,
-    AnalyzerProtocol,
-    AnalyzerWorkspaceEstimate,
-    AnalyzerWorkspaceRequest,
-)
+from .base import Analyzer
 from .coherence_carrier import CoherenceCarrierAnalyzer, CoherenceCarrierConfig
 from .coherence_matrix import CoherenceMatrixAnalyzer, CoherenceMatrixConfig
 from .dist import DistAnalyzer, DistAnalyzerConfig
@@ -63,12 +66,20 @@ from .trajectory_diagnostics import (
     TrajectoryDiagnosticsConfig,
 )
 
+if TYPE_CHECKING:
+    from ..contracts.analyser import (
+        AnalyserContract,
+        AnalyserExecutionCapabilities,
+        AnalyserWorkspaceEstimate,
+        AnalyserWorkspaceRequest,
+    )
+
 __all__ = [
     "Analyzer",
-    "AnalyzerExecutionCapabilities",
-    "AnalyzerProtocol",
-    "AnalyzerWorkspaceEstimate",
-    "AnalyzerWorkspaceRequest",
+    "AnalyserContract",
+    "AnalyserExecutionCapabilities",
+    "AnalyserWorkspaceEstimate",
+    "AnalyserWorkspaceRequest",
     "AllanVarianceAnalyzer",
     "AllanVarianceConfig",
     "AllanScalingAnalyzer",
@@ -105,3 +116,22 @@ __all__ = [
     "TrajectoryDiagnosticsConfig",
     "resolve_frequency_orientation",
 ]
+
+#: Contract re-exports resolved lazily (PEP 562) from the contracts package.
+_LAZY_CONTRACT_EXPORTS = {
+    "AnalyserContract": "..contracts.analyser",
+    "AnalyserExecutionCapabilities": "..contracts.analyser",
+    "AnalyserWorkspaceEstimate": "..contracts.analyser",
+    "AnalyserWorkspaceRequest": "..contracts.analyser",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve contract re-exports on first access."""
+    module_suffix = _LAZY_CONTRACT_EXPORTS.get(name)
+    if module_suffix is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    module = importlib.import_module(module_suffix, __name__)
+    return getattr(module, name)

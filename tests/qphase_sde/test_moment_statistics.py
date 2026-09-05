@@ -1,10 +1,10 @@
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
-from qphase_sde.analyser.base import AnalyzerWorkspaceRequest
 from qphase_sde.analyser.moment_statistics import (
     MomentStatisticsAnalyzer,
     MomentStatisticsConfig,
 )
+from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
 from qphase_sde.state import TrajectorySet
 
 
@@ -119,7 +119,7 @@ def test_moment_statistics_accumulator_matches_full_ensemble():
 
 def test_moment_statistics_workspace_is_bounded_by_time_chunk():
     analyzer = _analyzer(modes=[0, 1, 2], time_chunk_samples=8192)
-    short = AnalyzerWorkspaceRequest(
+    short = AnalyserWorkspaceRequest(
         trajectory_bytes=1,
         n_traj=60,
         saved_samples=100_000,
@@ -127,7 +127,7 @@ def test_moment_statistics_workspace_is_bounded_by_time_chunk():
         real_itemsize=8,
         backend_name="cupy",
     )
-    long = AnalyzerWorkspaceRequest(
+    long = AnalyserWorkspaceRequest(
         trajectory_bytes=1,
         n_traj=60,
         saved_samples=1_000_001,
@@ -145,7 +145,6 @@ def test_moment_statistics_workspace_is_bounded_by_time_chunk():
 
 def test_moment_statistics_advertises_trajectory_batching():
     capabilities = _analyzer().capabilities()
-    assert capabilities.execution_location == "backend"
-    assert capabilities.requires_full_trajectory is True
+    assert capabilities.preferred_location == "backend"
     assert capabilities.supports_trajectory_batching is True
     assert capabilities.supports_time_streaming is False

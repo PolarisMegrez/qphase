@@ -3,25 +3,32 @@
 Base class for all analyzers in the qphase_sde package, plus the shared
 analyser helpers (physical-to-recorded mode-column mapping).
 
+The engine-facing contract types (execution capabilities, workspace
+request/estimate, work estimates, reducer lifecycle) live in
+``qphase_sde.contracts.analyser``; this module only hosts the plugin base
+class that consumes them.
+
 Public API
 ----------
-``AnalyzerProtocol`` : Protocol for analyzers.
+``Analyzer`` : Base class for analyzers.
 ``resolve_mode_columns`` : Map physical mode indices to stored columns.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
+from typing import Any, ClassVar
 
 from qphase.backend.base import BackendBase
 from qphase.core.protocols import PluginBase, PluginConfigBase, ResultProtocol
 
+from ..contracts.analyser import (
+    AnalyserExecutionCapabilities,
+    AnalyserWorkspaceEstimate,
+    AnalyserWorkspaceRequest,
+)
+from ..contracts.reducer import ReducerProtocol
+
 __all__ = [
     "Analyzer",
-    "AnalyzerExecutionCapabilities",
-    "AnalyzerProtocol",
-    "AnalyzerWorkspaceEstimate",
-    "AnalyzerWorkspaceRequest",
     "resolve_mode_columns",
 ]
 
@@ -41,55 +48,6 @@ def resolve_mode_columns(data: Any, modes: list[int]) -> list[int]:
             f"{list(mapping)}"
         )
     return [mapping[mode] for mode in modes]
-
-
-@dataclass(frozen=True)
-class AnalyzerExecutionCapabilities:
-    """Planner-visible execution properties of an analyser.
-
-    ``execution_location`` describes where the analyser's largest temporary
-    arrays live. It does not constrain small metadata transfers or final
-    result arrays. An analyser must only advertise batching or streaming when
-    its public implementation actually supports the corresponding protocol.
-    """
-
-    execution_location: Literal["backend", "host"] = "backend"
-    requires_full_trajectory: bool = True
-    supports_trajectory_batching: bool = False
-    supports_time_streaming: bool = False
-
-
-@dataclass(frozen=True)
-class AnalyzerWorkspaceRequest:
-    """Shape and dtype facts supplied to analyser workspace estimators."""
-
-    trajectory_bytes: int
-    n_traj: int
-    saved_samples: int
-    n_record_modes: int
-    real_itemsize: int
-    backend_name: str
-
-
-@dataclass(frozen=True)
-class AnalyzerWorkspaceEstimate:
-    """Peak temporary memory attributed to one analyser invocation."""
-
-    device_bytes: int = 0
-    host_bytes: int = 0
-
-
-@runtime_checkable
-class AnalyzerProtocol(Protocol):
-    """Protocol for analyzers."""
-
-    def capabilities(self) -> AnalyzerExecutionCapabilities: ...
-
-    def estimate_workspace(
-        self, request: AnalyzerWorkspaceRequest
-    ) -> AnalyzerWorkspaceEstimate: ...
-
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol: ...
 
 
 class Analyzer(PluginBase, ABC):
@@ -122,20 +80,24 @@ class Analyzer(PluginBase, ABC):
         else:
             self.config = config
 
-    def capabilities(self) -> AnalyzerExecutionCapabilities:
+    def capabilities(self) -> AnalyserExecutionCapabilities:
         """Return conservative planner-visible execution capabilities."""
-        return AnalyzerExecutionCapabilities()
+        return AnalyserExecutionCapabilities()
 
     def estimate_workspace(
-        self, request: AnalyzerWorkspaceRequest
-    ) -> AnalyzerWorkspaceEstimate:
+        self, request: AnalyserWorkspaceRequest
+    ) -> AnalyserWorkspaceEstimate:
         """Estimate temporary memory beyond the input trajectory itself."""
         workspace = request.trajectory_bytes // 2
-        if self.capabilities().execution_location == "host":
-            return AnalyzerWorkspaceEstimate(host_bytes=workspace)
+        if self.capabilities().preferred_location == "host":
+            return AnalyserWorkspaceEstimate(host_bytes=workspace)
         if request.backend_name == "cupy":
-            return AnalyzerWorkspaceEstimate(device_bytes=workspace)
-        return AnalyzerWorkspaceEstimate(host_bytes=workspace)
+            return AnalyserWorkspaceEstimate(device_bytes=workspace)
+        return AnalyserWorkspaceEstimate(host_bytes=workspace)
+
+    def reducer(self) -> ReducerProtocol | None:
+        """Return the reducer for batched/streaming execution, if supported."""
+        return None
 
     @abstractmethod
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:

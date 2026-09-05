@@ -26,6 +26,11 @@ from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
 from scipy.optimize import least_squares
 
+from ..contracts.analyser import (
+    AnalyserExecutionCapabilities,
+    AnalyserWorkspaceEstimate,
+    AnalyserWorkspaceRequest,
+)
 from ..math.coordinates import (
     CANONICAL_COORDINATE_LAYOUT,
     R_CONVENTION,
@@ -33,13 +38,7 @@ from ..math.coordinates import (
     canonical_vector,
 )
 from .allan_statistics import calculate_allan_variance
-from .base import (
-    Analyzer,
-    AnalyzerExecutionCapabilities,
-    AnalyzerWorkspaceEstimate,
-    AnalyzerWorkspaceRequest,
-    resolve_mode_columns,
-)
+from .base import Analyzer, resolve_mode_columns
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
@@ -230,25 +229,24 @@ class TrajectoryDiagnostics(Analyzer):
         TrajectoryDiagnosticsConfig
     )
 
-    def capabilities(self) -> AnalyzerExecutionCapabilities:
+    def capabilities(self) -> AnalyserExecutionCapabilities:
         """Declare the current full-record host implementation."""
-        return AnalyzerExecutionCapabilities(
-            execution_location="host",
-            requires_full_trajectory=True,
+        return AnalyserExecutionCapabilities(
+            preferred_location="host",
             supports_trajectory_batching=False,
             supports_time_streaming=False,
         )
 
     def estimate_workspace(
-        self, request: AnalyzerWorkspaceRequest
-    ) -> AnalyzerWorkspaceEstimate:
+        self, request: AnalyserWorkspaceRequest
+    ) -> AnalyserWorkspaceEstimate:
         """Estimate D2H, canonical-coordinate, and diagnostic temporaries."""
         materialization = (
             request.trajectory_bytes if request.backend_name == "cupy" else 0
         )
         coordinate_bytes = request.trajectory_bytes * request.n_record_modes // 2
         scratch = request.trajectory_bytes
-        return AnalyzerWorkspaceEstimate(
+        return AnalyserWorkspaceEstimate(
             host_bytes=materialization + coordinate_bytes + scratch
         )
 

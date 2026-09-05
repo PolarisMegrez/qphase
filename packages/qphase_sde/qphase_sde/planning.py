@@ -566,12 +566,12 @@ def _analyzer_workspace_bytes(
     New analysers provide their own estimator. The PSD-specific fallback is
     retained for lightweight test doubles and one-cycle external plugins.
     """
-    from qphase_sde.analyser.base import (
-        AnalyzerWorkspaceEstimate,
-        AnalyzerWorkspaceRequest,
+    from qphase_sde.contracts.analyser import (
+        AnalyserWorkspaceEstimate,
+        AnalyserWorkspaceRequest,
     )
 
-    request = AnalyzerWorkspaceRequest(
+    request = AnalyserWorkspaceRequest(
         trajectory_bytes=trajectory_per_point,
         n_traj=n_traj,
         saved_samples=saved_samples,
@@ -585,7 +585,7 @@ def _analyzer_workspace_bytes(
         estimator_fn = getattr(analyser, "estimate_workspace", None)
         if callable(estimator_fn):
             estimate = estimator_fn(request)
-            if not isinstance(estimate, AnalyzerWorkspaceEstimate):
+            if not isinstance(estimate, AnalyserWorkspaceEstimate):
                 raise TypeError(
                     f"analyser {name!r} returned an invalid workspace estimate"
                 )
@@ -634,15 +634,15 @@ def _analyzer_workspace_bytes(
 
 def _analyzer_capabilities(analyser: Any) -> Any:
     """Return a conservative capability object for old analyser instances."""
-    from qphase_sde.analyser.base import AnalyzerExecutionCapabilities
+    from qphase_sde.contracts.analyser import AnalyserExecutionCapabilities
 
     provider = getattr(analyser, "capabilities", None)
     if callable(provider):
         capabilities = provider()
-        if isinstance(capabilities, AnalyzerExecutionCapabilities):
+        if isinstance(capabilities, AnalyserExecutionCapabilities):
             return capabilities
         raise TypeError("analyser capabilities() returned an invalid value")
-    return AnalyzerExecutionCapabilities(
+    return AnalyserExecutionCapabilities(
         supports_trajectory_batching=callable(
             getattr(analyser, "create_result_accumulator", None)
         )

@@ -1,13 +1,19 @@
 """qphase_sde: Analyser Contract (2.0)
 ---------------------------------------------------------
-Freezes the engine-facing analyser contract. An analyser is an adapter between
+The single engine-facing analyser contract. An analyser is an adapter between
 the engine and replaceable child plugins: it declares typed input requirements
 and output specs, execution capabilities, workspace and work estimates, and
 optionally a reducer for batched/streaming execution. The engine consumes only
 these declarations — it never branches on analyser names.
 
-The legacy ``analyze(data, backend)`` entry point remains as a convenience
-adapter but is no longer the only execution interface the engine knows.
+This module is the sole source of truth for those types: the legacy 1.x
+duplicates in ``qphase_sde.analyser.base`` (``AnalyzerExecutionCapabilities``,
+``AnalyzerWorkspaceRequest``, ``AnalyzerWorkspaceEstimate`` and
+``AnalyzerProtocol``) have been removed. The plugin base class
+(:class:`qphase_sde.analyser.base.Analyzer`) consumes these contract types
+directly, and the legacy ``analyze(data, backend)`` entry point remains as a
+convenience adapter but is no longer the only execution interface the engine
+knows.
 
 Public API
 ----------

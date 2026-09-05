@@ -46,6 +46,11 @@ from qphase.data import (
     VariableConstraints,
 )
 
+from ..contracts.analyser import (
+    AnalyserExecutionCapabilities,
+    AnalyserWorkspaceEstimate,
+    AnalyserWorkspaceRequest,
+)
 from ..products import (
     StackedLeaves,
     TypedAxisSpec,
@@ -53,13 +58,7 @@ from ..products import (
     json_safe_meta,
     stack_payload_leaves,
 )
-from .base import (
-    Analyzer,
-    AnalyzerExecutionCapabilities,
-    AnalyzerWorkspaceEstimate,
-    AnalyzerWorkspaceRequest,
-    resolve_mode_columns,
-)
+from .base import Analyzer, resolve_mode_columns
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
@@ -281,19 +280,18 @@ class PsdAnalyzer(Analyzer):
         result["estimator"] = {method: child_config}
         return result
 
-    def capabilities(self) -> AnalyzerExecutionCapabilities:
+    def capabilities(self) -> AnalyserExecutionCapabilities:
         """Expose the selected estimator's real execution contract."""
         capabilities = self.estimator.capabilities()
-        return AnalyzerExecutionCapabilities(
-            execution_location=("backend" if capabilities.backend_native else "host"),
-            requires_full_trajectory=capabilities.requires_full_trajectory,
+        return AnalyserExecutionCapabilities(
+            preferred_location=("backend" if capabilities.backend_native else "host"),
             supports_trajectory_batching=capabilities.trajectory_batching,
             supports_time_streaming=capabilities.time_streaming,
         )
 
     def estimate_workspace(
-        self, request: AnalyzerWorkspaceRequest
-    ) -> AnalyzerWorkspaceEstimate:
+        self, request: AnalyserWorkspaceRequest
+    ) -> AnalyserWorkspaceEstimate:
         """Estimate FFT or host-estimator workspace for one scan point."""
         capabilities = self.estimator.capabilities()
         trajectory_bytes = request.trajectory_bytes
@@ -302,7 +300,7 @@ class PsdAnalyzer(Analyzer):
             # trajectory-spectrum sized temporary while the backend source is
             # still alive.
             host_bytes = 2 * trajectory_bytes
-            return AnalyzerWorkspaceEstimate(host_bytes=host_bytes)
+            return AnalyserWorkspaceEstimate(host_bytes=host_bytes)
 
         chunk = getattr(
             getattr(self.estimator, "config", None),
@@ -317,8 +315,8 @@ class PsdAnalyzer(Analyzer):
         else:
             workspace = 2 * trajectory_bytes
         if request.backend_name == "cupy":
-            return AnalyzerWorkspaceEstimate(device_bytes=workspace)
-        return AnalyzerWorkspaceEstimate(host_bytes=workspace)
+            return AnalyserWorkspaceEstimate(device_bytes=workspace)
+        return AnalyserWorkspaceEstimate(host_bytes=workspace)
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         """Compute PSD for multiple modes.

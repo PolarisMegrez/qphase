@@ -19,15 +19,14 @@ from qphase.data import (
     UncertaintySchema,
 )
 
+from ..contracts.analyser import (
+    AnalyserExecutionCapabilities,
+    AnalyserWorkspaceEstimate,
+    AnalyserWorkspaceRequest,
+)
 from ..contracts.quantities import SDEMomentFamilySchema, SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .base import (
-    Analyzer,
-    AnalyzerExecutionCapabilities,
-    AnalyzerWorkspaceEstimate,
-    AnalyzerWorkspaceRequest,
-    resolve_mode_columns,
-)
+from .base import Analyzer, resolve_mode_columns
 from .result import AnalysisResult
 
 __all__ = ["MomentStatisticsAnalyzer", "MomentStatisticsConfig"]
@@ -79,17 +78,16 @@ class MomentStatisticsAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[MomentStatisticsConfig]] = MomentStatisticsConfig
 
-    def capabilities(self) -> AnalyzerExecutionCapabilities:
-        return AnalyzerExecutionCapabilities(
-            execution_location="backend",
-            requires_full_trajectory=True,
+    def capabilities(self) -> AnalyserExecutionCapabilities:
+        return AnalyserExecutionCapabilities(
+            preferred_location="backend",
             supports_trajectory_batching=True,
             supports_time_streaming=False,
         )
 
     def estimate_workspace(
-        self, request: AnalyzerWorkspaceRequest
-    ) -> AnalyzerWorkspaceEstimate:
+        self, request: AnalyserWorkspaceRequest
+    ) -> AnalyserWorkspaceEstimate:
         config = cast(MomentStatisticsConfig, self.config)
         n_modes = (
             len(config.modes) if config.modes is not None else request.n_record_modes
@@ -106,11 +104,11 @@ class MomentStatisticsAnalyzer(Analyzer):
         )
         host_bytes = summaries + blocks
         if request.backend_name == "cupy":
-            return AnalyzerWorkspaceEstimate(
+            return AnalyserWorkspaceEstimate(
                 device_bytes=backend_workspace + summaries,
                 host_bytes=host_bytes,
             )
-        return AnalyzerWorkspaceEstimate(
+        return AnalyserWorkspaceEstimate(
             host_bytes=backend_workspace + 2 * summaries + blocks
         )
 

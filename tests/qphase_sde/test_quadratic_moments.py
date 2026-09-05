@@ -1,11 +1,11 @@
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
-from qphase_sde.analyser.base import AnalyzerWorkspaceRequest
 from qphase_sde.analyser.quadratic_moments import (
     QuadraticMomentAnalyzer,
     QuadraticMomentConfig,
 )
+from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
 from qphase_sde.state import TrajectorySet
 
 
@@ -147,7 +147,7 @@ def test_quadratic_moments_workspace_is_bounded_by_time_chunk():
         },
         time_chunk_samples=4096,
     )
-    short = AnalyzerWorkspaceRequest(
+    short = AnalyserWorkspaceRequest(
         trajectory_bytes=1,
         n_traj=64,
         saved_samples=100_000,
@@ -155,7 +155,7 @@ def test_quadratic_moments_workspace_is_bounded_by_time_chunk():
         real_itemsize=8,
         backend_name="cupy",
     )
-    long = AnalyzerWorkspaceRequest(
+    long = AnalyserWorkspaceRequest(
         trajectory_bytes=1,
         n_traj=64,
         saved_samples=1_500_001,
@@ -175,7 +175,6 @@ def test_quadratic_moments_advertise_trajectory_batching():
     capabilities = _analyzer(
         observables={"occupation": {"matrix": [[1.0]]}}
     ).capabilities()
-    assert capabilities.execution_location == "backend"
-    assert capabilities.requires_full_trajectory is True
+    assert capabilities.preferred_location == "backend"
     assert capabilities.supports_trajectory_batching is True
     assert capabilities.supports_time_streaming is False

@@ -22,6 +22,11 @@ from qphase.data import (
     VariableConstraints,
 )
 
+from ..contracts.analyser import (
+    AnalyserExecutionCapabilities,
+    AnalyserWorkspaceEstimate,
+    AnalyserWorkspaceRequest,
+)
 from ..contracts.quantities import SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .allan_statistics import (
@@ -29,13 +34,7 @@ from .allan_statistics import (
     calculate_allan_variance_device,
     summarize_trajectories,
 )
-from .base import (
-    Analyzer,
-    AnalyzerExecutionCapabilities,
-    AnalyzerWorkspaceEstimate,
-    AnalyzerWorkspaceRequest,
-    resolve_mode_columns,
-)
+from .base import Analyzer, resolve_mode_columns
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
@@ -106,17 +105,16 @@ class AllanVarianceAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[AllanVarianceConfig]] = AllanVarianceConfig
 
-    def capabilities(self) -> AnalyzerExecutionCapabilities:
-        return AnalyzerExecutionCapabilities(
-            execution_location="backend",
-            requires_full_trajectory=True,
+    def capabilities(self) -> AnalyserExecutionCapabilities:
+        return AnalyserExecutionCapabilities(
+            preferred_location="backend",
             supports_trajectory_batching=True,
             supports_time_streaming=False,
         )
 
     def estimate_workspace(
-        self, request: AnalyzerWorkspaceRequest
-    ) -> AnalyzerWorkspaceEstimate:
+        self, request: AnalyserWorkspaceRequest
+    ) -> AnalyserWorkspaceEstimate:
         config = cast(AllanVarianceConfig, self.config)
         mode_bytes = request.trajectory_bytes // max(request.n_record_modes, 1)
         if request.backend_name == "cupy":
@@ -128,10 +126,10 @@ class AllanVarianceAnalyzer(Analyzer):
             device_bytes = chunk_rows * request.saved_samples * bytes_per_sample
             # Only the per-trajectory tau tables are assembled on the host.
             host_bytes = request.n_traj * 256 * 4 * 8
-            return AnalyzerWorkspaceEstimate(
+            return AnalyserWorkspaceEstimate(
                 device_bytes=device_bytes, host_bytes=host_bytes
             )
-        return AnalyzerWorkspaceEstimate(host_bytes=5 * mode_bytes)
+        return AnalyserWorkspaceEstimate(host_bytes=5 * mode_bytes)
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         config = cast(AllanVarianceConfig, self.config)

@@ -21,14 +21,13 @@ from qphase.data import (
     VariableConstraints,
 )
 
-from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .base import (
-    Analyzer,
-    AnalyzerExecutionCapabilities,
-    AnalyzerWorkspaceEstimate,
-    AnalyzerWorkspaceRequest,
-    resolve_mode_columns,
+from ..contracts.analyser import (
+    AnalyserExecutionCapabilities,
+    AnalyserWorkspaceEstimate,
+    AnalyserWorkspaceRequest,
 )
+from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
+from .base import Analyzer, resolve_mode_columns
 from .result import AnalysisResult
 
 __all__ = ["CoherenceMatrixAnalyzer", "CoherenceMatrixConfig"]
@@ -86,17 +85,16 @@ class CoherenceMatrixAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[CoherenceMatrixConfig]] = CoherenceMatrixConfig
 
-    def capabilities(self) -> AnalyzerExecutionCapabilities:
-        return AnalyzerExecutionCapabilities(
-            execution_location="backend",
-            requires_full_trajectory=True,
+    def capabilities(self) -> AnalyserExecutionCapabilities:
+        return AnalyserExecutionCapabilities(
+            preferred_location="backend",
             supports_trajectory_batching=True,
             supports_time_streaming=False,
         )
 
     def estimate_workspace(
-        self, request: AnalyzerWorkspaceRequest
-    ) -> AnalyzerWorkspaceEstimate:
+        self, request: AnalyserWorkspaceRequest
+    ) -> AnalyserWorkspaceEstimate:
         config = cast(CoherenceMatrixConfig, self.config)
         n_modes = (
             len(config.modes) if config.modes is not None else request.n_record_modes
@@ -108,11 +106,11 @@ class CoherenceMatrixAnalyzer(Analyzer):
         block_bytes = config.time_blocks * n_modes * n_modes * 2 * request.real_itemsize
         retained = 2 * matrix_bytes + amplitude_bytes + block_bytes
         if request.backend_name == "cupy":
-            return AnalyzerWorkspaceEstimate(
+            return AnalyserWorkspaceEstimate(
                 device_bytes=chunk_bytes + retained,
                 host_bytes=matrix_bytes + block_bytes,
             )
-        return AnalyzerWorkspaceEstimate(host_bytes=chunk_bytes + retained)
+        return AnalyserWorkspaceEstimate(host_bytes=chunk_bytes + retained)
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         config = cast(CoherenceMatrixConfig, self.config)
