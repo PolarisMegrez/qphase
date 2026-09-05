@@ -54,6 +54,7 @@ from .graph import (
     ProductGraph,
     ProductNode,
     ProductRequirement,
+    requirement_matches,
 )
 from .handles import CopyPolicy, DataHandleProtocol, DataLeaseProtocol, LeaseScope
 from .kinds import DataKind, SpectralQuantity
@@ -173,6 +174,7 @@ __all__ = [
     "register_adapter",
     "register_artifact_location",
     "register_bundle_adapter",
+    "requirement_matches",
     "save_products",
     "storage_adapter_available",
     "storage_referenced_files",

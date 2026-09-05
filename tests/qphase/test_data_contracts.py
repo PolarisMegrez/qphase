@@ -19,6 +19,7 @@ from qphase.data import (
     DataHandleProtocol,
     DataKind,
     DataLeaseProtocol,
+    GraphEdge,
     ProductDeclaration,
     ProductGraph,
     ProductNode,
@@ -30,6 +31,7 @@ from qphase.data import (
     UncertaintySchema,
     VariableConstraints,
     VariableSchema,
+    requirement_matches,
     validate_backing,
 )
 
@@ -571,12 +573,24 @@ def test_artifact_ref_is_minimal_and_typed():
         )
 
 
-def _node(producer: str, product: str, requires=()) -> ProductNode:
+def _node(producer: str, *products: str, requires=(), publish=()) -> ProductNode:
     return ProductNode(
-        node_id=f"{producer}:{product}",
+        node_id=f"{producer}:{':'.join(products)}",
         producer=producer,
-        declaration=ProductDeclaration(name=product, kind=DataKind.SPECTRAL),
+        outputs=[ProductDeclaration(name=p, kind=DataKind.SPECTRAL) for p in products],
         requirements=list(requires),
+        publish_outputs=list(publish),
+    )
+
+
+def _edge(
+    source: ProductNode, product: str, sink: ProductNode, requirement: str
+) -> GraphEdge:
+    return GraphEdge(
+        producer=source.node_id,
+        product=product,
+        consumer=sink.node_id,
+        requirement=requirement,
     )
 
 
@@ -586,35 +600,139 @@ def test_product_graph_validates_and_orders():
     mid = _node(
         "analyser.spectrum",
         "psd",
-        [ProductRequirement(name="traces", kind=DataKind.TIME_SERIES)],
+        requires=[ProductRequirement(name="traces", kind=DataKind.TIME_SERIES)],
     )
     sink = _node(
         "analyser.spectral_peaks",
         "peaks",
-        [ProductRequirement(name="spectrum", kind=DataKind.SPECTRAL)],
+        requires=[ProductRequirement(name="spectrum", kind=DataKind.SPECTRAL)],
     )
     edges = [
-        {"producer": source.node_id, "consumer": mid.node_id},
-        {"producer": mid.node_id, "consumer": sink.node_id},
+        _edge(source, "trajectories", mid, "traces"),
+        _edge(mid, "psd", sink, "spectrum"),
     ]
     graph = ProductGraph(nodes=[sink, source, mid], edges=edges)
     order = [n.producer for n in graph.topological_order()]
     assert order == ["engine.sde", "analyser.spectrum", "analyser.spectral_peaks"]
+    assert graph.terminal_outputs() == {
+        source.node_id: set(),
+        mid.node_id: set(),
+        sink.node_id: {"peaks"},
+    }
 
     with pytest.raises(ValidationError, match="acyclic"):
+        looped = _node(
+            "engine.looped",
+            "series",
+            requires=[ProductRequirement(name="in", kind=DataKind.SPECTRAL)],
+        )
         ProductGraph(
-            nodes=[source, mid],
+            nodes=[looped, mid],
             edges=[
-                {"producer": source.node_id, "consumer": mid.node_id},
-                {"producer": mid.node_id, "consumer": source.node_id},
+                _edge(looped, "series", mid, "traces"),
+                _edge(mid, "psd", looped, "in"),
             ],
         )
 
     with pytest.raises(ValidationError, match="unknown producer"):
         ProductGraph(
             nodes=[source],
-            edges=[{"producer": "missing", "consumer": source.node_id}],
+            edges=[
+                GraphEdge(
+                    producer="missing",
+                    product="trajectories",
+                    consumer=source.node_id,
+                    requirement="traces",
+                )
+            ],
         )
+
+    with pytest.raises(ValidationError, match="undeclared output"):
+        ProductGraph(
+            nodes=[source, mid],
+            edges=[_edge(source, "not-an-output", mid, "traces")],
+        )
+
+    with pytest.raises(ValidationError, match="undeclared requirement"):
+        ProductGraph(
+            nodes=[source, mid],
+            edges=[_edge(source, "trajectories", mid, "not-a-requirement")],
+        )
+
+
+def test_product_node_multi_output_and_publish():
+    """Nodes declare >=1 uniquely named outputs; publishing is validated."""
+    node = _node("analyser.peaks", "candidates", "fit_table", publish=["candidates"])
+    assert [o.name for o in node.outputs] == ["candidates", "fit_table"]
+    assert node.publish_outputs == ["candidates"]
+
+    with pytest.raises(ValidationError, match="duplicate output"):
+        _node("analyser.peaks", "candidates", "candidates")
+    with pytest.raises(ValidationError, match="publishes undeclared output"):
+        _node("analyser.peaks", "candidates", publish=["missing"])
+    with pytest.raises(ValidationError, match="at least 1"):
+        ProductNode(node_id="n", producer="p", outputs=[])
+
+
+def test_requirement_matches_schema():
+    """Requirements match schemas by kind/quantity/domain/fields/axes."""
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[
+            AxisSchema(name="scan", role=AxisRole.PARAMETER, size=1),
+            AxisSchema(name="time", role=AxisRole.COORDINATE, size=8),
+        ],
+        variables=[
+            VariableSchema(
+                name="alpha",
+                dtype="complex128",
+                value_domain="complex",
+                dims=("scan", "time"),
+                quantity="field_amplitude",
+            ),
+            VariableSchema(
+                name="valid_length",
+                dtype="int64",
+                value_domain="real",
+                dims=("scan",),
+                quantity="valid_length",
+            ),
+        ],
+    )
+    assert requirement_matches(ProductRequirement(name="in"), schema)
+    assert requirement_matches(
+        ProductRequirement(name="in", kind=DataKind.TIME_SERIES), schema
+    )
+    assert not requirement_matches(
+        ProductRequirement(name="in", kind=DataKind.SPECTRAL), schema
+    )
+    # quantity and value_domain must hold for the same variable.
+    assert requirement_matches(
+        ProductRequirement(
+            name="in", quantity="field_amplitude", value_domain="complex"
+        ),
+        schema,
+    )
+    assert not requirement_matches(
+        ProductRequirement(name="in", quantity="field_amplitude", value_domain="real"),
+        schema,
+    )
+    assert not requirement_matches(
+        ProductRequirement(name="in", value_domain="complex", quantity="missing"),
+        schema,
+    )
+    assert requirement_matches(
+        ProductRequirement(name="in", required_fields=["valid_length"]), schema
+    )
+    assert not requirement_matches(
+        ProductRequirement(name="in", required_fields=["missing"]), schema
+    )
+    assert requirement_matches(
+        ProductRequirement(name="in", accepted_axes=["scan", "time", "extra"]), schema
+    )
+    assert not requirement_matches(
+        ProductRequirement(name="in", accepted_axes=["time"]), schema
+    )
 
 
 def test_task_profile_roundtrip_and_resolver_validation():

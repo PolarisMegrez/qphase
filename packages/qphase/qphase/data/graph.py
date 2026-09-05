@@ -4,6 +4,12 @@ Freezes the typed dependency description between data products. Engines compile
 a ``ProductGraph`` from plugin declarations; the core validates references and
 acyclicity but knows nothing about domain semantics (PSD, Allan, fits, ...).
 
+One node represents one plugin execution: it consumes its ``requirements`` and
+atomically returns the mapping of its declared ``outputs``. ``publish_outputs``
+is the compiler-resolved persistence disposition of those outputs (terminal
+outputs are published by default; intermediates only when explicitly listed) —
+it is execution/persistence metadata, not part of the product type declaration.
+
 Public API
 ----------
 ProductRequirement
@@ -12,34 +18,47 @@ ProductDeclaration
     Declared output product of one node.
 ProductNode
     One graph node, identified by a compiler-assigned node id.
+GraphEdge
+    Directed edge from one declared output to one consumer requirement.
 ProductGraph
     Validated acyclic graph of product nodes.
+requirement_matches
+    Check a requirement against a concrete product schema.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .kinds import DataKind
+from .schema import ProductSchema
 
 __all__ = [
+    "GraphEdge",
     "ProductDeclaration",
     "ProductGraph",
     "ProductNode",
     "ProductRequirement",
+    "requirement_matches",
 ]
 
 
 class ProductRequirement(BaseModel):
-    """Typed input requirement; consumers select by kind/quantity/fields."""
+    """Typed input requirement; consumers select by kind/quantity/fields.
+
+    ``value_domain`` distinguishes complex field trajectories from sampled
+    real scalar series: when set together with ``quantity``, the same variable
+    must satisfy both.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Local label of the required input.")
     kind: DataKind | None = None
     quantity: str | None = None
+    value_domain: Literal["real", "complex"] | None = None
     required_fields: list[str] = Field(default_factory=list)
     accepted_axes: list[str] = Field(default_factory=list)
     optional: bool = False
@@ -57,7 +76,13 @@ class ProductDeclaration(BaseModel):
 
 
 class ProductNode(BaseModel):
-    """One graph node with an explicit compiler-assigned identity."""
+    """One graph node with an explicit compiler-assigned identity.
+
+    The node executes once and returns its declared ``outputs`` atomically;
+    output names are unique within the node. ``publish_outputs`` names the
+    subset of outputs the compiler resolved for persistence; all other
+    outputs are graph-local intermediates.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -68,19 +93,45 @@ class ProductNode(BaseModel):
     producer: str = Field(
         description="Identifier of the producing component (plugin/engine)."
     )
-    declaration: ProductDeclaration
     requirements: list[ProductRequirement] = Field(default_factory=list)
+    outputs: list[ProductDeclaration] = Field(min_length=1)
+    publish_outputs: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_outputs(self) -> ProductNode:
+        names = [output.name for output in self.outputs]
+        if len(set(names)) != len(names):
+            raise ValueError(
+                f"node {self.node_id!r} declares duplicate output names"
+            )
+        known = set(names)
+        for published in self.publish_outputs:
+            if published not in known:
+                raise ValueError(
+                    f"node {self.node_id!r} publishes undeclared output "
+                    f"{published!r}"
+                )
+        if len(set(self.publish_outputs)) != len(self.publish_outputs):
+            raise ValueError(
+                f"node {self.node_id!r} lists duplicate publish outputs"
+            )
+        return self
 
 
 class GraphEdge(BaseModel):
-    """Directed edge from a producer node to a consumer node."""
+    """Directed edge from one declared output to one consumer requirement."""
 
     model_config = ConfigDict(extra="forbid")
 
     producer: str = Field(description="Id of the producer node.")
+    product: str = Field(
+        min_length=1,
+        description="Name of the producer node output this edge carries.",
+    )
     consumer: str = Field(description="Id of the consumer node.")
     requirement: str = Field(
-        default="", description="Name of the requirement this edge satisfies."
+        min_length=1,
+        description="Name of the consumer requirement this edge satisfies.",
     )
 
 
@@ -94,16 +145,27 @@ class ProductGraph(BaseModel):
 
     @model_validator(mode="after")
     def _check_graph(self) -> ProductGraph:
-        node_ids = [node.node_id for node in self.nodes]
-        if len(set(node_ids)) != len(node_ids):
+        by_id = {node.node_id: node for node in self.nodes}
+        if len(by_id) != len(self.nodes):
             raise ValueError("product graph nodes must have unique node ids")
-        known = set(node_ids)
         for edge in self.edges:
-            if edge.producer not in known:
+            producer = by_id.get(edge.producer)
+            if producer is None:
                 raise ValueError(f"edge references unknown producer {edge.producer!r}")
-            if edge.consumer not in known:
+            consumer = by_id.get(edge.consumer)
+            if consumer is None:
                 raise ValueError(f"edge references unknown consumer {edge.consumer!r}")
-        self._check_acyclic(node_ids)
+            if edge.product not in {output.name for output in producer.outputs}:
+                raise ValueError(
+                    f"edge references undeclared output {edge.product!r} of "
+                    f"node {edge.producer!r}"
+                )
+            if edge.requirement not in {req.name for req in consumer.requirements}:
+                raise ValueError(
+                    f"edge references undeclared requirement "
+                    f"{edge.requirement!r} of node {edge.consumer!r}"
+                )
+        self._check_acyclic(list(by_id))
         return self
 
     def _check_acyclic(self, node_ids: list[str]) -> None:
@@ -144,6 +206,23 @@ class ProductGraph(BaseModel):
                     queue.append(nxt)
         return order
 
+    def terminal_outputs(self) -> dict[str, set[str]]:
+        """Return the outputs with no consuming edge, keyed by node id.
+
+        Compilers use these as the default publish set: terminal outputs are
+        persisted unless the producer says otherwise, while intermediates
+        stay graph-local unless explicitly listed in ``publish_outputs``.
+        """
+        consumed = {(edge.producer, edge.product) for edge in self.edges}
+        return {
+            node.node_id: {
+                output.name
+                for output in node.outputs
+                if (node.node_id, output.name) not in consumed
+            }
+            for node in self.nodes
+        }
+
     def summary(self) -> dict[str, Any]:
         """Return a JSON-serializable summary for CLI/GUI display."""
         return {
@@ -151,17 +230,50 @@ class ProductGraph(BaseModel):
                 {
                     "id": node.node_id,
                     "producer": node.producer,
-                    "product": node.declaration.name,
-                    "kind": str(node.declaration.kind),
+                    "outputs": [output.name for output in node.outputs],
+                    "publish_outputs": list(node.publish_outputs),
                 }
                 for node in self.topological_order()
             ],
             "edges": [
                 {
                     "producer": edge.producer,
+                    "product": edge.product,
                     "consumer": edge.consumer,
                     "requirement": edge.requirement,
                 }
                 for edge in self.edges
             ],
         }
+
+
+def requirement_matches(requirement: ProductRequirement, schema: ProductSchema) -> bool:
+    """Check whether a concrete product schema satisfies a requirement.
+
+    ``quantity`` and ``value_domain`` constrain variables: each, when set,
+    must be satisfied by at least one variable, and when both are set the
+    same variable must satisfy both. ``required_fields`` must be variable
+    names; a non-empty ``accepted_axes`` bounds the schema's axis names.
+    """
+    if requirement.kind is not None and schema.kind != requirement.kind:
+        return False
+    if requirement.quantity is not None or requirement.value_domain is not None:
+        candidates = list(schema.variables)
+        if requirement.quantity is not None:
+            candidates = [
+                v for v in candidates if v.quantity == requirement.quantity
+            ]
+        if requirement.value_domain is not None:
+            candidates = [
+                v for v in candidates if v.value_domain == requirement.value_domain
+            ]
+        if not candidates:
+            return False
+    variable_names = {v.name for v in schema.variables}
+    if any(field not in variable_names for field in requirement.required_fields):
+        return False
+    if requirement.accepted_axes:
+        axis_names = {axis.name for axis in schema.axes}
+        if not axis_names <= set(requirement.accepted_axes):
+            return False
+    return True
