@@ -674,6 +674,41 @@ def test_product_node_multi_output_and_publish():
         ProductNode(node_id="n", producer="p", outputs=[])
 
 
+def test_requirement_align_with_must_reference_sibling():
+    """``align_with`` names an existing sibling requirement of the same node."""
+    ok = _node(
+        "analyser.scaling",
+        "fit",
+        requires=[
+            ProductRequirement(name="series", kind=DataKind.TIME_SERIES),
+            ProductRequirement(
+                name="initial_state",
+                kind=DataKind.TIME_SERIES,
+                align_with="series",
+                optional=True,
+            ),
+        ],
+    )
+    assert ok.requirements[1].align_with == "series"
+
+    with pytest.raises(ValidationError, match="unknown sibling requirement"):
+        _node(
+            "analyser.scaling",
+            "fit",
+            requires=[
+                ProductRequirement(name="aux", align_with="missing"),
+            ],
+        )
+    with pytest.raises(ValidationError, match="aligns with itself"):
+        _node(
+            "analyser.scaling",
+            "fit",
+            requires=[
+                ProductRequirement(name="aux", align_with="aux"),
+            ],
+        )
+
+
 def test_requirement_matches_schema():
     """Requirements match schemas by kind/quantity/domain/fields/axes."""
     schema = ProductSchema(

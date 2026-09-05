@@ -51,6 +51,12 @@ class ProductRequirement(BaseModel):
     ``value_domain`` distinguishes complex field trajectories from sampled
     real scalar series: when set together with ``quantity``, the same variable
     must satisfy both.
+
+    ``align_with`` names a sibling requirement of the same node whose
+    parameter-axis coordinates this input must match elementwise (values,
+    length, uniqueness, sampling basis). Alignment is validated when the
+    inputs materialize; compilers reject ``align_with`` references to unknown
+    sibling requirements.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -61,6 +67,7 @@ class ProductRequirement(BaseModel):
     value_domain: Literal["real", "complex"] | None = None
     required_fields: list[str] = Field(default_factory=list)
     accepted_axes: list[str] = Field(default_factory=list)
+    align_with: str | None = None
     optional: bool = False
 
 
@@ -115,6 +122,18 @@ class ProductNode(BaseModel):
             raise ValueError(
                 f"node {self.node_id!r} lists duplicate publish outputs"
             )
+        requirement_names = {req.name for req in self.requirements}
+        for req in self.requirements:
+            if req.align_with is not None and req.align_with not in requirement_names:
+                raise ValueError(
+                    f"node {self.node_id!r} requirement {req.name!r} aligns with "
+                    f"unknown sibling requirement {req.align_with!r}"
+                )
+            if req.align_with == req.name:
+                raise ValueError(
+                    f"node {self.node_id!r} requirement {req.name!r} aligns with "
+                    f"itself"
+                )
         return self
 
 
