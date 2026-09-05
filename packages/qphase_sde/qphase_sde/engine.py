@@ -334,11 +334,13 @@ class Engine(EngineBase):
     name: ClassVar[str] = "SDE"
     description: ClassVar[str] = "Stochastic Differential Equation Simulation Engine"
     config_schema: ClassVar[type[EngineConfig]] = EngineConfig
+    # Conditional task profiles are the single asset-requirement declaration:
+    # the compiler selects simulate/analyze/simulate_analyze from the job
+    # config instead of consulting legacy required/input plugin sets.
     manifest: ClassVar[EngineManifest] = EngineManifest(
-        required_plugins={"backend", "model", "integrator"},
-        optional_plugins={"analyser", "observer"},
         defaults={"integrator": "euler_maruyama"},
-        input_plugins={"analyser"},
+        task_profiles="qphase_sde.contracts.tasks:SDE_TASK_PROFILES",
+        profile_selector="qphase_sde.contracts.tasks:select_sde_task_profile",
     )
 
     def __init__(

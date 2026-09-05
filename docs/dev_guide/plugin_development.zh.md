@@ -124,6 +124,10 @@ class MyAnalyser:
 
 引擎协调仿真。它们必须使用 `EngineManifest` 声明其依赖项。
 
+插件要求随任务类型变化的引擎（如 SDE 引擎）可改为在清单上声明
+`task_profiles`/`profile_selector` 点路径；编译器随后按选定的任务
+profile 校验，而不再使用旧的 `required_plugins`/`input_plugins` 集合。
+
 ```python
 from typing import ClassVar
 from qphase.core.protocols import EngineManifest

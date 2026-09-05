@@ -32,6 +32,10 @@ but those are execution details rather than scheduler nodes.
 
 Engines declare plugin requirements before execution:
 
+(Engines declaring `task_profiles`/`profile_selector` — e.g. the SDE
+engine — are validated against the selected task profile instead of the
+manifest's `required_plugins`/`input_plugins` sets.)
+
 ```python
 from qphase.core.protocols import EngineManifest
 

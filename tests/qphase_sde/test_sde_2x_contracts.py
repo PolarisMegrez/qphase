@@ -346,7 +346,8 @@ def test_sde_task_profiles_are_frozen():
     assert simulate.requirements.optional == ["analyser", "observer"]
 
     analyze = tasks.sde_task_profile("analyze")
-    assert analyze.requirements.required == ["analyser", "backend"]
+    assert analyze.requirements.required == ["analyser"]
+    assert analyze.requirements.optional == ["backend"]
     assert analyze.requirements.forbidden == [
         "integrator",
         "model",
@@ -370,3 +371,44 @@ def test_sde_task_profiles_are_frozen():
     from qphase.core.task_profile import EngineTaskProfile
 
     assert EngineTaskProfile.model_validate(payload) == analyze
+
+
+def test_select_sde_task_profile_mapping():
+    """User-facing ``mode`` plus analyser presence select the task profile."""
+    # simulate (default mode) without analysers.
+    assert tasks.select_sde_task_profile({"engine": {"sde": {}}}) == "simulate"
+    assert tasks.select_sde_task_profile({}) == "simulate"
+    # Empty analyser sections do not count as configured.
+    assert (
+        tasks.select_sde_task_profile({"engine": {"sde": {}}, "analyser": {}})
+        == "simulate"
+    )
+    # simulate with at least one analyser upgrades to simulate_analyze.
+    assert (
+        tasks.select_sde_task_profile(
+            {"engine": {"sde": {"mode": "simulate"}}, "analyser": {"psd": {}}}
+        )
+        == "simulate_analyze"
+    )
+    # The plugins-block spelling of the analyser section counts as well.
+    assert (
+        tasks.select_sde_task_profile(
+            {"engine": {"sde": {}}, "plugins": {"analyser": {"psd": {}}}}
+        )
+        == "simulate_analyze"
+    )
+    # analyze mode maps to analyze; profile validation enforces the required
+    # analyser afterwards, so selection does not depend on its presence.
+    assert (
+        tasks.select_sde_task_profile({"engine": {"sde": {"mode": "analyze"}}})
+        == "analyze"
+    )
+    assert (
+        tasks.select_sde_task_profile(
+            {
+                "engine": {"sde": {"mode": "analyze"}},
+                "analyser": {"allan_scaling": {}},
+            }
+        )
+        == "analyze"
+    )

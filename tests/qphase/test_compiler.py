@@ -155,6 +155,240 @@ def test_compiled_workflow_round_trips_without_registry_access(tmp_path):
     assert restored.job("job").parameter_grid.shape == (2,)
 
 
+@pytest.fixture
+def sde_profile_plugins():
+    """Register the real SDE engine plus dummy plugins for its namespaces."""
+    from qphase_sde.engine import Engine
+
+    from tests.plugins.dummy_plugin import DummyPlugin
+
+    engine_table = registry._tables.setdefault("engine", {})
+    previous_sde = engine_table.get("sde")
+    registry.register("engine", "sde", Engine, overwrite=True)
+    registry.register("integrator", "dummy", DummyPlugin, overwrite=True)
+    registry.register("analyser", "dummy", DummyPlugin, overwrite=True)
+    try:
+        yield
+    finally:
+        if previous_sde is None:
+            engine_table.pop("sde", None)
+        else:
+            engine_table["sde"] = previous_sde
+        registry._tables.get("integrator", {}).pop("dummy", None)
+        registry._tables.get("analyser", {}).pop("dummy", None)
+
+
+@pytest.fixture
+def profiled_engine():
+    """Register the fixture engine declaring conditional task profiles."""
+    from tests.plugins.dummy_plugin import DummyPlugin
+    from tests.plugins.profiled_plugins import ProfiledEngine
+
+    registry.register("engine", "profiled", ProfiledEngine, overwrite=True)
+    registry.register("observer", "dummy", DummyPlugin, overwrite=True)
+    try:
+        yield
+    finally:
+        registry._tables.get("engine", {}).pop("profiled", None)
+        registry._tables.get("observer", {}).pop("dummy", None)
+
+
+def _sde_job(name: str, engine_config: dict, **sections) -> JobConfig:
+    return JobConfig(name=name, engine={"sde": engine_config}, **sections)
+
+
+def test_compiler_selects_sde_task_profiles(tmp_path, sde_profile_plugins):
+    """The SDE engine selects simulate/simulate_analyze/analyze from config."""
+    project = ProjectContext.create(tmp_path / "project")
+    compiler = WorkflowCompiler(project, SystemConfig())
+
+    simulate = compiler.compile(
+        _workflow(
+            _sde_job(
+                "sim",
+                {"t1": 1.0, "dt": 0.1},
+                backend={"dummy": {}},
+                integrator={"dummy": {}},
+                model={"dummy": {}},
+            )
+        )
+    ).job("sim")
+    assert simulate.required_plugins == ("backend", "integrator", "model")
+    assert simulate.optional_plugins == ("analyser", "observer")
+
+    simulate_analyze = compiler.compile(
+        _workflow(
+            _sde_job(
+                "sim",
+                {"t1": 1.0, "dt": 0.1},
+                backend={"dummy": {}},
+                integrator={"dummy": {}},
+                model={"dummy": {}},
+                analyser={"dummy": {}},
+            )
+        )
+    ).job("sim")
+    assert simulate_analyze.required_plugins == (
+        "analyser",
+        "backend",
+        "integrator",
+        "model",
+    )
+    assert simulate_analyze.optional_plugins == ("observer",)
+
+    analyze = compiler.compile(
+        _workflow(
+            _sde_job("ana", {"mode": "analyze"}, analyser={"dummy": {}}),
+        )
+    ).job("ana")
+    assert analyze.required_plugins == ("analyser",)
+    assert analyze.optional_plugins == ("backend",)
+    assert set(analyze.plugin_config) == {"analyser"}
+
+
+def test_compiler_sde_analyze_profile_forbids_model(tmp_path, sde_profile_plugins):
+    """The analyze profile turns configured model/integrator into errors."""
+    project = ProjectContext.create(tmp_path / "project")
+    with pytest.raises(QPhaseConfigError) as excinfo:
+        WorkflowCompiler(project, SystemConfig()).compile(
+            _workflow(
+                _sde_job(
+                    "ana",
+                    {"mode": "analyze"},
+                    analyser={"dummy": {}},
+                    model={"dummy": {}},
+                )
+            )
+        )
+    message = str(excinfo.value)
+    assert "'analyze'" in message
+    assert "forbidden plugins" in message
+    assert "model" in message
+
+
+def test_compiler_sde_profile_reports_missing_required(tmp_path, sde_profile_plugins):
+    """Missing required plugins name the job, engine and resolved profile."""
+    project = ProjectContext.create(tmp_path / "project")
+    compiler = WorkflowCompiler(project, SystemConfig())
+
+    with pytest.raises(QPhaseConfigError, match="missing required plugins"):
+        compiler.compile(_workflow(_sde_job("ana", {"mode": "analyze"})))
+    with pytest.raises(QPhaseConfigError) as excinfo:
+        compiler.compile(
+            _workflow(
+                _sde_job(
+                    "sim",
+                    {"t1": 1.0, "dt": 0.1},
+                    backend={"dummy": {}},
+                    integrator={"dummy": {}},
+                )
+            )
+        )
+    message = str(excinfo.value)
+    assert "'simulate'" in message
+    assert "model" in message
+
+
+def test_compiler_profile_resolver_replaces_defaults(tmp_path, profiled_engine):
+    """A profile resolver refines requirements through the dotted-path hook."""
+    project = ProjectContext.create(tmp_path / "project")
+    compiler = WorkflowCompiler(project, SystemConfig())
+
+    compiled = compiler.compile(
+        _workflow(
+            JobConfig(
+                name="job",
+                engine={"profiled": {}},
+                backend={"dummy": {}},
+                model={"dummy": {}},
+            )
+        )
+    )
+    # The 'base' profile defaults require only backend; its resolver adds
+    # model and forbids observer.
+    assert compiled.job("job").required_plugins == ("backend", "model")
+
+    with pytest.raises(QPhaseConfigError, match="task profile 'base'"):
+        compiler.compile(
+            _workflow(
+                JobConfig(name="job", engine={"profiled": {}}, backend={"dummy": {}})
+            )
+        )
+
+    with pytest.raises(QPhaseConfigError) as excinfo:
+        compiler.compile(
+            _workflow(
+                JobConfig(
+                    name="job",
+                    engine={"profiled": {}},
+                    backend={"dummy": {}},
+                    model={"dummy": {}},
+                    observer={"dummy": {}},
+                )
+            )
+        )
+    assert "forbidden plugins" in str(excinfo.value)
+    assert "observer" in str(excinfo.value)
+
+
+def test_compiler_profile_selector_switches_profiles(tmp_path, profiled_engine):
+    """The selector maps the normalized job config onto the profile id."""
+    project = ProjectContext.create(tmp_path / "project")
+    compiled = WorkflowCompiler(project, SystemConfig()).compile(
+        _workflow(
+            JobConfig(
+                name="job",
+                engine={"profiled": {"mode": "resolved"}},
+                backend={"dummy": {}},
+                observer={"dummy": {}},
+            )
+        )
+    )
+    job = compiled.job("job")
+    assert job.required_plugins == ("backend",)
+    assert job.optional_plugins == ("observer",)
+    assert "observer" in job.plugin_config
+
+
+def test_compiler_legacy_manifest_engines_keep_legacy_validation(tmp_path):
+    """Engines without task profiles keep the legacy manifest checks."""
+
+    class Config(BaseModel):
+        name: str = "legacy"
+
+    class LegacyEngine:
+        name: ClassVar[str] = "legacy"
+        description: ClassVar[str] = "legacy manifest engine"
+        config_schema: ClassVar[type[Config]] = Config
+        manifest: ClassVar[EngineManifest] = EngineManifest(required_plugins={"model"})
+
+        def __init__(self, config=None, plugins=None, **kwargs):
+            del config, plugins, kwargs
+
+    registry.register("engine", "legacy", LegacyEngine, overwrite=True)
+    try:
+        project = ProjectContext.create(tmp_path / "project")
+        compiler = WorkflowCompiler(project, SystemConfig())
+
+        with pytest.raises(QPhaseConfigError) as excinfo:
+            compiler.compile(_workflow(JobConfig(name="job", engine={"legacy": {}})))
+        assert "missing required plugins" in str(excinfo.value)
+        assert "task profile" not in str(excinfo.value)
+
+        compiled = compiler.compile(
+            _workflow(
+                JobConfig(
+                    name="job",
+                    engine={"legacy": {}},
+                    model={"dummy": {"param": 1.0}},
+                )
+            )
+        )
+        assert compiled.job("job").required_plugins == ("model",)
+    finally:
+        registry._tables.get("engine", {}).pop("legacy", None)
+
+
 def _write_tag_policy(project: ProjectContext) -> None:
     path = project.defaults_path.parent / "tags.yaml"
     path.write_text(

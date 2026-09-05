@@ -58,6 +58,10 @@ class EngineManifest:
     required_plugins: set[str] = field(default_factory=set)
     optional_plugins: set[str] = field(default_factory=set)
     defaults: dict[str, str] = field(default_factory=dict)
+    # Engines with conditional task requirements instead declare task
+    # profiles; both are dotted-path references ('module:attr'):
+    task_profiles: str | None = None     # -> EngineTaskProfile collection
+    profile_selector: str | None = None  # -> (normalized_job_config) -> id
 
 @runtime_checkable
 class EngineBase(PluginBase, Protocol):

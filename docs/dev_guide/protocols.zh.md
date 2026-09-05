@@ -58,6 +58,10 @@ class EngineManifest:
     required_plugins: set[str] = field(default_factory=set)
     optional_plugins: set[str] = field(default_factory=set)
     defaults: dict[str, str] = field(default_factory=dict)
+    # 插件要求随任务类型变化的引擎改为声明任务 profile；
+    # 两者均为点路径引用（'module:attr'）：
+    task_profiles: str | None = None     # -> EngineTaskProfile 集合
+    profile_selector: str | None = None  # -> (归一化任务配置) -> profile id
 
 @runtime_checkable
 class EngineBase(PluginBase, Protocol):

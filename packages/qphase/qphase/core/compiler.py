@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .config import JobConfig, WorkflowSpec
 from .config_loader import (
@@ -34,12 +35,26 @@ from .tags import (
 )
 from .workflow import workflow_revision
 
+if TYPE_CHECKING:
+    # task_profile imports qphase.data at module level; importing it lazily
+    # keeps ``qphase.data`` -> ``qphase.core`` import orders cycle-free.
+    from .task_profile import PluginRequirementSet
+
 __all__ = ["CompiledJob", "CompiledWorkflow", "WorkflowCompiler"]
 
 
 def _freeze_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
     """Freeze one compiler-owned mapping without copying payloads."""
     return MappingProxyType(dict(value))
+
+
+def _load_dotted_path(dotted_path: str) -> Any:
+    """Import a 'module:attr' dotted path."""
+    module_name, _, attr = dotted_path.partition(":")
+    target: Any = import_module(module_name)
+    for part in attr.split("."):
+        target = getattr(target, part)
+    return target
 
 
 @dataclass(frozen=True)
@@ -283,14 +298,6 @@ class WorkflowCompiler:
                 code=ErrorCode.PLUGIN_DISCOVERY,
                 context={"engine": engine_name},
             )
-        input_plugins = set(getattr(manifest, "input_plugins", set()))
-        required_plugins = set(getattr(manifest, "required_plugins", set()))
-        required = (
-            input_plugins
-            if job.input is not None and input_plugins
-            else required_plugins
-        )
-        optional = set(getattr(manifest, "optional_plugins", set()))
         namespaces = set(self.registry.list(namespace=None))
         merged = get_config_for_job(
             self.project,
@@ -298,6 +305,28 @@ class WorkflowCompiler:
         )
         plugin_sections = merge_plugin_config_sections(merged, namespaces=namespaces)
         explicit = self._explicit_namespaces(job, namespaces)
+        input_plugins: set[str] = set()
+        profile_id: str | None = None
+        forbidden: set[str] = set()
+        if getattr(manifest, "task_profiles", None):
+            # Conditional task profiles replace the legacy required/input
+            # plugin sets: the selected profile is the only requirement
+            # declaration for this engine.
+            profile_id, requirements = self._resolve_task_profile(
+                job, engine_name, manifest, merged
+            )
+            required = set(requirements.required)
+            optional = set(requirements.optional)
+            forbidden = set(requirements.forbidden)
+        else:
+            input_plugins = set(getattr(manifest, "input_plugins", set()))
+            required_plugins = set(getattr(manifest, "required_plugins", set()))
+            required = (
+                input_plugins
+                if job.input is not None and input_plugins
+                else required_plugins
+            )
+            optional = set(getattr(manifest, "optional_plugins", set()))
         selected: dict[str, Any] = {}
         for namespace, config in plugin_sections.items():
             if namespace in explicit or namespace in required:
@@ -319,6 +348,13 @@ class WorkflowCompiler:
             namespace for namespace in required if not selected.get(namespace)
         )
         if missing:
+            if profile_id is not None:
+                raise QPhaseConfigError(
+                    f"Job {job.name!r} uses engine {engine_name!r} with task "
+                    f"profile {profile_id!r} but is missing required plugins: "
+                    f"{missing}",
+                    code=ErrorCode.CONFIG,
+                )
             mode = " for input/analyze mode" if job.input and input_plugins else ""
             raise QPhaseConfigError(
                 f"Job {job.name!r} uses engine {engine_name!r} but is missing "
@@ -332,16 +368,29 @@ class WorkflowCompiler:
             and namespace not in explicit
             and isinstance(config, Mapping)
         }
-        forbidden_explicit = sorted(
-            namespace
-            for namespace in explicit
-            if namespace in getattr(manifest, "forbidden_plugins", set())
-        )
-        if forbidden_explicit:
-            raise QPhaseConfigError(
-                f"Job {job.name!r} configures forbidden plugins: {forbidden_explicit}",
-                code=ErrorCode.CONFIG,
+        if profile_id is not None:
+            forbidden_configured = sorted(
+                namespace for namespace in forbidden if plugin_sections.get(namespace)
             )
+            if forbidden_configured:
+                raise QPhaseConfigError(
+                    f"Job {job.name!r} uses engine {engine_name!r} with task "
+                    f"profile {profile_id!r} but configures forbidden plugins: "
+                    f"{forbidden_configured}",
+                    code=ErrorCode.CONFIG,
+                )
+        else:
+            forbidden_explicit = sorted(
+                namespace
+                for namespace in explicit
+                if namespace in getattr(manifest, "forbidden_plugins", set())
+            )
+            if forbidden_explicit:
+                raise QPhaseConfigError(
+                    f"Job {job.name!r} configures forbidden plugins: "
+                    f"{forbidden_explicit}",
+                    code=ErrorCode.CONFIG,
+                )
 
         engine_config = self._engine_config(merged, engine_name)
         self._validate_plugin_sections(selected)
@@ -364,6 +413,74 @@ class WorkflowCompiler:
             depends_on=tuple(job.depends_on),
             parameter_grid=parameter_grid,
         )
+
+    def _resolve_task_profile(
+        self,
+        job: JobConfig,
+        engine_name: str,
+        manifest: Any,
+        merged: Mapping[str, Any],
+    ) -> tuple[str, PluginRequirementSet]:
+        """Select and resolve the engine's task profile for one job.
+
+        The profile selector reads the normalized merged job config; the
+        profile's requirements (possibly refined by its resolver) replace the
+        legacy manifest plugin sets for this job.
+        """
+        from .task_profile import (
+            EngineTaskProfile,
+            TaskProfileResolutionContext,
+            resolve_plugin_requirements,
+        )
+
+        selector_ref = getattr(manifest, "profile_selector", None)
+        profiles_ref = getattr(manifest, "task_profiles", None)
+        if not profiles_ref or not selector_ref:
+            raise QPhasePluginError(
+                f"engine {engine_name!r} must declare both 'task_profiles' and "
+                "'profile_selector' to use conditional task profiles",
+                code=ErrorCode.PLUGIN_DISCOVERY,
+                context={"engine": engine_name},
+            )
+        try:
+            raw_profiles = _load_dotted_path(str(profiles_ref))
+            selector = _load_dotted_path(str(selector_ref))
+        except Exception as exc:
+            raise QPhasePluginError(
+                f"failed to load the task profile declaration of engine "
+                f"{engine_name!r}: {exc}",
+                code=ErrorCode.PLUGIN_DISCOVERY,
+                context={"engine": engine_name},
+            ) from exc
+        candidates = (
+            list(raw_profiles.values())
+            if isinstance(raw_profiles, Mapping)
+            else list(raw_profiles)
+        )
+        profiles: dict[str, EngineTaskProfile] = {}
+        for profile in candidates:
+            if not isinstance(profile, EngineTaskProfile):
+                raise QPhasePluginError(
+                    f"engine {engine_name!r} task profile collection must "
+                    "contain EngineTaskProfile entries, got "
+                    f"{type(profile).__name__}",
+                    code=ErrorCode.PLUGIN_DISCOVERY,
+                    context={"engine": engine_name},
+                )
+            profiles[profile.id] = profile
+        profile_id = selector(dict(merged))
+        if profile_id not in profiles:
+            raise QPhaseConfigError(
+                f"Job {job.name!r} uses engine {engine_name!r} whose profile "
+                f"selector returned unknown task profile {profile_id!r} "
+                f"(declared: {sorted(profiles)})",
+                code=ErrorCode.CONFIG,
+            )
+        context = TaskProfileResolutionContext(
+            normalized_job_config=dict(merged),
+            named_input_product_schemas={},
+        )
+        return profile_id, resolve_plugin_requirements(profiles[profile_id], context)
 
     @staticmethod
     def _job_override(job: JobConfig, namespaces: set[str]) -> dict[str, Any]:

@@ -28,6 +28,10 @@ tile、chunk、进程或融合 GPU 工作，但这些不是 scheduler 节点。
 
 engine 在执行前声明插件要求：
 
+（声明了 `task_profiles`/`profile_selector` 的引擎——如 SDE 引擎——
+改为按选定的任务 profile 校验，不再使用清单中的
+`required_plugins`/`input_plugins` 集合。）
+
 ```python
 from qphase.core.protocols import EngineManifest
 

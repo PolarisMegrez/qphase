@@ -72,6 +72,15 @@ class EngineManifest(PluginManifest):
         Optional plugin types (e.g., {'integrator', 'analyzer'}).
     defaults : dict[str, str]
         Default plugin implementations (e.g., {'integrator': 'euler_maruyama'}).
+    task_profiles : str | None
+        Dotted path ('module:attr') to the engine's ``EngineTaskProfile``
+        collection (tuple or id-keyed mapping). Engines declaring profiles are
+        validated against the selected profile instead of the legacy
+        ``required_plugins``/``input_plugins`` sets.
+    profile_selector : str | None
+        Dotted path ('module:attr') to a callable
+        ``(normalized_job_config: dict) -> str`` returning the task profile id
+        for one job. Required when ``task_profiles`` is set.
 
     """
 
@@ -85,7 +94,13 @@ class EngineManifest(PluginManifest):
     # Plugins required when the job provides an upstream input (e.g. analyze mode).
     # If non-empty, scheduler will validate against these namespaces instead of
     # ``required_plugins`` when ``job.input`` is set.
+    # Engines declaring ``task_profiles`` bypass the legacy required/input sets.
     input_plugins: set[str] = field(default_factory=set)
+    # Dotted path to the engine's EngineTaskProfile collection, if it declares
+    # conditional task profiles.
+    task_profiles: str | None = None
+    # Dotted path to the callable selecting the task profile id for a job.
+    profile_selector: str | None = None
 
 
 class PluginConfigBase(BaseModel):

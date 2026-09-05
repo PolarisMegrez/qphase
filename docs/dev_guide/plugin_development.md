@@ -124,6 +124,11 @@ class MyAnalyser:
 
 Engines orchestrate the simulation. They must declare their dependencies using `EngineManifest`.
 
+Engines whose plugin requirements depend on the task (e.g. the SDE engine)
+instead declare `task_profiles`/`profile_selector` dotted paths on the
+manifest; the compiler then validates against the selected task profile
+rather than the legacy `required_plugins`/`input_plugins` sets.
+
 ```python
 from typing import ClassVar
 from qphase.core.protocols import EngineManifest

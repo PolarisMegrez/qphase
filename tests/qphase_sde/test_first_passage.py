@@ -670,11 +670,13 @@ def test_planner_reports_observer_cadence_cost():
 
 def test_observer_plugin_is_discoverable():
     from qphase.core.registry import discovery, registry
+    from qphase_sde.contracts import tasks
 
     discovery.discover_plugins()
     discovered = registry.get_plugin_class("observer", "first_passage")
     assert discovered is FirstPassageObserver
-    assert "observer" in Engine.manifest.optional_plugins
+    # Observer support is declared by the simulate task profiles now.
+    assert "observer" in tasks.sde_task_profile("simulate").requirements.optional
 
 
 def test_config_validation_rejects_incomplete_rules():

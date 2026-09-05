@@ -48,6 +48,10 @@ QPhase 使用 Pydantic 进行验证。常见问题包括：
 
 **修复**：确保您的 YAML 配置包含引擎 `required_plugins` 中列出的所有插件。
 
+如果引擎声明了任务 profile（如 SDE 引擎），错误信息会改为给出解析到的
+profile（例如 `task profile 'simulate_analyze'`）：请配置该 profile
+要求的插件，并移除其禁止的插件。
+
 ## 架构和内部机制
 
 ### 急切注册和延迟注册有什么区别？

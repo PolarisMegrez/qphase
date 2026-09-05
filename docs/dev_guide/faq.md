@@ -48,6 +48,10 @@ This error comes from the `EngineManifest` validation. Your Engine class likely 
 
 **Fix**: Ensure your YAML configuration includes all plugins listed in the Engine's `required_plugins`.
 
+If the engine declares task profiles (e.g. the SDE engine), the error
+instead names the resolved profile (`task profile 'simulate_analyze'`,
+say): include the plugins that profile requires and remove any it forbids.
+
 ## Architecture & Internals
 
 ### What is the difference between Eager and Lazy registration?
