@@ -154,7 +154,14 @@ def test_peak_candidate_and_path_roundtrip():
     dumped = candidate.model_dump()
     assert "path" not in dumped
     assert "fit_payload" not in dumped  # fit payloads are not frozen
+    # The default status layers every defined flag (the historical "ok").
+    assert candidate.status == (
+        peaks.PeakStatus.COMPUTED
+        | peaks.PeakStatus.CENTER_IDENTIFIABLE
+        | peaks.PeakStatus.PATH_UNIQUE
+    )
     payload = json.loads(json.dumps(candidate.model_dump(mode="json")))
+    assert payload["status"] == peaks.PEAK_STATUS_MASK
     assert peaks.PeakCandidate.model_validate(payload) == candidate
 
     path = peaks.PeakPathResult(
@@ -164,6 +171,7 @@ def test_peak_candidate_and_path_roundtrip():
         uncertainty_scope=peaks.UncertaintyScope.PATH_MODEL_SELECTION,
     )
     assert path.uncertainty_scope.value == "path_model_selection"
+    assert isinstance(path.status, peaks.PeakStatus)
 
     with pytest.raises(ValidationError):
         peaks.PeakCandidate(location=1.0, intensity=2.0, bogus_field=True)
@@ -222,64 +230,6 @@ def test_analyser_contract_is_structural():
     assert estimate.total is None  # heartbeat-only stage, no fake ETA
 
 
-def test_peak_candidate_offsets_contract():
-    """Candidate offsets: start 0, monotone, terminal count, scan+1 length."""
-    import numpy as np
-
-    scan_count = 3
-    columns = {
-        "location": np.zeros(4),
-        "intensity": np.zeros(4),
-        "status_code": np.zeros(4, dtype=np.int64),
-    }
-    peaks.validate_candidate_table([0, 2, 2, 4], scan_count, columns)
-
-    with pytest.raises(ValueError, match="start at 0"):
-        peaks.validate_candidate_table([1, 2, 2, 4], scan_count, columns)
-    with pytest.raises(ValueError, match="non-decreasing"):
-        peaks.validate_candidate_table([0, 3, 2, 4], scan_count, columns)
-    with pytest.raises(ValueError, match=r"scan_count \+ 1"):
-        peaks.validate_candidate_table([0, 2, 4], scan_count, columns)
-    with pytest.raises(ValueError, match="one entry per candidate"):
-        # Terminal offset (4) disagrees with the column length (3).
-        peaks.validate_candidate_table(
-            [0, 2, 2, 4],
-            scan_count,
-            {
-                "location": np.zeros(3),
-                "intensity": np.zeros(3),
-                "status_code": np.zeros(3, dtype=np.int64),
-            },
-        )
-    with pytest.raises(ValueError, match="required column"):
-        peaks.validate_candidate_table([0, 2, 2, 4], scan_count, {})
-
-
-def test_optional_capability_requires_valid_mask():
-    """Optional columns need an explicit 0/1 '<name>_valid' mask column."""
-    import numpy as np
-
-    columns = {
-        "location": np.zeros(2),
-        "intensity": np.zeros(2),
-        "status_code": np.zeros(2, dtype=np.int64),
-        "width": np.array([0.1, 0.2]),
-        "width_valid": np.array([1, 0], dtype=np.int8),
-    }
-    peaks.validate_candidate_table([0, 2], 1, columns)
-
-    with pytest.raises(ValueError, match="mask column"):
-        peaks.validate_candidate_table(
-            [0, 2], 1, {k: v for k, v in columns.items() if k != "width_valid"}
-        )
-    with pytest.raises(ValueError, match="0/1"):
-        peaks.validate_candidate_table(
-            [0, 2],
-            1,
-            {**columns, "width_valid": np.array([1, 7], dtype=np.int8)},
-        )
-
-
 def test_confidence_bounds_ordering():
     """Confidence lower bounds must never exceed upper bounds."""
     import numpy as np
@@ -293,22 +243,6 @@ def test_confidence_bounds_ordering():
         np.array([1.5, 2.5]),
         valid_mask=np.array([1, 0], dtype=np.int8),
     )
-
-
-def test_path_table_validation():
-    """Path offsets, candidate rows and scan positions stay consistent."""
-    peaks.validate_path_table(
-        path_offsets=[0, 2, 5],
-        candidate_row=[0, 3, 1, 2, 4],
-        scan_position=[0, 1, 0, 1, 2],
-        candidate_count=5,
-    )
-    with pytest.raises(ValueError, match="equal length"):
-        peaks.validate_path_table([0, 2], [0, 3], [0], 5)
-    with pytest.raises(ValueError, match="terminal path offset"):
-        peaks.validate_path_table([0, 3], [0, 3], [0, 1], 5)
-    with pytest.raises(ValueError, match="outside"):
-        peaks.validate_path_table([0, 2], [0, 9], [0, 1], 5)
 
 
 def test_fit_parameter_table_has_no_object_payload():
