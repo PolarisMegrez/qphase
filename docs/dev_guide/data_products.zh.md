@@ -103,7 +103,12 @@ core schema **没有** moment-family 字段——该领域语义归资源包所�
 
 `ProductRequirement`/`ProductDeclaration` 描述带类型的输入与输出；`ProductGraph` 是
 engine 从插件声明编译出的、经无环校验的 `ProductNode` 图。每个节点使用编译器
-分配的 `node_id`，图边使用这个可读 ID；图不再通过 hash 制造节点身份。
+分配的 `node_id`，执行一次并原子返回其声明的 `outputs`；`publish_outputs` 是编译期
+解析出的持久化子集（terminal 输出默认发布，intermediate 仅在显式列出时发布）。图边
+同时引用来源节点的输出（`product`）与消费节点的输入槽（`requirement`），图校验这两个
+引用。requirement 可通过 `value_domain` 区分复数场轨迹与实值采样标量序列，也可通过
+`align_with` 指向同节点的兄弟 requirement，要求其输入与该兄弟输入的参数轴坐标逐元素
+对齐。图不再通过 hash 制造节点身份。
 
 `EngineTaskProfile` 使插件需求随任务条件化：
 

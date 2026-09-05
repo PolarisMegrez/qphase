@@ -134,7 +134,14 @@ another job outside a lease.
 
 `ProductRequirement` / `ProductDeclaration` describe typed inputs and outputs;
 `ProductGraph` is the validated acyclic graph of `ProductNode`s. Each node has
-a compiler-assigned `node_id`; graph edges use those readable IDs. The graph
+a compiler-assigned `node_id`, executes once and atomically returns its declared
+`outputs`; `publish_outputs` names the subset resolved for persistence (terminal
+outputs publish by default, intermediates stay graph-local unless explicitly
+listed). Edges reference both the producer output (`product`) and the consumer
+input slot (`requirement`), and the graph validates those references. A
+requirement may restrict the accepted `value_domain` (complex field trajectory
+vs sampled real scalar) and may name a sibling requirement via `align_with`
+whose parameter-axis coordinates its input must match elementwise. The graph
 does not hash nodes to manufacture identities.
 
 `EngineTaskProfile` makes plugin requirements conditional on the job:
