@@ -66,7 +66,7 @@ MANIFEST = ResourcePackageManifest(
         ),
         PluginClassDeclaration(
             namespace="analyser",
-            protocol="qphase_sde.analyser.base:AnalyzerProtocol",
+            protocol="qphase_sde.contracts.analyser:AnalyserContract",
             description="Engine-facing analysis adapters owning data kinds, "
             "reducers, workspace and progress.",
         ),
@@ -74,13 +74,13 @@ MANIFEST = ResourcePackageManifest(
             namespace="spectral_estimator",
             protocol=("qphase_sde.analyser.spectral_estimator.base:SpectralEstimator"),
             description="Replaceable spectral estimators (periodogram, Welch, "
-            "multitaper); hosted under analyser/ until Phase 2.",
+            "multitaper); hosted under analyser/ until Wave 5B.",
         ),
         PluginClassDeclaration(
             namespace="peak_finder",
             protocol="qphase_sde.analyser.peak_finding.base:PeakFinder",
             description="Peak-candidate finders returning unified PeakCandidate "
-            "results; hosted under analyser/ until Phase 2.",
+            "results; hosted under analyser/ until Wave 5B.",
         ),
     ],
     data_products=[
