@@ -108,20 +108,15 @@ class ProductNode(BaseModel):
     def _check_outputs(self) -> ProductNode:
         names = [output.name for output in self.outputs]
         if len(set(names)) != len(names):
-            raise ValueError(
-                f"node {self.node_id!r} declares duplicate output names"
-            )
+            raise ValueError(f"node {self.node_id!r} declares duplicate output names")
         known = set(names)
         for published in self.publish_outputs:
             if published not in known:
                 raise ValueError(
-                    f"node {self.node_id!r} publishes undeclared output "
-                    f"{published!r}"
+                    f"node {self.node_id!r} publishes undeclared output {published!r}"
                 )
         if len(set(self.publish_outputs)) != len(self.publish_outputs):
-            raise ValueError(
-                f"node {self.node_id!r} lists duplicate publish outputs"
-            )
+            raise ValueError(f"node {self.node_id!r} lists duplicate publish outputs")
         requirement_names = {req.name for req in self.requirements}
         for req in self.requirements:
             if req.align_with is not None and req.align_with not in requirement_names:
@@ -131,8 +126,7 @@ class ProductNode(BaseModel):
                 )
             if req.align_with == req.name:
                 raise ValueError(
-                    f"node {self.node_id!r} requirement {req.name!r} aligns with "
-                    f"itself"
+                    f"node {self.node_id!r} requirement {req.name!r} aligns with itself"
                 )
         return self
 
@@ -279,9 +273,7 @@ def requirement_matches(requirement: ProductRequirement, schema: ProductSchema) 
     if requirement.quantity is not None or requirement.value_domain is not None:
         candidates = list(schema.variables)
         if requirement.quantity is not None:
-            candidates = [
-                v for v in candidates if v.quantity == requirement.quantity
-            ]
+            candidates = [v for v in candidates if v.quantity == requirement.quantity]
         if requirement.value_domain is not None:
             candidates = [
                 v for v in candidates if v.value_domain == requirement.value_domain
