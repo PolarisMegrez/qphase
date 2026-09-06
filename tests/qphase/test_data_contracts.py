@@ -573,11 +573,20 @@ def test_artifact_ref_is_minimal_and_typed():
         )
 
 
-def _node(producer: str, *products: str, requires=(), publish=()) -> ProductNode:
+def _node(producer: str, *products, requires=(), publish=()) -> ProductNode:
+    """Build a node; products are names, (name, kind) pairs or declarations."""
+    outputs = []
+    for product in products:
+        if isinstance(product, ProductDeclaration):
+            outputs.append(product)
+        elif isinstance(product, tuple):
+            outputs.append(ProductDeclaration(name=product[0], kind=product[1]))
+        else:
+            outputs.append(ProductDeclaration(name=product, kind=DataKind.SPECTRAL))
     return ProductNode(
-        node_id=f"{producer}:{':'.join(products)}",
+        node_id=f"{producer}:{':'.join(output.name for output in outputs)}",
         producer=producer,
-        outputs=[ProductDeclaration(name=p, kind=DataKind.SPECTRAL) for p in products],
+        outputs=outputs,
         requirements=list(requires),
         publish_outputs=list(publish),
     )
@@ -596,7 +605,7 @@ def _edge(
 
 def test_product_graph_validates_and_orders():
     """Graphs validate references, reject cycles and order topologically."""
-    source = _node("engine.sde", "trajectories")
+    source = _node("engine.sde", ("trajectories", DataKind.TIME_SERIES))
     mid = _node(
         "analyser.spectrum",
         "psd",
@@ -623,7 +632,7 @@ def test_product_graph_validates_and_orders():
     with pytest.raises(ValidationError, match="acyclic"):
         looped = _node(
             "engine.looped",
-            "series",
+            ("series", DataKind.TIME_SERIES),
             requires=[ProductRequirement(name="in", kind=DataKind.SPECTRAL)],
         )
         ProductGraph(
@@ -707,6 +716,146 @@ def test_requirement_align_with_must_reference_sibling():
                 ProductRequirement(name="aux", align_with="aux"),
             ],
         )
+
+
+def test_product_node_rejects_duplicate_requirement_names():
+    """Requirement names are unique within a node."""
+    with pytest.raises(ValidationError, match="duplicate requirement names"):
+        _node(
+            "analyser.scaling",
+            "fit",
+            requires=[
+                ProductRequirement(name="series", kind=DataKind.TIME_SERIES),
+                ProductRequirement(name="series", kind=DataKind.SPECTRAL),
+            ],
+        )
+
+
+def test_product_graph_rejects_conflicting_edges():
+    """Edges whose endpoints declare conflicting facets are rejected."""
+    stats = _node("analyser.moments", ("stats", DataKind.STATISTICS))
+    series_sink = _node(
+        "analyser.consumer",
+        "out",
+        requires=[ProductRequirement(name="series", kind=DataKind.TIME_SERIES)],
+    )
+    with pytest.raises(ValidationError, match="kind"):
+        ProductGraph(
+            nodes=[stats, series_sink],
+            edges=[_edge(stats, "stats", series_sink, "series")],
+        )
+
+    mean_source = _node(
+        "analyser.reducer",
+        ProductDeclaration(name="mean", kind=DataKind.STATISTICS, quantity="mean"),
+    )
+    variance_sink = _node(
+        "analyser.plot",
+        "fig",
+        requires=[
+            ProductRequirement(
+                name="input", kind=DataKind.STATISTICS, quantity="variance"
+            )
+        ],
+    )
+    with pytest.raises(ValidationError, match="quantity"):
+        ProductGraph(
+            nodes=[mean_source, variance_sink],
+            edges=[_edge(mean_source, "mean", variance_sink, "input")],
+        )
+
+    fields_source = _node(
+        "analyser.histogram",
+        ProductDeclaration(name="hist", kind=DataKind.STATISTICS, fields=["counts"]),
+    )
+    fields_sink = _node(
+        "analyser.report",
+        "table",
+        requires=[
+            ProductRequirement(
+                name="hist",
+                kind=DataKind.STATISTICS,
+                required_fields=["counts", "edges"],
+            )
+        ],
+    )
+    with pytest.raises(ValidationError, match="fields"):
+        ProductGraph(
+            nodes=[fields_source, fields_sink],
+            edges=[_edge(fields_source, "hist", fields_sink, "hist")],
+        )
+
+
+def test_product_graph_rejects_multiple_edges_per_slot():
+    """One (consumer, requirement) slot binds at most one edge: no fan-in."""
+    source_a = _node("engine.sde_a", ("traces", DataKind.TIME_SERIES))
+    source_b = _node("engine.sde_b", ("traces", DataKind.TIME_SERIES))
+    sink = _node(
+        "analyser.spectrum",
+        "psd",
+        requires=[ProductRequirement(name="series", kind=DataKind.TIME_SERIES)],
+    )
+    with pytest.raises(ValidationError, match="more than one edge"):
+        ProductGraph(
+            nodes=[source_a, source_b, sink],
+            edges=[
+                _edge(source_a, "traces", sink, "series"),
+                _edge(source_b, "traces", sink, "series"),
+            ],
+        )
+
+
+def test_product_graph_accepts_compatible_and_open_facets():
+    """Compatible statistics edges pass; absent facets never conflict."""
+    source = _node(
+        "analyser.moments",
+        ProductDeclaration(
+            name="stats",
+            kind=DataKind.STATISTICS,
+            quantity="variance",
+            fields=["value", "stderr"],
+        ),
+    )
+    sink = _node(
+        "analyser.report",
+        "table",
+        requires=[
+            ProductRequirement(
+                name="stats",
+                kind=DataKind.STATISTICS,
+                quantity="variance",
+                required_fields=["value"],
+            )
+        ],
+    )
+    graph = ProductGraph(
+        nodes=[source, sink], edges=[_edge(source, "stats", sink, "stats")]
+    )
+    assert len(graph.edges) == 1
+
+    # Facets absent on either side (kind/quantity/fields unset) cannot conflict.
+    open_source = _node("engine.any", "data")
+    open_sink = _node("analyser.any", "out", requires=[ProductRequirement(name="in")])
+    ProductGraph(
+        nodes=[open_source, open_sink],
+        edges=[_edge(open_source, "data", open_sink, "in")],
+    )
+
+    # A requirement facet with no declared counterpart is not a conflict either.
+    partial_source = _node("engine.partial", ("series", DataKind.TIME_SERIES))
+    partial_sink = _node(
+        "analyser.partial",
+        "out",
+        requires=[
+            ProductRequirement(
+                name="in", kind=DataKind.TIME_SERIES, quantity="field_amplitude"
+            )
+        ],
+    )
+    ProductGraph(
+        nodes=[partial_source, partial_sink],
+        edges=[_edge(partial_source, "series", partial_sink, "in")],
+    )
 
 
 def test_requirement_matches_schema():

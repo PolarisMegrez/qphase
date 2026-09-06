@@ -1,8 +1,18 @@
 """qphase: Product Graph Contracts
 ---------------------------------------------------------
 Freezes the typed dependency description between data products. Engines compile
-a ``ProductGraph`` from plugin declarations; the core validates references and
-acyclicity but knows nothing about domain semantics (PSD, Allan, fits, ...).
+a ``ProductGraph`` from plugin declarations; the core validates references,
+input-slot uniqueness (at most one edge per consumer requirement — no fan-in
+this phase; a future cardinality mechanism will state it explicitly), edge
+compatibility and acyclicity, but knows nothing about domain semantics (PSD,
+Allan, fits, ...).
+
+Edge compatibility is conflict-based: when both endpoints declare a comparable
+facet (``kind``, ``quantity``, ``fields``), the two must agree, while absent
+facets never conflict. ``value_domain`` and axis constraints are deliberately
+NOT checked here: they require a closed ``ProductSchema`` and are owned by the
+materialization boundary (``requirement_matches`` and backing validation),
+not by the graph.
 
 One node represents one plugin execution: it consumes its ``requirements`` and
 atomically returns the mapping of its declared ``outputs``. ``publish_outputs``
@@ -86,7 +96,8 @@ class ProductNode(BaseModel):
     """One graph node with an explicit compiler-assigned identity.
 
     The node executes once and returns its declared ``outputs`` atomically;
-    output names are unique within the node. ``publish_outputs`` names the
+    output and requirement names are unique within the node.
+    ``publish_outputs`` names the
     subset of outputs the compiler resolved for persistence; all other
     outputs are graph-local intermediates.
     """
@@ -117,9 +128,14 @@ class ProductNode(BaseModel):
                 )
         if len(set(self.publish_outputs)) != len(self.publish_outputs):
             raise ValueError(f"node {self.node_id!r} lists duplicate publish outputs")
-        requirement_names = {req.name for req in self.requirements}
+        requirement_names = [req.name for req in self.requirements]
+        if len(set(requirement_names)) != len(requirement_names):
+            raise ValueError(
+                f"node {self.node_id!r} declares duplicate requirement names"
+            )
+        known_requirements = set(requirement_names)
         for req in self.requirements:
-            if req.align_with is not None and req.align_with not in requirement_names:
+            if req.align_with is not None and req.align_with not in known_requirements:
                 raise ValueError(
                     f"node {self.node_id!r} requirement {req.name!r} aligns with "
                     f"unknown sibling requirement {req.align_with!r}"
@@ -148,8 +164,56 @@ class GraphEdge(BaseModel):
     )
 
 
+def _check_edge_compatibility(
+    edge: GraphEdge,
+    declaration: ProductDeclaration,
+    requirement: ProductRequirement,
+) -> None:
+    """Reject an edge whose endpoints declare conflicting facets.
+
+    Conflict-based, not match-based: a facet conflicts only when both sides
+    specify it and disagree, so absent facets never conflict. ``value_domain``
+    and axis constraints require a closed ``ProductSchema`` and are checked at
+    the materialization boundary, not here.
+    """
+    label = (
+        f"edge {edge.producer!r}:{edge.product} -> {edge.consumer!r}:{edge.requirement}"
+    )
+    if requirement.kind is not None and declaration.kind != requirement.kind:
+        raise ValueError(
+            f"{label}: product {declaration.name!r} of node {edge.producer!r} "
+            f"declares kind {declaration.kind.value!r} but requirement "
+            f"{requirement.name!r} of node {edge.consumer!r} requires kind "
+            f"{requirement.kind.value!r}"
+        )
+    if (
+        requirement.quantity is not None
+        and declaration.quantity is not None
+        and declaration.quantity != requirement.quantity
+    ):
+        raise ValueError(
+            f"{label}: product {declaration.name!r} of node {edge.producer!r} "
+            f"declares quantity {declaration.quantity!r} but requirement "
+            f"{requirement.name!r} of node {edge.consumer!r} requires quantity "
+            f"{requirement.quantity!r}"
+        )
+    if declaration.fields and not set(requirement.required_fields) <= set(
+        declaration.fields
+    ):
+        raise ValueError(
+            f"{label}: requirement {requirement.name!r} of node "
+            f"{edge.consumer!r} requires fields {requirement.required_fields!r} "
+            f"but product {declaration.name!r} of node {edge.producer!r} "
+            f"declares fields {declaration.fields!r}"
+        )
+
+
 class ProductGraph(BaseModel):
-    """Validated acyclic graph of product nodes."""
+    """Validated acyclic graph of product nodes.
+
+    Each consumer requirement is bound by at most one edge, and every edge is
+    checked for facet conflicts between the bound declaration and requirement.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -161,6 +225,7 @@ class ProductGraph(BaseModel):
         by_id = {node.node_id: node for node in self.nodes}
         if len(by_id) != len(self.nodes):
             raise ValueError("product graph nodes must have unique node ids")
+        bound_slots: set[tuple[str, str]] = set()
         for edge in self.edges:
             producer = by_id.get(edge.producer)
             if producer is None:
@@ -178,6 +243,20 @@ class ProductGraph(BaseModel):
                     f"edge references undeclared requirement "
                     f"{edge.requirement!r} of node {edge.consumer!r}"
                 )
+            slot = (edge.consumer, edge.requirement)
+            if slot in bound_slots:
+                raise ValueError(
+                    f"requirement {edge.requirement!r} of node {edge.consumer!r} "
+                    f"is bound by more than one edge"
+                )
+            bound_slots.add(slot)
+            declaration = next(
+                output for output in producer.outputs if output.name == edge.product
+            )
+            requirement = next(
+                req for req in consumer.requirements if req.name == edge.requirement
+            )
+            _check_edge_compatibility(edge, declaration, requirement)
         self._check_acyclic(list(by_id))
         return self
 
