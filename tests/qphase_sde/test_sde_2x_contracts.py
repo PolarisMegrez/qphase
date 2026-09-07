@@ -187,7 +187,10 @@ def test_coherence_frequency_estimate_roundtrip():
         bandwidth=0.05,
         lag=12.0,
         estimator="band_limited",
+        conditional_std=0.02,
         frequency_sem=0.01,
+        confidence_lower=-0.45,
+        confidence_upper=-0.39,
         independent_count=64,
         status=(
             coherence.CoherenceFrequencyStatus.COMPUTED
@@ -210,10 +213,44 @@ def test_coherence_frequency_estimate_roundtrip():
         )
 
 
+def test_coherence_frequency_status_coerces_integer_protocol():
+    """NumPy integers are valid statuses; booleans are rejected first."""
+    import numpy as np
+
+    estimate = coherence.CoherenceFrequencyEstimate(
+        frequency=0.0,
+        estimator="short_delay",
+        status=np.int64(
+            coherence.CoherenceFrequencyStatus.COMPUTED
+            | coherence.CoherenceFrequencyStatus.INTERIOR_WINDOW
+        ),
+    )
+    assert int(estimate.status) == 5
+    assert isinstance(estimate.status, coherence.CoherenceFrequencyStatus)
+    with pytest.raises(ValidationError, match="CoherenceFrequencyStatus mask"):
+        coherence.CoherenceFrequencyEstimate(
+            frequency=0.0,
+            estimator="short_delay",
+            status=np.int64(8),
+        )
+    # Booleans are integers but never a status code; floats carry no
+    # integer protocol.
+    for bad_status in (True, np.bool_(True), False, np.bool_(False)):
+        with pytest.raises(ValidationError, match="not a boolean"):
+            coherence.CoherenceFrequencyEstimate(
+                frequency=0.0, estimator="short_delay", status=bad_status
+            )
+    with pytest.raises(ValidationError, match="integer"):
+        coherence.CoherenceFrequencyEstimate(
+            frequency=0.0, estimator="short_delay", status=1.0
+        )
+
+
 def test_coherence_frequency_product_declares_explicit_estimate_fields():
     """Frequency + uncertainty payload, lag, bandwidth and status_code are
     explicit schema variables, grounded in what the coherence estimators
-    produce; the sampling uncertainty closes on ``frequency_sem``.
+    produce; the conditional uncertainty closes on ``conditional_std`` and
+    the sampling uncertainty on ``frequency_sem``.
     """
     import numpy as np
 
@@ -221,6 +258,9 @@ def test_coherence_frequency_product_declares_explicit_estimate_fields():
     variables = {variable.name: variable for variable in schema.variables}
     assert set(variables) == {
         "frequency",
+        "conditional_std",
+        "confidence_lower",
+        "confidence_upper",
         "frequency_sem",
         "lag",
         "bandwidth",
@@ -231,11 +271,15 @@ def test_coherence_frequency_product_declares_explicit_estimate_fields():
     assert np.dtype(variables["status_code"].dtype).kind == "i"
     assert variables["frequency"].quantity == "coherence_frequency"
 
-    (uncertainty,) = schema.uncertainties
-    assert uncertainty.target == "frequency"
-    assert uncertainty.data_variable == "frequency_sem"
-    assert uncertainty.sampling_basis == "trajectory"
-    assert uncertainty.scope == "sampling"
+    uncertainties = {u.scope: u for u in schema.uncertainties}
+    assert set(uncertainties) == {"conditional", "sampling"}
+    conditional = uncertainties["conditional"]
+    assert conditional.target == "frequency"
+    assert conditional.data_variable == "conditional_std"
+    sampling = uncertainties["sampling"]
+    assert sampling.target == "frequency"
+    assert sampling.data_variable == "frequency_sem"
+    assert sampling.sampling_basis == "trajectory"
 
     # status_bits decodes codes without importing this module.
     assert schema.attributes["status_bits"] == {
@@ -254,6 +298,9 @@ def test_coherence_frequency_table_validation():
 
     columns = {
         "frequency": np.zeros((2, 2)),
+        "conditional_std": np.full((2, 2), 0.02),
+        "confidence_lower": np.full((2, 2), -0.05),
+        "confidence_upper": np.full((2, 2), 0.05),
         "frequency_sem": np.full((2, 2), 0.01),
         "lag": np.full((2, 2), 12.0),
         "bandwidth": np.full((2, 2), 0.5),
@@ -261,6 +308,19 @@ def test_coherence_frequency_table_validation():
     }
     coherence.validate_coherence_frequency_table(columns, scan_count=2, channel_count=2)
 
+    # NaN marks a value the estimator does not produce.
+    coherence.validate_coherence_frequency_table(
+        {**columns, "conditional_std": np.full((2, 2), np.nan)},
+        scan_count=2,
+        channel_count=2,
+    )
+    for missing in ("conditional_std", "confidence_lower", "confidence_upper"):
+        with pytest.raises(ValueError, match="required column"):
+            coherence.validate_coherence_frequency_table(
+                {k: v for k, v in columns.items() if k != missing},
+                scan_count=2,
+                channel_count=2,
+            )
     with pytest.raises(ValueError, match="required column"):
         coherence.validate_coherence_frequency_table(
             {k: v for k, v in columns.items() if k != "lag"},
@@ -288,6 +348,18 @@ def test_coherence_frequency_table_validation():
     with pytest.raises(ValueError, match="nonnegative"):
         coherence.validate_coherence_frequency_table(
             {**columns, "bandwidth": np.full((2, 2), -0.5)},
+            scan_count=2,
+            channel_count=2,
+        )
+    with pytest.raises(ValueError, match="nonnegative"):
+        coherence.validate_coherence_frequency_table(
+            {**columns, "conditional_std": np.full((2, 2), -0.5)},
+            scan_count=2,
+            channel_count=2,
+        )
+    with pytest.raises(ValueError, match="lower bound exceeds upper"):
+        coherence.validate_coherence_frequency_table(
+            {**columns, "confidence_lower": np.full((2, 2), 0.1)},
             scan_count=2,
             channel_count=2,
         )

@@ -417,6 +417,23 @@ def test_moment_and_coherence_products_are_typed_over_scan():
     assert carrier_roles["measurement"] is AxisRole.COMPONENT
     assert carrier_roles["lag"] is AxisRole.COORDINATE
     assert carrier.axis("lag").units == "time"
+    # The conditional uncertainty/confidence payload is typed alongside the
+    # sampling SEM: per-(scan, measurement) variables closing on declared
+    # uncertainty entries.
+    for name in ("conditional_std", "confidence_lower", "confidence_upper"):
+        assert carrier.schema.variable(name).dims == ("scan", "measurement"), name
+    carrier_uncertainties = {
+        (u.target, u.scope, u.data_variable) for u in carrier.schema.uncertainties
+    }
+    assert ("frequency", "conditional", "conditional_std") in carrier_uncertainties
+    assert ("frequency", "sampling", "frequency_sem") in carrier_uncertainties
+    lower = carrier.handle("confidence_lower").materialize()
+    upper = carrier.handle("confidence_upper").materialize()
+    finite = np.isfinite(lower) & np.isfinite(upper)
+    assert np.all(lower[finite] <= upper[finite])
+    center = carrier.handle("frequency").materialize()
+    assert np.all(lower[finite] <= center[finite])
+    assert np.all(center[finite] <= upper[finite])
 
     for name, product in bundle.products.items():
         assert product.attributes["graph_ready"] is True, name

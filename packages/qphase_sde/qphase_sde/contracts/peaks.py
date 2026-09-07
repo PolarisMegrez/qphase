@@ -30,14 +30,30 @@ Channel labels never enter payload columns: the mandatory schema attribute
 ``channel_names`` (a list of strings — single-channel products list one
 name) is the stable index-to-label mapping that ``group_channel_index``
 references. The measurement basis is explicit: ``mode_labels`` lists the
-modes the readouts act on, and the optional ``channel_mode_weights``
-attribute holds the complex readout vector of every channel as ``[re, im]``
-pairs flattened row-major over (channel × mode). A *bare mode* channel
-carries exactly one unit weight; a *trace* or combined channel carries an
-arbitrary normalized readout vector ``l`` of the coherent readout
-``c = l†α``. Channel names and mode labels are the stable mapping and
-complex numbers travel as real pairs, so there are no object or string
-arrays anywhere in the product.
+modes the readouts act on and ``channel_measurement_kinds`` classifies
+every channel as ``bare``, ``coherent``, ``incoherent`` or ``general``. A
+channel measurement is a Hermitian matrix ``W`` acting on the mode vector
+— the measured correlation is the quadratic form ``α†Wα`` — and exactly
+one of two representations is populated per channel:
+
+- ``channel_mode_weights`` holds the rank-1 readout vector ``l`` of
+  ``W = l l†`` as ``[re, im]`` pairs flattened row-major over
+  (channel × mode) — only ``bare``/``coherent`` channels carry it. A
+  *bare* channel reads a single mode: exactly one unit weight with all
+  others zero (``W = e_m e_m†``). A *coherent* channel carries any finite
+  non-zero ``l`` of the coherent readout ``c = l†α`` (``W = l l†`` is
+  rank-1).
+- ``channel_mode_matrix`` holds the full Hermitian ``W`` as ``[re, im]``
+  pairs flattened row-major over (channel × mode × mode) — required for
+  ``incoherent``/``general`` channels. An *incoherent* channel carries a
+  diagonal ``W`` with real non-negative entries: a trace is the incoherent
+  sum ``W = I`` over the modes, which is generally NOT rank-1 and cannot
+  be written as a coherent readout ``c = l†α``. A *general* channel
+  carries any Hermitian ``W``.
+
+Channel names and mode labels are the stable mapping and complex numbers
+travel as real pairs, so there are no object or string arrays anywhere in
+the product.
 
 Status codes
 ------------
@@ -99,6 +115,8 @@ PEAK_STATUS_MASK
 PEAK_CANDIDATE_STATUS_MASK, PEAK_PATH_STATUS_MASK
     Per-table status masks: candidate codes layer COMPUTED and
     CENTER_IDENTIFIABLE; path codes layer COMPUTED and PATH_UNIQUE.
+CHANNEL_MEASUREMENT_KINDS
+    Channel measurement kinds of the peak measurement basis.
 PeakCandidate
     One row of the candidate table.
 PeakPathResult
@@ -132,9 +150,11 @@ from qphase.data import (
     VariableSchema,
 )
 
+from ._status import coerce_status_flags
 from .quantities import SDEQuantity
 
 __all__ = [
+    "CHANNEL_MEASUREMENT_KINDS",
     "OPTIONAL_CAPABILITY_FIELDS",
     "PEAK_CANDIDATE_STATUS_MASK",
     "PEAK_FIT_PRODUCT",
@@ -207,17 +227,6 @@ PEAK_CANDIDATE_STATUS_MASK: int = (
 PEAK_PATH_STATUS_MASK: int = (PeakStatus.COMPUTED | PeakStatus.PATH_UNIQUE).value
 
 
-def _require_status_bits(value: Any, *, mask: int, label: str) -> Any:
-    """Reject raw integers with bits outside the given PeakStatus mask."""
-    if isinstance(value, int) and not isinstance(value, bool):
-        raw = int(value)
-        if raw < 0 or raw & ~mask:
-            raise ValueError(
-                f"status {raw} sets bits outside the {label} PeakStatus mask"
-            )
-    return value
-
-
 class PeakCandidate(BaseModel):
     """One peak-candidate row of the unified peak table.
 
@@ -256,8 +265,8 @@ class PeakCandidate(BaseModel):
     @field_validator("status", mode="before")
     @classmethod
     def _check_status_bits(cls, value: Any) -> Any:
-        return _require_status_bits(
-            value, mask=PEAK_CANDIDATE_STATUS_MASK, label="candidate"
+        return coerce_status_flags(
+            value, enum=PeakStatus, mask=PEAK_CANDIDATE_STATUS_MASK, label="candidate"
         )
 
     @model_validator(mode="after")
@@ -313,7 +322,9 @@ class PeakPathResult(BaseModel):
     @field_validator("status", mode="before")
     @classmethod
     def _check_status_bits(cls, value: Any) -> Any:
-        return _require_status_bits(value, mask=PEAK_PATH_STATUS_MASK, label="path")
+        return coerce_status_flags(
+            value, enum=PeakStatus, mask=PEAK_PATH_STATUS_MASK, label="path"
+        )
 
     @model_validator(mode="after")
     def _check_path(self) -> PeakPathResult:
@@ -368,7 +379,8 @@ def _optional_variables() -> list[VariableSchema]:
 #: ``group_count + 1`` entries and ``candidate`` to the terminal offset once
 #: candidates are counted. Concrete finders must replace the template
 #: ``channel_names``/``mode_labels`` attributes with their stable labels and
-#: may add the ``channel_mode_weights`` measurement basis; they may drop
+#: may add the measurement basis (``channel_measurement_kinds`` plus
+#: ``channel_mode_weights``/``channel_mode_matrix``); they may drop
 #: optional capability columns they cannot provide (dropping an uncertainty
 #: data variable requires dropping its uncertainty entry too — core enforces
 #: the closure). The group index columns, the required candidate columns and
@@ -601,22 +613,190 @@ def _stable_labels(field: str, values: Iterable[str], *, noun: str) -> tuple[str
     return result
 
 
-def _check_channel_mode_weights(
-    weights: Any, channel_count: int, mode_count: int
-) -> None:
-    array = np.asarray(weights)
-    expected = channel_count * mode_count
-    if array.shape != (expected, 2):
+#: Channel measurement kinds of the peak measurement basis. A channel
+#: measurement is a Hermitian matrix ``W`` acting on the mode vector:
+#: ``bare`` reads a single mode (``W = e_m e_m†``, rank-1), ``coherent``
+#: is a coherent readout ``c = l†α`` (``W = l l†``, rank-1),
+#: ``incoherent`` is an incoherent sum over the modes with diagonal real
+#: non-negative ``W`` (a plain trace is ``W = I``, generally not rank-1),
+#: and ``general`` is any Hermitian ``W``.
+CHANNEL_MEASUREMENT_KINDS: tuple[str, ...] = (
+    "bare",
+    "coherent",
+    "incoherent",
+    "general",
+)
+
+_MEASUREMENT_KIND_SET = frozenset(CHANNEL_MEASUREMENT_KINDS)
+
+#: Tolerances of the measurement-basis checks (unit weights, zero blocks,
+#: Hermiticity): loose enough for float64 roundoff, tight enough to catch
+#: structural violations.
+_BASIS_RTOL = 1e-6
+_BASIS_ATOL = 1e-9
+
+
+def _real_pair_array(
+    name: str, values: Any, entry_count: int, entry_desc: str, context: str
+) -> np.ndarray:
+    """Validate a flattened real ``[re, im]`` pair array; return float64."""
+    array = np.asarray(values)
+    if array.shape != (entry_count, 2):
         raise ValueError(
-            "channel_mode_weights must hold one [re, im] pair per "
-            "(channel, mode) entry flattened row-major, expected shape "
-            f"({expected}, 2) for {channel_count} channels x {mode_count} "
-            f"modes, got {array.shape}"
+            f"{name} must hold one [re, im] pair per {entry_desc} entry "
+            f"flattened row-major, expected shape ({entry_count}, 2)"
+            f"{context}, got {array.shape}"
         )
     if np.iscomplexobj(array) or not np.issubdtype(array.dtype, np.number):
-        raise ValueError("channel_mode_weights must hold real [re, im] pairs")
-    if not np.all(np.isfinite(array.astype(np.float64))):
-        raise ValueError("channel_mode_weights must be finite")
+        raise ValueError(f"{name} must hold real [re, im] pairs")
+    array = array.astype(np.float64)
+    if not np.all(np.isfinite(array)):
+        raise ValueError(f"{name} must be finite")
+    return array
+
+
+def _check_channel_mode_weights(
+    weights: Any, channel_count: int, mode_count: int
+) -> np.ndarray:
+    return _real_pair_array(
+        "channel_mode_weights",
+        weights,
+        channel_count * mode_count,
+        "(channel, mode)",
+        f" for {channel_count} channels x {mode_count} modes",
+    )
+
+
+def _check_channel_mode_matrix(
+    matrix: Any, channel_count: int, mode_count: int
+) -> np.ndarray:
+    return _real_pair_array(
+        "channel_mode_matrix",
+        matrix,
+        channel_count * mode_count * mode_count,
+        "(channel, mode, mode)",
+        f" for {channel_count} channels x {mode_count} modes",
+    )
+
+
+def _check_measurement_kinds(kinds: Any, channel_count: int) -> tuple[str, ...]:
+    if isinstance(kinds, str):
+        raise ValueError(
+            "channel_measurement_kinds must be a list of strings, not one string"
+        )
+    result: tuple[str, ...] = tuple(kinds)
+    if len(result) != channel_count:
+        raise ValueError(
+            "channel_measurement_kinds must hold exactly one entry per "
+            f"channel ({channel_count}), got {len(result)}"
+        )
+    unknown = [kind for kind in result if kind not in _MEASUREMENT_KIND_SET]
+    if unknown:
+        raise ValueError(
+            "channel_measurement_kinds entries must be one of "
+            f"{sorted(_MEASUREMENT_KIND_SET)}, got {unknown}"
+        )
+    return result
+
+
+def _check_measurement_basis(
+    channel_names: tuple[str, ...],
+    mode_count: int,
+    kinds: tuple[str, ...],
+    weights: np.ndarray | None,
+    matrices: np.ndarray | None,
+) -> None:
+    """Enforce the per-channel representation/kind agreement.
+
+    Exactly one representation is populated per channel: the rank-1
+    readout vector ``l`` of ``W = l l†`` (``channel_mode_weights``) for
+    ``bare``/``coherent`` channels, the Hermitian measurement matrix ``W``
+    (``channel_mode_matrix``) for ``incoherent``/``general`` channels. A
+    representation block of a channel of the other kind must be identically
+    zero, so a channel can never populate both.
+    """
+    channel_count = len(channel_names)
+    vectors = (
+        None
+        if weights is None
+        else (weights[:, 0] + 1j * weights[:, 1]).reshape(channel_count, mode_count)
+    )
+    w_matrices = (
+        None
+        if matrices is None
+        else (matrices[:, 0] + 1j * matrices[:, 1]).reshape(
+            channel_count, mode_count, mode_count
+        )
+    )
+    for index, (name, kind) in enumerate(zip(channel_names, kinds, strict=True)):
+        vector = None if vectors is None else vectors[index]
+        matrix = None if w_matrices is None else w_matrices[index]
+        if kind in ("bare", "coherent"):
+            if vector is None:
+                raise ValueError(
+                    f"{kind} channel {name!r} requires channel_mode_weights: "
+                    "the rank-1 readout vector l of W = l l^dagger"
+                )
+            if matrix is not None and bool(np.any(np.abs(matrix) > _BASIS_ATOL)):
+                raise ValueError(
+                    f"channel {name!r} populates both channel_mode_weights and "
+                    "channel_mode_matrix: exactly one representation per channel"
+                )
+            if kind == "bare":
+                norms = np.abs(vector)
+                unit = np.isclose(norms, 1.0, rtol=_BASIS_RTOL, atol=_BASIS_ATOL)
+                zero = norms <= _BASIS_ATOL
+                if int(np.count_nonzero(unit)) != 1 or not bool(np.all(unit | zero)):
+                    raise ValueError(
+                        f"bare channel {name!r} must carry exactly one unit "
+                        "weight with all other weights zero (W = e_m e_m^dagger)"
+                    )
+            elif not bool(np.any(np.abs(vector) > _BASIS_ATOL)):
+                raise ValueError(
+                    f"coherent channel {name!r} must carry a non-zero readout "
+                    "vector l (W = l l^dagger)"
+                )
+        else:
+            if matrix is None:
+                raise ValueError(
+                    f"{kind} channel {name!r} requires channel_mode_matrix: "
+                    "the Hermitian measurement matrix W acting on the mode "
+                    "vector"
+                )
+            if vector is not None and bool(np.any(np.abs(vector) > _BASIS_ATOL)):
+                raise ValueError(
+                    f"channel {name!r} populates both channel_mode_weights and "
+                    "channel_mode_matrix: exactly one representation per channel"
+                )
+            if not bool(np.any(np.abs(matrix) > _BASIS_ATOL)):
+                raise ValueError(
+                    f"{kind} channel {name!r} must carry a non-zero "
+                    "measurement matrix W"
+                )
+            scale = max(1.0, float(np.max(np.abs(matrix))))
+            hermiticity = float(np.max(np.abs(matrix - matrix.conj().T)))
+            if hermiticity > _BASIS_ATOL + _BASIS_RTOL * scale:
+                raise ValueError(
+                    f"channel_mode_matrix of channel {name!r} must be "
+                    "Hermitian (W = W^dagger)"
+                )
+            if kind == "incoherent":
+                off_diagonal = matrix.copy()
+                np.fill_diagonal(off_diagonal, 0.0)
+                if bool(np.any(np.abs(off_diagonal) > _BASIS_ATOL)):
+                    raise ValueError(
+                        f"incoherent channel {name!r} must carry a diagonal "
+                        "W: an incoherent sum over the modes (W = I for a "
+                        "plain trace)"
+                    )
+                diagonal = np.diagonal(matrix)
+                if bool(np.any(np.abs(diagonal.imag) > _BASIS_ATOL)) or bool(
+                    np.any(diagonal.real < -_BASIS_ATOL)
+                ):
+                    raise ValueError(
+                        f"incoherent channel {name!r} must carry real "
+                        "non-negative diagonal entries"
+                    )
 
 
 class CandidateTablePayload(TypedDict):
@@ -624,8 +804,11 @@ class CandidateTablePayload(TypedDict):
 
     A unified peak finder returns exactly this mapping — unpacking it into
     the validator (``validate_candidate_table(**payload)``) must not raise.
-    ``mode_labels`` and ``channel_mode_weights`` are optional together:
-    weights index the mode axis, so they are meaningless without the labels.
+    ``mode_labels``, ``channel_measurement_kinds`` and the channel
+    representations (``channel_mode_weights``/``channel_mode_matrix``) are
+    optional together: the basis indexes the mode axis, so it is
+    meaningless without the labels, and the kind of each channel selects
+    the representation it carries.
     """
 
     candidate_offsets: Any
@@ -635,7 +818,9 @@ class CandidateTablePayload(TypedDict):
     scan_count: int
     channel_names: list[str]
     mode_labels: NotRequired[list[str]]
+    channel_measurement_kinds: NotRequired[list[str]]
     channel_mode_weights: NotRequired[list[list[float]]]
+    channel_mode_matrix: NotRequired[list[list[float]]]
 
 
 def validate_candidate_table(
@@ -647,7 +832,9 @@ def validate_candidate_table(
     scan_count: int,
     channel_names: Iterable[str],
     mode_labels: Iterable[str] | None = None,
+    channel_measurement_kinds: Iterable[str] | None = None,
     channel_mode_weights: Any | None = None,
+    channel_mode_matrix: Any | None = None,
     optional_capabilities: Iterable[str] = OPTIONAL_CAPABILITY_FIELDS,
 ) -> None:
     """Validate the group structure and columns of a candidate table.
@@ -661,12 +848,31 @@ def validate_candidate_table(
     most one group — there is no implicit replicate dimension.
 
     ``channel_names`` is the mandatory stable index-to-label mapping
-    (single-channel tables list one name). ``mode_labels`` lists the modes
-    the readouts act on; ``channel_mode_weights``, when given, must hold one
-    finite ``[re, im]`` pair per (channel, mode) entry — flattened row-major,
-    so exactly ``len(channel_names) * len(mode_labels)`` pairs — and requires
-    ``mode_labels``. A bare-mode channel carries exactly one unit weight; a
-    trace/combined channel carries an arbitrary normalized readout vector.
+    (single-channel tables list one name). The measurement basis is
+    optional as a whole, but when either representation is present,
+    ``mode_labels`` and ``channel_measurement_kinds`` are required with it:
+    a channel measurement is a Hermitian matrix ``W`` acting on the mode
+    vector (the measured correlation is the quadratic form ``α†Wα``), and
+    the kind of each channel — ``bare``, ``coherent``, ``incoherent`` or
+    ``general`` — selects the representation it carries.
+
+    Exactly one representation is populated per channel.
+    ``channel_mode_weights`` holds the rank-1 readout vector ``l`` of
+    ``W = l l†``: one finite ``[re, im]`` pair per (channel, mode) entry,
+    flattened row-major, so exactly ``len(channel_names) * len(mode_labels)``
+    pairs. It is allowed only for ``bare``/``coherent`` channels — a
+    ``bare`` channel carries exactly one unit weight with all others zero
+    (``W = e_m e_m†``), a ``coherent`` channel any finite non-zero ``l``
+    of the coherent readout ``c = l†α``. ``channel_mode_matrix`` holds the
+    full Hermitian ``W``: one finite ``[re, im]`` pair per
+    (channel, mode, mode) entry, flattened row-major, so exactly
+    ``len(channel_names) * len(mode_labels)**2`` pairs. It is required for
+    ``incoherent``/``general`` channels — ``W`` must be Hermitian, and an
+    ``incoherent`` channel additionally carries a diagonal ``W`` with real
+    non-negative entries: a trace is the incoherent sum ``W = I`` over the
+    modes, which is generally NOT rank-1 and cannot be written as a
+    coherent readout. A channel populating both representations — or a
+    representation contradicting its kind — is rejected.
 
     The required columns ``location``/``intensity``/``status_code`` must be
     present, and every column must hold exactly one entry per candidate.
@@ -719,13 +925,40 @@ def validate_candidate_table(
                 "duplicate (group_scan_index, group_channel_index) pairs: "
                 "exactly one group per scan/channel pair"
             )
-    if channel_mode_weights is not None:
+    if channel_mode_weights is None and channel_mode_matrix is None:
+        if channel_measurement_kinds is not None:
+            raise ValueError(
+                "channel_measurement_kinds requires a measurement "
+                "representation: channel_mode_weights and/or "
+                "channel_mode_matrix"
+            )
+    else:
         if modes is None:
             raise ValueError(
-                "channel_mode_weights requires mode_labels: the weights index "
-                "the mode axis"
+                "the measurement basis (channel_mode_weights/"
+                "channel_mode_matrix) requires mode_labels: the basis "
+                "indexes the mode axis"
             )
-        _check_channel_mode_weights(channel_mode_weights, len(names), len(modes))
+        if channel_measurement_kinds is None:
+            raise ValueError(
+                "the measurement basis (channel_mode_weights/"
+                "channel_mode_matrix) requires channel_measurement_kinds: "
+                "the kind selects the representation each channel carries"
+            )
+        kinds = _check_measurement_kinds(channel_measurement_kinds, len(names))
+        weights = (
+            None
+            if channel_mode_weights is None
+            else _check_channel_mode_weights(
+                channel_mode_weights, len(names), len(modes)
+            )
+        )
+        matrices = (
+            None
+            if channel_mode_matrix is None
+            else _check_channel_mode_matrix(channel_mode_matrix, len(names), len(modes))
+        )
+        _check_measurement_basis(names, len(modes), kinds, weights, matrices)
     candidate_count = int(offsets[-1])
 
     for required in ("location", "intensity", "status_code"):

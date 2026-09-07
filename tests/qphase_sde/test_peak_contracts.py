@@ -25,6 +25,7 @@ MODE_LABELS = ["mode_0", "mode_1"]
 #: Identity basis over two bare modes, flattened row-major over
 #: (channel x mode): channel 0 reads mode 0, channel 1 reads mode 1.
 CHANNEL_MODE_WEIGHTS = [[1.0, 0.0], [0.0, 0.0], [0.0, 0.0], [1.0, 0.0]]
+CHANNEL_KINDS = ["bare", "bare"]
 
 #: Variables kept by the concrete product of the roundtrip test. Uncertainty
 #: data variables (conditional/sampling location std) must stay because the
@@ -197,12 +198,59 @@ def test_peak_candidate_and_path_status_flags_roundtrip():
             )
 
 
+def test_status_coerces_integer_protocol_and_rejects_booleans():
+    """NumPy integers are valid statuses; booleans and floats are not."""
+    # NumPy integers satisfy the integer protocol and are coerced through
+    # the per-table mask — bitwise, so np.int64(PATH_UNIQUE) still fails a
+    # candidate row (the candidate mask 0b011 excludes the 0b100 bit).
+    with pytest.raises(ValidationError, match="PeakStatus mask"):
+        peaks.PeakCandidate(
+            location=1.0,
+            intensity=2.0,
+            status=np.int64(peaks.PeakStatus.PATH_UNIQUE),
+        )
+    candidate = peaks.PeakCandidate(
+        location=1.0,
+        intensity=2.0,
+        status=np.int64(
+            peaks.PeakStatus.COMPUTED | peaks.PeakStatus.CENTER_IDENTIFIABLE
+        ),
+    )
+    assert int(candidate.status) == 3
+    assert isinstance(candidate.status, peaks.PeakStatus)
+
+    path = peaks.PeakPathResult(
+        path_id="p0",
+        candidate_rows=[0],
+        scan_positions=[0],
+        status=np.int64(peaks.PeakStatus.COMPUTED | peaks.PeakStatus.PATH_UNIQUE),
+    )
+    assert path.status & peaks.PeakStatus.PATH_UNIQUE
+
+    # Booleans are integers but never a status: they are rejected before
+    # the integer protocol on every row model. Floats and strings carry no
+    # integer protocol and fail as well.
+    for bad_status in (True, np.bool_(True), False, np.bool_(False)):
+        with pytest.raises(ValidationError, match="not a boolean"):
+            peaks.PeakCandidate(location=1.0, intensity=2.0, status=bad_status)
+        with pytest.raises(ValidationError, match="not a boolean"):
+            peaks.PeakPathResult(
+                path_id="p",
+                candidate_rows=[0],
+                scan_positions=[0],
+                status=bad_status,
+            )
+    for bad_status in (1.0, np.float64(1), "1"):
+        with pytest.raises(ValidationError, match="integer"):
+            peaks.PeakCandidate(location=1.0, intensity=2.0, status=bad_status)
+
+
 def test_grouped_candidate_table_validates():
     """Groups with 0/1/N candidates over 3 scan points x 2 channels pass."""
     offsets, group_scan_index, group_channel_index, columns = _grouped_table()
     _validate(offsets, group_scan_index, group_channel_index, columns)
     # The measurement basis, when present, holds one [re, im] pair per
-    # (channel, mode) entry flattened row-major.
+    # (channel, mode) entry flattened row-major, kind-labeled per channel.
     peaks.validate_candidate_table(
         offsets,
         group_scan_index,
@@ -211,6 +259,7 @@ def test_grouped_candidate_table_validates():
         scan_count=3,
         channel_names=CHANNEL_NAMES,
         mode_labels=MODE_LABELS,
+        channel_measurement_kinds=CHANNEL_KINDS,
         channel_mode_weights=CHANNEL_MODE_WEIGHTS,
     )
 
@@ -335,6 +384,7 @@ def test_measurement_basis_attributes_are_stable():
             scan_count=3,
             channel_names=CHANNEL_NAMES,
             mode_labels=MODE_LABELS,
+            channel_measurement_kinds=CHANNEL_KINDS,
             channel_mode_weights=[[1.0, 0.0], [0.0, 1.0]],
         )
     # The nested (channel, mode, 2) form is rejected: only the flattened
@@ -348,6 +398,7 @@ def test_measurement_basis_attributes_are_stable():
             scan_count=3,
             channel_names=CHANNEL_NAMES,
             mode_labels=MODE_LABELS,
+            channel_measurement_kinds=CHANNEL_KINDS,
             channel_mode_weights=np.array(
                 [[[1.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [1.0, 0.0]]]
             ),
@@ -361,9 +412,10 @@ def test_measurement_basis_attributes_are_stable():
             scan_count=3,
             channel_names=CHANNEL_NAMES,
             mode_labels=MODE_LABELS,
+            channel_measurement_kinds=CHANNEL_KINDS,
             channel_mode_weights=[[1.0, 0.0], [0.0, 0.0], [0.0, 0.0], [np.inf, 0.0]],
         )
-    # Weights index the mode axis: they are meaningless without mode labels.
+    # The basis indexes the mode axis: it is meaningless without mode labels.
     with pytest.raises(ValueError, match="requires mode_labels"):
         peaks.validate_candidate_table(
             offsets,
@@ -376,14 +428,16 @@ def test_measurement_basis_attributes_are_stable():
         )
 
 
-def test_multi_mode_bare_bright_dark_readout_basis():
-    """A 3-mode basis expresses bare, bright and dark readout channels."""
+def _multi_mode_basis() -> tuple[list[str], list[str], list[str], list, list]:
+    """3-mode basis: bare mode 0, bright/dark coherent readouts, trace."""
     mode_labels = ["mode_0", "mode_1", "mode_2"]
-    channel_names = ["bare_0", "bright", "dark"]
+    channel_names = ["bare_0", "bright", "dark", "trace"]
+    kinds = ["bare", "coherent", "coherent", "incoherent"]
     inv_sqrt2 = 1.0 / math.sqrt(2.0)
-    # Readout vectors l of c = l^dagger alpha, flattened row-major over
-    # (channel x mode): bare mode 0, bright (1,1,0)/sqrt(2), dark
-    # (1,-1,0)/sqrt(2).
+    # Rank-1 readout vectors l of W = l l^dagger, flattened row-major over
+    # (channel x mode): bare mode 0 (W = e_0 e_0^dagger), bright
+    # (1,1,0)/sqrt(2), dark (1,-1,0)/sqrt(2). The trace channel carries the
+    # matrix representation, so its weights block is identically zero.
     weights = [
         [1.0, 0.0],
         [0.0, 0.0],
@@ -394,43 +448,159 @@ def test_multi_mode_bare_bright_dark_readout_basis():
         [inv_sqrt2, 0.0],
         [-inv_sqrt2, 0.0],
         [0.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
     ]
-    offsets = np.array([0, 1, 2, 3], dtype=np.int64)
+    # Hermitian measurement matrices W, flattened row-major over
+    # (channel x mode x mode). The trace channel is the incoherent sum
+    # W = I; the vector channels carry zero blocks.
+    eye = np.eye(3)
+    matrices = [
+        [float(eye[i, j].real), 0.0] if name == "trace" else [0.0, 0.0]
+        for name in channel_names
+        for i in range(3)
+        for j in range(3)
+    ]
+    return channel_names, mode_labels, kinds, weights, matrices
+
+
+def test_multi_mode_bare_bright_dark_trace_measurement_basis():
+    """A 3-mode basis expresses bare, coherent and incoherent channels."""
+    channel_names, mode_labels, kinds, weights, matrices = _multi_mode_basis()
+    offsets = np.array([0, 1, 2, 3, 4], dtype=np.int64)
     columns = {
-        "location": np.array([0.3, 0.5, 0.4]),
-        "intensity": np.array([2.0, 4.0, 0.1]),
-        "status_code": np.array([3, 3, 1], dtype=np.int64),
+        "location": np.array([0.3, 0.5, 0.4, 0.6]),
+        "intensity": np.array([2.0, 4.0, 0.1, 1.0]),
+        "status_code": np.array([3, 3, 1, 1], dtype=np.int64),
     }
     peaks.validate_candidate_table(
         offsets,
-        np.array([0, 0, 0], dtype=np.int64),
-        np.array([0, 1, 2], dtype=np.int64),
+        np.zeros(4, dtype=np.int64),
+        np.arange(4, dtype=np.int64),
         columns,
         scan_count=1,
         channel_names=channel_names,
         mode_labels=mode_labels,
+        channel_measurement_kinds=kinds,
         channel_mode_weights=weights,
+        channel_mode_matrix=matrices,
     )
-    # Every readout vector is normalized; bright and dark are orthogonal.
+    # Every coherent readout vector is normalized; bright and dark are
+    # orthogonal. The trace is the incoherent sum W = I, which is not
+    # rank-1 and carries no readout vector.
     vectors = np.asarray(weights)
     vectors = vectors[:, 0] + 1j * vectors[:, 1]
-    bare, bright, dark = vectors.reshape(3, 3)
+    bare, bright, dark, trace_vector = vectors.reshape(4, 3)
     assert np.isclose(np.linalg.norm(bare), 1.0)
     assert np.isclose(np.linalg.norm(bright), 1.0)
     assert np.isclose(np.linalg.norm(dark), 1.0)
     assert np.isclose(np.vdot(bright, dark), 0.0)
+    assert not np.any(trace_vector)
+    w_matrices = np.asarray(matrices)
+    w_matrices = w_matrices[:, 0] + 1j * w_matrices[:, 1]
+    trace = w_matrices.reshape(4, 3, 3)[3]
+    np.testing.assert_array_equal(trace, np.eye(3))
     # Dropping one (channel, mode) pair breaks the flattened closure.
     with pytest.raises(ValueError, match=r"\(channel, mode\)"):
         peaks.validate_candidate_table(
             offsets,
-            np.array([0, 0, 0], dtype=np.int64),
-            np.array([0, 1, 2], dtype=np.int64),
+            np.zeros(4, dtype=np.int64),
+            np.arange(4, dtype=np.int64),
             columns,
             scan_count=1,
             channel_names=channel_names,
             mode_labels=mode_labels,
+            channel_measurement_kinds=kinds,
             channel_mode_weights=weights[:-1],
         )
+
+
+def test_measurement_basis_rejects_ambiguous_or_unphysical_channels():
+    """Mixed representations, kind mismatches and unphysical W fail."""
+    channel_names, mode_labels, kinds, weights, matrices = _multi_mode_basis()
+    offsets = np.array([0, 1, 2, 3, 4], dtype=np.int64)
+    columns = {
+        "location": np.array([0.3, 0.5, 0.4, 0.6]),
+        "intensity": np.array([2.0, 4.0, 0.1, 1.0]),
+        "status_code": np.array([3, 3, 1, 1], dtype=np.int64),
+    }
+
+    def _validate_basis(**overrides):
+        payload = {
+            "scan_count": 1,
+            "channel_names": channel_names,
+            "mode_labels": mode_labels,
+            "channel_measurement_kinds": kinds,
+            "channel_mode_weights": weights,
+            "channel_mode_matrix": matrices,
+        }
+        payload.update(overrides)
+        peaks.validate_candidate_table(
+            offsets,
+            np.zeros(4, dtype=np.int64),
+            np.arange(4, dtype=np.int64),
+            columns,
+            **payload,
+        )
+
+    # Representations require the kinds: the kind selects the representation.
+    with pytest.raises(ValueError, match="requires channel_measurement_kinds"):
+        _validate_basis(channel_measurement_kinds=None)
+    # Kinds without any representation are ambiguous.
+    with pytest.raises(ValueError, match="requires a measurement representation"):
+        _validate_basis(channel_mode_weights=None, channel_mode_matrix=None)
+    # Kind/representation mismatch: an incoherent channel needs the matrix.
+    with pytest.raises(ValueError, match="requires channel_mode_matrix"):
+        _validate_basis(channel_mode_matrix=None)
+    # A bare/coherent channel needs the readout vector.
+    with pytest.raises(ValueError, match="requires channel_mode_weights"):
+        _validate_basis(channel_mode_weights=None)
+    # Unknown kinds and wrong kind counts fail.
+    with pytest.raises(ValueError, match="one of"):
+        _validate_basis(channel_measurement_kinds=["bare", "coherent", "x", "y"])
+    with pytest.raises(ValueError, match="one entry per channel"):
+        _validate_basis(channel_measurement_kinds=["bare"])
+
+    # Mixed representations: the trace channel also populates weights.
+    mixed_weights = [row[:] for row in weights]
+    mixed_weights[9] = [1.0, 0.0]
+    with pytest.raises(ValueError, match="exactly one representation"):
+        _validate_basis(channel_mode_weights=mixed_weights)
+    # ... and a bare channel also populating its matrix block.
+    mixed_matrices = [row[:] for row in matrices]
+    mixed_matrices[0] = [1.0, 0.0]
+    with pytest.raises(ValueError, match="exactly one representation"):
+        _validate_basis(channel_mode_matrix=mixed_matrices)
+
+    # A bare channel carries exactly one unit weight, all others zero.
+    two_unit = [row[:] for row in weights]
+    two_unit[1] = [1.0, 0.0]
+    with pytest.raises(ValueError, match="exactly one unit weight"):
+        _validate_basis(channel_mode_weights=two_unit)
+    fractional = [row[:] for row in weights]
+    fractional[0] = [0.5, 0.0]
+    with pytest.raises(ValueError, match="exactly one unit weight"):
+        _validate_basis(channel_mode_weights=fractional)
+
+    # The measurement matrix must be Hermitian (W = W^dagger).
+    non_hermitian = [row[:] for row in matrices]
+    non_hermitian[28] = [0.5, 0.3]  # W_01 of the trace channel
+    with pytest.raises(ValueError, match="Hermitian"):
+        _validate_basis(channel_mode_matrix=non_hermitian)
+    # An incoherent channel is diagonal with real non-negative entries.
+    off_diagonal = [row[:] for row in matrices]
+    off_diagonal[28] = [0.5, 0.0]  # W_01 = W_10 = 0.5: Hermitian, not diagonal
+    off_diagonal[30] = [0.5, 0.0]
+    with pytest.raises(ValueError, match="diagonal"):
+        _validate_basis(channel_mode_matrix=off_diagonal)
+    negative = [row[:] for row in matrices]
+    negative[27] = [-1.0, 0.0]
+    with pytest.raises(ValueError, match="non-negative"):
+        _validate_basis(channel_mode_matrix=negative)
+    # A general channel needs no diagonality, only Hermiticity.
+    general_kinds = ["bare", "coherent", "coherent", "general"]
+    _validate_basis(channel_measurement_kinds=general_kinds)
 
 
 def test_candidate_status_codes_stay_within_candidate_mask():
@@ -547,6 +717,7 @@ def _closed_schema(*, scan_count: int, group_count: int, candidate_count: int):
     ]
     payload["attributes"]["channel_names"] = list(CHANNEL_NAMES)
     payload["attributes"]["mode_labels"] = list(MODE_LABELS)
+    payload["attributes"]["channel_measurement_kinds"] = list(CHANNEL_KINDS)
     payload["attributes"]["channel_mode_weights"] = CHANNEL_MODE_WEIGHTS
     return ProductSchema.model_validate(payload)
 
@@ -583,6 +754,7 @@ peaks.validate_candidate_table(
     scan_count=int(sys.argv[2]),
     channel_names=schema.attributes["channel_names"],
     mode_labels=schema.attributes["mode_labels"],
+    channel_measurement_kinds=schema.attributes["channel_measurement_kinds"],
     channel_mode_weights=schema.attributes["channel_mode_weights"],
 )
 print(
@@ -597,6 +769,9 @@ print(
             "width_valid": columns["width_valid"].tolist(),
             "channel_names": schema.attributes["channel_names"],
             "mode_labels": schema.attributes["mode_labels"],
+            "channel_measurement_kinds": schema.attributes[
+                "channel_measurement_kinds"
+            ],
             "channel_mode_weights": schema.attributes["channel_mode_weights"],
             "status_bits": schema.attributes["status_bits"],
             "uncertainty_scopes": [u.scope for u in schema.uncertainties],
@@ -658,6 +833,7 @@ def test_candidate_table_clean_process_roundtrip(tmp_path, first_import):
         "width_valid": columns["width_valid"].tolist(),
         "channel_names": CHANNEL_NAMES,
         "mode_labels": MODE_LABELS,
+        "channel_measurement_kinds": CHANNEL_KINDS,
         "channel_mode_weights": CHANNEL_MODE_WEIGHTS,
         "status_bits": {
             "computed": 1,

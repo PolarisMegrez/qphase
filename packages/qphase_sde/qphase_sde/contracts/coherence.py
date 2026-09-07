@@ -2,10 +2,10 @@
 ---------------------------------------------------------
 Freezes the unified coherence-frequency estimate returned by every
 ``coherence_frequency`` estimator (short-delay, band-limited, finite-delay,
-pole model). Estimates are rows of a typed statistics table; the frequency
-uncertainty payload, lag, bandwidth and status code are explicit schema
-variables so that estimator changes are always visible in the schema and
-provenance.
+pole model). Estimates are rows of a typed statistics table; the conditional
+uncertainty/confidence payload, the sampling uncertainty, lag, bandwidth and
+status code are explicit schema variables so that estimator changes are
+always visible in the schema and provenance.
 
 Status codes
 ------------
@@ -60,6 +60,7 @@ from qphase.data import (
     VariableSchema,
 )
 
+from ._status import coerce_status_flags
 from .quantities import SDEQuantity
 
 __all__ = [
@@ -102,20 +103,15 @@ COHERENCE_FREQUENCY_STATUS_MASK: int = (
 ).value
 
 
-def _require_status_bits(value: Any) -> Any:
-    """Reject raw integers with bits outside the defined status mask."""
-    if isinstance(value, int) and not isinstance(value, bool):
-        raw = int(value)
-        if raw < 0 or raw & ~COHERENCE_FREQUENCY_STATUS_MASK:
-            raise ValueError(
-                f"status {raw} sets bits outside the defined "
-                "CoherenceFrequencyStatus mask"
-            )
-    return value
-
-
 class CoherenceFrequencyEstimate(BaseModel):
-    """One coherence-frequency estimate with explicit diagnostics."""
+    """One coherence-frequency estimate with explicit diagnostics.
+
+    ``conditional_std`` carries the conditional uncertainty scope (the
+    error at the computed estimate, e.g. from the local fit residuals) and
+    ``confidence_lower``/``confidence_upper`` the conditional confidence
+    interval; ``frequency_sem`` carries the sampling scope over independent
+    trajectories.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -148,16 +144,24 @@ class CoherenceFrequencyEstimate(BaseModel):
     @field_validator("status", mode="before")
     @classmethod
     def _check_status_bits(cls, value: Any) -> Any:
-        return _require_status_bits(value)
+        return coerce_status_flags(
+            value,
+            enum=CoherenceFrequencyStatus,
+            mask=COHERENCE_FREQUENCY_STATUS_MASK,
+            label="coherence-frequency",
+        )
 
 
 #: Open schema template of the coherence-frequency product: one estimate per
 #: (scan, channel) cell, with the lag the estimate was computed at, the
 #: frequency half-bandwidth it was computed over and the layered status code
 #: as explicit variables (NaN marks a value the estimator does not produce).
-#: The trajectory-sampling uncertainty of the frequency counts over
-#: independent trajectories, never over the scan axis, and its payload lives
-#: in the ``frequency_sem`` variable.
+#: The two uncertainty scopes of :class:`CoherenceFrequencyEstimate` are both
+#: typed: the conditional scope (error at the computed estimate) lives in
+#: ``conditional_std`` and the ``confidence_lower``/``confidence_upper``
+#: interval, while the trajectory-sampling uncertainty of the frequency
+#: counts over independent trajectories, never over the scan axis, and its
+#: payload lives in the ``frequency_sem`` variable.
 COHERENCE_FREQUENCY_PRODUCT = ProductSchema(
     kind=DataKind.STATISTICS,
     axes=[
@@ -172,6 +176,24 @@ COHERENCE_FREQUENCY_PRODUCT = ProductSchema(
             value_domain="real",
             dims=("scan", "channel"),
             quantity=SDEQuantity.COHERENCE_FREQUENCY.value,
+        ),
+        VariableSchema(
+            name="conditional_std",
+            dtype="float64",
+            value_domain="real",
+            dims=("scan", "channel"),
+        ),
+        VariableSchema(
+            name="confidence_lower",
+            dtype="float64",
+            value_domain="real",
+            dims=("scan", "channel"),
+        ),
+        VariableSchema(
+            name="confidence_upper",
+            dtype="float64",
+            value_domain="real",
+            dims=("scan", "channel"),
         ),
         VariableSchema(
             name="frequency_sem",
@@ -202,12 +224,19 @@ COHERENCE_FREQUENCY_PRODUCT = ProductSchema(
     uncertainties=[
         UncertaintySchema(
             target="frequency",
+            kind="sample_std",
+            covariance="real",
+            scope="conditional",
+            data_variable="conditional_std",
+        ),
+        UncertaintySchema(
+            target="frequency",
             kind="sem",
             sampling_basis="trajectory",
             covariance="real",
             scope="sampling",
             data_variable="frequency_sem",
-        )
+        ),
     ],
     attributes={
         "estimator": "",
@@ -228,12 +257,15 @@ def validate_coherence_frequency_table(
 ) -> None:
     """Validate a materialized coherence-frequency table.
 
-    The required columns ``frequency``/``frequency_sem``/``lag``/
+    The required columns ``frequency``/``conditional_std``/
+    ``confidence_lower``/``confidence_upper``/``frequency_sem``/``lag``/
     ``bandwidth``/``status_code`` must be present, and every column must
-    hold exactly one entry per (scan, channel) cell. ``lag`` and
-    ``bandwidth`` must be nonnegative where finite (NaN marks a value the
-    estimator does not produce). ``status_code`` must have an integer dtype
-    and stay within the :class:`CoherenceFrequencyStatus` mask.
+    hold exactly one entry per (scan, channel) cell. ``conditional_std``,
+    ``lag`` and ``bandwidth`` must be nonnegative where finite (NaN marks
+    a value the estimator does not produce), and finite confidence bounds
+    must satisfy ``confidence_lower <= confidence_upper``. ``status_code``
+    must have an integer dtype and stay within the
+    :class:`CoherenceFrequencyStatus` mask.
 
     Raises
     ------
@@ -243,7 +275,16 @@ def validate_coherence_frequency_table(
     """
     if scan_count < 0 or channel_count < 0:
         raise ValueError("scan_count and channel_count must be nonnegative")
-    for required in ("frequency", "frequency_sem", "lag", "bandwidth", "status_code"):
+    for required in (
+        "frequency",
+        "conditional_std",
+        "confidence_lower",
+        "confidence_upper",
+        "frequency_sem",
+        "lag",
+        "bandwidth",
+        "status_code",
+    ):
         if required not in columns:
             raise ValueError(
                 f"coherence-frequency table misses required column {required!r}"
@@ -266,7 +307,12 @@ def validate_coherence_frequency_table(
             "status_code values set bits outside the defined "
             "CoherenceFrequencyStatus mask"
         )
-    for name in ("lag", "bandwidth"):
+    for name in ("conditional_std", "lag", "bandwidth"):
         column = np.asarray(columns[name], dtype=np.float64)
         if np.any(np.isfinite(column) & (column < 0)):
             raise ValueError(f"{name} must be nonnegative where finite")
+    lower = np.asarray(columns["confidence_lower"], dtype=np.float64)
+    upper = np.asarray(columns["confidence_upper"], dtype=np.float64)
+    finite = np.isfinite(lower) & np.isfinite(upper)
+    if np.any(lower[finite] > upper[finite]):
+        raise ValueError("confidence lower bound exceeds upper bound")

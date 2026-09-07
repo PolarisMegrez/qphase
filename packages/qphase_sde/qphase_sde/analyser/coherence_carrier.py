@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from statistics import NormalDist
 from typing import Any, ClassVar, cast
 
 import numpy as np
@@ -95,6 +96,15 @@ class CoherenceCarrierConfig(PluginConfigBase):
         gt=0.0,
         description="Nested-window consistency threshold in combined SEM units",
     )
+    confidence_level: float = Field(
+        0.95,
+        gt=0.0,
+        lt=1.0,
+        description=(
+            "Normal-approximation level of the conditional confidence "
+            "interval around the selected frequency"
+        ),
+    )
     time_chunk_samples: int = Field(
         8192,
         ge=1,
@@ -137,10 +147,22 @@ class CoherenceCarrierConfig(PluginConfigBase):
 
 @dataclass(frozen=True)
 class CoherenceCarrierEstimate:
-    """One zero-delay phase-derivative estimate and its diagnostics."""
+    """One zero-delay phase-derivative estimate and its diagnostics.
+
+    ``conditional_std`` is the conditional uncertainty of the selected
+    slope — the local phase-fit residual variance propagated through the
+    normal equations, i.e. the error at the computed estimate given the
+    ensemble correlation — while ``frequency_sem`` carries the sampling
+    scope over independent trajectories. ``confidence_lower``/
+    ``confidence_upper`` are the conditional normal-approximation interval
+    at the configured confidence level.
+    """
 
     frequency: float = math.nan
     frequency_sem: float = math.nan
+    conditional_std: float = math.nan
+    confidence_lower: float = math.nan
+    confidence_upper: float = math.nan
     selected_lag_points: int = 0
     selected_lag_time: float = math.nan
     phase_fit_rms: float = math.nan
@@ -156,6 +178,7 @@ class _CandidateFit:
     lag_points: int
     frequency: float
     frequency_sem: float
+    conditional_std: float
     phase_fit_rms: float
 
 
@@ -164,10 +187,10 @@ def _phase_slope(
     dt: float,
     lag_points: int,
     order: int,
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     c0 = complex(correlation[0])
     if not np.isfinite(c0.real) or abs(c0) <= np.finfo(float).tiny:
-        return math.nan, math.nan
+        return math.nan, math.nan, math.nan
     normalized = np.asarray(correlation[: lag_points + 1], dtype=complex) / c0
     phase = np.unwrap(np.angle(normalized))
     x = np.arange(1, lag_points + 1, dtype=float) / float(lag_points)
@@ -175,8 +198,23 @@ def _phase_slope(
     coefficients, *_ = np.linalg.lstsq(design, phase[1:], rcond=None)
     fitted = design @ coefficients
     slope = float(coefficients[0] / (lag_points * dt))
-    rms = float(np.sqrt(np.mean((phase[1:] - fitted) ** 2)))
-    return slope, rms
+    residuals = phase[1:] - fitted
+    rms = float(np.sqrt(np.mean(residuals**2)))
+    # Conditional standard error of the slope: the residual variance of the
+    # local phase fit propagated through the normal equations — the error at
+    # the computed estimate given the ensemble correlation, not the scatter
+    # over trajectories (that stays with the jackknife SEM).
+    gram_inverse = np.linalg.inv(design.T @ design)
+    conditional = float(
+        math.sqrt(
+            max(
+                float(np.sum(residuals**2)) / (lag_points - order) * gram_inverse[0, 0],
+                0.0,
+            )
+        )
+        / (lag_points * dt)
+    )
+    return slope, rms, conditional
 
 
 def _jackknife_sem(
@@ -193,7 +231,7 @@ def _jackknife_sem(
     estimates = np.empty(n_traj, dtype=float)
     for index in range(n_traj):
         leave_one = (total - per_trajectory[index]) / float(n_traj - 1)
-        slope, _ = _phase_slope(leave_one, dt, lag_points, order)
+        slope, _, _ = _phase_slope(leave_one, dt, lag_points, order)
         estimates[index] = sign * slope
     if not np.all(np.isfinite(estimates)):
         return math.nan
@@ -233,13 +271,16 @@ def estimate_coherence_carrier(
     maximum_lag_points: int | None = None,
     consistency_sigma: float = 2.0,
     intensity_floor: float = 1.0e-14,
+    confidence_level: float = 0.95,
 ) -> tuple[CoherenceCarrierEstimate, list[_CandidateFit]]:
     """Estimate ``d arg C(tau)/d tau`` at ``tau=0+``.
 
     The input contains one independently time-averaged correlation row per
     trajectory. The point estimate is formed from the ensemble correlation;
     leave-one-trajectory-out estimates are used only for uncertainty and
-    nested-window selection.
+    nested-window selection. ``confidence_level`` sets the level of the
+    conditional normal-approximation interval around the selected
+    frequency.
     """
     values = np.asarray(per_trajectory_correlation, dtype=complex)
     if values.ndim != 2 or values.shape[0] < 1 or values.shape[1] < 3:
@@ -267,13 +308,16 @@ def estimate_coherence_carrier(
     sign = orientation_sign(orientation)
     candidates: list[_CandidateFit] = []
     for lag_points in range(minimum, maximum + 1):
-        slope, residual = _phase_slope(correlation, dt, lag_points, polynomial_order)
+        slope, residual, conditional = _phase_slope(
+            correlation, dt, lag_points, polynomial_order
+        )
         sem = _jackknife_sem(values, dt, lag_points, polynomial_order, sign)
         candidates.append(
             _CandidateFit(
                 lag_points=lag_points,
                 frequency=sign * slope,
                 frequency_sem=sem,
+                conditional_std=conditional,
                 phase_fit_rms=residual,
             )
         )
@@ -291,10 +335,19 @@ def estimate_coherence_carrier(
     first_phase = float(np.angle(normalized[1]))
     first_coherence = float(abs(normalized[1]))
     status = "ok" if selected.lag_points > minimum else "minimum_window"
+    z = NormalDist().inv_cdf((1.0 + confidence_level) / 2.0)
+    if np.isfinite(selected.conditional_std):
+        confidence_lower = selected.frequency - z * selected.conditional_std
+        confidence_upper = selected.frequency + z * selected.conditional_std
+    else:
+        confidence_lower = confidence_upper = math.nan
     return (
         CoherenceCarrierEstimate(
             frequency=selected.frequency,
             frequency_sem=selected.frequency_sem,
+            conditional_std=selected.conditional_std,
+            confidence_lower=confidence_lower,
+            confidence_upper=confidence_upper,
             selected_lag_points=selected.lag_points,
             selected_lag_time=selected.lag_points * dt,
             phase_fit_rms=selected.phase_fit_rms,
@@ -518,6 +571,7 @@ class CoherenceCarrierAnalyzer(Analyzer):
                 maximum_lag_points=config.maximum_lag_points,
                 consistency_sigma=config.consistency_sigma,
                 intensity_floor=config.intensity_floor,
+                confidence_level=config.confidence_level,
             )
             estimates.append(estimate)
             candidate_frequencies.append([item.frequency for item in candidates])
@@ -551,6 +605,13 @@ class CoherenceCarrierAnalyzer(Analyzer):
             "measurement_matrices": np.asarray(matrices),
             "frequency": np.asarray([item.frequency for item in estimates]),
             "frequency_sem": np.asarray([item.frequency_sem for item in estimates]),
+            "conditional_std": np.asarray([item.conditional_std for item in estimates]),
+            "confidence_lower": np.asarray(
+                [item.confidence_lower for item in estimates]
+            ),
+            "confidence_upper": np.asarray(
+                [item.confidence_upper for item in estimates]
+            ),
             "status": np.asarray([item.status for item in estimates]),
             "error": np.asarray([item.error for item in estimates]),
             "selected_lag_points": np.asarray(
@@ -591,6 +652,8 @@ class CoherenceCarrierAnalyzer(Analyzer):
                 "independent_unit": "trajectory",
                 "n_independent": n_traj,
                 "frequency_method": "leave_one_trajectory_out_jackknife",
+                "conditional_method": "local_phase_polynomial_residual",
+                "confidence_level": float(config.confidence_level),
                 "point_estimate_is_ratio_of_ensemble_correlations": True,
             },
             **metadata,
@@ -604,6 +667,9 @@ _COHERENCE_CARRIER_FIELDS = (
     "measurement_matrices",
     "frequency",
     "frequency_sem",
+    "conditional_std",
+    "confidence_lower",
+    "confidence_upper",
     "selected_lag_points",
     "selected_lag_time",
     "phase_fit_rms",
@@ -627,6 +693,7 @@ _COHERENCE_CARRIER_FIELDS = (
     "consistency_sigma",
     "uncertainty.available",
     "uncertainty.n_independent",
+    "uncertainty.confidence_level",
     "uncertainty.point_estimate_is_ratio_of_ensemble_correlations",
 )
 
@@ -665,6 +732,9 @@ def _build_coherence_carrier_products(
         declared_dims={
             "frequency": ("measurement",),
             "frequency_sem": ("measurement",),
+            "conditional_std": ("measurement",),
+            "confidence_lower": ("measurement",),
+            "confidence_upper": ("measurement",),
             "selected_lag_points": ("measurement",),
             "selected_lag_time": ("measurement",),
             "phase_fit_rms": ("measurement",),
@@ -694,12 +764,19 @@ def _build_coherence_carrier_products(
         uncertainties=[
             UncertaintySchema(
                 target="frequency",
+                kind="sample_std",
+                covariance="real",
+                scope="conditional",
+                data_variable="conditional_std",
+            ),
+            UncertaintySchema(
+                target="frequency",
                 kind="sem",
                 sampling_basis="trajectory",
                 covariance="real",
                 scope="sampling",
                 data_variable="frequency_sem",
-            )
+            ),
         ],
         sampling_bases=[
             SamplingBasisSchema(name="trajectory", source_axis="trajectory")
