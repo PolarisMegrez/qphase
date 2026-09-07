@@ -34,6 +34,7 @@ from qphase.data import (
 )
 from scipy.optimize import curve_fit
 
+from ..contracts.analyser import AnalyserWorkspaceRequest, WorkEstimate
 from .base import Analyzer
 from .frequency_orientation import (
     FrequencyOrientation,
@@ -541,6 +542,11 @@ class LorentzFitter(Analyzer):
 
     def __init__(self, config: LorentzFitterConfig | None = None, **kwargs: Any):
         super().__init__(config, **kwargs)
+
+    def work_estimate(self, request: AnalyserWorkspaceRequest) -> WorkEstimate:
+        """Work scales with the number of loaded PSD spectra; no total is fabricated."""
+        del request
+        return WorkEstimate(unit="spectrum", total=None)
 
     def input_requirements(self) -> list[ProductRequirement]:
         config = cast(LorentzFitterConfig, self.config)

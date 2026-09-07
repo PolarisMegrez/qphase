@@ -22,7 +22,11 @@ from qphase.data import (
 from scipy.ndimage import convolve1d, gaussian_filter1d
 from scipy.signal import find_peaks
 
-from ..contracts.analyser import AnalyserExecutionCapabilities
+from ..contracts.analyser import (
+    AnalyserExecutionCapabilities,
+    AnalyserWorkspaceRequest,
+    WorkEstimate,
+)
 from .base import Analyzer
 from .frequency_orientation import (
     FrequencyOrientation,
@@ -751,6 +755,11 @@ class SpectralRidgeAnalyzer(Analyzer):
 
     def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(preferred_location="host")
+
+    def work_estimate(self, request: AnalyserWorkspaceRequest) -> WorkEstimate:
+        """Work scales with the number of loaded PSD spectra; no total is fabricated."""
+        del request
+        return WorkEstimate(unit="spectrum", total=None)
 
     def input_requirements(self) -> list[ProductRequirement]:
         config = cast(SpectralRidgeConfig, self.config)

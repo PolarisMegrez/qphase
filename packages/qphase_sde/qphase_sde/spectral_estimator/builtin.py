@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Literal
 
 import numpy as np
-from pydantic import Field
+from pydantic import ConfigDict, Field
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
 
@@ -13,6 +13,12 @@ from .base import PsdEstimate, SpectralEstimatorCapabilities
 
 
 class PeriodogramEstimatorConfig(PluginConfigBase):
+    """Strict estimator config: unknown fields are rejected, matching the
+    other plugin config bases in this repo.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     window: str | None = Field(None, description="Window function name")
     fft_chunk_trajectories: int | None = Field(
         None,
@@ -22,6 +28,12 @@ class PeriodogramEstimatorConfig(PluginConfigBase):
 
 
 class WelchEstimatorConfig(PluginConfigBase):
+    """Strict estimator config: unknown fields are rejected, matching the
+    other plugin config bases in this repo.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     window: str | None = Field(None, description="Window function name")
     nperseg: int | None = Field(None, ge=1, description="Samples per segment")
     noverlap: int | None = Field(None, ge=0, description="Overlapping samples")
@@ -29,6 +41,12 @@ class WelchEstimatorConfig(PluginConfigBase):
 
 
 class MultitaperEstimatorConfig(PluginConfigBase):
+    """Strict estimator config: unknown fields are rejected, matching the
+    other plugin config bases in this repo.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     nw: float = Field(2.5, gt=0.0, description="Time-half-bandwidth product")
     k_tapers: int | None = Field(None, ge=1, description="Number of DPSS tapers")
 

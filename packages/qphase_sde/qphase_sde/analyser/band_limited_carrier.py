@@ -20,7 +20,11 @@ from qphase.data import (
     SpectralQuantity,
 )
 
-from ..contracts.analyser import AnalyserExecutionCapabilities
+from ..contracts.analyser import (
+    AnalyserExecutionCapabilities,
+    AnalyserWorkspaceRequest,
+    WorkEstimate,
+)
 from .base import Analyzer
 from .frequency_orientation import (
     FrequencyOrientation,
@@ -1165,6 +1169,11 @@ class BandLimitedCarrierAnalyzer(Analyzer):
 
     def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(preferred_location="host")
+
+    def work_estimate(self, request: AnalyserWorkspaceRequest) -> WorkEstimate:
+        """Work scales with the number of loaded PSD spectra; no total is fabricated."""
+        del request
+        return WorkEstimate(unit="spectrum", total=None)
 
     def input_requirements(self) -> list[ProductRequirement]:
         config = cast(BandLimitedCarrierConfig, self.config)

@@ -17,6 +17,7 @@ from qphase.core.protocols import PluginConfigBase, ResultProtocol
 from qphase.data import DataKind, ProductDeclaration, ProductRequirement
 from scipy.optimize import curve_fit
 
+from ..contracts.analyser import AnalyserWorkspaceRequest, WorkEstimate
 from ..contracts.quantities import SDEQuantity
 from ..result import SDEResult
 from .base import Analyzer
@@ -626,6 +627,11 @@ class AllanScalingAnalyzer(Analyzer):
     name: ClassVar[str] = "allan_scaling"
     description: ClassVar[str] = "Cross-scan white-FM detection and scaling fits"
     config_schema: ClassVar[type[AllanScalingConfig]] = AllanScalingConfig
+
+    def work_estimate(self, request: AnalyserWorkspaceRequest) -> WorkEstimate:
+        """Windows and fits are indexed by the tau grid; no total is fabricated."""
+        del request
+        return WorkEstimate(unit="tau", total=None)
 
     def input_requirements(self) -> list[ProductRequirement]:
         config = cast(AllanScalingConfig, self.config)

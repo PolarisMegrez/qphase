@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from qphase.core.protocols import PluginConfigBase
 
 from ..contracts.peaks import CandidateTablePayload
@@ -62,7 +62,14 @@ def _serialize_peak_value(value: Any) -> Any:
 
 
 class BasePeakFinderConfig(PluginConfigBase):
-    """Base configuration for peak finders."""
+    """Base configuration for peak finders.
+
+    Strict like the other plugin config bases in this repo (e.g. the CAM
+    solver/postprocessor bases): unknown fields are rejected instead of
+    being silently absorbed by the permissive ``PluginConfigBase`` default.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     method: str
 
