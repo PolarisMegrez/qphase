@@ -49,6 +49,7 @@ from .errors import (
     ArtifactUnsupportedError,
 )
 from .graph import (
+    ExternalInputBinding,
     GraphEdge,
     ProductDeclaration,
     ProductGraph,
@@ -141,6 +142,7 @@ __all__ = [
     "Dataset",
     "DictProductBacking",
     "DirectoryArtifactResolver",
+    "ExternalInputBinding",
     "GenericDataBundle",
     "GraphEdge",
     "HostArrayHandle",

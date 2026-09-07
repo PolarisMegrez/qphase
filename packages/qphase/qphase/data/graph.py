@@ -2,10 +2,15 @@
 ---------------------------------------------------------
 Freezes the typed dependency description between data products. Engines compile
 a ``ProductGraph`` from plugin declarations; the core validates references,
-input-slot uniqueness (at most one edge per consumer requirement — no fan-in
-this phase; a future cardinality mechanism will state it explicitly), edge
-compatibility and acyclicity, but knows nothing about domain semantics (PSD,
-Allan, fits, ...).
+input-slot binding, edge compatibility and acyclicity, but knows nothing about
+domain semantics (PSD, Allan, fits, ...).
+
+Requirement binding discipline: a required requirement (``optional=False``)
+must have exactly one binding — an edge into its slot XOR an
+``ExternalInputBinding`` naming an external source — while an optional
+requirement has at most one binding (no fan-in this phase; a future
+cardinality mechanism will state it explicitly). External bindings declare
+where an unbound-by-edge input comes from (job input, artifact, ...).
 
 Edge compatibility is conflict-based: when both endpoints declare a comparable
 facet (``kind``, ``quantity``, ``fields``), the two must agree, while absent
@@ -30,6 +35,8 @@ ProductNode
     One graph node, identified by a compiler-assigned node id.
 GraphEdge
     Directed edge from one declared output to one consumer requirement.
+ExternalInputBinding
+    Binding of one consumer requirement to an external source.
 ProductGraph
     Validated acyclic graph of product nodes.
 requirement_matches
@@ -46,6 +53,7 @@ from .kinds import DataKind
 from .schema import ProductSchema
 
 __all__ = [
+    "ExternalInputBinding",
     "GraphEdge",
     "ProductDeclaration",
     "ProductGraph",
@@ -164,6 +172,21 @@ class GraphEdge(BaseModel):
     )
 
 
+class ExternalInputBinding(BaseModel):
+    """Binding of one consumer requirement to an external source."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    consumer: str = Field(description="Id of the consumer node.")
+    requirement: str = Field(
+        description="Name of the consumer requirement this binding satisfies.",
+    )
+    source: str = Field(
+        min_length=1,
+        description="External source label (e.g. job input / artifact).",
+    )
+
+
 def _check_edge_compatibility(
     edge: GraphEdge,
     declaration: ProductDeclaration,
@@ -211,14 +234,19 @@ def _check_edge_compatibility(
 class ProductGraph(BaseModel):
     """Validated acyclic graph of product nodes.
 
-    Each consumer requirement is bound by at most one edge, and every edge is
-    checked for facet conflicts between the bound declaration and requirement.
+    Every requirement slot follows a strict binding discipline: a required
+    requirement (``optional=False``) has exactly one binding — an edge into
+    the slot XOR an ``ExternalInputBinding`` naming an external source —
+    while an optional requirement has at most one binding. Every edge is
+    checked for facet conflicts between the bound declaration and
+    requirement.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     nodes: list[ProductNode]
     edges: list[GraphEdge] = Field(default_factory=list)
+    external_inputs: list[ExternalInputBinding] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_graph(self) -> ProductGraph:
@@ -257,6 +285,37 @@ class ProductGraph(BaseModel):
                 req for req in consumer.requirements if req.name == edge.requirement
             )
             _check_edge_compatibility(edge, declaration, requirement)
+        external_counts: dict[tuple[str, str], int] = {}
+        for binding in self.external_inputs:
+            consumer = by_id.get(binding.consumer)
+            if consumer is None:
+                raise ValueError(
+                    f"external input binding references unknown consumer "
+                    f"{binding.consumer!r}"
+                )
+            if binding.requirement not in {req.name for req in consumer.requirements}:
+                raise ValueError(
+                    f"external input binding references undeclared requirement "
+                    f"{binding.requirement!r} of node {binding.consumer!r}"
+                )
+            slot = (binding.consumer, binding.requirement)
+            external_counts[slot] = external_counts.get(slot, 0) + 1
+        for node in self.nodes:
+            for requirement in node.requirements:
+                slot = (node.node_id, requirement.name)
+                bindings = int(slot in bound_slots) + external_counts.get(slot, 0)
+                if bindings == 0 and not requirement.optional:
+                    raise ValueError(
+                        f"required requirement {requirement.name!r} of node "
+                        f"{node.node_id!r} has no binding; declare an edge or "
+                        f"an external input binding"
+                    )
+                if bindings > 1:
+                    raise ValueError(
+                        f"requirement {requirement.name!r} of node "
+                        f"{node.node_id!r} has more than one binding; each "
+                        f"requirement binds at most one edge or external input"
+                    )
         self._check_acyclic(list(by_id))
         return self
 

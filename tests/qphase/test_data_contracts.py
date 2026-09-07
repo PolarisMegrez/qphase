@@ -19,6 +19,7 @@ from qphase.data import (
     DataHandleProtocol,
     DataKind,
     DataLeaseProtocol,
+    ExternalInputBinding,
     GraphEdge,
     ProductDeclaration,
     ProductGraph,
@@ -603,6 +604,14 @@ def _edge(
     )
 
 
+def _binding(
+    sink: ProductNode, requirement: str, source: str = "job.input"
+) -> ExternalInputBinding:
+    return ExternalInputBinding(
+        consumer=sink.node_id, requirement=requirement, source=source
+    )
+
+
 def test_product_graph_validates_and_orders():
     """Graphs validate references, reject cycles and order topologically."""
     source = _node("engine.sde", ("trajectories", DataKind.TIME_SERIES))
@@ -856,6 +865,100 @@ def test_product_graph_accepts_compatible_and_open_facets():
         nodes=[partial_source, partial_sink],
         edges=[_edge(partial_source, "series", partial_sink, "in")],
     )
+
+
+def test_external_input_binding_contract():
+    """External bindings name a consumer slot and a non-empty source label."""
+    binding = ExternalInputBinding(consumer="n", requirement="in", source="job.input")
+    assert binding.source == "job.input"
+    with pytest.raises(ValidationError, match="source"):
+        ExternalInputBinding(consumer="n", requirement="in", source="")
+    with pytest.raises(ValidationError, match="extra"):
+        ExternalInputBinding(
+            consumer="n", requirement="in", source="job.input", provenance="x"
+        )
+
+
+def test_product_graph_required_slots_need_exactly_one_binding():
+    """Required requirements bind exactly one edge or one external input."""
+    source = _node("engine.sde", ("trajectories", DataKind.TIME_SERIES))
+    sink = _node(
+        "analyser.spectrum",
+        "psd",
+        requires=[
+            ProductRequirement(name="traces", kind=DataKind.TIME_SERIES),
+            ProductRequirement(name="reference", kind=DataKind.SPECTRAL, optional=True),
+        ],
+    )
+
+    # Required slot bound externally; optional slot left unbound.
+    graph = ProductGraph(
+        nodes=[source, sink],
+        external_inputs=[_binding(sink, "traces", source="job.trajectories")],
+    )
+    assert graph.external_inputs[0].source == "job.trajectories"
+
+    with pytest.raises(ValidationError, match="has no binding"):
+        ProductGraph(nodes=[source, sink])
+
+    # An edge and an external binding for the same slot both count.
+    with pytest.raises(ValidationError, match="more than one binding"):
+        ProductGraph(
+            nodes=[source, sink],
+            edges=[_edge(source, "trajectories", sink, "traces")],
+            external_inputs=[_binding(sink, "traces")],
+        )
+
+    # Two external bindings for the same slot count too.
+    with pytest.raises(ValidationError, match="more than one binding"):
+        ProductGraph(
+            nodes=[source, sink],
+            external_inputs=[
+                _binding(sink, "traces", source="job.trajectories"),
+                _binding(sink, "traces", source="artifact.ref"),
+            ],
+        )
+
+
+def test_product_graph_optional_slots_allow_at_most_one_binding():
+    """Optional requirements may be unbound but never bound twice."""
+    ref_source = _node("analyser.reference", ("ref", DataKind.SPECTRAL))
+    sink = _node(
+        "analyser.compare",
+        "delta",
+        requires=[
+            ProductRequirement(name="reference", kind=DataKind.SPECTRAL, optional=True)
+        ],
+    )
+    with pytest.raises(ValidationError, match="more than one binding"):
+        ProductGraph(
+            nodes=[ref_source, sink],
+            edges=[_edge(ref_source, "ref", sink, "reference")],
+            external_inputs=[_binding(sink, "reference")],
+        )
+
+
+def test_product_graph_external_bindings_must_reference_declared_slots():
+    """External bindings reference existing nodes and requirements."""
+    sink = _node(
+        "analyser.spectrum",
+        "psd",
+        requires=[ProductRequirement(name="traces", kind=DataKind.TIME_SERIES)],
+    )
+    with pytest.raises(ValidationError, match="unknown consumer"):
+        ProductGraph(
+            nodes=[sink],
+            external_inputs=[
+                ExternalInputBinding(
+                    consumer="missing", requirement="traces", source="job.input"
+                )
+            ],
+        )
+    with pytest.raises(ValidationError, match="undeclared requirement"):
+        ProductGraph(
+            nodes=[sink],
+            external_inputs=[_binding(sink, "not-a-requirement")],
+        )
 
 
 def test_requirement_matches_schema():
