@@ -23,6 +23,7 @@ from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyzer
 from qphase_sde.analyser.result import AnalysisResult
 from qphase_sde.contracts.quantities import SDEQuantity
 from qphase_sde.engine import Engine, EngineConfig
+from qphase_sde.errors import SDEExecutionError
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 from qphase_sde.result import legacy_view_from_products
 
@@ -77,19 +78,24 @@ class _ProductBuilderAnalyzer(_MeanAnalyzer):
         *,
         graph_ready: bool = True,
         declared_kind: DataKind = DataKind.STATISTICS,
+        declared_name: str | None = None,
+        extra_declarations: tuple[ProductDeclaration, ...] = (),
     ):
         self.product_name = product_name
         self.graph_ready = graph_ready
         self.declared_kind = declared_kind
+        self.declared_name = declared_name or product_name
+        self.extra_declarations = extra_declarations
 
     def output_specs(self, *, label):
         return (
             ProductDeclaration(
-                name=self.product_name,
+                name=self.declared_name,
                 kind=self.declared_kind,
                 quantity="mean",
                 fields=["mean"],
             ),
+            *self.extra_declarations,
         )
 
     def build_products(self, payload, *, scan_size, label):
@@ -139,7 +145,7 @@ def _two_mode_grid():
     ).compile()
 
 
-def _run(model, analysers, *, scan=False, t1=0.2, n_traj=8, keep_traj=False):
+def _run(model, analysers, *, scan=False, t1=0.2, n_traj=8, keep_traj=False, grid=None):
     n_modes = model.n_modes
     engine = Engine(
         config=EngineConfig(
@@ -158,12 +164,24 @@ def _run(model, analysers, *, scan=False, t1=0.2, n_traj=8, keep_traj=False):
             "analyser": analysers,
         },
     )
-    grid = None
-    if scan:
+    if grid is None and scan:
         grid = _two_mode_grid() if n_modes == 2 else _grid()
     return engine.run(
         context=SimpleNamespace(parameter_grid=grid, progress=None, cancellation=None)
     )
+
+
+def _singleton_grid():
+    return ScanSpec.model_validate(
+        {
+            "axes": {
+                "rate": {
+                    "target": "model.typed_one_mode.rate",
+                    "values": [1.0],
+                }
+            }
+        }
+    ).compile()
 
 
 def test_psd_product_is_graph_ready_spectral():
@@ -444,3 +462,34 @@ def test_analyser_products_must_be_graph_ready_and_match_declaration():
             _OneModeModel(),
             {"bad": _ProductBuilderAnalyzer("bad", declared_kind=DataKind.SPECTRAL)},
         )
+
+
+def test_singleton_scan_product_must_carry_scan_axis():
+    """A genuine 1-point scan producer may not omit the size-1 scan axis."""
+    with np.testing.assert_raises_regex(SDEExecutionError, "no scan axis"):
+        _run(
+            _OneModeModel(),
+            {"bad": _ProductBuilderAnalyzer("bad")},
+            grid=_singleton_grid(),
+        )
+
+
+def test_builder_products_must_be_declared():
+    with np.testing.assert_raises_regex(SDEExecutionError, "not declared"):
+        _run(
+            _OneModeModel(),
+            {"bad": _ProductBuilderAnalyzer("bad", declared_name="other")},
+        )
+
+
+def test_builder_must_return_all_declared_outputs_atomically():
+    analyser = _ProductBuilderAnalyzer(
+        "bad",
+        extra_declarations=(
+            ProductDeclaration(
+                name="bad.extra", kind=DataKind.STATISTICS, fields=["extra"]
+            ),
+        ),
+    )
+    with np.testing.assert_raises_regex(SDEExecutionError, "did not return"):
+        _run(_OneModeModel(), {"bad": analyser})

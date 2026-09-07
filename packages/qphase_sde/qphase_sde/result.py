@@ -762,8 +762,10 @@ def bundle_from_result(
     ``scan_size == 1`` and lists of per-point payloads for larger scans.
 
     Producer failures are fail-fast: a payload of a registered analyser (a
-    name present in ``analysers``) that builds no product — or a product
-    whose scan axis contradicts the job scan size — raises
+    name present in ``analysers``) that builds no product, a product whose
+    scan axis is missing or contradicts the job scan size, a product not
+    declared by the analyser's ``output_specs()``, or a declared output the
+    producer did not return atomically raises
     :class:`~qphase_sde.errors.SDEExecutionError` and the job ends failed.
     Payloads of names outside ``analysers`` (observer/metadata payloads
     merged into ``analysis``) that carry no numeric leaves are not products;
@@ -819,6 +821,11 @@ def bundle_from_result(
                 if callable(declaration_factory)
                 else None
             )
+            declared_names = (
+                {item.name for item in declarations}
+                if declarations is not None
+                else None
+            )
             for product_name, product in built.items():
                 if product_name in products:
                     raise ValueError(
@@ -837,6 +844,13 @@ def bundle_from_result(
                 if not graph_ready and not legacy_bridge:
                     raise TypeError(
                         f"analyser product {product_name!r} is not graph-ready"
+                    )
+                if declared_names is not None and product_name not in declared_names:
+                    raise SDEExecutionError(
+                        f"analyser product {product_name!r} is not declared by "
+                        f"the output_specs() of analyser {name!r}; the "
+                        "producer output is inconsistent and the job is "
+                        "marked failed"
                     )
                 declaration = (
                     next(
@@ -868,7 +882,18 @@ def bundle_from_result(
                             f"analyser product {product_name!r} misses "
                             f"declared quantity {declaration.quantity!r}"
                         )
-                if _SCAN_AXIS in {axis.name for axis in product.axes}:
+                product_axes = {axis.name for axis in product.axes}
+                if (
+                    graph_ready
+                    and scan_size is not None
+                    and _SCAN_AXIS not in product_axes
+                ):
+                    raise SDEExecutionError(
+                        f"analyser product {product_name!r} has no scan axis, "
+                        f"but the job scan size is {scan_size}; the producer "
+                        "output is incomplete and the job is marked failed"
+                    )
+                if _SCAN_AXIS in product_axes:
                     product_scan_size = product.axis(_SCAN_AXIS).size
                     if product_scan_size is None or product_scan_size != scan_size:
                         raise SDEExecutionError(
@@ -882,6 +907,16 @@ def bundle_from_result(
                     if graph_ready
                     else product
                 )
+            if declared_names is not None:
+                missing_outputs = sorted(declared_names - set(built))
+                if missing_outputs:
+                    raise SDEExecutionError(
+                        f"analyser {name!r} did not return its declared "
+                        f"outputs {missing_outputs}; a multi-output producer "
+                        "returns all declared outputs atomically, so the "
+                        "producer output is incomplete and the job is marked "
+                        "failed"
+                    )
             continue
         product = _analysis_product(str(name), payload, scan_size=scan_size)
         if product is not None:
