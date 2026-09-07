@@ -3,7 +3,8 @@
 The compiler is deliberately limited to control-plane work: it resolves the
 project defaults, engine declarations, plugin configuration and logical data
 flow. It never instantiates an engine or backend and never opens a product
-payload.
+payload; for external job inputs that already exist as artifact directories
+it reads only the artifact manifest (product schemas), never payloads.
 """
 
 from __future__ import annotations
@@ -33,12 +34,14 @@ from .tags import (
     validate_declared_tags,
     workflow_tag_assignment_id,
 )
+from .utils import deep_copy
 from .workflow import workflow_revision
 
 if TYPE_CHECKING:
     # task_profile imports qphase.data at module level; importing it lazily
     # keeps ``qphase.data`` -> ``qphase.core`` import orders cycle-free.
-    from .task_profile import PluginRequirementSet
+    from ..data.schema import ProductSchema
+    from .task_profile import ResolvedTaskProfile
 
 __all__ = ["CompiledJob", "CompiledWorkflow", "WorkflowCompiler"]
 
@@ -76,6 +79,9 @@ class CompiledJob:
     save: bool | str | None
     depends_on: tuple[str, ...]
     parameter_grid: ParameterGrid | None
+    # Snapshot of the resolved conditional task profile; ``None`` for
+    # legacy-manifest engines that declare no task profiles.
+    task_profile: ResolvedTaskProfile | None = None
 
     @property
     def name(self) -> str:
@@ -102,13 +108,23 @@ class CompiledJob:
             "output": self.output,
             "save": self.save,
             "depends_on": list(self.depends_on),
+            "task_profile": (
+                self.task_profile.model_dump(mode="json")
+                if self.task_profile is not None
+                else None
+            ),
         }
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> CompiledJob:
         """Restore a resolved job request without registry access."""
+        # Imported lazily: restoration is plain model validation and must not
+        # touch the plugin registry or dotted-path imports.
+        from .task_profile import ResolvedTaskProfile
+
         job = JobConfig.model_validate(payload["job"])
         parameter_grid = job.scan.compile() if job.scan is not None else None
+        raw_profile = payload.get("task_profile")
         return cls(
             job=job,
             engine_name=str(payload["engine_name"]),
@@ -128,6 +144,11 @@ class CompiledJob:
             save=payload.get("save"),
             depends_on=tuple(payload["depends_on"]),
             parameter_grid=parameter_grid,
+            task_profile=(
+                ResolvedTaskProfile.model_validate(raw_profile)
+                if raw_profile is not None
+                else None
+            ),
         )
 
 
@@ -305,19 +326,31 @@ class WorkflowCompiler:
         )
         plugin_sections = merge_plugin_config_sections(merged, namespaces=namespaces)
         explicit = self._explicit_namespaces(job, namespaces)
+        input_source = self._validate_input(job, workflow)
         input_plugins: set[str] = set()
         profile_id: str | None = None
+        resolved_profile: ResolvedTaskProfile | None = None
         forbidden: set[str] = set()
         if getattr(manifest, "task_profiles", None):
             # Conditional task profiles replace the legacy required/input
             # plugin sets: the selected profile is the only requirement
-            # declaration for this engine.
-            profile_id, requirements = self._resolve_task_profile(
-                job, engine_name, manifest, merged
+            # declaration for this engine. Profile *selection* sees only
+            # job-explicit plugin presence, so optional plugins living solely
+            # in project defaults cannot switch the selected profile.
+            resolved_profile = self._resolve_task_profile(
+                job,
+                engine_name,
+                manifest,
+                merged,
+                selector_config=self._explicit_selector_config(
+                    job, merged, namespaces
+                ),
+                input_schemas=self._input_product_schemas(input_source, workflow),
             )
-            required = set(requirements.required)
-            optional = set(requirements.optional)
-            forbidden = set(requirements.forbidden)
+            profile_id = resolved_profile.profile_id
+            required = set(resolved_profile.requirements.required)
+            optional = set(resolved_profile.requirements.optional)
+            forbidden = set(resolved_profile.requirements.forbidden)
         else:
             input_plugins = set(getattr(manifest, "input_plugins", set()))
             required_plugins = set(getattr(manifest, "required_plugins", set()))
@@ -369,8 +402,13 @@ class WorkflowCompiler:
             and isinstance(config, Mapping)
         }
         if profile_id is not None:
+            # Only job-explicit plugin config can trip a forbidden namespace;
+            # a forbidden namespace injected solely by project defaults is
+            # not configured by the job and is simply not selected.
             forbidden_configured = sorted(
-                namespace for namespace in forbidden if plugin_sections.get(namespace)
+                namespace
+                for namespace in forbidden
+                if namespace in explicit and plugin_sections.get(namespace)
             )
             if forbidden_configured:
                 raise QPhaseConfigError(
@@ -392,10 +430,11 @@ class WorkflowCompiler:
                     code=ErrorCode.CONFIG,
                 )
 
+        if resolved_profile is not None:
+            self._validate_profile_inputs(job, engine_name, resolved_profile)
         engine_config = self._engine_config(merged, engine_name)
         self._validate_plugin_sections(selected)
         parameter_grid = job.scan.compile() if job.scan is not None else None
-        input_source = self._validate_input(job, workflow)
         return CompiledJob(
             job=job,
             engine_name=engine_name,
@@ -412,6 +451,7 @@ class WorkflowCompiler:
             save=job.save,
             depends_on=tuple(job.depends_on),
             parameter_grid=parameter_grid,
+            task_profile=resolved_profile,
         )
 
     def _resolve_task_profile(
@@ -420,15 +460,23 @@ class WorkflowCompiler:
         engine_name: str,
         manifest: Any,
         merged: Mapping[str, Any],
-    ) -> tuple[str, PluginRequirementSet]:
+        *,
+        selector_config: Mapping[str, Any],
+        input_schemas: Mapping[str, ProductSchema],
+    ) -> ResolvedTaskProfile:
         """Select and resolve the engine's task profile for one job.
 
-        The profile selector reads the normalized merged job config; the
-        profile's requirements (possibly refined by its resolver) replace the
-        legacy manifest plugin sets for this job.
+        The profile selector reads the job-explicit config view (plugin
+        presence restricted to what the job itself configures); the profile's
+        requirements — possibly refined by its resolver, which sees the
+        normalized merged config plus any compile-time-knowable input product
+        schemas — replace the legacy manifest plugin sets for this job. The
+        returned snapshot freezes the selection so the compiled payload
+        preserves the resolved profile identity and its typed inputs/outputs.
         """
         from .task_profile import (
             EngineTaskProfile,
+            ResolvedTaskProfile,
             TaskProfileResolutionContext,
             resolve_plugin_requirements,
         )
@@ -467,8 +515,15 @@ class WorkflowCompiler:
                     code=ErrorCode.PLUGIN_DISCOVERY,
                     context={"engine": engine_name},
                 )
+            if profile.id in profiles:
+                raise QPhasePluginError(
+                    f"engine {engine_name!r} declares duplicate task profile "
+                    f"id {profile.id!r}",
+                    code=ErrorCode.PLUGIN_DISCOVERY,
+                    context={"engine": engine_name, "profile": profile.id},
+                )
             profiles[profile.id] = profile
-        profile_id = selector(dict(merged))
+        profile_id = selector(dict(selector_config))
         if profile_id not in profiles:
             raise QPhaseConfigError(
                 f"Job {job.name!r} uses engine {engine_name!r} whose profile "
@@ -476,11 +531,101 @@ class WorkflowCompiler:
                 f"(declared: {sorted(profiles)})",
                 code=ErrorCode.CONFIG,
             )
+        selected = profiles[profile_id]
         context = TaskProfileResolutionContext(
             normalized_job_config=dict(merged),
-            named_input_product_schemas={},
+            named_input_product_schemas=dict(input_schemas),
         )
-        return profile_id, resolve_plugin_requirements(profiles[profile_id], context)
+        return ResolvedTaskProfile(
+            profile_id=profile_id,
+            requirements=resolve_plugin_requirements(selected, context),
+            inputs=list(selected.inputs),
+            outputs=list(selected.outputs),
+        )
+
+    @staticmethod
+    def _explicit_selector_config(
+        job: JobConfig, merged: Mapping[str, Any], namespaces: set[str]
+    ) -> dict[str, Any]:
+        """Build the job-explicit config view that drives profile selection.
+
+        The engine and params sections stay the effective merged ones
+        (project defaults may fill them), but plugin namespaces and the
+        ``plugins`` block reflect only what the job itself configures, so an
+        optional plugin present solely in project defaults cannot change the
+        selected task profile.
+        """
+        view = dict(merged)
+        view["plugins"] = deep_copy(job.plugins)
+        extra = job.model_extra or {}
+        # ``engine``/``params`` are reserved job sections, not plugin-class
+        # namespaces; the engine section stays the effective merged one.
+        for namespace in namespaces - {"engine", "params"}:
+            if namespace in extra:
+                view[namespace] = deep_copy(extra[namespace])
+            else:
+                view.pop(namespace, None)
+        return view
+
+    @staticmethod
+    def _input_product_schemas(
+        input_source: str | None, workflow: WorkflowSpec
+    ) -> dict[str, ProductSchema]:
+        """Read compile-time input product schemas, metadata-only.
+
+        Only an external input that already exists as a current-format
+        artifact directory exposes product schemas at compile time: its
+        manifest is read, payloads are never opened. Upstream-job inputs have
+        no products yet and legacy or plain-path inputs carry no typed
+        manifest, so both yield an empty mapping by design.
+        """
+        if input_source is None:
+            return {}
+        if input_source in {item.name for item in workflow.jobs}:
+            return {}
+        path = Path(input_source).expanduser()
+        if not path.is_dir():
+            return {}
+        # Imported lazily: core must not depend on the data layer at module
+        # import time (the data layer already depends on core.utils).
+        from ..data.errors import ArtifactError
+        from ..data.store import ArtifactManifest
+
+        try:
+            manifest = ArtifactManifest.read(path)
+        except ArtifactError:
+            return {}
+        return {entry.name: entry.product_schema for entry in manifest.products}
+
+    @staticmethod
+    def _validate_profile_inputs(
+        job: JobConfig, engine_name: str, profile: ResolvedTaskProfile
+    ) -> None:
+        """Validate the selected profile's typed input contract against the job.
+
+        A job input expresses exactly one external input slot, so a profile
+        whose required input slots need more than that is rejected explicitly
+        instead of pretending support.
+        """
+        required_slots = [
+            slot for slot in profile.inputs if not slot.requirement.optional
+        ]
+        if len(required_slots) > 1:
+            names = sorted(slot.name for slot in required_slots)
+            raise QPhasePluginError(
+                f"engine {engine_name!r} task profile {profile.profile_id!r} "
+                f"declares {len(required_slots)} required input slots {names}, "
+                "but the job input contract expresses at most one",
+                code=ErrorCode.PLUGIN_DISCOVERY,
+                context={"engine": engine_name, "profile": profile.profile_id},
+            )
+        if required_slots and job.input is None:
+            raise QPhaseConfigError(
+                f"Job {job.name!r} uses engine {engine_name!r} with task "
+                f"profile {profile.profile_id!r} which requires input slot "
+                f"{required_slots[0].name!r}, but the job declares no input",
+                code=ErrorCode.INPUT,
+            )
 
     @staticmethod
     def _job_override(job: JobConfig, namespaces: set[str]) -> dict[str, Any]:

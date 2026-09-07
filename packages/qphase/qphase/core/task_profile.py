@@ -10,6 +10,15 @@ scheduler or the execution context) and returns a **complete**
 may legitimately turn ``model`` from forbidden into required without any
 implicit merge order.
 
+Input product schemas are a two-phase contract: at compile time
+``TaskProfileResolutionContext.named_input_product_schemas`` is populated
+metadata-only when the job input references an external artifact directory
+that already exists with a readable current-format manifest (manifests only,
+never payloads). Upstream-job inputs do not exist yet and legacy or
+plain-path inputs carry no typed manifest, so the mapping is empty for them
+by design; resolvers must treat it as optional metadata and never require an
+entry.
+
 ``forbidden`` is an explicit configuration error, not a silent "ignore this
 plugin". Resolver outputs are re-validated with the same invariants.
 
@@ -25,6 +34,8 @@ TaskProfileResolutionContext
     Restricted resolver input.
 EngineTaskProfile
     Complete task profile with an optional resolver reference.
+ResolvedTaskProfile
+    Serializable snapshot of the profile resolved for one job.
 resolve_plugin_requirements
     Resolve a profile against a context, re-validating resolver output.
 """
@@ -46,6 +57,7 @@ __all__ = [
     "InputProductRequirement",
     "OutputProductDeclaration",
     "PluginRequirementSet",
+    "ResolvedTaskProfile",
     "TaskProfileResolutionContext",
     "resolve_plugin_requirements",
 ]
@@ -117,6 +129,13 @@ class TaskProfileResolutionContext(BaseModel):
     Resolvers receive the normalized job config and the schemas of named
     input products — never data handles, product payloads, artifact loaders,
     the scheduler or the execution context.
+
+    ``named_input_product_schemas`` is a two-phase field: at compile time it
+    is populated metadata-only when the job input references an external
+    artifact directory that already exists with a readable current-format
+    manifest; for upstream-job inputs (whose products do not exist yet) and
+    legacy or plain-path inputs it is empty by design. Resolvers must not
+    depend on its entries being present.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -183,6 +202,24 @@ class EngineTaskProfile(BaseModel):
         if value is not None and not _DOTTED_PATH_PATTERN.match(value):
             raise ValueError(f"invalid resolver dotted path: {value!r}")
         return value
+
+
+class ResolvedTaskProfile(BaseModel):
+    """Serializable snapshot of the task profile resolved for one job.
+
+    Freezes the selected profile id, the *resolved* plugin requirements
+    (post-resolver) and the profile's typed inputs/outputs, so a compiled job
+    payload preserves which profile governed its validation. Restoration is
+    plain model validation — it never touches the plugin registry or
+    dotted-path imports.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: str
+    requirements: PluginRequirementSet
+    inputs: list[InputProductRequirement] = Field(default_factory=list)
+    outputs: list[OutputProductDeclaration] = Field(default_factory=list)
 
 
 def _default_loader(dotted_path: str) -> Any:

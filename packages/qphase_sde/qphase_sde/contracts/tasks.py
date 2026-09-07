@@ -13,6 +13,18 @@ The workflow compiler enforces these profiles for every SDE job: the
 :func:`select_sde_task_profile`, replacing the legacy
 ``required_plugins``/``input_plugins`` conditional scheduling for this engine.
 
+Profile *selection* is driven by the job-explicit configuration view: project
+defaults may fill the effective engine config, but an optional analyser
+present only in project defaults never upgrades ``simulate`` to
+``simulate_analyze`` and is never injected into the job.
+
+Resolver input schemas follow the two-phase boundary of
+``qphase.core.task_profile.TaskProfileResolutionContext``: at compile time
+they are populated metadata-only for external inputs that already exist as
+current-format artifact directories and stay empty otherwise (upstream-job
+products do not exist yet). The SDE profiles declare no resolver, so the SDE
+engine never depends on them.
+
 Public API
 ----------
 SDE_TASK_PROFILES
@@ -67,7 +79,9 @@ SIMULATE_PROFILE = EngineTaskProfile(
 #: Analysis of existing typed products: model/integrator/observer are
 #: forbidden by default and backend support is optional (analysers fall back
 #: to a host NumPy backend). A model-aware analyser must opt in explicitly via
-#: a resolver that returns a complete replacement requirement set.
+#: a resolver that returns a complete replacement requirement set. The
+#: profile's required ``input`` slot must map to the job's ``input:``
+#: declaration — the compiler rejects ``mode: analyze`` jobs without one.
 ANALYZE_PROFILE = EngineTaskProfile(
     id="analyze",
     requirements=PluginRequirementSet(
@@ -116,39 +130,42 @@ def sde_task_profile(task_id: str) -> EngineTaskProfile:
     raise KeyError(f"unknown SDE task profile {task_id!r}")
 
 
-def select_sde_task_profile(normalized_job_config: dict[str, Any]) -> str:
-    """Select the SDE task profile id for one normalized job config.
+def select_sde_task_profile(job_explicit_config: dict[str, Any]) -> str:
+    """Select the SDE task profile id for one job-explicit config view.
 
     The user-facing config keeps only ``mode: simulate|analyze``:
 
     - ``mode: analyze`` maps to ``analyze``;
-    - ``mode: simulate`` (the default) with at least one configured analyser
-      maps to ``simulate_analyze``;
+    - ``mode: simulate`` (the default) with at least one job-configured
+      analyser maps to ``simulate_analyze``;
     - ``mode: simulate`` without analysers maps to ``simulate``.
 
-    ``normalized_job_config`` is the compiler-merged job configuration: the
-    engine section lives under ``engine.sde`` and configured analysers under
-    the ``analyser`` plugin-class namespace (top-level or ``plugins`` block).
+    ``job_explicit_config`` is the compiler's job-explicit view: the engine
+    section lives under ``engine.sde`` and is the effective, defaults-filled
+    engine config, while plugin namespaces and the ``plugins`` block contain
+    only what the job itself configures (top-level or ``plugins`` block). An
+    optional analyser present solely in project defaults therefore never
+    upgrades ``simulate`` to ``simulate_analyze``.
     """
     mode = "simulate"
-    engines = normalized_job_config.get("engine")
+    engines = job_explicit_config.get("engine")
     if isinstance(engines, Mapping):
         engine_config = engines.get("sde")
         if isinstance(engine_config, Mapping):
             mode = str(engine_config.get("mode", "simulate"))
     if mode == "analyze":
         return "analyze"
-    if _configured_analysers(normalized_job_config):
+    if _configured_analysers(job_explicit_config):
         return "simulate_analyze"
     return "simulate"
 
 
-def _configured_analysers(normalized_job_config: Mapping[str, Any]) -> bool:
-    """Return whether the job configures at least one analyser plugin."""
-    analysers = normalized_job_config.get("analyser")
+def _configured_analysers(job_explicit_config: Mapping[str, Any]) -> bool:
+    """Return whether the job itself configures at least one analyser."""
+    analysers = job_explicit_config.get("analyser")
     if isinstance(analysers, Mapping) and analysers:
         return True
-    plugins = normalized_job_config.get("plugins")
+    plugins = job_explicit_config.get("plugins")
     if isinstance(plugins, Mapping):
         analysers = plugins.get("analyser")
         if isinstance(analysers, Mapping) and analysers:

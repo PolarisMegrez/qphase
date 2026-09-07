@@ -76,11 +76,17 @@ class EngineManifest(PluginManifest):
         Dotted path ('module:attr') to the engine's ``EngineTaskProfile``
         collection (tuple or id-keyed mapping). Engines declaring profiles are
         validated against the selected profile instead of the legacy
-        ``required_plugins``/``input_plugins`` sets.
+        ``required_plugins``/``input_plugins`` sets. Profile ids must be
+        unique within the collection; duplicates fail at compile time.
     profile_selector : str | None
         Dotted path ('module:attr') to a callable
-        ``(normalized_job_config: dict) -> str`` returning the task profile id
-        for one job. Required when ``task_profiles`` is set.
+        ``(job_explicit_config: dict) -> str`` returning the task profile id
+        for one job. The argument is the compiler's job-explicit
+        configuration view: the engine section is the effective
+        (defaults-filled) engine config, while plugin namespaces and the
+        ``plugins`` block reflect only what the job itself configures, so an
+        optional plugin present solely in project defaults never changes the
+        selected profile. Required when ``task_profiles`` is set.
 
     """
 
