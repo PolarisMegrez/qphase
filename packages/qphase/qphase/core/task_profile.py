@@ -22,6 +22,12 @@ entry.
 ``forbidden`` is an explicit configuration error, not a silent "ignore this
 plugin". Resolver outputs are re-validated with the same invariants.
 
+Required input slots are matched against available product schemas with
+``unmatched_required_slots`` (kind equality, per-variable quantity/domain,
+required fields, accepted axes — the same predicate as the product graph's
+materialization boundary). The compiler applies it when compile-time schemas
+exist; the scheduler applies it once an input is resolved at execution time.
+
 Public API
 ----------
 PluginRequirementSet
@@ -38,17 +44,23 @@ ResolvedTaskProfile
     Serializable snapshot of the profile resolved for one job.
 resolve_plugin_requirements
     Resolve a profile against a context, re-validating resolver output.
+unmatched_required_slots
+    Required input slots that no available product schema satisfies.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ..data.graph import ProductDeclaration, ProductRequirement
+from ..data.graph import (
+    ProductDeclaration,
+    ProductRequirement,
+    requirement_matches,
+)
 from ..data.schema import ProductSchema
 from .utils import canonical_json
 
@@ -60,6 +72,7 @@ __all__ = [
     "ResolvedTaskProfile",
     "TaskProfileResolutionContext",
     "resolve_plugin_requirements",
+    "unmatched_required_slots",
 ]
 
 _DOTTED_PATH_PATTERN = re.compile(r"^[A-Za-z_][\w.]*:[A-Za-z_][\w.]*$")
@@ -182,7 +195,9 @@ class EngineTaskProfile(BaseModel):
     ``resolver`` optionally points to a callable
     ``(TaskProfileResolutionContext) -> PluginRequirementSet`` whose result
     *replaces* the defaults. Resolvers stay dotted-path strings so profiles
-    remain JSON-serializable.
+    remain JSON-serializable. Input slot names and output product names are
+    each unique, and no name may be both — a slot is either consumed or
+    produced by the task.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -202,6 +217,26 @@ class EngineTaskProfile(BaseModel):
         if value is not None and not _DOTTED_PATH_PATTERN.match(value):
             raise ValueError(f"invalid resolver dotted path: {value!r}")
         return value
+
+    @model_validator(mode="after")
+    def _check_slot_names(self) -> EngineTaskProfile:
+        input_names = [slot.name for slot in self.inputs]
+        if len(set(input_names)) != len(input_names):
+            raise ValueError(
+                f"task profile {self.id!r} declares duplicate input slot names"
+            )
+        output_names = [output.name for output in self.outputs]
+        if len(set(output_names)) != len(output_names):
+            raise ValueError(
+                f"task profile {self.id!r} declares duplicate output names"
+            )
+        shared = sorted(set(input_names) & set(output_names))
+        if shared:
+            raise ValueError(
+                f"task profile {self.id!r} declares {shared} as both input "
+                "slots and output products; a slot is either consumed or produced"
+            )
+        return self
 
 
 class ResolvedTaskProfile(BaseModel):
@@ -256,3 +291,28 @@ def resolve_plugin_requirements(
         )
     validate_requirement_set(resolved)
     return resolved
+
+
+def unmatched_required_slots(
+    inputs: Iterable[InputProductRequirement],
+    schemas: Mapping[str, ProductSchema],
+) -> list[InputProductRequirement]:
+    """Return the required input slots no available product schema satisfies.
+
+    A slot is satisfied when at least one available product schema matches its
+    ``ProductRequirement`` facets via
+    :func:`~qphase.data.graph.requirement_matches`: kind equality when the
+    requirement sets a kind, per-variable quantity/value-domain, required
+    fields as a subset of variable names, and accepted axes. An empty
+    ``schemas`` mapping therefore leaves every required slot unmatched;
+    callers hold the two-phase context and decide whether "no schemas" means
+    "skip" (upstream-job or legacy plain-path input) rather than "fail".
+    """
+    return [
+        slot
+        for slot in inputs
+        if not slot.requirement.optional
+        and not any(
+            requirement_matches(slot.requirement, schema) for schema in schemas.values()
+        )
+    ]

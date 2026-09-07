@@ -4,12 +4,22 @@ import pytest
 from pydantic import ValidationError
 from qphase.core.task_profile import (
     EngineTaskProfile,
+    InputProductRequirement,
+    OutputProductDeclaration,
     PluginRequirementSet,
     TaskProfileResolutionContext,
     _default_loader,
     resolve_plugin_requirements,
 )
-from qphase.data import AxisRole, AxisSchema, DataKind, ProductSchema, VariableSchema
+from qphase.data import (
+    AxisRole,
+    AxisSchema,
+    DataKind,
+    ProductDeclaration,
+    ProductRequirement,
+    ProductSchema,
+    VariableSchema,
+)
 
 
 def test_requirement_sets_must_be_pairwise_disjoint():
@@ -153,3 +163,60 @@ def test_resolver_dotted_path_validation():
         id="ok", resolver="qphase_sde.config:resolve_analyze_profile"
     )
     assert ok.resolver == "qphase_sde.config:resolve_analyze_profile"
+
+
+def test_profile_input_slot_names_must_be_unique():
+    """A profile may not declare two input slots with the same name."""
+    with pytest.raises(ValidationError, match="duplicate input slot names"):
+        EngineTaskProfile(
+            id="bad",
+            inputs=[
+                InputProductRequirement(
+                    name="input", requirement=ProductRequirement(name="input")
+                ),
+                InputProductRequirement(
+                    name="input", requirement=ProductRequirement(name="other")
+                ),
+            ],
+        )
+
+
+def test_profile_output_names_must_be_unique():
+    """A profile may not declare two output products with the same name."""
+    with pytest.raises(ValidationError, match="duplicate output names"):
+        EngineTaskProfile(
+            id="bad",
+            outputs=[
+                OutputProductDeclaration(
+                    name="out",
+                    declaration=ProductDeclaration(
+                        name="out", kind=DataKind.TIME_SERIES
+                    ),
+                ),
+                OutputProductDeclaration(
+                    name="out",
+                    declaration=ProductDeclaration(name="out", kind=DataKind.SPECTRAL),
+                ),
+            ],
+        )
+
+
+def test_profile_slot_may_not_be_both_input_and_output():
+    """A slot is either consumed or produced, never both under one name."""
+    with pytest.raises(ValidationError, match="both input slots and output products"):
+        EngineTaskProfile(
+            id="bad",
+            inputs=[
+                InputProductRequirement(
+                    name="shared", requirement=ProductRequirement(name="shared")
+                )
+            ],
+            outputs=[
+                OutputProductDeclaration(
+                    name="shared",
+                    declaration=ProductDeclaration(
+                        name="shared", kind=DataKind.TIME_SERIES
+                    ),
+                )
+            ],
+        )

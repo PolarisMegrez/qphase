@@ -19,7 +19,7 @@ import json
 import os
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -27,6 +27,7 @@ from typing import Any, TypedDict, cast
 from .compiler import CompiledJob, CompiledWorkflow, WorkflowCompiler
 from .config import JobConfig, WorkflowSpec
 from .errors import (
+    ErrorCode,
     QPhaseConfigError,
     attach_session_log,
     get_logger,
@@ -625,6 +626,49 @@ class Scheduler:
             session_dir=self.session_dir,
         )
 
+    @staticmethod
+    def _validate_profile_input_products(
+        compiled_job: CompiledJob, input_result: ResultProtocol | None
+    ) -> None:
+        """Execution-time phase of the profile's typed input contract.
+
+        Compile time cannot see upstream-job products, so once the job input
+        is resolved the required input slots of the job's task profile
+        snapshot are matched against the product schemas the resolved input
+        exposes (typed bundles publish ``products`` as a name → ``Dataset``
+        mapping). Inputs exposing no typed product mapping — legacy results,
+        directory handles — carry no extractable schemas and are skipped,
+        the same "no schema information" boundary as compile-time plain-path
+        inputs.
+        """
+        profile = compiled_job.task_profile
+        if profile is None or input_result is None:
+            return
+        if not any(not slot.requirement.optional for slot in profile.inputs):
+            return
+        # Imported lazily: core must not depend on the data layer at module
+        # import time (the data layer already depends on core).
+        from ..data.datasets import Dataset
+        from .task_profile import unmatched_required_slots
+
+        products = getattr(input_result, "products", None)
+        if not (
+            isinstance(products, Mapping)
+            and all(isinstance(product, Dataset) for product in products.values())
+        ):
+            return
+        schemas = {name: product.schema for name, product in products.items()}
+        unmatched = unmatched_required_slots(profile.inputs, schemas)
+        if unmatched:
+            slot = unmatched[0]
+            raise QPhaseConfigError(
+                f"Job {compiled_job.name!r} input does not satisfy task "
+                f"profile {profile.profile_id!r}: required input slot "
+                f"{slot.name!r} is satisfied by no product of the resolved "
+                f"input (available: {sorted(schemas)})",
+                code=ErrorCode.INPUT,
+            )
+
     def _run_single(
         self,
         job: JobConfig,
@@ -744,6 +788,7 @@ class Scheduler:
         # Resolve input (input/config boundary; the engine never starts).
         try:
             input_result = self._resolve_input(job, job_results, source)
+            self._validate_profile_input_products(compiled_job, input_result)
         except Exception as e:
             result = fail_job(self, job, job_idx, job_total, e, job_dir=None)
             results.append(result)

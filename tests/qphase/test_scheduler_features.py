@@ -208,3 +208,185 @@ def test_depends_on_failure_skips_downstream_job(temp_project):
         registry._tables.get("engine", {}).pop("fails", None)
 
     assert [result.status for result in results] == ["failed", "skipped_dependency"]
+
+
+class _ProductsResult:
+    """Minimal typed-bundle-shaped result: a name → Dataset mapping."""
+
+    def __init__(self, products):
+        self._products = dict(products)
+
+    @property
+    def products(self):
+        return dict(self._products)
+
+    @property
+    def data(self):
+        return dict(self._products)
+
+    @property
+    def metadata(self):
+        return {}
+
+    @property
+    def label(self):
+        return None
+
+    def save(self, path):
+        raise NotImplementedError("_ProductsResult is a test fixture")
+
+
+def _typed_input_workflow(source_engine_name: str) -> WorkflowSpec:
+    return WorkflowSpec(
+        schema="qphase.workflow/2",
+        id="typed-input-validation",
+        title="Typed input validation",
+        jobs=[
+            JobConfig(name="source", engine={source_engine_name: {}}, save=False),
+            JobConfig(
+                name="sink",
+                engine={"profiled_typed_input": {}},
+                backend={"dummy": {}},
+                input={"from": "source", "mode": "dataset"},
+                save=False,
+            ),
+        ],
+    )
+
+
+def test_upstream_products_violating_profile_input_fail_the_job(temp_project):
+    """Execution-time phase: upstream products matching no required slot fail."""
+    import numpy as np
+    from qphase.data import (
+        AxisRole,
+        AxisSchema,
+        DataKind,
+        ProductSchema,
+        StatisticsDataset,
+        VariableSchema,
+    )
+
+    from tests.plugins.profiled_plugins import TypedInputProfileEngine
+
+    class StatisticsSourceEngine:
+        class Config(BaseModel):
+            pass
+
+        config_schema = Config
+        name = "statistics_source"
+
+        def __init__(self, config=None, **kwargs):
+            del config, kwargs
+
+        def run(self, data=None, **kwargs):
+            del data, kwargs
+            schema = ProductSchema(
+                kind=DataKind.STATISTICS,
+                axes=[AxisSchema(name="candidate", role=AxisRole.INDEX, size=2)],
+                variables=[
+                    VariableSchema(
+                        name="rank",
+                        dtype="int64",
+                        value_domain="real",
+                        dims=("candidate",),
+                    )
+                ],
+            )
+            dataset = StatisticsDataset.from_arrays(
+                schema, {"rank": np.array([1, 2])}, owner="engine.statistics_source"
+            )
+            return _ProductsResult({"table": dataset})
+
+    registry.register(
+        "engine", "statistics_source", StatisticsSourceEngine, overwrite=True
+    )
+    registry.register(
+        "engine", "profiled_typed_input", TypedInputProfileEngine, overwrite=True
+    )
+    try:
+        scheduler = Scheduler(system_config=SystemConfig(), project=temp_project)
+        results = scheduler.run(_typed_input_workflow("statistics_source"))
+    finally:
+        registry._tables.get("engine", {}).pop("statistics_source", None)
+        registry._tables.get("engine", {}).pop("profiled_typed_input", None)
+
+    assert [result.job_name for result in results] == ["source", "sink"]
+    assert results[0].success
+    sink = results[1]
+    assert sink.status == "failed"
+    summary = sink.error_summary or ""
+    assert "'sink'" in summary
+    assert "task profile 'base'" in summary
+    assert "input slot 'input'" in summary
+
+
+def test_upstream_products_satisfying_profile_input_pass(temp_project):
+    """Execution-time phase: a matching upstream product lets the job run."""
+    import numpy as np
+    from qphase.data import (
+        AxisRole,
+        AxisSchema,
+        DataKind,
+        ProductSchema,
+        TimeSeriesDataset,
+        VariableSchema,
+    )
+
+    from tests.plugins.profiled_plugins import TypedInputProfileEngine
+
+    class TimeSeriesSourceEngine:
+        class Config(BaseModel):
+            pass
+
+        config_schema = Config
+        name = "time_series_source"
+
+        def __init__(self, config=None, **kwargs):
+            del config, kwargs
+
+        def run(self, data=None, **kwargs):
+            del data, kwargs
+            schema = ProductSchema(
+                kind=DataKind.TIME_SERIES,
+                axes=[
+                    AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=2),
+                    AxisSchema(
+                        name="time",
+                        role=AxisRole.COORDINATE,
+                        size=4,
+                        coordinate="regular",
+                        start=0.0,
+                        step=0.1,
+                    ),
+                ],
+                variables=[
+                    VariableSchema(
+                        name="x",
+                        dtype="complex128",
+                        value_domain="complex",
+                        dims=("trajectory", "time"),
+                    )
+                ],
+            )
+            dataset = TimeSeriesDataset.from_arrays(
+                schema,
+                {"x": np.zeros((2, 4), dtype=np.complex128)},
+                owner="engine.time_series_source",
+            )
+            return _ProductsResult({"trajectories": dataset})
+
+    registry.register(
+        "engine", "time_series_source", TimeSeriesSourceEngine, overwrite=True
+    )
+    registry.register(
+        "engine", "profiled_typed_input", TypedInputProfileEngine, overwrite=True
+    )
+    try:
+        scheduler = Scheduler(system_config=SystemConfig(), project=temp_project)
+        results = scheduler.run(_typed_input_workflow("time_series_source"))
+    finally:
+        registry._tables.get("engine", {}).pop("time_series_source", None)
+        registry._tables.get("engine", {}).pop("profiled_typed_input", None)
+
+    assert [result.job_name for result in results] == ["source", "sink"]
+    assert all(result.success for result in results)

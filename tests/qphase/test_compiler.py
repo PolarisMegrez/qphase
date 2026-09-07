@@ -239,6 +239,20 @@ def multi_input_profile_engine():
         registry._tables.get("engine", {}).pop("profiled_multi_input", None)
 
 
+@pytest.fixture
+def typed_input_profile_engine():
+    """Register the fixture engine whose profile requires a typed input."""
+    from tests.plugins.profiled_plugins import TypedInputProfileEngine
+
+    registry.register(
+        "engine", "profiled_typed_input", TypedInputProfileEngine, overwrite=True
+    )
+    try:
+        yield
+    finally:
+        registry._tables.get("engine", {}).pop("profiled_typed_input", None)
+
+
 def _sde_job(name: str, engine_config: dict, **sections) -> JobConfig:
     return JobConfig(name=name, engine={"sde": engine_config}, **sections)
 
@@ -621,6 +635,150 @@ def test_compiler_populates_input_product_schemas_metadata_only(
         )
     )
     assert RECORDED_CONTEXTS[-1].named_input_product_schemas == {}
+
+
+def _time_series_artifact(path):
+    """Write a current-format artifact holding one time-series product."""
+    import numpy as np
+    from qphase.data import (
+        AxisRole,
+        AxisSchema,
+        DataKind,
+        ProductSchema,
+        TimeSeriesDataset,
+        VariableSchema,
+    )
+    from qphase.data.store import save_products
+
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[
+            AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=2),
+            AxisSchema(
+                name="time",
+                role=AxisRole.COORDINATE,
+                size=4,
+                coordinate="regular",
+                start=0.0,
+                step=0.1,
+            ),
+        ],
+        variables=[
+            VariableSchema(
+                name="x",
+                dtype="complex128",
+                value_domain="complex",
+                dims=("trajectory", "time"),
+            )
+        ],
+    )
+    dataset = TimeSeriesDataset.from_arrays(
+        schema, {"x": np.zeros((2, 4), dtype=np.complex128)}, owner="engine.fake"
+    )
+    save_products(path, {"trajectories": dataset})
+
+
+def _statistics_artifact(path):
+    """Write a current-format artifact holding one statistics product."""
+    import numpy as np
+    from qphase.data import (
+        AxisRole,
+        AxisSchema,
+        DataKind,
+        ProductSchema,
+        StatisticsDataset,
+        VariableSchema,
+    )
+    from qphase.data.store import save_products
+
+    schema = ProductSchema(
+        kind=DataKind.STATISTICS,
+        axes=[AxisSchema(name="candidate", role=AxisRole.INDEX, size=2)],
+        variables=[
+            VariableSchema(
+                name="rank", dtype="int64", value_domain="real", dims=("candidate",)
+            )
+        ],
+    )
+    dataset = StatisticsDataset.from_arrays(
+        schema, {"rank": np.array([1, 2])}, owner="engine.fake"
+    )
+    save_products(path, {"table": dataset})
+
+
+def _typed_input_job(artifact_dir) -> JobConfig:
+    return JobConfig(
+        name="job",
+        engine={"profiled_typed_input": {}},
+        backend={"dummy": {}},
+        input={"from": str(artifact_dir), "mode": "dataset"},
+    )
+
+
+def test_compiler_matches_profile_input_against_artifact_products(
+    tmp_path, typed_input_profile_engine
+):
+    """A required input slot is satisfied by a matching artifact product."""
+    artifact_dir = tmp_path / "upstream_artifact"
+    _time_series_artifact(artifact_dir)
+
+    project = ProjectContext.create(tmp_path / "project")
+    compiled = WorkflowCompiler(project, SystemConfig()).compile(
+        _workflow(_typed_input_job(artifact_dir))
+    )
+
+    profile = compiled.job("job").task_profile
+    assert profile is not None
+    assert [slot.name for slot in profile.inputs] == ["input"]
+
+
+def test_compiler_rejects_profile_input_kind_mismatch(
+    tmp_path, typed_input_profile_engine
+):
+    """An artifact whose products violate the slot's kind fails the compile."""
+    artifact_dir = tmp_path / "upstream_artifact"
+    _statistics_artifact(artifact_dir)
+
+    project = ProjectContext.create(tmp_path / "project")
+    with pytest.raises(QPhaseConfigError) as excinfo:
+        WorkflowCompiler(project, SystemConfig()).compile(
+            _workflow(_typed_input_job(artifact_dir))
+        )
+    message = str(excinfo.value)
+    assert "'job'" in message
+    assert "'base'" in message
+    assert "input slot 'input'" in message
+    assert str(artifact_dir) in message
+
+
+def test_compiler_rejects_corrupt_input_manifest(tmp_path, typed_input_profile_engine):
+    """A corrupt input manifest fails fast instead of reading as no schema."""
+    artifact_dir = tmp_path / "upstream_artifact"
+    artifact_dir.mkdir()
+    (artifact_dir / "artifact_manifest.json").write_text("{not json", encoding="utf-8")
+
+    project = ProjectContext.create(tmp_path / "project")
+    with pytest.raises(QPhaseConfigError, match="unreadable artifact manifest"):
+        WorkflowCompiler(project, SystemConfig()).compile(
+            _workflow(_typed_input_job(artifact_dir))
+        )
+
+
+def test_compiler_rejects_unsupported_input_manifest_version(
+    tmp_path, typed_input_profile_engine
+):
+    """An unsupported manifest version fails fast instead of a silent skip."""
+    artifact_dir = tmp_path / "upstream_artifact"
+    artifact_dir.mkdir()
+    (artifact_dir / "artifact_manifest.json").write_text(
+        json.dumps({"schema_version": "qphase.artifact/3"}), encoding="utf-8"
+    )
+
+    project = ProjectContext.create(tmp_path / "project")
+    with pytest.raises(QPhaseConfigError, match="unreadable artifact manifest"):
+        WorkflowCompiler(project, SystemConfig()).compile(
+            _workflow(_typed_input_job(artifact_dir))
+        )
 
 
 def test_compiler_legacy_manifest_engines_keep_legacy_validation(tmp_path):

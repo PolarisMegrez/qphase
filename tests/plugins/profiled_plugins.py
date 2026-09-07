@@ -10,7 +10,7 @@ from qphase.core.task_profile import (
     PluginRequirementSet,
     TaskProfileResolutionContext,
 )
-from qphase.data import ProductRequirement
+from qphase.data import DataKind, ProductRequirement
 
 
 class ProfiledEngineConfig(BaseModel):
@@ -173,3 +173,40 @@ class MultiInputProfileEngine:
         del kwargs
         self.config = config
         self.plugins = plugins or {}
+
+
+TYPED_INPUT_PROFILE = EngineTaskProfile(
+    id="base",
+    requirements=PluginRequirementSet(required=["backend"]),
+    inputs=[
+        InputProductRequirement(
+            name="input",
+            requirement=ProductRequirement(name="input", kind=DataKind.TIME_SERIES),
+        )
+    ],
+)
+
+#: Single-profile collection requiring a time-series typed input product.
+TYPED_INPUT_PROFILES = (TYPED_INPUT_PROFILE,)
+
+
+class TypedInputProfileEngine:
+    """Engine fixture whose profile requires a time-series input product."""
+
+    name: ClassVar[str] = "profiled_typed_input"
+    description: ClassVar[str] = "compiler typed-input task-profile engine"
+    config_schema: ClassVar[type[ProfiledEngineConfig]] = ProfiledEngineConfig
+    manifest: ClassVar[EngineManifest] = EngineManifest(
+        task_profiles="tests.plugins.profiled_plugins:TYPED_INPUT_PROFILES",
+        profile_selector="tests.plugins.profiled_plugins:select_profile",
+    )
+
+    def __init__(self, config: Any = None, plugins: dict | None = None, **kwargs: Any):
+        del kwargs
+        self.config = config
+        self.plugins = plugins or {}
+
+    def run(self, data: Any = None, **kwargs: Any) -> Any:
+        """Pass the resolved input through so scheduler tests can run it."""
+        del kwargs
+        return data

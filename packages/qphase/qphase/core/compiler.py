@@ -331,19 +331,21 @@ class WorkflowCompiler:
         profile_id: str | None = None
         resolved_profile: ResolvedTaskProfile | None = None
         forbidden: set[str] = set()
+        input_schemas: dict[str, ProductSchema] = {}
         if getattr(manifest, "task_profiles", None):
             # Conditional task profiles replace the legacy required/input
             # plugin sets: the selected profile is the only requirement
             # declaration for this engine. Profile *selection* sees only
             # job-explicit plugin presence, so optional plugins living solely
             # in project defaults cannot switch the selected profile.
+            input_schemas = self._input_product_schemas(job, input_source, workflow)
             resolved_profile = self._resolve_task_profile(
                 job,
                 engine_name,
                 manifest,
                 merged,
                 selector_config=self._explicit_selector_config(job, merged, namespaces),
-                input_schemas=self._input_product_schemas(input_source, workflow),
+                input_schemas=input_schemas,
             )
             profile_id = resolved_profile.profile_id
             required = set(resolved_profile.requirements.required)
@@ -430,6 +432,9 @@ class WorkflowCompiler:
 
         if resolved_profile is not None:
             self._validate_profile_inputs(job, engine_name, resolved_profile)
+            self._validate_profile_input_products(
+                job, engine_name, resolved_profile, input_source, input_schemas
+            )
         engine_config = self._engine_config(merged, engine_name)
         self._validate_plugin_sections(selected)
         parameter_grid = job.scan.compile() if job.scan is not None else None
@@ -567,7 +572,7 @@ class WorkflowCompiler:
 
     @staticmethod
     def _input_product_schemas(
-        input_source: str | None, workflow: WorkflowSpec
+        job: JobConfig, input_source: str | None, workflow: WorkflowSpec
     ) -> dict[str, ProductSchema]:
         """Read compile-time input product schemas, metadata-only.
 
@@ -575,7 +580,9 @@ class WorkflowCompiler:
         artifact directory exposes product schemas at compile time: its
         manifest is read, payloads are never opened. Upstream-job inputs have
         no products yet and legacy or plain-path inputs carry no typed
-        manifest, so both yield an empty mapping by design.
+        manifest, so both yield an empty mapping by design. A manifest that
+        exists but is corrupt or has an unsupported schema version is a
+        fail-fast configuration error, never a silent "no schemas".
         """
         if input_source is None:
             return {}
@@ -586,14 +593,58 @@ class WorkflowCompiler:
             return {}
         # Imported lazily: core must not depend on the data layer at module
         # import time (the data layer already depends on core.utils).
-        from ..data.errors import ArtifactError
+        from ..data.errors import (
+            ArtifactCorruptError,
+            ArtifactNotFoundError,
+            ArtifactUnsupportedError,
+        )
         from ..data.store import ArtifactManifest
 
         try:
             manifest = ArtifactManifest.read(path)
-        except ArtifactError:
+        except ArtifactNotFoundError:
+            # Plain path without a typed manifest: no schemas by design.
             return {}
+        except (ArtifactCorruptError, ArtifactUnsupportedError) as exc:
+            raise QPhaseConfigError(
+                f"Job {job.name!r} input {input_source} holds an unreadable "
+                f"artifact manifest: {exc}",
+                code=ErrorCode.INPUT,
+            ) from exc
         return {entry.name: entry.product_schema for entry in manifest.products}
+
+    @staticmethod
+    def _validate_profile_input_products(
+        job: JobConfig,
+        engine_name: str,
+        profile: ResolvedTaskProfile,
+        input_source: str | None,
+        input_schemas: Mapping[str, ProductSchema],
+    ) -> None:
+        """Match required profile input slots against known product schemas.
+
+        When the job input exposes compile-time product schemas (an existing
+        current-format artifact directory), every required input slot of the
+        selected profile must be satisfied by at least one product schema.
+        When no schemas are knowable — upstream-job or legacy plain-path
+        inputs — validation is deferred to the scheduler's execution-time
+        phase by the two-phase design.
+        """
+        if not input_schemas:
+            return
+        # Imported lazily like every other task-profile touchpoint here.
+        from .task_profile import unmatched_required_slots
+
+        unmatched = unmatched_required_slots(profile.inputs, input_schemas)
+        if unmatched:
+            slot = unmatched[0]
+            raise QPhaseConfigError(
+                f"Job {job.name!r} uses engine {engine_name!r} with task "
+                f"profile {profile.profile_id!r} whose required input slot "
+                f"{slot.name!r} is satisfied by no product of input "
+                f"{input_source} (available: {sorted(input_schemas)})",
+                code=ErrorCode.INPUT,
+            )
 
     @staticmethod
     def _validate_profile_inputs(
