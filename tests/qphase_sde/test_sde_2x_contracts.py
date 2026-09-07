@@ -294,7 +294,7 @@ def test_coherence_frequency_table_validation():
 
 
 def test_analyser_contract_is_structural():
-    """A minimal structural implementation satisfies the analyser contract."""
+    """A minimal structural implementation satisfies the declaration contract."""
 
     class FakeAnalyser:
         def input_requirements(self):
@@ -320,7 +320,7 @@ def test_analyser_contract_is_structural():
             return None
 
     instance = FakeAnalyser()
-    assert isinstance(instance, analyser.AnalyserContract)
+    assert isinstance(instance, analyser.AnalyserDeclarationContract)
     estimate = instance.work_estimate(None)
     assert estimate.total is None  # heartbeat-only stage, no fake ETA
 

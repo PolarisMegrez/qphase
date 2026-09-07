@@ -3,9 +3,9 @@
 Numerical analysis utilities for simulated data, including power spectral
 density (PSD) computation and phase space distribution.
 
-The engine-facing contract types (``AnalyserExecutionCapabilities``,
+The analyser declaration types (``AnalyserExecutionCapabilities``,
 ``AnalyserWorkspaceRequest``, ``AnalyserWorkspaceEstimate`` and
-``AnalyserContract``) are re-exported lazily from
+``AnalyserDeclarationContract``) are re-exported lazily from
 ``qphase_sde.contracts.analyser`` — the single source of truth — so that
 importing this package never pulls the contracts package before the core
 schema packages are fully initialized.
@@ -68,7 +68,7 @@ from .trajectory_diagnostics import (
 
 if TYPE_CHECKING:
     from ..contracts.analyser import (
-        AnalyserContract,
+        AnalyserDeclarationContract,
         AnalyserExecutionCapabilities,
         AnalyserWorkspaceEstimate,
         AnalyserWorkspaceRequest,
@@ -76,7 +76,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Analyzer",
-    "AnalyserContract",
+    "AnalyserDeclarationContract",
     "AnalyserExecutionCapabilities",
     "AnalyserWorkspaceEstimate",
     "AnalyserWorkspaceRequest",
@@ -119,7 +119,7 @@ __all__ = [
 
 #: Contract re-exports resolved lazily (PEP 562) from the contracts package.
 _LAZY_CONTRACT_EXPORTS = {
-    "AnalyserContract": "..contracts.analyser",
+    "AnalyserDeclarationContract": "..contracts.analyser",
     "AnalyserExecutionCapabilities": "..contracts.analyser",
     "AnalyserWorkspaceEstimate": "..contracts.analyser",
     "AnalyserWorkspaceRequest": "..contracts.analyser",

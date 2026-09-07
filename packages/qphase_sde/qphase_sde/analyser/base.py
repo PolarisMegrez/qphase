@@ -3,10 +3,18 @@
 Base class for all analyzers in the qphase_sde package, plus the shared
 analyser helpers (physical-to-recorded mode-column mapping).
 
-The engine-facing contract types (execution capabilities, workspace
+The analyser declaration types (execution capabilities, workspace
 request/estimate, work estimates, reducer lifecycle) live in
 ``qphase_sde.contracts.analyser``; this module only hosts the plugin base
-class that consumes them.
+class that consumes them. ``Analyzer`` satisfies
+``qphase_sde.contracts.analyser:AnalyserDeclarationContract`` via
+``execution_capabilities``/``workspace``/``work_estimate``/
+``input_requirements``/``output_specs``/``reducer``.
+
+Execution is transitional: the engine invokes the legacy ``analyze()``
+method and ``AnalyserProductBuilderProtocol.build_products`` bridges its
+payload into typed products. The typed ``execute()`` entry on the
+declaration contract is Wave 5B scope.
 
 Public API
 ----------
@@ -71,8 +79,15 @@ def trajectory_requirement(
 class Analyzer(PluginBase, ABC):
     """Base class for analyzers.
 
-    All analyzers must inherit from this class and implement the
-    analyze method.
+    All analyzers must inherit from this class and implement the abstract
+    :meth:`analyze` method — the transitional execution entry. Together with
+    the subclass-declared ``input_requirements``/``output_specs`` and the
+    ``execution_capabilities``/``workspace``/``work_estimate``/``reducer``
+    defaults below, this satisfies
+    ``qphase_sde.contracts.analyser:AnalyserDeclarationContract``;
+    ``analyze()`` plus ``AnalyserProductBuilderProtocol.build_products``
+    form the transitional execution bridge pending Wave 5B's typed
+    ``execute()``.
     """
 
     config_schema: ClassVar[type[PluginConfigBase]]

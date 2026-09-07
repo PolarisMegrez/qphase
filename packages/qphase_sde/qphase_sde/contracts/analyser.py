@@ -1,20 +1,27 @@
-"""qphase_sde: Analyser Contract (2.0)
+"""qphase_sde: Analyser Declaration Contract (2.0)
 ---------------------------------------------------------
-The single engine-facing analyser contract. An analyser is an adapter between
-the engine and replaceable child plugins: it declares typed input requirements
-and (multi-)output specs, execution capabilities, workspace and work
-estimates, and optionally a reducer for batched/streaming execution. The
-engine consumes only these declarations — it never branches on analyser
-names.
+The planner/bundle-facing analyser declaration contract. An analyser is an
+adapter between the engine and replaceable child plugins: it declares typed
+input requirements and (multi-)output specs, execution capabilities,
+workspace and work estimates, and optionally a reducer for batched/streaming
+execution. Planners and the bundle adapter consume only these declarations —
+they never branch on analyser names.
+
+This protocol freezes the declaration surface only — what an analyser
+advertises, not how it runs. Execution currently flows through the
+documented legacy bridge: ``Analyzer.analyze`` produces the payload and
+``AnalyserProductBuilderProtocol.build_products`` converts it into typed
+products (see ``qphase_sde.analyser.base``). A typed ``execute()`` entry on
+this contract is Wave 5B scope; until it lands, the contract deliberately
+carries no execution method.
 
 This module is the sole source of truth for those types: the legacy 1.x
 duplicates in ``qphase_sde.analyser.base`` (``AnalyzerExecutionCapabilities``,
 ``AnalyzerWorkspaceRequest``, ``AnalyzerWorkspaceEstimate`` and
 ``AnalyzerProtocol``) have been removed. The plugin base class
 (:class:`qphase_sde.analyser.base.Analyzer`) consumes these contract types
-directly, and the legacy ``analyze(data, backend)`` entry point remains as a
-convenience adapter but is no longer the only execution interface the engine
-knows.
+directly and hosts the transitional ``analyze(data, backend)`` execution
+entry.
 
 Public API
 ----------
@@ -26,8 +33,10 @@ AnalyserWorkspaceEstimate
     Estimated peak workspace of one invocation.
 WorkEstimate
     Natural work-unit estimate for structured progress.
-AnalyserContract
-    The 2.0 analyser protocol.
+AnalyserDeclarationContract
+    The 2.0 analyser declaration protocol.
+AnalyserProductBuilderProtocol
+    Transitional bridge from ``analyze()`` payloads to typed products.
 """
 
 from __future__ import annotations
@@ -42,7 +51,7 @@ if TYPE_CHECKING:
     from .reducer import ReducerProtocol
 
 __all__ = [
-    "AnalyserContract",
+    "AnalyserDeclarationContract",
     "AnalyserExecutionCapabilities",
     "AnalyserProductBuilderProtocol",
     "AnalyserWorkspaceEstimate",
@@ -114,8 +123,15 @@ class WorkEstimate:
 
 
 @runtime_checkable
-class AnalyserContract(Protocol):
-    """The 2.0 analyser protocol consumed by the SDE engine."""
+class AnalyserDeclarationContract(Protocol):
+    """The 2.0 analyser declaration protocol.
+
+    Planner- and bundle-facing only: implementations declare typed
+    inputs/outputs, execution capabilities, workspace and work estimates,
+    and an optional reducer. The protocol deliberately has no execution
+    entry — payloads are produced through the legacy ``Analyzer.analyze``
+    bridge until the typed ``execute()`` entry lands in Wave 5B.
+    """
 
     def input_requirements(self) -> list[ProductRequirement]:
         """Typed input products this analyser consumes."""
@@ -152,6 +168,11 @@ class AnalyserContract(Protocol):
 @runtime_checkable
 class AnalyserProductBuilderProtocol(Protocol):
     """Optional analyser hook converting ``analyze()`` payloads into products.
+
+    This hook is the transitional execution bridge: pending the typed
+    ``execute()`` entry planned for Wave 5B on
+    :class:`AnalyserDeclarationContract`, it is how legacy ``analyze()``
+    payloads become typed products.
 
     The bundle adapter discovers this hook by duck-typing — the engine never
     branches on analyser names. An analyser implementing it is authoritative
