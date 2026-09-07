@@ -13,6 +13,12 @@ from qphase.backend.base import BackendBase
 from qphase.core.aggregation import write_table_csv
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase, ResultProtocol
+from qphase.data import (
+    DataKind,
+    ProductDeclaration,
+    ProductRequirement,
+    SpectralQuantity,
+)
 
 from ..contracts.analyser import AnalyserExecutionCapabilities
 from .base import Analyzer
@@ -1157,8 +1163,27 @@ class BandLimitedCarrierAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[BandLimitedCarrierConfig]] = BandLimitedCarrierConfig
 
-    def capabilities(self) -> AnalyserExecutionCapabilities:
+    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(preferred_location="host")
+
+    def input_requirements(self) -> list[ProductRequirement]:
+        config = cast(BandLimitedCarrierConfig, self.config)
+        required = ["axis", "psd"]
+        if isinstance(config.readout, int):
+            required.append("modes")
+        return [
+            ProductRequirement(
+                name=config.psd_key,
+                kind=DataKind.SPECTRAL,
+                quantity=SpectralQuantity.POWER_SPECTRAL_DENSITY.value,
+                required_fields=required,
+            )
+        ]
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        # The payload is row tables plus orientation metadata only: the legacy
+        # bridge finds no numeric leaves, so the declaration is field-free.
+        return (ProductDeclaration(name=label, kind=DataKind.STATISTICS),)
 
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         config = cast(BandLimitedCarrierConfig, self.config)

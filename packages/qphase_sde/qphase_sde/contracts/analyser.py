@@ -2,9 +2,10 @@
 ---------------------------------------------------------
 The single engine-facing analyser contract. An analyser is an adapter between
 the engine and replaceable child plugins: it declares typed input requirements
-and output specs, execution capabilities, workspace and work estimates, and
-optionally a reducer for batched/streaming execution. The engine consumes only
-these declarations — it never branches on analyser names.
+and (multi-)output specs, execution capabilities, workspace and work
+estimates, and optionally a reducer for batched/streaming execution. The
+engine consumes only these declarations — it never branches on analyser
+names.
 
 This module is the sole source of truth for those types: the legacy 1.x
 duplicates in ``qphase_sde.analyser.base`` (``AnalyzerExecutionCapabilities``,
@@ -120,8 +121,15 @@ class AnalyserContract(Protocol):
         """Typed input products this analyser consumes."""
         ...
 
-    def output_spec(self) -> ProductDeclaration:
-        """Return the declared output product of this analyser."""
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        """Return the declared output products of this analyser.
+
+        ``label`` is the job-local analyser mapping key (the name under which
+        the analyser's payload appears in ``result.analysis``); product names
+        are label-derived, so it is a required keyword argument. Analysers
+        with multiple outputs (e.g. a graph-ready product plus a legacy
+        bridge) declare every product they can emit for the current config.
+        """
         ...
 
     def execution_capabilities(self) -> AnalyserExecutionCapabilities:

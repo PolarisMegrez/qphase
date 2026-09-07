@@ -300,7 +300,7 @@ def test_analyser_contract_is_structural():
         def input_requirements(self):
             return []
 
-        def output_spec(self):
+        def output_specs(self, *, label):
             return None
 
         def execution_capabilities(self):

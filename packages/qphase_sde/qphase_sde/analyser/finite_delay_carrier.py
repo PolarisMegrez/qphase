@@ -12,6 +12,12 @@ from pydantic import Field, field_validator, model_validator
 from qphase.backend.base import BackendBase
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase, ResultProtocol
+from qphase.data import (
+    DataKind,
+    ProductDeclaration,
+    ProductRequirement,
+    SpectralQuantity,
+)
 
 from ..contracts.analyser import AnalyserExecutionCapabilities
 from .base import Analyzer
@@ -191,8 +197,31 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
     description: ClassVar[str] = "Finite-delay coherence-weighted carrier"
     config_schema: ClassVar[type[FiniteDelayCarrierConfig]] = FiniteDelayCarrierConfig
 
-    def capabilities(self) -> AnalyserExecutionCapabilities:
+    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(preferred_location="host")
+
+    def input_requirements(self) -> list[ProductRequirement]:
+        config = cast(FiniteDelayCarrierConfig, self.config)
+        required = ["axis", "psd"]
+        if any(isinstance(readout, int) for readout in config.resolved_readouts()):
+            required.append("modes")
+        return [
+            ProductRequirement(
+                name=config.psd_key,
+                kind=DataKind.SPECTRAL,
+                quantity=SpectralQuantity.POWER_SPECTRAL_DENSITY.value,
+                required_fields=required,
+            )
+        ]
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.STATISTICS,
+                fields=["detector_rates"],
+            ),
+        )
 
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         del backend

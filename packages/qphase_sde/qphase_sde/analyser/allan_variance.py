@@ -17,6 +17,8 @@ from qphase.data import (
     CoordinateSchema,
     DataKind,
     Dataset,
+    ProductDeclaration,
+    ProductRequirement,
     SamplingBasisSchema,
     UncertaintySchema,
     VariableConstraints,
@@ -26,6 +28,7 @@ from ..contracts.analyser import (
     AnalyserExecutionCapabilities,
     AnalyserWorkspaceEstimate,
     AnalyserWorkspaceRequest,
+    WorkEstimate,
 )
 from ..contracts.quantities import SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
@@ -34,7 +37,7 @@ from .allan_statistics import (
     calculate_allan_variance_device,
     summarize_trajectories,
 )
-from .base import Analyzer, resolve_mode_columns
+from .base import Analyzer, resolve_mode_columns, trajectory_requirement
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
@@ -96,6 +99,36 @@ class AllanVarianceConfig(PluginConfigBase):
         return self
 
 
+#: Numeric leaves of the shared per-mode Allan payload (see
+#: ``allan_statistics._assemble_result``); string convention keys stay in
+#: payload metadata.
+_ALLAN_TABLE_LEAVES = (
+    "tau",
+    "angular_frequency_variance",
+    "angular_frequency_variance_sem",
+    "per_trajectory",
+    "valid_second_differences",
+    "trajectory_sample_count",
+    "nonoverlap_angular_frequency_variance",
+    "nonoverlap_angular_frequency_variance_sem",
+    "nonoverlap_per_trajectory",
+    "nonoverlap_valid_second_differences",
+    "nonoverlap_trajectory_sample_count",
+    "nominal_independent_windows_per_trajectory",
+    "total_independent_window_count",
+    "observation_duration",
+    "min_independent_windows",
+)
+
+#: Numeric leaves of the per-mode phase-increment summary.
+_PHASE_INCREMENT_LEAVES = (
+    "mean_angular_frequency_per_trajectory",
+    "max_abs_phase_step_per_trajectory",
+    "near_nyquist_fraction_per_trajectory",
+    "near_nyquist_threshold",
+)
+
+
 class AllanVarianceAnalyzer(Analyzer):
     """Compute compact Allan statistics without retaining complex trajectories."""
 
@@ -105,16 +138,43 @@ class AllanVarianceAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[AllanVarianceConfig]] = AllanVarianceConfig
 
-    def capabilities(self) -> AnalyserExecutionCapabilities:
+    def input_requirements(self) -> list[ProductRequirement]:
+        return [trajectory_requirement()]
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        """Declare the single graph-ready statistics product of this analyser."""
+        config = cast(AllanVarianceConfig, self.config)
+        fields = ["modes", "t0", "dt", "n_traj", "n_samples"]
+        for mode in config.modes:
+            fields.extend(
+                f"mode_results.{mode}.allan.{leaf}" for leaf in _ALLAN_TABLE_LEAVES
+            )
+            fields.extend(
+                f"mode_results.{mode}.phase_increment.{leaf}"
+                for leaf in _PHASE_INCREMENT_LEAVES
+            )
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.STATISTICS,
+                quantity=SDEQuantity.ALLAN_VARIANCE.value,
+                fields=fields,
+            ),
+        )
+
+    def work_estimate(self, request: AnalyserWorkspaceRequest) -> WorkEstimate:
+        """Allan work scales with the tau grid; no total is fabricated."""
+        del request
+        return WorkEstimate(unit="tau", total=None)
+
+    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(
             preferred_location="backend",
             supports_trajectory_batching=True,
             supports_time_streaming=False,
         )
 
-    def estimate_workspace(
-        self, request: AnalyserWorkspaceRequest
-    ) -> AnalyserWorkspaceEstimate:
+    def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
         config = cast(AllanVarianceConfig, self.config)
         mode_bytes = request.trajectory_bytes // max(request.n_record_modes, 1)
         if request.backend_name == "cupy":

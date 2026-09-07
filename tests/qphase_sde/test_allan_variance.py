@@ -145,7 +145,7 @@ def test_allan_accumulator_matches_full_trajectory_analysis():
 
 
 def test_allan_analyzer_advertises_trajectory_batching():
-    capabilities = _analyzer().capabilities()
+    capabilities = _analyzer().execution_capabilities()
     assert capabilities.preferred_location == "backend"
     assert capabilities.supports_trajectory_batching is True
     assert capabilities.supports_time_streaming is False
@@ -174,7 +174,7 @@ def test_allan_workspace_is_host_resident_for_numpy_backend():
         backend_name="numpy",
     )
 
-    estimate = analyzer.estimate_workspace(request)
+    estimate = analyzer.workspace(request)
     assert estimate.host_bytes == 5 * trajectory_bytes // 3
     assert estimate.device_bytes == 0
 
@@ -198,7 +198,7 @@ def test_allan_workspace_is_trajectory_chunked_on_device(
         backend_name="cupy",
     )
 
-    estimate = analyzer.estimate_workspace(request)
+    estimate = analyzer.workspace(request)
     assert estimate.device_bytes == 16 * 1_000_001 * bytes_per_sample
     # Host memory no longer materializes full modes; only tau tables remain.
     assert estimate.host_bytes == 60 * 256 * 4 * 8

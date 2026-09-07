@@ -13,6 +13,12 @@ from qphase.backend.base import BackendBase
 from qphase.core.aggregation import write_table_csv
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase, ResultProtocol
+from qphase.data import (
+    DataKind,
+    ProductDeclaration,
+    ProductRequirement,
+    SpectralQuantity,
+)
 from scipy.ndimage import convolve1d, gaussian_filter1d
 from scipy.signal import find_peaks
 
@@ -743,8 +749,26 @@ class SpectralRidgeAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[SpectralRidgeConfig]] = SpectralRidgeConfig
 
-    def capabilities(self) -> AnalyserExecutionCapabilities:
+    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(preferred_location="host")
+
+    def input_requirements(self) -> list[ProductRequirement]:
+        config = cast(SpectralRidgeConfig, self.config)
+        required = ["axis", "psd"]
+        if any(isinstance(readout, int) for readout in config.readouts):
+            required.append("modes")
+        return [
+            ProductRequirement(
+                name=config.psd_key,
+                kind=DataKind.SPECTRAL,
+                quantity=SpectralQuantity.POWER_SPECTRAL_DENSITY.value,
+                required_fields=required,
+            )
+        ]
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        # ridge_rows/candidate_rows/written are payload meta: no numeric leaves.
+        return (ProductDeclaration(name=label, kind=DataKind.STATISTICS),)
 
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         del backend

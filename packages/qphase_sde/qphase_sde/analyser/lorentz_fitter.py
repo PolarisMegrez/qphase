@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, cast
 
 import numpy as np
 from pydantic import Field
@@ -26,6 +26,12 @@ from qphase.core.aggregation import (
 )
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase, ResultProtocol
+from qphase.data import (
+    DataKind,
+    ProductDeclaration,
+    ProductRequirement,
+    SpectralQuantity,
+)
 from scipy.optimize import curve_fit
 
 from .base import Analyzer
@@ -535,6 +541,41 @@ class LorentzFitter(Analyzer):
 
     def __init__(self, config: LorentzFitterConfig | None = None, **kwargs: Any):
         super().__init__(config, **kwargs)
+
+    def input_requirements(self) -> list[ProductRequirement]:
+        config = cast(LorentzFitterConfig, self.config)
+        required = ["axis", "psd", "modes"]
+        if config.uncertainty == "required":
+            required.append("psd_sem")
+        requirements = [
+            ProductRequirement(
+                name=config.psd_key,
+                kind=DataKind.SPECTRAL,
+                quantity=SpectralQuantity.POWER_SPECTRAL_DENSITY.value,
+                required_fields=required,
+            )
+        ]
+        if config.export_dist:
+            requirements += [
+                ProductRequirement(
+                    name="dist", kind=DataKind.STATISTICS, optional=True
+                ),
+                ProductRequirement(
+                    name="pdist", kind=DataKind.STATISTICS, optional=True
+                ),
+            ]
+        return requirements
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        # psd_columns/psd_sem_columns keys are data-derived scan-value strings
+        # and fit_rows/written are payload meta, so only the axis is declared.
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.STATISTICS,
+                fields=["axis"],
+            ),
+        )
 
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         """Fit Lorentzians to aggregated PSD data and export merged outputs.

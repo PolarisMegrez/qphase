@@ -15,6 +15,8 @@ from qphase.data import (
     AxisRole,
     DataKind,
     Dataset,
+    ProductDeclaration,
+    ProductRequirement,
     SamplingBasisSchema,
     UncertaintySchema,
 )
@@ -26,7 +28,7 @@ from ..contracts.analyser import (
 )
 from ..contracts.quantities import SDEMomentFamilySchema, SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .base import Analyzer, resolve_mode_columns
+from .base import Analyzer, resolve_mode_columns, trajectory_requirement
 from .result import AnalysisResult
 
 __all__ = [
@@ -34,6 +36,38 @@ __all__ = [
     "QuadraticMomentConfig",
     "QuadraticObservableSpec",
 ]
+
+_QUADRATIC_MOMENT_FIELDS: tuple[str, ...] = (
+    "modes",
+    "matrices",
+    "centers",
+    "reference_matrices",
+    "max_order",
+    "n_traj",
+    "n_samples",
+    "t0",
+    "dt",
+    "observation_duration",
+    "raw_moments",
+    "raw_moment_sem",
+    "central_moments",
+    "cumulants",
+    "cumulant_sem",
+    "per_trajectory_raw_moments",
+    "time_blocks.count",
+    "time_blocks.start_index",
+    "time_blocks.stop_index",
+    "time_blocks.start_time",
+    "time_blocks.stop_time",
+    "time_blocks.raw_moments",
+    "time_blocks.central_moments",
+    "time_blocks.cumulants",
+    "time_blocks.relative_mean_distance",
+    "time_blocks.first_last_mean_distance",
+    "uncertainty.available",
+    "uncertainty.n_independent",
+    "uncertainty.time_blocks_are_independent",
+)
 
 
 class QuadraticObservableSpec(BaseModel):
@@ -129,16 +163,14 @@ class QuadraticMomentAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[QuadraticMomentConfig]] = QuadraticMomentConfig
 
-    def capabilities(self) -> AnalyserExecutionCapabilities:
+    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(
             preferred_location="backend",
             supports_trajectory_batching=True,
             supports_time_streaming=False,
         )
 
-    def estimate_workspace(
-        self, request: AnalyserWorkspaceRequest
-    ) -> AnalyserWorkspaceEstimate:
+    def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
         config = cast(QuadraticMomentConfig, self.config)
         n_observables = len(config.observables)
         n_modes = (
@@ -170,6 +202,19 @@ class QuadraticMomentAnalyzer(Analyzer):
             )
         return AnalyserWorkspaceEstimate(
             host_bytes=chunk_values + 2 * summaries + blocks + matrices
+        )
+
+    def input_requirements(self) -> list[ProductRequirement]:
+        return [trajectory_requirement()]
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.STATISTICS,
+                quantity=SDEQuantity.MOMENTS.value,
+                fields=list(_QUADRATIC_MOMENT_FIELDS),
+            ),
         )
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:

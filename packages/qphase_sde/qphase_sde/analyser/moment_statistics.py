@@ -15,6 +15,8 @@ from qphase.data import (
     AxisRole,
     DataKind,
     Dataset,
+    ProductDeclaration,
+    ProductRequirement,
     SamplingBasisSchema,
     UncertaintySchema,
 )
@@ -26,10 +28,44 @@ from ..contracts.analyser import (
 )
 from ..contracts.quantities import SDEMomentFamilySchema, SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .base import Analyzer, resolve_mode_columns
+from .base import Analyzer, resolve_mode_columns, trajectory_requirement
 from .result import AnalysisResult
 
 __all__ = ["MomentStatisticsAnalyzer", "MomentStatisticsConfig"]
+
+_MOMENT_STATISTICS_FIELDS: tuple[str, ...] = (
+    "modes",
+    "n_traj",
+    "n_samples",
+    "t0",
+    "dt",
+    "observation_duration",
+    "occupation",
+    "occupation_sem",
+    "fourth_moment",
+    "fourth_moment_sem",
+    "occupation_product",
+    "occupation_product_sem",
+    "occupation_covariance",
+    "g2",
+    "g2_sem",
+    "per_trajectory_occupation",
+    "per_trajectory_occupation_product",
+    "time_blocks.count",
+    "time_blocks.start_index",
+    "time_blocks.stop_index",
+    "time_blocks.start_time",
+    "time_blocks.stop_time",
+    "time_blocks.occupation",
+    "time_blocks.fourth_moment",
+    "time_blocks.occupation_product",
+    "time_blocks.g2",
+    "time_blocks.relative_occupation_distance",
+    "time_blocks.first_last_occupation_distance",
+    "uncertainty.available",
+    "uncertainty.n_independent",
+    "uncertainty.time_blocks_are_independent",
+)
 
 
 class MomentStatisticsConfig(PluginConfigBase):
@@ -78,16 +114,14 @@ class MomentStatisticsAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[MomentStatisticsConfig]] = MomentStatisticsConfig
 
-    def capabilities(self) -> AnalyserExecutionCapabilities:
+    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(
             preferred_location="backend",
             supports_trajectory_batching=True,
             supports_time_streaming=False,
         )
 
-    def estimate_workspace(
-        self, request: AnalyserWorkspaceRequest
-    ) -> AnalyserWorkspaceEstimate:
+    def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
         config = cast(MomentStatisticsConfig, self.config)
         n_modes = (
             len(config.modes) if config.modes is not None else request.n_record_modes
@@ -110,6 +144,19 @@ class MomentStatisticsAnalyzer(Analyzer):
             )
         return AnalyserWorkspaceEstimate(
             host_bytes=backend_workspace + 2 * summaries + blocks
+        )
+
+    def input_requirements(self) -> list[ProductRequirement]:
+        return [trajectory_requirement()]
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.STATISTICS,
+                quantity=SDEQuantity.MOMENTS.value,
+                fields=list(_MOMENT_STATISTICS_FIELDS),
+            ),
         )
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:

@@ -82,12 +82,14 @@ class _ProductBuilderAnalyzer(_MeanAnalyzer):
         self.graph_ready = graph_ready
         self.declared_kind = declared_kind
 
-    def output_spec(self):
-        return ProductDeclaration(
-            name=self.product_name,
-            kind=self.declared_kind,
-            quantity="mean",
-            fields=["mean"],
+    def output_specs(self, *, label):
+        return (
+            ProductDeclaration(
+                name=self.product_name,
+                kind=self.declared_kind,
+                quantity="mean",
+                fields=["mean"],
+            ),
         )
 
     def build_products(self, payload, *, scan_size, label):

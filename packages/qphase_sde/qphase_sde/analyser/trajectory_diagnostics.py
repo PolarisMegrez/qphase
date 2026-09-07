@@ -24,6 +24,7 @@ from pydantic import Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
+from qphase.data import DataKind, ProductDeclaration, ProductRequirement
 from scipy.optimize import least_squares
 
 from ..contracts.analyser import (
@@ -38,7 +39,7 @@ from ..math.coordinates import (
     canonical_vector,
 )
 from .allan_statistics import calculate_allan_variance
-from .base import Analyzer, resolve_mode_columns
+from .base import Analyzer, resolve_mode_columns, trajectory_requirement
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
@@ -82,6 +83,46 @@ _STATIONARITY_RADIAL_QUANTILES = (0.1, 0.5, 0.9)
 # Above this covariance condition number the radial distance falls back to
 # Euclidean (the Mahalanobis metric would be dominated by numerical noise).
 _STATIONARITY_MAX_CONDITION = 1.0e6
+
+# Numeric leaves of the phase-increment summary; orientation metadata strings
+# are payload meta, not variables.
+_PHASE_INCREMENT_FIELDS = (
+    "mean_angular_frequency_per_trajectory",
+    "max_abs_phase_step_per_trajectory",
+    "near_nyquist_fraction_per_trajectory",
+    "near_nyquist_threshold",
+)
+# Numeric leaves of ``allan_statistics._assemble_result`` (string quantity,
+# unit, and definition keys are payload meta).
+_ALLAN_TABLE_FIELDS = (
+    "tau",
+    "angular_frequency_variance",
+    "angular_frequency_variance_sem",
+    "per_trajectory",
+    "valid_second_differences",
+    "trajectory_sample_count",
+    "nonoverlap_angular_frequency_variance",
+    "nonoverlap_angular_frequency_variance_sem",
+    "nonoverlap_per_trajectory",
+    "nonoverlap_valid_second_differences",
+    "nonoverlap_trajectory_sample_count",
+    "nominal_independent_windows_per_trajectory",
+    "total_independent_window_count",
+    "observation_duration",
+    "min_independent_windows",
+)
+# Always-present numeric leaves of the g1 model-fit summary; converged-fit
+# parameters and residuals are data-dependent and stay undeclared.
+_G1_MODEL_FIT_FIELDS = (
+    "lag_step_seconds",
+    "lag_window_seconds",
+    "n_lags",
+    "n_finite",
+    "n_signal",
+    "min_finite_lags",
+    "min_signal_lags",
+    "holdout_mismatch_factor",
+)
 
 
 class TrajectoryDiagnosticsConfig(PluginConfigBase):
@@ -229,7 +270,7 @@ class TrajectoryDiagnostics(Analyzer):
         TrajectoryDiagnosticsConfig
     )
 
-    def capabilities(self) -> AnalyserExecutionCapabilities:
+    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         """Declare the current full-record host implementation."""
         return AnalyserExecutionCapabilities(
             preferred_location="host",
@@ -237,9 +278,7 @@ class TrajectoryDiagnostics(Analyzer):
             supports_time_streaming=False,
         )
 
-    def estimate_workspace(
-        self, request: AnalyserWorkspaceRequest
-    ) -> AnalyserWorkspaceEstimate:
+    def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
         """Estimate D2H, canonical-coordinate, and diagnostic temporaries."""
         materialization = (
             request.trajectory_bytes if request.backend_name == "cupy" else 0
@@ -248,6 +287,78 @@ class TrajectoryDiagnostics(Analyzer):
         scratch = request.trajectory_bytes
         return AnalyserWorkspaceEstimate(
             host_bytes=materialization + coordinate_bytes + scratch
+        )
+
+    def input_requirements(self) -> list[ProductRequirement]:
+        return [trajectory_requirement()]
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        config = cast(TrajectoryDiagnosticsConfig, self.config)
+        fields = ["modes", "t0", "dt", "n_traj", "n_samples"]
+        for mode in config.modes:
+            prefix = f"mode_results.{mode}"
+            fields += [
+                f"{prefix}.mean_amplitude_per_trajectory",
+                f"{prefix}.mean_power_per_trajectory",
+            ]
+            fields += [
+                f"{prefix}.phase_increment.{leaf}" for leaf in _PHASE_INCREMENT_FIELDS
+            ]
+            if not config.block_durations:
+                # An empty block-statistics list stacks as an empty float array.
+                fields.append(f"{prefix}.block_statistics")
+            if config.coherence:
+                coherence = f"{prefix}.coherence"
+                fields += [
+                    f"{coherence}.{leaf}"
+                    for leaf in (
+                        "lag",
+                        "g1",
+                        "g1_normalized",
+                        "g1_sem_magnitude",
+                        "centered",
+                    )
+                ]
+                fits = f"{coherence}.model_fits"
+                fields += [f"{fits}.{leaf}" for leaf in _G1_MODEL_FIT_FIELDS]
+                for model in _G1_MODEL_FUNCTIONS:
+                    fields += [
+                        f"{fits}.models.{model}.n_train",
+                        f"{fits}.models.{model}.n_holdout",
+                    ]
+                if config.keep_coherence_per_trajectory:
+                    fields.append(f"{coherence}.g1_per_trajectory")
+            if config.allan:
+                fields += [f"{prefix}.allan.{leaf}" for leaf in _ALLAN_TABLE_FIELDS]
+        if config.matrix_projection:
+            fields += [
+                "matrix_projection.n_modes",
+                "matrix_projection.n_coordinates",
+                "matrix_projection.reference_vector",
+                "matrix_projection.reference_norm",
+                "matrix_projection.dt",
+                "matrix_projection.mean_coordinates_per_trajectory",
+            ]
+            if config.matrix_projection_left_vector is not None:
+                fields += [
+                    "matrix_projection.left_vector",
+                    "matrix_projection.left_vector_norm",
+                    "matrix_projection.projection_per_trajectory",
+                    "matrix_projection.projection_mean_per_trajectory",
+                    "matrix_projection.projection_std_per_trajectory",
+                    "matrix_projection.projection_min_per_trajectory",
+                    "matrix_projection.projection_max_per_trajectory",
+                ]
+            if config.matrix_projection_keep_coordinates:
+                fields.append("matrix_projection.coordinates_per_trajectory")
+        if config.stationarity_details and config.block_durations:
+            fields.append("stationarity.n_features")
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.STATISTICS,
+                fields=fields,
+            ),
         )
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:

@@ -813,9 +813,11 @@ def bundle_from_result(
                     "payload; the producer output is incomplete and the job "
                     "is marked failed"
                 )
-            declaration_factory = getattr(analyser, "output_spec", None)
-            declaration = (
-                declaration_factory() if callable(declaration_factory) else None
+            declaration_factory = getattr(analyser, "output_specs", None)
+            declarations = (
+                declaration_factory(label=str(name))
+                if callable(declaration_factory)
+                else None
             )
             for product_name, product in built.items():
                 if product_name in products:
@@ -836,6 +838,14 @@ def bundle_from_result(
                     raise TypeError(
                         f"analyser product {product_name!r} is not graph-ready"
                     )
+                declaration = (
+                    next(
+                        (item for item in declarations if item.name == product_name),
+                        None,
+                    )
+                    if declarations is not None
+                    else None
+                )
                 if declaration is not None and graph_ready:
                     if product.kind is not declaration.kind:
                         raise TypeError(

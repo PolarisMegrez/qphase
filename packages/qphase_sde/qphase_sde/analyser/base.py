@@ -12,24 +12,29 @@ Public API
 ----------
 ``Analyzer`` : Base class for analyzers.
 ``resolve_mode_columns`` : Map physical mode indices to stored columns.
+``trajectory_requirement`` : Requirement on the engine trajectory product.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from qphase.backend.base import BackendBase
 from qphase.core.protocols import PluginBase, PluginConfigBase, ResultProtocol
+from qphase.data import DataKind, ProductRequirement
 
 from ..contracts.analyser import (
     AnalyserExecutionCapabilities,
     AnalyserWorkspaceEstimate,
     AnalyserWorkspaceRequest,
+    WorkEstimate,
 )
+from ..contracts.quantities import SDEQuantity
 from ..contracts.reducer import ReducerProtocol
 
 __all__ = [
     "Analyzer",
     "resolve_mode_columns",
+    "trajectory_requirement",
 ]
 
 
@@ -48,6 +53,19 @@ def resolve_mode_columns(data: Any, modes: list[int]) -> list[int]:
             f"{list(mapping)}"
         )
     return [mapping[mode] for mode in modes]
+
+
+def trajectory_requirement(
+    *, value_domain: Literal["real", "complex"] | None = "complex"
+) -> ProductRequirement:
+    """Return a requirement on the engine's ``trajectories`` time-series product."""
+    return ProductRequirement(
+        name="trajectories",
+        kind=DataKind.TIME_SERIES,
+        quantity=SDEQuantity.FIELD_AMPLITUDE.value,
+        value_domain=value_domain,
+        required_fields=["alpha"],
+    )
 
 
 class Analyzer(PluginBase, ABC):
@@ -80,20 +98,23 @@ class Analyzer(PluginBase, ABC):
         else:
             self.config = config
 
-    def capabilities(self) -> AnalyserExecutionCapabilities:
+    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         """Return conservative planner-visible execution capabilities."""
         return AnalyserExecutionCapabilities()
 
-    def estimate_workspace(
-        self, request: AnalyserWorkspaceRequest
-    ) -> AnalyserWorkspaceEstimate:
+    def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
         """Estimate temporary memory beyond the input trajectory itself."""
         workspace = request.trajectory_bytes // 2
-        if self.capabilities().preferred_location == "host":
+        if self.execution_capabilities().preferred_location == "host":
             return AnalyserWorkspaceEstimate(host_bytes=workspace)
         if request.backend_name == "cupy":
             return AnalyserWorkspaceEstimate(device_bytes=workspace)
         return AnalyserWorkspaceEstimate(host_bytes=workspace)
+
+    def work_estimate(self, request: AnalyserWorkspaceRequest) -> WorkEstimate:
+        """Heartbeat-only default: ``total=None`` never fabricates an ETA."""
+        del request
+        return WorkEstimate(unit="sample", total=None)
 
     def reducer(self) -> ReducerProtocol | None:
         """Return the reducer for batched/streaming execution, if supported."""

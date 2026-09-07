@@ -17,6 +17,8 @@ from qphase.data import (
     CoordinateSchema,
     DataKind,
     Dataset,
+    ProductDeclaration,
+    ProductRequirement,
     SamplingBasisSchema,
     UncertaintySchema,
 )
@@ -28,7 +30,7 @@ from ..contracts.analyser import (
 )
 from ..contracts.quantities import SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .base import Analyzer, resolve_mode_columns
+from .base import Analyzer, resolve_mode_columns, trajectory_requirement
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
@@ -375,16 +377,28 @@ class CoherenceCarrierAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[CoherenceCarrierConfig]] = CoherenceCarrierConfig
 
-    def capabilities(self) -> AnalyserExecutionCapabilities:
+    def input_requirements(self) -> list[ProductRequirement]:
+        return [trajectory_requirement()]
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        """Declare the single graph-ready coherence-carrier product."""
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.STATISTICS,
+                quantity=SDEQuantity.COHERENCE_FREQUENCY.value,
+                fields=list(_COHERENCE_CARRIER_FIELDS),
+            ),
+        )
+
+    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(
             preferred_location="backend",
             supports_trajectory_batching=True,
             supports_time_streaming=False,
         )
 
-    def estimate_workspace(
-        self, request: AnalyserWorkspaceRequest
-    ) -> AnalyserWorkspaceEstimate:
+    def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
         config = cast(CoherenceCarrierConfig, self.config)
         n_measurements = (
             len(config.modes) + len(config.channels) + int(config.include_trace)
@@ -581,6 +595,40 @@ class CoherenceCarrierAnalyzer(Analyzer):
             },
             **metadata,
         }
+
+
+#: Numeric payload leaves of ``analyze()`` (``_summarize``); string leaves
+#: (``status``, ``error``, ``measurement_names``, ...) stay in payload metadata.
+_COHERENCE_CARRIER_FIELDS = (
+    "recorded_modes",
+    "measurement_matrices",
+    "frequency",
+    "frequency_sem",
+    "selected_lag_points",
+    "selected_lag_time",
+    "phase_fit_rms",
+    "first_lag_coherence",
+    "first_lag_phase",
+    "nyquist_fraction",
+    "candidate_lag_points",
+    "candidate_frequency",
+    "candidate_frequency_sem",
+    "candidate_phase_fit_rms",
+    "lag",
+    "correlation",
+    "correlation_sem_real",
+    "correlation_sem_imag",
+    "per_trajectory_correlation",
+    "n_traj",
+    "n_samples",
+    "t0",
+    "dt",
+    "polynomial_order",
+    "consistency_sigma",
+    "uncertainty.available",
+    "uncertainty.n_independent",
+    "uncertainty.point_estimate_is_ratio_of_ensemble_correlations",
+)
 
 
 def _build_coherence_carrier_products(

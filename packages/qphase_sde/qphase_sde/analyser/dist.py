@@ -15,8 +15,9 @@ from pydantic import Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
+from qphase.data import DataKind, ProductDeclaration, ProductRequirement
 
-from .base import Analyzer, resolve_mode_columns
+from .base import Analyzer, resolve_mode_columns, trajectory_requirement
 from .result import AnalysisResult
 
 __all__ = [
@@ -59,6 +60,26 @@ class DistAnalyzer(Analyzer):
 
     def __init__(self, config: DistAnalyzerConfig | None = None, **kwargs):
         super().__init__(config, **kwargs)
+
+    def input_requirements(self) -> list[ProductRequirement]:
+        return [trajectory_requirement(value_domain=None)]
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        config = cast(DistAnalyzerConfig, self.config)
+        fields = ["modes", "bins", "density"]
+        for mode in config.modes:
+            fields += [
+                f"distributions.{mode}.hist",
+                f"distributions.{mode}.xedges",
+                f"distributions.{mode}.yedges",
+            ]
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.STATISTICS,
+                fields=fields,
+            ),
+        )
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         """Compute distribution for multiple modes.

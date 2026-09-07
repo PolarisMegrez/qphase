@@ -164,8 +164,8 @@ def test_quadratic_moments_workspace_is_bounded_by_time_chunk():
         backend_name="cupy",
     )
 
-    short_estimate = analyzer.estimate_workspace(short)
-    long_estimate = analyzer.estimate_workspace(long)
+    short_estimate = analyzer.workspace(short)
+    long_estimate = analyzer.workspace(long)
     assert short_estimate == long_estimate
     assert long_estimate.device_bytes < 16 * 1024**2
     assert long_estimate.host_bytes < 32 * 1024
@@ -174,7 +174,7 @@ def test_quadratic_moments_workspace_is_bounded_by_time_chunk():
 def test_quadratic_moments_advertise_trajectory_batching():
     capabilities = _analyzer(
         observables={"occupation": {"matrix": [[1.0]]}}
-    ).capabilities()
+    ).execution_capabilities()
     assert capabilities.preferred_location == "backend"
     assert capabilities.supports_trajectory_batching is True
     assert capabilities.supports_time_streaming is False

@@ -582,7 +582,7 @@ def _analyzer_workspace_bytes(
     device_total = 0
     host_total = 0
     for name, analyser in analysers.items():
-        estimator_fn = getattr(analyser, "estimate_workspace", None)
+        estimator_fn = getattr(analyser, "workspace", None)
         if callable(estimator_fn):
             estimate = estimator_fn(request)
             if not isinstance(estimate, AnalyserWorkspaceEstimate):
@@ -636,12 +636,12 @@ def _analyzer_capabilities(analyser: Any) -> Any:
     """Return a conservative capability object for old analyser instances."""
     from qphase_sde.contracts.analyser import AnalyserExecutionCapabilities
 
-    provider = getattr(analyser, "capabilities", None)
+    provider = getattr(analyser, "execution_capabilities", None)
     if callable(provider):
         capabilities = provider()
         if isinstance(capabilities, AnalyserExecutionCapabilities):
             return capabilities
-        raise TypeError("analyser capabilities() returned an invalid value")
+        raise TypeError("analyser execution_capabilities() returned an invalid value")
     return AnalyserExecutionCapabilities(
         supports_trajectory_batching=callable(
             getattr(analyser, "create_result_accumulator", None)

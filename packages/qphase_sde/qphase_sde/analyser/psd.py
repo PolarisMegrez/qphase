@@ -40,6 +40,8 @@ from qphase.data import (
     CoordinateSchema,
     DataKind,
     Dataset,
+    ProductDeclaration,
+    ProductRequirement,
     SamplingBasisSchema,
     SpectralQuantity,
     UncertaintySchema,
@@ -50,6 +52,7 @@ from ..contracts.analyser import (
     AnalyserExecutionCapabilities,
     AnalyserWorkspaceEstimate,
     AnalyserWorkspaceRequest,
+    WorkEstimate,
 )
 from ..peak_finder import (
     RationalPeakFinderConfig,
@@ -70,7 +73,7 @@ from ..spectral_estimator import (
     SpectralEstimator,
     create_builtin_estimator,
 )
-from .base import Analyzer, resolve_mode_columns
+from .base import Analyzer, resolve_mode_columns, trajectory_requirement
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
@@ -278,7 +281,39 @@ class PsdAnalyzer(Analyzer):
         result["estimator"] = {method: child_config}
         return result
 
-    def capabilities(self) -> AnalyserExecutionCapabilities:
+    def input_requirements(self) -> list[ProductRequirement]:
+        # Both real and complex records are accepted (``kind="modular"`` uses
+        # the magnitude), so no value_domain constraint is declared.
+        return [trajectory_requirement(value_domain=None)]
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        """Declare the graph-ready spectrum plus the config-gated peak bridge."""
+        declarations = [
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.SPECTRAL,
+                quantity=SpectralQuantity.POWER_SPECTRAL_DENSITY.value,
+                fields=list(_PSD_PRODUCT_FIELDS),
+            )
+        ]
+        if _peak_finder_enabled(cast(PsdAnalyzerConfig, self.config)):
+            # Emitted only when a peak finder is configured: the built product
+            # carries a ``present`` marker and the peaks payload in metadata.
+            declarations.append(
+                ProductDeclaration(
+                    name=f"{label}.legacy_peaks",
+                    kind=DataKind.STATISTICS,
+                    fields=["present"],
+                )
+            )
+        return tuple(declarations)
+
+    def work_estimate(self, request: AnalyserWorkspaceRequest) -> WorkEstimate:
+        """PSD work is FFT-dominated; no total is fabricated."""
+        del request
+        return WorkEstimate(unit="transform", total=None)
+
+    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         """Expose the selected estimator's real execution contract."""
         capabilities = self.estimator.capabilities()
         return AnalyserExecutionCapabilities(
@@ -287,9 +322,7 @@ class PsdAnalyzer(Analyzer):
             supports_time_streaming=capabilities.time_streaming,
         )
 
-    def estimate_workspace(
-        self, request: AnalyserWorkspaceRequest
-    ) -> AnalyserWorkspaceEstimate:
+    def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
         """Estimate FFT or host-estimator workspace for one scan point."""
         capabilities = self.estimator.capabilities()
         trajectory_bytes = request.trajectory_bytes
@@ -868,6 +901,32 @@ class PsdAnalyzer(Analyzer):
             energy,
             n_traj,
         )
+
+
+#: Numeric payload leaves of ``analyze()`` after the ``peaks`` leaf is routed
+#: to the legacy bridge; string leaves stay in payload metadata.
+_PSD_PRODUCT_FIELDS = (
+    "axis",
+    "psd",
+    "psd_std",
+    "psd_sem",
+    "modes",
+    "sample_dt",
+    "nyquist",
+    "uncertainty.n_independent",
+    "uncertainty.ddof",
+    "uncertainty.available",
+)
+
+
+def _peak_finder_enabled(config: PsdAnalyzerConfig) -> bool:
+    """Return whether the config selects a peak finder (mirrors ``_find_peaks``)."""
+    finder_config = config.find_peaks
+    if isinstance(finder_config, bool):
+        return finder_config
+    if isinstance(finder_config, str):
+        return finder_config.lower() in {"scipy", "standard", "rational"}
+    return isinstance(finder_config, ScipyPeakFinderConfig | RationalPeakFinderConfig)
 
 
 def _meta_scalar(meta: Mapping[str, Any], key: str, default: str) -> str:

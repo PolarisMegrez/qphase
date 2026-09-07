@@ -16,6 +16,8 @@ from qphase.data import (
     AxisRole,
     DataKind,
     Dataset,
+    ProductDeclaration,
+    ProductRequirement,
     SamplingBasisSchema,
     UncertaintySchema,
     VariableConstraints,
@@ -27,7 +29,7 @@ from ..contracts.analyser import (
     AnalyserWorkspaceRequest,
 )
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .base import Analyzer, resolve_mode_columns
+from .base import Analyzer, resolve_mode_columns, trajectory_requirement
 from .result import AnalysisResult
 
 __all__ = ["CoherenceMatrixAnalyzer", "CoherenceMatrixConfig"]
@@ -85,16 +87,28 @@ class CoherenceMatrixAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[CoherenceMatrixConfig]] = CoherenceMatrixConfig
 
-    def capabilities(self) -> AnalyserExecutionCapabilities:
+    def input_requirements(self) -> list[ProductRequirement]:
+        return [trajectory_requirement()]
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        """Declare the single graph-ready coherence-matrix product."""
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.STATISTICS,
+                quantity="coherence_matrix",
+                fields=list(_COHERENCE_MATRIX_FIELDS),
+            ),
+        )
+
+    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(
             preferred_location="backend",
             supports_trajectory_batching=True,
             supports_time_streaming=False,
         )
 
-    def estimate_workspace(
-        self, request: AnalyserWorkspaceRequest
-    ) -> AnalyserWorkspaceEstimate:
+    def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
         config = cast(CoherenceMatrixConfig, self.config)
         n_modes = (
             len(config.modes) if config.modes is not None else request.n_record_modes
@@ -332,6 +346,56 @@ class CoherenceMatrixAnalyzer(Analyzer):
                 "time_blocks_are_independent": False,
             },
         }
+
+
+#: Numeric payload leaves of ``analyze()`` (``_summarize``): every leaf becomes
+#: a variable of the typed product; string leaves stay in payload metadata.
+_COHERENCE_MATRIX_FIELDS = (
+    "modes",
+    "n_traj",
+    "n_samples",
+    "t0",
+    "dt",
+    "observation_duration",
+    "matrix",
+    "matrix_sem",
+    "matrix_sem_real",
+    "matrix_sem_imag",
+    "normalized_matrix",
+    "mean_amplitude",
+    "connected_matrix",
+    "first_order_coherence",
+    "eigenvalues",
+    "normalized_eigenvalues",
+    "trace",
+    "purity",
+    "purity_sem",
+    "purity_ci",
+    "purity_jackknife_bias_corrected",
+    "effective_rank",
+    "spectral_entropy",
+    "principal_fraction",
+    "minimum_eigenvalue",
+    "hermiticity_residual",
+    "per_trajectory_matrix",
+    "per_trajectory_mean_amplitude",
+    "per_trajectory_purity",
+    "time_blocks.count",
+    "time_blocks.start_index",
+    "time_blocks.stop_index",
+    "time_blocks.start_time",
+    "time_blocks.stop_time",
+    "time_blocks.matrix",
+    "time_blocks.purity",
+    "time_blocks.trace",
+    "time_blocks.relative_matrix_distance",
+    "time_blocks.first_last_matrix_distance",
+    "time_blocks.purity_range",
+    "uncertainty.available",
+    "uncertainty.n_independent",
+    "uncertainty.confidence_level",
+    "uncertainty.time_blocks_are_independent",
+)
 
 
 def _build_coherence_matrix_products(

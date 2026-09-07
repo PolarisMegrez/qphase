@@ -14,8 +14,10 @@ from qphase.backend.base import BackendBase
 from qphase.core.aggregation import write_table_csv
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase, ResultProtocol
+from qphase.data import DataKind, ProductDeclaration, ProductRequirement
 from scipy.optimize import curve_fit
 
+from ..contracts.quantities import SDEQuantity
 from ..result import SDEResult
 from .base import Analyzer
 from .frequency_orientation import (
@@ -624,6 +626,59 @@ class AllanScalingAnalyzer(Analyzer):
     name: ClassVar[str] = "allan_scaling"
     description: ClassVar[str] = "Cross-scan white-FM detection and scaling fits"
     config_schema: ClassVar[type[AllanScalingConfig]] = AllanScalingConfig
+
+    def input_requirements(self) -> list[ProductRequirement]:
+        config = cast(AllanScalingConfig, self.config)
+        allan_prefix = f"mode_results.{config.mode}.allan"
+        required = [
+            f"{allan_prefix}.{leaf}"
+            for leaf in (
+                "tau",
+                "angular_frequency_variance",
+                "angular_frequency_variance_sem",
+                "total_independent_window_count",
+                "per_trajectory",
+                "nonoverlap_per_trajectory",
+            )
+        ]
+        if config.fit_frequency:
+            required.append(
+                f"mode_results.{config.mode}.phase_increment."
+                "mean_angular_frequency_per_trajectory"
+            )
+        return [
+            ProductRequirement(
+                name=config.source_key,
+                kind=DataKind.STATISTICS,
+                quantity=SDEQuantity.ALLAN_VARIANCE.value,
+                required_fields=required,
+            )
+        ]
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        fields = [
+            f"summary.{leaf}"
+            for leaf in (
+                "critical_value",
+                "mode",
+                "accepted_points",
+                "selected_points",
+                "epsilon_min",
+                "epsilon_max",
+                "epsilon_window_decades",
+                "common_tau_start",
+                "common_tau_end",
+                "common_tau_decades",
+                "target_scaling_decades",
+            )
+        ]
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.STATISTICS,
+                fields=fields,
+            ),
+        )
 
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         del backend
