@@ -79,8 +79,11 @@ MANIFEST = ResourcePackageManifest(
         PluginClassDeclaration(
             namespace="peak_finder",
             protocol="qphase_sde.peak_finder.base:PeakFinder",
-            description="Peak-candidate finders returning unified PeakCandidate "
-            "results.",
+            description="Peak finders. The public PeakFinder still returns the "
+            "legacy PeakInfo consumed by the production PSD analyser; the "
+            "unified grouped PeakCandidate table contract is frozen as "
+            "qphase_sde.peak_finder.base:TypedPeakFinder and concrete finders "
+            "migrate to it in Wave 5B.",
         ),
         PluginClassDeclaration(
             namespace="peak_tracker",
@@ -137,7 +140,9 @@ MANIFEST = ResourcePackageManifest(
     backend_capabilities=BackendCapabilities(
         backends=["numpy", "cupy"],
         devices=["cpu", "cuda"],
-        streaming=True,
+        # No time-streaming reducer exists: trajectory batching is not
+        # streaming, so the package must not claim it.
+        streaming=False,
     ),
     optional_dependencies=[
         OptionalDependencyDeclaration(

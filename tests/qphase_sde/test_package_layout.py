@@ -110,6 +110,9 @@ def test_manifest_is_valid_and_declares_one_engine():
     """The static MANIFEST validates and matches the installed engine EP."""
     assert isinstance(MANIFEST, ResourcePackageManifest)
     assert validate_manifest(MANIFEST) == []
+    # No time-streaming reducer exists; trajectory batching is not
+    # streaming, so the manifest must not claim the capability.
+    assert MANIFEST.backend_capabilities.streaming is False
 
     entry_points = _pyproject_entry_points()
     engine_points = {

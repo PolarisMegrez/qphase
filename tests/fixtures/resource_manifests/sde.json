@@ -91,7 +91,7 @@
   "backend_capabilities": {
     "backends": ["numpy", "cupy"],
     "devices": ["cpu", "cuda"],
-    "streaming": true
+    "streaming": false
   },
   "optional_dependencies": [
     {

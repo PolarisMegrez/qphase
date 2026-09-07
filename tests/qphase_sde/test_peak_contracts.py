@@ -1,13 +1,15 @@
 """Contract tests for the grouped, channel-aware peak candidate schema.
 
 Freezes the Phase 5A peak layout: candidates group by scan point x channel
-(one group per pair, each holding 0/1/N candidates), channel labels live in
-schema attributes (never in payload columns), the single ``status_code``
-column layers the :class:`PeakStatus` flags, and a materialized candidate
-product survives a clean-process artifact roundtrip.
+(one group per pair, each holding 0/1/N candidates), channel labels and the
+mode-indexed measurement basis live in schema attributes (never in payload
+columns), the single ``status_code`` column layers the per-table
+:class:`PeakStatus` masks, and a materialized candidate product survives a
+clean-process artifact roundtrip.
 """
 
 import json
+import math
 import subprocess
 import sys
 from typing import Any
@@ -19,7 +21,10 @@ from qphase.data import AxisRole, ProductSchema, StatisticsDataset, save_product
 from qphase_sde.contracts import peaks
 
 CHANNEL_NAMES = ["mode_0", "mode_1"]
-CHANNEL_WEIGHTS = [[1.0, 0.0], [0.5, 0.5]]
+MODE_LABELS = ["mode_0", "mode_1"]
+#: Identity basis over two bare modes, flattened row-major over
+#: (channel x mode): channel 0 reads mode 0, channel 1 reads mode 1.
+CHANNEL_MODE_WEIGHTS = [[1.0, 0.0], [0.0, 0.0], [0.0, 0.0], [1.0, 0.0]]
 
 #: Variables kept by the concrete product of the roundtrip test. Uncertainty
 #: data variables (conditional/sampling location std) must stay because the
@@ -51,7 +56,8 @@ def _grouped_table() -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]
     columns: dict[str, Any] = {
         "location": np.linspace(0.1, 0.7, candidate_count),
         "intensity": np.arange(candidate_count, dtype=np.float64) + 1.0,
-        "status_code": np.array([7, 3, 7, 1, 7, 0, 5], dtype=np.int64),
+        # Candidate codes layer COMPUTED|CENTER_IDENTIFIABLE only (mask 3).
+        "status_code": np.array([3, 1, 3, 1, 2, 0, 3], dtype=np.int64),
         "width": np.full(candidate_count, 0.1),
         "width_valid": np.array([1, 1, 1, 0, 1, 1, 1], dtype=np.int8),
     }
@@ -90,25 +96,29 @@ def test_grouped_schema_template_layout():
     assert schema.variable("candidate_offsets").dims == ("group_offset",)
     assert schema.variable("status_code").dims == ("candidate",)
 
-    # Channel labels are a stable attribute mapping, never a payload column.
+    # Channel labels and the measurement basis are stable attribute
+    # mappings, never payload columns.
     variable_names = {variable.name for variable in schema.variables}
     assert "channel_names" not in variable_names
+    assert "mode_labels" not in variable_names
     for variable in schema.variables:
         assert np.dtype(variable.dtype).kind in "fi", variable.name
     attributes = schema.attributes
     assert attributes["channel_names"] == ["channel_0"]
+    assert attributes["mode_labels"] == ["mode_0"]
     assert attributes["group_axis"] == "group"
     assert attributes["group_scan_variable"] == "group_scan_index"
     assert attributes["group_channel_variable"] == "group_channel_index"
     assert attributes["offsets_variable"] == "candidate_offsets"
+    # status_bits is per-table: exactly the flags each product may layer.
     assert attributes["status_bits"] == {
         "computed": 1,
         "center_identifiable": 2,
+    }
+    assert peaks.PEAK_PATH_PRODUCT.attributes["status_bits"] == {
+        "computed": 1,
         "path_unique": 4,
     }
-    assert (
-        peaks.PEAK_PATH_PRODUCT.attributes["status_bits"] == (attributes["status_bits"])
-    )
 
 
 def test_estimand_capability_lives_in_valid_masks_not_status():
@@ -124,11 +134,17 @@ def test_estimand_capability_lives_in_valid_masks_not_status():
 
 
 def test_peak_status_flag_semantics():
-    """The flag enum layers computation/identifiability/ambiguity axes."""
+    """One flag enum serves both tables; each table enforces its own mask."""
     assert int(peaks.PeakStatus.COMPUTED) == 1
     assert int(peaks.PeakStatus.CENTER_IDENTIFIABLE) == 2
     assert int(peaks.PeakStatus.PATH_UNIQUE) == 4
     assert peaks.PEAK_STATUS_MASK == 7
+    # Candidates layer computation and center identifiability only;
+    # PATH_UNIQUE belongs to path products.
+    assert peaks.PEAK_CANDIDATE_STATUS_MASK == 3
+    # Paths layer computation and path ambiguity only; CENTER_IDENTIFIABLE
+    # is meaningless on a path (a path has no center of its own).
+    assert peaks.PEAK_PATH_STATUS_MASK == 5
     assert peaks.PeakStatus(0) is peaks.PeakStatus.NONE
     combined = peaks.PeakStatus.COMPUTED | peaks.PeakStatus.PATH_UNIQUE
     assert combined & peaks.PeakStatus.COMPUTED
@@ -136,7 +152,7 @@ def test_peak_status_flag_semantics():
 
 
 def test_peak_candidate_and_path_status_flags_roundtrip():
-    """Pydantic rows carry the layered flags and reject undefined bits."""
+    """Pydantic rows carry the layered flags and reject out-of-mask bits."""
     candidate = peaks.PeakCandidate(
         location=1.25,
         intensity=42.0,
@@ -147,37 +163,46 @@ def test_peak_candidate_and_path_status_flags_roundtrip():
     assert payload["status"] == 3
     assert peaks.PeakCandidate.model_validate(payload) == candidate
 
+    # The default asserts computation only; identifiability is opt-in.
     default = peaks.PeakCandidate(location=1.0, intensity=2.0)
-    assert int(default.status) == peaks.PEAK_STATUS_MASK  # historical "ok"
+    assert default.status is peaks.PeakStatus.COMPUTED
 
     path = peaks.PeakPathResult(
         path_id="p0",
         candidate_rows=[0, 3],
         scan_positions=[0, 1],
-        status=peaks.PeakStatus.COMPUTED,  # path uniqueness not established
+        status=peaks.PeakStatus.COMPUTED | peaks.PeakStatus.PATH_UNIQUE,
     )
-    assert not path.status & peaks.PeakStatus.PATH_UNIQUE
+    assert path.status & peaks.PeakStatus.PATH_UNIQUE
     payload = json.loads(json.dumps(path.model_dump(mode="json")))
     assert peaks.PeakPathResult.model_validate(payload) == path
+    # The default path asserts computation only; uniqueness is opt-in.
+    default_path = peaks.PeakPathResult(
+        path_id="p1", candidate_rows=[0], scan_positions=[0]
+    )
+    assert default_path.status is peaks.PeakStatus.COMPUTED
 
-    for model, kwargs in (
-        (peaks.PeakCandidate, {"location": 1.0, "intensity": 2.0}),
-        (
-            peaks.PeakPathResult,
-            {"path_id": "p", "candidate_rows": [0], "scan_positions": [0]},
-        ),
-    ):
+    # PATH_UNIQUE is a path-product bit and fails on candidates;
+    # CENTER_IDENTIFIABLE is candidate-level and fails on paths.
+    for bad_status in (4, 5, 7, 8, -1):
         with pytest.raises(ValidationError, match="PeakStatus mask"):
-            model(**kwargs, status=8)
+            peaks.PeakCandidate(location=1.0, intensity=2.0, status=bad_status)
+    for bad_status in (2, 3, 7, 8, -1):
         with pytest.raises(ValidationError, match="PeakStatus mask"):
-            model(**kwargs, status=-1)
+            peaks.PeakPathResult(
+                path_id="p",
+                candidate_rows=[0],
+                scan_positions=[0],
+                status=bad_status,
+            )
 
 
 def test_grouped_candidate_table_validates():
     """Groups with 0/1/N candidates over 3 scan points x 2 channels pass."""
     offsets, group_scan_index, group_channel_index, columns = _grouped_table()
     _validate(offsets, group_scan_index, group_channel_index, columns)
-    # Channel weights, when present, are one [re, im] pair per channel.
+    # The measurement basis, when present, holds one [re, im] pair per
+    # (channel, mode) entry flattened row-major.
     peaks.validate_candidate_table(
         offsets,
         group_scan_index,
@@ -185,7 +210,8 @@ def test_grouped_candidate_table_validates():
         columns,
         scan_count=3,
         channel_names=CHANNEL_NAMES,
-        channel_weights=CHANNEL_WEIGHTS,
+        mode_labels=MODE_LABELS,
+        channel_mode_weights=CHANNEL_MODE_WEIGHTS,
     )
 
 
@@ -244,12 +270,41 @@ def test_group_indices_must_stay_in_range():
         _validate(offsets, gsi.astype(np.float64), gci, columns)
 
 
-def test_channel_names_attribute_is_mandatory_and_stable():
-    """channel_names: non-empty, unique, non-empty strings; weights aligned."""
+def test_one_group_per_scan_channel_pair():
+    """Duplicate (scan, channel) groups are rejected: no replicate dimension."""
+    offsets = np.array([0, 1, 2], dtype=np.int64)
+    columns = {
+        "location": np.array([0.1, 0.2]),
+        "intensity": np.array([1.0, 2.0]),
+        "status_code": np.array([1, 3], dtype=np.int64),
+    }
+    # Two groups claiming scan point 0 / channel 0: rejected.
+    with pytest.raises(ValueError, match="one group per scan/channel pair"):
+        peaks.validate_candidate_table(
+            offsets,
+            np.array([0, 0], dtype=np.int64),
+            np.array([0, 0], dtype=np.int64),
+            columns,
+            scan_count=3,
+            channel_names=CHANNEL_NAMES,
+        )
+    # The same scan point on two different channels is legal.
+    peaks.validate_candidate_table(
+        offsets,
+        np.array([0, 0], dtype=np.int64),
+        np.array([0, 1], dtype=np.int64),
+        columns,
+        scan_count=3,
+        channel_names=CHANNEL_NAMES,
+    )
+
+
+def test_measurement_basis_attributes_are_stable():
+    """channel_names/mode_labels: unique non-empty strings; weights closed."""
     offsets, gsi, gci, columns = _grouped_table()
 
     for bad, match in (
-        ([], "at least one channel"),
+        ([], "at least one"),
         (["mode_0", "mode_0"], "unique"),
         (["mode_0", ""], "non-empty strings"),
         (["mode_0", 1], "non-empty strings"),
@@ -259,8 +314,19 @@ def test_channel_names_attribute_is_mandatory_and_stable():
             peaks.validate_candidate_table(
                 offsets, gsi, gci, columns, scan_count=3, channel_names=bad
             )
+        with pytest.raises(ValueError, match=match):
+            peaks.validate_candidate_table(
+                offsets,
+                gsi,
+                gci,
+                columns,
+                scan_count=3,
+                channel_names=CHANNEL_NAMES,
+                mode_labels=bad,
+            )
 
-    with pytest.raises(ValueError, match=r"\[re, im\] pair per channel"):
+    # Weights must close over (channel x mode): 2 channels x 2 modes = 4.
+    with pytest.raises(ValueError, match=r"\[re, im\] pair per \(channel, mode\)"):
         peaks.validate_candidate_table(
             offsets,
             gsi,
@@ -268,7 +334,23 @@ def test_channel_names_attribute_is_mandatory_and_stable():
             columns,
             scan_count=3,
             channel_names=CHANNEL_NAMES,
-            channel_weights=[[1.0, 0.0]],
+            mode_labels=MODE_LABELS,
+            channel_mode_weights=[[1.0, 0.0], [0.0, 1.0]],
+        )
+    # The nested (channel, mode, 2) form is rejected: only the flattened
+    # row-major list of pairs is JSON-clean and shape-unambiguous.
+    with pytest.raises(ValueError, match="flattened row-major"):
+        peaks.validate_candidate_table(
+            offsets,
+            gsi,
+            gci,
+            columns,
+            scan_count=3,
+            channel_names=CHANNEL_NAMES,
+            mode_labels=MODE_LABELS,
+            channel_mode_weights=np.array(
+                [[[1.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [1.0, 0.0]]]
+            ),
         )
     with pytest.raises(ValueError, match="finite"):
         peaks.validate_candidate_table(
@@ -278,19 +360,88 @@ def test_channel_names_attribute_is_mandatory_and_stable():
             columns,
             scan_count=3,
             channel_names=CHANNEL_NAMES,
-            channel_weights=[[1.0, 0.0], [np.inf, 0.0]],
+            mode_labels=MODE_LABELS,
+            channel_mode_weights=[[1.0, 0.0], [0.0, 0.0], [0.0, 0.0], [np.inf, 0.0]],
+        )
+    # Weights index the mode axis: they are meaningless without mode labels.
+    with pytest.raises(ValueError, match="requires mode_labels"):
+        peaks.validate_candidate_table(
+            offsets,
+            gsi,
+            gci,
+            columns,
+            scan_count=3,
+            channel_names=CHANNEL_NAMES,
+            channel_mode_weights=CHANNEL_MODE_WEIGHTS,
         )
 
 
-def test_status_code_must_stay_within_flag_mask():
-    """Unknown status bits (or negative codes) fail candidate validation."""
+def test_multi_mode_bare_bright_dark_readout_basis():
+    """A 3-mode basis expresses bare, bright and dark readout channels."""
+    mode_labels = ["mode_0", "mode_1", "mode_2"]
+    channel_names = ["bare_0", "bright", "dark"]
+    inv_sqrt2 = 1.0 / math.sqrt(2.0)
+    # Readout vectors l of c = l^dagger alpha, flattened row-major over
+    # (channel x mode): bare mode 0, bright (1,1,0)/sqrt(2), dark
+    # (1,-1,0)/sqrt(2).
+    weights = [
+        [1.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [inv_sqrt2, 0.0],
+        [inv_sqrt2, 0.0],
+        [0.0, 0.0],
+        [inv_sqrt2, 0.0],
+        [-inv_sqrt2, 0.0],
+        [0.0, 0.0],
+    ]
+    offsets = np.array([0, 1, 2, 3], dtype=np.int64)
+    columns = {
+        "location": np.array([0.3, 0.5, 0.4]),
+        "intensity": np.array([2.0, 4.0, 0.1]),
+        "status_code": np.array([3, 3, 1], dtype=np.int64),
+    }
+    peaks.validate_candidate_table(
+        offsets,
+        np.array([0, 0, 0], dtype=np.int64),
+        np.array([0, 1, 2], dtype=np.int64),
+        columns,
+        scan_count=1,
+        channel_names=channel_names,
+        mode_labels=mode_labels,
+        channel_mode_weights=weights,
+    )
+    # Every readout vector is normalized; bright and dark are orthogonal.
+    vectors = np.asarray(weights)
+    vectors = vectors[:, 0] + 1j * vectors[:, 1]
+    bare, bright, dark = vectors.reshape(3, 3)
+    assert np.isclose(np.linalg.norm(bare), 1.0)
+    assert np.isclose(np.linalg.norm(bright), 1.0)
+    assert np.isclose(np.linalg.norm(dark), 1.0)
+    assert np.isclose(np.vdot(bright, dark), 0.0)
+    # Dropping one (channel, mode) pair breaks the flattened closure.
+    with pytest.raises(ValueError, match=r"\(channel, mode\)"):
+        peaks.validate_candidate_table(
+            offsets,
+            np.array([0, 0, 0], dtype=np.int64),
+            np.array([0, 1, 2], dtype=np.int64),
+            columns,
+            scan_count=1,
+            channel_names=channel_names,
+            mode_labels=mode_labels,
+            channel_mode_weights=weights[:-1],
+        )
+
+
+def test_candidate_status_codes_stay_within_candidate_mask():
+    """PATH_UNIQUE, unknown bits and negative codes fail candidate tables."""
     offsets, gsi, gci, columns = _grouped_table()
 
-    for bad_code in (8, 16, -1):
-        columns["status_code"] = np.array([7, 3, 7, 1, 7, 0, bad_code], dtype=np.int64)
+    for bad_code in (4, 5, 7, 8, -1):
+        columns["status_code"] = np.array([3, 1, 3, 1, 2, 0, bad_code], dtype=np.int64)
         with pytest.raises(ValueError, match="PeakStatus mask"):
             _validate(offsets, gsi, gci, columns)
-    columns["status_code"] = np.full(7, 7, dtype=np.float64)
+    columns["status_code"] = np.full(7, 3, dtype=np.float64)
     with pytest.raises(ValueError, match="integer dtype"):
         _validate(offsets, gsi, gci, columns)
 
@@ -345,18 +496,22 @@ def test_path_table_validation():
         candidate_row=[0, 3, 1, 2, 4],
         scan_position=[0, 1, 0, 1, 2],
         candidate_count=5,
-        path_status_code=[7, 5],
+        path_status_code=[5, 1],
     )
     with pytest.raises(ValueError, match="equal length"):
-        peaks.validate_path_table([0, 2], [0, 3], [0], 5, path_status_code=[7])
+        peaks.validate_path_table([0, 2], [0, 3], [0], 5, path_status_code=[5])
     with pytest.raises(ValueError, match="terminal path offset"):
-        peaks.validate_path_table([0, 3], [0, 3], [0, 1], 5, path_status_code=[7])
+        peaks.validate_path_table([0, 3], [0, 3], [0, 1], 5, path_status_code=[5])
     with pytest.raises(ValueError, match="outside"):
-        peaks.validate_path_table([0, 2], [0, 9], [0, 1], 5, path_status_code=[7])
+        peaks.validate_path_table([0, 2], [0, 9], [0, 1], 5, path_status_code=[5])
     with pytest.raises(ValueError, match="PeakStatus mask"):
+        # Unknown bit.
         peaks.validate_path_table([0, 2], [0, 1], [0, 1], 5, path_status_code=[8])
+    with pytest.raises(ValueError, match="PeakStatus mask"):
+        # CENTER_IDENTIFIABLE is candidate-level and fails on paths.
+        peaks.validate_path_table([0, 2], [0, 1], [0, 1], 5, path_status_code=[2])
     with pytest.raises(ValueError, match="one entry per path"):
-        peaks.validate_path_table([0, 2], [0, 1], [0, 1], 5, path_status_code=[7, 7])
+        peaks.validate_path_table([0, 2], [0, 1], [0, 1], 5, path_status_code=[5, 5])
 
 
 def test_uncertainty_scopes_stay_separate():
@@ -391,21 +546,21 @@ def _closed_schema(*, scan_count: int, group_count: int, candidate_count: int):
         if variable["name"] in _KEPT_VARIABLES
     ]
     payload["attributes"]["channel_names"] = list(CHANNEL_NAMES)
-    payload["attributes"]["channel_weights"] = CHANNEL_WEIGHTS
+    payload["attributes"]["mode_labels"] = list(MODE_LABELS)
+    payload["attributes"]["channel_mode_weights"] = CHANNEL_MODE_WEIGHTS
     return ProductSchema.model_validate(payload)
 
 
-#: Clean-process probe: the artifact is reopened without any in-process
+#: Clean-process probe body: the artifact is reopened without any in-process
 #: state, the candidate table is re-validated from the persisted schema
 #: attributes and the payload is echoed as JSON for the parent to compare.
-#: ``qphase.core`` must be imported before ``qphase.data`` in a clean
-#: process (an in-flight compiler change made qphase.core import
-#: qphase.data.graph, which cycles when qphase.data initializes first).
-_PROBE = """
+#: The probe runs twice with different first imports — ``qphase.data`` and
+#: ``qphase_sde.contracts.peaks`` — and both entry orders must initialize
+#: cleanly.
+_PROBE_BODY = """
 import json
 import sys
 
-import qphase.core  # noqa: F401  (core must initialize before qphase.data)
 from qphase.data import load_bundle
 from qphase_sde.contracts import peaks
 
@@ -427,7 +582,8 @@ peaks.validate_candidate_table(
     columns,
     scan_count=int(sys.argv[2]),
     channel_names=schema.attributes["channel_names"],
-    channel_weights=schema.attributes["channel_weights"],
+    mode_labels=schema.attributes["mode_labels"],
+    channel_mode_weights=schema.attributes["channel_mode_weights"],
 )
 print(
     json.dumps(
@@ -440,7 +596,8 @@ print(
             "status_code": columns["status_code"].tolist(),
             "width_valid": columns["width_valid"].tolist(),
             "channel_names": schema.attributes["channel_names"],
-            "channel_weights": schema.attributes["channel_weights"],
+            "mode_labels": schema.attributes["mode_labels"],
+            "channel_mode_weights": schema.attributes["channel_mode_weights"],
             "status_bits": schema.attributes["status_bits"],
             "uncertainty_scopes": [u.scope for u in schema.uncertainties],
         }
@@ -449,7 +606,12 @@ print(
 """
 
 
-def test_candidate_table_clean_process_roundtrip(tmp_path):
+@pytest.mark.parametrize(
+    "first_import",
+    ["import qphase.data", "import qphase_sde.contracts.peaks"],
+    ids=["qphase-data-first", "peaks-first"],
+)
+def test_candidate_table_clean_process_roundtrip(tmp_path, first_import):
     """A materialized candidate product roundtrips through a clean process."""
     offsets, gsi, gci, columns = _grouped_table()
     candidate_count = int(offsets[-1])
@@ -476,7 +638,7 @@ def test_candidate_table_clean_process_roundtrip(tmp_path):
     save_products(tmp_path, {"peaks": dataset})
 
     probe = tmp_path / "probe.py"
-    probe.write_text(_PROBE, encoding="utf-8")
+    probe.write_text(f"{first_import}  # noqa: F401\n" + _PROBE_BODY, encoding="utf-8")
     completed = subprocess.run(
         [sys.executable, str(probe), str(tmp_path), "3"],
         capture_output=True,
@@ -495,11 +657,11 @@ def test_candidate_table_clean_process_roundtrip(tmp_path):
         "status_code": columns["status_code"].tolist(),
         "width_valid": columns["width_valid"].tolist(),
         "channel_names": CHANNEL_NAMES,
-        "channel_weights": CHANNEL_WEIGHTS,
+        "mode_labels": MODE_LABELS,
+        "channel_mode_weights": CHANNEL_MODE_WEIGHTS,
         "status_bits": {
             "computed": 1,
             "center_identifiable": 2,
-            "path_unique": 4,
         },
         "uncertainty_scopes": ["conditional", "sampling"],
     }

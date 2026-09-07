@@ -24,6 +24,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import Any, ClassVar
 
+from pydantic import ConfigDict
 from qphase.core.protocols import PluginConfigBase
 
 from ..contracts.coherence import CoherenceFrequencyEstimate
@@ -35,7 +36,14 @@ __all__ = [
 
 
 class BaseCoherenceFrequencyConfig(PluginConfigBase):
-    """Base configuration for coherence-frequency estimators."""
+    """Base configuration for coherence-frequency estimators.
+
+    Strict like the other plugin config bases in this repo (e.g. the CAM
+    solver/postprocessor bases): unknown fields are rejected instead of
+    being silently absorbed by the permissive ``PluginConfigBase`` default.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class CoherenceFrequencyProtocol(ABC):

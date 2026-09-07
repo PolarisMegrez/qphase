@@ -23,6 +23,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
 import numpy as np
+from pydantic import ConfigDict
 from qphase.core.protocols import PluginConfigBase
 
 from ..contracts.peaks import PeakPathResult
@@ -34,7 +35,14 @@ __all__ = [
 
 
 class BasePeakTrackerConfig(PluginConfigBase):
-    """Base configuration for peak trackers."""
+    """Base configuration for peak trackers.
+
+    Strict like the other plugin config bases in this repo (e.g. the CAM
+    solver/postprocessor bases): unknown fields are rejected instead of
+    being silently absorbed by the permissive ``PluginConfigBase`` default.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class PeakTrackerProtocol(ABC):

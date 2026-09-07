@@ -154,14 +154,11 @@ def test_peak_candidate_and_path_roundtrip():
     dumped = candidate.model_dump()
     assert "path" not in dumped
     assert "fit_payload" not in dumped  # fit payloads are not frozen
-    # The default status layers every defined flag (the historical "ok").
-    assert candidate.status == (
-        peaks.PeakStatus.COMPUTED
-        | peaks.PeakStatus.CENTER_IDENTIFIABLE
-        | peaks.PeakStatus.PATH_UNIQUE
-    )
+    # The default candidate status asserts computation only; center
+    # identifiability is opt-in and PATH_UNIQUE belongs to path products.
+    assert candidate.status is peaks.PeakStatus.COMPUTED
     payload = json.loads(json.dumps(candidate.model_dump(mode="json")))
-    assert payload["status"] == peaks.PEAK_STATUS_MASK
+    assert payload["status"] == int(peaks.PeakStatus.COMPUTED)
     assert peaks.PeakCandidate.model_validate(payload) == candidate
 
     path = peaks.PeakPathResult(
@@ -171,7 +168,7 @@ def test_peak_candidate_and_path_roundtrip():
         uncertainty_scope=peaks.UncertaintyScope.PATH_MODEL_SELECTION,
     )
     assert path.uncertainty_scope.value == "path_model_selection"
-    assert isinstance(path.status, peaks.PeakStatus)
+    assert path.status is peaks.PeakStatus.COMPUTED
 
     with pytest.raises(ValidationError):
         peaks.PeakCandidate(location=1.0, intensity=2.0, bogus_field=True)
@@ -184,18 +181,116 @@ def test_peak_candidate_and_path_roundtrip():
 
 
 def test_coherence_frequency_estimate_roundtrip():
-    """Coherence estimates carry lag/bandwidth/model diagnostics explicitly."""
+    """Coherence estimates carry lag/bandwidth/status explicitly."""
     estimate = coherence.CoherenceFrequencyEstimate(
         frequency=-0.42,
         bandwidth=0.05,
         lag=12.0,
         estimator="band_limited",
-        sampling_std=0.01,
+        frequency_sem=0.01,
         independent_count=64,
+        status=(
+            coherence.CoherenceFrequencyStatus.COMPUTED
+            | coherence.CoherenceFrequencyStatus.UNIQUE
+        ),
         diagnostics={"platform": "flat", "rayleigh": 0.001},
     )
     payload = json.loads(json.dumps(estimate.model_dump(mode="json")))
     assert coherence.CoherenceFrequencyEstimate.model_validate(payload) == (estimate)
+
+    # The default status asserts computation only; uniqueness and window
+    # selection are asserted explicitly once established.
+    default = coherence.CoherenceFrequencyEstimate(
+        frequency=0.0, estimator="short_delay"
+    )
+    assert default.status is coherence.CoherenceFrequencyStatus.COMPUTED
+    with pytest.raises(ValidationError, match="CoherenceFrequencyStatus mask"):
+        coherence.CoherenceFrequencyEstimate(
+            frequency=0.0, estimator="short_delay", status=8
+        )
+
+
+def test_coherence_frequency_product_declares_explicit_estimate_fields():
+    """Frequency + uncertainty payload, lag, bandwidth and status_code are
+    explicit schema variables, grounded in what the coherence estimators
+    produce; the sampling uncertainty closes on ``frequency_sem``.
+    """
+    import numpy as np
+
+    schema = coherence.COHERENCE_FREQUENCY_PRODUCT
+    variables = {variable.name: variable for variable in schema.variables}
+    assert set(variables) == {
+        "frequency",
+        "frequency_sem",
+        "lag",
+        "bandwidth",
+        "status_code",
+    }
+    for name, variable in variables.items():
+        assert variable.dims == ("scan", "channel"), name
+    assert np.dtype(variables["status_code"].dtype).kind == "i"
+    assert variables["frequency"].quantity == "coherence_frequency"
+
+    (uncertainty,) = schema.uncertainties
+    assert uncertainty.target == "frequency"
+    assert uncertainty.data_variable == "frequency_sem"
+    assert uncertainty.sampling_basis == "trajectory"
+    assert uncertainty.scope == "sampling"
+
+    # status_bits decodes codes without importing this module.
+    assert schema.attributes["status_bits"] == {
+        "computed": 1,
+        "unique": 2,
+        "interior_window": 4,
+    }
+    # The template stays closed under core validation and JSON roundtrip.
+    payload = json.loads(json.dumps(schema.model_dump(mode="json")))
+    assert ProductSchema.model_validate(payload) == schema
+
+
+def test_coherence_frequency_table_validation():
+    """The table validator checks required columns, cells and status mask."""
+    import numpy as np
+
+    columns = {
+        "frequency": np.zeros((2, 2)),
+        "frequency_sem": np.full((2, 2), 0.01),
+        "lag": np.full((2, 2), 12.0),
+        "bandwidth": np.full((2, 2), 0.5),
+        "status_code": np.array([[7, 5], [1, 0]], dtype=np.int64),
+    }
+    coherence.validate_coherence_frequency_table(columns, scan_count=2, channel_count=2)
+
+    with pytest.raises(ValueError, match="required column"):
+        coherence.validate_coherence_frequency_table(
+            {k: v for k, v in columns.items() if k != "lag"},
+            scan_count=2,
+            channel_count=2,
+        )
+    with pytest.raises(ValueError, match=r"per \(scan, channel\) cell"):
+        coherence.validate_coherence_frequency_table(
+            {**columns, "frequency": np.zeros(4)},
+            scan_count=2,
+            channel_count=2,
+        )
+    with pytest.raises(ValueError, match="CoherenceFrequencyStatus mask"):
+        coherence.validate_coherence_frequency_table(
+            {**columns, "status_code": np.full((2, 2), 8, dtype=np.int64)},
+            scan_count=2,
+            channel_count=2,
+        )
+    with pytest.raises(ValueError, match="integer dtype"):
+        coherence.validate_coherence_frequency_table(
+            {**columns, "status_code": np.zeros((2, 2))},
+            scan_count=2,
+            channel_count=2,
+        )
+    with pytest.raises(ValueError, match="nonnegative"):
+        coherence.validate_coherence_frequency_table(
+            {**columns, "bandwidth": np.full((2, 2), -0.5)},
+            scan_count=2,
+            channel_count=2,
+        )
 
 
 def test_analyser_contract_is_structural():

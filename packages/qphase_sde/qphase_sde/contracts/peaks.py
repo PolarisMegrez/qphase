@@ -29,8 +29,13 @@ follows the same ``path``/``path_offset`` pattern as ``PEAK_PATH_PRODUCT``.
 Channel labels never enter payload columns: the mandatory schema attribute
 ``channel_names`` (a list of strings — single-channel products list one
 name) is the stable index-to-label mapping that ``group_channel_index``
-references. When channel superposition weights are relevant, the optional
-``channel_weights`` attribute holds one ``[re, im]`` pair per channel;
+references. The measurement basis is explicit: ``mode_labels`` lists the
+modes the readouts act on, and the optional ``channel_mode_weights``
+attribute holds the complex readout vector of every channel as ``[re, im]``
+pairs flattened row-major over (channel × mode). A *bare mode* channel
+carries exactly one unit weight; a *trace* or combined channel carries an
+arbitrary normalized readout vector ``l`` of the coherent readout
+``c = l†α``. Channel names and mode labels are the stable mapping and
 complex numbers travel as real pairs, so there are no object or string
 arrays anywhere in the product.
 
@@ -45,18 +50,24 @@ promoting domain fields into core job status:
   detection;
 - center identifiability: ``CENTER_IDENTIFIABLE`` — the peak center is
   identifiable from the data (sufficient support, non-degenerate fit);
-- path ambiguity: ``PATH_UNIQUE`` — for a path, its continuation is unique;
-  for a candidate, its path membership is unambiguous (meaningful once path
-  tracking consumed the table);
+- path ambiguity: ``PATH_UNIQUE`` — a path's continuation is unique;
 - estimand capability: deliberately *not* a flag — it is expressed per
   candidate and per capability by the ``<name>_valid`` masks of the optional
   columns, so a candidate can carry, say, a width but no curvature without
   faking capability with NaN sentinels.
 
-``PEAK_PATH_PRODUCT.path_status_code`` reuses the same flag enum (there
-``PATH_UNIQUE`` carries the path-ambiguity axis); the ``status_bits``
-attribute of both products maps flag names to bit values so clean-process
-readers can decode codes without importing this module.
+Candidate status expresses only computation and center identifiability:
+``PATH_UNIQUE`` belongs to path products, so candidate ``status_code``
+values must stay within ``PEAK_CANDIDATE_STATUS_MASK`` and
+``PeakCandidate.status`` defaults to bare ``COMPUTED`` (identifiability is
+asserted explicitly once established). ``PEAK_PATH_PRODUCT`` rows layer the
+computation and path-ambiguity axes: ``path_status_code`` must stay within
+``PEAK_PATH_STATUS_MASK`` — ``CENTER_IDENTIFIABLE`` is meaningless on paths
+because a path has no center of its own (its member candidate rows carry
+that axis). The ``status_bits`` attribute of each product maps exactly the
+flag names its table may use to bit values, so clean-process readers can
+decode codes without importing this module; ``PEAK_STATUS_MASK`` remains the
+union of all defined bits for unknown-producer detection.
 
 Products
 --------
@@ -84,11 +95,16 @@ UncertaintyScope
 PeakStatus
     Bit flags layered into the candidate/path status code.
 PEAK_STATUS_MASK
-    Union of all defined status bits; stored codes must stay within it.
+    Union of all defined status bits; unknown bits fail loudly.
+PEAK_CANDIDATE_STATUS_MASK, PEAK_PATH_STATUS_MASK
+    Per-table status masks: candidate codes layer COMPUTED and
+    CENTER_IDENTIFIABLE; path codes layer COMPUTED and PATH_UNIQUE.
 PeakCandidate
     One row of the candidate table.
 PeakPathResult
     Scan-axis path built over candidate rows.
+CandidateTablePayload
+    Exact keyword payload accepted by ``validate_candidate_table``.
 PEAK_PRODUCT, PEAK_FIT_PRODUCT, PEAK_PATH_PRODUCT
     Open product schema templates of the peak products.
 OPTIONAL_CAPABILITY_FIELDS
@@ -102,7 +118,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from enum import Enum, IntFlag
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -120,10 +136,13 @@ from .quantities import SDEQuantity
 
 __all__ = [
     "OPTIONAL_CAPABILITY_FIELDS",
+    "PEAK_CANDIDATE_STATUS_MASK",
     "PEAK_FIT_PRODUCT",
     "PEAK_PATH_PRODUCT",
+    "PEAK_PATH_STATUS_MASK",
     "PEAK_PRODUCT",
     "PEAK_STATUS_MASK",
+    "CandidateTablePayload",
     "PeakCandidate",
     "PeakPathResult",
     "PeakStatus",
@@ -150,14 +169,18 @@ class PeakStatus(IntFlag):
     center identifiability, path ambiguity); the fourth axis — estimand
     capability — is expressed per candidate by the ``<name>_valid`` masks of
     the optional capability columns and is deliberately not a status bit.
+    One enum serves both peak tables, but each table enforces its own mask
+    (:data:`PEAK_CANDIDATE_STATUS_MASK` / :data:`PEAK_PATH_STATUS_MASK`).
 
     - ``COMPUTED``: the row payload was actually computed. A row without
       this bit is a placeholder or a failed computation and must not be
       consumed as a detection.
     - ``CENTER_IDENTIFIABLE``: the peak center is identifiable from the data
-      (sufficient support, non-degenerate fit).
-    - ``PATH_UNIQUE``: no path ambiguity — for a path, its continuation is
-      unique; for a candidate, its path membership is unambiguous.
+      (sufficient support, non-degenerate fit). Candidate rows only — a
+      path has no center of its own.
+    - ``PATH_UNIQUE``: no path ambiguity — the path's continuation is
+      unique. Path rows only — path membership of a candidate is never
+      claimed on the candidate table itself.
     """
 
     NONE = 0
@@ -166,27 +189,31 @@ class PeakStatus(IntFlag):
     PATH_UNIQUE = 4
 
 
-#: Union of all defined :class:`PeakStatus` bits. Stored ``status_code`` and
-#: ``path_status_code`` values must stay within this mask; an unknown bit
-#: means a producer newer than this contract (or corruption) and fails loudly.
+#: Union of all defined :class:`PeakStatus` bits. An unknown bit means a
+#: producer newer than this contract (or corruption) and fails loudly.
 PEAK_STATUS_MASK: int = (
     PeakStatus.COMPUTED | PeakStatus.CENTER_IDENTIFIABLE | PeakStatus.PATH_UNIQUE
 ).value
 
-#: Default status of a cleanly computed, identifiable, unambiguous row — the
-#: layered-flag equivalent of the historical ``"ok"`` literal.
-_DEFAULT_STATUS = (
-    PeakStatus.COMPUTED | PeakStatus.CENTER_IDENTIFIABLE | PeakStatus.PATH_UNIQUE
-)
+#: Bits a candidate row may layer: computation and center identifiability.
+#: ``PATH_UNIQUE`` is the path-ambiguity axis and belongs to path products.
+PEAK_CANDIDATE_STATUS_MASK: int = (
+    PeakStatus.COMPUTED | PeakStatus.CENTER_IDENTIFIABLE
+).value
+
+#: Bits a path row may layer: computation and path ambiguity.
+#: ``CENTER_IDENTIFIABLE`` is a candidate-level property — a path has no
+#: center of its own — so path tables must not set it.
+PEAK_PATH_STATUS_MASK: int = (PeakStatus.COMPUTED | PeakStatus.PATH_UNIQUE).value
 
 
-def _require_defined_status_bits(value: Any) -> Any:
-    """Reject raw integers with bits outside the defined PeakStatus mask."""
+def _require_status_bits(value: Any, *, mask: int, label: str) -> Any:
+    """Reject raw integers with bits outside the given PeakStatus mask."""
     if isinstance(value, int) and not isinstance(value, bool):
         raw = int(value)
-        if raw < 0 or raw & ~PEAK_STATUS_MASK:
+        if raw < 0 or raw & ~mask:
             raise ValueError(
-                f"status {raw} sets bits outside the defined PeakStatus mask"
+                f"status {raw} sets bits outside the {label} PeakStatus mask"
             )
     return value
 
@@ -197,9 +224,10 @@ class PeakCandidate(BaseModel):
     ``conditional_location_std``/``confidence_*`` carry the conditional scope;
     ``sampling_location_std`` carries the sampling scope. Model-specific fit
     parameters never enter this row — they live in the separate fit-parameter
-    table keyed by candidate row. ``status`` layers the orthogonal
-    :class:`PeakStatus` flags; estimand capability is expressed by the
-    ``<name>_valid`` table masks, not by this field.
+    table keyed by candidate row. ``status`` layers the candidate-level
+    :class:`PeakStatus` flags (computation and center identifiability only —
+    ``PATH_UNIQUE`` belongs to path products); estimand capability is
+    expressed by the ``<name>_valid`` table masks, not by this field.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -219,14 +247,18 @@ class PeakCandidate(BaseModel):
     )
     quality: float | None = None
     status: PeakStatus = Field(
-        default=_DEFAULT_STATUS,
-        description="Layered PeakStatus flags of the candidate row.",
+        default=PeakStatus.COMPUTED,
+        description="Layered candidate-level PeakStatus flags. Defaults to "
+        "bare COMPUTED: the row was computed, while CENTER_IDENTIFIABLE is "
+        "asserted explicitly once the center is established.",
     )
 
     @field_validator("status", mode="before")
     @classmethod
     def _check_status_bits(cls, value: Any) -> Any:
-        return _require_defined_status_bits(value)
+        return _require_status_bits(
+            value, mask=PEAK_CANDIDATE_STATUS_MASK, label="candidate"
+        )
 
     @model_validator(mode="after")
     def _check_candidate(self) -> PeakCandidate:
@@ -252,9 +284,11 @@ class PeakCandidate(BaseModel):
 class PeakPathResult(BaseModel):
     """A scan-axis peak path referencing candidate rows of the peak table.
 
-    ``status`` reuses :class:`PeakStatus`; there ``PATH_UNIQUE`` carries the
-    path-ambiguity axis. A path references candidate rows only — it is never
-    a global physical cross-scan branch identity.
+    ``status`` reuses :class:`PeakStatus` under the path mask
+    (:data:`PEAK_PATH_STATUS_MASK`): ``PATH_UNIQUE`` carries the
+    path-ambiguity axis, while ``CENTER_IDENTIFIABLE`` is candidate-level and
+    rejected here. A path references candidate rows only — it is never a
+    global physical cross-scan branch identity.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -270,14 +304,16 @@ class PeakPathResult(BaseModel):
     uncertainty_scope: UncertaintyScope = UncertaintyScope.PATH_MODEL_SELECTION
     quality: float | None = None
     status: PeakStatus = Field(
-        default=_DEFAULT_STATUS,
-        description="Layered PeakStatus flags of the path.",
+        default=PeakStatus.COMPUTED,
+        description="Layered path-level PeakStatus flags. Defaults to bare "
+        "COMPUTED: the row was computed, while PATH_UNIQUE is asserted "
+        "explicitly once continuation uniqueness is established.",
     )
 
     @field_validator("status", mode="before")
     @classmethod
     def _check_status_bits(cls, value: Any) -> Any:
-        return _require_defined_status_bits(value)
+        return _require_status_bits(value, mask=PEAK_PATH_STATUS_MASK, label="path")
 
     @model_validator(mode="after")
     def _check_path(self) -> PeakPathResult:
@@ -331,9 +367,12 @@ def _optional_variables() -> list[VariableSchema]:
 #: grouped by scan point and channel. ``group_offset`` closes to
 #: ``group_count + 1`` entries and ``candidate`` to the terminal offset once
 #: candidates are counted. Concrete finders must replace the template
-#: ``channel_names`` attribute with their stable channel labels and may drop
-#: optional capability columns they cannot provide; the group index columns,
-#: the required candidate columns and the offsets contract always hold.
+#: ``channel_names``/``mode_labels`` attributes with their stable labels and
+#: may add the ``channel_mode_weights`` measurement basis; they may drop
+#: optional capability columns they cannot provide (dropping an uncertainty
+#: data variable requires dropping its uncertainty entry too — core enforces
+#: the closure). The group index columns, the required candidate columns and
+#: the offsets contract always hold.
 PEAK_PRODUCT = ProductSchema(
     kind=DataKind.STATISTICS,
     axes=[
@@ -410,10 +449,10 @@ PEAK_PRODUCT = ProductSchema(
         "group_channel_variable": "group_channel_index",
         "scan_axis": "scan",
         "channel_names": ["channel_0"],
+        "mode_labels": ["mode_0"],
         "status_bits": {
             "computed": PeakStatus.COMPUTED.value,
             "center_identifiable": PeakStatus.CENTER_IDENTIFIABLE.value,
-            "path_unique": PeakStatus.PATH_UNIQUE.value,
         },
         "valid_mask_suffix": "_valid",
         "optional_capabilities": list(OPTIONAL_CAPABILITY_FIELDS),
@@ -459,8 +498,9 @@ PEAK_FIT_PRODUCT = ProductSchema(
 
 #: Open schema template of the peak path product. ``path_offsets`` has one
 #: entry per path plus the terminal offset; ``candidate_row`` and
-#: ``scan_position`` run along ``path_member``. ``path_status_code`` reuses
-#: the :class:`PeakStatus` flags (``PATH_UNIQUE`` carries the ambiguity axis).
+#: ``scan_position`` run along ``path_member``. ``path_status_code`` layers
+#: the path-level :class:`PeakStatus` flags (``PATH_UNIQUE`` carries the
+#: ambiguity axis; ``CENTER_IDENTIFIABLE`` is candidate-level and rejected).
 PEAK_PATH_PRODUCT = ProductSchema(
     kind=DataKind.STATISTICS,
     axes=[
@@ -507,7 +547,6 @@ PEAK_PATH_PRODUCT = ProductSchema(
         "uncertainty_scope": UncertaintyScope.PATH_MODEL_SELECTION.value,
         "status_bits": {
             "computed": PeakStatus.COMPUTED.value,
-            "center_identifiable": PeakStatus.CENTER_IDENTIFIABLE.value,
             "path_unique": PeakStatus.PATH_UNIQUE.value,
         },
     },
@@ -536,40 +575,67 @@ def _index_array(name: str, values: Any) -> np.ndarray:
     return array
 
 
-def _status_code_array(name: str, codes: Any) -> np.ndarray:
+def _status_code_array(name: str, codes: Any, *, mask: int, label: str) -> np.ndarray:
     array = _index_array(name, codes)
-    if len(array) and (int(array.min()) < 0 or int(array.max()) > PEAK_STATUS_MASK):
+    # Bitwise, not a range check: the per-table masks are not necessarily
+    # contiguous (the path mask 0b101 excludes CENTER_IDENTIFIABLE = 0b010).
+    if len(array) and (
+        int(array.min()) < 0 or bool(np.any(np.bitwise_and(array, ~mask)))
+    ):
         raise ValueError(
-            f"{name} values must stay within the defined PeakStatus mask "
-            f"(0..{PEAK_STATUS_MASK})"
+            f"{name} values set bits outside the {label} PeakStatus mask (0b{mask:b})"
         )
     return array
 
 
-def _channel_names(names: Iterable[str]) -> tuple[str, ...]:
-    if isinstance(names, str):
-        raise ValueError("channel_names must be a list of strings, not one string")
-    result = tuple(names)
+def _stable_labels(field: str, values: Iterable[str], *, noun: str) -> tuple[str, ...]:
+    if isinstance(values, str):
+        raise ValueError(f"{field} must be a list of strings, not one string")
+    result = tuple(values)
     if not result:
-        raise ValueError("channel_names must list at least one channel")
-    if any(not isinstance(name, str) or not name for name in result):
-        raise ValueError("channel_names must hold non-empty strings")
+        raise ValueError(f"{field} must list at least one {noun}")
+    if any(not isinstance(value, str) or not value for value in result):
+        raise ValueError(f"{field} must hold non-empty strings")
     if len(set(result)) != len(result):
-        raise ValueError("channel_names must be unique")
+        raise ValueError(f"{field} must be unique")
     return result
 
 
-def _check_channel_weights(weights: Any, channel_count: int) -> None:
+def _check_channel_mode_weights(
+    weights: Any, channel_count: int, mode_count: int
+) -> None:
     array = np.asarray(weights)
-    if array.shape != (channel_count, 2):
+    expected = channel_count * mode_count
+    if array.shape != (expected, 2):
         raise ValueError(
-            f"channel_weights must hold one [re, im] pair per channel, "
-            f"expected shape ({channel_count}, 2), got {array.shape}"
+            "channel_mode_weights must hold one [re, im] pair per "
+            "(channel, mode) entry flattened row-major, expected shape "
+            f"({expected}, 2) for {channel_count} channels x {mode_count} "
+            f"modes, got {array.shape}"
         )
     if np.iscomplexobj(array) or not np.issubdtype(array.dtype, np.number):
-        raise ValueError("channel_weights must hold real [re, im] pairs")
+        raise ValueError("channel_mode_weights must hold real [re, im] pairs")
     if not np.all(np.isfinite(array.astype(np.float64))):
-        raise ValueError("channel_weights must be finite")
+        raise ValueError("channel_mode_weights must be finite")
+
+
+class CandidateTablePayload(TypedDict):
+    """Exact keyword payload accepted by :func:`validate_candidate_table`.
+
+    A unified peak finder returns exactly this mapping — unpacking it into
+    the validator (``validate_candidate_table(**payload)``) must not raise.
+    ``mode_labels`` and ``channel_mode_weights`` are optional together:
+    weights index the mode axis, so they are meaningless without the labels.
+    """
+
+    candidate_offsets: Any
+    group_scan_index: Any
+    group_channel_index: Any
+    columns: Mapping[str, Any]
+    scan_count: int
+    channel_names: list[str]
+    mode_labels: NotRequired[list[str]]
+    channel_mode_weights: NotRequired[list[list[float]]]
 
 
 def validate_candidate_table(
@@ -580,7 +646,8 @@ def validate_candidate_table(
     *,
     scan_count: int,
     channel_names: Iterable[str],
-    channel_weights: Any | None = None,
+    mode_labels: Iterable[str] | None = None,
+    channel_mode_weights: Any | None = None,
     optional_capabilities: Iterable[str] = OPTIONAL_CAPABILITY_FIELDS,
 ) -> None:
     """Validate the group structure and columns of a candidate table.
@@ -590,16 +657,24 @@ def validate_candidate_table(
     monotonically non-decreasing, hold exactly ``group_count + 1`` entries
     and end at the candidate count. Group indices must reference existing
     scan points (``[0, scan_count)``) and channels
-    (``[0, len(channel_names))``); ``channel_names`` is the mandatory stable
-    index-to-label mapping (single-channel tables list one name), and
-    ``channel_weights``, when given, must hold one finite ``[re, im]`` pair
-    per channel.
+    (``[0, len(channel_names))``), and each (scan, channel) pair owns at
+    most one group — there is no implicit replicate dimension.
+
+    ``channel_names`` is the mandatory stable index-to-label mapping
+    (single-channel tables list one name). ``mode_labels`` lists the modes
+    the readouts act on; ``channel_mode_weights``, when given, must hold one
+    finite ``[re, im]`` pair per (channel, mode) entry — flattened row-major,
+    so exactly ``len(channel_names) * len(mode_labels)`` pairs — and requires
+    ``mode_labels``. A bare-mode channel carries exactly one unit weight; a
+    trace/combined channel carries an arbitrary normalized readout vector.
 
     The required columns ``location``/``intensity``/``status_code`` must be
     present, and every column must hold exactly one entry per candidate.
-    ``status_code`` values must stay within the :class:`PeakStatus` mask.
-    Each present optional capability must be paired with a ``<name>_valid``
-    mask column of the same length holding only 0/1 values.
+    ``status_code`` values must stay within the candidate
+    :class:`PeakStatus` mask (:data:`PEAK_CANDIDATE_STATUS_MASK`) —
+    ``PATH_UNIQUE`` is a path-product bit and fails here. Each present
+    optional capability must be paired with a ``<name>_valid`` mask column
+    of the same length holding only 0/1 values.
 
     Raises
     ------
@@ -610,7 +685,12 @@ def validate_candidate_table(
     offsets = _offsets_array("candidate_offsets", candidate_offsets)
     scan_index = _index_array("group_scan_index", group_scan_index)
     channel_index = _index_array("group_channel_index", group_channel_index)
-    names = _channel_names(channel_names)
+    names = _stable_labels("channel_names", channel_names, noun="channel")
+    modes = (
+        None
+        if mode_labels is None
+        else _stable_labels("mode_labels", mode_labels, noun="mode")
+    )
     if scan_count < 0:
         raise ValueError("scan_count must be nonnegative")
     if len(scan_index) != len(channel_index):
@@ -633,8 +713,19 @@ def validate_candidate_table(
             raise ValueError(
                 f"group_channel_index references channels outside [0, {len(names)})"
             )
-    if channel_weights is not None:
-        _check_channel_weights(channel_weights, len(names))
+        pairs = set(zip(scan_index.tolist(), channel_index.tolist(), strict=True))
+        if len(pairs) != group_count:
+            raise ValueError(
+                "duplicate (group_scan_index, group_channel_index) pairs: "
+                "exactly one group per scan/channel pair"
+            )
+    if channel_mode_weights is not None:
+        if modes is None:
+            raise ValueError(
+                "channel_mode_weights requires mode_labels: the weights index "
+                "the mode axis"
+            )
+        _check_channel_mode_weights(channel_mode_weights, len(names), len(modes))
     candidate_count = int(offsets[-1])
 
     for required in ("location", "intensity", "status_code"):
@@ -647,7 +738,12 @@ def validate_candidate_table(
                 f"column {name!r} must be one-dimensional with exactly one "
                 f"entry per candidate ({candidate_count})"
             )
-    _status_code_array("status_code", columns["status_code"])
+    _status_code_array(
+        "status_code",
+        columns["status_code"],
+        mask=PEAK_CANDIDATE_STATUS_MASK,
+        label="candidate",
+    )
     for capability in optional_capabilities:
         if capability not in columns:
             continue
@@ -725,8 +821,10 @@ def validate_path_table(
     ``path_offsets`` must be legal offsets whose terminal value equals the
     number of path members; ``candidate_row`` and ``scan_position`` must have
     equal length, and every candidate row must reference an existing
-    candidate. ``path_status_code`` must hold one :class:`PeakStatus` code
-    per path. Paths never modify the candidate body.
+    candidate. ``path_status_code`` must hold one path-level
+    :class:`PeakStatus` code per path, within
+    :data:`PEAK_PATH_STATUS_MASK` — ``CENTER_IDENTIFIABLE`` is
+    candidate-level and fails here. Paths never modify the candidate body.
 
     Raises
     ------
@@ -752,7 +850,12 @@ def validate_path_table(
         raise ValueError(
             f"candidate_row references rows outside [0, {candidate_count})"
         )
-    status = _status_code_array("path_status_code", path_status_code)
+    status = _status_code_array(
+        "path_status_code",
+        path_status_code,
+        mask=PEAK_PATH_STATUS_MASK,
+        label="path",
+    )
     if len(status) != len(offsets) - 1:
         raise ValueError(
             f"path_status_code must hold exactly one entry per path "
