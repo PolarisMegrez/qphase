@@ -342,9 +342,7 @@ class WorkflowCompiler:
                 engine_name,
                 manifest,
                 merged,
-                selector_config=self._explicit_selector_config(
-                    job, merged, namespaces
-                ),
+                selector_config=self._explicit_selector_config(job, merged, namespaces),
                 input_schemas=self._input_product_schemas(input_source, workflow),
             )
             profile_id = resolved_profile.profile_id
