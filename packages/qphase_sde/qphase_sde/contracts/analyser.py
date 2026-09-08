@@ -8,20 +8,17 @@ execution. Planners and the bundle adapter consume only these declarations —
 they never branch on analyser names.
 
 This protocol freezes the declaration surface only — what an analyser
-advertises, not how it runs. Execution currently flows through the
-documented legacy bridge: ``Analyzer.analyze`` produces the payload and
-``AnalyserProductBuilderProtocol.build_products`` converts it into typed
-products (see ``qphase_sde.analyser.base``). A typed ``execute()`` entry on
-this contract is Wave 5B scope; until it lands, the contract deliberately
-carries no execution method.
+advertises, not how it runs. ``AnalyserExecutionContract.execute`` is the
+runtime boundary used by ``ProductGraphExecutor``; numerical implementation
+details remain inside the resource package.
 
 This module is the sole source of truth for those types: the legacy 1.x
 duplicates in ``qphase_sde.analyser.base`` (``AnalyzerExecutionCapabilities``,
 ``AnalyzerWorkspaceRequest``, ``AnalyzerWorkspaceEstimate`` and
 ``AnalyzerProtocol``) have been removed. The plugin base class
 (:class:`qphase_sde.analyser.base.Analyzer`) consumes these contract types
-directly and hosts the transitional ``analyze(data, backend)`` execution
-entry.
+directly. Built-in numerical kernels remain private implementation details
+behind the typed execution boundary.
 
 Public API
 ----------
@@ -36,7 +33,7 @@ WorkEstimate
 AnalyserDeclarationContract
     The 2.0 analyser declaration protocol.
 AnalyserProductBuilderProtocol
-    Transitional bridge from ``analyze()`` payloads to typed products.
+    Internal product assembly hook used by the built-in analyser base.
 """
 
 from __future__ import annotations
@@ -52,6 +49,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AnalyserDeclarationContract",
+    "AnalyserExecutionContract",
     "AnalyserExecutionCapabilities",
     "AnalyserProductBuilderProtocol",
     "AnalyserWorkspaceEstimate",
@@ -128,13 +126,28 @@ class AnalyserDeclarationContract(Protocol):
 
     Planner- and bundle-facing only: implementations declare typed
     inputs/outputs, execution capabilities, workspace and work estimates,
-    and an optional reducer. The protocol deliberately has no execution
-    entry — payloads are produced through the legacy ``Analyzer.analyze``
-    bridge until the typed ``execute()`` entry lands in Wave 5B.
+    and an optional reducer. Runtime execution is specified by the separate
+    ``AnalyserExecutionContract``.
     """
 
     def input_requirements(self) -> list[ProductRequirement]:
         """Typed input products this analyser consumes."""
+        ...
+
+
+@runtime_checkable
+class AnalyserExecutionContract(Protocol):
+    """Typed execution surface used by the core ProductGraph executor."""
+
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: Any,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        """Consume named typed products and return declared typed products."""
         ...
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
@@ -167,12 +180,11 @@ class AnalyserDeclarationContract(Protocol):
 
 @runtime_checkable
 class AnalyserProductBuilderProtocol(Protocol):
-    """Optional analyser hook converting ``analyze()`` payloads into products.
+    """Internal hook converting numerical output into typed products.
 
-    This hook is the transitional execution bridge: pending the typed
-    ``execute()`` entry planned for Wave 5B on
-    :class:`AnalyserDeclarationContract`, it is how legacy ``analyze()``
-    payloads become typed products.
+    This hook is an internal assembly detail used by built-in analysers after
+    their numerical kernel has completed. The public runtime entry is
+    ``AnalyserExecutionContract.execute``.
 
     The bundle adapter discovers this hook by duck-typing — the engine never
     branches on analyser names. An analyser implementing it is authoritative

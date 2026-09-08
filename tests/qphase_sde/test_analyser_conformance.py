@@ -5,6 +5,7 @@ from qphase.core.registry import discovery, registry
 from qphase.data import DataKind, ProductDeclaration, ProductRequirement
 from qphase_sde.contracts.analyser import (
     AnalyserDeclarationContract,
+    AnalyserExecutionContract,
     AnalyserWorkspaceEstimate,
     AnalyserWorkspaceRequest,
     WorkEstimate,
@@ -62,6 +63,7 @@ def test_registered_analyser_satisfies_contract(name):
     cls = registry.get_plugin_class("analyser", name)
     instance = cls(**MINIMAL_CONFIGS.get(name, {}))
     assert isinstance(instance, AnalyserDeclarationContract)
+    assert isinstance(instance, AnalyserExecutionContract)
 
     requirements = instance.input_requirements()
     assert isinstance(requirements, list)

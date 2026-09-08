@@ -77,7 +77,12 @@ jobs:
     peaks:
       scan_param: omega_a
       psd_key: psd
-      finder: scipy
+      finder:
+        scipy:
+          smooth_window: 5
+          distance: 5
+          noise_threshold: null
+          prominence: null
 
 - name: vdp_2mode_fit_mode1
   input:

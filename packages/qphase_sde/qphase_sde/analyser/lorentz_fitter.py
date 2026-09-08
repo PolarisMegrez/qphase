@@ -36,7 +36,9 @@ from qphase.data import (
 from scipy.optimize import curve_fit
 
 from ..contracts.analyser import AnalyserWorkspaceRequest, WorkEstimate
-from ..products import assemble_typed_product, stack_payload_leaves
+from ..products import (
+    assemble_row_table_product,
+)
 from .base import Analyzer
 from .frequency_orientation import (
     FrequencyOrientation,
@@ -575,30 +577,61 @@ class LorentzFitter(Analyzer):
         return requirements
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
-        # psd_columns/psd_sem_columns keys are data-derived scan-value strings
-        # and fit_rows/written are payload meta, so only the axis is declared.
         return (
             ProductDeclaration(
                 name=label,
                 kind=DataKind.STATISTICS,
-                fields=["axis"],
+                fields=[
+                    "center",
+                    "center_std",
+                    "linewidth",
+                    "linewidth_std",
+                    "base",
+                    "base_std",
+                    "amplitude",
+                    "amplitude_std",
+                    "peak_intensity",
+                    "peak_intensity_std",
+                    "R2",
+                    "reduced_chi2",
+                ],
             ),
         )
 
     def build_products(
         self, payload: Any, *, scan_size: int | None, label: str
     ) -> dict[str, Dataset] | None:
-        leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
-        if leaves is None:
-            return None
-        product = assemble_typed_product(
+        if not isinstance(payload, dict):
+            raise TypeError("lorentz_fitter payload must be a mapping")
+        rows = payload.get("fit_rows", [])
+        if not isinstance(rows, list):
+            raise TypeError("lorentz_fitter fit_rows must be a list")
+        config = cast(LorentzFitterConfig, self.config)
+        metadata = {key: value for key, value in payload.items() if key != "fit_rows"}
+        product = assemble_row_table_product(
             label,
-            leaves,
+            rows,
             scan_size=scan_size,
-            kind=DataKind.STATISTICS,
-            attributes={"graph_ready": True, "typed_builder": "lorentz/1"},
+            fields=[
+                "center",
+                "center_std",
+                "linewidth",
+                "linewidth_std",
+                "base",
+                "base_std",
+                "amplitude",
+                "amplitude_std",
+                "peak_intensity",
+                "peak_intensity_std",
+                "R2",
+                "reduced_chi2",
+            ],
+            scan_value_field=config.scan_param if scan_size is not None else None,
+            payload_key="fit_rows",
+            payload_meta=metadata,
+            attributes={"table": "lorentz_fit"},
         )
-        return None if product is None else {label: product}
+        return {label: product}
 
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         """Fit Lorentzians to aggregated PSD data and export merged outputs.

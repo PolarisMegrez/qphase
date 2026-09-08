@@ -68,9 +68,8 @@ MANIFEST = ResourcePackageManifest(
             namespace="analyser",
             protocol="qphase_sde.contracts.analyser:AnalyserDeclarationContract",
             description="Analysis plugins declaring typed inputs/outputs, "
-            "capabilities, workspace and progress; execution flows through "
-            "the legacy analyze()/build_products() bridge until the typed "
-            "execute() entry lands in Wave 5B.",
+            "capabilities, workspace and progress; graph execution invokes "
+            "the typed analyser execution contract.",
         ),
         PluginClassDeclaration(
             namespace="spectral_estimator",

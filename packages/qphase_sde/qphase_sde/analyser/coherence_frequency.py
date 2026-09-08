@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, cast
 
 import numpy as np
 from pydantic import ConfigDict, Field
 from qphase.backend.base import BackendBase
 from qphase.core.aggregation import DirectoryInputResult
 from qphase.core.protocols import PluginConfigBase, ResultProtocol
+from qphase.core.registry import discovery, registry
 from qphase.data import (
     DataKind,
     Dataset,
@@ -38,7 +39,7 @@ class CoherenceFrequencyAnalyzerConfig(PluginConfigBase):
 
     scan_param: str = Field(..., description="Name of the input scan axis")
     input_key: str = Field("spectrum", description="Typed input product label")
-    estimator: Literal["short_delay", "band_limited", "finite_delay"] = "band_limited"
+    estimator: str = Field("band_limited", min_length=1)
     channel: int = Field(0, ge=0)
     child: dict[str, Any] = Field(default_factory=dict)
 
@@ -59,26 +60,9 @@ def _products_from_input(data: Any) -> Mapping[str, Dataset]:
 
 
 def _make_child(config: CoherenceFrequencyAnalyzerConfig) -> Any:
-    from ..coherence_frequency import (
-        BandLimitedCoherenceFrequency,
-        BandLimitedCoherenceFrequencyConfig,
-        FiniteDelayCoherenceFrequency,
-        FiniteDelayCoherenceFrequencyConfig,
-        ShortDelayCoherenceFrequency,
-        ShortDelayCoherenceFrequencyConfig,
-    )
-
-    if config.estimator == "short_delay":
-        return ShortDelayCoherenceFrequency(
-            ShortDelayCoherenceFrequencyConfig.model_validate(config.child)
-        )
-    if config.estimator == "finite_delay":
-        return FiniteDelayCoherenceFrequency(
-            FiniteDelayCoherenceFrequencyConfig.model_validate(config.child)
-        )
-    return BandLimitedCoherenceFrequency(
-        BandLimitedCoherenceFrequencyConfig.model_validate(config.child)
-    )
+    if not registry.list("coherence_frequency"):
+        discovery.discover_plugins()
+    return registry.create(f"coherence_frequency:{config.estimator}", **config.child)
 
 
 def _point_product(product: Dataset, index: int) -> Dataset:
@@ -143,6 +127,20 @@ def _materialize_estimates(
         "graph_ready": True,
         "estimator": estimates[0].estimator if estimates else "",
     }
+    has_sampling = all(
+        item.independent_count is not None and item.frequency_sem is not None
+        for item in estimates
+    )
+    if not has_sampling:
+        schema_data["sampling_bases"] = []
+        schema_data["uncertainties"] = [
+            item for item in schema_data["uncertainties"] if item["scope"] != "sampling"
+        ]
+        schema_data["variables"] = [
+            item
+            for item in schema_data["variables"]
+            if item["name"] not in {"frequency_sem", "independent_count"}
+        ]
     from qphase.data import ProductSchema
 
     schema = ProductSchema.model_validate(schema_data)
@@ -157,16 +155,17 @@ def _materialize_estimates(
         "conditional_std": values("conditional_std"),
         "confidence_lower": values("confidence_lower"),
         "confidence_upper": values("confidence_upper"),
-        "frequency_sem": values("frequency_sem"),
-        "independent_count": np.asarray(
-            [[item.independent_count or -1] for item in estimates], dtype=np.int64
-        ),
         "lag": values("lag"),
         "bandwidth": values("bandwidth"),
         "status_code": np.asarray(
             [[int(item.status)] for item in estimates], dtype=np.int64
         ),
     }
+    if has_sampling:
+        arrays["frequency_sem"] = values("frequency_sem")
+        arrays["independent_count"] = np.asarray(
+            [[item.independent_count] for item in estimates], dtype=np.int64
+        )
     return StatisticsDataset.from_arrays(
         schema,
         arrays,
@@ -202,14 +201,38 @@ class CoherenceFrequencyAnalyzer(Analyzer):
             )
         ]
 
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        del metadata
+        """Execute directly on typed input products."""
+        result = cast(AnalysisResult, self.analyze(inputs, backend))
+        scan_size = result.data_dict["estimates"].__len__()
+        products = self.build_products(
+            result.data_dict, scan_size=scan_size, label=label
+        )
+        if products is None:
+            raise ValueError("coherence_frequency produced no typed product")
+        return products
+
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
+        fields = [
+            variable.name
+            for variable in COHERENCE_FREQUENCY_PRODUCT.variables
+            if config.estimator == "short_delay"
+            or variable.name not in {"frequency_sem", "independent_count"}
+        ]
         return (
             ProductDeclaration(
                 name=label,
                 kind=COHERENCE_FREQUENCY_PRODUCT.kind,
-                fields=[
-                    variable.name for variable in COHERENCE_FREQUENCY_PRODUCT.variables
-                ],
+                fields=fields,
             ),
         )
 
@@ -234,7 +257,12 @@ class CoherenceFrequencyAnalyzer(Analyzer):
             if "scan" in {axis.name for axis in product.axes}
             else None
         )
-        scan_count = int(scan_axis.size) if scan_axis is not None else 1
+        scan_count = 1
+        if scan_axis is not None:
+            size = scan_axis.size
+            if size is None:
+                raise ValueError("coherence-frequency input scan axis has no size")
+            scan_count = int(size)
         child = _make_child(config)
         estimates = [
             child.estimate(_estimate_input(_point_product(product, index), config))

@@ -51,6 +51,7 @@ def materialize_path_product(
     *,
     candidate_count: int,
     label: str = "peak_paths",
+    source_product: str = "",
 ) -> Dataset:
     """Materialize tracker paths using the formal ``PEAK_PATH_PRODUCT`` schema."""
     path_offsets = [0]
@@ -83,6 +84,7 @@ def materialize_path_product(
     schema_data["attributes"] = {
         **schema_data["attributes"],
         "graph_ready": True,
+        "source_product": source_product,
     }
     schema = ProductSchema.model_validate(schema_data)
     return StatisticsDataset.from_arrays(

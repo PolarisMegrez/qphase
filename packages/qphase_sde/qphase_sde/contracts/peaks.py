@@ -428,6 +428,12 @@ PEAK_PRODUCT = ProductSchema(
             quantity=SDEQuantity.INTENSITY.value,
         ),
         VariableSchema(
+            name="sample_index",
+            dtype="int64",
+            value_domain="real",
+            dims=("candidate",),
+        ),
+        VariableSchema(
             name="status_code",
             dtype="int64",
             value_domain="real",

@@ -439,6 +439,9 @@ class Engine(EngineBase):
 
         if getattr(self.config, "mode", "simulate") == "analyze":
             source_scan = _analysis_source_scan(data)
+            typed = self._run_typed_analyze(source_scan)
+            if typed is not None:
+                return typed
             return bundle_from_result(
                 self._run_analyze(data),
                 provenance=self._job_provenance(),
@@ -535,6 +538,99 @@ class Engine(EngineBase):
             result,
             provenance=self._job_provenance(),
             analysers=analysers,
+        )
+
+    def _run_typed_analyze(
+        self, source: DatasetResultProtocol | None
+    ) -> ResultProtocol | None:
+        """Run an all-typed analyser set through the core ProductGraph."""
+        if source is None:
+            return None
+        analysers = self._normalised_analysers()
+        if not analysers or not all(
+            callable(getattr(analyser, "execute", None))
+            for analyser in analysers.values()
+        ):
+            return None
+        from qphase.core import ProductGraphExecutor
+        from qphase.data import ProductGraph, ProductNode
+
+        from .products import add_scan_parameter_coordinates
+
+        nodes = []
+        bindings = []
+        for name, analyser in analysers.items():
+            output_dir = getattr(self.config, "output_dir", None)
+            if output_dir is not None:
+                analyser.output_dir = output_dir
+            requirements = list(analyser.input_requirements())
+            outputs = list(analyser.output_specs(label=str(name)))
+            node_id = f"analyser.{name}"
+            nodes.append(
+                ProductNode(
+                    node_id=node_id,
+                    producer=f"analyser:{name}",
+                    requirements=requirements,
+                    outputs=outputs,
+                )
+            )
+            for requirement in requirements:
+                bindings.append(
+                    {
+                        "consumer": node_id,
+                        "requirement": requirement.name,
+                        "source": "input",
+                        "product": requirement.name,
+                    }
+                )
+        graph = ProductGraph(nodes=nodes, external_inputs=bindings)
+        backend = (
+            self._required_backend() if self._default_backend is not None else None
+        )
+        if backend is None:
+            from qphase.backend.numpy_backend import NumpyBackend
+
+            backend = NumpyBackend()
+        source_metadata = getattr(source, "metadata", None)
+        execution_metadata = (
+            dict(source_metadata) if isinstance(source_metadata, dict) else {}
+        )
+        execution_metadata["scan_axes"] = dict(source.axes)
+        runners = {
+            f"analyser.{name}": (
+                lambda node, inputs, analyser=analyser, name=name: analyser.execute(
+                    inputs,
+                    backend=backend,
+                    label=str(name),
+                    metadata=(execution_metadata),
+                )
+            )
+            for name, analyser in analysers.items()
+        }
+        source_products = getattr(source, "products", None)
+        if not isinstance(source_products, dict):
+            source_products = dict(source.data)
+        node_products = ProductGraphExecutor(graph, runners).run(
+            {"input": source_products}
+        )
+        products = {
+            product_name: product
+            for node_products_for_node in node_products.values()
+            for product_name, product in node_products_for_node.items()
+        }
+        scan_coordinates = {
+            name: np.asarray(values).reshape(-1) for name, values in source.axes.items()
+        }
+        products = {
+            name: add_scan_parameter_coordinates(product, scan_coordinates)
+            for name, product in products.items()
+        }
+        return SDEDataBundle(
+            products,
+            self._job_provenance(),
+            scan_axes=dict(source.axes),
+            scan_shape=source.shape,
+            meta={"mode": "analyze", "execution": "product_graph"},
         )
 
     def _job_provenance(self, *, grid: Any | None = None) -> SDEProvenance:

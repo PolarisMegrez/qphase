@@ -10,7 +10,13 @@ import numpy as np
 from pydantic import ConfigDict, Field
 from qphase.backend.base import BackendBase
 from qphase.core.aggregation import DirectoryInputResult
-from qphase.core.protocols import PluginConfigBase, ResultProtocol
+from qphase.core.protocols import (
+    PluginConfigBase,
+    PluginManifest,
+    ResultProtocol,
+    SubpluginSlot,
+)
+from qphase.core.registry import discovery, registry
 from qphase.data import (
     DataKind,
     Dataset,
@@ -21,11 +27,7 @@ from qphase.data import (
 
 from ..contracts.analyser import AnalyserExecutionCapabilities, WorkEstimate
 from ..contracts.peaks import PEAK_PATH_PRODUCT, PeakPathResult
-from ..peak_tracker import (
-    RidgePeakTracker,
-    RidgePeakTrackerConfig,
-    materialize_path_product,
-)
+from ..peak_tracker import materialize_path_product
 from .base import Analyzer
 from .result import AnalysisResult
 
@@ -39,8 +41,8 @@ class PeakPathsAnalyzerConfig(PluginConfigBase):
 
     scan_param: str = Field(..., description="Name of the input scan axis")
     candidates_key: str = Field("peaks", description="Input peak product label")
-    tracker: RidgePeakTrackerConfig = Field(
-        default_factory=RidgePeakTrackerConfig,
+    tracker: dict[str, Any] = Field(
+        default_factory=lambda: {"ridge": {}},
         description="Configuration of the peak-tracker child plugin",
     )
 
@@ -60,6 +62,24 @@ def _products_from_input(data: Any) -> Mapping[str, Dataset]:
     return products
 
 
+def _make_tracker(config: PeakPathsAnalyzerConfig, injected: Any | None) -> Any:
+    if injected is not None:
+        return injected
+    if not registry.list("peak_tracker"):
+        discovery.discover_plugins()
+    names = set(registry.list("peak_tracker"))
+    selected = set(config.tracker) & names
+    if selected:
+        if len(config.tracker) != 1:
+            raise ValueError("peak_paths tracker must select exactly one child")
+        name, values = next(iter(config.tracker.items()))
+        if not isinstance(values, Mapping):
+            raise ValueError("peak_paths tracker child configuration must be a mapping")
+    else:
+        name, values = "ridge", config.tracker
+    return registry.create(f"peak_tracker:{name}", **values)
+
+
 class PeakPathsAnalyzer(Analyzer):
     """Link typed peak candidates into scan-axis paths."""
 
@@ -67,6 +87,26 @@ class PeakPathsAnalyzer(Analyzer):
     description: ClassVar[str] = "Typed scan-axis peak-path analyser"
     config_schema: ClassVar[type[PeakPathsAnalyzerConfig]] = PeakPathsAnalyzerConfig
     preserves_input_scan: ClassVar[bool] = False
+    manifest: ClassVar[PluginManifest] = PluginManifest(
+        subplugins={
+            "tracker": SubpluginSlot(
+                namespace="peak_tracker",
+                default="ridge",
+                protocol="qphase_sde.peak_tracker.base:PeakTrackerProtocol",
+                description="Peak path tracker child",
+            )
+        }
+    )
+
+    def __init__(
+        self,
+        config: PeakPathsAnalyzerConfig | None = None,
+        *,
+        subplugins: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(config, **kwargs)
+        self._tracker = None if subplugins is None else subplugins.get("tracker")
 
     def input_requirements(self) -> list[ProductRequirement]:
         config = cast(PeakPathsAnalyzerConfig, self.config)
@@ -84,6 +124,22 @@ class PeakPathsAnalyzer(Analyzer):
                 ],
             )
         ]
+
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        del metadata
+        """Execute directly on a typed candidate product mapping."""
+        result = cast(AnalysisResult, self.analyze(inputs, backend))
+        products = self.build_products(result.data_dict, scan_size=None, label=label)
+        if products is None:
+            raise ValueError("peak_paths produced no typed path product")
+        return products
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         return (
@@ -140,12 +196,17 @@ class PeakPathsAnalyzer(Analyzer):
             if "scan" in {axis.name for axis in candidates.axes}
             else None
         )
-        scan_count = int(scan_axis.size) if scan_axis is not None else 1
+        scan_count = 1
+        if scan_axis is not None:
+            size = scan_axis.size
+            if size is None:
+                raise ValueError("peak-path input scan axis has no size")
+            scan_count = int(size)
         channel_names = candidates.attributes.get("channel_names")
         if not isinstance(channel_names, list) or not channel_names:
             channel_count = int(group_channel.max()) + 1 if group_channel.size else 1
             channel_names = [f"channel_{index}" for index in range(channel_count)]
-        tracker = RidgePeakTracker(config=config.tracker)
+        tracker = _make_tracker(config, self._tracker)
         paths = tracker.track(
             offsets,
             group_scan,
@@ -182,5 +243,8 @@ class PeakPathsAnalyzer(Analyzer):
                 paths,
                 candidate_count=int(payload["candidate_count"]),
                 label=label,
+                source_product=cast(
+                    PeakPathsAnalyzerConfig, self.config
+                ).candidates_key,
             )
         }

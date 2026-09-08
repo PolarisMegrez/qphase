@@ -85,4 +85,9 @@ jobs:
     peaks:
       scan_param: gamma_b
       psd_key: psd
-      finder: scipy
+      finder:
+        scipy:
+          smooth_window: 5
+          distance: 5
+          noise_threshold: null
+          prominence: null

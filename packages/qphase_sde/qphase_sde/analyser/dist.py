@@ -15,9 +15,19 @@ from pydantic import Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
-from qphase.data import DataKind, Dataset, ProductDeclaration, ProductRequirement
+from qphase.data import (
+    AxisRole,
+    DataKind,
+    Dataset,
+    ProductDeclaration,
+    ProductRequirement,
+)
 
-from ..products import assemble_typed_product, stack_payload_leaves
+from ..products import (
+    TypedAxisSpec,
+    assemble_typed_product,
+    stack_payload_leaves,
+)
 from .base import Analyzer, resolve_mode_columns, trajectory_requirement
 from .result import AnalysisResult
 
@@ -67,7 +77,7 @@ class DistAnalyzer(Analyzer):
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         config = cast(DistAnalyzerConfig, self.config)
-        fields = ["modes", "bins", "density"]
+        fields: list[str] = []
         for mode in config.modes:
             fields += [
                 f"distributions.{mode}.hist",
@@ -88,11 +98,39 @@ class DistAnalyzer(Analyzer):
         leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
         if leaves is None:
             return None
+        sample_payload = payload[0] if isinstance(payload, list) else payload
+        distributions = (
+            sample_payload.get("distributions", {})
+            if isinstance(sample_payload, dict)
+            else {}
+        )
+        declared_dims: dict[str, tuple[str, ...]] = {}
+        axis_specs: dict[str, TypedAxisSpec] = {}
+        declared_dims["modes"] = ("mode",)
+        axis_specs["mode"] = TypedAxisSpec("mode", AxisRole.COMPONENT)
+        for mode in cast(DistAnalyzerConfig, self.config).modes:
+            prefix = f"distributions.{mode}"
+            kind = distributions.get(mode, {}).get("type")
+            if kind == "2d_complex":
+                declared_dims[f"{prefix}.hist"] = ("bin_x", "bin_y")
+                axis_specs["bin_x"] = TypedAxisSpec("bin_x", AxisRole.COORDINATE)
+                axis_specs["bin_y"] = TypedAxisSpec("bin_y", AxisRole.COORDINATE)
+                declared_dims[f"{prefix}.xedges"] = ("edge_x",)
+                declared_dims[f"{prefix}.yedges"] = ("edge_y",)
+                axis_specs["edge_x"] = TypedAxisSpec("edge_x", AxisRole.COORDINATE)
+                axis_specs["edge_y"] = TypedAxisSpec("edge_y", AxisRole.COORDINATE)
+            else:
+                declared_dims[f"{prefix}.hist"] = ("bin",)
+                declared_dims[f"{prefix}.edges"] = ("edge",)
+                axis_specs["bin"] = TypedAxisSpec("bin", AxisRole.COORDINATE)
+                axis_specs["edge"] = TypedAxisSpec("edge", AxisRole.COORDINATE)
         product = assemble_typed_product(
             label,
             leaves,
             scan_size=scan_size,
             kind=DataKind.STATISTICS,
+            declared_dims=declared_dims,
+            axis_specs=axis_specs,
             attributes={"graph_ready": True, "typed_builder": "dist/1"},
         )
         return None if product is None else {label: product}

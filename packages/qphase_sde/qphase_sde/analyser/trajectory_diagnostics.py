@@ -24,7 +24,13 @@ from pydantic import Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
-from qphase.data import DataKind, Dataset, ProductDeclaration, ProductRequirement
+from qphase.data import (
+    AxisRole,
+    DataKind,
+    Dataset,
+    ProductDeclaration,
+    ProductRequirement,
+)
 from scipy.optimize import least_squares
 
 from ..contracts.analyser import (
@@ -38,7 +44,7 @@ from ..math.coordinates import (
     canonical_r_coordinates,
     canonical_vector,
 )
-from ..products import assemble_typed_product, stack_payload_leaves
+from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .allan_statistics import calculate_allan_variance
 from .base import Analyzer, resolve_mode_columns, trajectory_requirement
 from .frequency_orientation import (
@@ -277,11 +283,47 @@ class TrajectoryDiagnostics(Analyzer):
         leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
         if leaves is None:
             return None
+        declared_dims: dict[str, tuple[str, ...]] = {}
+        for key, array in leaves.arrays.items():
+            if key == "modes":
+                declared_dims[key] = ("mode",)
+            elif ".allan." in key and array.ndim == 2:
+                declared_dims[key] = ("trajectory", "tau")
+            elif ".allan." in key and array.ndim == 1:
+                declared_dims[key] = ("tau",)
+            elif ".coherence." in key and array.ndim == 2:
+                declared_dims[key] = ("trajectory", "lag")
+            elif key.endswith(
+                ("mean_amplitude_per_trajectory", "mean_power_per_trajectory")
+            ):
+                declared_dims[key] = ("trajectory",)
+            elif "per_trajectory" in key and ".phase_increment." in key:
+                declared_dims[key] = ("trajectory",)
+            elif "per_trajectory" in key and ".coherence." in key:
+                declared_dims[key] = (
+                    ("trajectory", "lag") if array.ndim == 2 else ("trajectory",)
+                )
+            elif key.endswith("lag_window_seconds") and array.ndim == 1:
+                declared_dims[key] = ("fit_parameter",)
+            elif key.endswith("block_statistics") and array.ndim == 1:
+                declared_dims[key] = ("block",)
+            elif ".coherence." in key and array.ndim == 1:
+                declared_dims[key] = ("lag",)
+        axis_specs = {
+            "mode": TypedAxisSpec("mode", AxisRole.COMPONENT),
+            "trajectory": TypedAxisSpec("trajectory", AxisRole.REALIZATION),
+            "tau": TypedAxisSpec("tau", AxisRole.COORDINATE, units="time"),
+            "lag": TypedAxisSpec("lag", AxisRole.COORDINATE, units="time"),
+            "fit_parameter": TypedAxisSpec("fit_parameter", AxisRole.INDEX),
+            "block": TypedAxisSpec("block", AxisRole.INDEX),
+        }
         product = assemble_typed_product(
             label,
             leaves,
             scan_size=scan_size,
             kind=DataKind.STATISTICS,
+            declared_dims=declared_dims,
+            axis_specs=axis_specs,
             attributes={
                 "graph_ready": True,
                 "typed_builder": "trajectory_diagnostics/1",

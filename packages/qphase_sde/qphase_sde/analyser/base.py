@@ -11,10 +11,9 @@ class that consumes them. ``Analyzer`` satisfies
 ``execution_capabilities``/``workspace``/``work_estimate``/
 ``input_requirements``/``output_specs``/``reducer``.
 
-Execution is transitional: the engine invokes the legacy ``analyze()``
-method and ``AnalyserProductBuilderProtocol.build_products`` bridges its
-payload into typed products. The typed ``execute()`` entry on the
-declaration contract is Wave 5B scope.
+The engine's typed graph invokes ``execute()``. The existing ``analyze()``
+method is an internal numerical kernel; schema materialization stays behind
+the typed execution boundary.
 
 Public API
 ----------
@@ -24,11 +23,13 @@ Public API
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from typing import Any, ClassVar, Literal
 
+import numpy as np
 from qphase.backend.base import BackendBase
 from qphase.core.protocols import PluginBase, PluginConfigBase, ResultProtocol
-from qphase.data import DataKind, ProductDeclaration, ProductRequirement
+from qphase.data import DataKind, Dataset, ProductDeclaration, ProductRequirement
 
 from ..contracts.analyser import (
     AnalyserExecutionCapabilities,
@@ -80,14 +81,13 @@ class Analyzer(PluginBase, ABC):
     """Base class for analyzers.
 
     All analyzers must inherit from this class and implement the abstract
-    :meth:`analyze` method — the transitional execution entry. Together with
+    :meth:`analyze` numerical kernel. Together with
     the subclass-declared ``input_requirements``/``output_specs`` and the
     ``execution_capabilities``/``workspace``/``work_estimate``/``reducer``
     defaults below, this satisfies
     ``qphase_sde.contracts.analyser:AnalyserDeclarationContract``;
-    ``analyze()`` plus ``AnalyserProductBuilderProtocol.build_products``
-    form the transitional execution bridge pending Wave 5B's typed
-    ``execute()``.
+    ``execute()`` is the graph-facing typed entry. The default implementation
+    adapts the kernel result to the analyser's declared Dataset products.
     """
 
     config_schema: ClassVar[type[PluginConfigBase]]
@@ -140,6 +140,87 @@ class Analyzer(PluginBase, ABC):
         raise NotImplementedError(
             f"analyser {type(self).__name__!r} must declare output_specs()"
         )
+
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        """Execute one analyser on named typed products.
+
+        The numerical kernels remain in ``analyze``; this boundary supplies a
+        typed bundle view and materializes the analyser's declared products.
+        Subclasses with a native typed path may override this method, while
+        the default keeps the existing numerical implementation unchanged.
+        """
+        from ..contracts.bundle import SDEProvenance
+        from ..result import SDEDataBundle
+
+        parameter_axes = [
+            axis
+            for product in inputs.values()
+            for axis in product.axes
+            if axis.role.value == "parameter"
+        ]
+        axes: dict[str, Any] = {}
+        shape: tuple[int, ...] = ()
+        params: dict[str, Any] = {}
+        if isinstance(metadata, Mapping):
+            source_params = metadata.get("params")
+            if isinstance(source_params, Mapping):
+                params.update(source_params)
+            source_axes = metadata.get("scan_axes")
+            if isinstance(source_axes, Mapping):
+                for name, values in source_axes.items():
+                    array = np.asarray(values)
+                    if array.ndim == 1:
+                        axes[str(name)] = array
+                if axes:
+                    shape = tuple(
+                        int(np.asarray(values).size) for values in axes.values()
+                    )
+        scan_param = getattr(self.config, "scan_param", None)
+        if isinstance(scan_param, str):
+            variable_name = f"parameter.{scan_param}"
+            for product in inputs.values():
+                if variable_name not in {item.name for item in product.variables}:
+                    continue
+                values = np.asarray(product.handle(variable_name).materialize())
+                params[scan_param] = values
+                shape = (int(values.size),)
+                axes = {scan_param: values.reshape(-1)}
+                break
+        if not shape and parameter_axes:
+            unique: dict[str, Any] = {axis.name: axis for axis in parameter_axes}
+            shape = tuple(int(axis.size) for axis in unique.values())
+            axes = {name: np.arange(int(axis.size)) for name, axis in unique.items()}
+        bundle = SDEDataBundle(
+            dict(inputs),
+            SDEProvenance(),
+            scan_axes=axes,
+            scan_shape=shape,
+            meta={"params": params} if params else None,
+        )
+        from ..engine import _coerce_analysis_input
+
+        result = self.analyze(_coerce_analysis_input(bundle), backend)
+        from .result import AnalysisResult
+
+        if not isinstance(result, AnalysisResult):
+            raise TypeError("analyser analyze() must return AnalysisResult")
+        builder = getattr(self, "build_products", None)
+        if not callable(builder):
+            raise NotImplementedError(
+                f"analyser {type(self).__name__!r} has no typed product builder"
+            )
+        scan_size = int(np.prod(shape, dtype=np.int64)) if shape else None
+        products = builder(result.data_dict, scan_size=scan_size, label=label)
+        if not products:
+            raise ValueError(f"analyser {label!r} produced no typed products")
+        return products
 
     @abstractmethod
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:

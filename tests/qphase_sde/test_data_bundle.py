@@ -8,7 +8,15 @@ from qphase.core.aggregation import DirectoryInputResult
 from qphase.core.artifacts import ArtifactStore
 from qphase.core.dataset import DatasetResultProtocol, ResultProtocol
 from qphase.core.scan import ParameterGrid
-from qphase.data import DataKind, load_products
+from qphase.data import (
+    AxisRole,
+    AxisSchema,
+    DataKind,
+    ProductSchema,
+    SpectralDataset,
+    VariableSchema,
+    load_products,
+)
 from qphase_sde.contracts.bundle import SDEDataBundleProtocol, SDEProvenance
 from qphase_sde.errors import SDEExecutionError
 from qphase_sde.result import (
@@ -294,8 +302,44 @@ def test_analyser_output_inherits_source_scan_identity(tmp_path):
         }
         for index in range(4)
     ]
-    source_product = _analysis_product("psd", payload, scan_size=4)
-    assert source_product is not None
+    source_schema = ProductSchema(
+        kind=DataKind.SPECTRAL,
+        axes=[
+            AxisSchema(name="scan", role=AxisRole.PARAMETER, size=4),
+            AxisSchema(name="frequency", role=AxisRole.COORDINATE, size=101),
+            AxisSchema(name="channel", role=AxisRole.COMPONENT, size=1),
+        ],
+        variables=[
+            VariableSchema(
+                name="axis",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan", "frequency"),
+            ),
+            VariableSchema(
+                name="psd",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan", "frequency", "channel"),
+            ),
+        ],
+        attributes={
+            "frequency_units": "inverse_time",
+            "orientation": "phase_decreasing",
+            "sidedness": "two_sided",
+            "normalization": "density",
+            "window": "none",
+            "estimator": "periodogram",
+        },
+    )
+    source_product = SpectralDataset.from_arrays(
+        source_schema,
+        {
+            "axis": np.stack([item["axis"] for item in payload]),
+            "psd": np.stack([item["psd"] for item in payload]),
+        },
+        owner="test",
+    )
     source = SDEDataBundle(
         {"psd": source_product},
         _provenance(),

@@ -345,9 +345,9 @@ def test_standalone_peak_analyser_uses_baseline_spectrum():
         SDEResult(analysis={"psd": spectrum}), NumpyBackend()
     ).data_dict
 
-    assert len(payload["peak_points"]) == 1
+    assert len(payload["candidate_tables"]) == 1
     assert payload["modes"] == [0, 1]
-    assert payload["peak_points"][0][0]["frequencies"][0] == pytest.approx(
+    assert payload["candidate_tables"][0]["columns"]["location"][0] == pytest.approx(
         -60.6921101512001, rel=RTOL
     )
 

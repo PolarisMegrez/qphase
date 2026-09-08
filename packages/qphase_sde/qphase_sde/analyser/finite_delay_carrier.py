@@ -25,7 +25,9 @@ from ..contracts.analyser import (
     AnalyserWorkspaceRequest,
     WorkEstimate,
 )
-from ..products import assemble_typed_product, stack_payload_leaves
+from ..products import (
+    assemble_row_table_product,
+)
 from .base import Analyzer
 from .frequency_orientation import (
     FrequencyOrientation,
@@ -163,24 +165,55 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
             ProductDeclaration(
                 name=label,
                 kind=DataKind.STATISTICS,
-                fields=["detector_rates"],
+                fields=[
+                    "detector_rate",
+                    "frequency",
+                    "instantaneous_frequency",
+                    "finite_delay_correction",
+                    "coherent_weight",
+                    "lag_end",
+                    "sample_count",
+                    "sample_lag",
+                ],
             ),
         )
 
     def build_products(
         self, payload: Any, *, scan_size: int | None, label: str
     ) -> dict[str, Dataset] | None:
-        leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
-        if leaves is None:
-            return None
-        product = assemble_typed_product(
+        if not isinstance(payload, dict):
+            raise TypeError("finite_delay_carrier payload must be a mapping")
+        rows = payload.get("carrier_rows", [])
+        if not isinstance(rows, list):
+            raise TypeError("finite_delay_carrier carrier_rows must be a list")
+        metadata = {
+            key: value for key, value in payload.items() if key != "carrier_rows"
+        }
+        product = assemble_row_table_product(
             label,
-            leaves,
+            rows,
             scan_size=scan_size,
-            kind=DataKind.STATISTICS,
-            attributes={"graph_ready": True, "typed_builder": "finite_delay/1"},
+            fields=[
+                "detector_rate",
+                "frequency",
+                "instantaneous_frequency",
+                "finite_delay_correction",
+                "coherent_weight",
+                "lag_end",
+                "sample_count",
+                "sample_lag",
+            ],
+            integer_fields=("sample_count",),
+            scan_value_field=(
+                cast(FiniteDelayCarrierConfig, self.config).scan_param
+                if scan_size is not None
+                else None
+            ),
+            payload_key="carrier_rows",
+            payload_meta=metadata,
+            attributes={"table": "finite_delay_carrier"},
         )
-        return None if product is None else {label: product}
+        return {label: product}
 
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         del backend

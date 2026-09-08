@@ -14,12 +14,18 @@ from qphase.backend.base import BackendBase
 from qphase.core.aggregation import write_table_csv
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase, ResultProtocol
-from qphase.data import DataKind, Dataset, ProductDeclaration, ProductRequirement
+from qphase.data import (
+    AxisRole,
+    DataKind,
+    Dataset,
+    ProductDeclaration,
+    ProductRequirement,
+)
 from scipy.optimize import curve_fit
 
 from ..contracts.analyser import AnalyserWorkspaceRequest, WorkEstimate
 from ..contracts.quantities import SDEQuantity
-from ..products import assemble_typed_product, stack_payload_leaves
+from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from ..result import SDEResult
 from .base import Analyzer
 from .frequency_orientation import (
@@ -693,11 +699,23 @@ class AllanScalingAnalyzer(Analyzer):
         leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
         if leaves is None:
             return None
+        declared_dims: dict[str, tuple[str, ...]] = {}
+        for key, _array in leaves.arrays.items():
+            if key == "summary.gate_failures":
+                declared_dims[key] = ("gate_failure",)
+            elif key.endswith("exponent_ci95"):
+                declared_dims[key] = ("confidence_bound",)
+        axis_specs = {
+            "gate_failure": TypedAxisSpec("gate_failure", AxisRole.INDEX),
+            "confidence_bound": TypedAxisSpec("confidence_bound", AxisRole.INDEX),
+        }
         product = assemble_typed_product(
             label,
             leaves,
             scan_size=scan_size,
             kind=DataKind.STATISTICS,
+            declared_dims=declared_dims,
+            axis_specs=axis_specs,
             attributes={"graph_ready": True, "typed_builder": "allan_scaling/1"},
         )
         return None if product is None else {label: product}

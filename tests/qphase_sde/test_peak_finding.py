@@ -203,6 +203,43 @@ def test_peaks_analyser_publishes_grouped_product():
     assert product.attributes["graph_ready"] is True
     assert product.axis("scan").size == 2
     assert product.axis("group").size == 2
+    np.testing.assert_array_equal(
+        product.handle("sample_index").materialize(),
+        np.asarray([60, 65]),
+    )
+    np.testing.assert_array_equal(
+        product.handle("status_code").materialize(),
+        np.asarray([3, 3]),
+    )
+
+
+def test_peaks_analyser_resolves_finder_through_registry():
+    from qphase.core.registry import registry
+
+    class RegistryFinder(ScipyPeakFinder):
+        name = "registry_test"
+
+    registry.register("peak_finder", "registry_test", RegistryFinder, overwrite=True)
+    analyzer = PeaksAnalyzer(
+        PeaksAnalyzerConfig(scan_param="epsilon", finder="registry_test")
+    )
+    result = analyzer.analyze(
+        {
+            "point": SDEResult(
+                analysis={
+                    "psd": {
+                        "axis": np.linspace(-1.0, 1.0, 101),
+                        "psd": np.exp(
+                            -(((np.linspace(-1.0, 1.0, 101) - 0.2) / 0.08) ** 2)
+                        )[:, None],
+                        "modes": [0],
+                    }
+                }
+            )
+        },
+        NumpyBackend(),
+    )
+    assert len(result.data_dict["candidate_tables"]) == 1
 
 
 def test_peak_paths_analyser_publishes_typed_path_product():
@@ -246,7 +283,7 @@ def test_peak_paths_analyser_publishes_typed_path_product():
     analyzer = PeakPathsAnalyzer(
         PeakPathsAnalyzerConfig(
             scan_param="epsilon",
-            tracker=RidgePeakTrackerConfig(path_count=1),
+            tracker=RidgePeakTrackerConfig(path_count=1).model_dump(),
         )
     )
     result = analyzer.analyze(source, NumpyBackend())

@@ -80,41 +80,82 @@ class BasePeakFinderConfig(PluginConfigBase):
 
 
 def materialize_candidate_product(
-    peak_points: Sequence[Mapping[Any, Any]],
+    peak_points: Sequence[Mapping[Any, Any]] | None = None,
     *,
     scan_size: int | None,
     label: str,
     modes: Sequence[int],
+    candidate_tables: Sequence[Mapping[str, Any]] | None = None,
 ) -> Dataset:
     """Materialize per-scan finder results as a grouped peak product."""
+    if candidate_tables is None and peak_points is None:
+        raise ValueError("candidate product needs peak points or candidate tables")
     scan_count = 1 if scan_size is None else scan_size
-    points = list(peak_points)
-    if len(points) != scan_count:
-        raise ValueError("peak_points must match the scan cardinality")
     group_scan_index: list[int] = []
     group_channel_index: list[int] = []
     candidate_offsets = [0]
     locations: list[float] = []
     intensities: list[float] = []
-    for scan_index, point in enumerate(points):
-        for channel_index, mode in enumerate(modes):
-            info = point.get(mode, point.get(str(mode), {}))
-            frequencies = info.get("frequencies", [])
-            values = info.get("values", [])
-            if len(frequencies) != len(values):
-                raise ValueError("peak frequencies and values must have equal lengths")
-            group_scan_index.append(scan_index)
-            group_channel_index.append(channel_index)
-            locations.extend(float(value) for value in frequencies)
-            intensities.extend(float(value) for value in values)
-            candidate_offsets.append(len(locations))
+    candidate_columns: dict[str, list[Any]] = {}
+    if candidate_tables is not None:
+        if len(candidate_tables) != scan_count:
+            raise ValueError("candidate tables must match the scan cardinality")
+        for table in candidate_tables:
+            columns = table["columns"]
+            offsets = np.asarray(table["candidate_offsets"], dtype=np.int64)
+            group_scan = np.asarray(table["group_scan_index"], dtype=np.int64)
+            group_channel = np.asarray(table["group_channel_index"], dtype=np.int64)
+            for group, (scan, channel) in enumerate(
+                zip(group_scan, group_channel, strict=True)
+            ):
+                start, stop = int(offsets[group]), int(offsets[group + 1])
+                group_scan_index.append(int(scan))
+                group_channel_index.append(int(channel))
+                candidate_offsets.append(candidate_offsets[-1] + stop - start)
+                for name, values in columns.items():
+                    candidate_columns.setdefault(name, []).extend(
+                        np.asarray(values)[start:stop].tolist()
+                    )
+        locations = [float(value) for value in candidate_columns.pop("location", [])]
+        intensities = [float(value) for value in candidate_columns.pop("intensity", [])]
+    else:
+        points = list(peak_points or [])
+        if len(points) != scan_count:
+            raise ValueError("peak_points must match the scan cardinality")
+        for scan_index, point in enumerate(points):
+            for channel_index, mode in enumerate(modes):
+                info = point.get(mode, point.get(str(mode), {}))
+                frequencies = info.get("frequencies", [])
+                values = info.get("values", [])
+                if len(frequencies) != len(values):
+                    raise ValueError(
+                        "peak frequencies and values must have equal lengths"
+                    )
+                group_scan_index.append(scan_index)
+                group_channel_index.append(channel_index)
+                locations.extend(float(value) for value in frequencies)
+                intensities.extend(float(value) for value in values)
+                candidate_offsets.append(len(locations))
 
     candidate_count = len(locations)
     columns = {
         "location": np.asarray(locations, dtype=float),
         "intensity": np.asarray(intensities, dtype=float),
-        "status_code": np.full(candidate_count, 3, dtype=np.int64),
+        "status_code": np.asarray(
+            candidate_columns.pop(
+                "status_code", np.full(candidate_count, 3, dtype=np.int64)
+            ),
+            dtype=np.int64,
+        ),
+        "sample_index": np.asarray(
+            candidate_columns.pop(
+                "sample_index", np.full(candidate_count, -1, dtype=np.int64)
+            ),
+            dtype=np.int64,
+        ),
     }
+    for name, values in candidate_columns.items():
+        columns[name] = np.asarray(values)
     channel_names = [f"mode_{mode}" for mode in modes]
     validate_candidate_table(
         np.asarray(candidate_offsets, dtype=np.int64),

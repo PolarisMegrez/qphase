@@ -109,6 +109,7 @@ __all__ = [
     "CompiledJob",
     "PluginGraphResolver",
     "ResolvedPluginNode",
+    "ProductGraphExecutor",
     "SessionStoreProtocol",
     "EventStoreProtocol",
     "ExecutionStoreProtocol",
@@ -152,3 +153,12 @@ __all__ = [
     "merge_configs",
     "get_config_for_job",
 ]
+
+
+def __getattr__(name: str):
+    """Load the product executor only when the public symbol is requested."""
+    if name == "ProductGraphExecutor":
+        from .product_executor import ProductGraphExecutor
+
+        return ProductGraphExecutor
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

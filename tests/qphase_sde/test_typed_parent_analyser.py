@@ -45,7 +45,7 @@ def _spectrum_bundle() -> SDEDataBundle:
     )
 
 
-def test_coherence_frequency_parent_publishes_typed_product():
+def test_coherence_frequency_parent_publishes_typed_product(tmp_path):
     source = _spectrum_bundle()
     analyzer = CoherenceFrequencyAnalyzer(
         CoherenceFrequencyAnalyzerConfig(
@@ -71,6 +71,9 @@ def test_coherence_frequency_parent_publishes_typed_product():
     ).run(source)
     assert runtime.shape == (2,)
     assert runtime.products["coherence_frequency"].axis("scan").size == 2
+    output = tmp_path / "coherence_frequency"
+    runtime.save(output)
+    assert (output / "artifact_manifest.json").is_file()
 
 
 def test_peak_paths_parent_consumes_peak_product():
@@ -96,6 +99,7 @@ def test_peak_paths_parent_consumes_peak_product():
 
     assert products is not None
     assert products["paths"].attributes["graph_ready"] is True
+    assert products["paths"].attributes["source_product"] == "peaks"
 
     runtime = Engine(
         config=EngineConfig(mode="analyze"),
@@ -103,3 +107,26 @@ def test_peak_paths_parent_consumes_peak_product():
     ).run(candidate_source)
     assert runtime.shape == (2,)
     assert runtime.products["peak_paths"].axis("path").size == 1
+
+
+def test_coherence_frequency_parent_resolves_child_through_registry():
+    from qphase.core.registry import registry
+    from qphase_sde.coherence_frequency import BandLimitedCoherenceFrequency
+
+    class RegistryChild(BandLimitedCoherenceFrequency):
+        name = "registry_test"
+
+    registry.register(
+        "coherence_frequency", "registry_test", RegistryChild, overwrite=True
+    )
+    source = _spectrum_bundle()
+    analyzer = CoherenceFrequencyAnalyzer(
+        CoherenceFrequencyAnalyzerConfig(
+            scan_param="epsilon",
+            input_key="psd",
+            estimator="registry_test",
+            child={"freq_min": -2.0, "freq_max": 0.2},
+        )
+    )
+    result = analyzer.analyze(source, NumpyBackend())
+    assert len(result.data_dict["estimates"]) == 2

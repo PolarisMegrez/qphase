@@ -83,6 +83,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Analyzer",
     "AnalyserDeclarationContract",
+    "AnalyserExecutionContract",
     "AnalyserExecutionCapabilities",
     "AnalyserWorkspaceEstimate",
     "AnalyserWorkspaceRequest",
@@ -132,6 +133,7 @@ __all__ = [
 #: Contract re-exports resolved lazily (PEP 562) from the contracts package.
 _LAZY_CONTRACT_EXPORTS = {
     "AnalyserDeclarationContract": "..contracts.analyser",
+    "AnalyserExecutionContract": "..contracts.analyser",
     "AnalyserExecutionCapabilities": "..contracts.analyser",
     "AnalyserWorkspaceEstimate": "..contracts.analyser",
     "AnalyserWorkspaceRequest": "..contracts.analyser",
