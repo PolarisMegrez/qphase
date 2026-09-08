@@ -25,6 +25,7 @@ from qphase_sde.analyser.lorentz_fitter import (
 from qphase_sde.analyser.lorentz_fitter import (
     _lorentzian_with_baseline as lorentzian_with_baseline,
 )
+from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.analyser.result import AnalysisResult
 from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.result import SDEResult, bundle_from_result
@@ -315,7 +316,7 @@ def test_lorentz_fitter_engine_analyze_mode(tmp_path, temp_project):
         jobs=[
             JobConfig(
                 name="fit",
-                input={"from": str(run_dir), "mode": "dataset"},
+                input={"from": str(run_dir / "job_001"), "mode": "dataset"},
                 engine={"sde": {"mode": "analyze"}},
                 analyser={"lorentz_fitter": {"scan_param": "epsilon", "mode": 0}},
             )
@@ -376,6 +377,8 @@ def _make_run_dir(tmp_path: Path, *, with_uncertainty: bool = False) -> Path:
             "axis": axis,
             "psd": psd[:, None],
             "modes": [0],
+            "sample_dt": 1.0,
+            "nyquist": np.pi,
             "kind": "complex",
             "convention": "symmetric",
         }
@@ -392,6 +395,10 @@ def _make_run_dir(tmp_path: Path, *, with_uncertainty: bool = False) -> Path:
             meta={"params": {"epsilon": epsilon}, "job_name": job_dir.name},
             analysis={"psd": psd_payload},
         )
-        bundle = bundle_from_result(result, provenance=SDEProvenance(dt=1.0))
+        bundle = bundle_from_result(
+            result,
+            provenance=SDEProvenance(dt=1.0),
+            analysers={"psd": PsdAnalyzer(kind="complex", modes=[0])},
+        )
         bundle.save(job_dir)
     return run_dir

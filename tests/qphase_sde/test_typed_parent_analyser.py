@@ -7,6 +7,7 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.coherence_frequency import (
     CoherenceFrequencyAnalyzer,
     CoherenceFrequencyAnalyzerConfig,
+    _materialize_estimates,
 )
 from qphase_sde.analyser.peak_paths import (
     PeakPathsAnalyzer,
@@ -14,7 +15,10 @@ from qphase_sde.analyser.peak_paths import (
 )
 from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
 from qphase_sde.analyser.psd import PsdAnalyzer
+from qphase_sde.coherence_frequency import BandLimitedCoherenceFrequency
+from qphase_sde.contracts.coherence import CoherenceFrequencyEstimate
 from qphase_sde.engine import Engine, EngineConfig
+from qphase_sde.peak_tracker import RidgePeakTracker
 from qphase_sde.result import SDEDataBundle, SDEProvenance
 
 
@@ -51,9 +55,19 @@ def test_coherence_frequency_parent_publishes_typed_product(tmp_path):
         CoherenceFrequencyAnalyzerConfig(
             scan_param="epsilon",
             input_key="psd",
-            estimator="band_limited",
-            child={"freq_min": -2.0, "freq_max": 0.2, "maximum_lag": 100.0},
-        )
+            estimator={
+                "band_limited": {
+                    "freq_min": -2.0,
+                    "freq_max": 0.2,
+                    "maximum_lag": 100.0,
+                }
+            },
+        ),
+        subplugins={
+            "estimator": BandLimitedCoherenceFrequency(
+                freq_min=-2.0, freq_max=0.2, maximum_lag=100.0
+            )
+        },
     )
 
     payload = analyzer.analyze(source, NumpyBackend()).data_dict
@@ -109,6 +123,23 @@ def test_peak_paths_parent_consumes_peak_product():
     assert runtime.products["peak_paths"].axis("path").size == 1
 
 
+def test_analyze_graph_connects_peak_candidates_to_paths():
+    source = _spectrum_bundle()
+    peaks = PeaksAnalyzer(PeaksAnalyzerConfig(scan_param="epsilon", finder="scipy"))
+    paths = PeakPathsAnalyzer(
+        PeakPathsAnalyzerConfig(scan_param="epsilon"),
+        subplugins={"tracker": RidgePeakTracker()},
+    )
+
+    runtime = Engine(
+        config=EngineConfig(mode="analyze"),
+        plugins={"analyser": {"peaks": peaks, "peak_paths": paths}},
+    ).run(source)
+
+    assert set(runtime.products) == {"peak_paths"}
+    assert runtime.products["peak_paths"].attributes["source_product"] == "peaks"
+
+
 def test_coherence_frequency_parent_resolves_child_through_registry():
     from qphase.core.registry import registry
     from qphase_sde.coherence_frequency import BandLimitedCoherenceFrequency
@@ -124,9 +155,43 @@ def test_coherence_frequency_parent_resolves_child_through_registry():
         CoherenceFrequencyAnalyzerConfig(
             scan_param="epsilon",
             input_key="psd",
-            estimator="registry_test",
-            child={"freq_min": -2.0, "freq_max": 0.2},
-        )
+            estimator={"registry_test": {"freq_min": -2.0, "freq_max": 0.2}},
+        ),
+        subplugins={"estimator": RegistryChild(freq_min=-2.0, freq_max=0.2)},
     )
     result = analyzer.analyze(source, NumpyBackend())
     assert len(result.data_dict["estimates"]) == 2
+
+
+def test_short_delay_coherence_product_closes_sampling_basis(tmp_path):
+    product = _materialize_estimates(
+        [
+            CoherenceFrequencyEstimate(
+                frequency=0.2,
+                estimator="short_delay",
+                frequency_sem=0.01,
+                independent_count=8,
+            )
+        ],
+        scan_size=1,
+        label="frequency",
+    )
+
+    assert product.schema.is_closed
+    from qphase.data import save_products
+
+    save_products(tmp_path / "frequency", {"frequency": product})
+
+
+def test_coherence_frequency_plugin_graph_injects_selected_estimator():
+    from qphase.core.plugin_graph import PluginGraphResolver
+    from qphase.core.registry import discovery, registry
+
+    discovery.discover_plugins()
+    node = PluginGraphResolver(registry).resolve(
+        "analyser",
+        "coherence_frequency",
+        {"scan_param": "epsilon", "estimator": {"short_delay": {}}},
+    )
+
+    assert node.instance._selected_estimator_name() == "short_delay"

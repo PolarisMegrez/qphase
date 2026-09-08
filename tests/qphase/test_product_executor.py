@@ -152,3 +152,87 @@ def test_executor_checks_output_quantity_and_fields():
             graph,
             {"producer": lambda node, inputs: {"output": valid_quantity_product()}},
         ).run({})
+
+
+def test_executor_routes_internal_edges_and_releases_intermediates():
+    graph = ProductGraph(
+        nodes=[
+            ProductNode(
+                node_id="producer",
+                producer="test.producer",
+                outputs=[ProductDeclaration(name="a", kind=DataKind.STATISTICS)],
+            ),
+            ProductNode(
+                node_id="consumer",
+                producer="test.consumer",
+                requirements=[ProductRequirement(name="a")],
+                outputs=[ProductDeclaration(name="b", kind=DataKind.STATISTICS)],
+            ),
+        ],
+        edges=[
+            {
+                "producer": "producer",
+                "product": "a",
+                "consumer": "consumer",
+                "requirement": "a",
+            }
+        ],
+    )
+    seen: list[str] = []
+
+    def producer(node, inputs):
+        del node, inputs
+        return {"a": _product("a")}
+
+    def consumer(node, inputs):
+        del node
+        seen.append(inputs["a"].variable("a").name)
+        return {"b": _product("b")}
+
+    result = ProductGraphExecutor(
+        graph, {"producer": producer, "consumer": consumer}
+    ).run({})
+
+    assert seen == ["a"]
+    assert set(result) == {"consumer"}
+    assert set(result["consumer"]) == {"b"}
+
+
+def test_executor_reports_nodes_and_checks_cancellation():
+    graph = ProductGraph(
+        nodes=[
+            ProductNode(
+                node_id="producer",
+                producer="test.producer",
+                outputs=[ProductDeclaration(name="output", kind=DataKind.STATISTICS)],
+            )
+        ]
+    )
+
+    class Token:
+        def __init__(self):
+            self.calls = 0
+
+        def raise_if_cancelled(self):
+            self.calls += 1
+
+    class Progress:
+        def __init__(self):
+            self.messages = []
+
+        def status(self, message, *, stage):
+            self.messages.append((message, stage))
+
+    token = Token()
+    progress = Progress()
+    context = type("Context", (), {"cancellation": token, "progress": progress})()
+    ProductGraphExecutor(
+        graph,
+        {"producer": lambda node, inputs: {"output": _product()}},
+    ).run({}, context=context)
+
+    assert token.calls == 1
+    assert [item[1] for item in progress.messages] == [
+        "producer",
+        "producer",
+    ]

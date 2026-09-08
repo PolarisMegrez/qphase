@@ -133,10 +133,12 @@ class PeakPathsAnalyzer(Analyzer):
         label: str,
         metadata: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Dataset]:
-        del metadata
         """Execute directly on a typed candidate product mapping."""
         result = cast(AnalysisResult, self.analyze(inputs, backend))
-        products = self.build_products(result.data_dict, scan_size=None, label=label)
+        payload = dict(result.data_dict)
+        if isinstance(metadata, Mapping) and "source_product" in metadata:
+            payload["_source_product"] = str(metadata["source_product"])
+        products = self.build_products(payload, scan_size=None, label=label)
         if products is None:
             raise ValueError("peak_paths produced no typed path product")
         return products
@@ -243,8 +245,11 @@ class PeakPathsAnalyzer(Analyzer):
                 paths,
                 candidate_count=int(payload["candidate_count"]),
                 label=label,
-                source_product=cast(
-                    PeakPathsAnalyzerConfig, self.config
-                ).candidates_key,
+                source_product=str(
+                    payload.get(
+                        "_source_product",
+                        cast(PeakPathsAnalyzerConfig, self.config).candidates_key,
+                    )
+                ),
             )
         }

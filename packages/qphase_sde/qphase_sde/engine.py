@@ -439,15 +439,14 @@ class Engine(EngineBase):
 
         if getattr(self.config, "mode", "simulate") == "analyze":
             source_scan = _analysis_source_scan(data)
-            typed = self._run_typed_analyze(source_scan)
-            if typed is not None:
-                return typed
-            return bundle_from_result(
-                self._run_analyze(data),
-                provenance=self._job_provenance(),
-                analysers=self._normalised_analysers(),
-                source_scan=source_scan,
-            )
+            if source_scan is None:
+                raise TypeError(
+                    "analyze mode requires a typed DatasetResultProtocol input"
+                )
+            typed = self._run_typed_analyze(source_scan, context=context)
+            if typed is None:
+                raise TypeError("analyze mode requires typed analyser execution")
+            return typed
         grid = context.parameter_grid if context is not None else None
         model = self._required_model()
         analysers = self._normalised_analysers()
@@ -541,7 +540,10 @@ class Engine(EngineBase):
         )
 
     def _run_typed_analyze(
-        self, source: DatasetResultProtocol | None
+        self,
+        source: DatasetResultProtocol | None,
+        *,
+        context: Any | None = None,
     ) -> ResultProtocol | None:
         """Run an all-typed analyser set through the core ProductGraph."""
         if source is None:
@@ -553,12 +555,16 @@ class Engine(EngineBase):
         ):
             return None
         from qphase.core import ProductGraphExecutor
-        from qphase.data import ProductGraph, ProductNode
+        from qphase.data import GraphEdge, ProductGraph, ProductNode
 
         from .products import add_scan_parameter_coordinates
 
+        source_products = getattr(source, "products", None)
+        if not isinstance(source_products, dict):
+            source_products = dict(source.data)
         nodes = []
-        bindings = []
+        node_requirements: dict[str, list[Any]] = {}
+        output_owners: dict[str, list[tuple[str, str]]] = {}
         for name, analyser in analysers.items():
             output_dir = getattr(self.config, "output_dir", None)
             if output_dir is not None:
@@ -566,6 +572,9 @@ class Engine(EngineBase):
             requirements = list(analyser.input_requirements())
             outputs = list(analyser.output_specs(label=str(name)))
             node_id = f"analyser.{name}"
+            node_requirements[node_id] = requirements
+            for output in outputs:
+                output_owners.setdefault(output.name, []).append((node_id, output.name))
             nodes.append(
                 ProductNode(
                     node_id=node_id,
@@ -574,16 +583,38 @@ class Engine(EngineBase):
                     outputs=outputs,
                 )
             )
+        edges: list[GraphEdge] = []
+        bindings = []
+        for node_id, requirements in node_requirements.items():
             for requirement in requirements:
-                bindings.append(
-                    {
-                        "consumer": node_id,
-                        "requirement": requirement.name,
-                        "source": "input",
-                        "product": requirement.name,
-                    }
-                )
-        graph = ProductGraph(nodes=nodes, external_inputs=bindings)
+                owners = output_owners.get(requirement.name, [])
+                if len(owners) > 1:
+                    raise ValueError(
+                        f"analyser input {requirement.name!r} of node "
+                        f"{node_id!r} has multiple internal producers"
+                    )
+                if owners:
+                    producer, product = owners[0]
+                    edges.append(
+                        GraphEdge(
+                            producer=producer,
+                            product=product,
+                            consumer=node_id,
+                            requirement=requirement.name,
+                        )
+                    )
+                elif requirement.name in source_products:
+                    bindings.append(
+                        {
+                            "consumer": node_id,
+                            "requirement": requirement.name,
+                            "source": "input",
+                            "product": requirement.name,
+                        }
+                    )
+                elif requirement.optional:
+                    continue
+        graph = ProductGraph(nodes=nodes, edges=edges, external_inputs=bindings)
         backend = (
             self._required_backend() if self._default_backend is not None else None
         )
@@ -596,22 +627,30 @@ class Engine(EngineBase):
             dict(source_metadata) if isinstance(source_metadata, dict) else {}
         )
         execution_metadata["scan_axes"] = dict(source.axes)
-        runners = {
-            f"analyser.{name}": (
-                lambda node, inputs, analyser=analyser, name=name: analyser.execute(
+
+        def make_runner(node_id: str, analyser: Any, name: str) -> Any:
+            incoming = [edge for edge in edges if edge.consumer == node_id]
+
+            def runner(node: Any, inputs: Any) -> Any:
+                del node
+                node_metadata = dict(execution_metadata)
+                if incoming:
+                    node_metadata["source_product"] = incoming[0].product
+                return analyser.execute(
                     inputs,
                     backend=backend,
                     label=str(name),
-                    metadata=(execution_metadata),
+                    metadata=node_metadata,
                 )
-            )
+
+            return runner
+
+        runners = {
+            f"analyser.{name}": make_runner(f"analyser.{name}", analyser, name)
             for name, analyser in analysers.items()
         }
-        source_products = getattr(source, "products", None)
-        if not isinstance(source_products, dict):
-            source_products = dict(source.data)
         node_products = ProductGraphExecutor(graph, runners).run(
-            {"input": source_products}
+            {"input": source_products}, context=context
         )
         products = {
             product_name: product
@@ -1030,44 +1069,6 @@ class Engine(EngineBase):
             current.update(params)
             return
         raise TypeError(f"model {model.name!r} does not expose mutable parameters")
-
-    def _run_analyze(self, data: Any | None) -> SDEResult:
-        """Run analysers on upstream input data without performing a simulation.
-
-        This mode is used for cross-job postprocessing: the scheduler passes an
-        ``AggregateResult``, a directory ``Path``, a single ``SDEResult`` or a
-        2.0 :class:`SDEDataBundle` as ``data``, and the configured analysers
-        produce derived outputs. Bundle inputs are coerced back to a
-        TrajectorySet from their ``trajectories`` product (single-point only)
-        until analysers consume typed products natively (Phase 2).
-        """
-        assert self.config is not None
-
-        from qphase.backend.numpy_backend import NumpyBackend
-
-        data = _coerce_analysis_input(data)
-
-        analysis_results: dict[str, Any] = {}
-        meta: dict[str, Any] = {"mode": "analyze"}
-
-        analysers = self.plugins.get("analyser")
-        if not analysers:
-            return SDEResult(trajectory=None, meta=meta, analysis=analysis_results)
-
-        if not isinstance(analysers, dict):
-            analysers = {getattr(analysers, "name", "analyser"): analysers}
-
-        be = NumpyBackend()
-        output_dir = getattr(self.config, "output_dir", None)
-        for name, analyzer in analysers.items():
-            if hasattr(analyzer, "analyze"):
-                # Provide a place for analysers to write aggregated outputs.
-                if output_dir is not None:
-                    analyzer.output_dir = output_dir
-                res = analyzer.analyze(data, be)
-                analysis_results[name] = res.data_dict
-
-        return SDEResult(trajectory=None, meta=meta, analysis=analysis_results)
 
     def _run_simulate(
         self,

@@ -797,14 +797,9 @@ class PsdAnalyzer(Analyzer):
 _PSD_PRODUCT_FIELDS = (
     "axis",
     "psd",
-    "psd_std",
-    "psd_sem",
     "modes",
     "sample_dt",
     "nyquist",
-    "uncertainty.n_independent",
-    "uncertainty.ddof",
-    "uncertainty.available",
 )
 
 
@@ -872,15 +867,41 @@ def _build_psd_products(
     leaves = stack_payload_leaves(label, cleaned_payload, scan_size=scan_size)
     if leaves is None:
         return None
+    has_independent_count = "uncertainty.n_independent" in leaves.arrays
+    has_psd_std = "psd_std" in leaves.arrays
+    has_psd_sem = "psd_sem" in leaves.arrays
     sampling_bases = (
         [
             SamplingBasisSchema(
                 name="trajectory", count_variable="uncertainty.n_independent"
             )
         ]
-        if "uncertainty.n_independent" in leaves.arrays
-        else [SamplingBasisSchema(name="trajectory")]
+        if has_independent_count and (has_psd_std or has_psd_sem)
+        else []
     )
+    uncertainties = []
+    if has_independent_count and has_psd_std:
+        uncertainties.append(
+            UncertaintySchema(
+                target="psd",
+                kind="sample_std",
+                sampling_basis="trajectory",
+                covariance="real",
+                scope="sampling",
+                data_variable="psd_std",
+            )
+        )
+    if has_independent_count and has_psd_sem:
+        uncertainties.append(
+            UncertaintySchema(
+                target="psd",
+                kind="sem",
+                sampling_basis="trajectory",
+                covariance="real",
+                scope="sampling",
+                data_variable="psd_sem",
+            )
+        )
     leading = ("scan",) if scan_size is not None else ()
     coordinates = [
         CoordinateSchema(
@@ -917,24 +938,7 @@ def _build_psd_products(
         },
         quantities={"psd": SpectralQuantity.POWER_SPECTRAL_DENSITY.value},
         constraints={"psd": VariableConstraints(nonnegative=True)},
-        uncertainties=[
-            UncertaintySchema(
-                target="psd",
-                kind="sample_std",
-                sampling_basis="trajectory",
-                covariance="real",
-                scope="sampling",
-                data_variable="psd_std",
-            ),
-            UncertaintySchema(
-                target="psd",
-                kind="sem",
-                sampling_basis="trajectory",
-                covariance="real",
-                scope="sampling",
-                data_variable="psd_sem",
-            ),
-        ],
+        uncertainties=uncertainties,
         sampling_bases=sampling_bases,
         coordinates=coordinates,
         attributes={

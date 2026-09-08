@@ -134,6 +134,26 @@ class AnalyserDeclarationContract(Protocol):
         """Typed input products this analyser consumes."""
         ...
 
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        """Typed products emitted by this analyser."""
+        ...
+
+    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
+        """Planner-visible execution capabilities."""
+        ...
+
+    def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
+        """Estimate temporary workspace for one invocation."""
+        ...
+
+    def work_estimate(self, request: AnalyserWorkspaceRequest) -> WorkEstimate:
+        """Estimate natural work units for structured progress."""
+        ...
+
+    def reducer(self) -> ReducerProtocol | None:
+        """Return the optional batch/stream reducer."""
+        ...
+
 
 @runtime_checkable
 class AnalyserExecutionContract(Protocol):
@@ -148,33 +168,6 @@ class AnalyserExecutionContract(Protocol):
         metadata: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Dataset]:
         """Consume named typed products and return declared typed products."""
-        ...
-
-    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
-        """Return the declared output products of this analyser.
-
-        ``label`` is the job-local analyser mapping key (the name under which
-        the analyser's payload appears in ``result.analysis``); product names
-        are label-derived, so it is a required keyword argument. Analysers
-        with multiple outputs (e.g. a graph-ready product plus a legacy
-        bridge) declare every product they can emit for the current config.
-        """
-        ...
-
-    def execution_capabilities(self) -> AnalyserExecutionCapabilities:
-        """Planner-visible execution capabilities."""
-        ...
-
-    def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
-        """Estimate peak workspace for one invocation."""
-        ...
-
-    def work_estimate(self, request: AnalyserWorkspaceRequest) -> WorkEstimate:
-        """Estimate natural work units for structured progress."""
-        ...
-
-    def reducer(self) -> ReducerProtocol | None:
-        """Return the reducer for batched/streaming execution, if supported."""
         ...
 
 

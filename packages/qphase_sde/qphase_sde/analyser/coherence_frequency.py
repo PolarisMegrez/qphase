@@ -10,8 +10,12 @@ import numpy as np
 from pydantic import ConfigDict, Field
 from qphase.backend.base import BackendBase
 from qphase.core.aggregation import DirectoryInputResult
-from qphase.core.protocols import PluginConfigBase, ResultProtocol
-from qphase.core.registry import discovery, registry
+from qphase.core.protocols import (
+    PluginConfigBase,
+    PluginManifest,
+    ResultProtocol,
+    SubpluginSlot,
+)
 from qphase.data import (
     DataKind,
     Dataset,
@@ -21,6 +25,7 @@ from qphase.data import (
     load_bundle,
 )
 
+from ..coherence_frequency.base import CoherenceFrequencyProtocol
 from ..contracts.analyser import AnalyserExecutionCapabilities, WorkEstimate
 from ..contracts.coherence import (
     COHERENCE_FREQUENCY_PRODUCT,
@@ -39,9 +44,18 @@ class CoherenceFrequencyAnalyzerConfig(PluginConfigBase):
 
     scan_param: str = Field(..., description="Name of the input scan axis")
     input_key: str = Field("spectrum", description="Typed input product label")
-    estimator: str = Field("band_limited", min_length=1)
+    estimator: dict[str, Any] = Field(
+        default_factory=lambda: {"band_limited": {}},
+        description="One selected coherence-frequency child configuration",
+    )
     channel: int = Field(0, ge=0)
-    child: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def estimator_name(self) -> str:
+        """Return the selected estimator child name."""
+        if len(self.estimator) != 1:
+            raise ValueError("coherence_frequency.estimator must select one child")
+        return str(next(iter(self.estimator)))
 
 
 def _products_from_input(data: Any) -> Mapping[str, Dataset]:
@@ -59,10 +73,17 @@ def _products_from_input(data: Any) -> Mapping[str, Dataset]:
     return products
 
 
-def _make_child(config: CoherenceFrequencyAnalyzerConfig) -> Any:
-    if not registry.list("coherence_frequency"):
-        discovery.discover_plugins()
-    return registry.create(f"coherence_frequency:{config.estimator}", **config.child)
+def _make_child(
+    config: CoherenceFrequencyAnalyzerConfig,
+    injected: CoherenceFrequencyProtocol | None,
+) -> CoherenceFrequencyProtocol:
+    del config
+    if injected is None:
+        raise RuntimeError(
+            "coherence_frequency requires a resolved estimator child; "
+            "construct it through the plugin graph or pass subplugins"
+        )
+    return injected
 
 
 def _point_product(product: Dataset, index: int) -> Dataset:
@@ -83,9 +104,11 @@ def _spectral_channel(array: np.ndarray, channel: int) -> np.ndarray:
 
 
 def _estimate_input(
-    product: Dataset, config: CoherenceFrequencyAnalyzerConfig
+    product: Dataset,
+    config: CoherenceFrequencyAnalyzerConfig,
+    estimator_name: str | None = None,
 ) -> Mapping[str, Any]:
-    child = config.estimator
+    child = estimator_name or config.estimator_name
     if child == "short_delay":
         correlations = np.asarray(
             product.handle("per_trajectory_correlation").materialize()
@@ -141,6 +164,10 @@ def _materialize_estimates(
             for item in schema_data["variables"]
             if item["name"] not in {"frequency_sem", "independent_count"}
         ]
+    else:
+        schema_data["sampling_bases"] = [
+            {"name": "trajectory", "count_variable": "independent_count"}
+        ]
     from qphase.data import ProductSchema
 
     schema = ProductSchema.model_validate(schema_data)
@@ -183,19 +210,47 @@ class CoherenceFrequencyAnalyzer(Analyzer):
         CoherenceFrequencyAnalyzerConfig
     )
     preserves_input_scan: ClassVar[bool] = True
+    manifest: ClassVar[PluginManifest] = PluginManifest(
+        subplugins={
+            "estimator": SubpluginSlot(
+                namespace="coherence_frequency",
+                default="band_limited",
+                protocol="qphase_sde.coherence_frequency.base:CoherenceFrequencyProtocol",
+                description="Coherence-frequency estimator child",
+            )
+        }
+    )
+
+    def __init__(
+        self,
+        config: CoherenceFrequencyAnalyzerConfig | None = None,
+        *,
+        subplugins: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(config, **kwargs)
+        self._estimator = None if subplugins is None else subplugins.get("estimator")
+
+    def _selected_estimator_name(self) -> str:
+        """Return the resolved child name, including graph-injected children."""
+        if self._estimator is not None:
+            return str(self._estimator.name)
+        config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
+        return config.estimator_name
 
     def input_requirements(self) -> list[ProductRequirement]:
         config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
+        estimator_name = self._selected_estimator_name()
         fields = (
             ["per_trajectory_correlation", "dt"]
-            if config.estimator == "short_delay"
+            if estimator_name == "short_delay"
             else ["axis", "psd"]
         )
         return [
             ProductRequirement(
                 name=config.input_key,
                 kind=DataKind.STATISTICS
-                if config.estimator == "short_delay"
+                if estimator_name == "short_delay"
                 else DataKind.SPECTRAL,
                 required_fields=fields,
             )
@@ -221,11 +276,11 @@ class CoherenceFrequencyAnalyzer(Analyzer):
         return products
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
-        config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
+        estimator_name = self._selected_estimator_name()
         fields = [
             variable.name
             for variable in COHERENCE_FREQUENCY_PRODUCT.variables
-            if config.estimator == "short_delay"
+            if estimator_name == "short_delay"
             or variable.name not in {"frequency_sem", "independent_count"}
         ]
         return (
@@ -263,9 +318,12 @@ class CoherenceFrequencyAnalyzer(Analyzer):
             if size is None:
                 raise ValueError("coherence-frequency input scan axis has no size")
             scan_count = int(size)
-        child = _make_child(config)
+        child = _make_child(config, self._estimator)
+        estimator_name = self._selected_estimator_name()
         estimates = [
-            child.estimate(_estimate_input(_point_product(product, index), config))
+            child.estimate(
+                _estimate_input(_point_product(product, index), config, estimator_name)
+            )
             for index in range(scan_count)
         ]
         return AnalysisResult(

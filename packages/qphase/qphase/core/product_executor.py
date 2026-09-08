@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from typing import Any
 
 from ..data.datasets import Dataset
 from ..data.graph import ProductGraph, ProductNode, requirement_matches
@@ -36,10 +37,20 @@ class ProductGraphExecutor:
     def run(
         self,
         external_inputs: Mapping[str, Mapping[str, Dataset]],
+        *,
+        context: Any | None = None,
     ) -> dict[str, dict[str, Dataset]]:
-        """Run nodes in topological order and return node-local products."""
+        """Run nodes in order and return terminal or explicitly published products."""
         produced: dict[str, dict[str, Dataset]] = {}
+        published = self.graph.terminal_outputs()
+        for node in self.graph.nodes:
+            published[node.node_id].update(node.publish_outputs)
+        remaining = {(edge.producer, edge.product): 0 for edge in self.graph.edges}
+        for edge in self.graph.edges:
+            remaining[(edge.producer, edge.product)] += 1
         for node in self.graph.topological_order():
+            self._check_cancelled(context)
+            self._report(context, node, "started")
             inputs = self._resolve_inputs(node, produced, external_inputs)
             outputs = self.runners[node.node_id](node, inputs)
             if not isinstance(outputs, Mapping):
@@ -83,7 +94,42 @@ class ProductGraphExecutor:
                         f"declared fields {sorted(missing_fields)!r}"
                     )
             produced[node.node_id] = dict(outputs)
-        return produced
+            for edge in self.graph.edges:
+                if edge.consumer != node.node_id:
+                    continue
+                key = (edge.producer, edge.product)
+                remaining[key] -= 1
+                if remaining[key] == 0 and edge.product not in published[edge.producer]:
+                    produced[edge.producer].pop(edge.product, None)
+                    if not produced[edge.producer]:
+                        produced.pop(edge.producer)
+            self._report(context, node, "completed")
+        return {
+            node_id: {
+                name: products[name] for name in published[node_id] if name in products
+            }
+            for node_id, products in produced.items()
+            if published[node_id]
+        }
+
+    @staticmethod
+    def _check_cancelled(context: Any | None) -> None:
+        if context is None:
+            return
+        cancellation = getattr(context, "cancellation", None)
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
+
+    @staticmethod
+    def _report(context: Any | None, node: ProductNode, state: str) -> None:
+        if context is None:
+            return
+        progress = getattr(context, "progress", None)
+        if progress is not None:
+            progress.status(
+                f"product node {node.node_id} {state}",
+                stage=node.node_id,
+            )
 
     def _resolve_inputs(
         self,
