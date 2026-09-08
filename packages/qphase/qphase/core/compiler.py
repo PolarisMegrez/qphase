@@ -79,6 +79,7 @@ class CompiledJob:
     save: bool | str | None
     depends_on: tuple[str, ...]
     parameter_grid: ParameterGrid | None
+    product_graph: Any | None = None
     # Snapshot of the resolved conditional task profile; ``None`` for
     # legacy-manifest engines that declare no task profiles.
     task_profile: ResolvedTaskProfile | None = None
@@ -113,6 +114,11 @@ class CompiledJob:
                 if self.task_profile is not None
                 else None
             ),
+            "product_graph": (
+                self.product_graph.model_dump(mode="json")
+                if self.product_graph is not None
+                else None
+            ),
         }
 
     @classmethod
@@ -120,6 +126,7 @@ class CompiledJob:
         """Restore a resolved job request without registry access."""
         # Imported lazily: restoration is plain model validation and must not
         # touch the plugin registry or dotted-path imports.
+        from ..data import ProductGraph
         from .task_profile import ResolvedTaskProfile
 
         job = JobConfig.model_validate(payload["job"])
@@ -144,6 +151,11 @@ class CompiledJob:
             save=payload.get("save"),
             depends_on=tuple(payload["depends_on"]),
             parameter_grid=parameter_grid,
+            product_graph=(
+                ProductGraph.model_validate(payload["product_graph"])
+                if payload.get("product_graph") is not None
+                else None
+            ),
             task_profile=(
                 ResolvedTaskProfile.model_validate(raw_profile)
                 if raw_profile is not None
@@ -438,6 +450,7 @@ class WorkflowCompiler:
         engine_config = self._engine_config(merged, engine_name)
         self._validate_plugin_sections(selected)
         parameter_grid = job.scan.compile() if job.scan is not None else None
+        product_graph = self._compile_product_graph(manifest, selected, job)
         return CompiledJob(
             job=job,
             engine_name=engine_name,
@@ -454,8 +467,34 @@ class WorkflowCompiler:
             save=job.save,
             depends_on=tuple(job.depends_on),
             parameter_grid=parameter_grid,
+            product_graph=product_graph,
             task_profile=resolved_profile,
         )
+
+    def _compile_product_graph(
+        self,
+        manifest: Any,
+        selected: Mapping[str, Any],
+        job: JobConfig,
+    ) -> Any | None:
+        builder_path = getattr(manifest, "product_graph_builder", None)
+        if not builder_path:
+            return None
+        try:
+            builder = _load_dotted_path(str(builder_path))
+            return builder(
+                plugin_config=dict(selected),
+                registry=self.registry,
+                publish_outputs=dict(job.publish_outputs),
+            )
+        except QPhaseConfigError:
+            raise
+        except Exception as exc:
+            raise QPhasePluginError(
+                f"failed to compile product graph for job {job.name!r}: {exc}",
+                code=ErrorCode.PLUGIN_DISCOVERY,
+                context={"job": job.name, "builder": str(builder_path)},
+            ) from exc
 
     def _resolve_task_profile(
         self,

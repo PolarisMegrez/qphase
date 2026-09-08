@@ -14,7 +14,7 @@ Public API
 
 import logging
 import time as _time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -359,6 +359,7 @@ class Engine(EngineBase):
         defaults={"integrator": "euler_maruyama"},
         task_profiles="qphase_sde.contracts.tasks:SDE_TASK_PROFILES",
         profile_selector="qphase_sde.contracts.tasks:select_sde_task_profile",
+        product_graph_builder="qphase_sde.graph:compile_product_graph",
     )
 
     def __init__(
@@ -381,6 +382,7 @@ class Engine(EngineBase):
         """
         self.config = config
         self.plugins = plugins or {}
+        self._product_graph = kwargs.get("product_graph")
 
         # Legacy support for direct injection via kwargs
         backend = kwargs.get("backend")
@@ -483,6 +485,17 @@ class Engine(EngineBase):
             if plan.stream_analysis and (
                 plan.tile_count > 1 or plan.trajectory_batch_count > 1
             ):
+                if (
+                    context is not None
+                    and getattr(context, "product_graph", None) is not None
+                ):
+                    return self._run_scan_tiled_typed(
+                        data,
+                        adapter=adapter,
+                        plan=plan,
+                        reporter=reporter,
+                        context=context,
+                    )
                 combined: SDEResult = self._run_scan_tiled(
                     data,
                     adapter=adapter,
@@ -493,7 +506,13 @@ class Engine(EngineBase):
             else:
                 with adapter:
                     combined = self._run_simulate(
-                        data, reporter=reporter, context=context
+                        data,
+                        reporter=reporter,
+                        context=context,
+                        skip_analysis=(
+                            context is not None
+                            and getattr(context, "product_graph", None) is not None
+                        ),
                     )
             if not isinstance(combined, SDEResult):
                 raise TypeError("SDE simulation did not return an SDEResult")
@@ -510,6 +529,19 @@ class Engine(EngineBase):
                 adapter.base_params,
                 adapter.base_n_traj,
             )
+            if (
+                context is not None
+                and getattr(context, "product_graph", None) is not None
+            ):
+                source = bundle_from_result(
+                    scan_result,
+                    provenance=self._job_provenance(grid=grid),
+                    analysers={},
+                )
+                typed = self._run_typed_analyze(source, context=context)
+                if typed is None:
+                    raise RuntimeError("typed simulation analysis produced no result")
+                return self._merge_simulation_trajectory(source, typed)
             return bundle_from_result(
                 scan_result,
                 provenance=self._job_provenance(grid=grid),
@@ -527,12 +559,27 @@ class Engine(EngineBase):
             )
         else:
             result = self._run_simulate(
-                data, reporter=reporter, context=context, observers=observers
+                data,
+                reporter=reporter,
+                context=context,
+                observers=observers,
+                skip_analysis=(
+                    context is not None
+                    and getattr(context, "product_graph", None) is not None
+                ),
             )
         if isinstance(result, SDEResult):
             result.meta.setdefault("execution_plan", plan.to_dict())
         if not isinstance(result, SDEResult):
             raise TypeError("SDE simulation did not return an SDEResult")
+        if context is not None and getattr(context, "product_graph", None) is not None:
+            source = bundle_from_result(
+                result, provenance=self._job_provenance(), analysers={}
+            )
+            typed = self._run_typed_analyze(source, context=context)
+            if typed is None:
+                raise RuntimeError("typed simulation analysis produced no result")
+            return self._merge_simulation_trajectory(source, typed)
         return bundle_from_result(
             result,
             provenance=self._job_provenance(),
@@ -555,66 +602,34 @@ class Engine(EngineBase):
         ):
             return None
         from qphase.core import ProductGraphExecutor
-        from qphase.data import GraphEdge, ProductGraph, ProductNode
 
         from .products import add_scan_parameter_coordinates
 
         source_products = getattr(source, "products", None)
         if not isinstance(source_products, dict):
             source_products = dict(source.data)
-        nodes = []
-        node_requirements: dict[str, list[Any]] = {}
-        output_owners: dict[str, list[tuple[str, str]]] = {}
-        for name, analyser in analysers.items():
+        graph = (
+            getattr(context, "product_graph", None)
+            if context is not None
+            else self._product_graph
+        )
+        if graph is None:
+            raise RuntimeError(
+                "typed analyser execution requires the compiler-resolved "
+                "ProductGraph in ExecutionContext"
+            )
+        node_names = {
+            node.node_id: node.node_id.removeprefix("analyser.") for node in graph.nodes
+        }
+        for name in node_names.values():
+            analyser = analysers.get(name)
+            if analyser is None:
+                raise RuntimeError(
+                    f"compiled ProductGraph references unknown analyser {name!r}"
+                )
             output_dir = getattr(self.config, "output_dir", None)
             if output_dir is not None:
                 analyser.output_dir = output_dir
-            requirements = list(analyser.input_requirements())
-            outputs = list(analyser.output_specs(label=str(name)))
-            node_id = f"analyser.{name}"
-            node_requirements[node_id] = requirements
-            for output in outputs:
-                output_owners.setdefault(output.name, []).append((node_id, output.name))
-            nodes.append(
-                ProductNode(
-                    node_id=node_id,
-                    producer=f"analyser:{name}",
-                    requirements=requirements,
-                    outputs=outputs,
-                )
-            )
-        edges: list[GraphEdge] = []
-        bindings = []
-        for node_id, requirements in node_requirements.items():
-            for requirement in requirements:
-                owners = output_owners.get(requirement.name, [])
-                if len(owners) > 1:
-                    raise ValueError(
-                        f"analyser input {requirement.name!r} of node "
-                        f"{node_id!r} has multiple internal producers"
-                    )
-                if owners:
-                    producer, product = owners[0]
-                    edges.append(
-                        GraphEdge(
-                            producer=producer,
-                            product=product,
-                            consumer=node_id,
-                            requirement=requirement.name,
-                        )
-                    )
-                elif requirement.name in source_products:
-                    bindings.append(
-                        {
-                            "consumer": node_id,
-                            "requirement": requirement.name,
-                            "source": "input",
-                            "product": requirement.name,
-                        }
-                    )
-                elif requirement.optional:
-                    continue
-        graph = ProductGraph(nodes=nodes, edges=edges, external_inputs=bindings)
         backend = (
             self._required_backend() if self._default_backend is not None else None
         )
@@ -626,10 +641,31 @@ class Engine(EngineBase):
         execution_metadata = (
             dict(source_metadata) if isinstance(source_metadata, dict) else {}
         )
-        execution_metadata["scan_axes"] = dict(source.axes)
+        source_provenance = getattr(source, "provenance", None)
+        if isinstance(source_provenance, Mapping):
+            provenance_meta = source_provenance.get("meta")
+            if isinstance(provenance_meta, Mapping):
+                execution_metadata.update(provenance_meta)
+        raw_scan_axes = dict(source.axes)
+        combine = execution_metadata.get("scan_combine")
+        if combine == "zipped":
+            scan_axes = {
+                name: np.asarray(values).reshape(-1)
+                for name, values in raw_scan_axes.items()
+            }
+        elif raw_scan_axes:
+            meshes = np.meshgrid(*raw_scan_axes.values(), indexing="ij")
+            scan_axes = {
+                name: values.reshape(-1)
+                for name, values in zip(raw_scan_axes, meshes, strict=True)
+            }
+        else:
+            scan_axes = {}
+        execution_metadata["scan_axes"] = scan_axes
+        execution_metadata["scan_shape"] = list(source.shape)
 
         def make_runner(node_id: str, analyser: Any, name: str) -> Any:
-            incoming = [edge for edge in edges if edge.consumer == node_id]
+            incoming = [edge for edge in graph.edges if edge.consumer == node_id]
 
             def runner(node: Any, inputs: Any) -> Any:
                 del node
@@ -646,8 +682,8 @@ class Engine(EngineBase):
             return runner
 
         runners = {
-            f"analyser.{name}": make_runner(f"analyser.{name}", analyser, name)
-            for name, analyser in analysers.items()
+            node_id: make_runner(node_id, analysers[name], name)
+            for node_id, name in node_names.items()
         }
         node_products = ProductGraphExecutor(graph, runners).run(
             {"input": source_products}, context=context
@@ -658,18 +694,171 @@ class Engine(EngineBase):
             for product_name, product in node_products_for_node.items()
         }
         scan_coordinates = {
-            name: np.asarray(values).reshape(-1) for name, values in source.axes.items()
+            name: np.asarray(values).reshape(-1) for name, values in scan_axes.items()
         }
         products = {
             name: add_scan_parameter_coordinates(product, scan_coordinates)
             for name, product in products.items()
         }
+        result_meta = dict(execution_metadata)
+        result_meta.pop("scan_axes", None)
+        result_meta.pop("scan_shape", None)
+        result_meta.update({"mode": "analyze", "execution": "product_graph"})
         return SDEDataBundle(
             products,
             self._job_provenance(),
             scan_axes=dict(source.axes),
             scan_shape=source.shape,
-            meta={"mode": "analyze", "execution": "product_graph"},
+            meta=result_meta,
+        )
+
+    def _run_scan_tiled_typed(
+        self,
+        data: Any | None,
+        *,
+        adapter: Any,
+        plan: SDEExecutionPlan,
+        reporter: Any | None,
+        context: Any,
+    ) -> SDEDataBundle:
+        """Run a resource-bounded scan through the frozen typed graph."""
+        if plan.trajectory_batch_count > 1:
+            raise RuntimeError(
+                "typed scan tiling does not support trajectory batching; "
+                "use a larger execution budget or disable typed analysis"
+            )
+        assert context.parameter_grid is not None
+        grid = context.parameter_grid
+        from .result import _trajectory_product
+
+        flat_coordinates = grid.parameter_arrays(flatten=True)
+        tile_products: list[dict[str, Any]] = []
+        tile_trajectories: list[Any] = []
+        total_work = plan.scan_size * plan.n_traj_per_point * plan.steps
+        for tile_index, start in enumerate(
+            range(0, plan.scan_size, plan.scan_tile_size)
+        ):
+            stop = min(start + plan.scan_tile_size, plan.scan_size)
+            point_count = stop - start
+            if reporter is not None:
+                reporter.status(
+                    f"SDE typed scan tile {tile_index + 1}/{plan.tile_count} "
+                    f"(points {start + 1}-{stop})",
+                    stage="sampling",
+                )
+            with adapter.tile(start, stop):
+                tile_result = self._run_simulate(
+                    data,
+                    reporter=reporter,
+                    context=context,
+                    rng_group_seeds=adapter.point_seeds(start, stop),
+                    rng_group_size=adapter.base_n_traj,
+                    progress_offset=start * plan.n_traj_per_point * plan.steps,
+                    progress_scale=point_count * plan.n_traj_per_point,
+                    progress_total=total_work,
+                    progress_label=f"tile {tile_index + 1}/{plan.tile_count}",
+                    skip_analysis=True,
+                )
+            if tile_result.trajectory is None:
+                raise RuntimeError("typed scan tile did not retain trajectories")
+            tile_scan_axes = {
+                name: np.asarray(values)[start:stop]
+                for name, values in flat_coordinates.items()
+            }
+            tile_source = SDEDataBundle(
+                {
+                    "trajectories": _trajectory_product(
+                        tile_result.trajectory,
+                        scan_size=point_count,
+                        n_traj_per_point=plan.n_traj_per_point,
+                    )
+                },
+                self._job_provenance(grid=grid),
+                scan_axes=tile_scan_axes,
+                scan_shape=(point_count,),
+                meta={"scan_combine": "zipped"},
+            )
+            analysed_tile = self._run_typed_analyze(tile_source, context=context)
+            if not isinstance(analysed_tile, SDEDataBundle):
+                raise RuntimeError("typed scan tile produced no SDE data bundle")
+            tile_products.append(analysed_tile.products)
+            if self.config is not None and self.config.keep_traj:
+                tile_trajectories.append(tile_source.products["trajectories"])
+            self._release_backend_pool()
+
+        products = self._concat_scan_products(tile_products)
+        if tile_trajectories:
+            products["trajectories"] = self._concat_scan_datasets(tile_trajectories)
+        return SDEDataBundle(
+            products,
+            self._job_provenance(grid=grid),
+            scan_axes=dict(grid.axes),
+            scan_shape=grid.shape,
+            meta={"mode": "simulate_analyze", "execution": "product_graph"},
+        )
+
+    @staticmethod
+    def _concat_scan_products(
+        groups: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        names = set().union(*(group.keys() for group in groups))
+        return {
+            name: Engine._concat_scan_datasets(
+                [group[name] for group in groups if name in group]
+            )
+            for name in names
+        }
+
+    @staticmethod
+    def _concat_scan_datasets(datasets: list[Any]) -> Any:
+        if not datasets:
+            raise ValueError("cannot concatenate an empty Dataset sequence")
+        first = datasets[0]
+        scan_axis = {axis.name for axis in first.axes}
+        if "scan" not in scan_axis:
+            if len(datasets) > 1:
+                raise RuntimeError(
+                    "typed scan tiles produced a non-scan product that cannot "
+                    "be combined without a resource-package reducer"
+                )
+            return first
+        schema_data = first.schema.model_dump(mode="python")
+        for axis in schema_data["axes"]:
+            if axis["name"] == "scan":
+                axis["size"] = sum(
+                    int(dataset.axis("scan").size) for dataset in datasets
+                )
+        schema = type(first.schema).model_validate(schema_data)
+        arrays: dict[str, np.ndarray] = {}
+        for variable in first.variables:
+            values = [
+                np.asarray(dataset.handle(variable.name).materialize())
+                for dataset in datasets
+            ]
+            if "scan" in variable.dims:
+                arrays[variable.name] = np.concatenate(
+                    values, axis=variable.dims.index("scan")
+                )
+            else:
+                arrays[variable.name] = values[0]
+        return type(first).from_arrays(schema, arrays, owner="engine.sde")
+
+    def _merge_simulation_trajectory(
+        self, source: SDEDataBundle, analysed: ResultProtocol
+    ) -> SDEDataBundle:
+        """Add an explicitly retained trajectory to typed analyser products."""
+        products = dict(getattr(analysed, "products", {}))
+        if self.config is not None and self.config.keep_traj:
+            products["trajectories"] = source.products["trajectories"]
+        result_meta = dict(source.metadata)
+        result_meta.pop("provenance", None)
+        result_meta.update({"execution": "product_graph", "mode": "simulate_analyze"})
+        return SDEDataBundle(
+            products,
+            source.provenance,
+            scan_axes=source.axes,
+            scan_shape=source.shape,
+            meta=result_meta,
         )
 
     def _job_provenance(self, *, grid: Any | None = None) -> SDEProvenance:
@@ -1083,6 +1272,7 @@ class Engine(EngineBase):
         progress_scale: int | None = None,
         progress_total: int | None = None,
         progress_label: str | None = None,
+        skip_analysis: bool = False,
     ) -> SDEResult:
         """Execute SDE simulation and optional per-job analysis."""
         assert self.config is not None
@@ -1218,7 +1408,7 @@ class Engine(EngineBase):
         meta: dict[str, Any] = {}
 
         analysers = self.plugins.get("analyser")
-        if analysers:
+        if analysers and not skip_analysis:
             # Normalize to dict of name -> instance
             if not isinstance(analysers, dict):
                 # Single instance

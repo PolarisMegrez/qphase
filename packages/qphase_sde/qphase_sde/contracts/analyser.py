@@ -156,7 +156,7 @@ class AnalyserDeclarationContract(Protocol):
 
 
 @runtime_checkable
-class AnalyserExecutionContract(Protocol):
+class AnalyserExecutionContract(AnalyserDeclarationContract, Protocol):
     """Typed execution surface used by the core ProductGraph executor."""
 
     def execute(

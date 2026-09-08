@@ -138,6 +138,11 @@ class JobConfig(BaseModel):
         description="List of job names this job depends on",
     )
 
+    publish_outputs: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Optional analyser outputs to persist explicitly",
+    )
+
     model_config = ConfigDict(
         extra="allow",
         str_strip_whitespace=True,

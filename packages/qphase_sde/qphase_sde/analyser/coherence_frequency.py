@@ -32,6 +32,12 @@ from ..contracts.coherence import (
     CoherenceFrequencyEstimate,
 )
 from .base import Analyzer
+from .frequency_orientation import (
+    DEFAULT_FREQUENCY_ORIENTATION,
+    FrequencyOrientation,
+    orientation_metadata,
+    resolve_frequency_orientation,
+)
 from .result import AnalysisResult
 
 __all__ = ["CoherenceFrequencyAnalyzer", "CoherenceFrequencyAnalyzerConfig"]
@@ -138,7 +144,13 @@ def _estimate_input(
 
 
 def _materialize_estimates(
-    estimates: list[CoherenceFrequencyEstimate], *, scan_size: int, label: str
+    estimates: list[CoherenceFrequencyEstimate],
+    *,
+    scan_size: int,
+    label: str,
+    orientation: FrequencyOrientation = DEFAULT_FREQUENCY_ORIENTATION,
+    channel_name: str = "channel_0",
+    channel_index: int = 0,
 ) -> Dataset:
     schema_data = COHERENCE_FREQUENCY_PRODUCT.model_dump(mode="python")
     schema_data["axes"] = [
@@ -149,6 +161,9 @@ def _materialize_estimates(
         **schema_data["attributes"],
         "graph_ready": True,
         "estimator": estimates[0].estimator if estimates else "",
+        **orientation_metadata(orientation),
+        "channel_names": [channel_name],
+        "channel_indices": [int(channel_index)],
     }
     has_sampling = all(
         item.independent_count is not None and item.frequency_sem is not None
@@ -264,12 +279,19 @@ class CoherenceFrequencyAnalyzer(Analyzer):
         label: str,
         metadata: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Dataset]:
-        del metadata
         """Execute directly on typed input products."""
         result = cast(AnalysisResult, self.analyze(inputs, backend))
         scan_size = result.data_dict["estimates"].__len__()
+        config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
+        source = inputs[config.input_key]
+        orientation = resolve_frequency_orientation(source.attributes)
         products = self.build_products(
-            result.data_dict, scan_size=scan_size, label=label
+            result.data_dict,
+            scan_size=scan_size,
+            label=label,
+            orientation=orientation,
+            channel_name=f"channel_{config.channel}",
+            channel_index=config.channel,
         )
         if products is None:
             raise ValueError("coherence_frequency produced no typed product")
@@ -337,6 +359,9 @@ class CoherenceFrequencyAnalyzer(Analyzer):
         *,
         scan_size: int | None,
         label: str,
+        orientation: FrequencyOrientation = DEFAULT_FREQUENCY_ORIENTATION,
+        channel_name: str = "channel_0",
+        channel_index: int = 0,
     ) -> dict[str, Dataset] | None:
         if not isinstance(payload, Mapping) or not isinstance(
             payload.get("estimates"), list
@@ -348,4 +373,13 @@ class CoherenceFrequencyAnalyzer(Analyzer):
         size = len(estimates) if scan_size is None else scan_size
         if size != len(estimates):
             raise ValueError("coherence_frequency estimates do not match scan size")
-        return {label: _materialize_estimates(estimates, scan_size=size, label=label)}
+        return {
+            label: _materialize_estimates(
+                estimates,
+                scan_size=size,
+                label=label,
+                orientation=orientation,
+                channel_name=channel_name,
+                channel_index=channel_index,
+            )
+        }

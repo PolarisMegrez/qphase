@@ -332,13 +332,17 @@ def test_standalone_peak_analyser_uses_baseline_spectrum():
     analyzer = PeaksAnalyzer(
         PeaksAnalyzerConfig(
             scan_param="unused",
-            finder=ScipyPeakFinderConfig(
-                distance=5,
-                smooth_window=5,
-                noise_threshold=None,
-                prominence=None,
-            ),
-        )
+        ),
+        subplugins={
+            "finder": ScipyPeakFinder(
+                ScipyPeakFinderConfig(
+                    distance=5,
+                    smooth_window=5,
+                    noise_threshold=None,
+                    prominence=None,
+                )
+            )
+        },
     )
 
     payload = analyzer.analyze(

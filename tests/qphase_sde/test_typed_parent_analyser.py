@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase.core.registry import discovery, registry
 from qphase_sde.analyser.coherence_frequency import (
     CoherenceFrequencyAnalyzer,
     CoherenceFrequencyAnalyzerConfig,
@@ -18,8 +19,15 @@ from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.coherence_frequency import BandLimitedCoherenceFrequency
 from qphase_sde.contracts.coherence import CoherenceFrequencyEstimate
 from qphase_sde.engine import Engine, EngineConfig
+from qphase_sde.graph import compile_product_graph
+from qphase_sde.peak_finder import ScipyPeakFinder
 from qphase_sde.peak_tracker import RidgePeakTracker
 from qphase_sde.result import SDEDataBundle, SDEProvenance
+
+
+def _compiled_graph(config):
+    discovery.discover_plugins()
+    return compile_product_graph(plugin_config={"analyser": config}, registry=registry)
 
 
 def _spectrum_bundle() -> SDEDataBundle:
@@ -76,12 +84,24 @@ def test_coherence_frequency_parent_publishes_typed_product(tmp_path):
     assert products is not None
     product = products["frequency"]
     assert product.attributes["graph_ready"] is True
+    assert product.attributes["orientation"] == "phase_decreasing"
+    assert product.attributes["channel_names"] == ["channel_0"]
+    assert product.attributes["channel_indices"] == [0]
     assert product.axis("scan").size == 2
     assert product.handle("frequency").materialize().shape == (2, 1)
 
     runtime = Engine(
         config=EngineConfig(mode="analyze"),
         plugins={"analyser": {"coherence_frequency": analyzer}},
+        product_graph=_compiled_graph(
+            {
+                "coherence_frequency": {
+                    "scan_param": "epsilon",
+                    "input_key": "psd",
+                    "estimator": {"band_limited": {}},
+                }
+            }
+        ),
     ).run(source)
     assert runtime.shape == (2,)
     assert runtime.products["coherence_frequency"].axis("scan").size == 2
@@ -92,8 +112,11 @@ def test_coherence_frequency_parent_publishes_typed_product(tmp_path):
 
 def test_peak_paths_parent_consumes_peak_product():
     source = _spectrum_bundle()
+    from qphase_sde.peak_finder import ScipyPeakFinder
+
     peak_analyzer = PeaksAnalyzer(
-        PeaksAnalyzerConfig(scan_param="epsilon", finder="scipy")
+        PeaksAnalyzerConfig(scan_param="epsilon"),
+        subplugins={"finder": ScipyPeakFinder()},
     )
     peak_payload = peak_analyzer.analyze(source, NumpyBackend()).data_dict
     peak_products = peak_analyzer.build_products(
@@ -106,7 +129,10 @@ def test_peak_paths_parent_consumes_peak_product():
         scan_axes=source.axes,
         scan_shape=source.shape,
     )
-    analyzer = PeakPathsAnalyzer(PeakPathsAnalyzerConfig(scan_param="epsilon"))
+    analyzer = PeakPathsAnalyzer(
+        PeakPathsAnalyzerConfig(scan_param="epsilon"),
+        subplugins={"tracker": RidgePeakTracker()},
+    )
 
     payload = analyzer.analyze(candidate_source, NumpyBackend()).data_dict
     products = analyzer.build_products(payload, scan_size=None, label="paths")
@@ -118,6 +144,9 @@ def test_peak_paths_parent_consumes_peak_product():
     runtime = Engine(
         config=EngineConfig(mode="analyze"),
         plugins={"analyser": {"peak_paths": analyzer}},
+        product_graph=_compiled_graph(
+            {"peak_paths": {"scan_param": "epsilon", "tracker": {"ridge": {}}}}
+        ),
     ).run(candidate_source)
     assert runtime.shape == (2,)
     assert runtime.products["peak_paths"].axis("path").size == 1
@@ -125,7 +154,10 @@ def test_peak_paths_parent_consumes_peak_product():
 
 def test_analyze_graph_connects_peak_candidates_to_paths():
     source = _spectrum_bundle()
-    peaks = PeaksAnalyzer(PeaksAnalyzerConfig(scan_param="epsilon", finder="scipy"))
+    peaks = PeaksAnalyzer(
+        PeaksAnalyzerConfig(scan_param="epsilon"),
+        subplugins={"finder": ScipyPeakFinder()},
+    )
     paths = PeakPathsAnalyzer(
         PeakPathsAnalyzerConfig(scan_param="epsilon"),
         subplugins={"tracker": RidgePeakTracker()},
@@ -134,6 +166,15 @@ def test_analyze_graph_connects_peak_candidates_to_paths():
     runtime = Engine(
         config=EngineConfig(mode="analyze"),
         plugins={"analyser": {"peaks": peaks, "peak_paths": paths}},
+        product_graph=_compiled_graph(
+            {
+                "peaks": {"scan_param": "epsilon", "finder": {"scipy": {}}},
+                "peak_paths": {
+                    "scan_param": "epsilon",
+                    "tracker": {"ridge": {}},
+                },
+            }
+        ),
     ).run(source)
 
     assert set(runtime.products) == {"peak_paths"}

@@ -14,15 +14,10 @@ from qphase.core.protocols import (
     ResultProtocol,
     SubpluginSlot,
 )
-from qphase.core.registry import discovery, registry
 from qphase.data import DataKind, Dataset, ProductDeclaration, ProductRequirement
 
 from ..contracts.analyser import AnalyserExecutionCapabilities, WorkEstimate
-from ..peak_finder import (
-    RationalPeakFinderConfig,
-    ScipyPeakFinderConfig,
-    materialize_candidate_product,
-)
+from ..peak_finder import materialize_candidate_product
 from .base import Analyzer
 from .result import AnalysisResult
 from .result_input import load_sde_results
@@ -40,8 +35,9 @@ class PeaksAnalyzerConfig(PluginConfigBase):
     modes: list[int] | None = Field(
         None, description="Physical modes to analyse; otherwise use PSD metadata"
     )
-    finder: bool | str | ScipyPeakFinderConfig | RationalPeakFinderConfig = Field(
-        "scipy", description="Typed peak-finder child configuration"
+    finder: dict[str, Any] = Field(
+        default_factory=lambda: {"scipy": {}},
+        description="One selected typed peak-finder child configuration",
     )
 
 
@@ -74,23 +70,12 @@ class PeaksAnalyzer(Analyzer):
         self._finder = None if subplugins is None else subplugins.get("finder")
 
     def _resolve_finder(self) -> Any:
-        if self._finder is not None:
-            return self._finder
-        config = cast(PeaksAnalyzerConfig, self.config)
-        selected = config.finder
-        if selected is True:
-            selected = "scipy"
-        if selected is False or selected is None:
-            return None
-        if not registry.list("peak_finder"):
-            discovery.discover_plugins()
-        if isinstance(selected, str):
-            name = "scipy" if selected.lower() == "standard" else selected
-            return registry.create(f"peak_finder:{name}")
-        if isinstance(selected, (ScipyPeakFinderConfig, RationalPeakFinderConfig)):
-            name = str(selected.method)
-            return registry.create(f"peak_finder:{name}", config=selected)
-        raise TypeError("peak finder configuration must be a registered child")
+        if self._finder is None:
+            raise RuntimeError(
+                "peaks requires a resolved peak_finder child; construct it "
+                "through the plugin graph or pass subplugins"
+            )
+        return self._finder
 
     def input_requirements(self) -> list[ProductRequirement]:
         config = cast(PeaksAnalyzerConfig, self.config)

@@ -140,7 +140,7 @@ class RidgePeakTracker(PeakTrackerProtocol):
             path_is_unique = runner_up_gap > config.ambiguity_cost_delta
             for path_index, (candidate_rows, _) in enumerate(complete):
                 status = PeakStatus.COMPUTED
-                if path_is_unique:
+                if path_index == 0 and path_is_unique:
                     status |= PeakStatus.PATH_UNIQUE
                 paths.append(
                     PeakPathResult(

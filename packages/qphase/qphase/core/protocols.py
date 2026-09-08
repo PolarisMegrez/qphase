@@ -87,6 +87,9 @@ class EngineManifest(PluginManifest):
         ``plugins`` block reflect only what the job itself configures, so an
         optional plugin present solely in project defaults never changes the
         selected profile. Required when ``task_profiles`` is set.
+    product_graph_builder : str | None
+        Optional resource-package control-plane callable that builds a
+        validated ProductGraph for one job.
 
     """
 
@@ -107,6 +110,7 @@ class EngineManifest(PluginManifest):
     task_profiles: str | None = None
     # Dotted path to the callable selecting the task profile id for a job.
     profile_selector: str | None = None
+    product_graph_builder: str | None = None
 
 
 class PluginConfigBase(BaseModel):

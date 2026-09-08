@@ -374,8 +374,11 @@ def _run_job_inner(
     engine_config_raw["output_dir"] = str(job_dir)
 
     try:
+        engine_kwargs = {"plugins": plugins}
+        if compiled_job.product_graph is not None:
+            engine_kwargs["product_graph"] = compiled_job.product_graph
         engine = scheduler._registry.create_plugin_instance(
-            "engine", engine_config_raw, plugins=plugins
+            "engine", engine_config_raw, **engine_kwargs
         )
     except Exception as exc:
         raise QPhasePluginError(
@@ -454,6 +457,7 @@ def _run_job_inner(
         checkpoints=CheckpointStore(job_dir, checkpoint_config, fingerprint),
         job_dir=job_dir,
         artifact_resolver=ProjectArtifactResolver(scheduler.project),
+        product_graph=compiled_job.product_graph,
         metadata={
             "job_name": job.name,
             "scan_summary": scan_summary(job),

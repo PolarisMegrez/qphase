@@ -16,7 +16,6 @@ from qphase.core.protocols import (
     ResultProtocol,
     SubpluginSlot,
 )
-from qphase.core.registry import discovery, registry
 from qphase.data import (
     DataKind,
     Dataset,
@@ -65,19 +64,10 @@ def _products_from_input(data: Any) -> Mapping[str, Dataset]:
 def _make_tracker(config: PeakPathsAnalyzerConfig, injected: Any | None) -> Any:
     if injected is not None:
         return injected
-    if not registry.list("peak_tracker"):
-        discovery.discover_plugins()
-    names = set(registry.list("peak_tracker"))
-    selected = set(config.tracker) & names
-    if selected:
-        if len(config.tracker) != 1:
-            raise ValueError("peak_paths tracker must select exactly one child")
-        name, values = next(iter(config.tracker.items()))
-        if not isinstance(values, Mapping):
-            raise ValueError("peak_paths tracker child configuration must be a mapping")
-    else:
-        name, values = "ridge", config.tracker
-    return registry.create(f"peak_tracker:{name}", **values)
+    raise RuntimeError(
+        "peak_paths requires a resolved peak_tracker child; construct it "
+        "through the plugin graph or pass subplugins"
+    )
 
 
 class PeakPathsAnalyzer(Analyzer):

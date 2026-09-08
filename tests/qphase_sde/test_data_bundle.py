@@ -289,8 +289,10 @@ def test_bundle_satisfies_all_protocols():
 
 def test_analyser_output_inherits_source_scan_identity(tmp_path):
     """A scan-free analyze job preserves the upstream dataset scan."""
+    from qphase.core.registry import discovery, registry
     from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
     from qphase_sde.engine import Engine, EngineConfig
+    from qphase_sde.graph import compile_product_graph
 
     axis = np.linspace(-1.0, 1.0, 101)
     payload = [
@@ -343,27 +345,41 @@ def test_analyser_output_inherits_source_scan_identity(tmp_path):
     source = SDEDataBundle(
         {"psd": source_product},
         _provenance(),
-        scan_axes={"epsilon": np.arange(4.0)},
-        scan_shape=(4,),
-        meta={"scan_combine": "zipped"},
+        scan_axes={"x": np.asarray([0.0, 1.0]), "y": np.asarray([10.0, 20.0])},
+        scan_shape=(2, 2),
+        meta={"scan_combine": "cartesian"},
     )
-    analyzer = PeaksAnalyzer(PeaksAnalyzerConfig(scan_param="epsilon", finder="scipy"))
+    from qphase_sde.peak_finder import ScipyPeakFinder
+
+    analyzer = PeaksAnalyzer(
+        PeaksAnalyzerConfig(scan_param="x"),
+        subplugins={"finder": ScipyPeakFinder()},
+    )
+    discovery.discover_plugins()
+    graph = compile_product_graph(
+        plugin_config={
+            "analyser": {"peaks": {"scan_param": "epsilon", "finder": {"scipy": {}}}}
+        },
+        registry=registry,
+    )
     engine = Engine(
         config=EngineConfig(mode="analyze"),
         plugins={"analyser": {"peaks": analyzer}},
+        product_graph=graph,
     )
 
     result = engine.run(source)
 
-    assert result.shape == (4,)
+    assert result.shape == (2, 2)
     product = result.products["peaks"]
     assert product.axis("scan").size == 4
-    assert product.coordinate("epsilon").shape == (4,)
-    assert result.bundle_descriptor.descriptor["scan"]["shape"] == [4]
+    np.testing.assert_array_equal(product.coordinate("x"), [0.0, 0.0, 1.0, 1.0])
+    np.testing.assert_array_equal(product.coordinate("y"), [10.0, 20.0, 10.0, 20.0])
+    assert result.bundle_descriptor.descriptor["scan"]["shape"] == [2, 2]
 
     source.save(tmp_path / "source")
     restored_result = engine.run(DirectoryInputResult(path=tmp_path / "source"))
-    assert restored_result.shape == (4,)
+    assert restored_result.shape == (2, 2)
     assert restored_result.products["peaks"].axis("scan").size == 4
 
 

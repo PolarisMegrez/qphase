@@ -305,12 +305,20 @@ class SDEDataBundle:
         flat = int(np.ravel_multi_index(tuple(index), self._scan_shape))
         meta = dict(self._meta)
         meta["scan_index"] = flat
-        meta["scan_point"] = {
-            name: values[position]
-            for (name, values), position in zip(
-                self._scan_axes.items(), index, strict=True
-            )
-        }
+        parameter_values = meta.get("scan_parameter_values")
+        if isinstance(parameter_values, dict):
+            meta["scan_point"] = {
+                name: np.asarray(values).reshape(-1)[flat]
+                for name, values in parameter_values.items()
+            }
+        else:
+            meta["scan_point"] = {
+                name: values[position]
+                for (name, values), position in zip(
+                    self._scan_axes.items(), index, strict=True
+                )
+            }
+        meta["params"] = dict(meta["scan_point"])
         params = meta.get("params")
         if isinstance(params, dict):
             # Mirror the 1.x SDEScanResult.point_view contract: the per-point

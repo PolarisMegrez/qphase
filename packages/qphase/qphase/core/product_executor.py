@@ -51,8 +51,16 @@ class ProductGraphExecutor:
         for node in self.graph.topological_order():
             self._check_cancelled(context)
             self._report(context, node, "started")
-            inputs = self._resolve_inputs(node, produced, external_inputs)
-            outputs = self.runners[node.node_id](node, inputs)
+            try:
+                inputs = self._resolve_inputs(node, produced, external_inputs)
+            except Exception:
+                self._report(context, node, "failed")
+                raise
+            try:
+                outputs = self.runners[node.node_id](node, inputs)
+            except Exception:
+                self._report(context, node, "failed")
+                raise
             if not isinstance(outputs, Mapping):
                 raise TypeError(
                     f"runner for node {node.node_id!r} must return a product mapping"
@@ -163,6 +171,8 @@ class ProductGraphExecutor:
             elif binding is not None:
                 external = external_inputs.get(binding.source, {}).get(binding.product)
                 if external is None:
+                    if requirement.optional:
+                        continue
                     raise ValueError(
                         f"external input {binding.source!r}:{binding.product!r} "
                         f"is unavailable for {node.node_id!r}"

@@ -317,6 +317,7 @@ class ExecutionContext:
     job_dir: Path
     metadata: dict[str, Any] = field(default_factory=dict)
     artifact_resolver: Any | None = None
+    product_graph: Any | None = None
 
 
 def execution_fingerprint(

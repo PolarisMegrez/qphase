@@ -195,7 +195,10 @@ def test_peaks_analyser_publishes_grouped_product():
         )
         for index in range(2)
     }
-    analyzer = PeaksAnalyzer(PeaksAnalyzerConfig(scan_param="epsilon", finder="scipy"))
+    analyzer = PeaksAnalyzer(
+        PeaksAnalyzerConfig(scan_param="epsilon"),
+        subplugins={"finder": ScipyPeakFinder()},
+    )
     payload = analyzer.analyze(inputs, NumpyBackend()).data_dict
     products = analyzer.build_products(payload, scan_size=2, label="peaks")
     assert products is not None
@@ -221,7 +224,8 @@ def test_peaks_analyser_resolves_finder_through_registry():
 
     registry.register("peak_finder", "registry_test", RegistryFinder, overwrite=True)
     analyzer = PeaksAnalyzer(
-        PeaksAnalyzerConfig(scan_param="epsilon", finder="registry_test")
+        PeaksAnalyzerConfig(scan_param="epsilon"),
+        subplugins={"finder": RegistryFinder()},
     )
     result = analyzer.analyze(
         {
@@ -247,12 +251,13 @@ def test_peak_paths_analyser_publishes_typed_path_product():
         PeakPathsAnalyzer,
         PeakPathsAnalyzerConfig,
     )
-    from qphase_sde.peak_tracker import RidgePeakTrackerConfig
+    from qphase_sde.peak_tracker import RidgePeakTracker, RidgePeakTrackerConfig
     from qphase_sde.result import SDEDataBundle, SDEProvenance
 
     axis = np.linspace(-1.0, 1.0, 101)
     peak_analyzer = PeaksAnalyzer(
-        PeaksAnalyzerConfig(scan_param="epsilon", finder="scipy")
+        PeaksAnalyzerConfig(scan_param="epsilon"),
+        subplugins={"finder": ScipyPeakFinder()},
     )
     payload = peak_analyzer.analyze(
         {
@@ -284,7 +289,8 @@ def test_peak_paths_analyser_publishes_typed_path_product():
         PeakPathsAnalyzerConfig(
             scan_param="epsilon",
             tracker=RidgePeakTrackerConfig(path_count=1).model_dump(),
-        )
+        ),
+        subplugins={"tracker": RidgePeakTracker(path_count=1)},
     )
     result = analyzer.analyze(source, NumpyBackend())
     products = analyzer.build_products(result.data_dict, scan_size=None, label="paths")

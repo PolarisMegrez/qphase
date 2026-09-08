@@ -24,7 +24,7 @@ Public API
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, cast
 
 import numpy as np
 from qphase.backend.base import BackendBase
@@ -152,13 +152,10 @@ class Analyzer(PluginBase, ABC):
         """Execute one analyser on named typed products.
 
         The numerical kernels remain in ``analyze``; this boundary supplies a
-        typed bundle view and materializes the analyser's declared products.
+        typed Dataset handles and materializes the analyser's declared products.
         Subclasses with a native typed path may override this method, while
         the default keeps the existing numerical implementation unchanged.
         """
-        from ..contracts.bundle import SDEProvenance
-        from ..result import SDEDataBundle
-
         parameter_axes = [
             axis
             for product in inputs.values()
@@ -179,9 +176,13 @@ class Analyzer(PluginBase, ABC):
                     if array.ndim == 1:
                         axes[str(name)] = array
                 if axes:
-                    shape = tuple(
-                        int(np.asarray(values).size) for values in axes.values()
-                    )
+                    source_shape = metadata.get("scan_shape")
+                    if isinstance(source_shape, (tuple, list)) and source_shape:
+                        shape = (int(np.prod(source_shape, dtype=np.int64)),)
+                    else:
+                        shape = tuple(
+                            int(np.asarray(values).size) for values in axes.values()
+                        )
         scan_param = getattr(self.config, "scan_param", None)
         if isinstance(scan_param, str):
             variable_name = f"parameter.{scan_param}"
@@ -194,30 +195,123 @@ class Analyzer(PluginBase, ABC):
                 axes = {scan_param: values.reshape(-1)}
                 break
         if not shape and parameter_axes:
-            unique: dict[str, Any] = {axis.name: axis for axis in parameter_axes}
-            shape = tuple(int(axis.size) for axis in unique.values())
-            axes = {name: np.arange(int(axis.size)) for name, axis in unique.items()}
-        bundle = SDEDataBundle(
-            dict(inputs),
-            SDEProvenance(),
-            scan_axes=axes,
-            scan_shape=shape,
-            meta={"params": params} if params else None,
-        )
-        from ..engine import _coerce_analysis_input
-
-        result = self.analyze(_coerce_analysis_input(bundle), backend)
+            unique: dict[str, Any] = {
+                axis.name: axis for axis in parameter_axes if axis.size != 1
+            }
+            if unique:
+                shape = tuple(int(axis.size) for axis in unique.values())
+                axes = {
+                    name: np.arange(int(axis.size)) for name, axis in unique.items()
+                }
+        from ..contracts.bundle import SDEProvenance
+        from ..result import SDEDataBundle
+        from ..state import TrajectorySet
         from .result import AnalysisResult
 
-        if not isinstance(result, AnalysisResult):
-            raise TypeError("analyser analyze() must return AnalysisResult")
+        def kernel_input(products: Mapping[str, Dataset]) -> Any:
+            trajectory_product = products.get("trajectories")
+            if trajectory_product is None:
+                return dict(products)
+            alpha = trajectory_product.handle("alpha").materialize()
+            if (
+                alpha.ndim == 4
+                and "scan" in {axis.name for axis in trajectory_product.axes}
+                and trajectory_product.axis("scan").size == 1
+            ):
+                alpha = alpha[0]
+            time_axis = (
+                trajectory_product.axis("time")
+                if "time" in {axis.name for axis in trajectory_product.axes}
+                else None
+            )
+            t0 = (
+                float(time_axis.start)
+                if time_axis is not None and time_axis.start is not None
+                else 0.0
+            )
+            dt = (
+                float(time_axis.step)
+                if time_axis is not None and time_axis.step is not None
+                else 1.0
+            )
+            trajectory_meta = {
+                name: trajectory_product.attributes[name]
+                for name in ("mode_indices", "valid_length")
+                if name in trajectory_product.attributes
+            }
+            return TrajectorySet(data=alpha, t0=t0, dt=dt, meta=trajectory_meta)
+
+        analysis_input: Any = inputs
+        scanned_products = [
+            product
+            for product in inputs.values()
+            if "scan" in {axis.name for axis in product.axes}
+        ]
+        if scanned_products and "trajectories" not in inputs:
+            input_scan_size = scanned_products[0].axis("scan").size
+            if input_scan_size is not None and input_scan_size > 1:
+                analysis_input = SDEDataBundle(
+                    dict(inputs),
+                    SDEProvenance(),
+                    scan_axes={"scan": np.arange(input_scan_size)},
+                    scan_shape=(input_scan_size,),
+                    meta={
+                        "scan_parameter_values": dict(axes),
+                    },
+                )
+        elif "trajectories" in inputs:
+            analysis_input = kernel_input(inputs)
+        elif params:
+            analysis_input = SDEDataBundle(
+                dict(inputs), SDEProvenance(), meta={"params": params}
+            )
+
+        scan_size: int | None
+        trajectory = inputs.get("trajectories")
+        has_scan_trajectory = (
+            trajectory is not None
+            and "scan" in {axis.name for axis in trajectory.axes}
+            and trajectory.axis("scan").size not in (None, 1)
+        )
+        if has_scan_trajectory:
+            assert trajectory is not None
+            scan_axis_size = trajectory.axis("scan").size
+            assert scan_axis_size is not None
+            scan_count = int(scan_axis_size)
+            payloads: list[Any] = []
+            for index in range(scan_count):
+                point_inputs = {
+                    name: (
+                        product.point_view(scan=index)
+                        if "scan" in {axis.name for axis in product.axes}
+                        else product
+                    )
+                    for name, product in inputs.items()
+                }
+                point_result = cast(
+                    AnalysisResult,
+                    self.analyze(kernel_input(point_inputs), backend),
+                )
+                if not isinstance(point_result, AnalysisResult):
+                    raise TypeError("analyser analyze() must return AnalysisResult")
+                payloads.append(point_result.data_dict)
+            raw_payload: Any = payloads
+            scan_size = scan_count
+        else:
+            raw_result = cast(
+                AnalysisResult,
+                self.analyze(analysis_input, backend),
+            )
+            if not isinstance(raw_result, AnalysisResult):
+                raise TypeError("analyser analyze() must return AnalysisResult")
+            raw_payload = raw_result.data_dict
+            scan_size = int(np.prod(shape, dtype=np.int64)) if shape else None
         builder = getattr(self, "build_products", None)
         if not callable(builder):
             raise NotImplementedError(
                 f"analyser {type(self).__name__!r} has no typed product builder"
             )
-        scan_size = int(np.prod(shape, dtype=np.int64)) if shape else None
-        products = builder(result.data_dict, scan_size=scan_size, label=label)
+        products = builder(raw_payload, scan_size=scan_size, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
         return products

@@ -502,6 +502,12 @@ class RegistryView:
         """Validate plugin configuration without constructing the plugin."""
         return self._source.validate_plugin_config(namespace, config)
 
+    def create_plugin_instance(
+        self, plugin_type: str, config: Any, **extra_kwargs: Any
+    ) -> Any:
+        """Create a control-plane plugin instance from the registry snapshot."""
+        return self._source.create_plugin_instance(plugin_type, config, **extra_kwargs)
+
 
 class DiscoveryService:
     """Service for discovering plugins from entry points and local files."""
