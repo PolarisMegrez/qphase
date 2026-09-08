@@ -548,6 +548,19 @@ class Engine(EngineBase):
                 analysers=analysers,
             )
         if plan.trajectory_batch_count > 1:
+            if (
+                context is not None
+                and getattr(context, "product_graph", None) is not None
+            ):
+                return self._run_trajectory_batched_typed(
+                    data,
+                    plan=plan,
+                    reporter=reporter,
+                    context=context,
+                    point_index=0,
+                    master_seed=self.config.seed,
+                    observers=observers,
+                )
             result: SDEResult = self._run_trajectory_batched(
                 data,
                 plan=plan,
@@ -808,6 +821,128 @@ class Engine(EngineBase):
             )
             for name in names
         }
+
+    def _run_trajectory_batched_typed(
+        self,
+        data: Any | None,
+        *,
+        plan: SDEExecutionPlan,
+        reporter: Any | None,
+        context: Any,
+        point_index: int,
+        master_seed: int | None,
+        observers: dict[str, Any],
+    ) -> SDEDataBundle:
+        """Run trajectory batches through the frozen graph and reduce them."""
+        assert self.config is not None
+        analysers = self._normalised_analysers()
+        accumulators = {
+            name: analyser.create_result_accumulator()
+            for name, analyser in analysers.items()
+        }
+        if len(accumulators) != len(analysers):
+            raise RuntimeError(
+                "typed trajectory batching requires an accumulator for every analyser"
+            )
+        if master_seed is None:
+            master_seed = int(
+                np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0]
+            )
+        master_seed = int(master_seed) % (1 << 64)
+        observer_batches: dict[str, list[Any]] = {name: [] for name in observers}
+        result_meta: dict[str, Any] = {}
+        from qphase_sde.result import legacy_view_from_products
+
+        for batch_index, start in enumerate(
+            range(0, plan.n_traj_per_point, plan.trajectory_batch_size)
+        ):
+            stop = min(start + plan.trajectory_batch_size, plan.n_traj_per_point)
+            count = stop - start
+            cancellation = getattr(context, "cancellation", None)
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
+            group_size = plan.logical_rng_group_size
+            if count % group_size:
+                if stop != plan.n_traj_per_point or count >= group_size:
+                    raise RuntimeError(
+                        "trajectory batch boundaries must align with logical RNG groups"
+                    )
+                group_size = count
+            first_group = start // plan.logical_rng_group_size
+            seeds = tuple(
+                int(
+                    np.random.SeedSequence(
+                        [master_seed, point_index, first_group + offset]
+                    ).generate_state(1, dtype=np.uint64)[0]
+                )
+                for offset in range(count // group_size)
+            )
+            if reporter is not None:
+                reporter.status(
+                    f"SDE typed trajectory batch {batch_index + 1}/"
+                    f"{plan.trajectory_batch_count}",
+                    stage="sampling",
+                )
+            with self._trajectory_batch_scope(start, stop, plan.n_traj_per_point):
+                partial = self._run_simulate(
+                    data,
+                    reporter=reporter,
+                    context=context,
+                    rng_group_seeds=seeds,
+                    rng_group_size=group_size,
+                    observers=observers,
+                    progress_offset=(point_index * plan.n_traj_per_point + start)
+                    * plan.steps,
+                    progress_scale=count,
+                    progress_total=plan.scan_size * plan.n_traj_per_point * plan.steps,
+                    progress_label=f"typed trajectory batch {batch_index + 1}/"
+                    f"{plan.trajectory_batch_count}",
+                    skip_analysis=True,
+                )
+            source = bundle_from_result(
+                partial, provenance=self._job_provenance(), analysers={}
+            )
+            typed = self._run_typed_analyze(source, context=context)
+            if not isinstance(typed, SDEDataBundle):
+                raise RuntimeError("typed trajectory batch produced no data bundle")
+            legacy = legacy_view_from_products(typed.products)
+            for name, accumulator in accumulators.items():
+                payload = legacy.analysis.get(name)
+                if payload is None:
+                    raise RuntimeError(
+                        f"typed analyser {name!r} produced no batch output"
+                    )
+                accumulator.update(self._analysis_to_host(payload))
+            for name in observers:
+                payload = self._analysis_to_host(partial.analysis.get(name))
+                if payload is not None:
+                    observer_batches[name].append(payload)
+            if not result_meta:
+                result_meta.update(partial.meta)
+            del partial, source, typed, legacy
+            self._release_backend_pool()
+
+        analysis = {
+            name: accumulator.finalize() for name, accumulator in accumulators.items()
+        }
+        for name, payloads in observer_batches.items():
+            if payloads:
+                analysis[name] = observers[name].merge_payloads(payloads)
+        result_meta.update(
+            {
+                "params": dict(self._required_model().params),
+                "rng_master_seed": master_seed,
+                "rng_strategy": plan.rng_strategy,
+                "drop_trajectory_reason": "online_trajectory_aggregation",
+                "trajectory_batch_size": plan.trajectory_batch_size,
+                "trajectory_batch_count": plan.trajectory_batch_count,
+                "execution_plan": plan.to_dict(),
+            }
+        )
+        final = SDEResult(trajectory=None, analysis=analysis, meta=result_meta)
+        return bundle_from_result(
+            final, provenance=self._job_provenance(), analysers=analysers
+        )
 
     @staticmethod
     def _concat_scan_datasets(datasets: list[Any]) -> Any:
