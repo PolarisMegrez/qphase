@@ -19,6 +19,7 @@ never copy arrays beyond the scan stacking the engine already performed.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
@@ -45,6 +46,7 @@ __all__ = [
     "StackedLeaves",
     "TypedAxisSpec",
     "assemble_typed_product",
+    "assemble_row_table_product",
     "json_safe_meta",
     "split_payload_leaves",
     "stack_payload_leaves",
@@ -64,6 +66,8 @@ def json_safe_meta(meta: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     def _coerce(value: Any) -> Any:
         if isinstance(value, np.generic):
             return value.item()
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
         if isinstance(value, np.ndarray):
             return value.tolist()
         if isinstance(value, dict):
@@ -231,6 +235,123 @@ class _TrailingAxis:
 
     spec: TypedAxisSpec
     size: int
+
+
+def assemble_row_table_product(
+    name: str,
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    scan_size: int | None,
+    fields: Sequence[str],
+    integer_fields: Sequence[str] = (),
+    scan_index_field: str | None = None,
+    scan_value_field: str | None = None,
+    quantities: Mapping[str, str] | None = None,
+    payload_key: str = "rows",
+    payload_meta: Mapping[str, Any] | None = None,
+    source_scan: bool = False,
+    attributes: Mapping[str, Any] | None = None,
+    owner: str = "engine.sde",
+) -> Dataset:
+    """Materialize a small row table as a graph-ready statistics product.
+
+    Row-oriented analysers naturally produce variable-length tables.  The
+    table remains rectangular at the product boundary: rows are grouped on
+    the scan axis and padded with ``row_valid``.  Original records and
+    diagnostic strings stay in product attributes, while declared numeric
+    fields are typed variables.  This is intentionally limited to compact
+    analyser summaries; large numerical arrays use their analyser-specific
+    builders.
+    """
+    field_names = tuple(fields)
+    integer_names = frozenset(integer_fields)
+    if not field_names:
+        raise ValueError(f"row table {name!r} must declare at least one field")
+    if not integer_names <= set(field_names):
+        raise ValueError("integer_fields must be a subset of fields")
+
+    groups: list[list[Mapping[str, Any]]]
+    if scan_size is None:
+        groups = [list(rows)]
+    else:
+        groups = [[] for _ in range(scan_size)]
+        value_to_index: dict[float, int] = {}
+        if scan_value_field is not None:
+            values = sorted(
+                {
+                    float(row[scan_value_field])
+                    for row in rows
+                    if scan_value_field in row
+                }
+            )
+            value_to_index = {value: index for index, value in enumerate(values)}
+        for row in rows:
+            if scan_index_field is not None and scan_index_field in row:
+                index = int(row[scan_index_field])
+            elif scan_value_field is not None and scan_value_field in row:
+                index = value_to_index[float(row[scan_value_field])]
+            else:
+                raise ValueError(
+                    f"row table {name!r} needs a scan index or scan value field"
+                )
+            if index < 0 or index >= scan_size:
+                raise ValueError(
+                    f"row table {name!r} row has scan index {index}, "
+                    f"outside scan size {scan_size}"
+                )
+            groups[index].append(row)
+
+    row_count = max((len(group) for group in groups), default=0)
+    row_count = max(row_count, 1)
+    arrays: dict[str, np.ndarray] = {}
+    for field in field_names:
+        dtype = np.int64 if field in integer_names else np.float64
+        fill = -1 if field in integer_names else np.nan
+        shape = (len(groups), row_count) if scan_size is not None else (row_count,)
+        array = np.full(shape, fill, dtype=dtype)
+        for group_index, group in enumerate(groups):
+            for row_index, row in enumerate(group):
+                value = row.get(field, fill)
+                if scan_size is None:
+                    array[row_index] = value
+                else:
+                    array[group_index, row_index] = value
+        arrays[field] = array
+    valid_shape = (len(groups), row_count) if scan_size is not None else (row_count,)
+    valid = np.zeros(valid_shape, dtype=np.int8)
+    for group_index, group in enumerate(groups):
+        if scan_size is None:
+            valid[: len(group)] = 1
+        else:
+            valid[group_index, : len(group)] = 1
+    arrays["row_valid"] = valid
+    declared_dims = {field: ("row",) for field in (*field_names, "row_valid")}
+    meta = {payload_key: list(rows), **dict(payload_meta or {})}
+    safe_meta, dropped = json_safe_meta(meta)
+    leaves = StackedLeaves(
+        arrays=arrays,
+        payload_meta=safe_meta,
+        per_point_meta=[],
+        dropped=dropped,
+    )
+    product = assemble_typed_product(
+        name,
+        leaves,
+        scan_size=scan_size,
+        kind=DataKind.STATISTICS,
+        declared_dims=declared_dims,
+        axis_specs={"row": TypedAxisSpec("row", AxisRole.INDEX)},
+        quantities=quantities,
+        attributes={
+            "graph_ready": True,
+            "table": "row_table",
+            "source_scan": source_scan,
+            **dict(attributes or {}),
+        },
+        owner=owner,
+    )
+    assert product is not None
+    return product
 
 
 def _resolve_declared_dims(

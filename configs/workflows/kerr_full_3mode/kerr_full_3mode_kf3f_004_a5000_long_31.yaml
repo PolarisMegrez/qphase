@@ -1,0 +1,224 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_kf3f_004_a5000_long_31
+title: Kerr Full 3Mode kf3f-004 A5000 Long 31
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- candidate:kf3f-004
+- purpose:validation/long-sde
+
+jobs:
+- name: kerr_full_3mode_kf3f_004_a5000_long_31_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint: {enabled: true, interval_chunks: 1, keep_on_success: false}
+      resources: {gpu_memory_fraction: 0.85}
+  scan:
+    axes:
+      omega_b:
+        target: model.kerr_full_3mode.omega_b
+        values:
+        - 0.5001
+        - 0.50012589254117945
+        - 0.5001584893192461
+        - 0.5001995262314969
+        - 0.500251188643151
+        - 0.5003162277660168
+        - 0.5003981071705536
+        - 0.5005011872336272
+        - 0.5006309573444802
+        - 0.5007943282347243
+        - 0.501
+        - 0.5012589254117942
+        - 0.5015848931924611
+        - 0.5019952623149688
+        - 0.5025118864315096
+        - 0.5031622776601684
+        - 0.503981071705535
+        - 0.5050118723362727
+        - 0.506309573444802
+        - 0.5079432823472428
+        - 0.51
+        - 0.5125892541179417
+        - 0.5158489319246111
+        - 0.5199526231496888
+        - 0.5251188643150958
+        - 0.5316227766016838
+        - 0.5398107170553498
+        - 0.5501187233627273
+        - 0.5630957344480194
+        - 0.5794328234724282
+        - 0.6
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 550000.0
+      dt: 0.01
+      n_traj: 512
+      seed: 202609500
+      # Current scan execution has one shared IC. Use the qualified inner-branch
+      # state and let every point relax during the 5e4 warm-up.
+      ic:
+      - - "-58.62254827844075+6.6459278995768605j"
+        - "85.42230014787226-32.32977534832201j"
+        - "133.6966822675078+0.0j"
+      adaptive: false
+      # sample_dt=0.32 gives angular Nyquist 9.817, above the maximum CAM
+      # Hamiltonian frequency 8.946 observed on the qualified branch.
+      save_stride: 32
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 256
+      max_state_norm: 600.0
+      state_check_interval_steps: 2048
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      # Half of the minimum CAM trace on the qualified branch (epsilon=0.1).
+      threshold: 4568.620255100055
+      direction: below
+      action: record
+      check_interval_steps: 2048
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes: [0, 1, 2]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 9.0
+      estimator: {periodogram: {fft_chunk_trajectories: 16}}
+    allan_variance:
+      modes: [0, 1, 2]
+      points: 80
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 65536
+      device_chunk_trajectories: 16
+    coherence_matrix:
+      modes: [0, 1, 2]
+      time_blocks: 32
+      time_chunk_samples: 65536
+    moment_statistics:
+      modes: [0, 1, 2]
+      time_blocks: 32
+      time_chunk_samples: 65536
+
+- name: kerr_full_3mode_kf3f_004_a5000_long_31_ridge
+  input:
+    from: kerr_full_3mode_kf3f_004_a5000_long_31_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    spectral_ridge:
+      scan_param: omega_b
+      readouts: [trace, 0, 1, 2]
+      freq_min: -0.5
+      freq_max: 1.5
+      minimum_prominence_fraction: 0.01
+      tracking_path_count: 3
+      tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_kf3f_004_a5000_long_31_mode2_carrier
+  input:
+    from: kerr_full_3mode_kf3f_004_a5000_long_31_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_b
+      readout: 2
+      freq_min: -0.5
+      freq_max: 1.5
+      maximum_lag: 2048.0
+      tracking_enabled: true
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_b
+          readouts: [2]
+          freq_min: -0.5
+          freq_max: 1.5
+          minimum_prominence_fraction: 0.01
+          tracking_path_count: 3
+          tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_kf3f_004_a5000_long_31_allan_mode0
+  input:
+    from: kerr_full_3mode_kf3f_004_a5000_long_31_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling: &allan_scaling
+      scan_param: omega_b
+      critical_value: 0.5
+      side: positive
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.15
+      white_slope_max: -0.85
+      min_local_r2: 0.98
+      min_tau_decades: 0.4
+      min_averaging_samples: 16
+      max_relative_sem: 0.25
+      min_independent_windows: 32
+      min_scaling_points: 8
+      target_scaling_decades: 2.0
+      max_scaling_reduced_chi2: 10.0
+      bootstrap_samples: 5000
+      bootstrap_seed: 202609500
+      min_frequency_rss_improvement: 0.05
+      normal_form: {n: 3, k: 1, m: 0, observable_order: 1}
+
+- name: kerr_full_3mode_kf3f_004_a5000_long_31_allan_mode1
+  input:
+    from: kerr_full_3mode_kf3f_004_a5000_long_31_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling:
+      <<: *allan_scaling
+      mode: 1
+      bootstrap_seed: 202609501
+
+- name: kerr_full_3mode_kf3f_004_a5000_long_31_allan_mode2
+  input:
+    from: kerr_full_3mode_kf3f_004_a5000_long_31_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling:
+      <<: *allan_scaling
+      mode: 2
+      bootstrap_seed: 202609502

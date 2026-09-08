@@ -601,6 +601,36 @@ def test_measurement_basis_rejects_ambiguous_or_unphysical_channels():
     # A general channel needs no diagonality, only Hermiticity.
     general_kinds = ["bare", "coherent", "coherent", "general"]
     _validate_basis(channel_measurement_kinds=general_kinds)
+    indefinite = [row[:] for row in matrices]
+    indefinite[27] = [1.0, 0.0]
+    indefinite[31] = [-0.1, 0.0]
+    with pytest.raises(ValueError, match="positive semidefinite"):
+        _validate_basis(
+            channel_measurement_kinds=general_kinds,
+            channel_mode_matrix=indefinite,
+        )
+    tiny_indefinite = [[value * 1.0e-8 for value in row] for row in matrices]
+    tiny_indefinite[27] = [1.0e-8, 0.0]
+    tiny_indefinite[31] = [-1.0e-8, 0.0]
+    with pytest.raises(ValueError, match="positive semidefinite"):
+        _validate_basis(
+            channel_measurement_kinds=general_kinds,
+            channel_mode_matrix=tiny_indefinite,
+        )
+    scaled_psd = [[value * 1.0e-8 for value in row] for row in matrices]
+    _validate_basis(
+        channel_measurement_kinds=general_kinds,
+        channel_mode_matrix=scaled_psd,
+    )
+    tiny_off_diagonal = [[value * 1.0e-12 for value in row] for row in matrices]
+    tiny_off_diagonal[28] = [1.0e-12, 0.0]
+    tiny_off_diagonal[30] = [1.0e-12, 0.0]
+    with pytest.raises(ValueError, match="diagonal"):
+        _validate_basis(channel_mode_matrix=tiny_off_diagonal)
+    tiny_extra_matrix = [[value * 1.0e-12 for value in row] for row in matrices]
+    tiny_extra_matrix[0] = [1.0e-12, 0.0]
+    with pytest.raises(ValueError, match="exactly one representation"):
+        _validate_basis(channel_mode_matrix=tiny_extra_matrix)
 
 
 def test_candidate_status_codes_stay_within_candidate_mask():

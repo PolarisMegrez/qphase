@@ -1,6 +1,12 @@
 from typing import Any
 
-from .base import BasePeakFinderConfig, PeakFinder, PeakInfo, TypedPeakFinder
+from .base import (
+    BasePeakFinderConfig,
+    PeakFinder,
+    PeakInfo,
+    TypedPeakFinder,
+    materialize_candidate_product,
+)
 from .rational import RationalPeakFinder, RationalPeakFinderConfig
 from .scipy import ScipyPeakFinder, ScipyPeakFinderConfig
 
@@ -9,6 +15,7 @@ __all__ = [
     "PeakInfo",
     "BasePeakFinderConfig",
     "TypedPeakFinder",
+    "materialize_candidate_product",
     "ScipyPeakFinder",
     "ScipyPeakFinderConfig",
     "RationalPeakFinder",

@@ -17,12 +17,14 @@ import time as _time
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy, get_xp
+from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 
 from qphase_sde.contracts.bundle import SDEProvenance
@@ -310,6 +312,22 @@ def _coerce_analysis_input(data: Any | None) -> Any | None:
     return TrajectorySet(data=alpha, t0=t0, dt=dt, meta={})
 
 
+def _analysis_source_scan(data: Any | None) -> DatasetResultProtocol | None:
+    """Return the input dataset when analyze mode receives one directly."""
+    if isinstance(data, DatasetResultProtocol):
+        return data
+    path = getattr(data, "path", None)
+    if path is None:
+        return None
+    artifact = Path(path) / "artifact_manifest.json"
+    if not artifact.is_file():
+        return None
+    from qphase.data import load_bundle
+
+    restored = load_bundle(Path(path))
+    return restored if isinstance(restored, DatasetResultProtocol) else None
+
+
 # -----------------------------------------------------------------------------
 # Engine Class
 # -----------------------------------------------------------------------------
@@ -420,10 +438,12 @@ class Engine(EngineBase):
             reporter = ProgressReporter.wrap_legacy(progress_cb)
 
         if getattr(self.config, "mode", "simulate") == "analyze":
+            source_scan = _analysis_source_scan(data)
             return bundle_from_result(
                 self._run_analyze(data),
                 provenance=self._job_provenance(),
                 analysers=self._normalised_analysers(),
+                source_scan=source_scan,
             )
         grid = context.parameter_grid if context is not None else None
         model = self._required_model()

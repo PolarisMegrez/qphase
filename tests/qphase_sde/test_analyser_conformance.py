@@ -24,6 +24,9 @@ MINIMAL_CONFIGS = {
     "finite_delay_carrier": {"scan_param": "x"},
     "lorentz_fitter": {"scan_param": "x"},
     "spectral_ridge": {"scan_param": "x"},
+    "peaks": {"scan_param": "x"},
+    "peak_paths": {"scan_param": "x"},
+    "coherence_frequency": {"scan_param": "x"},
     "quadratic_moments": {"observables": {"n": {"matrix": [[1.0]]}}},
 }
 
@@ -84,13 +87,8 @@ def test_registered_analyser_satisfies_contract(name):
     assert reducer is None or isinstance(reducer, ReducerProtocol)
 
 
-def test_psd_declares_legacy_peaks_only_with_peak_finder():
+def test_psd_does_not_declare_inline_peaks():
     from qphase_sde.analyser.psd import PsdAnalyzer
 
     default = PsdAnalyzer(kind="complex", modes=[0])
     assert [spec.name for spec in default.output_specs(label="probe")] == ["probe"]
-    with_peaks = PsdAnalyzer(kind="complex", modes=[0], find_peaks="scipy")
-    assert [spec.name for spec in with_peaks.output_specs(label="probe")] == [
-        "probe",
-        "probe.legacy_peaks",
-    ]

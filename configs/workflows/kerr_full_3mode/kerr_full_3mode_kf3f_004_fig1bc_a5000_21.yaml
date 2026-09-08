@@ -1,0 +1,159 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_kf3f_004_fig1bc_a5000_21
+title: Kerr Full 3Mode kf3f-004 Fig 1bc A5000 21
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- candidate:kf3f-004
+- purpose:paper/fig1bc
+
+jobs:
+- name: kerr_full_3mode_kf3f_004_fig1bc_a5000_21_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint: {enabled: true, interval_chunks: 1, keep_on_success: false}
+      resources: {gpu_memory_fraction: 0.85}
+  scan:
+    axes:
+      omega_b:
+        target: model.kerr_full_3mode.omega_b
+        # epsilon = omega_b - 0.5, spanning [-5e-4, 5e-4] in 21 linear steps.
+        # The CAM equilibrium branch is unstable for epsilon <= -2e-4. Those
+        # seven outer-negative points are retained as dynamical controls and
+        # must not enter a stable-equilibrium scaling fit.
+        values:
+        - 0.49950
+        - 0.49955
+        - 0.49960
+        - 0.49965
+        - 0.49970
+        - 0.49975
+        - 0.49980
+        - 0.49985
+        - 0.49990
+        - 0.49995
+        - 0.50000
+        - 0.50005
+        - 0.50010
+        - 0.50015
+        - 0.50020
+        - 0.50025
+        - 0.50030
+        - 0.50035
+        - 0.50040
+        - 0.50045
+        - 0.50050
+  engine:
+    sde:
+      # A 5e4 warm-up is about 15 local relaxation times at the nearest nonzero
+      # points. The exact BP has no linear relaxation time; the critical IC and
+      # retained time blocks provide the required convergence diagnostic.
+      # Retain the qualified 5e5 frequency record: around
+      # epsilon=1e-4, adjacent fine-scan shifts are already comparable to the
+      # long-record ridge uncertainty, so a shorter record would be underpowered.
+      t0: 50000.0
+      t1: 550000.0
+      dt: 0.01
+      n_traj: 512
+      seed: 202609610
+      # Principal coherent amplitude of the CAM critical R matrix. This avoids
+      # biasing a two-sided scan with an initial condition from either branch.
+      ic:
+      - - "-60.95859985+7.01484721j"
+        - "96.32161506-34.6595639j"
+        - "143.35481608+0.0j"
+      adaptive: false
+      # The outer-negative CAM branch reaches |omega|=10.40. sample_dt=0.24
+      # gives angular Nyquist 13.09 and prevents aliasing at that endpoint.
+      save_stride: 24
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      # 192/24 equals the successful long-31 working-set ratio 256/32.
+      trajectory_batch_size: 192
+      max_state_norm: 600.0
+      state_check_interval_steps: 2048
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  analyser:
+    psd:
+      modes: [0, 1, 2]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 11.0
+      estimator: {periodogram: {fft_chunk_trajectories: 16}}
+    coherence_matrix:
+      modes: [0, 1, 2]
+      time_blocks: 32
+      time_chunk_samples: 65536
+    moment_statistics:
+      modes: [0, 1, 2]
+      time_blocks: 32
+      time_chunk_samples: 65536
+
+- name: kerr_full_3mode_kf3f_004_fig1bc_a5000_21_ridge
+  input:
+    from: kerr_full_3mode_kf3f_004_fig1bc_a5000_21_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    # The ridge supplies the conditioning center and an independent frequency
+    # cross-check for the primary ridge-conditioned G1 estimator below.
+    spectral_ridge:
+      scan_param: omega_b
+      readouts: [trace, 0, 1, 2]
+      freq_min: -0.5
+      freq_max: 1.5
+      minimum_prominence_fraction: 0.01
+      tracking_path_count: 3
+      tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_kf3f_004_fig1bc_a5000_21_mode2_carrier
+  input:
+    from: kerr_full_3mode_kf3f_004_fig1bc_a5000_21_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    # Preregistered primary frequency estimator for Fig. 1c. The explicit lag
+    # span avoids coupling the minimum usable interval to 10% of a deliberately
+    # generous maximum_lag. Failed status remains invalid rather than a fallback.
+    band_limited_carrier:
+      scan_param: omega_b
+      readout: 2
+      freq_min: -0.5
+      freq_max: 1.5
+      maximum_lag: 2048.0
+      minimum_lag_span: 16.0
+      tracking_enabled: true
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_b
+          readouts: [2]
+          freq_min: -0.5
+          freq_max: 1.5
+          minimum_prominence_fraction: 0.01
+          tracking_path_count: 3
+          tracking_max_cost_delta: 2.0

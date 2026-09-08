@@ -40,7 +40,6 @@ jobs:
     psd:
       modes: [0]
       kind: complex
-      find_peaks: true
 
   backend:
     cupy:

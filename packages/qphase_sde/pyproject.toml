@@ -57,6 +57,9 @@ dependencies = [
 "analyser.band_limited_carrier" = "qphase_sde.analyser.band_limited_carrier:BandLimitedCarrierAnalyzer"
 "analyser.finite_delay_carrier" = "qphase_sde.analyser.finite_delay_carrier:FiniteDelayCarrierAnalyzer"
 "analyser.spectral_ridge" = "qphase_sde.analyser.spectral_ridge:SpectralRidgeAnalyzer"
+"analyser.peaks" = "qphase_sde.analyser.peaks:PeaksAnalyzer"
+"analyser.coherence_frequency" = "qphase_sde.analyser.coherence_frequency:CoherenceFrequencyAnalyzer"
+"analyser.peak_paths" = "qphase_sde.analyser.peak_paths:PeakPathsAnalyzer"
 "analyser.moment_statistics" = "qphase_sde.analyser.moment_statistics:MomentStatisticsAnalyzer"
 "analyser.quadratic_moments" = "qphase_sde.analyser.quadratic_moments:QuadraticMomentAnalyzer"
 # Observer plugin
@@ -68,6 +71,12 @@ dependencies = [
 # Peak Finder plugins
 "peak_finder.scipy" = "qphase_sde.peak_finder.scipy:ScipyPeakFinder"
 "peak_finder.rational" = "qphase_sde.peak_finder.rational:RationalPeakFinder"
+# Peak tracker plugins
+"peak_tracker.ridge" = "qphase_sde.peak_tracker.ridge:RidgePeakTracker"
+# Coherence-frequency child plugins
+"coherence_frequency.short_delay" = "qphase_sde.coherence_frequency.short_delay:ShortDelayCoherenceFrequency"
+"coherence_frequency.band_limited" = "qphase_sde.coherence_frequency.band_limited:BandLimitedCoherenceFrequency"
+"coherence_frequency.finite_delay" = "qphase_sde.coherence_frequency.finite_delay:FiniteDelayCoherenceFrequency"
 
 [tool.setuptools.packages.find]
 where = ["."]

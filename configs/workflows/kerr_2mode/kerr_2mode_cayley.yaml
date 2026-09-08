@@ -57,7 +57,6 @@ jobs:
       modes: [0]
       kind: complex
       expected_freq_max: 1.0
-      find_peaks: true
 
 
 - name: kerr_2mode_cayley_fit
@@ -78,3 +77,14 @@ jobs:
       export:
       - fit_results.csv
       - psd_merged.csv
+
+- name: kerr_2mode_cayley_peaks
+  input: {from: kerr_2mode_cayley_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    peaks:
+      scan_param: omega_b
+      psd_key: psd
+      finder: scipy

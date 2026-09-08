@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from qphase.core.aggregation import DirectoryInputResult
 from qphase.core.artifacts import ArtifactStore
 from qphase.core.dataset import DatasetResultProtocol, ResultProtocol
 from qphase.core.scan import ParameterGrid
@@ -276,6 +277,50 @@ def test_bundle_satisfies_all_protocols():
     assert isinstance(bundle, DatasetResultProtocol)
     assert bundle.metadata["label"] == "test"
     assert "provenance" in bundle.metadata
+
+
+def test_analyser_output_inherits_source_scan_identity(tmp_path):
+    """A scan-free analyze job preserves the upstream dataset scan."""
+    from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
+    from qphase_sde.engine import Engine, EngineConfig
+
+    axis = np.linspace(-1.0, 1.0, 101)
+    payload = [
+        {
+            "axis": axis,
+            "psd": np.exp(-(((axis - 0.1 * index) / 0.08) ** 2))[:, None],
+            "modes": [0],
+            "orientation": "phase_decreasing",
+        }
+        for index in range(4)
+    ]
+    source_product = _analysis_product("psd", payload, scan_size=4)
+    assert source_product is not None
+    source = SDEDataBundle(
+        {"psd": source_product},
+        _provenance(),
+        scan_axes={"epsilon": np.arange(4.0)},
+        scan_shape=(4,),
+        meta={"scan_combine": "zipped"},
+    )
+    analyzer = PeaksAnalyzer(PeaksAnalyzerConfig(scan_param="epsilon", finder="scipy"))
+    engine = Engine(
+        config=EngineConfig(mode="analyze"),
+        plugins={"analyser": {"peaks": analyzer}},
+    )
+
+    result = engine.run(source)
+
+    assert result.shape == (4,)
+    product = result.products["peaks"]
+    assert product.axis("scan").size == 4
+    assert product.coordinate("epsilon").shape == (4,)
+    assert result.bundle_descriptor.descriptor["scan"]["shape"] == [4]
+
+    source.save(tmp_path / "source")
+    restored_result = engine.run(DirectoryInputResult(path=tmp_path / "source"))
+    assert restored_result.shape == (4,)
+    assert restored_result.products["peaks"].axis("scan").size == 4
 
 
 def test_bundle_require_filters_by_kind_quantity_fields():

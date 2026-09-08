@@ -1,0 +1,1439 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_kf3f_004_q1_independent_points
+title: Kerr Full 3Mode kf3f_004 Three-Decade Q1 Independent Points
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- candidate:kf3f-004
+- purpose:validation/frequency-q1
+jobs:
+- name: kerr_full_3mode_kf3f_004_q1_p00_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609200
+      ic:
+      - - (-58.62254827844075+6.6459278995768605j)
+        - (85.42230014787226-32.32977534832201j)
+        - (133.6966822675078+2.3950983408260112e-15j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5001
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 14850.215907967367
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+- name: kerr_full_3mode_kf3f_004_q1_p01_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609201
+      ic:
+      - - (-58.14028945056373+6.5734078547370505j)
+        - (83.28813658036161-31.871176949463678j)
+        - (131.79552234895473+2.4389938245248887e-16j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5001778279410038
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 14374.439580569855
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+- name: kerr_full_3mode_kf3f_004_q1_p02_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609202
+      ic:
+      - - (-57.561215683696595+6.488023869275857j)
+        - (80.77654040505858-31.330196077170992j)
+        - (129.55279579352222+6.828982623355083e-16j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5003162277660168
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 13824.163785167593
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+- name: kerr_full_3mode_kf3f_004_q1_p03_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609203
+      ic:
+      - - (-56.86702486636334+6.388137956258227j)
+        - (77.83796604633835-30.695276406602463j)
+        - (126.92055037601138-9.797763674505272e-17j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5005623413251904
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 13193.48434122161
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+- name: kerr_full_3mode_kf3f_004_q1_p04_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609204
+      ic:
+      - - (-56.03639338703573+6.272220220480082j)
+        - (74.42366310768635-29.954514764034702j)
+        - (123.84936003006449-7.177404640252401e-16j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.501
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 12478.35097113622
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+- name: kerr_full_3mode_kf3f_004_q1_p05_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609205
+      ic:
+      - - (-55.04463302851454+6.139050193591926j)
+        - (70.48932523640725-29.096169704822987j)
+        - (120.29040736092031-7.433628191631564e-16j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5017782794100389
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 11677.555669251144
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+- name: kerr_full_3mode_kf3f_004_q1_p06_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609206
+      ic:
+      - - (-53.863363286171456+5.988023538067088j)
+        - (66.00015875495275-28.10933539055098j)
+        - (116.19823470889462+2.0092704693775867e-15j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5031622776601684
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 10793.814144293885
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+- name: kerr_full_3mode_kf3f_004_q1_p07_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609207
+      ic:
+      - - (-52.46022991978773+5.819604536352832j)
+        - (60.93754894191194-26.984755570670455j)
+        - (111.53404995997221-1.5075516958073807e-15j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5056234132519035
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 9834.798375668732
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+- name: kerr_full_3mode_kf3f_004_q1_p08_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609208
+      ic:
+      - - (-50.79872994199479+5.635976321680249j)
+        - (55.3073779419737-25.715707742249094j)
+        - (106.2692838961792+2.6478648649625136e-16j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.51
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 8813.903109663088
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+- name: kerr_full_3mode_kf3f_004_q1_p09_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609209
+      ic:
+      - - (-48.83827063699565+5.44195305496811j)
+        - (49.14984201071671-24.29883640316007j)
+        - (100.38887941419125-9.271575438197812e-16j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5177827941003892
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 7750.4721966264815
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+- name: kerr_full_3mode_kf3f_004_q1_p10_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609210
+      ic:
+      - - (-46.53473878079941+5.246227037617332j)
+        - (42.550288083494536-22.734780653286467j)
+        - (93.89365022792418-3.5573500629088316e-16j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5316227766016838
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 6669.212520937308
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+- name: kerr_full_3mode_kf3f_004_q1_p11_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609211
+      ic:
+      - - (-43.84216220080346+5.063016962985382j)
+        - (35.65002149592999-21.028478584639647j)
+        - (86.80120313044637-1.530711142386524e-15j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5562341325190349
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 5598.634305857297
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+- name: kerr_full_3mode_kf3f_004_q1_p12_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint:
+        enabled: true
+        interval_chunks: 1
+        keep_on_success: false
+      resources:
+        gpu_memory_fraction: 0.85
+  engine:
+    sde:
+      t0: 30000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609212
+      ic:
+      - - (-40.716616565164756+4.914132363913719j)
+        - (28.654905464274275-19.189240384175147j)
+        - (79.1458034197298-8.538629430673325e-16j)
+      adaptive: false
+      save_stride: 25
+      record_modes:
+      - 0
+      - 1
+      - 2
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy:
+      float_dtype: float64
+      device: cuda
+  integrator:
+    cayley_maruyama:
+      fused: required
+      chunk_steps: 2048
+      max_modes: 16
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.6
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      threshold: 4568.620255100055
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes:
+      - 0
+      - 1
+      - 2
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator:
+        periodogram:
+          fft_chunk_trajectories: 8
+    allan_variance:
+      modes:
+      - 0
+      - 1
+      - 2
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes:
+      - 0
+      - 1
+      - 2
+      time_blocks: 20
+      time_chunk_samples: 16384

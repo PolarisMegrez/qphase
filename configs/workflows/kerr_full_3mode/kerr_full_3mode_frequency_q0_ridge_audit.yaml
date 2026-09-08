@@ -1,0 +1,145 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_frequency_q0_ridge_audit
+title: Kerr Full 3Mode Q0 Ridge-Conditioned Carrier Audit
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- purpose:validation/frequency-q0-ridge
+jobs:
+- name: kerr_full_3mode_q0r_kf3f_019_ridge
+  input:
+    from: D:/Code/qphase/runs/2026/09/2026-09-04T12-58-16_ce3007/kerr_full_3mode_q0_kf3f_019_omega_c_positive
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    spectral_ridge:
+      scan_param: omega_c
+      readouts: [trace, 0, 1, 2]
+      freq_min: -2.5
+      freq_max: 0.5
+      minimum_prominence_fraction: 0.01
+      tracking_path_count: 3
+      tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_q0r_kf3f_019_mode0_carrier
+  input:
+    from: D:/Code/qphase/runs/2026/09/2026-09-04T12-58-16_ce3007/kerr_full_3mode_q0_kf3f_019_omega_c_positive
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_c
+      readout: 0
+      freq_min: -2.5
+      freq_max: 0.5
+      maximum_lag: 1024.0
+      tracking_enabled: true
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_c
+          readouts: [0]
+          freq_min: -2.5
+          freq_max: 0.5
+          minimum_prominence_fraction: 0.01
+          tracking_path_count: 3
+          tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_q0r_kf3f_019_trace_carrier
+  input:
+    from: D:/Code/qphase/runs/2026/09/2026-09-04T12-58-16_ce3007/kerr_full_3mode_q0_kf3f_019_omega_c_positive
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_c
+      readout: trace
+      freq_min: -2.5
+      freq_max: 0.5
+      maximum_lag: 1024.0
+      tracking_enabled: true
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_c
+          readouts: [trace]
+          freq_min: -2.5
+          freq_max: 0.5
+          minimum_prominence_fraction: 0.01
+          tracking_path_count: 3
+          tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_q0r_kf3f_036_ridge
+  input:
+    from: D:/Code/qphase/runs/2026/09/2026-09-04T12-58-16_ce3007/kerr_full_3mode_q0_kf3f_036_omega_c_negative
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    spectral_ridge:
+      scan_param: omega_c
+      readouts: [trace, 0, 1, 2]
+      freq_min: 0.0
+      freq_max: 6.0
+      minimum_prominence_fraction: 0.01
+      tracking_path_count: 3
+      tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_q0r_kf3f_036_mode0_carrier
+  input:
+    from: D:/Code/qphase/runs/2026/09/2026-09-04T12-58-16_ce3007/kerr_full_3mode_q0_kf3f_036_omega_c_negative
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_c
+      readout: 0
+      freq_min: 0.0
+      freq_max: 6.0
+      maximum_lag: 1024.0
+      tracking_enabled: true
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_c
+          readouts: [0]
+          freq_min: 0.0
+          freq_max: 6.0
+          minimum_prominence_fraction: 0.01
+          tracking_path_count: 3
+          tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_q0r_kf3f_036_trace_carrier
+  input:
+    from: D:/Code/qphase/runs/2026/09/2026-09-04T12-58-16_ce3007/kerr_full_3mode_q0_kf3f_036_omega_c_negative
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_c
+      readout: trace
+      freq_min: 0.0
+      freq_max: 6.0
+      maximum_lag: 1024.0
+      tracking_enabled: true
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_c
+          readouts: [trace]
+          freq_min: 0.0
+          freq_max: 6.0
+          minimum_prominence_fraction: 0.01
+          tracking_path_count: 3
+          tracking_max_cost_delta: 2.0

@@ -1,0 +1,76 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_frequency_q0_fallback
+title: Kerr Full 3Mode Frequency Q0 Gap Fallback
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- purpose:validation/frequency-q0-fallback
+jobs:
+- name: kerr_full_3mode_q0f_kf3f_032_outer
+  save: true
+  engine:
+    sde:
+      t0: 10000.0
+      t1: 30000.0
+      dt: 0.01
+      n_traj: 8
+      seed: 202609061
+      ic:
+      - - "-17.555291182822057+0.19321634313700783j"
+        - "-1.4919527457700898-7.011882340280477j"
+        - "34.21438856861703+0.0j"
+      adaptive: false
+      save_stride: 25
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 4
+      max_state_norm: 1000.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 1024, max_modes: 16}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 2.1
+      omega_c: 1.693026328083852
+      chi: 0.002
+      gamma_a: 4.0
+      gamma_b: 4.0
+      gamma_c: 1.2280049821171213
+      g_ab: 5.0
+      g_ac: 0.05
+      g_bc: 3.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      threshold: 765.9145975702532
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes: [0, 1, 2]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 10.0
+      estimator: {periodogram: {fft_chunk_trajectories: 2}}
+    allan_variance:
+      modes: [0, 1, 2]
+      points: 48
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 8192
+      device_chunk_trajectories: 4
+    coherence_matrix:
+      modes: [0, 1, 2]
+      time_blocks: 8
+      time_chunk_samples: 8192
+    moment_statistics:
+      modes: [0, 1, 2]
+      time_blocks: 8
+      time_chunk_samples: 8192

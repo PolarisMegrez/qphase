@@ -201,22 +201,20 @@ def test_profile_output_names_must_be_unique():
         )
 
 
-def test_profile_slot_may_not_be_both_input_and_output():
-    """A slot is either consumed or produced, never both under one name."""
-    with pytest.raises(ValidationError, match="both input slots and output products"):
-        EngineTaskProfile(
-            id="bad",
-            inputs=[
-                InputProductRequirement(
-                    name="shared", requirement=ProductRequirement(name="shared")
-                )
-            ],
-            outputs=[
-                OutputProductDeclaration(
-                    name="shared",
-                    declaration=ProductDeclaration(
-                        name="shared", kind=DataKind.TIME_SERIES
-                    ),
-                )
-            ],
-        )
+def test_profile_input_and_output_names_are_separate_namespaces():
+    """A transform may consume and produce the same local name."""
+    profile = EngineTaskProfile(
+        id="transform",
+        inputs=[
+            InputProductRequirement(
+                name="data", requirement=ProductRequirement(name="data")
+            )
+        ],
+        outputs=[
+            OutputProductDeclaration(
+                name="data",
+                declaration=ProductDeclaration(name="data", kind=DataKind.TIME_SERIES),
+            )
+        ],
+    )
+    assert profile.inputs[0].name == profile.outputs[0].name

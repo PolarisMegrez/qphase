@@ -28,7 +28,7 @@ from typing import Any, ClassVar, Literal
 
 from qphase.backend.base import BackendBase
 from qphase.core.protocols import PluginBase, PluginConfigBase, ResultProtocol
-from qphase.data import DataKind, ProductRequirement
+from qphase.data import DataKind, ProductDeclaration, ProductRequirement
 
 from ..contracts.analyser import (
     AnalyserExecutionCapabilities,
@@ -134,6 +134,12 @@ class Analyzer(PluginBase, ABC):
     def reducer(self) -> ReducerProtocol | None:
         """Return the reducer for batched/streaming execution, if supported."""
         return None
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        """Declare the product set of a single-output analyser."""
+        raise NotImplementedError(
+            f"analyser {type(self).__name__!r} must declare output_specs()"
+        )
 
     @abstractmethod
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:

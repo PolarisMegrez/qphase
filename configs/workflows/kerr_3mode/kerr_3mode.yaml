@@ -39,7 +39,6 @@ jobs:
     psd:
       modes: [0]
       kind: complex
-      find_peaks: true
     pdist:
       modes: [0]
       bins: "auto"
@@ -65,3 +64,14 @@ jobs:
       gamma_a: 1.00000000e-05
       gamma_b: 0.1
       gamma_c: 0.1
+
+- name: kerr_3mode_peaks
+  input: {from: kerr_3mode, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    peaks:
+      scan_param: gamma_a
+      psd_key: psd
+      finder: scipy

@@ -630,8 +630,8 @@ CHANNEL_MEASUREMENT_KINDS: tuple[str, ...] = (
 _MEASUREMENT_KIND_SET = frozenset(CHANNEL_MEASUREMENT_KINDS)
 
 #: Tolerances of the measurement-basis checks (unit weights, zero blocks,
-#: Hermiticity): loose enough for float64 roundoff, tight enough to catch
-#: structural violations.
+#: Hermiticity and positive semidefiniteness): loose enough for float64
+#: roundoff, tight enough to catch structural violations.
 _BASIS_RTOL = 1e-6
 _BASIS_ATOL = 1e-9
 
@@ -737,7 +737,7 @@ def _check_measurement_basis(
                     f"{kind} channel {name!r} requires channel_mode_weights: "
                     "the rank-1 readout vector l of W = l l^dagger"
                 )
-            if matrix is not None and bool(np.any(np.abs(matrix) > _BASIS_ATOL)):
+            if matrix is not None and bool(np.any(matrix != 0.0)):
                 raise ValueError(
                     f"channel {name!r} populates both channel_mode_weights and "
                     "channel_mode_matrix: exactly one representation per channel"
@@ -751,7 +751,7 @@ def _check_measurement_basis(
                         f"bare channel {name!r} must carry exactly one unit "
                         "weight with all other weights zero (W = e_m e_m^dagger)"
                     )
-            elif not bool(np.any(np.abs(vector) > _BASIS_ATOL)):
+            elif not bool(np.any(vector != 0.0)):
                 raise ValueError(
                     f"coherent channel {name!r} must carry a non-zero readout "
                     "vector l (W = l l^dagger)"
@@ -763,35 +763,44 @@ def _check_measurement_basis(
                     "the Hermitian measurement matrix W acting on the mode "
                     "vector"
                 )
-            if vector is not None and bool(np.any(np.abs(vector) > _BASIS_ATOL)):
+            if vector is not None and bool(np.any(vector != 0.0)):
                 raise ValueError(
                     f"channel {name!r} populates both channel_mode_weights and "
                     "channel_mode_matrix: exactly one representation per channel"
                 )
-            if not bool(np.any(np.abs(matrix) > _BASIS_ATOL)):
+            scale = float(np.max(np.abs(matrix)))
+            if scale == 0.0:
                 raise ValueError(
                     f"{kind} channel {name!r} must carry a non-zero "
                     "measurement matrix W"
                 )
-            scale = max(1.0, float(np.max(np.abs(matrix))))
             hermiticity = float(np.max(np.abs(matrix - matrix.conj().T)))
-            if hermiticity > _BASIS_ATOL + _BASIS_RTOL * scale:
+            tolerance = _BASIS_RTOL * scale
+            if hermiticity > tolerance:
                 raise ValueError(
                     f"channel_mode_matrix of channel {name!r} must be "
                     "Hermitian (W = W^dagger)"
                 )
+            eigenvalues = np.linalg.eigvalsh(0.5 * (matrix + matrix.conj().T))
+            eigen_tolerance = tolerance
+            if float(np.min(eigenvalues)) < -eigen_tolerance:
+                raise ValueError(
+                    f"channel_mode_matrix of channel {name!r} must be "
+                    "positive semidefinite (non-negative, W >= 0) for a "
+                    "power measurement"
+                )
             if kind == "incoherent":
                 off_diagonal = matrix.copy()
                 np.fill_diagonal(off_diagonal, 0.0)
-                if bool(np.any(np.abs(off_diagonal) > _BASIS_ATOL)):
+                if bool(np.any(np.abs(off_diagonal) > tolerance)):
                     raise ValueError(
                         f"incoherent channel {name!r} must carry a diagonal "
                         "W: an incoherent sum over the modes (W = I for a "
                         "plain trace)"
                     )
                 diagonal = np.diagonal(matrix)
-                if bool(np.any(np.abs(diagonal.imag) > _BASIS_ATOL)) or bool(
-                    np.any(diagonal.real < -_BASIS_ATOL)
+                if bool(np.any(np.abs(diagonal.imag) > tolerance)) or bool(
+                    np.any(diagonal.real < -tolerance)
                 ):
                     raise ValueError(
                         f"incoherent channel {name!r} must carry real "

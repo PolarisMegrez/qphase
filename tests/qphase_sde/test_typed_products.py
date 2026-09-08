@@ -252,7 +252,7 @@ def test_psd_scan_product_stacks_over_scan_axis():
     np.testing.assert_array_equal(payload["modes"], [0])
 
 
-def test_psd_peak_metadata_isolated_from_graph_ready_spectrum():
+def test_psd_does_not_build_inline_peak_products():
     analyser = PsdAnalyzer(kind="complex", modes=[0])
     axis = np.linspace(-1.0, 1.0, 5)
     payload = {
@@ -263,21 +263,12 @@ def test_psd_peak_metadata_isolated_from_graph_ready_spectrum():
         "modes": [0],
         "orientation": "phase_decreasing",
         "uncertainty": {"n_independent": 4},
-        "peaks": {0: {"center": 0.25, "linewidth": 0.1}},
     }
     products = analyser.build_products(payload, scan_size=None, label="psd")
     assert products is not None
     spectrum = products["psd"]
+    assert set(products) == {"psd"}
     assert "peaks" not in spectrum.attributes["payload_meta"]
-    legacy = products["psd.legacy_peaks"]
-    assert legacy.attributes["bridge"] == "legacy_peaks/1"
-    assert legacy.attributes["graph_ready"] is False
-    assert legacy.attributes["source_product"] == "psd"
-    assert legacy.attributes["payload_field"] == "peaks"
-
-    restored = legacy_view_from_products(products)
-    assert sorted(restored.analysis) == ["psd"]
-    assert restored.analysis["psd"]["peaks"]["0"]["center"] == 0.25
 
 
 def test_psd_peak_bridge_restores_per_scan_point():
@@ -299,12 +290,10 @@ def test_psd_peak_bridge_restores_per_scan_point():
     products = analyser.build_products(points, scan_size=2, label="psd")
     assert products is not None
 
-    for index, expected in enumerate((0.25, 0.5)):
-        point_products = {
-            name: product.point_view(scan=index) for name, product in products.items()
-        }
+    for index in range(2):
+        point_products = {"psd": products["psd"].point_view(scan=index)}
         restored = legacy_view_from_products(point_products, meta={"scan_index": index})
-        assert restored.analysis["psd"]["peaks"]["0"]["center"] == expected
+        assert "peaks" not in restored.analysis["psd"]
 
 
 def test_allan_product_is_graph_ready_statistics():

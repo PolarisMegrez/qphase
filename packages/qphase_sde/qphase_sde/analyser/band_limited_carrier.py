@@ -15,6 +15,7 @@ from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase, ResultProtocol
 from qphase.data import (
     DataKind,
+    Dataset,
     ProductDeclaration,
     ProductRequirement,
     SpectralQuantity,
@@ -25,6 +26,7 @@ from ..contracts.analyser import (
     AnalyserWorkspaceRequest,
     WorkEstimate,
 )
+from ..products import assemble_row_table_product
 from .base import Analyzer
 from .frequency_orientation import (
     FrequencyOrientation,
@@ -48,6 +50,82 @@ __all__ = [
     "estimate_band_limited_carrier",
     "track_band_limited_carrier",
 ]
+
+
+def _unique_fields(*names: str) -> list[str]:
+    return list(dict.fromkeys(names))
+
+
+_CARRIER_RESULT_FIELDS = (
+    "frequency",
+    "regression_std",
+    "bandwidth_std",
+    "diagnostic_uncertainty",
+    "peak_center",
+    "peak_hwhm",
+    "spectral_width",
+    "selected_half_bandwidth",
+    "consensus_count",
+    "phase_fit_rms",
+    "lag_points",
+    "lag_start",
+    "lag_end",
+    "frequency_drift",
+    "decay_rate",
+    "touched_maximum_lag",
+    "platform_count",
+    "tracked_frequency",
+    "tracked_diagnostic_uncertainty",
+    "tracked_platform_index",
+    "tracked_path_cost_gap",
+    "row_valid",
+)
+
+
+def _carrier_result_fields(scan_param: str) -> list[str]:
+    return _unique_fields(scan_param, *_CARRIER_RESULT_FIELDS)
+
+
+def _carrier_candidate_fields(scan_param: str) -> list[str]:
+    return _unique_fields(
+        scan_param,
+        "half_bandwidth",
+        "frequency",
+        "regression_std",
+        "phase_fit_rms",
+        "frequency_drift",
+        "decay_rate",
+        "lag_points",
+        "lag_start",
+        "lag_end",
+        "touched_maximum_lag",
+        "row_valid",
+    )
+
+
+def _carrier_platform_fields(scan_param: str) -> list[str]:
+    return _unique_fields(
+        scan_param,
+        "platform_index",
+        "frequency",
+        "regression_std",
+        "bandwidth_std",
+        "diagnostic_uncertainty",
+        "score",
+        "first_candidate",
+        "last_candidate",
+        "candidate_count",
+        "minimum_half_bandwidth",
+        "maximum_half_bandwidth",
+        "log_bandwidth_span",
+        "phase_fit_rms",
+        "frequency_drift",
+        "decay_rate",
+        "lag_start",
+        "lag_end",
+        "touched_maximum_lag",
+        "row_valid",
+    )
 
 
 class RidgeConditionedCenterConfig(PluginConfigBase):
@@ -1190,9 +1268,99 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         ]
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
-        # The payload is row tables plus orientation metadata only: the legacy
-        # bridge finds no numeric leaves, so the declaration is field-free.
-        return (ProductDeclaration(name=label, kind=DataKind.STATISTICS),)
+        config = cast(BandLimitedCarrierConfig, self.config)
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.STATISTICS,
+                fields=_carrier_result_fields(config.scan_param),
+            ),
+            ProductDeclaration(
+                name=f"{label}.candidates",
+                kind=DataKind.STATISTICS,
+                fields=_carrier_candidate_fields(config.scan_param),
+            ),
+            ProductDeclaration(
+                name=f"{label}.platforms",
+                kind=DataKind.STATISTICS,
+                fields=_carrier_platform_fields(config.scan_param),
+            ),
+        )
+
+    def build_products(
+        self,
+        payload: Any,
+        *,
+        scan_size: int | None,
+        label: str,
+    ) -> dict[str, Dataset] | None:
+        """Build graph-ready products for results and their audit tables."""
+        if not isinstance(payload, dict):
+            raise TypeError("band_limited_carrier payload must be a mapping")
+        config = cast(BandLimitedCarrierConfig, self.config)
+        rows = payload.get("carrier_rows", [])
+        candidates = payload.get("candidate_rows", [])
+        platforms = payload.get("platform_rows", [])
+        if not all(isinstance(value, list) for value in (rows, candidates, platforms)):
+            raise TypeError("band_limited_carrier row tables must be lists")
+        metadata = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"carrier_rows", "candidate_rows", "platform_rows"}
+        }
+        result = assemble_row_table_product(
+            label,
+            rows,
+            scan_size=scan_size,
+            fields=_carrier_result_fields(config.scan_param),
+            integer_fields=(
+                "consensus_count",
+                "lag_points",
+                "touched_maximum_lag",
+                "platform_count",
+                "tracked_platform_index",
+            ),
+            scan_value_field=config.scan_param,
+            quantities={"frequency": "coherence_frequency"},
+            payload_key="carrier_rows",
+            payload_meta=metadata,
+            attributes={"table": "band_limited_carrier"},
+        )
+        candidate = assemble_row_table_product(
+            f"{label}.candidates",
+            candidates,
+            scan_size=scan_size,
+            fields=_carrier_candidate_fields(config.scan_param),
+            integer_fields=("lag_points", "touched_maximum_lag"),
+            scan_value_field=config.scan_param,
+            quantities={"frequency": "coherence_frequency"},
+            payload_key="candidate_rows",
+            payload_meta=metadata,
+            attributes={"table": "band_limited_carrier_candidates"},
+        )
+        platform = assemble_row_table_product(
+            f"{label}.platforms",
+            platforms,
+            scan_size=scan_size,
+            fields=_carrier_platform_fields(config.scan_param),
+            integer_fields=(
+                "platform_index",
+                "first_candidate",
+                "last_candidate",
+                "candidate_count",
+                "touched_maximum_lag",
+            ),
+            scan_value_field=config.scan_param,
+            quantities={"frequency": "coherence_frequency"},
+            payload_key="platform_rows",
+            payload_meta=metadata,
+            attributes={"table": "band_limited_carrier_platforms"},
+        )
+        return {
+            label: result,
+            f"{label}.candidates": candidate,
+            f"{label}.platforms": platform,
+        }
 
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         config = cast(BandLimitedCarrierConfig, self.config)

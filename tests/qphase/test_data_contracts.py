@@ -605,10 +605,16 @@ def _edge(
 
 
 def _binding(
-    sink: ProductNode, requirement: str, source: str = "job.input"
+    sink: ProductNode,
+    requirement: str,
+    source: str = "job.input",
+    product: str = "input",
 ) -> ExternalInputBinding:
     return ExternalInputBinding(
-        consumer=sink.node_id, requirement=requirement, source=source
+        consumer=sink.node_id,
+        requirement=requirement,
+        source=source,
+        product=product,
     )
 
 
@@ -869,13 +875,20 @@ def test_product_graph_accepts_compatible_and_open_facets():
 
 def test_external_input_binding_contract():
     """External bindings name a consumer slot and a non-empty source label."""
-    binding = ExternalInputBinding(consumer="n", requirement="in", source="job.input")
+    binding = ExternalInputBinding(
+        consumer="n", requirement="in", source="job.input", product="input"
+    )
     assert binding.source == "job.input"
+    assert binding.product == "input"
     with pytest.raises(ValidationError, match="source"):
         ExternalInputBinding(consumer="n", requirement="in", source="")
     with pytest.raises(ValidationError, match="extra"):
         ExternalInputBinding(
-            consumer="n", requirement="in", source="job.input", provenance="x"
+            consumer="n",
+            requirement="in",
+            source="job.input",
+            product="input",
+            provenance="x",
         )
 
 
@@ -920,6 +933,60 @@ def test_product_graph_required_slots_need_exactly_one_binding():
         )
 
 
+def test_external_input_binding_resolves_one_schema_compatible_product():
+    """Materialization validates the explicitly named external product."""
+    sink = _node(
+        "analyser.spectrum",
+        "out",
+        requires=[ProductRequirement(name="input", kind=DataKind.SPECTRAL)],
+    )
+    graph = ProductGraph(
+        nodes=[sink],
+        external_inputs=[
+            _binding(sink, "input", source="artifact", product="spectrum")
+        ],
+    )
+    schema = ProductSchema(
+        kind=DataKind.SPECTRAL,
+        axes=[AxisSchema(name="frequency", role=AxisRole.COORDINATE, size=4)],
+        variables=[
+            VariableSchema(
+                name="spectrum",
+                dtype="float64",
+                value_domain="real",
+                dims=("frequency",),
+            )
+        ],
+        attributes={
+            "frequency_units": "Hz",
+            "orientation": "phase_decreasing",
+            "sidedness": "two_sided",
+            "normalization": "test",
+            "window": "rectangular",
+            "estimator": "test",
+        },
+    )
+    graph.validate_external_products({"artifact": {"spectrum": schema}})
+    with pytest.raises(ValueError, match="does not resolve"):
+        graph.validate_external_products({"artifact": {"other": schema}})
+    with pytest.raises(ValueError, match="does not satisfy"):
+        graph.validate_external_products(
+            {
+                "artifact": {
+                    "spectrum": ProductSchema(
+                        kind=DataKind.TIME_SERIES,
+                        axes=[
+                            AxisSchema(
+                                name="frequency", role=AxisRole.COORDINATE, size=4
+                            )
+                        ],
+                        variables=schema.variables,
+                    )
+                }
+            }
+        )
+
+
 def test_product_graph_optional_slots_allow_at_most_one_binding():
     """Optional requirements may be unbound but never bound twice."""
     ref_source = _node("analyser.reference", ("ref", DataKind.SPECTRAL))
@@ -950,7 +1017,10 @@ def test_product_graph_external_bindings_must_reference_declared_slots():
             nodes=[sink],
             external_inputs=[
                 ExternalInputBinding(
-                    consumer="missing", requirement="traces", source="job.input"
+                    consumer="missing",
+                    requirement="traces",
+                    source="job.input",
+                    product="trajectories",
                 )
             ],
         )

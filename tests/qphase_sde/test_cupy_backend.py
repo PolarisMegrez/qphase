@@ -266,11 +266,7 @@ def test_cupy_vdp_end_to_end_smoke():
             "model": model,
             "integrator": GenericSRK(),
             "analyser": {
-                "psd": PsdAnalyzer(
-                    config=PsdAnalyzerConfig(
-                        modes=[0], kind="complex", find_peaks=False
-                    )
-                )
+                "psd": PsdAnalyzer(config=PsdAnalyzerConfig(modes=[0], kind="complex"))
             },
         },
     )
@@ -337,7 +333,6 @@ jobs:
       psd:
         modes: [0]
         kind: complex
-        find_peaks: false
 """
     )
 

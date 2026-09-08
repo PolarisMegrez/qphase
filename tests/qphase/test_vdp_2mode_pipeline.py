@@ -107,14 +107,14 @@ def test_vdp_2mode_smoke_workflow_scheduler(vdp_workflow_path, temp_project):
     _discover_plugins()
 
     job_list = load_workflow(vdp_workflow_path)
-    assert len(job_list.jobs) == 3, "Expected sim + 2 fit jobs"
+    assert len(job_list.jobs) == 4, "Expected sim + 2 fit + peaks jobs"
 
     scheduler = Scheduler(
         system_config=_make_system_config(temp_project.root), project=temp_project
     )
     results = scheduler.run(job_list)
 
-    assert len(results) == 3, "Expected one logical sim job + 2 fit jobs"
+    assert len(results) == 4, "Expected one logical sim job + 2 fit + peaks jobs"
     assert all(r.success for r in results), f"Job failed: {results}"
 
     sim = next(r for r in results if r.job_name == "vdp_2mode_sim")
@@ -149,7 +149,7 @@ def test_vdp_2mode_smoke_cli_plan(vdp_workflow_path, vdp_cli_project, tmp_path):
     assert result.exit_code == 0, result.output
 
     plan = _extract_json(result.output)
-    assert len(plan["jobs"]) == 3
+    assert len(plan["jobs"]) == 4
     sim_plan = next(job for job in plan["jobs"] if job["name"] == "vdp_2mode_sim")
     assert sim_plan["scan_summary"]["shape"] == [3]
 
@@ -157,6 +157,7 @@ def test_vdp_2mode_smoke_cli_plan(vdp_workflow_path, vdp_cli_project, tmp_path):
     targets = {e["target"] for e in edges}
     assert "vdp_2mode_fit_mode0" in targets
     assert "vdp_2mode_fit_mode1" in targets
+    assert "vdp_2mode_peaks" in targets
 
 
 def test_vdp_2mode_smoke_cli_run(vdp_workflow_path, vdp_cli_project, tmp_path):
@@ -170,7 +171,7 @@ def test_vdp_2mode_smoke_cli_run(vdp_workflow_path, vdp_cli_project, tmp_path):
     assert result.exit_code == 0, result.output
 
     report = _extract_json(result.output)
-    assert report["completed"] == 3
+    assert report["completed"] == 4
     assert report["failed"] == 0
     session = Path(report["session_dir"])
     for mode in (0, 1):

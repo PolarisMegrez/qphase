@@ -1,13 +1,8 @@
-"""Golden-value baselines for PSD inline ``find_peaks`` (Wave 5B equivalence).
+"""Golden-value baselines for the standalone PSD peak analyser (Wave 5B equivalence).
 
-Migration row: PSD inline ``find_peaks`` -> ``analyser.peaks`` +
-``peak_finder.prominence``. The existing suite pins the PSD spectrum itself
-(``test_psd_methods.py``) but never the ``peaks`` payload. These tests capture
-what ``PsdAnalyzer(find_peaks=True)`` emits today: with the legacy bool flag
-the psd config forwards all-``None`` deprecated fields, so the SciPy finder
-applies no height/prominence filtering (only ``distance=5`` after log-savgol
-smoothing) and returns every local maximum with empty ``properties``.
-
+Migration row: PSD inline peak finding -> ``analyser.peaks`` +
+``peak_finder.scipy``. The spectrum remains produced by ``PsdAnalyzer`` and
+these tests pin the numerical output of the standalone finder on that spectrum.
 Tolerance policy: peak ``indices`` are exact integers. ``frequencies`` and
 ``values`` involve pocketfft + savgol (deterministic per environment, but
 last-ulp drift across NumPy/SciPy builds is possible), so they are pinned
@@ -20,7 +15,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
 from qphase_sde.analyser.psd import PsdAnalyzer
+from qphase_sde.peak_finder import ScipyPeakFinder, ScipyPeakFinderConfig
+from qphase_sde.result import SDEResult
 from qphase_sde.state import TrajectorySet
 
 RTOL = 1e-6
@@ -44,22 +42,42 @@ def _tone_fixture() -> TrajectorySet:
     return TrajectorySet(data=data + noise, dt=DT, meta={"mode_indices": [0, 1]})
 
 
+def _baseline_peaks() -> dict[str, dict[int, dict[str, object]]]:
+    spectrum = (
+        PsdAnalyzer(modes=[0, 1], kind="complex")
+        .analyze(_tone_fixture(), NumpyBackend())
+        .data_dict
+    )
+    finder = ScipyPeakFinder(
+        ScipyPeakFinderConfig(
+            distance=5,
+            smooth_window=5,
+            noise_threshold=None,
+            prominence=None,
+        )
+    )
+    axis = np.asarray(spectrum["axis"])
+    matrix = np.asarray(spectrum["psd"])
+    return {
+        "peaks": {
+            mode: finder.find_peaks(axis, matrix[:, index]).model_dump()
+            for index, mode in enumerate((0, 1))
+        }
+    }
+
+
 def test_psd_find_peaks_false_emits_empty_payload():
     out = (
-        PsdAnalyzer(modes=[0, 1], kind="complex", find_peaks=False)
+        PsdAnalyzer(modes=[0, 1], kind="complex")
         .analyze(_tone_fixture(), NumpyBackend())
         .data_dict
     )
 
-    assert out["peaks"] == {}
+    assert "peaks" not in out
 
 
 def test_psd_find_peaks_true_payload_baseline():
-    out = (
-        PsdAnalyzer(modes=[0, 1], kind="complex", find_peaks=True)
-        .analyze(_tone_fixture(), NumpyBackend())
-        .data_dict
-    )
+    out = _baseline_peaks()
 
     mode0 = out["peaks"][0]
     assert mode0["properties"] == {}
@@ -305,13 +323,38 @@ def test_psd_find_peaks_true_payload_baseline():
     )
 
 
-def test_psd_find_peaks_carrier_anchor_baseline():
-    """The dominant detected peak per mode must sit on the injected tones."""
-    out = (
-        PsdAnalyzer(modes=[0, 1], kind="complex", find_peaks=True)
+def test_standalone_peak_analyser_uses_baseline_spectrum():
+    spectrum = (
+        PsdAnalyzer(modes=[0, 1], kind="complex")
         .analyze(_tone_fixture(), NumpyBackend())
         .data_dict
     )
+    analyzer = PeaksAnalyzer(
+        PeaksAnalyzerConfig(
+            scan_param="unused",
+            finder=ScipyPeakFinderConfig(
+                distance=5,
+                smooth_window=5,
+                noise_threshold=None,
+                prominence=None,
+            ),
+        )
+    )
+
+    payload = analyzer.analyze(
+        SDEResult(analysis={"psd": spectrum}), NumpyBackend()
+    ).data_dict
+
+    assert len(payload["peak_points"]) == 1
+    assert payload["modes"] == [0, 1]
+    assert payload["peak_points"][0][0]["frequencies"][0] == pytest.approx(
+        -60.6921101512001, rel=RTOL
+    )
+
+
+def test_psd_find_peaks_carrier_anchor_baseline():
+    """The dominant detected peak per mode must sit on the injected tones."""
+    out = _baseline_peaks()
 
     top0 = int(np.argmax(out["peaks"][0]["values"]))
     assert out["peaks"][0]["indices"][top0] == 132

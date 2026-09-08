@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
-from qphase.core.dataset import DatasetSaveReport
+from qphase.core.dataset import DatasetResultProtocol, DatasetSaveReport
 from qphase.data import (
     AxisRole,
     AxisSchema,
@@ -670,6 +670,11 @@ def legacy_view_from_products(
     deferred_bridges: list[tuple[str, str, dict[Any, Any]]] = []
     for name, product in products.items():
         axis_names = {axis.name for axis in product.axes}
+        if (
+            product.attributes.get("table") == "peak_candidates"
+            and product.attributes.get("source_product") in products
+        ):
+            continue
         if _SCAN_AXIS in axis_names:
             scan_axis = product.axis(_SCAN_AXIS)
             if scan_axis.size not in (None, 1):
@@ -741,6 +746,7 @@ def bundle_from_result(
     provenance: SDEProvenance,
     n_traj_per_point: int | None = None,
     analysers: Mapping[str, Any] | None = None,
+    source_scan: DatasetResultProtocol | None = None,
 ) -> SDEDataBundle:
     """Adapt a legacy SDEResult/SDEScanResult into an SDEDataBundle.
 
@@ -760,6 +766,11 @@ def bundle_from_result(
     axis) and the exact grid size otherwise — a 1-point scan keeps a scan
     axis of size 1. Payloads are bare per-point mappings for
     ``scan_size == 1`` and lists of per-point payloads for larger scans.
+
+    ``source_scan`` supplies an upstream dataset identity for analyze jobs;
+    only producers declaring ``preserves_input_scan`` receive that size while
+    building their output. Other analysers may publish a cross-scan aggregate
+    without a scan axis.
 
     Producer failures are fail-fast: a payload of a registered analyser (a
     name present in ``analysers``) that builds no product, a product whose
@@ -783,6 +794,23 @@ def bundle_from_result(
         scan_coordinates = grid.parameter_arrays(flatten=True)
         if n_traj_per_point is None:
             n_traj_per_point = getattr(result, "n_traj_per_point", None)
+    elif source_scan is not None and source_scan.shape:
+        scan_shape = tuple(source_scan.shape)
+        scan_size = math.prod(scan_shape)
+        scan_axes = dict(source_scan.axes)
+        metadata = getattr(source_scan, "metadata", {})
+        combine = metadata.get("scan_combine") if isinstance(metadata, dict) else None
+        if combine == "zipped":
+            scan_coordinates = {
+                name: np.asarray(values).reshape(-1)
+                for name, values in scan_axes.items()
+            }
+        else:
+            meshes = np.meshgrid(*scan_axes.values(), indexing="ij")
+            scan_coordinates = {
+                name: values.reshape(-1)
+                for name, values in zip(scan_axes, meshes, strict=True)
+            }
     else:
         scan_size, scan_shape, scan_axes = None, (), {}
         scan_coordinates = {}
@@ -804,8 +832,14 @@ def bundle_from_result(
         if builder is not None:
             # The analyser's own builder is authoritative for its payload:
             # an empty result is a producer failure, never a bridge fallback.
+            builder_scan_size = (
+                scan_size
+                if source_scan is None
+                or getattr(analyser, "preserves_input_scan", False)
+                else None
+            )
             built = (
-                builder(payload, scan_size=scan_size, label=str(name))
+                builder(payload, scan_size=builder_scan_size, label=str(name))
                 if payload is not None
                 else None
             )
@@ -887,6 +921,7 @@ def bundle_from_result(
                     graph_ready
                     and scan_size is not None
                     and _SCAN_AXIS not in product_axes
+                    and source_scan is None
                 ):
                     raise SDEExecutionError(
                         f"analyser product {product_name!r} has no scan axis, "
@@ -894,6 +929,13 @@ def bundle_from_result(
                         "output is incomplete and the job is marked failed"
                     )
                 if _SCAN_AXIS in product_axes:
+                    if scan_size is None:
+                        raise SDEExecutionError(
+                            f"analyser product {product_name!r} has a scan "
+                            "axis, but the execution has no scan identity; "
+                            "the producer output is incomplete and the job "
+                            "is marked failed"
+                        )
                     product_scan_size = product.axis(_SCAN_AXIS).size
                     if product_scan_size is None or product_scan_size != scan_size:
                         raise SDEExecutionError(

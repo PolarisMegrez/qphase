@@ -55,7 +55,6 @@ jobs:
     psd:
       modes: [0]
       kind: complex
-      find_peaks: true
 
 - name: kerr_3mode_cayley_fit
   input:
@@ -75,3 +74,14 @@ jobs:
       export:
       - fit_results.csv
       - psd_merged.csv
+
+- name: kerr_3mode_cayley_peaks
+  input: {from: kerr_3mode_cayley_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    peaks:
+      scan_param: gamma_a
+      psd_key: psd
+      finder: scipy

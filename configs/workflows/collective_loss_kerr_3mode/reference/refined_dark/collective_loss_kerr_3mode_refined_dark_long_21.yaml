@@ -77,7 +77,6 @@ jobs:
       kind: complex
       convention: symmetric
       expected_freq_max: 1.0
-      find_peaks: true
       estimator: {periodogram: {fft_chunk_trajectories: 2}}
     allan_variance:
       modes: [0]
@@ -132,3 +131,14 @@ jobs:
       bootstrap_seed: 20260820
       min_frequency_rss_improvement: 0.05
       normal_form: {n: 3, k: 1, m: 0, observable_order: 1}
+
+- name: collective_loss_kerr_3mode_refined_dark_long_21_peaks
+  input: {from: collective_loss_kerr_3mode_refined_dark_long_21_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    peaks:
+      scan_param: omega_c
+      psd_key: psd
+      finder: scipy

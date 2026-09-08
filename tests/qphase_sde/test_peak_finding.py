@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import numpy as np
+from qphase.backend.numpy_backend import NumpyBackend
+from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
 from qphase_sde.peak_finder import (
     PeakInfo,
     RationalPeakFinder,
     RationalPeakFinderConfig,
     ScipyPeakFinder,
     ScipyPeakFinderConfig,
+    TypedPeakFinder,
 )
+from qphase_sde.result import SDEResult
 
 
 def _lorentzian(
@@ -152,3 +156,104 @@ def test_scipy_properties_serialized():
     # SciPy find_peaks properties contain arrays; they must be lists now.
     for value in dumped["properties"].values():
         assert not isinstance(value, np.ndarray)
+
+
+def test_builtin_finder_emits_grouped_typed_candidate_table():
+    freqs = np.linspace(-1.0, 1.0, 101)
+    power = np.vstack(
+        [np.exp(-(((freqs - 0.2) / 0.08) ** 2)), np.exp(-(((freqs + 0.3) / 0.1) ** 2))]
+    )
+    finder = ScipyPeakFinder(ScipyPeakFinderConfig(noise_threshold=None, max_peaks=1))
+    assert isinstance(finder, TypedPeakFinder)
+    table = finder.find_candidate_table(
+        freqs,
+        power,
+        scan_index=0,
+        scan_count=1,
+        channel_names=["mode_0", "mode_1"],
+    )
+    assert table["candidate_offsets"].tolist() == [0, 1, 2]
+    assert table["group_scan_index"].tolist() == [0, 0]
+    assert table["group_channel_index"].tolist() == [0, 1]
+    assert table["columns"]["sample_index"].dtype == np.int64
+    assert table["columns"]["status_code"].tolist() == [3, 3]
+
+
+def test_peaks_analyser_publishes_grouped_product():
+    axis = np.linspace(-1.0, 1.0, 101)
+    inputs = {
+        f"point_{index}": SDEResult(
+            analysis={
+                "psd": {
+                    "axis": axis,
+                    "psd": np.exp(-(((axis - 0.2 - 0.1 * index) / 0.08) ** 2))[:, None],
+                    "modes": [0],
+                    "orientation": "phase_decreasing",
+                }
+            },
+            meta={"params": {"epsilon": float(index)}},
+        )
+        for index in range(2)
+    }
+    analyzer = PeaksAnalyzer(PeaksAnalyzerConfig(scan_param="epsilon", finder="scipy"))
+    payload = analyzer.analyze(inputs, NumpyBackend()).data_dict
+    products = analyzer.build_products(payload, scan_size=2, label="peaks")
+    assert products is not None
+    product = products["peaks"]
+    assert product.attributes["graph_ready"] is True
+    assert product.axis("scan").size == 2
+    assert product.axis("group").size == 2
+
+
+def test_peak_paths_analyser_publishes_typed_path_product():
+    from qphase_sde.analyser.peak_paths import (
+        PeakPathsAnalyzer,
+        PeakPathsAnalyzerConfig,
+    )
+    from qphase_sde.peak_tracker import RidgePeakTrackerConfig
+    from qphase_sde.result import SDEDataBundle, SDEProvenance
+
+    axis = np.linspace(-1.0, 1.0, 101)
+    peak_analyzer = PeaksAnalyzer(
+        PeaksAnalyzerConfig(scan_param="epsilon", finder="scipy")
+    )
+    payload = peak_analyzer.analyze(
+        {
+            f"point_{index}": SDEResult(
+                analysis={
+                    "psd": {
+                        "axis": axis,
+                        "psd": np.exp(-(((axis - 0.2 - 0.1 * index) / 0.08) ** 2))[
+                            :, None
+                        ],
+                        "modes": [0],
+                    }
+                },
+                meta={"params": {"epsilon": float(index)}},
+            )
+            for index in range(2)
+        },
+        NumpyBackend(),
+    ).data_dict
+    candidates = peak_analyzer.build_products(payload, scan_size=2, label="peaks")
+    assert candidates is not None
+    source = SDEDataBundle(
+        candidates,
+        SDEProvenance(dt=1.0),
+        scan_axes={"epsilon": np.asarray([0.0, 1.0])},
+        scan_shape=(2,),
+    )
+    analyzer = PeakPathsAnalyzer(
+        PeakPathsAnalyzerConfig(
+            scan_param="epsilon",
+            tracker=RidgePeakTrackerConfig(path_count=1),
+        )
+    )
+    result = analyzer.analyze(source, NumpyBackend())
+    products = analyzer.build_products(result.data_dict, scan_size=None, label="paths")
+
+    assert products is not None
+    product = products["paths"]
+    assert product.attributes["graph_ready"] is True
+    assert product.schema.attributes["table"] == "peak_paths"
+    assert product.axis("path").size == 1

@@ -56,12 +56,12 @@ def test_cpu_smoke_run_and_postprocess(cpu_workflow_path, temp_project):
     _discover_plugins()
 
     job_list = load_workflow(cpu_workflow_path)
-    assert len(job_list.jobs) == 2
+    assert len(job_list.jobs) == 3
 
     scheduler = Scheduler(system_config=SystemConfig(), project=temp_project)
     results = scheduler.run(job_list)
 
-    assert len(results) == 2, "Expected one logical scan job + one fit job"
+    assert len(results) == 3, "Expected scan, fit, and standalone peaks jobs"
     assert all(r.success for r in results), f"Job failed: {results}"
 
     # Locate the fit job run directory.
@@ -70,6 +70,10 @@ def test_cpu_smoke_run_and_postprocess(cpu_workflow_path, temp_project):
     assert (sim_result.job_dir / "artifact_manifest.json").exists()
     assert (fit_result.job_dir / "fit_results.csv").exists()
     assert (fit_result.job_dir / "psd_merged.csv").exists()
+    peaks_result = next(
+        r for r in results if r.job_name == "cpu_smoke_kerr_2mode_peaks"
+    )
+    assert (peaks_result.job_dir / "artifact_manifest.json").exists()
 
 
 def test_cpu_smoke_cli_list(cpu_job_path):

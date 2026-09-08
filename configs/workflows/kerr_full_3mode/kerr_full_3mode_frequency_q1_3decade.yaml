@@ -1,0 +1,261 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_frequency_q1_3decade
+title: Kerr Full 3Mode kf3f-032 Three-Decade Q1 Preflight
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- candidate:kf3f-032
+- purpose:validation/frequency-q1
+jobs:
+- name: kerr_full_3mode_q1_kf3f_032_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint: {enabled: true, interval_chunks: 1, keep_on_success: false}
+      resources: {gpu_memory_fraction: 0.85}
+  scan:
+    axes:
+      omega_b:
+        target: model.kerr_full_3mode.omega_b
+        values:
+        - 2.0001
+        - 2.0001778279410038
+        - 2.000316227766017
+        - 2.00056234132519
+        - 2.001
+        - 2.001778279410039
+        - 2.0031622776601683
+        - 2.0056234132519035
+        - 2.01
+        - 2.017782794100389
+        - 2.031622776601684
+        - 2.0562341325190348
+        - 2.1
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 250000.0
+      dt: 0.02
+      n_traj: 16
+      seed: 202609071
+      ic:
+      - - "-10.809371092579374-0.28323983142467046j"
+        - "-2.0700738252482624-4.377849411179509j"
+        - "21.365299074164604+0.0j"
+      adaptive: false
+      save_stride: 20
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 4
+      max_state_norm: 1000.0
+      state_check_interval_steps: 2048
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 2.0
+      omega_c: 1.693026328083852
+      chi: 0.002
+      gamma_a: 4.0
+      gamma_b: 4.0
+      gamma_c: 1.2280049821171213
+      g_ab: 5.0
+      g_ac: 0.05
+      g_bc: 3.0
+  observer:
+    first_passage:
+      rule: state_norm
+      threshold: 200.0
+      direction: above
+      action: record
+      check_interval_steps: 2048
+      debounce_checks: 2
+  analyser:
+    psd:
+      modes: [0, 1, 2]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 6.0
+      estimator: {periodogram: {fft_chunk_trajectories: 4}}
+    allan_variance:
+      modes: [0, 1, 2]
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 4
+    coherence_matrix:
+      modes: [0, 1, 2]
+      time_blocks: 16
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes: [0, 1, 2]
+      time_blocks: 16
+      time_chunk_samples: 16384
+
+- name: kerr_full_3mode_q1_kf3f_032_ridge
+  input: {from: kerr_full_3mode_q1_kf3f_032_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    spectral_ridge:
+      scan_param: omega_b
+      readouts: [trace, 0, 1, 2]
+      freq_min: 0.5
+      freq_max: 2.5
+      minimum_prominence_fraction: 0.01
+      tracking_path_count: 3
+      tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_q1_kf3f_032_mode0_carrier
+  input: {from: kerr_full_3mode_q1_kf3f_032_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_b
+      readout: 0
+      freq_min: 0.5
+      freq_max: 2.5
+      maximum_lag: 2048.0
+      tracking_enabled: true
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_b
+          readouts: [0]
+          freq_min: 0.5
+          freq_max: 2.5
+          minimum_prominence_fraction: 0.01
+          tracking_path_count: 3
+          tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_q1_kf3f_032_trace_carrier
+  input: {from: kerr_full_3mode_q1_kf3f_032_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_b
+      readout: trace
+      freq_min: 0.5
+      freq_max: 2.5
+      maximum_lag: 2048.0
+      tracking_enabled: true
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_b
+          readouts: [trace]
+          freq_min: 0.5
+          freq_max: 2.5
+          minimum_prominence_fraction: 0.01
+          tracking_path_count: 3
+          tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_q1_kf3f_032_mode1_carrier
+  input: {from: kerr_full_3mode_q1_kf3f_032_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_b
+      readout: 1
+      freq_min: 0.5
+      freq_max: 2.5
+      maximum_lag: 2048.0
+      tracking_enabled: true
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_b
+          readouts: [1]
+          freq_min: 0.5
+          freq_max: 2.5
+          minimum_prominence_fraction: 0.01
+          tracking_path_count: 3
+          tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_q1_kf3f_032_mode2_carrier
+  input: {from: kerr_full_3mode_q1_kf3f_032_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier:
+      scan_param: omega_b
+      readout: 2
+      freq_min: 0.5
+      freq_max: 2.5
+      maximum_lag: 2048.0
+      tracking_enabled: true
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_b
+          readouts: [2]
+          freq_min: 0.5
+          freq_max: 2.5
+          minimum_prominence_fraction: 0.01
+          tracking_path_count: 3
+          tracking_max_cost_delta: 2.0
+
+- name: kerr_full_3mode_q1_kf3f_032_allan_mode0
+  input: {from: kerr_full_3mode_q1_kf3f_032_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling: &allan_scaling_mode0
+      scan_param: omega_b
+      critical_value: 2.0
+      side: positive
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.5
+      min_independent_windows: 8
+      min_scaling_points: 7
+      target_scaling_decades: 2.0
+      max_scaling_reduced_chi2: 30.0
+      bootstrap_samples: 1000
+      bootstrap_seed: 202609071
+      fit_frequency: false
+      normal_form: {n: 3, k: 1, m: 0, observable_order: 1}
+
+- name: kerr_full_3mode_q1_kf3f_032_allan_mode1
+  input: {from: kerr_full_3mode_q1_kf3f_032_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling:
+      <<: *allan_scaling_mode0
+      mode: 1
+      bootstrap_seed: 202609072
+
+- name: kerr_full_3mode_q1_kf3f_032_allan_mode2
+  input: {from: kerr_full_3mode_q1_kf3f_032_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling:
+      <<: *allan_scaling_mode0
+      mode: 2
+      bootstrap_seed: 202609073

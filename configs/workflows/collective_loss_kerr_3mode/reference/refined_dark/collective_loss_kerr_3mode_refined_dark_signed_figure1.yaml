@@ -87,7 +87,6 @@ jobs:
       kind: complex
       convention: symmetric
       expected_freq_max: 1.0
-      find_peaks: true
       estimator: {periodogram: {fft_chunk_trajectories: 2}}
     allan_variance:
       modes: [0]
@@ -128,3 +127,14 @@ jobs:
       uncertainty: auto
       clip_by_std: false
       export: [fit_results.csv]
+
+- name: collective_loss_kerr_3mode_refined_dark_signed_figure1_peaks
+  input: {from: collective_loss_kerr_3mode_refined_dark_signed_figure1_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    peaks:
+      scan_param: omega_c
+      psd_key: psd
+      finder: scipy

@@ -47,7 +47,6 @@ jobs:
       modes: [0]
       kind: complex
       expected_freq_max: 0.34
-      find_peaks: true
 
 - name: vdp_2mode_cayley_fit
   input:
@@ -67,3 +66,14 @@ jobs:
       export:
       - fit_results.csv
       - psd_merged.csv
+
+- name: vdp_2mode_cayley_peaks
+  input: {from: vdp_2mode_cayley_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    peaks:
+      scan_param: omega_a
+      psd_key: psd
+      finder: scipy

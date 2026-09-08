@@ -1,16 +1,16 @@
 """qphase_sde: Peak Finder Plugin Class
 ---------------------------------------------------------
-Two contracts coexist during Wave 5:
+The numerical finder base retains a small private method for compatibility:
 
-- ``PeakFinder`` is the public legacy plugin class: ``find_peaks`` returns
-  the legacy :class:`PeakInfo`, which the production PSD analyser consumes
-  until the Wave 5B migration.
-- :class:`TypedPeakFinder` is the frozen Wave 5B target contract: a runtime
+- ``PeakFinder`` provides the numerical ``find_peaks`` implementation and
+  the public typed ``find_candidate_table`` adapter.
+- :class:`TypedPeakFinder` is the public plugin-class contract: a runtime
   structural protocol whose finders return the grouped candidate-table
   payload of ``qphase_sde.contracts.peaks`` — exactly the mapping
   :func:`~qphase_sde.contracts.peaks.validate_candidate_table` accepts.
 
-No concrete finder claims :class:`TypedPeakFinder` conformance yet.
+Built-in finders satisfy :class:`TypedPeakFinder` through the shared base
+implementation.
 
 Public API
 ----------
@@ -21,14 +21,19 @@ Public API
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 from qphase.core.protocols import PluginConfigBase
+from qphase.data import Dataset, ProductSchema, StatisticsDataset
 
-from ..contracts.peaks import CandidateTablePayload
+from ..contracts.peaks import (
+    PEAK_PRODUCT,
+    CandidateTablePayload,
+    validate_candidate_table,
+)
 
 
 class PeakInfo(BaseModel):
@@ -74,6 +79,101 @@ class BasePeakFinderConfig(PluginConfigBase):
     method: str
 
 
+def materialize_candidate_product(
+    peak_points: Sequence[Mapping[Any, Any]],
+    *,
+    scan_size: int | None,
+    label: str,
+    modes: Sequence[int],
+) -> Dataset:
+    """Materialize per-scan finder results as a grouped peak product."""
+    scan_count = 1 if scan_size is None else scan_size
+    points = list(peak_points)
+    if len(points) != scan_count:
+        raise ValueError("peak_points must match the scan cardinality")
+    group_scan_index: list[int] = []
+    group_channel_index: list[int] = []
+    candidate_offsets = [0]
+    locations: list[float] = []
+    intensities: list[float] = []
+    for scan_index, point in enumerate(points):
+        for channel_index, mode in enumerate(modes):
+            info = point.get(mode, point.get(str(mode), {}))
+            frequencies = info.get("frequencies", [])
+            values = info.get("values", [])
+            if len(frequencies) != len(values):
+                raise ValueError("peak frequencies and values must have equal lengths")
+            group_scan_index.append(scan_index)
+            group_channel_index.append(channel_index)
+            locations.extend(float(value) for value in frequencies)
+            intensities.extend(float(value) for value in values)
+            candidate_offsets.append(len(locations))
+
+    candidate_count = len(locations)
+    columns = {
+        "location": np.asarray(locations, dtype=float),
+        "intensity": np.asarray(intensities, dtype=float),
+        "status_code": np.full(candidate_count, 3, dtype=np.int64),
+    }
+    channel_names = [f"mode_{mode}" for mode in modes]
+    validate_candidate_table(
+        np.asarray(candidate_offsets, dtype=np.int64),
+        np.asarray(group_scan_index, dtype=np.int64),
+        np.asarray(group_channel_index, dtype=np.int64),
+        columns,
+        scan_count=scan_count,
+        channel_names=channel_names,
+    )
+    schema_data = PEAK_PRODUCT.model_dump(mode="python")
+    sizes = {
+        "scan": scan_count,
+        "group": len(group_scan_index),
+        "group_offset": len(candidate_offsets),
+        "candidate": candidate_count,
+    }
+    schema_data["axes"] = [
+        {**axis, "size": sizes[axis["name"]]}
+        for axis in schema_data["axes"]
+        if axis["name"] != "scan" or scan_size is not None
+    ]
+    schema_data["sampling_bases"] = []
+    schema_data["uncertainties"] = [
+        item for item in schema_data["uncertainties"] if item["scope"] != "sampling"
+    ]
+    schema_data["variables"] = [
+        variable
+        for variable in schema_data["variables"]
+        if variable["name"]
+        not in {"sampling_location_std", "sampling_location_std_valid"}
+    ]
+    schema_data["attributes"] = {
+        **schema_data["attributes"],
+        "channel_names": channel_names,
+        "mode_labels": channel_names,
+        "graph_ready": True,
+        "source_finder": "typed",
+        "source_product": label,
+    }
+    schema = ProductSchema.model_validate(schema_data)
+    arrays: dict[str, Any] = {**columns}
+    arrays["group_scan_index"] = np.asarray(group_scan_index, dtype=np.int64)
+    arrays["group_channel_index"] = np.asarray(group_channel_index, dtype=np.int64)
+    arrays["candidate_offsets"] = np.asarray(candidate_offsets, dtype=np.int64)
+    for variable in schema.variables:
+        if variable.name in arrays:
+            continue
+        if variable.name.endswith("_valid"):
+            arrays[variable.name] = np.zeros(candidate_count, dtype=np.int8)
+        else:
+            arrays[variable.name] = np.full(candidate_count, np.nan, dtype=float)
+    return StatisticsDataset.from_arrays(
+        schema,
+        arrays,
+        owner="engine.sde",
+        provenance={"source_finder": "typed", "product": label},
+    )
+
+
 class PeakFinder(ABC):
     """Abstract base class for peak finding algorithms."""
 
@@ -105,17 +205,78 @@ class PeakFinder(ABC):
         """
         pass
 
+    def find_candidate_table(
+        self,
+        frequencies: np.ndarray,
+        power: np.ndarray,
+        *,
+        scan_index: int,
+        scan_count: int,
+        channel_names: Sequence[str],
+        mode_labels: Sequence[str] | None = None,
+        channel_measurement_kinds: Sequence[str] | None = None,
+        channel_mode_weights: Sequence[Sequence[float]] | None = None,
+    ) -> CandidateTablePayload:
+        """Return the legacy finder's detections as a grouped typed table."""
+        axis = np.asarray(frequencies, dtype=float).reshape(-1)
+        values = np.asarray(power, dtype=float)
+        if values.ndim == 1:
+            values = values[None, :]
+        if values.ndim != 2 or values.shape[1] != axis.size:
+            raise ValueError("power must have shape (channel, frequency)")
+        if values.shape[0] != len(channel_names):
+            raise ValueError("channel_names must match the power channel count")
+
+        offsets = [0]
+        group_scan_index: list[int] = []
+        group_channel_index: list[int] = []
+        locations: list[float] = []
+        intensities: list[float] = []
+        sample_indices: list[int] = []
+        statuses: list[int] = []
+        for channel, spectrum in enumerate(values):
+            result = self.find_peaks(axis, spectrum)
+            sample_indices.extend(int(value) for value in result.indices)
+            locations.extend(float(value) for value in result.frequencies)
+            intensities.extend(float(value) for value in result.values)
+            statuses.extend([3] * len(result.frequencies))
+            offsets.append(len(locations))
+            group_scan_index.append(scan_index)
+            group_channel_index.append(channel)
+        payload: CandidateTablePayload = {
+            "candidate_offsets": np.asarray(offsets, dtype=np.int64),
+            "group_scan_index": np.asarray(group_scan_index, dtype=np.int64),
+            "group_channel_index": np.asarray(group_channel_index, dtype=np.int64),
+            "columns": {
+                "location": np.asarray(locations, dtype=float),
+                "intensity": np.asarray(intensities, dtype=float),
+                "sample_index": np.asarray(sample_indices, dtype=np.int64),
+                "status_code": np.asarray(statuses, dtype=np.int64),
+            },
+            "scan_count": int(scan_count),
+            "channel_names": list(channel_names),
+        }
+        if mode_labels is not None:
+            payload["mode_labels"] = list(mode_labels)
+        if channel_measurement_kinds is not None:
+            payload["channel_measurement_kinds"] = list(channel_measurement_kinds)
+        if channel_mode_weights is not None:
+            payload["channel_mode_weights"] = [
+                list(row) for row in channel_mode_weights
+            ]
+        validate_candidate_table(**payload)
+        return payload
+
 
 @runtime_checkable
 class TypedPeakFinder(Protocol):
-    """Frozen Wave 5B target contract: unified peak-candidate finders.
+    """Typed contract for unified peak-candidate finders.
 
     Implementations return the grouped candidate-table payload of
     ``qphase_sde.contracts.peaks`` — a :class:`CandidateTablePayload` mapping
     that must unpack into ``validate_candidate_table`` without raising.
-    Until the Wave 5B migration, production consumers (the PSD analyser)
-    keep using the legacy :class:`PeakFinder` contract; no concrete finder
-    claims this protocol yet.
+    Built-in finders inherit the shared implementation from :class:`PeakFinder`;
+    they retain ``find_peaks`` only as a private numerical compatibility method.
     """
 
     name: ClassVar[str]
@@ -131,6 +292,7 @@ class TypedPeakFinder(Protocol):
         scan_count: int,
         channel_names: Sequence[str],
         mode_labels: Sequence[str] | None = None,
+        channel_measurement_kinds: Sequence[str] | None = None,
         channel_mode_weights: Sequence[Sequence[float]] | None = None,
     ) -> CandidateTablePayload:
         """Find peaks in one scan point's spectra and return the payload.
@@ -153,6 +315,9 @@ class TypedPeakFinder(Protocol):
         channel_mode_weights : Sequence[Sequence[float]] | None
             ``[re, im]`` readout weights flattened row-major over
             (channel x mode), echoed into the payload.
+        channel_measurement_kinds : Sequence[str] | None
+            Measurement representation kind for each channel when a basis is
+            supplied.
 
         Returns
         -------

@@ -230,12 +230,6 @@ class EngineTaskProfile(BaseModel):
             raise ValueError(
                 f"task profile {self.id!r} declares duplicate output names"
             )
-        shared = sorted(set(input_names) & set(output_names))
-        if shared:
-            raise ValueError(
-                f"task profile {self.id!r} declares {shared} as both input "
-                "slots and output products; a slot is either consumed or produced"
-            )
         return self
 
 

@@ -16,8 +16,9 @@ from pydantic import Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
-from qphase.data import DataKind, ProductDeclaration, ProductRequirement
+from qphase.data import DataKind, Dataset, ProductDeclaration, ProductRequirement
 
+from ..products import assemble_typed_product, stack_payload_leaves
 from .base import Analyzer, resolve_mode_columns, trajectory_requirement
 from .result import AnalysisResult
 
@@ -84,6 +85,21 @@ class PolarDistAnalyzer(Analyzer):
                 fields=fields,
             ),
         )
+
+    def build_products(
+        self, payload: Any, *, scan_size: int | None, label: str
+    ) -> dict[str, Dataset] | None:
+        leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
+        if leaves is None:
+            return None
+        product = assemble_typed_product(
+            label,
+            leaves,
+            scan_size=scan_size,
+            kind=DataKind.STATISTICS,
+            attributes={"graph_ready": True, "typed_builder": "pdist/1"},
+        )
+        return None if product is None else {label: product}
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         """Compute magnitude distribution for multiple modes.

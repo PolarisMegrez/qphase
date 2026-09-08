@@ -49,7 +49,7 @@ from enum import IntFlag
 from typing import Any
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from qphase.data import (
     AxisRole,
     AxisSchema,
@@ -151,6 +151,24 @@ class CoherenceFrequencyEstimate(BaseModel):
             label="coherence-frequency",
         )
 
+    @model_validator(mode="after")
+    def _check_estimate_fields(self) -> CoherenceFrequencyEstimate:
+        for name in ("bandwidth", "lag", "conditional_std", "frequency_sem"):
+            value = getattr(self, name)
+            if value is not None and np.isfinite(value) and value < 0:
+                raise ValueError(f"{name} must be nonnegative where finite")
+        if (
+            self.confidence_lower is not None
+            and self.confidence_upper is not None
+            and np.isfinite(self.confidence_lower)
+            and np.isfinite(self.confidence_upper)
+            and self.confidence_lower > self.confidence_upper
+        ):
+            raise ValueError("confidence lower bound exceeds upper bound")
+        if self.independent_count is not None and self.independent_count < 1:
+            raise ValueError("independent_count must be positive")
+        return self
+
 
 #: Open schema template of the coherence-frequency product: one estimate per
 #: (scan, channel) cell, with the lag the estimate was computed at, the
@@ -198,6 +216,12 @@ COHERENCE_FREQUENCY_PRODUCT = ProductSchema(
         VariableSchema(
             name="frequency_sem",
             dtype="float64",
+            value_domain="real",
+            dims=("scan", "channel"),
+        ),
+        VariableSchema(
+            name="independent_count",
+            dtype="int64",
             value_domain="real",
             dims=("scan", "channel"),
         ),
@@ -259,8 +283,9 @@ def validate_coherence_frequency_table(
 
     The required columns ``frequency``/``conditional_std``/
     ``confidence_lower``/``confidence_upper``/``frequency_sem``/``lag``/
-    ``bandwidth``/``status_code`` must be present, and every column must
-    hold exactly one entry per (scan, channel) cell. ``conditional_std``,
+    ``bandwidth``/``independent_count``/``status_code`` must be present, and
+    every column must hold exactly one entry per (scan, channel) cell.
+    ``conditional_std``,
     ``lag`` and ``bandwidth`` must be nonnegative where finite (NaN marks
     a value the estimator does not produce), and finite confidence bounds
     must satisfy ``confidence_lower <= confidence_upper``. ``status_code``
@@ -281,6 +306,7 @@ def validate_coherence_frequency_table(
         "confidence_lower",
         "confidence_upper",
         "frequency_sem",
+        "independent_count",
         "lag",
         "bandwidth",
         "status_code",
@@ -307,7 +333,12 @@ def validate_coherence_frequency_table(
             "status_code values set bits outside the defined "
             "CoherenceFrequencyStatus mask"
         )
-    for name in ("conditional_std", "lag", "bandwidth"):
+    independent_count = np.asarray(columns["independent_count"])
+    if not np.issubdtype(independent_count.dtype, np.integer):
+        raise ValueError("independent_count must have an integer dtype")
+    if independent_count.size and np.any(independent_count < 0):
+        raise ValueError("independent_count must be nonnegative")
+    for name in ("conditional_std", "frequency_sem", "lag", "bandwidth"):
         column = np.asarray(columns[name], dtype=np.float64)
         if np.any(np.isfinite(column) & (column < 0)):
             raise ValueError(f"{name} must be nonnegative where finite")

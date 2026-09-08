@@ -81,7 +81,6 @@ jobs:
       kind: complex
       convention: symmetric
       expected_freq_max: 1.0
-      find_peaks: false
       estimator: {periodogram: {fft_chunk_trajectories: 16}}
     allan_variance:
       modes: [0]

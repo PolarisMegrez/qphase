@@ -7,7 +7,7 @@ domain semantics (PSD, Allan, fits, ...).
 
 Requirement binding discipline: a required requirement (``optional=False``)
 must have exactly one binding — an edge into its slot XOR an
-``ExternalInputBinding`` naming an external source — while an optional
+``ExternalInputBinding`` naming an external source and product — while an optional
 requirement has at most one binding (no fan-in this phase; a future
 cardinality mechanism will state it explicitly). External bindings declare
 where an unbound-by-edge input comes from (job input, artifact, ...).
@@ -45,6 +45,7 @@ requirement_matches
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -173,7 +174,7 @@ class GraphEdge(BaseModel):
 
 
 class ExternalInputBinding(BaseModel):
-    """Binding of one consumer requirement to an external source."""
+    """Binding of one consumer requirement to one external product."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -184,6 +185,10 @@ class ExternalInputBinding(BaseModel):
     source: str = Field(
         min_length=1,
         description="External source label (e.g. job input / artifact).",
+    )
+    product: str = Field(
+        min_length=1,
+        description="Name of the product in the external source.",
     )
 
 
@@ -318,6 +323,36 @@ class ProductGraph(BaseModel):
                     )
         self._check_acyclic(list(by_id))
         return self
+
+    def validate_external_products(
+        self,
+        products: Mapping[str, Mapping[str, ProductSchema]],
+    ) -> None:
+        """Validate external bindings against already materialized schemas.
+
+        ``products`` is keyed by the external ``source`` label and then by
+        product name. The graph does not load artifacts or infer a product;
+        callers provide the metadata they have already resolved at the
+        materialization boundary.
+        """
+        by_id = {node.node_id: node for node in self.nodes}
+        for binding in self.external_inputs:
+            source_products = products.get(binding.source)
+            if source_products is None or binding.product not in source_products:
+                raise ValueError(
+                    f"external binding {binding.source!r}:{binding.product!r} "
+                    "does not resolve to a product schema"
+                )
+            node = by_id[binding.consumer]
+            requirement = next(
+                item for item in node.requirements if item.name == binding.requirement
+            )
+            if not requirement_matches(requirement, source_products[binding.product]):
+                raise ValueError(
+                    f"external product {binding.source!r}:{binding.product!r} "
+                    f"does not satisfy requirement {binding.requirement!r} "
+                    f"of node {binding.consumer!r}"
+                )
 
     def _check_acyclic(self, node_ids: list[str]) -> None:
         indegree = dict.fromkeys(node_ids, 0)

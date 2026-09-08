@@ -38,6 +38,10 @@ from .band_limited_carrier import (
 )
 from .base import Analyzer
 from .coherence_carrier import CoherenceCarrierAnalyzer, CoherenceCarrierConfig
+from .coherence_frequency import (
+    CoherenceFrequencyAnalyzer,
+    CoherenceFrequencyAnalyzerConfig,
+)
 from .coherence_matrix import CoherenceMatrixAnalyzer, CoherenceMatrixConfig
 from .dist import DistAnalyzer, DistAnalyzerConfig
 from .finite_delay_carrier import (
@@ -53,6 +57,8 @@ from .frequency_orientation import (
     resolve_frequency_orientation,
 )
 from .moment_statistics import MomentStatisticsAnalyzer, MomentStatisticsConfig
+from .peak_paths import PeakPathsAnalyzer, PeakPathsAnalyzerConfig
+from .peaks import PeaksAnalyzer, PeaksAnalyzerConfig
 from .polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
 from .psd import PsdAnalyzer, PsdAnalyzerConfig
 from .quadratic_moments import (
@@ -91,6 +97,8 @@ __all__ = [
     "CoherenceMatrixConfig",
     "CoherenceCarrierAnalyzer",
     "CoherenceCarrierConfig",
+    "CoherenceFrequencyAnalyzer",
+    "CoherenceFrequencyAnalyzerConfig",
     "MomentStatisticsAnalyzer",
     "MomentStatisticsConfig",
     "NormalFormExpectation",
@@ -112,6 +120,10 @@ __all__ = [
     "FiniteDelayCarrierConfig",
     "PolarDistAnalyzer",
     "PolarDistAnalyzerConfig",
+    "PeaksAnalyzer",
+    "PeaksAnalyzerConfig",
+    "PeakPathsAnalyzer",
+    "PeakPathsAnalyzerConfig",
     "TrajectoryDiagnostics",
     "TrajectoryDiagnosticsConfig",
     "resolve_frequency_orientation",

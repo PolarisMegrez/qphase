@@ -262,6 +262,7 @@ def test_coherence_frequency_product_declares_explicit_estimate_fields():
         "confidence_lower",
         "confidence_upper",
         "frequency_sem",
+        "independent_count",
         "lag",
         "bandwidth",
         "status_code",
@@ -302,6 +303,7 @@ def test_coherence_frequency_table_validation():
         "confidence_lower": np.full((2, 2), -0.05),
         "confidence_upper": np.full((2, 2), 0.05),
         "frequency_sem": np.full((2, 2), 0.01),
+        "independent_count": np.full((2, 2), 64, dtype=np.int64),
         "lag": np.full((2, 2), 12.0),
         "bandwidth": np.full((2, 2), 0.5),
         "status_code": np.array([[7, 5], [1, 0]], dtype=np.int64),
@@ -314,7 +316,12 @@ def test_coherence_frequency_table_validation():
         scan_count=2,
         channel_count=2,
     )
-    for missing in ("conditional_std", "confidence_lower", "confidence_upper"):
+    for missing in (
+        "conditional_std",
+        "confidence_lower",
+        "confidence_upper",
+        "independent_count",
+    ):
         with pytest.raises(ValueError, match="required column"):
             coherence.validate_coherence_frequency_table(
                 {k: v for k, v in columns.items() if k != missing},
@@ -345,6 +352,18 @@ def test_coherence_frequency_table_validation():
             scan_count=2,
             channel_count=2,
         )
+    with pytest.raises(ValueError, match="independent_count.*integer"):
+        coherence.validate_coherence_frequency_table(
+            {**columns, "independent_count": np.zeros((2, 2))},
+            scan_count=2,
+            channel_count=2,
+        )
+    with pytest.raises(ValueError, match="independent_count.*nonnegative"):
+        coherence.validate_coherence_frequency_table(
+            {**columns, "independent_count": np.full((2, 2), -1, dtype=np.int64)},
+            scan_count=2,
+            channel_count=2,
+        )
     with pytest.raises(ValueError, match="nonnegative"):
         coherence.validate_coherence_frequency_table(
             {**columns, "bandwidth": np.full((2, 2), -0.5)},
@@ -354,6 +373,12 @@ def test_coherence_frequency_table_validation():
     with pytest.raises(ValueError, match="nonnegative"):
         coherence.validate_coherence_frequency_table(
             {**columns, "conditional_std": np.full((2, 2), -0.5)},
+            scan_count=2,
+            channel_count=2,
+        )
+    with pytest.raises(ValueError, match="nonnegative"):
+        coherence.validate_coherence_frequency_table(
+            {**columns, "frequency_sem": np.full((2, 2), -0.5)},
             scan_count=2,
             channel_count=2,
         )

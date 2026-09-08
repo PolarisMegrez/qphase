@@ -37,7 +37,6 @@ jobs:
     psd:
       modes: [0]
       kind: complex
-      find_peaks: true
 
 - name: vdp_2mode_auto_fit
   input:
@@ -56,3 +55,14 @@ jobs:
       export:
       - fit_results.csv
       - psd_merged.csv
+
+- name: vdp_2mode_auto_peaks
+  input: {from: vdp_2mode_auto_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    peaks:
+      scan_param: omega_a
+      psd_key: psd
+      finder: scipy

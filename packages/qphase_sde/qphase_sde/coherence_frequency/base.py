@@ -6,12 +6,8 @@ and/or peak paths) and produces one coherence-frequency estimate row of the
 ``COHERENCE_FREQUENCY_PRODUCT`` table from ``qphase_sde.contracts.coherence``,
 with lag, bandwidth and model diagnostics as explicit fields.
 
-Concrete implementations arrive in Wave 5B:
-``coherence_frequency.short_delay`` (current ``analyser.coherence_carrier``),
-``coherence_frequency.band_limited`` (current
-``analyser.band_limited_carrier``) and ``coherence_frequency.finite_delay``
-(current ``analyser.finite_delay_carrier``). This module declares the
-plugin-class surface only and ships no concrete estimator.
+Concrete child plugins live in ``short_delay``, ``band_limited`` and
+``finite_delay``; this module only declares their shared plugin-class surface.
 
 Public API
 ----------

@@ -1,0 +1,197 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_kf3f_004_q0_five_point
+title: Kerr Full 3Mode kf3f-004 Five-Point Q0 Closure Calibration
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- candidate:kf3f-004
+- purpose:validation/frequency-q0
+jobs:
+- name: kerr_full_3mode_kf3f_004_q0_e1em4_sim
+  save: true
+  system: &system
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint: {enabled: true, interval_chunks: 1, keep_on_success: false}
+      resources: {gpu_memory_fraction: 0.85}
+  engine:
+    sde:
+      &sde_base
+      t0: 20000.0
+      t1: 100000.0
+      dt: 0.01
+      n_traj: 32
+      seed: 202609101
+      ic:
+      - - "-58.62254827844075+6.6459278995768605j"
+        - "85.42230014787226-32.32977534832201j"
+        - "133.6966822675078+0.0j"
+      adaptive: false
+      save_stride: 25
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 600.0
+      state_check_interval_steps: 1024
+  backend: &backend
+    cupy: {float_dtype: float64, device: cuda}
+  integrator: &integrator
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
+  model:
+    kerr_full_3mode: &model
+      omega_a: 0.0
+      omega_b: 0.5001
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      threshold: 14850.215907967368
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser: &analysers
+    psd:
+      modes: [0, 1, 2]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 3.0
+      estimator: {periodogram: {fft_chunk_trajectories: 8}}
+    allan_variance:
+      modes: [0, 1, 2]
+      points: 56
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes: [0, 1, 2]
+      time_blocks: 16
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes: [0, 1, 2]
+      time_blocks: 16
+      time_chunk_samples: 16384
+
+- name: kerr_full_3mode_kf3f_004_q0_e1em3_sim
+  save: true
+  system: *system
+  engine:
+    sde:
+      <<: *sde_base
+      seed: 202609102
+      ic:
+      - - "-56.03639338703573+6.272220220480082j"
+        - "74.42366310768635-29.954514764034702j"
+        - "123.84936003006449+0.0j"
+  backend: *backend
+  integrator: *integrator
+  model:
+    kerr_full_3mode:
+      <<: *model
+      omega_b: 0.501
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      threshold: 12478.35097113622
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser: *analysers
+
+- name: kerr_full_3mode_kf3f_004_q0_e1em2_sim
+  save: true
+  system: *system
+  engine:
+    sde:
+      <<: *sde_base
+      seed: 202609103
+      ic:
+      - - "-50.79872994199479+5.635976321680249j"
+        - "55.3073779419737-25.715707742249094j"
+        - "106.2692838961792+0.0j"
+  backend: *backend
+  integrator: *integrator
+  model:
+    kerr_full_3mode:
+      <<: *model
+      omega_b: 0.51
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      threshold: 8813.903109663088
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser: *analysers
+
+- name: kerr_full_3mode_kf3f_004_q0_e3em2_sim
+  save: true
+  system: *system
+  engine:
+    sde:
+      <<: *sde_base
+      seed: 202609104
+      ic:
+      - - "-46.76102208329122+5.263881642740296j"
+        - "43.169329773279074-22.88393444983498j"
+        - "94.51327467807177+0.0j"
+  backend: *backend
+  integrator: *integrator
+  model:
+    kerr_full_3mode:
+      <<: *model
+      omega_b: 0.53
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      threshold: 6768.169407063907
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser: *analysers
+
+- name: kerr_full_3mode_kf3f_004_q0_e1em1_sim
+  save: true
+  system: *system
+  engine:
+    sde:
+      <<: *sde_base
+      seed: 202609105
+      ic:
+      - - "-40.716616565164756+4.914132363913719j"
+        - "28.654905464274275-19.189240384175147j"
+        - "79.1458034197298+0.0j"
+  backend: *backend
+  integrator: *integrator
+  model:
+    kerr_full_3mode:
+      <<: *model
+      omega_b: 0.6
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      threshold: 4568.620255100055
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser: *analysers

@@ -85,6 +85,41 @@ def test_spectral_ridge_analyzer_handles_multiple_readouts(tmp_path: Path):
     assert (tmp_path / "spectral_ridge_candidates.csv").exists()
 
 
+def test_spectral_ridge_builds_typed_rows_and_restores_legacy_payload():
+    axis = np.linspace(-2.0, 2.0, 4001)
+    result = SDEResult(
+        analysis={
+            "psd": {
+                "axis": axis,
+                "psd": (0.01 + _gaussian(axis, 0.2, 0.08))[:, None],
+                "modes": [0],
+                "orientation": "phase_decreasing",
+            }
+        },
+        meta={"params": {"epsilon": 0.0}},
+    )
+    analyzer = SpectralRidgeAnalyzer(
+        SpectralRidgeConfig(
+            scan_param="epsilon", readouts=[0], smoothing_scale_bins=[2.0, 4.0, 8.0]
+        )
+    )
+    payload = analyzer.analyze({"point": result}, NumpyBackend()).data_dict
+    products = analyzer.build_products(payload, scan_size=1, label="ridge")
+    assert products is not None
+    assert set(products) == {"ridge", "ridge.candidates"}
+    assert all(product.attributes["graph_ready"] for product in products.values())
+    assert products["ridge"].axis("scan").size == 1
+    assert products["ridge"].axis("row").size >= 1
+
+    from qphase_sde.result import legacy_view_from_products
+
+    legacy = legacy_view_from_products(products)
+    assert legacy.analysis["ridge"]["ridge_rows"][0]["frequency"] == pytest.approx(
+        payload["ridge_rows"][0]["frequency"]
+    )
+    assert "ridge_rows" in legacy.analysis["ridge"]
+
+
 def test_spectral_ridge_rejects_duplicate_readouts():
     with pytest.raises(ValueError, match="unique"):
         SpectralRidgeConfig(scan_param="epsilon", readouts=[0, 0])

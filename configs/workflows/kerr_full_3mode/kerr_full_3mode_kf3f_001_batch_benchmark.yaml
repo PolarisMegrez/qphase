@@ -1,0 +1,124 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_kf3f_001_batch_benchmark
+title: Kerr Full 3Mode kf3f-001 Batch Benchmark
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- candidate:kf3f-001
+- purpose:benchmark/trajectory-batch
+jobs:
+- name: kerr_full_3mode_kf3f_001_bench_batch32
+  save: true
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 250000.0
+      dt: 0.02
+      n_traj: 192
+      seed: 202609081
+      ic: &initial_condition
+      - - "-5.632629062184118-0.20455076672446626j"
+        - "-2.9125748641655935-1.021221790165692j"
+        - "9.705598943050012+0.0j"
+      adaptive: false
+      save_stride: 20
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 32
+      max_state_norm: 200.0
+      state_check_interval_steps: 2048
+  backend: &backend
+    cupy: {float_dtype: float64, device: cuda}
+  integrator: &integrator
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
+  model: &model
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 3.0
+      omega_c: -0.99
+      chi: 0.01
+      gamma_a: 0.2793268961732697
+      gamma_b: 4.049258924851976
+      gamma_c: 0.5
+      g_ab: 0.1
+      g_ac: 2.0
+      g_bc: 2.0
+  observer: &observer
+    first_passage:
+      rule: state_norm
+      threshold: 100.0
+      direction: above
+      action: record
+      check_interval_steps: 2048
+      debounce_checks: 2
+  analyser: &analysers
+    psd:
+      modes: [0, 1, 2]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 5.0
+      estimator: {periodogram: {fft_chunk_trajectories: 16}}
+    allan_variance:
+      modes: [0, 1, 2]
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 16384
+      device_chunk_trajectories: 16
+    coherence_matrix:
+      modes: [0, 1, 2]
+      time_blocks: 16
+      time_chunk_samples: 16384
+    moment_statistics:
+      modes: [0, 1, 2]
+      time_blocks: 16
+      time_chunk_samples: 16384
+
+- name: kerr_full_3mode_kf3f_001_bench_batch64
+  save: true
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 250000.0
+      dt: 0.02
+      n_traj: 192
+      seed: 202609081
+      ic: *initial_condition
+      adaptive: false
+      save_stride: 20
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 64
+      max_state_norm: 200.0
+      state_check_interval_steps: 2048
+  backend: *backend
+  integrator: *integrator
+  model: *model
+  observer: *observer
+  analyser: *analysers
+
+- name: kerr_full_3mode_kf3f_001_bench_batch128
+  save: true
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 250000.0
+      dt: 0.02
+      n_traj: 192
+      seed: 202609081
+      ic: *initial_condition
+      adaptive: false
+      save_stride: 20
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 128
+      max_state_norm: 200.0
+      state_check_interval_steps: 2048
+  backend: *backend
+  integrator: *integrator
+  model: *model
+  observer: *observer
+  analyser: *analysers

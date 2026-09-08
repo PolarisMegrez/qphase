@@ -1,0 +1,172 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_frequency_q0_branch_followup
+title: Kerr Full 3Mode Frequency Q0 Branch-Initialized Follow-up
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- purpose:validation/frequency-q0-branch
+jobs:
+- name: kerr_full_3mode_q0b_kf3f_019_inner
+  save: true
+  engine:
+    sde:
+      t0: 10000.0
+      t1: 30000.0
+      dt: 0.01
+      n_traj: 8
+      seed: 202609051
+      ic:
+      - - "-111.81111540498844+10.809166611760086j"
+        - "93.83413298097297-25.999294742357446j"
+        - "130.0822509977244+0.0j"
+      adaptive: false
+      save_stride: 25
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 4
+      max_state_norm: 2000.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 1024, max_modes: 16}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: -4.0
+      omega_c: -1.9996018928294465
+      chi: 0.0002
+      gamma_a: 0.2313732629253484
+      gamma_b: 2.3693276625631956
+      gamma_c: 1.5
+      g_ab: 3.0
+      g_ac: 3.0
+      g_bc: 5.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      threshold: 19512.105267247796
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser: &q0_analysers
+    psd:
+      modes: [0, 1, 2]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 10.0
+      estimator: {periodogram: {fft_chunk_trajectories: 2}}
+    allan_variance:
+      modes: [0, 1, 2]
+      points: 48
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 8192
+      device_chunk_trajectories: 4
+    coherence_matrix:
+      modes: [0, 1, 2]
+      time_blocks: 8
+      time_chunk_samples: 8192
+    moment_statistics:
+      modes: [0, 1, 2]
+      time_blocks: 8
+      time_chunk_samples: 8192
+
+- name: kerr_full_3mode_q0b_kf3f_019_outer
+  save: true
+  engine:
+    sde:
+      t0: 10000.0
+      t1: 30000.0
+      dt: 0.01
+      n_traj: 8
+      seed: 202609052
+      ic:
+      - - "-146.98804522312696+13.387488047685444j"
+        - "183.59100102613556-44.70087246356201j"
+        - "244.44998403764478+0.0j"
+      adaptive: false
+      save_stride: 25
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 4
+      max_state_norm: 2000.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 1024, max_modes: 16}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: -4.0
+      omega_c: -1.9841510680753888
+      chi: 0.0002
+      gamma_a: 0.2313732629253484
+      gamma_b: 2.3693276625631956
+      gamma_c: 1.5
+      g_ab: 3.0
+      g_ac: 3.0
+      g_bc: 5.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      threshold: 58623.593572111415
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser: *q0_analysers
+
+- name: kerr_full_3mode_q0b_kf3f_036_crossover
+  save: true
+  engine:
+    sde:
+      t0: 10000.0
+      t1: 30000.0
+      dt: 0.01
+      n_traj: 8
+      seed: 202609053
+      ic:
+      - - "-52.63452926806557+2.700258182213004j"
+        - "80.64187375652351-31.4408448672981j"
+        - "215.2699159557334+0.0j"
+      adaptive: false
+      save_stride: 25
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 4
+      max_state_norm: 5000.0
+      state_check_interval_steps: 1024
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 1024, max_modes: 16}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 3.5102705096311446
+      omega_c: 3.9974881135684904
+      chi: 0.002
+      gamma_a: 0.2
+      gamma_b: 0.2351369124000918
+      gamma_c: 0.05
+      g_ab: 0.8
+      g_ac: 1.5
+      g_bc: 0.3
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      threshold: 28306.003569398915
+      direction: below
+      action: record
+      check_interval_steps: 1024
+      debounce_checks: 2
+  analyser: *q0_analysers

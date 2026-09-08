@@ -23,7 +23,6 @@ jobs:
     psd:
       modes: [0]
       kind: complex
-      find_peaks: true
   backend:
     numpy:
       float_dtype: float64
@@ -49,3 +48,14 @@ jobs:
     lorentz_fitter:
       scan_param: omega_b
       mode: 0
+
+- name: cpu_smoke_kerr_2mode_peaks
+  input: {from: cpu_smoke_kerr_2mode, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    peaks:
+      scan_param: omega_b
+      psd_key: psd
+      finder: scipy

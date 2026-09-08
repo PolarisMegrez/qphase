@@ -34,7 +34,7 @@ __all__ = ["MANIFEST"]
 #: namespaces (``model``: concrete models ship as project-local or
 #: third-party overlay plugins, never as package-owned entry points).
 #: ``peak_tracker``/``coherence_frequency`` declare their root-level
-#: plugin-class protocols ahead of the Wave 5B concrete implementations.
+#: plugin-class protocols; concrete child plugins are registered separately.
 MANIFEST = ResourcePackageManifest(
     resource_id="sde",
     package_version="2.0.0.dev0",
@@ -67,7 +67,7 @@ MANIFEST = ResourcePackageManifest(
         PluginClassDeclaration(
             namespace="analyser",
             protocol="qphase_sde.contracts.analyser:AnalyserDeclarationContract",
-            description="Analysis adapters declaring typed inputs/outputs, "
+            description="Analysis plugins declaring typed inputs/outputs, "
             "capabilities, workspace and progress; execution flows through "
             "the legacy analyze()/build_products() bridge until the typed "
             "execute() entry lands in Wave 5B.",
@@ -80,25 +80,21 @@ MANIFEST = ResourcePackageManifest(
         ),
         PluginClassDeclaration(
             namespace="peak_finder",
-            protocol="qphase_sde.peak_finder.base:PeakFinder",
-            description="Peak finders. The public PeakFinder still returns the "
-            "legacy PeakInfo consumed by the production PSD analyser; the "
-            "unified grouped PeakCandidate table contract is frozen as "
-            "qphase_sde.peak_finder.base:TypedPeakFinder and concrete finders "
-            "migrate to it in Wave 5B.",
+            protocol="qphase_sde.peak_finder.base:TypedPeakFinder",
+            description="Peak finders returning the grouped typed candidate "
+            "table used by PSD and peak-path analysis.",
         ),
         PluginClassDeclaration(
             namespace="peak_tracker",
             protocol="qphase_sde.peak_tracker.base:PeakTrackerProtocol",
             description="Scan-axis peak-path trackers linking candidate rows "
-            "into paths; concrete trackers land in Wave 5B.",
+            "into paths.",
         ),
         PluginClassDeclaration(
             namespace="coherence_frequency",
             protocol=("qphase_sde.coherence_frequency.base:CoherenceFrequencyProtocol"),
             description="Coherence-frequency estimators (short-delay, "
-            "band-limited, finite-delay); concrete estimators land in "
-            "Wave 5B.",
+            "band-limited, finite-delay).",
         ),
     ],
     data_products=[
@@ -134,6 +130,18 @@ MANIFEST = ResourcePackageManifest(
             schema_ref="qphase_sde.contracts.quantities:MOMENT_FAMILY_PRODUCT",
             description="Moment families with shared independent counts and "
             "joint covariance.",
+        ),
+        DataProductDeclaration(
+            name="peak_candidates",
+            kind="statistics",
+            schema_ref="qphase_sde.contracts.peaks:PEAK_PRODUCT",
+            description="Grouped typed peak candidates with ragged offsets.",
+        ),
+        DataProductDeclaration(
+            name="peak_paths",
+            kind="statistics",
+            schema_ref="qphase_sde.contracts.peaks:PEAK_PATH_PRODUCT",
+            description="Typed scan-axis paths referencing peak candidates.",
         ),
     ],
     # No SDE-owned materializer exists yet: the NPZ adapter lives in core

@@ -49,7 +49,7 @@ def test_save_stride_preserves_peak(vdp_auto_workflow_path, temp_project, save_s
     discovery.discover_local_plugins()
 
     job_list = load_workflow(vdp_auto_workflow_path)
-    assert len(job_list.jobs) == 2
+    assert len(job_list.jobs) == 3
 
     # Override the stride for this test.  Use a smaller ensemble so the
     # parametrized sweep stays fast while still averaging enough trajectories
@@ -63,7 +63,7 @@ def test_save_stride_preserves_peak(vdp_auto_workflow_path, temp_project, save_s
     )
     results = scheduler.run(job_list)
 
-    assert len(results) == 2, results
+    assert len(results) == 3, results
     assert all(r.success for r in results), f"Job failed: {results}"
 
     sim_result = next(r for r in results if r.job_name == "vdp_2mode_auto_sim")

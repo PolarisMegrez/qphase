@@ -15,6 +15,7 @@ from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase, ResultProtocol
 from qphase.data import (
     DataKind,
+    Dataset,
     ProductDeclaration,
     ProductRequirement,
     SpectralQuantity,
@@ -27,6 +28,7 @@ from ..contracts.analyser import (
     AnalyserWorkspaceRequest,
     WorkEstimate,
 )
+from ..products import assemble_row_table_product
 from .base import Analyzer
 from .frequency_orientation import (
     FrequencyOrientation,
@@ -37,6 +39,69 @@ from .result import AnalysisResult
 from .result_input import load_sde_results
 
 Readout = int | Literal["trace"]
+
+
+def _unique_fields(*names: str) -> list[str]:
+    return list(dict.fromkeys(names))
+
+
+def _ridge_selected_fields(scan_param: str) -> list[str]:
+    return _unique_fields(
+        "point_index",
+        scan_param,
+        "frequency",
+        "frequency_std",
+        "local_frequency_std",
+        "scale_frequency_std",
+        "peak_value",
+        "relative_height",
+        "curvature",
+        "curvature_std",
+        "curvature_significance",
+        "scale_support",
+        "confidence_lower",
+        "confidence_upper",
+        "confidence_width",
+        "ambiguity_lower",
+        "ambiguity_upper",
+        "ambiguity_width",
+        "ambiguity_candidate_count",
+        "plateau_lower",
+        "plateau_upper",
+        "plateau_width",
+        "selected_candidate",
+        "candidate_count",
+        "retained_candidate_count",
+        "accepted_tracking_path_count",
+        "row_valid",
+    )
+
+
+def _ridge_candidate_fields(scan_param: str) -> list[str]:
+    return _unique_fields(
+        "point_index",
+        scan_param,
+        "candidate_index",
+        "selected",
+        "retained_for_association",
+        "frequency",
+        "frequency_std",
+        "local_frequency_std",
+        "scale_frequency_std",
+        "peak_value",
+        "relative_height",
+        "curvature",
+        "curvature_std",
+        "curvature_significance",
+        "scale_support",
+        "confidence_lower",
+        "confidence_upper",
+        "plateau_lower",
+        "plateau_upper",
+        "score",
+        "row_valid",
+    )
+
 
 __all__ = [
     "SpectralRidgeAnalyzer",
@@ -776,8 +841,72 @@ class SpectralRidgeAnalyzer(Analyzer):
         ]
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
-        # ridge_rows/candidate_rows/written are payload meta: no numeric leaves.
-        return (ProductDeclaration(name=label, kind=DataKind.STATISTICS),)
+        config = cast(SpectralRidgeConfig, self.config)
+        selected_fields = _ridge_selected_fields(config.scan_param)
+        candidate_fields = _ridge_candidate_fields(config.scan_param)
+        return (
+            ProductDeclaration(
+                name=label, kind=DataKind.STATISTICS, fields=selected_fields
+            ),
+            ProductDeclaration(
+                name=f"{label}.candidates",
+                kind=DataKind.STATISTICS,
+                fields=candidate_fields,
+            ),
+        )
+
+    def build_products(
+        self,
+        payload: Any,
+        *,
+        scan_size: int | None,
+        label: str,
+    ) -> dict[str, Dataset] | None:
+        """Build graph-ready row products while retaining the legacy payload."""
+        if not isinstance(payload, dict):
+            raise TypeError("spectral_ridge payload must be a mapping")
+        config = cast(SpectralRidgeConfig, self.config)
+        rows = payload.get("ridge_rows", [])
+        candidates = payload.get("candidate_rows", [])
+        if not isinstance(rows, list) or not isinstance(candidates, list):
+            raise TypeError("spectral_ridge row tables must be lists")
+        metadata = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"ridge_rows", "candidate_rows"}
+        }
+        selected = assemble_row_table_product(
+            label,
+            rows,
+            scan_size=scan_size,
+            fields=_ridge_selected_fields(config.scan_param),
+            integer_fields=("point_index",),
+            scan_index_field="point_index",
+            scan_value_field=config.scan_param,
+            quantities={"frequency": "peak_location"},
+            payload_key="ridge_rows",
+            payload_meta=metadata,
+            attributes={"table": "spectral_ridge"},
+        )
+        candidate = assemble_row_table_product(
+            f"{label}.candidates",
+            candidates,
+            scan_size=scan_size,
+            fields=_ridge_candidate_fields(config.scan_param),
+            integer_fields=(
+                "point_index",
+                "candidate_index",
+                "selected",
+                "retained_for_association",
+            ),
+            scan_index_field="point_index",
+            scan_value_field=config.scan_param,
+            quantities={"frequency": "peak_location"},
+            payload_key="candidate_rows",
+            payload_meta=metadata,
+            attributes={"table": "spectral_ridge_candidates"},
+        )
+        return {label: selected, f"{label}.candidates": candidate}
 
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         del backend

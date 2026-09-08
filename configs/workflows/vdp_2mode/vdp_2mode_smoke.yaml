@@ -42,7 +42,6 @@ jobs:
     psd:
       modes: [0, 1]
       kind: complex
-      find_peaks: true
     dist:
       modes: [0, 1]
       bins: 20
@@ -68,6 +67,17 @@ jobs:
       export:
       - fit_results.csv
       - psd_merged.csv
+
+- name: vdp_2mode_peaks
+  input: {from: vdp_2mode_sim, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    peaks:
+      scan_param: omega_a
+      psd_key: psd
+      finder: scipy
 
 - name: vdp_2mode_fit_mode1
   input:

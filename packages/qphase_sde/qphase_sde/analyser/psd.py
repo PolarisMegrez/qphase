@@ -27,7 +27,7 @@ from collections.abc import Mapping
 from typing import Any, ClassVar, Literal, cast
 
 import numpy as _np
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import (
@@ -54,16 +54,9 @@ from ..contracts.analyser import (
     AnalyserWorkspaceRequest,
     WorkEstimate,
 )
-from ..peak_finder import (
-    RationalPeakFinderConfig,
-    ScipyPeakFinderConfig,
-    create_peak_finder,
-)
 from ..products import (
-    StackedLeaves,
     TypedAxisSpec,
     assemble_typed_product,
-    json_safe_meta,
     stack_payload_leaves,
 )
 from ..spectral_estimator import (
@@ -92,6 +85,8 @@ __all__ = [
 
 class PsdAnalyzerConfig(PluginConfigBase):
     """Configuration for PSD Analyzer."""
+
+    model_config = ConfigDict(extra="forbid")
 
     kind: Literal["complex", "modular"] = Field(
         ..., description="FFT of complex signal or FFT of |signal|"
@@ -156,44 +151,6 @@ class PsdAnalyzerConfig(PluginConfigBase):
         None,
         ge=1,
         description="Number of DPSS tapers (default: int(2*nw)-1)",
-        json_schema_extra={"template_hidden": True},
-    )
-
-    # Peak finding configuration
-    # Supports bool (legacy), string ("scipy", "rational"), or specific config objects
-    find_peaks: bool | str | ScipyPeakFinderConfig | RationalPeakFinderConfig = Field(
-        False, description="Peak finding method or configuration"
-    )
-
-    # Deprecated fields retained for backward compatibility with 'find_peaks=True'
-    min_height: float | None = Field(
-        None,
-        description="[Deprecated] Minimum peak height",
-        json_schema_extra={"template_hidden": True},
-    )
-    prominence: float | None = Field(
-        None,
-        description="[Deprecated] Peak prominence",
-        json_schema_extra={"template_hidden": True},
-    )
-    distance: int | None = Field(
-        None,
-        description="[Deprecated] Minimum horizontal distance",
-        json_schema_extra={"template_hidden": True},
-    )
-    smooth_window: int | None = Field(
-        None,
-        description="[Deprecated] Window length for smoothing",
-        json_schema_extra={"template_hidden": True},
-    )
-    noise_threshold: float | None = Field(
-        None,
-        description="[Deprecated] Threshold vs noise floor",
-        json_schema_extra={"template_hidden": True},
-    )
-    max_peaks: int | None = Field(
-        None,
-        description="[Deprecated] Maximum number of peaks to return",
         json_schema_extra={"template_hidden": True},
     )
 
@@ -287,7 +244,7 @@ class PsdAnalyzer(Analyzer):
         return [trajectory_requirement(value_domain=None)]
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
-        """Declare the graph-ready spectrum plus the config-gated peak bridge."""
+        """Declare the graph-ready spectrum product."""
         declarations = [
             ProductDeclaration(
                 name=label,
@@ -296,16 +253,6 @@ class PsdAnalyzer(Analyzer):
                 fields=list(_PSD_PRODUCT_FIELDS),
             )
         ]
-        if _peak_finder_enabled(cast(PsdAnalyzerConfig, self.config)):
-            # Emitted only when a peak finder is configured: the built product
-            # carries a ``present`` marker and the peaks payload in metadata.
-            declarations.append(
-                ProductDeclaration(
-                    name=f"{label}.legacy_peaks",
-                    kind=DataKind.STATISTICS,
-                    fields=["present"],
-                )
-            )
         return tuple(declarations)
 
     def work_estimate(self, request: AnalyserWorkspaceRequest) -> WorkEstimate:
@@ -438,8 +385,6 @@ class PsdAnalyzer(Analyzer):
             P_sem_mat[:, index] = estimate.sem
             del estimate
 
-        peaks_info = self._find_peaks(axis0, P_mat)
-
         result_dict = {
             "axis": axis0,
             "psd": P_mat,
@@ -452,7 +397,6 @@ class PsdAnalyzer(Analyzer):
             "estimator": self.estimator.name,
             "sample_dt": dt,
             "nyquist": nyquist,
-            "peaks": peaks_info,
             "uncertainty": {
                 "kind": "standard_error",
                 "field": "psd_sem",
@@ -481,60 +425,6 @@ class PsdAnalyzer(Analyzer):
         return _build_psd_products(
             payload, scan_size=scan_size, label=label, analyser=self
         )
-
-    def _find_peaks(self, axis: Any, psd: Any) -> dict[Any, Any]:
-        """Run the configured peak finder once on a finalized PSD."""
-        config = cast(PsdAnalyzerConfig, self.config)
-        peaks_info: dict[Any, Any] = {}
-        finder = None
-        pf_conf = config.find_peaks
-
-        # Backward compatibility logic.
-        # Build a Scipy config when using legacy bool/string peak-finding flags.
-        legacy_scipy = False
-        if isinstance(pf_conf, bool) and pf_conf:
-            legacy_scipy = True
-        elif isinstance(pf_conf, str) and pf_conf.lower() in ["scipy", "standard"]:
-            legacy_scipy = True
-
-        if legacy_scipy:
-            # Map legacy fields
-            scipy_conf = ScipyPeakFinderConfig(
-                method="scipy",
-                min_height=config.min_height,
-                prominence=config.prominence,
-                distance=config.distance,
-                smooth_window=config.smooth_window,
-                noise_threshold=config.noise_threshold,
-                max_peaks=config.max_peaks,
-            )
-            finder = create_peak_finder(scipy_conf)
-        else:
-            # Just try creating directly
-            finder = create_peak_finder(pf_conf)
-
-        if finder:
-            for i, mode in enumerate(config.modes):
-                p_data = psd[:, i]
-                # Delegate to finder
-                try:
-                    p_info = finder.find_peaks(axis, p_data)
-                    peaks_info[mode] = p_info.model_dump()
-                except Exception as e:
-                    import logging
-
-                    logging.getLogger(__name__).warning(
-                        f"Peak finding failed for mode {mode}: {e}"
-                    )
-                    # Fallback to empty
-                    peaks_info[mode] = {
-                        "indices": [],
-                        "frequencies": [],
-                        "values": [],
-                        "properties": {},
-                    }
-
-        return peaks_info
 
     def _compute_single(
         self,
@@ -903,8 +793,7 @@ class PsdAnalyzer(Analyzer):
         )
 
 
-#: Numeric payload leaves of ``analyze()`` after the ``peaks`` leaf is routed
-#: to the legacy bridge; string leaves stay in payload metadata.
+#: Numeric payload leaves of ``analyze()``; string leaves stay in payload metadata.
 _PSD_PRODUCT_FIELDS = (
     "axis",
     "psd",
@@ -917,16 +806,6 @@ _PSD_PRODUCT_FIELDS = (
     "uncertainty.ddof",
     "uncertainty.available",
 )
-
-
-def _peak_finder_enabled(config: PsdAnalyzerConfig) -> bool:
-    """Return whether the config selects a peak finder (mirrors ``_find_peaks``)."""
-    finder_config = config.find_peaks
-    if isinstance(finder_config, bool):
-        return finder_config
-    if isinstance(finder_config, str):
-        return finder_config.lower() in {"scipy", "standard", "rational"}
-    return isinstance(finder_config, ScipyPeakFinderConfig | RationalPeakFinderConfig)
 
 
 def _meta_scalar(meta: Mapping[str, Any], key: str, default: str) -> str:
@@ -982,14 +861,12 @@ def _build_psd_products(
     multi_point = scan_size is not None and scan_size > 1
     points = payload if multi_point else [payload]
     cleaned_points: list[Any] = []
-    peak_points: list[Any] = []
     for point in points:
         if isinstance(point, dict):
             clean = dict(point)
-            peak_points.append(clean.pop("peaks", {}))
+            clean.pop("peaks", None)
             cleaned_points.append(clean)
         else:
-            peak_points.append({})
             cleaned_points.append(point)
     cleaned_payload = cleaned_points if multi_point else cleaned_points[0]
     leaves = stack_payload_leaves(label, cleaned_payload, scan_size=scan_size)
@@ -1031,7 +908,6 @@ def _build_psd_products(
             "psd_std": ("frequency", "channel"),
             "psd_sem": ("frequency", "channel"),
             "modes": ("channel",),
-            "peaks.*.properties.fitted_curve": ("frequency",),
         },
         axis_specs={
             "frequency": TypedAxisSpec(
@@ -1076,33 +952,6 @@ def _build_psd_products(
     if dataset is None:
         return None
     products: dict[str, Dataset] = {label: dataset}
-    if any(bool(peaks) for peaks in peak_points):
-        peak_value: Any = peak_points if scan_size is not None else peak_points[0]
-        peak_meta, dropped = json_safe_meta({"peaks": peak_value})
-        marker = (
-            _np.ones(scan_size, dtype=_np.int8)
-            if scan_size is not None
-            else _np.asarray(1, dtype=_np.int8)
-        )
-        legacy = assemble_typed_product(
-            f"{label}.legacy_peaks",
-            StackedLeaves(
-                arrays={"present": marker},
-                payload_meta=peak_meta,
-                per_point_meta=["peaks"] if scan_size is not None else [],
-                dropped=dropped,
-            ),
-            scan_size=scan_size,
-            kind=DataKind.STATISTICS,
-            attributes={
-                "bridge": "legacy_peaks/1",
-                "graph_ready": False,
-                "source_product": label,
-                "payload_field": "peaks",
-            },
-        )
-        if legacy is not None:
-            products[f"{label}.legacy_peaks"] = legacy
     return products
 
 
@@ -1130,7 +979,7 @@ class PsdResultAccumulator:
             self.payload = {
                 key: value
                 for key, value in payload.items()
-                if key not in {"psd", "psd_std", "psd_sem", "peaks"}
+                if key not in {"psd", "psd_std", "psd_sem"}
             }
             self.mean = partial_mean.copy()
             self.m2 = partial_m2.copy()
@@ -1162,7 +1011,6 @@ class PsdResultAccumulator:
         payload["psd"] = self.mean
         payload["psd_std"] = std
         payload["psd_sem"] = sem
-        payload["peaks"] = self.analyzer._find_peaks(payload["axis"], self.mean)
         uncertainty = dict(payload["uncertainty"])
         uncertainty["n_independent"] = self.count
         uncertainty["available"] = self.count > 1

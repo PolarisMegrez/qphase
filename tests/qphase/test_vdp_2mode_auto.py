@@ -53,12 +53,12 @@ def test_vdp_2mode_auto_peak_fit(vdp_auto_workflow_path, temp_project):
     _discover_plugins()
 
     job_list = load_workflow(vdp_auto_workflow_path)
-    assert len(job_list.jobs) == 2, "Expected sim + fit jobs"
+    assert len(job_list.jobs) == 3, "Expected sim + fit + peaks jobs"
 
     scheduler = Scheduler(system_config=SystemConfig(), project=temp_project)
     results = scheduler.run(job_list)
 
-    assert len(results) == 2, results
+    assert len(results) == 3, results
     assert all(r.success for r in results), f"Job failed: {results}"
 
     fit_result = next(r for r in results if r.job_name == "vdp_2mode_auto_fit")

@@ -71,7 +71,6 @@ jobs:
       kind: complex
       convention: symmetric
       expected_freq_max: 1.0
-      find_peaks: false
       estimator: {periodogram: {fft_chunk_trajectories: 4}}
 
 - name: collective_loss_kerr_3mode_ridge_psd_26_ridge

@@ -142,6 +142,36 @@ def test_analyzer_exports_trace_rows_and_bandwidth_audit(tmp_path):
     assert payload["orientation"] == "phase_decreasing"
 
 
+def test_analyzer_builds_typed_result_and_audit_products():
+    axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
+    result = SDEResult(
+        analysis={
+            "psd": {
+                "axis": axis,
+                "psd": _lorentzian(axis, center=-0.1, hwhm=0.07)[:, None],
+                "modes": [0],
+                "orientation": "phase_decreasing",
+            }
+        },
+        meta={"params": {"epsilon": 0.1}},
+    )
+    analyzer = BandLimitedCarrierAnalyzer(
+        BandLimitedCarrierConfig(
+            scan_param="epsilon", freq_min=-1.0, freq_max=0.2, maximum_lag=80.0
+        )
+    )
+    payload = analyzer.analyze({"point": result}, NumpyBackend()).data_dict
+    products = analyzer.build_products(payload, scan_size=1, label="carrier")
+    assert products is not None
+    assert set(products) == {
+        "carrier",
+        "carrier.candidates",
+        "carrier.platforms",
+    }
+    assert all(product.attributes["graph_ready"] for product in products.values())
+    assert products["carrier"].axis("scan").size == 1
+
+
 def test_analyzer_writes_header_only_csvs_when_no_candidates(tmp_path):
     axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
     results: dict[str, SDEResult] = {

@@ -26,7 +26,6 @@ jobs:
     psd:
       modes: [0]
       kind: complex
-      find_peaks: true
 
   backend:
     numpy:
@@ -43,3 +42,14 @@ jobs:
       gamma_a: 0.5
       gamma_b: 1.8728
       g: 0.5
+
+- name: cpu_smoke_kerr_2mode_peaks
+  input: {from: cpu_smoke_kerr_2mode, mode: dataset}
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    peaks:
+      scan_param: omega_b
+      psd_key: psd
+      finder: scipy
