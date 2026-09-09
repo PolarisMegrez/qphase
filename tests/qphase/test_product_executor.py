@@ -236,3 +236,63 @@ def test_executor_reports_nodes_and_checks_cancellation():
         "producer",
         "producer",
     ]
+
+
+def test_executor_reports_output_validation_failure():
+    graph = ProductGraph(
+        nodes=[
+            ProductNode(
+                node_id="producer",
+                producer="test.producer",
+                outputs=[
+                    ProductDeclaration(
+                        name="output", kind=DataKind.STATISTICS, fields=["missing"]
+                    )
+                ],
+            )
+        ]
+    )
+
+    class Progress:
+        def __init__(self):
+            self.messages = []
+
+        def status(self, message, *, stage):
+            self.messages.append((message, stage))
+
+    progress = Progress()
+    context = type("Context", (), {"progress": progress})()
+    with pytest.raises(TypeError, match="missing declared fields"):
+        ProductGraphExecutor(
+            graph,
+            {"producer": lambda node, inputs: {"output": _product()}},
+        ).run({}, context=context)
+    assert [item[1] for item in progress.messages] == ["producer", "producer"]
+
+
+def test_executor_reports_non_mapping_output_failure():
+    graph = ProductGraph(
+        nodes=[
+            ProductNode(
+                node_id="producer",
+                producer="test.producer",
+                outputs=[ProductDeclaration(name="output", kind=DataKind.STATISTICS)],
+            )
+        ]
+    )
+
+    class Progress:
+        def __init__(self):
+            self.messages = []
+
+        def status(self, message, *, stage):
+            self.messages.append((message, stage))
+
+    progress = Progress()
+    context = type("Context", (), {"progress": progress})()
+    with pytest.raises(TypeError, match="product mapping"):
+        ProductGraphExecutor(
+            graph,
+            {"producer": lambda node, inputs: []},
+        ).run({}, context=context)
+    assert [item[1] for item in progress.messages] == ["producer", "producer"]

@@ -6,7 +6,15 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.progress import ProgressReporter
 from qphase.core.scan import ScanSpec
-from qphase.data import load_bundle
+from qphase.data import (
+    AxisRole,
+    AxisSchema,
+    DataKind,
+    ProductSchema,
+    StatisticsDataset,
+    VariableSchema,
+    load_bundle,
+)
 from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
 from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyzer
 from qphase_sde.analyser.lorentz_fitter import _load_input
@@ -19,6 +27,30 @@ from qphase_sde.errors import SDEExecutionError
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 from qphase_sde.result import SDEResult, bundle_from_result
 from qphase_sde.runtime.scan import SDEScanResult
+
+
+def test_typed_scan_refuses_ragged_table_concatenation():
+    schema = ProductSchema(
+        kind=DataKind.STATISTICS,
+        axes=[
+            AxisSchema(name="scan", role=AxisRole.PARAMETER, size=1),
+            AxisSchema(name="group", role=AxisRole.INDEX, size=1),
+        ],
+        variables=[
+            VariableSchema(
+                name="value",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan", "group"),
+            )
+        ],
+        attributes={"table": "peak_candidates"},
+    )
+    dataset = StatisticsDataset.from_arrays(
+        schema, {"value": np.asarray([[1.0]])}, owner="test"
+    )
+    with pytest.raises(RuntimeError, match="ragged/table products"):
+        Engine._concat_scan_datasets([dataset, dataset])
 
 
 class ScannedDummyModel:
@@ -345,6 +377,58 @@ def test_scan_runs_trajectory_batches_inside_each_parameter_point():
     assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
     assert engine.config.n_traj == 128
     assert model.params == {"rate": 1.0}
+
+
+def test_typed_dense_scan_supports_tiles_and_trajectory_batches():
+    from qphase.core.registry import discovery, registry
+    from qphase_sde.graph import compile_product_graph
+
+    discovery.discover_plugins()
+    graph = compile_product_graph(
+        plugin_config={
+            "analyser": {"psd": {"modes": [0], "kind": "complex"}}
+        },
+        registry=registry,
+    )
+    assert graph is not None
+    model = StochasticScannedModel()
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.04,
+            dt=0.01,
+            n_traj=128,
+            trajectory_batching="required",
+            trajectory_batch_size=64,
+            seed=41,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": model,
+            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+        },
+        product_graph=graph,
+    )
+    context = SimpleNamespace(
+        parameter_grid=_grid(),
+        product_graph=graph,
+        progress=None,
+        cancellation=None,
+        resources=SimpleNamespace(
+            memory_limit_mib=3,
+            gpu_memory_fraction=None,
+        ),
+    )
+
+    result = engine.run(context=context)
+
+    assert result.shape == (2,)
+    assert "trajectories" not in result.products
+    assert result.products["psd"].axis("scan").size == 2
+    assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
 
 
 def test_allan_variance_runs_through_engine_trajectory_batches():

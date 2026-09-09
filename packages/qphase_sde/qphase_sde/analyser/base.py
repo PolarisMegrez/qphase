@@ -273,25 +273,57 @@ class Analyzer(PluginBase, ABC):
             and "scan" in {axis.name for axis in trajectory.axes}
             and trajectory.axis("scan").size not in (None, 1)
         )
-        if has_scan_trajectory:
-            assert trajectory is not None
-            scan_axis_size = trajectory.axis("scan").size
-            assert scan_axis_size is not None
-            scan_count = int(scan_axis_size)
+        has_scan_input = bool(getattr(self, "preserves_input_scan", False)) and any(
+            "scan" in {axis.name for axis in product.axes}
+            and product.axis("scan").size not in (None, 1)
+            for product in inputs.values()
+        )
+        if has_scan_trajectory or has_scan_input:
+            if has_scan_trajectory:
+                assert trajectory is not None
+                scan_axis_size = trajectory.axis("scan").size
+                assert scan_axis_size is not None
+                scan_count = int(scan_axis_size)
+                scan_bundle = None
+            else:
+                scan_count = 0
+                for product in inputs.values():
+                    if "scan" not in {axis.name for axis in product.axes}:
+                        continue
+                    scan_axis_size = product.axis("scan").size
+                    if scan_axis_size not in (None, 1):
+                        assert scan_axis_size is not None
+                        scan_count = int(scan_axis_size)
+                        break
+                if scan_count == 0:
+                    raise RuntimeError("scan product has no concrete scan size")
+                scan_bundle = SDEDataBundle(
+                    dict(inputs),
+                    SDEProvenance(),
+                    scan_axes={"scan": np.arange(scan_count)},
+                    scan_shape=(scan_count,),
+                    meta={"scan_parameter_values": dict(axes)},
+                )
             payloads: list[Any] = []
             for index in range(scan_count):
-                point_inputs = {
-                    name: (
-                        product.point_view(scan=index)
-                        if "scan" in {axis.name for axis in product.axes}
-                        else product
+                if scan_bundle is not None:
+                    point_result = cast(
+                        AnalysisResult,
+                        self.analyze(scan_bundle.point_view((index,)), backend),
                     )
-                    for name, product in inputs.items()
-                }
-                point_result = cast(
-                    AnalysisResult,
-                    self.analyze(kernel_input(point_inputs), backend),
-                )
+                else:
+                    point_inputs = {
+                        name: (
+                            product.point_view(scan=index)
+                            if "scan" in {axis.name for axis in product.axes}
+                            else product
+                        )
+                        for name, product in inputs.items()
+                    }
+                    point_result = cast(
+                        AnalysisResult,
+                        self.analyze(kernel_input(point_inputs), backend),
+                    )
                 if not isinstance(point_result, AnalysisResult):
                     raise TypeError("analyser analyze() must return AnalysisResult")
                 payloads.append(point_result.data_dict)

@@ -49,15 +49,32 @@ def compile_product_graph(
             if output.name in output_owners:
                 raise ValueError(f"duplicate analyser output {output.name!r}")
             output_owners[output.name] = (node_id, output.name)
+        requested_publish = list((publish_outputs or {}).get(str(name), []))
+        unknown_publish = set(requested_publish) - {
+            output.name for output in outputs
+        }
+        if unknown_publish:
+            raise ValueError(
+                f"publish_outputs for analyser {name!r} references unknown "
+                f"products {sorted(unknown_publish)!r}"
+            )
         nodes.append(
             ProductNode(
                 node_id=node_id,
                 producer=f"analyser:{name}",
                 requirements=list(instance.input_requirements()),
                 outputs=outputs,
-                publish_outputs=list((publish_outputs or {}).get(str(name), [])),
+                publish_outputs=requested_publish,
             )
         )
+
+    node_by_name = {node.node_id.removeprefix("analyser."): node for node in nodes}
+    for analyser_name, _product_names in (publish_outputs or {}).items():
+        node = node_by_name.get(str(analyser_name))
+        if node is None:
+            raise ValueError(
+                f"publish_outputs references unknown analyser {analyser_name!r}"
+            )
 
     edges: list[GraphEdge] = []
     external: list[ExternalInputBinding] = []
@@ -78,6 +95,8 @@ def compile_product_graph(
                         requirement=requirement.name,
                     )
                 )
+            elif requirement.optional:
+                continue
             else:
                 external.append(
                     ExternalInputBinding(

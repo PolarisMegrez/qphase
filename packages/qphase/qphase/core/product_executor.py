@@ -61,46 +61,56 @@ class ProductGraphExecutor:
             except Exception:
                 self._report(context, node, "failed")
                 raise
-            if not isinstance(outputs, Mapping):
-                raise TypeError(
-                    f"runner for node {node.node_id!r} must return a product mapping"
-                )
-            declared = {output.name for output in node.outputs}
-            actual = set(outputs)
-            if actual != declared:
-                raise ValueError(
-                    f"runner for node {node.node_id!r} returned products "
-                    f"{sorted(actual)!r}; expected {sorted(declared)!r}"
-                )
+            try:
+                if not isinstance(outputs, Mapping):
+                    raise TypeError(
+                        f"runner for node {node.node_id!r} must return a product "
+                        "mapping"
+                    )
+                declared = {output.name for output in node.outputs}
+                actual = set(outputs)
+                if actual != declared:
+                    raise ValueError(
+                        f"runner for node {node.node_id!r} returned products "
+                        f"{sorted(actual)!r}; expected {sorted(declared)!r}"
+                    )
+            except Exception:
+                self._report(context, node, "failed")
+                raise
             for name, product in outputs.items():
-                if not isinstance(product, Dataset):
-                    raise TypeError(
-                        f"runner for node {node.node_id!r} returned non-Dataset "
-                        f"output {name!r}"
+                try:
+                    if not isinstance(product, Dataset):
+                        raise TypeError(
+                            f"runner for node {node.node_id!r} returned non-Dataset "
+                            f"output {name!r}"
+                        )
+                    declaration = next(
+                        output for output in node.outputs if output.name == name
                     )
-                declaration = next(
-                    output for output in node.outputs if output.name == name
-                )
-                if product.kind is not declaration.kind:
-                    raise TypeError(
-                        f"node {node.node_id!r} output {name!r} has kind "
-                        f"{product.kind.value!r}, expected {declaration.kind.value!r}"
-                    )
-                if declaration.quantity is not None and not any(
-                    variable.quantity == declaration.quantity
-                    for variable in product.variables
-                ):
-                    raise TypeError(
-                        f"node {node.node_id!r} output {name!r} does not provide "
-                        f"declared quantity {declaration.quantity!r}"
-                    )
-                variable_names = {variable.name for variable in product.variables}
-                missing_fields = set(declaration.fields) - variable_names
-                if missing_fields:
-                    raise TypeError(
-                        f"node {node.node_id!r} output {name!r} is missing "
-                        f"declared fields {sorted(missing_fields)!r}"
-                    )
+                    if product.kind is not declaration.kind:
+                        raise TypeError(
+                            f"node {node.node_id!r} output {name!r} has kind "
+                            f"{product.kind.value!r}, expected "
+                            f"{declaration.kind.value!r}"
+                        )
+                    if declaration.quantity is not None and not any(
+                        variable.quantity == declaration.quantity
+                        for variable in product.variables
+                    ):
+                        raise TypeError(
+                            f"node {node.node_id!r} output {name!r} does not provide "
+                            f"declared quantity {declaration.quantity!r}"
+                        )
+                    variable_names = {variable.name for variable in product.variables}
+                    missing_fields = set(declaration.fields) - variable_names
+                    if missing_fields:
+                        raise TypeError(
+                            f"node {node.node_id!r} output {name!r} is missing "
+                            f"declared fields {sorted(missing_fields)!r}"
+                        )
+                except Exception:
+                    self._report(context, node, "failed")
+                    raise
             produced[node.node_id] = dict(outputs)
             for edge in self.graph.edges:
                 if edge.consumer != node.node_id:
@@ -179,7 +189,19 @@ class ProductGraphExecutor:
                     )
                 product = external
             elif requirement.optional:
-                continue
+                optional_matches = [
+                    products[requirement.name]
+                    for products in external_inputs.values()
+                    if requirement.name in products
+                ]
+                if not optional_matches:
+                    continue
+                if len(optional_matches) > 1:
+                    raise ValueError(
+                        f"optional input {requirement.name!r} of node "
+                        f"{node.node_id!r} has multiple external sources"
+                    )
+                product = optional_matches[0]
             else:
                 raise ValueError(
                     f"required input {requirement.name!r} of node "

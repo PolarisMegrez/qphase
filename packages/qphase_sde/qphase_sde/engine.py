@@ -735,10 +735,52 @@ class Engine(EngineBase):
         context: Any,
     ) -> SDEDataBundle:
         """Run a resource-bounded scan through the frozen typed graph."""
+        from .products import add_scan_parameter_coordinates
+
         if plan.trajectory_batch_count > 1:
-            raise RuntimeError(
-                "typed scan tiling does not support trajectory batching; "
-                "use a larger execution budget or disable typed analysis"
+            point_bundles: list[SDEDataBundle] = []
+            for point_index in range(plan.scan_size):
+                with adapter.tile(point_index, point_index + 1):
+                    point_bundle = self._run_trajectory_batched_typed(
+                        data,
+                        plan=plan,
+                        reporter=reporter,
+                        context=context,
+                        point_index=point_index,
+                        master_seed=adapter.master_seed,
+                        observers=self._normalised_observers(),
+                    )
+                point_bundles.append(
+                    SDEDataBundle(
+                        {
+                            name: self._add_single_scan_axis(product)
+                            for name, product in point_bundle.products.items()
+                        },
+                        point_bundle.provenance,
+                        scan_axes={"scan": np.asarray([point_index])},
+                        scan_shape=(1,),
+                    )
+                )
+            products = self._concat_scan_products(
+                [bundle.products for bundle in point_bundles]
+            )
+            grid = context.parameter_grid
+            assert grid is not None
+            flat_coordinates = grid.parameter_arrays(flatten=True)
+            products = {
+                name: add_scan_parameter_coordinates(product, flat_coordinates)
+                for name, product in products.items()
+            }
+            return SDEDataBundle(
+                products,
+                self._job_provenance(grid=grid),
+                scan_axes=dict(grid.axes),
+                scan_shape=grid.shape,
+                meta={
+                    "mode": "simulate_analyze",
+                    "execution": "product_graph",
+                    "execution_plan": plan.to_dict(),
+                },
             )
         assert context.parameter_grid is not None
         grid = context.parameter_grid
@@ -807,7 +849,11 @@ class Engine(EngineBase):
             self._job_provenance(grid=grid),
             scan_axes=dict(grid.axes),
             scan_shape=grid.shape,
-            meta={"mode": "simulate_analyze", "execution": "product_graph"},
+            meta={
+                "mode": "simulate_analyze",
+                "execution": "product_graph",
+                "execution_plan": plan.to_dict(),
+            },
         )
 
     @staticmethod
@@ -949,6 +995,15 @@ class Engine(EngineBase):
         if not datasets:
             raise ValueError("cannot concatenate an empty Dataset sequence")
         first = datasets[0]
+        if first.attributes.get("table") in {
+            "peak_candidates",
+            "peak_paths",
+            "row_table",
+        }:
+            raise RuntimeError(
+                "ragged/table products require an analyser reducer; generic "
+                "scan concatenation is refused to prevent data loss"
+            )
         scan_axis = {axis.name for axis in first.axes}
         if "scan" not in scan_axis:
             if len(datasets) > 1:
@@ -977,6 +1032,39 @@ class Engine(EngineBase):
             else:
                 arrays[variable.name] = values[0]
         return type(first).from_arrays(schema, arrays, owner="engine.sde")
+
+    @staticmethod
+    def _add_single_scan_axis(dataset: Any) -> Any:
+        """Add a singleton scan axis to one dense, pointwise Dataset."""
+        coordinate_variables = {
+            coordinate.variable for coordinate in dataset.coordinates()
+        }
+        schema_data = dataset.schema.model_dump(mode="python")
+        schema_data["axes"] = [
+            {"name": "scan", "role": "parameter", "size": 1},
+            *schema_data["axes"],
+        ]
+        variables = []
+        arrays: dict[str, np.ndarray] = {}
+        for variable in dataset.variables:
+            if variable.name in coordinate_variables:
+                variables.append(variable)
+                arrays[variable.name] = np.asarray(
+                    dataset.handle(variable.name).materialize()
+                )
+                continue
+            variables.append(
+                variable.model_copy(update={"dims": ("scan", *variable.dims)})
+            )
+            arrays[variable.name] = np.expand_dims(
+                np.asarray(dataset.handle(variable.name).materialize()), axis=0
+            )
+        schema_data["variables"] = variables
+        return type(dataset).from_arrays(
+            type(dataset.schema).model_validate(schema_data),
+            arrays,
+            owner="engine.sde",
+        )
 
     def _merge_simulation_trajectory(
         self, source: SDEDataBundle, analysed: ResultProtocol

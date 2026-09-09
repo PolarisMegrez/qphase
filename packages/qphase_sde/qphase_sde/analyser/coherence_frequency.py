@@ -285,12 +285,22 @@ class CoherenceFrequencyAnalyzer(Analyzer):
         config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
         source = inputs[config.input_key]
         orientation = resolve_frequency_orientation(source.attributes)
+        channel_name = f"channel_{config.channel}"
+        configured_names = source.attributes.get("channel_names")
+        if isinstance(configured_names, list) and config.channel < len(
+            configured_names
+        ):
+            channel_name = str(configured_names[config.channel])
+        elif "modes" in {variable.name for variable in source.variables}:
+            modes = np.asarray(source.handle("modes").materialize()).reshape(-1)
+            if config.channel < modes.size:
+                channel_name = f"mode_{int(modes[config.channel])}"
         products = self.build_products(
             result.data_dict,
             scan_size=scan_size,
             label=label,
             orientation=orientation,
-            channel_name=f"channel_{config.channel}",
+            channel_name=channel_name,
             channel_index=config.channel,
         )
         if products is None:

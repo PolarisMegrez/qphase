@@ -156,6 +156,31 @@ class PeaksAnalyzer(Analyzer):
         scan_size: int | None,
         label: str,
     ) -> dict[str, Dataset] | None:
+        if isinstance(payload, list):
+            candidate_tables: list[Mapping[str, Any]] = []
+            modes: list[int] | None = None
+            for scan_index, item in enumerate(payload):
+                if not isinstance(item, Mapping):
+                    raise TypeError("peaks scan payload entries must be mappings")
+                tables = item.get("candidate_tables")
+                if not isinstance(tables, list):
+                    raise TypeError("peaks scan payload must contain candidate_tables")
+                for table in tables:
+                    if not isinstance(table, Mapping):
+                        raise TypeError("peaks candidate table must be a mapping")
+                    rebased = dict(table)
+                    rebased["group_scan_index"] = np.full_like(
+                        np.asarray(table["group_scan_index"], dtype=np.int64),
+                        scan_index,
+                    )
+                    rebased["scan_count"] = len(payload)
+                    candidate_tables.append(rebased)
+                item_modes = [int(mode) for mode in item.get("modes", [])]
+                if modes is None:
+                    modes = item_modes
+                elif modes != item_modes:
+                    raise ValueError("peak scan points use different mode selections")
+            payload = {"candidate_tables": candidate_tables, "modes": modes or []}
         if not isinstance(payload, dict):
             raise TypeError("peaks payload must be a mapping")
         tables = payload.get("candidate_tables")

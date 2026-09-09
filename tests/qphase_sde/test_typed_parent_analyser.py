@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.registry import discovery, registry
 from qphase_sde.analyser.coherence_frequency import (
@@ -236,3 +237,34 @@ def test_coherence_frequency_plugin_graph_injects_selected_estimator():
     )
 
     assert node.instance._selected_estimator_name() == "short_delay"
+
+
+def test_coherence_frequency_preserves_input_mode_identity():
+    source = _spectrum_bundle()
+    analyzer = CoherenceFrequencyAnalyzer(
+        CoherenceFrequencyAnalyzerConfig(
+            scan_param="epsilon",
+            input_key="psd",
+            estimator={"band_limited": {}},
+        ),
+        subplugins={"estimator": BandLimitedCoherenceFrequency()},
+    )
+    product = analyzer.execute(
+        {"psd": source.products["psd"]},
+        backend=NumpyBackend(),
+        label="frequency",
+    )["frequency"]
+    assert product.attributes["channel_names"] == ["mode_0"]
+
+
+def test_product_graph_rejects_unknown_published_output():
+    with pytest.raises(ValueError, match="unknown products"):
+        compile_product_graph(
+            plugin_config={
+                "analyser": {
+                    "peaks": {"scan_param": "epsilon", "finder": {"scipy": {}}}
+                }
+            },
+            registry=registry,
+            publish_outputs={"peaks": ["not_declared"]},
+        )

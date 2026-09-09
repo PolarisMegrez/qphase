@@ -66,7 +66,7 @@ MANIFEST = ResourcePackageManifest(
         ),
         PluginClassDeclaration(
             namespace="analyser",
-            protocol="qphase_sde.contracts.analyser:AnalyserDeclarationContract",
+            protocol="qphase_sde.contracts.analyser:AnalyserExecutionContract",
             description="Analysis plugins declaring typed inputs/outputs, "
             "capabilities, workspace and progress; graph execution invokes "
             "the typed analyser execution contract.",
