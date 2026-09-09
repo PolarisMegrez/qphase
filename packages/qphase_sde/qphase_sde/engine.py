@@ -900,27 +900,6 @@ class Engine(EngineBase):
         if point_count < 1:
             raise ValueError("typed trajectory batch requires a non-empty scan tile")
         analysers = self._normalised_analysers()
-        reducer_sets = [
-            {
-                name: analyser.reducer()
-                for name, analyser in analysers.items()
-            }
-            for _ in range(point_count)
-        ]
-        if any(
-            len(item) != len(analysers) or any(value is None for value in item.values())
-            for item in reducer_sets
-        ):
-            raise RuntimeError(
-                "typed trajectory batching requires a reducer for every analyser"
-            )
-        if master_seed is None:
-            master_seed = int(
-                np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0]
-            )
-        master_seed = int(master_seed) % (1 << 64)
-        observer_batches: dict[str, list[Any]] = {name: [] for name in observers}
-        result_meta: dict[str, Any] = {}
         graph = getattr(context, "product_graph", None)
         if graph is None:
             raise RuntimeError("typed trajectory batching requires a ProductGraph")
@@ -929,6 +908,37 @@ class Engine(EngineBase):
             for node in graph.nodes
             for output in node.outputs
         }
+        output_labels = {
+            node.node_id.removeprefix("analyser."): [
+                output.name for output in node.outputs
+            ]
+            for node in graph.nodes
+        }
+        reducer_sets = []
+        for _ in range(point_count):
+            reducers: dict[str, Any] = {}
+            for name, analyser in analysers.items():
+                reducer = analyser.reducer()
+                if reducer is None:
+                    raise RuntimeError(
+                        f"typed analyser {name!r} has no trajectory reducer"
+                    )
+                labels = output_labels.get(name, [])
+                if len(labels) != 1:
+                    raise RuntimeError(
+                        f"typed analyser {name!r} must declare one reducer output"
+                    )
+                if hasattr(reducer, "label"):
+                    reducer.label = labels[0]
+                reducers[name] = reducer
+            reducer_sets.append(reducers)
+        if master_seed is None:
+            master_seed = int(
+                np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0]
+            )
+        master_seed = int(master_seed) % (1 << 64)
+        observer_batches: dict[str, list[Any]] = {name: [] for name in observers}
+        result_meta: dict[str, Any] = {}
         reducer_states = [
             {
                 name: reducer.prepare(None, context)
