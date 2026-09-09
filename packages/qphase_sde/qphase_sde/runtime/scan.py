@@ -58,6 +58,63 @@ class SDEParameterGridAdapter:
         finally:
             self._restore()
 
+    @contextmanager
+    def trajectory_tile(
+        self,
+        scan_start: int,
+        scan_stop: int,
+        trajectory_start: int,
+        trajectory_stop: int,
+    ):
+        """Expose one trajectory batch for every point in a scan tile.
+
+        The fused array is point-major: each scan point contributes the same
+        trajectory slice. This is the layout consumed by ``_trajectory_product``
+        and keeps the existing model kernels unchanged.
+        """
+        if not (0 <= scan_start < scan_stop <= self.grid.size):
+            raise ValueError(f"invalid SDE scan tile [{scan_start}, {scan_stop})")
+        if not (0 <= trajectory_start < trajectory_stop <= self.base_n_traj):
+            raise ValueError(
+                "invalid trajectory batch "
+                f"[{trajectory_start}, {trajectory_stop})"
+            )
+        point_count = scan_stop - scan_start
+        batch_count = trajectory_stop - trajectory_start
+        original_n_traj = int(self.engine.config.n_traj)
+        original_params = dict(self.model.params)
+        original_attrs = {
+            name: getattr(self.engine.config, name, None)
+            for name in (
+                "_batch_scan_count",
+                "_batch_scan_offset",
+                "_batch_scan_params",
+            )
+        }
+        scanned = {
+            name: np.repeat(values[scan_start:scan_stop], batch_count)
+            for name, values in self._scanned_values.items()
+        }
+        self._replace_model_params({**self.base_params, **scanned})
+        self.engine.config.n_traj = point_count * batch_count
+        object.__setattr__(self.engine.config, "_batch_scan_count", point_count)
+        object.__setattr__(self.engine.config, "_batch_scan_offset", scan_start)
+        object.__setattr__(
+            self.engine.config,
+            "_batch_scan_params",
+            list(scanned),
+        )
+        try:
+            yield self
+        finally:
+            self.engine.config.n_traj = original_n_traj
+            self._replace_model_params(original_params)
+            for name, value in original_attrs.items():
+                if value is None and name in self.engine.config.__dict__:
+                    self.engine.config.__dict__.pop(name, None)
+                else:
+                    object.__setattr__(self.engine.config, name, value)
+
     def point_seeds(self, start: int, stop: int) -> tuple[int, ...]:
         """Return deterministic per-point seeds independent of tile boundaries."""
         seeds: list[int] = []

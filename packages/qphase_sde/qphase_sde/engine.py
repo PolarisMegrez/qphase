@@ -16,7 +16,7 @@ import logging
 import time as _time
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -464,7 +464,20 @@ class Engine(EngineBase):
             analysers=analysers,
             observers=observers,
             resources=getattr(context, "resources", None),
+            typed_execution=(
+                context is not None
+                and getattr(context, "product_graph", None) is not None
+            ),
         )
+        if (
+            plan.trajectory_batch_count > 1
+            and (context is None or getattr(context, "product_graph", None) is None)
+        ):
+            plan = replace(
+                plan,
+                scan_tile_size=1,
+                tile_count=plan.scan_size,
+            )
         plan_payload = plan.to_dict()
         log.info("SDE execution plan: %s", plan_payload)
         if context is not None and isinstance(getattr(context, "metadata", None), dict):
@@ -557,7 +570,6 @@ class Engine(EngineBase):
                     plan=plan,
                     reporter=reporter,
                     context=context,
-                    point_index=0,
                     master_seed=self.config.seed,
                     observers=observers,
                 )
@@ -738,31 +750,32 @@ class Engine(EngineBase):
         from .products import add_scan_parameter_coordinates
 
         if plan.trajectory_batch_count > 1:
-            point_bundles: list[SDEDataBundle] = []
-            for point_index in range(plan.scan_size):
-                with adapter.tile(point_index, point_index + 1):
-                    point_bundle = self._run_trajectory_batched_typed(
+            tile_bundles: list[SDEDataBundle] = []
+            for tile_index, start in enumerate(
+                range(0, plan.scan_size, plan.scan_tile_size)
+            ):
+                stop = min(start + plan.scan_tile_size, plan.scan_size)
+                if reporter is not None:
+                    reporter.status(
+                        f"SDE typed scan tile {tile_index + 1}/{plan.tile_count} "
+                        f"(points {start + 1}-{stop})",
+                        stage="sampling",
+                    )
+                tile_bundles.append(
+                    self._run_trajectory_batched_typed(
                         data,
+                        adapter=adapter,
                         plan=plan,
                         reporter=reporter,
                         context=context,
-                        point_index=point_index,
+                        scan_start=start,
+                        scan_stop=stop,
                         master_seed=adapter.master_seed,
                         observers=self._normalised_observers(),
                     )
-                point_bundles.append(
-                    SDEDataBundle(
-                        {
-                            name: self._add_single_scan_axis(product)
-                            for name, product in point_bundle.products.items()
-                        },
-                        point_bundle.provenance,
-                        scan_axes={"scan": np.asarray([point_index])},
-                        scan_shape=(1,),
-                    )
                 )
             products = self._concat_scan_products(
-                [bundle.products for bundle in point_bundles]
+                [bundle.products for bundle in tile_bundles]
             )
             grid = context.parameter_grid
             assert grid is not None
@@ -872,21 +885,29 @@ class Engine(EngineBase):
         self,
         data: Any | None,
         *,
+        adapter: Any | None = None,
         plan: SDEExecutionPlan,
         reporter: Any | None,
         context: Any,
-        point_index: int,
+        scan_start: int = 0,
+        scan_stop: int = 1,
         master_seed: int | None,
         observers: dict[str, Any],
     ) -> SDEDataBundle:
-        """Run trajectory batches through the frozen graph and reduce them."""
+        """Run fused scan-tile trajectory batches through the frozen graph."""
         assert self.config is not None
+        point_count = scan_stop - scan_start
+        if point_count < 1:
+            raise ValueError("typed trajectory batch requires a non-empty scan tile")
         analysers = self._normalised_analysers()
-        accumulators = {
-            name: analyser.create_result_accumulator()
-            for name, analyser in analysers.items()
-        }
-        if len(accumulators) != len(analysers):
+        accumulator_sets = [
+            {
+                name: analyser.create_result_accumulator()
+                for name, analyser in analysers.items()
+            }
+            for _ in range(point_count)
+        ]
+        if any(len(item) != len(analysers) for item in accumulator_sets):
             raise RuntimeError(
                 "typed trajectory batching requires an accumulator for every analyser"
             )
@@ -918,9 +939,10 @@ class Engine(EngineBase):
             seeds = tuple(
                 int(
                     np.random.SeedSequence(
-                        [master_seed, point_index, first_group + offset]
+                        [master_seed, point, first_group + offset]
                     ).generate_state(1, dtype=np.uint64)[0]
                 )
+                for point in range(scan_start, scan_stop)
                 for offset in range(count // group_size)
             )
             if reporter is not None:
@@ -929,7 +951,15 @@ class Engine(EngineBase):
                     f"{plan.trajectory_batch_count}",
                     stage="sampling",
                 )
-            with self._trajectory_batch_scope(start, stop, plan.n_traj_per_point):
+            if adapter is None:
+                batch_scope = self._trajectory_batch_scope(
+                    start, stop, plan.n_traj_per_point
+                )
+            else:
+                batch_scope = adapter.trajectory_tile(
+                    scan_start, scan_stop, start, stop
+                )
+            with batch_scope:
                 partial = self._run_simulate(
                     data,
                     reporter=reporter,
@@ -937,28 +967,51 @@ class Engine(EngineBase):
                     rng_group_seeds=seeds,
                     rng_group_size=group_size,
                     observers=observers,
-                    progress_offset=(point_index * plan.n_traj_per_point + start)
+                    progress_offset=(scan_start * plan.n_traj_per_point + start)
                     * plan.steps,
-                    progress_scale=count,
+                    progress_scale=count * point_count,
                     progress_total=plan.scan_size * plan.n_traj_per_point * plan.steps,
                     progress_label=f"typed trajectory batch {batch_index + 1}/"
                     f"{plan.trajectory_batch_count}",
                     skip_analysis=True,
                 )
-            source = bundle_from_result(
-                partial, provenance=self._job_provenance(), analysers={}
+            if partial.trajectory is None:
+                raise RuntimeError("typed trajectory batch did not retain trajectories")
+            from .result import _trajectory_product
+
+            source = SDEDataBundle(
+                {
+                    "trajectories": _trajectory_product(
+                        partial.trajectory,
+                        scan_size=point_count,
+                        n_traj_per_point=count,
+                    )
+                },
+                self._job_provenance(),
+                scan_axes={"scan": np.arange(point_count)},
+                scan_shape=(point_count,),
+                meta={"scan_combine": "zipped"},
             )
             typed = self._run_typed_analyze(source, context=context)
             if not isinstance(typed, SDEDataBundle):
                 raise RuntimeError("typed trajectory batch produced no data bundle")
-            legacy = legacy_view_from_products(typed.products)
-            for name, accumulator in accumulators.items():
-                payload = legacy.analysis.get(name)
-                if payload is None:
-                    raise RuntimeError(
-                        f"typed analyser {name!r} produced no batch output"
+            for point_offset, accumulators in enumerate(accumulator_sets):
+                point_products = {
+                    name: (
+                        product.point_view(scan=point_offset)
+                        if "scan" in {axis.name for axis in product.axes}
+                        else product
                     )
-                accumulator.update(self._analysis_to_host(payload))
+                    for name, product in typed.products.items()
+                }
+                legacy = legacy_view_from_products(point_products)
+                for name, accumulator in accumulators.items():
+                    payload = legacy.analysis.get(name)
+                    if payload is None:
+                        raise RuntimeError(
+                            f"typed analyser {name!r} produced no batch output"
+                        )
+                    accumulator.update(self._analysis_to_host(payload))
             for name in observers:
                 payload = self._analysis_to_host(partial.analysis.get(name))
                 if payload is not None:
@@ -968,12 +1021,6 @@ class Engine(EngineBase):
             del partial, source, typed, legacy
             self._release_backend_pool()
 
-        analysis = {
-            name: accumulator.finalize() for name, accumulator in accumulators.items()
-        }
-        for name, payloads in observer_batches.items():
-            if payloads:
-                analysis[name] = observers[name].merge_payloads(payloads)
         result_meta.update(
             {
                 "params": dict(self._required_model().params),
@@ -985,9 +1032,44 @@ class Engine(EngineBase):
                 "execution_plan": plan.to_dict(),
             }
         )
-        final = SDEResult(trajectory=None, analysis=analysis, meta=result_meta)
-        return bundle_from_result(
-            final, provenance=self._job_provenance(), analysers=analysers
+        point_bundles: list[SDEDataBundle] = []
+        for accumulators in accumulator_sets:
+            final = SDEResult(
+                trajectory=None,
+                analysis={
+                    name: accumulator.finalize()
+                    for name, accumulator in accumulators.items()
+                },
+                meta=result_meta,
+            )
+            point_bundles.append(
+                bundle_from_result(
+                    final,
+                    provenance=self._job_provenance(),
+                    analysers=analysers,
+                )
+            )
+        for name, payloads in observer_batches.items():
+            if payloads:
+                result_meta.setdefault("observer_payloads", {})[name] = (
+                    observers[name].merge_payloads(payloads)
+                )
+        if point_count == 1:
+            return point_bundles[0]
+        return SDEDataBundle(
+            self._concat_scan_products(
+                [
+                    {
+                        name: self._add_single_scan_axis(product)
+                        for name, product in bundle.products.items()
+                    }
+                    for bundle in point_bundles
+                ]
+            ),
+            self._job_provenance(),
+            scan_axes={"scan": np.arange(point_count)},
+            scan_shape=(point_count,),
+            meta=result_meta,
         )
 
     @staticmethod
@@ -1012,6 +1094,45 @@ class Engine(EngineBase):
                     "be combined without a resource-package reducer"
                 )
             return first
+        first_schema = first.schema.model_dump(mode="json")
+        first_schema["axes"] = [
+            {**axis, "size": None} if axis["name"] == "scan" else axis
+            for axis in first_schema["axes"]
+        ]
+        coordinate_variables = {
+            coordinate.variable for coordinate in first.coordinates()
+        }
+        first_variables = {
+            variable.name: variable for variable in first.variables
+        }
+        first_attributes = dict(first.attributes)
+        for dataset in datasets[1:]:
+            if type(dataset) is not type(first):
+                raise TypeError("typed scan tiles must use the same Dataset class")
+            if dataset.attributes != first_attributes:
+                raise ValueError("typed scan tiles have inconsistent attributes")
+            schema = dataset.schema.model_dump(mode="json")
+            schema["axes"] = [
+                {**axis, "size": None} if axis["name"] == "scan" else axis
+                for axis in schema["axes"]
+            ]
+            if schema != first_schema:
+                raise ValueError(
+                    "typed scan tiles have incompatible schema, axes, or "
+                    "sampling basis"
+                )
+            variables = {variable.name: variable for variable in dataset.variables}
+            if variables != first_variables:
+                raise ValueError("typed scan tiles have inconsistent variables")
+            for variable_name in coordinate_variables:
+                variable = first_variables[variable_name]
+                if "scan" not in variable.dims:
+                    left = np.asarray(first.handle(variable_name).materialize())
+                    right = np.asarray(dataset.handle(variable_name).materialize())
+                    if not np.array_equal(left, right):
+                        raise ValueError(
+                            "typed scan tiles have inconsistent non-scan coordinates"
+                        )
         schema_data = first.schema.model_dump(mode="python")
         for axis in schema_data["axes"]:
             if axis["name"] == "scan":

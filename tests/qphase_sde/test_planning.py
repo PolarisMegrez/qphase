@@ -3,8 +3,9 @@ from types import SimpleNamespace
 import pytest
 from qphase.core.scan import ScanSpec
 from qphase_sde.analyser.trajectory_diagnostics import TrajectoryDiagnostics
+from qphase_sde.contracts.analyser import AnalyserExecutionCapabilities
 from qphase_sde.engine import EngineConfig
-from qphase_sde.planning import build_execution_plan
+from qphase_sde.planning import SDEMemoryPlanningError, build_execution_plan
 from qphase_sde.spectral_estimator.base import SpectralEstimatorCapabilities
 
 
@@ -140,6 +141,35 @@ def test_planner_batches_trajectories_when_one_point_exceeds_host_budget():
     assert plan.scan_tile_size == 1
     assert plan.budget_bytes is not None
     assert plan.memory.estimated_peak_bytes <= plan.budget_bytes
+
+
+def test_typed_planner_rejects_non_tileable_products_before_running():
+    config = EngineConfig(
+        t0=0.0,
+        t1=100.0,
+        dt=0.01,
+        n_traj=1,
+        save_stride=1,
+        keep_traj=False,
+    )
+    typed_ragged = SimpleNamespace(
+        name="typed_ragged",
+        config=SimpleNamespace(),
+        output_specs=lambda **kwargs: (),
+        execution_capabilities=lambda: AnalyserExecutionCapabilities(),
+    )
+
+    with pytest.raises(SDEMemoryPlanningError, match="scan tiling"):
+        build_execution_plan(
+            config=config,
+            grid=_grid(31),
+            model=FakeModel(),
+            backend=FakeNumpyBackend(),
+            integrator=FakeIntegrator(),
+            analysers={"typed_ragged": typed_ragged},
+            resources=SimpleNamespace(memory_limit_mib=2),
+            typed_execution=True,
+        )
 
 
 def test_planner_uses_dynamic_host_memory_when_limit_is_unset():

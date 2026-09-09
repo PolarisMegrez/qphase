@@ -53,6 +53,31 @@ def test_typed_scan_refuses_ragged_table_concatenation():
         Engine._concat_scan_datasets([dataset, dataset])
 
 
+def test_typed_scan_concat_rejects_inconsistent_tile_metadata():
+    schema = ProductSchema(
+        kind=DataKind.STATISTICS,
+        axes=[AxisSchema(name="scan", role=AxisRole.PARAMETER, size=1)],
+        variables=[
+            VariableSchema(
+                name="value",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan",),
+            )
+        ],
+        attributes={"source": "tile"},
+    )
+    first = StatisticsDataset.from_arrays(
+        schema, {"value": np.asarray([1.0])}, owner="test"
+    )
+    changed_schema = schema.model_copy(update={"attributes": {"source": "other"}})
+    second = StatisticsDataset.from_arrays(
+        changed_schema, {"value": np.asarray([2.0])}, owner="test"
+    )
+    with pytest.raises(ValueError, match="inconsistent attributes"):
+        Engine._concat_scan_datasets([first, second])
+
+
 class ScannedDummyModel:
     name = "scanned_dummy"
     n_modes = 1
@@ -412,23 +437,50 @@ def test_typed_dense_scan_supports_tiles_and_trajectory_batches():
         },
         product_graph=graph,
     )
-    context = SimpleNamespace(
-        parameter_grid=_grid(),
-        product_graph=graph,
-        progress=None,
-        cancellation=None,
-        resources=SimpleNamespace(
-            memory_limit_mib=3,
-            gpu_memory_fraction=None,
-        ),
-    )
+    def run(memory_limit_mib):
+        run_engine = Engine(
+            config=engine.config.model_copy(deep=True),
+            plugins={
+                "backend": NumpyBackend(),
+                "integrator": EulerMaruyama(),
+                "model": StochasticScannedModel(),
+                "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            },
+            product_graph=graph,
+        )
+        run_context = SimpleNamespace(
+            parameter_grid=ScanSpec.model_validate(
+                {
+                    "axes": {
+                        "rate": {
+                            "target": "model.scanned_dummy.rate",
+                            "values": list(np.arange(16, dtype=float) + 1.0),
+                        }
+                    }
+                }
+            ).compile(),
+            product_graph=graph,
+            progress=None,
+            cancellation=None,
+            resources=SimpleNamespace(
+                memory_limit_mib=memory_limit_mib,
+                gpu_memory_fraction=None,
+            ),
+        )
+        run_result = run_engine.run(context=run_context)
+        return run_result, _product_arrays(run_result.products["psd"])
 
-    result = engine.run(context=context)
+    result, wide_tile = run(3)
+    narrow_result, narrow_tile = run(2)
 
-    assert result.shape == (2,)
+    assert result.shape == (16,)
     assert "trajectories" not in result.products
-    assert result.products["psd"].axis("scan").size == 2
+    assert result.products["psd"].axis("scan").size == 16
     assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
+    assert result.metadata["execution_plan"]["scan_tile_size"] == 16
+    assert narrow_result.metadata["execution_plan"]["scan_tile_size"] <= 16
+    for name in ("psd", "psd_std", "psd_sem", "uncertainty.n_independent"):
+        np.testing.assert_allclose(wide_tile[name], narrow_tile[name], rtol=1e-12)
 
 
 def test_allan_variance_runs_through_engine_trajectory_batches():

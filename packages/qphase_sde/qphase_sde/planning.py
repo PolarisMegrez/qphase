@@ -122,6 +122,7 @@ def build_execution_plan(
     observers: dict[str, Any] | None = None,
     resources: Any | None,
     device_memory: tuple[int, int] | None = None,
+    typed_execution: bool = False,
 ) -> SDEExecutionPlan:
     """Validate a job and choose an SDE-internal scan tile size."""
     time_grid = resolve_time_grid(
@@ -281,7 +282,16 @@ def build_execution_plan(
                     budget, fixed + working_per_point, backend_name
                 )
             )
-        tile_size = 1
+        if budget is None:
+            tile_size = scan_size
+        else:
+            tile_size = max(
+                1,
+                min(
+                    scan_size,
+                    (budget - fixed) // max(1, working_per_point),
+                ),
+            )
     elif budget is None:
         tile_size = scan_size
     elif stream_analysis:
@@ -306,6 +316,19 @@ def build_execution_plan(
 
     tile_size = int(max(1, tile_size))
     tile_count = math.ceil(scan_size / tile_size)
+    if typed_execution and tile_size < scan_size:
+        unsupported = [
+            str(name)
+            for name, analyser in analysers.items()
+            if not _analyzer_capabilities(analyser).supports_scan_tiling
+            and callable(getattr(analyser, "output_specs", None))
+        ]
+        if unsupported:
+            raise SDEMemoryPlanningError(
+                "scan tiling is required by the resource budget, but these "
+                "analysers do not provide a scan-tile reducer: "
+                f"{unsupported!r}"
+            )
     peak = fixed + working_per_point * tile_size
     if backend_name == "cupy":
         device_peak = peak

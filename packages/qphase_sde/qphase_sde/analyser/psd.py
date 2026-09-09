@@ -267,6 +267,7 @@ class PsdAnalyzer(Analyzer):
             preferred_location=("backend" if capabilities.backend_native else "host"),
             supports_trajectory_batching=capabilities.trajectory_batching,
             supports_time_streaming=capabilities.time_streaming,
+            supports_scan_tiling=capabilities.trajectory_batching,
         )
 
     def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:

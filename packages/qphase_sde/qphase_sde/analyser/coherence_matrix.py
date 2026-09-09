@@ -106,6 +106,7 @@ class CoherenceMatrixAnalyzer(Analyzer):
             preferred_location="backend",
             supports_trajectory_batching=True,
             supports_time_streaming=False,
+            supports_scan_tiling=True,
         )
 
     def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
