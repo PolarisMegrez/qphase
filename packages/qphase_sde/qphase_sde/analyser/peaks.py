@@ -104,6 +104,63 @@ class PeaksAnalyzer(Analyzer):
             ),
         )
 
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        """Find candidates directly from the typed spectral Dataset."""
+        del backend, metadata
+        config = cast(PeaksAnalyzerConfig, self.config)
+        finder = self._resolve_finder()
+        product = inputs.get(config.psd_key)
+        if product is None:
+            raise ValueError(f"peaks input has no product {config.psd_key!r}")
+        has_scan = "scan" in {axis.name for axis in product.axes}
+        scan_size = int(product.axis("scan").size) if has_scan else 1
+        tables: list[Mapping[str, Any]] = []
+        selected_modes: list[int] | None = None
+        for scan_index in range(scan_size):
+            point = product.point_view(scan=scan_index) if has_scan else product
+            axis = np.asarray(point.handle("axis").materialize(), dtype=float)
+            spectrum = np.asarray(point.handle("psd").materialize(), dtype=float)
+            if spectrum.ndim == 1:
+                spectrum = spectrum[:, None]
+            if "modes" in {variable.name for variable in point.variables}:
+                available = [
+                    int(value)
+                    for value in np.asarray(point.handle("modes").materialize())
+                ]
+            else:
+                available = list(range(spectrum.shape[1]))
+            modes = (
+                list(config.modes) if config.modes is not None else available
+            )
+            if selected_modes is None:
+                selected_modes = modes
+            elif selected_modes != modes:
+                raise ValueError("peak inputs use different mode selections")
+            tables.append(
+                finder.find_candidate_table(
+                    axis,
+                    spectrum[:, [available.index(mode) for mode in modes]].T,
+                    scan_index=scan_index,
+                    scan_count=scan_size,
+                    channel_names=[f"mode_{mode}" for mode in modes],
+                )
+            )
+        return {
+            label: materialize_candidate_product(
+                candidate_tables=tables,
+                scan_size=scan_size if has_scan else None,
+                label=label,
+                modes=selected_modes or [],
+            )
+        }
+
     def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(preferred_location="host")
 
