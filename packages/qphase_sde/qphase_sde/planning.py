@@ -199,7 +199,13 @@ def build_execution_plan(
     analysis_enabled = bool(analysers)
     should_keep = config.keep_traj is True or not analysis_enabled
     incremental = bool(analysers) and all(
-        callable(getattr(analyser, "create_result_accumulator", None))
+        (
+            (
+                callable(getattr(analyser, "reducer", None))
+                and analyser.reducer() is not None
+            )
+            or callable(getattr(analyser, "create_result_accumulator", None))
+        )
         and _analyzer_capabilities(analyser).supports_trajectory_batching
         for analyser in analysers.values()
     )

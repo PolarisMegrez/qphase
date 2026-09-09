@@ -132,8 +132,12 @@ class Analyzer(PluginBase, ABC):
         return WorkEstimate(unit="sample", total=None)
 
     def reducer(self) -> ReducerProtocol | None:
-        """Return the reducer for batched/streaming execution, if supported."""
-        return None
+        """Return the typed reducer for trajectory-batched execution."""
+        if not callable(getattr(self, "create_result_accumulator", None)):
+            return None
+        from .typed_reducer import TypedProductReducer
+
+        return TypedProductReducer(self, label=str(getattr(self, "name", "analyser")))
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         """Declare the product set of a single-output analyser."""

@@ -900,16 +900,19 @@ class Engine(EngineBase):
         if point_count < 1:
             raise ValueError("typed trajectory batch requires a non-empty scan tile")
         analysers = self._normalised_analysers()
-        accumulator_sets = [
+        reducer_sets = [
             {
-                name: analyser.create_result_accumulator()
+                name: analyser.reducer()
                 for name, analyser in analysers.items()
             }
             for _ in range(point_count)
         ]
-        if any(len(item) != len(analysers) for item in accumulator_sets):
+        if any(
+            len(item) != len(analysers) or any(value is None for value in item.values())
+            for item in reducer_sets
+        ):
             raise RuntimeError(
-                "typed trajectory batching requires an accumulator for every analyser"
+                "typed trajectory batching requires a reducer for every analyser"
             )
         if master_seed is None:
             master_seed = int(
@@ -918,7 +921,22 @@ class Engine(EngineBase):
         master_seed = int(master_seed) % (1 << 64)
         observer_batches: dict[str, list[Any]] = {name: [] for name in observers}
         result_meta: dict[str, Any] = {}
-        from qphase_sde.result import legacy_view_from_products
+        graph = getattr(context, "product_graph", None)
+        if graph is None:
+            raise RuntimeError("typed trajectory batching requires a ProductGraph")
+        output_owners = {
+            output.name: node.node_id.removeprefix("analyser.")
+            for node in graph.nodes
+            for output in node.outputs
+        }
+        reducer_states = [
+            {
+                name: reducer.prepare(None, context)
+                for name, reducer in reducers.items()
+                if reducer is not None
+            }
+            for reducers in reducer_sets
+        ]
 
         for batch_index, start in enumerate(
             range(0, plan.n_traj_per_point, plan.trajectory_batch_size)
@@ -995,30 +1013,35 @@ class Engine(EngineBase):
             typed = self._run_typed_analyze(source, context=context)
             if not isinstance(typed, SDEDataBundle):
                 raise RuntimeError("typed trajectory batch produced no data bundle")
-            for point_offset, accumulators in enumerate(accumulator_sets):
-                point_products = {
-                    name: (
+            for point_offset, reducers in enumerate(reducer_sets):
+                for product_name, product in typed.products.items():
+                    owner = output_owners.get(product_name)
+                    if owner is None:
+                        raise RuntimeError(
+                            f"typed product {product_name!r} has no graph owner"
+                        )
+                    reducer = reducers.get(owner)
+                    if reducer is None:
+                        raise RuntimeError(
+                            f"typed analyser {owner!r} has no trajectory reducer"
+                        )
+                    point_product = (
                         product.point_view(scan=point_offset)
                         if "scan" in {axis.name for axis in product.axes}
                         else product
                     )
-                    for name, product in typed.products.items()
-                }
-                legacy = legacy_view_from_products(point_products)
-                for name, accumulator in accumulators.items():
-                    payload = legacy.analysis.get(name)
-                    if payload is None:
-                        raise RuntimeError(
-                            f"typed analyser {name!r} produced no batch output"
-                        )
-                    accumulator.update(self._analysis_to_host(payload))
+                    reducer.consume(
+                        point_product,
+                        reducer_states[point_offset][owner],
+                        reporter,
+                    )
             for name in observers:
                 payload = self._analysis_to_host(partial.analysis.get(name))
                 if payload is not None:
                     observer_batches[name].append(payload)
             if not result_meta:
                 result_meta.update(partial.meta)
-            del partial, source, typed, legacy
+            del partial, source, typed
             self._release_backend_pool()
 
         result_meta.update(
@@ -1033,21 +1056,14 @@ class Engine(EngineBase):
             }
         )
         point_bundles: list[SDEDataBundle] = []
-        for accumulators in accumulator_sets:
-            final = SDEResult(
-                trajectory=None,
-                analysis={
-                    name: accumulator.finalize()
-                    for name, accumulator in accumulators.items()
-                },
-                meta=result_meta,
-            )
+        for reducers, states in zip(reducer_sets, reducer_states, strict=True):
+            products: dict[str, Any] = {}
+            for name, reducer in reducers.items():
+                if reducer is None:
+                    raise RuntimeError(f"typed analyser {name!r} has no reducer")
+                products.update(reducer.finalize(states[name]))
             point_bundles.append(
-                bundle_from_result(
-                    final,
-                    provenance=self._job_provenance(),
-                    analysers=analysers,
-                )
+                SDEDataBundle(products, self._job_provenance(), meta=result_meta)
             )
         for name, payloads in observer_batches.items():
             if payloads:
