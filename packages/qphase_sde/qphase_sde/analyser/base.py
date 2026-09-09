@@ -77,6 +77,72 @@ def trajectory_requirement(
     )
 
 
+def _add_scan_axis(dataset: Dataset) -> Dataset:
+    """Add a singleton scan axis to one typed product."""
+    coordinate_variables = {item.variable for item in dataset.coordinates()}
+    schema_data = dataset.schema.model_dump(mode="python")
+    schema_data["axes"] = [
+        {"name": "scan", "role": "parameter", "size": 1},
+        *schema_data["axes"],
+    ]
+    variables = []
+    arrays: dict[str, Any] = {}
+    for variable in dataset.variables:
+        if variable.name in coordinate_variables:
+            variables.append(variable)
+            arrays[variable.name] = dataset.handle(variable.name).materialize()
+            continue
+        variables.append(variable.model_copy(update={"dims": ("scan", *variable.dims)}))
+        arrays[variable.name] = np.expand_dims(
+            dataset.handle(variable.name).materialize(), axis=0
+        )
+    schema_data["variables"] = variables
+    return type(dataset).from_arrays(
+        type(dataset.schema).model_validate(schema_data), arrays, owner="engine.sde"
+    )
+
+
+def _stack_scan_products(products: list[Dataset]) -> Dataset:
+    """Stack point products along a new scan axis with strict invariants."""
+    if not products:
+        raise ValueError("cannot stack an empty typed product list")
+    first = products[0]
+    if first.attributes.get("table") in {"peak_candidates", "peak_paths", "row_table"}:
+        raise RuntimeError("ragged products require a domain reducer")
+    if any(item.attributes != first.attributes for item in products[1:]):
+        raise ValueError("typed point products have inconsistent attributes")
+    variables = {item.name: item for item in first.variables}
+    if any(
+        {item.name: item for item in product.variables} != variables
+        for product in products[1:]
+    ):
+        raise ValueError("typed point products have inconsistent variables")
+    arrays: dict[str, Any] = {}
+    for name, variable in variables.items():
+        values = [item.handle(name).materialize() for item in products]
+        if "scan" not in variable.dims:
+            if not all(np.array_equal(values[0], value) for value in values[1:]):
+                raise ValueError("typed point products have inconsistent coordinates")
+            arrays[name] = values[0]
+        else:
+            arrays[name] = np.concatenate(
+                values, axis=variable.dims.index("scan")
+            )
+    schema_data = first.schema.model_dump(mode="python")
+    schema_data["axes"] = [
+        {
+            **axis,
+            "size": len(products),
+        }
+        if axis["name"] == "scan"
+        else axis
+        for axis in schema_data["axes"]
+    ]
+    return type(first).from_arrays(
+        type(first.schema).model_validate(schema_data), arrays, owner="engine.sde"
+    )
+
+
 class Analyzer(PluginBase, ABC):
     """Base class for analyzers.
 
@@ -348,6 +414,73 @@ class Analyzer(PluginBase, ABC):
                 f"analyser {type(self).__name__!r} has no typed product builder"
             )
         products = builder(raw_payload, scan_size=scan_size, label=label)
+        if not products:
+            raise ValueError(f"analyser {label!r} produced no typed products")
+        return products
+
+    def _execute_trajectory_typed(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+    ) -> Mapping[str, Dataset]:
+        """Execute one trajectory point from a typed time-series product."""
+        trajectory = inputs.get("trajectories")
+        if trajectory is None:
+            raise TypeError(f"analyser {label!r} requires a trajectories product")
+        scan_axis = {axis.name for axis in trajectory.axes}
+        if "scan" in scan_axis and trajectory.axis("scan").size not in (None, 1):
+            size = trajectory.axis("scan").size
+            assert size is not None
+            point_products = [
+                self._execute_trajectory_typed(
+                    {"trajectories": trajectory.point_view(scan=index)},
+                    backend=backend,
+                    label=label,
+                )
+                for index in range(size)
+            ]
+            names = set(point_products[0])
+            if any(set(item) != names for item in point_products[1:]):
+                raise ValueError("typed trajectory points produced different products")
+            return {
+                name: _stack_scan_products(
+                    [_add_scan_axis(item[name]) for item in point_products]
+                )
+                for name in names
+            }
+        alpha = trajectory.handle("alpha").materialize()
+        if alpha.ndim == 4:
+            alpha = alpha[0]
+        time_axis = trajectory.axis("time") if "time" in scan_axis else None
+        t0 = (
+            float(time_axis.start)
+            if time_axis is not None and time_axis.start is not None
+            else 0.0
+        )
+        dt = (
+            float(time_axis.step)
+            if time_axis is not None and time_axis.step is not None
+            else 1.0
+        )
+        trajectory_meta = {
+            name: trajectory.attributes[name]
+            for name in ("mode_indices", "valid_length")
+            if name in trajectory.attributes
+        }
+        from qphase_sde.state import TrajectorySet
+
+        result = self.analyze(
+            TrajectorySet(data=alpha, t0=t0, dt=dt, meta=trajectory_meta),
+            backend,
+        )
+        builder = getattr(self, "build_products", None)
+        if not callable(builder):
+            raise NotImplementedError(
+                f"analyser {type(self).__name__!r} has no typed product builder"
+            )
+        products = builder(result.data_dict, scan_size=None, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
         return products

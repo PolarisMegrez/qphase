@@ -433,6 +433,17 @@ class CoherenceCarrierAnalyzer(Analyzer):
     def input_requirements(self) -> list[ProductRequirement]:
         return [trajectory_requirement()]
 
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        del metadata
+        return self._execute_trajectory_typed(inputs, backend=backend, label=label)
+
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         """Declare the single graph-ready coherence-carrier product."""
         return (

@@ -271,6 +271,34 @@ def test_psd_does_not_build_inline_peak_products():
     assert "peaks" not in spectrum.attributes["payload_meta"]
 
 
+def test_typed_reducer_merge_and_checkpoint_are_portable():
+    analyser = PsdAnalyzer(kind="complex", modes=[0])
+    axis = np.linspace(-1.0, 1.0, 5)
+
+    def product(offset: float):
+        payload = {
+            "axis": axis,
+            "psd": np.full((5, 1), 1.0 + offset),
+            "psd_std": np.full((5, 1), 0.1),
+            "psd_sem": np.full((5, 1), 0.05),
+            "modes": [0],
+            "orientation": "phase_decreasing",
+            "uncertainty": {"n_independent": 2},
+        }
+        return analyser.build_products(payload, scan_size=None, label="psd")["psd"]
+
+    reducer = analyser.reducer()
+    assert reducer is not None
+    left = reducer.prepare(None, None)
+    right = reducer.prepare(None, None)
+    reducer.consume(product(0.0), left, None)
+    reducer.consume(product(1.0), right, None)
+    merged = reducer.merge(left, right)
+    restored = reducer.restore(reducer.checkpoint(merged))
+    output = reducer.finalize(restored)
+    assert output["psd"].handle("psd").materialize()[0, 0] == 1.5
+
+
 def test_psd_peak_bridge_restores_per_scan_point():
     analyser = PsdAnalyzer(kind="complex", modes=[0])
     axis = np.linspace(-1.0, 1.0, 5)

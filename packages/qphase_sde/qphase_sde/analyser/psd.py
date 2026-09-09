@@ -243,6 +243,17 @@ class PsdAnalyzer(Analyzer):
         # the magnitude), so no value_domain constraint is declared.
         return [trajectory_requirement(value_domain=None)]
 
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        del metadata
+        return self._execute_trajectory_typed(inputs, backend=backend, label=label)
+
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         """Declare the graph-ready spectrum product."""
         declarations = [

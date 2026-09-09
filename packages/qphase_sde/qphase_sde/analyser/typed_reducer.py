@@ -41,6 +41,37 @@ def _payload_from_dataset(product: Dataset) -> dict[str, Any]:
     return payload
 
 
+def _portable(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return {
+            "__ndarray__": True,
+            "dtype": value.dtype.str,
+            "shape": list(value.shape),
+            "data": value.tobytes().hex(),
+        }
+    if isinstance(value, dict):
+        return {str(key): _portable(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_portable(item) for item in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _unportable(value: Any) -> Any:
+    if isinstance(value, dict):
+        if value.get("__ndarray__") is True:
+            array = np.frombuffer(
+                bytes.fromhex(str(value["data"])),
+                dtype=np.dtype(str(value["dtype"])),
+            ).copy()
+            return array.reshape(tuple(int(item) for item in value["shape"]))
+        return {key: _unportable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_unportable(item) for item in value]
+    return value
+
+
 class TypedProductReducer(ReducerProtocol):
     """Reduce one analyser's typed products and emit typed products.
 
@@ -66,10 +97,16 @@ class TypedProductReducer(ReducerProtocol):
         return state
 
     def merge(self, left: Any, right: Any) -> Any:
-        del left, right
-        raise NotImplementedError(
-            "typed analyser reducers are consumed sequentially in this runtime"
-        )
+        payloads = getattr(right, "payloads", None)
+        if isinstance(payloads, list):
+            for payload in payloads:
+                left.update(payload)
+            return left
+        finalize = getattr(right, "finalize", None)
+        if not callable(finalize):
+            raise TypeError("typed reducer state cannot be merged")
+        left.update(finalize())
+        return left
 
     def finalize(self, state: Any) -> Mapping[str, Dataset]:
         products = self.analyzer.build_products(
@@ -80,13 +117,15 @@ class TypedProductReducer(ReducerProtocol):
         return products
 
     def checkpoint(self, state: Any) -> dict[str, Any]:
-        del state
-        raise NotImplementedError(
-            "typed analyser reducer checkpoints are not supported"
-        )
+        finalize = getattr(state, "finalize", None)
+        if not callable(finalize):
+            raise TypeError("typed reducer state cannot be checkpointed")
+        return {"payload": _portable(finalize())}
 
     def restore(self, checkpoint: dict[str, Any]) -> Any:
-        del checkpoint
-        raise NotImplementedError(
-            "typed analyser reducer checkpoints are not supported"
-        )
+        payload = checkpoint.get("payload")
+        if not isinstance(payload, dict):
+            raise TypeError("typed reducer checkpoint must contain a payload")
+        state = self.analyzer.create_result_accumulator()
+        state.update(_unportable(payload))
+        return state

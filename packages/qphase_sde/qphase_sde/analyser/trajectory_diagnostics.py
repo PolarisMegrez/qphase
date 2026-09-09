@@ -16,7 +16,7 @@ its units and conventions explicitly (see the ``*_unit``, ``sidedness`` and
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, ClassVar, cast
 
 import numpy as np
@@ -352,6 +352,17 @@ class TrajectoryDiagnostics(Analyzer):
 
     def input_requirements(self) -> list[ProductRequirement]:
         return [trajectory_requirement()]
+
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        del metadata
+        return self._execute_trajectory_typed(inputs, backend=backend, label=label)
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         config = cast(TrajectoryDiagnosticsConfig, self.config)
