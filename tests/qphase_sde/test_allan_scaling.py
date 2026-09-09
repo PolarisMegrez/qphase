@@ -38,6 +38,10 @@ def _result(
     frequency = 0.2 + 0.4 * epsilon ** (1.0 / 3.0)
     phase_frequency = frequency + np.linspace(-1e-5, 1e-5, trajectories)
     payload = {
+        "t0": 0.0,
+        "dt": 1.0,
+        "n_traj": trajectories,
+        "n_samples": 100000,
         "mode_results": {
             0: {
                 "allan": {
@@ -164,6 +168,31 @@ def test_allan_scaling_consumes_v4_scan_bundle(tmp_path):
     assert summary["noise_fit"]["exponent"] == pytest.approx(4.0 / 3.0)
     assert summary["normal_form"]["allan_match"] is True
     assert len(result.data_dict["rows"]) == epsilon.size
+
+
+def test_allan_scaling_execute_consumes_typed_product_mapping(tmp_path):
+    epsilon = np.geomspace(1e-3, 1e-1, 9)
+    analyzer = AllanScalingAnalyzer(_config(tmp_path))
+    from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
+    from qphase_sde.products import add_scan_parameter_coordinates
+
+    typed = AllanVarianceAnalyzer(modes=[0]).build_products(
+        [_result(float(value)).analysis["allan_variance"] for value in epsilon],
+        scan_size=epsilon.size,
+        label="allan_variance",
+    )["allan_variance"]
+    typed = add_scan_parameter_coordinates(
+        typed, {"omega_c": 1.0 + epsilon}
+    )
+
+    products = analyzer.execute(
+        {"allan_variance": typed},
+        backend=NumpyBackend(),
+        label="allan_scaling",
+    )
+
+    assert "allan_scaling" in products
+    assert products["allan_scaling"].attributes["graph_ready"] is True
 
 
 def test_allan_scaling_consumes_restored_v4_artifact(tmp_path):

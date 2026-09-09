@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
@@ -235,6 +236,84 @@ def _epsilon(scan_value: float, config: AllanScalingConfig) -> float | None:
 
 def _collect_points(data: Any, config: AllanScalingConfig) -> list[_Point]:
     points: list[_Point] = []
+    if isinstance(data, Mapping) and all(
+        isinstance(value, Dataset) for value in data.values()
+    ):
+        source = data.get(config.source_key)
+        if source is None:
+            raise QPhaseError(
+                f"typed input has no Allan product {config.source_key!r}"
+            )
+        scan_size = (
+            int(source.axis("scan").size)
+            if "scan" in {axis.name for axis in source.axes}
+            else 1
+        )
+        for index in range(scan_size):
+            product = source.point_view(scan=index) if scan_size > 1 else source
+            payload: dict[str, Any] = {}
+            for variable in product.variables:
+                parts = variable.name.split(".")
+                target = payload
+                for part in parts[:-1]:
+                    child = target.setdefault(part, {})
+                    if not isinstance(child, dict):
+                        raise QPhaseError("typed Allan product has invalid field paths")
+                    target = child
+                target[parts[-1]] = np.asarray(
+                    product.handle(variable.name).materialize()
+                )
+            scan_variable = f"parameter.{config.scan_param}"
+            if scan_variable not in {
+                variable.name for variable in product.variables
+            }:
+                raise QPhaseError(
+                    f"typed Allan product is missing {scan_variable!r}"
+                )
+            scan_value = float(
+                np.asarray(product.handle(scan_variable).materialize()).reshape(-1)[0]
+            )
+            epsilon = _epsilon(scan_value, config)
+            if epsilon is None or epsilon <= 0.0:
+                continue
+            mode_payload = _mode_payload(payload, config.mode)
+            allan = mode_payload.get("allan")
+            phase = mode_payload.get("phase_increment", {})
+            if not isinstance(allan, dict) or not isinstance(phase, dict):
+                raise QPhaseError("typed Allan product has incomplete mode fields")
+            allan = dict(allan)
+            allan["sample_spacing"] = float(
+                np.asarray(product.handle("dt").materialize()).reshape(-1)[0]
+            )
+            if "total_independent_window_count" not in allan:
+                _estimate_legacy_independent_counts(
+                    allan,
+                    {
+                        "dt": allan["sample_spacing"],
+                        "n_samples": int(
+                            np.asarray(product.handle("n_samples").materialize())
+                            .reshape(-1)[0]
+                        ),
+                    },
+                )
+            points.append(
+                _Point(
+                    scan_value,
+                    epsilon,
+                    allan,
+                    phase,
+                    resolve_frequency_orientation(product.attributes),
+                )
+            )
+        if not points:
+            raise QPhaseError(
+                "AllanScalingAnalyzer received no nonzero perturbation points"
+            )
+        orientations = {point.orientation for point in points}
+        if len(orientations) != 1:
+            raise QPhaseError("Allan scan points use different frequency orientations")
+        points.sort(key=lambda point: point.epsilon)
+        return points
     # NOTE: load_sde_results bridges v4 bundles through legacy_result(); this
     # consumer must be retyped and the bridge removed in Phase 5.
     for loaded in load_sde_results(data):
@@ -667,6 +746,22 @@ class AllanScalingAnalyzer(Analyzer):
                 required_fields=required,
             )
         ]
+
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        """Run scaling analysis directly from a typed Allan Dataset."""
+        del metadata
+        result = cast(AnalysisResult, self.analyze(inputs, backend))
+        products = self.build_products(result.data_dict, scan_size=None, label=label)
+        if not products:
+            raise ValueError(f"analyser {label!r} produced no typed products")
+        return products
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         fields = [
