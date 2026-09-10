@@ -404,7 +404,7 @@ def test_scan_runs_trajectory_batches_inside_each_parameter_point():
     assert model.params == {"rate": 1.0}
 
 
-def test_typed_dense_scan_supports_tiles_and_trajectory_batches():
+def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
     from qphase.core.registry import discovery, registry
     from qphase_sde.graph import compile_product_graph
 
@@ -481,6 +481,19 @@ def test_typed_dense_scan_supports_tiles_and_trajectory_batches():
     assert narrow_result.metadata["execution_plan"]["scan_tile_size"] <= 16
     for name in ("psd", "psd_std", "psd_sem", "uncertainty.n_independent"):
         np.testing.assert_allclose(wide_tile[name], narrow_tile[name], rtol=1e-12)
+    artifact_dir = narrow_result.save_dataset(
+        tmp_path / "typed_scan",
+        layout="single",
+        shard_target_bytes=1024 * 1024,
+    )
+    restored = load_bundle(tmp_path / "typed_scan")
+    assert artifact_dir.schema_version
+    assert restored.shape == narrow_result.shape
+    np.testing.assert_allclose(
+        _product_arrays(restored.products["psd"])["psd"],
+        narrow_tile["psd"],
+        rtol=1e-12,
+    )
 
 
 def test_allan_variance_runs_through_engine_trajectory_batches():
