@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
@@ -39,6 +40,7 @@ from .spectral_ridge import (
     SpectralRidgeAnalyzer,
     SpectralRidgeConfig,
 )
+from .typed_input import TypedScanInput, typed_scan_input
 
 __all__ = [
     "BandLimitedCarrierAnalyzer",
@@ -1245,6 +1247,25 @@ class BandLimitedCarrierAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[BandLimitedCarrierConfig]] = BandLimitedCarrierConfig
 
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        metadata = metadata or {}
+        config = cast(BandLimitedCarrierConfig, self.config)
+        typed = typed_scan_input(
+            inputs, scan_param=config.scan_param, metadata=metadata
+        )
+        result = self.analyze(typed, backend)
+        products = self.build_products(result.data_dict, scan_size=None, label=label)
+        if not products:
+            raise ValueError(f"analyser {label!r} produced no typed products")
+        return products
+
     def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(preferred_location="host")
 
@@ -1365,7 +1386,11 @@ class BandLimitedCarrierAnalyzer(Analyzer):
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         config = cast(BandLimitedCarrierConfig, self.config)
         center_config = config.center
-        loaded_results = load_sde_results(data)
+        loaded_results = (
+            data.points
+            if isinstance(data, TypedScanInput)
+            else load_sde_results(data)
+        )
         if not loaded_results:
             raise QPhaseError("band_limited_carrier received no input results")
 

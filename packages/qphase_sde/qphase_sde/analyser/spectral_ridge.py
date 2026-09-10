@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
@@ -37,6 +38,7 @@ from .frequency_orientation import (
 )
 from .result import AnalysisResult
 from .result_input import load_sde_results
+from .typed_input import TypedScanInput, typed_scan_input
 
 Readout = int | Literal["trace"]
 
@@ -818,6 +820,26 @@ class SpectralRidgeAnalyzer(Analyzer):
     )
     config_schema: ClassVar[type[SpectralRidgeConfig]] = SpectralRidgeConfig
 
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        metadata = metadata or {}
+        typed = typed_scan_input(
+            inputs,
+            scan_param=cast(SpectralRidgeConfig, self.config).scan_param,
+            metadata=metadata,
+        )
+        result = self.analyze(typed, backend)
+        products = self.build_products(result.data_dict, scan_size=None, label=label)
+        if not products:
+            raise ValueError(f"analyser {label!r} produced no typed products")
+        return products
+
     def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(preferred_location="host")
 
@@ -911,7 +933,11 @@ class SpectralRidgeAnalyzer(Analyzer):
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         del backend
         config = cast(SpectralRidgeConfig, self.config)
-        loaded = load_sde_results(data)
+        loaded = (
+            data.points
+            if isinstance(data, TypedScanInput)
+            else load_sde_results(data)
+        )
         if not loaded:
             raise QPhaseError("spectral_ridge received no input results")
         point_data: dict[str, list[tuple[float, Any, list[SpectralRidgeEstimate]]]] = {

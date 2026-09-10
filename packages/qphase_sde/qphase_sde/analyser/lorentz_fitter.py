@@ -11,6 +11,7 @@ Public API
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
@@ -48,6 +49,7 @@ from .frequency_orientation import (
 from .result import AnalysisResult
 from .result_input import LoadedResult
 from .result_input import load_sde_results as _load_input
+from .typed_input import TypedScanInput, typed_scan_input
 
 __all__ = ["LorentzFitter", "LorentzFitterConfig"]
 
@@ -544,6 +546,25 @@ class LorentzFitter(Analyzer):
     )
     config_schema: ClassVar[type[LorentzFitterConfig]] = LorentzFitterConfig
 
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        metadata = metadata or {}
+        config = cast(LorentzFitterConfig, self.config)
+        typed = typed_scan_input(
+            inputs, scan_param=config.scan_param, metadata=metadata
+        )
+        result = self.analyze(typed, backend)
+        products = self.build_products(result.data_dict, scan_size=None, label=label)
+        if not products:
+            raise ValueError(f"analyser {label!r} produced no typed products")
+        return products
+
     def __init__(self, config: LorentzFitterConfig | None = None, **kwargs: Any):
         super().__init__(config, **kwargs)
 
@@ -654,7 +675,11 @@ class LorentzFitter(Analyzer):
         if not isinstance(config, LorentzFitterConfig):
             raise RuntimeError("LorentzFitter config not initialized")
 
-        loaded_results = _load_input(data)
+        loaded_results: Any = (
+            data.points
+            if isinstance(data, TypedScanInput)
+            else _load_input(data)
+        )
         if not loaded_results:
             raise QPhaseError("LorentzFitter received no input results")
 

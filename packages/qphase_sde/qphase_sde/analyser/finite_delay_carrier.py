@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
@@ -36,6 +37,7 @@ from .frequency_orientation import (
 )
 from .result import AnalysisResult
 from .result_input import load_sde_results
+from .typed_input import TypedScanInput, typed_scan_input
 
 __all__ = [
     "FiniteDelayCarrierAnalyzer",
@@ -138,6 +140,25 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
     description: ClassVar[str] = "Finite-delay coherence-weighted carrier"
     config_schema: ClassVar[type[FiniteDelayCarrierConfig]] = FiniteDelayCarrierConfig
 
+    def execute(
+        self,
+        inputs: Mapping[str, Dataset],
+        *,
+        backend: BackendBase,
+        label: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Dataset]:
+        metadata = metadata or {}
+        config = cast(FiniteDelayCarrierConfig, self.config)
+        typed = typed_scan_input(
+            inputs, scan_param=config.scan_param, metadata=metadata
+        )
+        result = self.analyze(typed, backend)
+        products = self.build_products(result.data_dict, scan_size=None, label=label)
+        if not products:
+            raise ValueError(f"analyser {label!r} produced no typed products")
+        return products
+
     def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         return AnalyserExecutionCapabilities(preferred_location="host")
 
@@ -218,7 +239,11 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
     def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
         del backend
         config = cast(FiniteDelayCarrierConfig, self.config)
-        loaded = load_sde_results(data)
+        loaded = (
+            data.points
+            if isinstance(data, TypedScanInput)
+            else load_sde_results(data)
+        )
         if not loaded:
             raise QPhaseError("finite_delay_carrier received no input results")
         rows: list[dict[str, Any]] = []

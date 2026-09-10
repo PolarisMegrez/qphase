@@ -6,23 +6,37 @@ import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.registry import discovery, registry
+from qphase_sde.analyser.band_limited_carrier import (
+    BandLimitedCarrierAnalyzer,
+    BandLimitedCarrierConfig,
+)
 from qphase_sde.analyser.coherence_frequency import (
     CoherenceFrequencyAnalyzer,
     CoherenceFrequencyAnalyzerConfig,
     _materialize_estimates,
 )
+from qphase_sde.analyser.finite_delay_carrier import (
+    FiniteDelayCarrierAnalyzer,
+    FiniteDelayCarrierConfig,
+)
+from qphase_sde.analyser.lorentz_fitter import LorentzFitter, LorentzFitterConfig
 from qphase_sde.analyser.peak_paths import (
     PeakPathsAnalyzer,
     PeakPathsAnalyzerConfig,
 )
 from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
 from qphase_sde.analyser.psd import PsdAnalyzer
+from qphase_sde.analyser.spectral_ridge import (
+    SpectralRidgeAnalyzer,
+    SpectralRidgeConfig,
+)
 from qphase_sde.coherence_frequency import BandLimitedCoherenceFrequency
 from qphase_sde.contracts.coherence import CoherenceFrequencyEstimate
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.graph import compile_product_graph
 from qphase_sde.peak_finder import ScipyPeakFinder
 from qphase_sde.peak_tracker import RidgePeakTracker
+from qphase_sde.products import add_scan_parameter_coordinates
 from qphase_sde.result import SDEDataBundle, SDEProvenance
 
 
@@ -268,3 +282,49 @@ def test_product_graph_rejects_unknown_published_output():
             registry=registry,
             publish_outputs={"peaks": ["not_declared"]},
         )
+
+
+def test_cross_result_analysers_execute_from_typed_psd(monkeypatch):
+    source = _spectrum_bundle()
+    psd = add_scan_parameter_coordinates(
+        source.products["psd"], {"epsilon": np.asarray([0.0, 1.0])}
+    )
+
+    def fail_legacy_loader(*args, **kwargs):
+        raise AssertionError("typed execute unexpectedly used the legacy loader")
+
+    monkeypatch.setattr(
+        "qphase_sde.analyser.spectral_ridge.load_sde_results", fail_legacy_loader
+    )
+    monkeypatch.setattr(
+        "qphase_sde.analyser.band_limited_carrier.load_sde_results",
+        fail_legacy_loader,
+    )
+    monkeypatch.setattr(
+        "qphase_sde.analyser.finite_delay_carrier.load_sde_results",
+        fail_legacy_loader,
+    )
+    monkeypatch.setattr(
+        "qphase_sde.analyser.lorentz_fitter._load_input", fail_legacy_loader
+    )
+
+    analysers = [
+        SpectralRidgeAnalyzer(
+            SpectralRidgeConfig(scan_param="epsilon", readouts=[0])
+        ),
+        BandLimitedCarrierAnalyzer(
+            BandLimitedCarrierConfig(scan_param="epsilon", readout=0, export=[])
+        ),
+        FiniteDelayCarrierAnalyzer(
+            FiniteDelayCarrierConfig(scan_param="epsilon", readout=0, export=[])
+        ),
+        LorentzFitter(
+            LorentzFitterConfig(scan_param="epsilon", mode=0, export=[])
+        ),
+    ]
+    for analyser in analysers:
+        products = analyser.execute(
+            {"psd": psd}, backend=NumpyBackend(), label="output"
+        )
+        assert products
+        assert all(product.attributes["table"] for product in products.values())
