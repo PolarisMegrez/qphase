@@ -111,16 +111,20 @@ class PeaksAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         """Find candidates directly from the typed spectral Dataset."""
-        del backend, metadata
+        del backend
         config = cast(PeaksAnalyzerConfig, self.config)
         finder = self._resolve_finder()
         product = inputs.get(config.psd_key)
         if product is None:
             raise ValueError(f"peaks input has no product {config.psd_key!r}")
         has_scan = "scan" in {axis.name for axis in product.axes}
-        scan_size = int(product.axis("scan").size) if has_scan else 1
+        raw_scan_size = product.axis("scan").size if has_scan else 1
+        if raw_scan_size is None:
+            raise ValueError("peaks input has an open scan axis")
+        scan_size = int(raw_scan_size)
         tables: list[Mapping[str, Any]] = []
         selected_modes: list[int] | None = None
         for scan_index in range(scan_size):
@@ -136,9 +140,7 @@ class PeaksAnalyzer(Analyzer):
                 ]
             else:
                 available = list(range(spectrum.shape[1]))
-            modes = (
-                list(config.modes) if config.modes is not None else available
-            )
+            modes = list(config.modes) if config.modes is not None else available
             if selected_modes is None:
                 selected_modes = modes
             elif selected_modes != modes:
@@ -158,6 +160,11 @@ class PeaksAnalyzer(Analyzer):
                 scan_size=scan_size if has_scan else None,
                 label=label,
                 modes=selected_modes or [],
+                source_product=(
+                    str(metadata["source_product"])
+                    if metadata is not None and "source_product" in metadata
+                    else config.psd_key
+                ),
             )
         }
 

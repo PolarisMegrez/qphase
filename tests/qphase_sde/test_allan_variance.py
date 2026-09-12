@@ -144,6 +144,34 @@ def test_allan_accumulator_matches_full_trajectory_analysis():
         )
 
 
+def test_typed_allan_reducer_accepts_multiple_batches():
+    trajectory = _phase_diffusion_trajectory()
+    analyzer = _analyzer()
+    reducer = analyzer.reducer()
+    assert reducer is not None
+    state = reducer.prepare(None, None)
+    for start, stop in ((0, 4), (4, 9)):
+        payload = analyzer.analyze(
+            TrajectorySet(
+                trajectory.data[start:stop],
+                t0=trajectory.t0,
+                dt=trajectory.dt,
+                meta=dict(trajectory.meta),
+            ),
+            NumpyBackend(),
+        ).data_dict
+        product = analyzer.build_products(
+            payload, scan_size=None, label="allan_variance"
+        )["allan_variance"]
+        reducer.consume(product, state, None)
+
+    merged = reducer.finalize(state)["allan_variance"]
+    assert merged.handle("n_traj").materialize() == 9
+    assert "mode_results.2.allan.angular_frequency_variance" in {
+        variable.name for variable in merged.variables
+    }
+
+
 def test_allan_analyzer_advertises_trajectory_batching():
     capabilities = _analyzer().execution_capabilities()
     assert capabilities.preferred_location == "backend"

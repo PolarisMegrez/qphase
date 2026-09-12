@@ -610,6 +610,120 @@ def test_scan_fused_payload_exposes_per_point_observer_views():
     assert _payload(result.point_view((0,)))["n_traj"] == 2
 
 
+def test_typed_batched_scan_preserves_per_point_observer_payloads():
+    from qphase.core.registry import discovery, registry
+    from qphase_sde.graph import compile_product_graph
+
+    grid = ScanSpec.model_validate(
+        {
+            "axes": {
+                "rate": {
+                    "target": "model.fp_scan.rate",
+                    "values": [1.0, 2.0],
+                }
+            }
+        }
+    ).compile()
+    discovery.discover_plugins()
+    graph = compile_product_graph(
+        plugin_config={"analyser": {"psd": {"modes": [0], "kind": "complex"}}},
+        registry=registry,
+    )
+    assert graph is not None
+    observer = FirstPassageObserver(
+        rule="state_norm",
+        threshold=0.9,
+        direction="below",
+        check_interval_steps=1,
+    )
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.2,
+            dt=0.01,
+            n_traj=4,
+            trajectory_batching="required",
+            trajectory_batch_size=2,
+            seed=7,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": DecayScanModel(),
+            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            "observer": {"first_passage": observer},
+        },
+        product_graph=graph,
+    )
+
+    result = engine.run(
+        context=SimpleNamespace(
+            parameter_grid=grid,
+            product_graph=graph,
+            progress=None,
+            cancellation=None,
+            metadata={},
+        )
+    )
+
+    payloads = [
+        result.point_view((index,)).metadata["observer_payloads"]["first_passage"]
+        for index in range(2)
+    ]
+    assert [payload["n_traj"] for payload in payloads] == [4, 4]
+    np.testing.assert_array_equal(payloads[0]["first_hit_step"], [11] * 4)
+    np.testing.assert_array_equal(payloads[1]["first_hit_step"], [6] * 4)
+
+
+def test_typed_single_point_batch_preserves_observer_metadata():
+    from qphase.core.registry import discovery, registry
+    from qphase_sde.graph import compile_product_graph
+
+    discovery.discover_plugins()
+    graph = compile_product_graph(
+        plugin_config={"analyser": {"psd": {"modes": [0], "kind": "complex"}}},
+        registry=registry,
+    )
+    assert graph is not None
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.5,
+            dt=0.125,
+            n_traj=8,
+            trajectory_batching="required",
+            trajectory_batch_size=4,
+            seed=7,
+            ic=[[0.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": LinearGrowthModel(),
+            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            "observer": {"first_passage": _observer(check_interval_steps=1)},
+        },
+        product_graph=graph,
+    )
+
+    result = engine.run(
+        context=SimpleNamespace(
+            parameter_grid=None,
+            product_graph=graph,
+            progress=None,
+            cancellation=None,
+            metadata={},
+        )
+    )
+
+    payload = result.metadata["observer_payloads"]["first_passage"]
+    assert payload["n_traj"] == 8
+    assert payload["hit"].shape == (8,)
+
+
 def test_planner_reports_observer_cadence_cost():
     class FakeBackend:
         config = SimpleNamespace(float_dtype="float64")

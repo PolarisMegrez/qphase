@@ -66,7 +66,13 @@ from ..spectral_estimator import (
     SpectralEstimator,
     create_builtin_estimator,
 )
-from .base import Analyzer, resolve_mode_columns, trajectory_requirement
+from .base import (
+    Analyzer,
+    map_trajectory_product,
+    resolve_mode_columns,
+    trajectory_arrays,
+    trajectory_requirement,
+)
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
@@ -250,9 +256,110 @@ class PsdAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         del metadata
-        return self._execute_trajectory_typed(inputs, backend=backend, label=label)
+        trajectory = inputs.get("trajectories")
+        if trajectory is None:
+            raise TypeError("PSD analyser requires a trajectories product")
+
+        def compute(point: Dataset) -> Mapping[str, Dataset]:
+            data, _, sample_dt, recorded_modes = trajectory_arrays(point)
+            config = cast(PsdAnalyzerConfig, self.config)
+            dt = config.dt if config.dt is not None else sample_dt
+            mode_map = {mode: index for index, mode in enumerate(recorded_modes)}
+            missing = [mode for mode in config.modes if mode not in mode_map]
+            if missing:
+                raise ValueError(f"requested PSD modes were not recorded: {missing}")
+            payload = self._compute_payload(
+                data,
+                dt=float(dt),
+                mode_columns=[mode_map[mode] for mode in config.modes],
+                backend=backend,
+            )
+            products = _build_psd_products(
+                payload, scan_size=None, label=label, analyser=self
+            )
+            if not products:
+                raise ValueError("PSD analyser produced no typed product")
+            return products
+
+        return map_trajectory_product(trajectory, compute, context=context)
+
+    def _compute_payload(
+        self,
+        data: Any,
+        *,
+        dt: float,
+        mode_columns: list[int],
+        backend: BackendBase,
+    ) -> dict[str, Any]:
+        config = cast(PsdAnalyzerConfig, self.config)
+        convention = config.convention
+        if dt <= 0.0:
+            raise ValueError("PSD sampling interval must be positive")
+        nyquist = _np.pi / dt if convention in ("symmetric", "unitary") else 0.5 / dt
+        if config.expected_freq_max is not None and config.expected_freq_max >= nyquist:
+            raise ValueError(
+                f"expected_freq_max={config.expected_freq_max:.6g} reaches or "
+                f"exceeds the PSD Nyquist limit {nyquist:.6g} for sample dt={dt:.6g}; "
+                "reduce save_stride or the PSD dt override"
+            )
+        estimate0 = self._estimate_single(
+            data[:, :, mode_columns[0]],
+            dt,
+            kind=config.kind,
+            convention=convention,
+            orientation=config.orientation,
+            backend=backend,
+        )
+        axis = estimate0.axis
+        output_shape = (int(axis.shape[0]), len(mode_columns))
+        mean = _np.empty(output_shape, dtype=estimate0.mean.dtype)
+        std = _np.empty(output_shape, dtype=estimate0.std.dtype)
+        sem = _np.empty(output_shape, dtype=estimate0.sem.dtype)
+        mean[:, 0], std[:, 0], sem[:, 0] = (
+            estimate0.mean,
+            estimate0.std,
+            estimate0.sem,
+        )
+        n_independent = estimate0.n_independent
+        for index, column in enumerate(mode_columns[1:], start=1):
+            estimate = self._estimate_single(
+                data[:, :, column],
+                dt,
+                kind=config.kind,
+                convention=convention,
+                orientation=config.orientation,
+                backend=backend,
+            )
+            mean[:, index], std[:, index], sem[:, index] = (
+                estimate.mean,
+                estimate.std,
+                estimate.sem,
+            )
+        return {
+            "axis": axis,
+            "psd": mean,
+            "psd_std": std,
+            "psd_sem": sem,
+            "modes": config.modes,
+            "kind": config.kind,
+            "convention": convention,
+            **orientation_metadata(config.orientation),
+            "estimator": self.estimator.name,
+            "sample_dt": dt,
+            "nyquist": nyquist,
+            "uncertainty": {
+                "kind": "standard_error",
+                "field": "psd_sem",
+                "std_field": "psd_std",
+                "independent_unit": "trajectory",
+                "n_independent": n_independent,
+                "ddof": 1,
+                "available": n_independent > 1,
+            },
+        }
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         """Declare the graph-ready spectrum product."""
@@ -336,17 +443,6 @@ class PsdAnalyzer(Analyzer):
 
         modes = config.modes
         mode_columns = resolve_mode_columns(data, modes)
-        kind = config.kind
-        convention = config.convention
-        if dt <= 0.0:
-            raise ValueError("PSD sampling interval must be positive")
-        nyquist = _np.pi / dt if convention in ("symmetric", "unitary") else 0.5 / dt
-        if config.expected_freq_max is not None and config.expected_freq_max >= nyquist:
-            raise ValueError(
-                f"expected_freq_max={config.expected_freq_max:.6g} reaches or "
-                f"exceeds the PSD Nyquist limit {nyquist:.6g} for sample dt={dt:.6g}; "
-                "reduce save_stride or the PSD dt override"
-            )
 
         # Extract data array. Some array-like objects (e.g. TrajectorySet) wrap
         # the actual array in a ``.data`` attribute. NumPy/CuPy arrays also
@@ -364,61 +460,12 @@ class PsdAnalyzer(Analyzer):
         else:
             data_arr = data
 
-        # Compute first to get the common axis and uncertainty metadata.
-        estimate0 = self._estimate_single(
-            data_arr[:, :, mode_columns[0]],
-            dt,
-            kind=kind,
-            convention=convention,
-            orientation=config.orientation,
+        result_dict = self._compute_payload(
+            data_arr,
+            dt=dt,
+            mode_columns=mode_columns,
             backend=backend,
         )
-        axis0 = estimate0.axis
-        output_shape = (int(axis0.shape[0]), len(mode_columns))
-        P_mat = _np.empty(output_shape, dtype=estimate0.mean.dtype)
-        P_std_mat = _np.empty(output_shape, dtype=estimate0.std.dtype)
-        P_sem_mat = _np.empty(output_shape, dtype=estimate0.sem.dtype)
-        P_mat[:, 0] = estimate0.mean
-        P_std_mat[:, 0] = estimate0.std
-        P_sem_mat[:, 0] = estimate0.sem
-        n_independent = estimate0.n_independent
-        del estimate0
-        for index, column in enumerate(mode_columns[1:], start=1):
-            estimate = self._estimate_single(
-                data_arr[:, :, column],
-                dt,
-                kind=kind,
-                convention=convention,
-                orientation=config.orientation,
-                backend=backend,
-            )
-            P_mat[:, index] = estimate.mean
-            P_std_mat[:, index] = estimate.std
-            P_sem_mat[:, index] = estimate.sem
-            del estimate
-
-        result_dict = {
-            "axis": axis0,
-            "psd": P_mat,
-            "psd_std": P_std_mat,
-            "psd_sem": P_sem_mat,
-            "modes": modes,
-            "kind": kind,
-            "convention": convention,
-            **orientation_metadata(config.orientation),
-            "estimator": self.estimator.name,
-            "sample_dt": dt,
-            "nyquist": nyquist,
-            "uncertainty": {
-                "kind": "standard_error",
-                "field": "psd_sem",
-                "std_field": "psd_std",
-                "independent_unit": "trajectory",
-                "n_independent": n_independent,
-                "ddof": 1,
-                "available": n_independent > 1,
-            },
-        }
 
         return AnalysisResult(data_dict=result_dict, meta=result_dict)
 
@@ -1012,6 +1059,40 @@ class PsdResultAccumulator:
         delta *= self.count * partial_count / total
         self.m2 += delta
         self.count = total
+
+    def consume_product(self, product: Dataset) -> None:
+        """Consume one typed PSD product without rebuilding a legacy result."""
+        count = int(product.handle("uncertainty.n_independent").materialize())
+        payload = {
+            "axis": product.handle("axis").materialize(),
+            "psd": product.handle("psd").materialize(),
+            "psd_std": product.handle("psd_std").materialize(),
+            "psd_sem": product.handle("psd_sem").materialize(),
+            "modes": product.handle("modes").materialize(),
+            "sample_dt": product.handle("sample_dt").materialize(),
+            "nyquist": product.handle("nyquist").materialize(),
+            "orientation": product.attributes["orientation"],
+            "estimator": product.attributes["estimator"],
+            "uncertainty": {"n_independent": count},
+        }
+        self.update(payload)
+
+    def merge(self, other: "PsdResultAccumulator") -> None:
+        self.update(other.finalize())
+
+    def finalize_product(self, label: str) -> Mapping[str, Dataset] | None:
+        return _build_psd_products(
+            self.finalize(), scan_size=None, label=label, analyser=self.analyzer
+        )
+
+    def checkpoint(self) -> dict[str, Any]:
+        return {"payload": self.finalize()}
+
+    def restore(self, checkpoint: dict[str, Any]) -> None:
+        payload = checkpoint.get("payload")
+        if not isinstance(payload, dict):
+            raise TypeError("PSD reducer checkpoint is missing its payload")
+        self.update(payload)
 
     def finalize(self) -> dict[str, Any]:
         """Return the standard PSD payload expected by downstream analysers."""

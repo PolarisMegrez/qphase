@@ -38,7 +38,7 @@ from .frequency_orientation import (
 )
 from .result import AnalysisResult
 from .result_input import load_sde_results
-from .typed_input import TypedScanInput, typed_scan_input
+from .spectral_input import SpectralPoint, SpectralScanInput, spectral_scan_input
 
 Readout = int | Literal["trace"]
 
@@ -780,10 +780,20 @@ def _tracking_segments(
 
 
 def _extract_readout(
-    analysis: dict[str, Any],
+    source_data: dict[str, Any] | SpectralPoint,
     psd_key: str,
     readout: Readout,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, dict[str, Any], str]:
+    if isinstance(source_data, SpectralPoint):
+        spectrum, sem, source = source_data.readout(readout)
+        return (
+            source_data.axis,
+            spectrum,
+            sem,
+            dict(source_data.attributes),
+            source,
+        )
+    analysis = source_data
     if psd_key not in analysis:
         raise QPhaseError(f"analysis is missing PSD payload {psd_key!r}")
     payload = analysis[psd_key]
@@ -827,15 +837,17 @@ class SpectralRidgeAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         metadata = metadata or {}
-        typed = typed_scan_input(
+        typed = spectral_scan_input(
             inputs,
+            psd_key=cast(SpectralRidgeConfig, self.config).psd_key,
             scan_param=cast(SpectralRidgeConfig, self.config).scan_param,
             metadata=metadata,
         )
-        result = self.analyze(typed, backend)
-        products = self.build_products(result.data_dict, scan_size=None, label=label)
+        payload, _ = self._compute_payload(typed, backend)
+        products = self.build_products(payload, scan_size=None, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
         return products
@@ -930,12 +942,14 @@ class SpectralRidgeAnalyzer(Analyzer):
         )
         return {label: selected, f"{label}.candidates": candidate}
 
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
+    def _compute_payload(
+        self, data: Any, backend: BackendBase
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         del backend
         config = cast(SpectralRidgeConfig, self.config)
         loaded = (
             data.points
-            if isinstance(data, TypedScanInput)
+            if isinstance(data, SpectralScanInput)
             else load_sde_results(data)
         )
         if not loaded:
@@ -946,15 +960,22 @@ class SpectralRidgeAnalyzer(Analyzer):
         reference_orientation: FrequencyOrientation | None = None
         uncertainty_sources: set[str] = set()
         for item in loaded:
-            params = item.meta.get("params", {})
-            if config.scan_param not in params:
-                raise QPhaseError(
-                    f"input is missing scan parameter {config.scan_param!r}"
-                )
-            scan_value = float(params[config.scan_param])
+            if isinstance(item, SpectralPoint):
+                scan_value = item.scan_value
+                job_name = item.job_name
+                source_data: dict[str, Any] | SpectralPoint = item
+            else:
+                params = item.meta.get("params", {})
+                if config.scan_param not in params:
+                    raise QPhaseError(
+                        f"input is missing scan parameter {config.scan_param!r}"
+                    )
+                scan_value = float(params[config.scan_param])
+                job_name = item.job_name
+                source_data = item.analysis
             for readout in config.readouts:
                 axis, spectrum, sem, payload, source = _extract_readout(
-                    item.analysis, config.psd_key, readout
+                    source_data, config.psd_key, readout
                 )
                 orientation = resolve_frequency_orientation(payload)
                 if reference_orientation is None:
@@ -985,7 +1006,7 @@ class SpectralRidgeAnalyzer(Analyzer):
                     plateau_fraction=config.plateau_fraction,
                     frequency_bin_covariance=config.frequency_bin_covariance,
                 )
-                point_data[str(readout)].append((scan_value, item.job_name, estimates))
+                point_data[str(readout)].append((scan_value, job_name, estimates))
                 uncertainty_sources.add(
                     f"{source}+frequency_{config.frequency_bin_covariance}"
                     if sem is not None
@@ -1184,14 +1205,14 @@ class SpectralRidgeAnalyzer(Analyzer):
         metadata = orientation_metadata(
             reference_orientation or resolve_frequency_orientation(None)
         )
-        return AnalysisResult(
-            data_dict={
+        return (
+            {
                 "ridge_rows": rows,
                 "candidate_rows": candidate_rows,
                 "written": written,
                 **metadata,
             },
-            meta={
+            {
                 "scan_param": config.scan_param,
                 "readouts": config.readouts,
                 "method": "Gaussian scale-space plus local quadratic ridge",
@@ -1217,3 +1238,7 @@ class SpectralRidgeAnalyzer(Analyzer):
                 **metadata,
             },
         )
+
+    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
+        payload, metadata = self._compute_payload(data, backend)
+        return AnalysisResult(data_dict=payload, meta=metadata)

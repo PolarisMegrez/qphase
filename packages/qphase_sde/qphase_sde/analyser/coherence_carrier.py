@@ -31,7 +31,12 @@ from ..contracts.analyser import (
 )
 from ..contracts.quantities import SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .base import Analyzer, resolve_mode_columns, trajectory_requirement
+from .base import (
+    Analyzer,
+    map_trajectory_product,
+    trajectory_arrays,
+    trajectory_requirement,
+)
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
@@ -377,14 +382,23 @@ def _measurement_matrices(
     config: CoherenceCarrierConfig,
 ) -> tuple[list[str], list[str], list[int], np.ndarray]:
     recorded = _recorded_modes(data, stored_modes)
+    return _measurement_matrices_for_recorded(recorded, config)
+
+
+def _measurement_matrices_for_recorded(
+    recorded: list[int],
+    config: CoherenceCarrierConfig,
+) -> tuple[list[str], list[str], list[int], np.ndarray]:
+    stored_modes = len(recorded)
+    mapping = {mode: index for index, mode in enumerate(recorded)}
+    missing_modes = [mode for mode in config.modes if mode not in mapping]
+    if missing_modes:
+        raise ValueError(f"requested modes were not recorded: {missing_modes}")
     names: list[str] = []
     kinds: list[str] = []
     matrices: list[np.ndarray] = []
-    for mode, column in zip(
-        config.modes,
-        resolve_mode_columns(data, config.modes),
-        strict=True,
-    ):
+    for mode in config.modes:
+        column = mapping[mode]
         matrix = np.zeros((stored_modes, stored_modes), dtype=complex)
         matrix[column, column] = 1.0
         names.append(f"mode_{mode}")
@@ -440,9 +454,85 @@ class CoherenceCarrierAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         del metadata
-        return self._execute_trajectory_typed(inputs, backend=backend, label=label)
+        trajectory = inputs.get("trajectories")
+        if trajectory is None:
+            raise TypeError("coherence_carrier requires a trajectories product")
+
+        def compute(point: Dataset) -> Mapping[str, Dataset]:
+            values, t0, dt, recorded = trajectory_arrays(point)
+            payload = self._compute_payload(
+                values,
+                recorded_modes=list(recorded),
+                t0=t0,
+                dt=dt,
+                backend=backend,
+            )
+            products = _build_coherence_carrier_products(
+                payload, scan_size=None, label=label
+            )
+            if not products:
+                raise ValueError("coherence_carrier produced no typed product")
+            return products
+
+        return map_trajectory_product(trajectory, compute, context=context)
+
+    def _compute_payload(
+        self,
+        values: Any,
+        *,
+        recorded_modes: list[int],
+        t0: float,
+        dt: float,
+        backend: BackendBase,
+    ) -> dict[str, Any]:
+        config = cast(CoherenceCarrierConfig, self.config)
+        if values.ndim != 3 or not np.issubdtype(values.dtype, np.complexfloating):
+            raise ValueError(
+                "coherence_carrier expects complex shape (n_traj, n_time, n_modes)"
+            )
+        n_traj, n_samples, stored_modes = map(int, values.shape)
+        if n_traj < 1 or n_samples <= config.maximum_lag_points:
+            raise ValueError(
+                "coherence_carrier requires trajectories longer than maximum_lag_points"
+            )
+        if not np.isfinite(dt) or dt <= 0.0:
+            raise ValueError("trajectory sample spacing must be positive")
+        if len(recorded_modes) != stored_modes:
+            raise ValueError("recorded mode labels do not match trajectory columns")
+        names, kinds, recorded, matrices = _measurement_matrices_for_recorded(
+            recorded_modes, config
+        )
+        backend_matrices = backend.asarray(matrices, dtype=values.dtype)
+        correlations = backend.zeros(
+            (n_traj, len(names), config.maximum_lag_points + 1),
+            dtype=values.dtype,
+        )
+        for lag in range(config.maximum_lag_points + 1):
+            pair_count = n_samples - lag
+            for start in range(0, pair_count, config.time_chunk_samples):
+                stop = min(pair_count, start + config.time_chunk_samples)
+                left = values[:, start:stop, :]
+                right = values[:, start + lag : stop + lag, :]
+                correlations[:, :, lag] += backend.einsum(
+                    "rti,mij,rtj->rm",
+                    left.conj(),
+                    backend_matrices,
+                    right,
+                )
+            correlations[:, :, lag] /= float(pair_count)
+        return self._summarize(
+            per_trajectory=np.asarray(convert_to_numpy(correlations)),
+            names=names,
+            kinds=kinds,
+            recorded_modes=recorded,
+            matrices=matrices,
+            dt=dt,
+            n_samples=n_samples,
+            t0=t0,
+        )
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         """Declare the single graph-ready coherence-carrier product."""
@@ -487,58 +577,18 @@ class CoherenceCarrierAnalyzer(Analyzer):
         return AnalyserWorkspaceEstimate(host_bytes=chunk_bytes + retained_bytes)
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
-        config = cast(CoherenceCarrierConfig, self.config)
         values = getattr(data, "data", data)
-        if (
-            not hasattr(values, "ndim")
-            or values.ndim != 3
-            or not np.issubdtype(values.dtype, np.complexfloating)
-        ):
-            raise ValueError(
-                "coherence_carrier expects complex shape (n_traj, n_time, n_modes)"
-            )
-        n_traj, n_samples, stored_modes = map(int, values.shape)
-        if n_traj < 1 or n_samples <= config.maximum_lag_points:
-            raise ValueError(
-                "coherence_carrier requires trajectories longer than maximum_lag_points"
-            )
+        stored_modes = int(values.shape[2])
         dt = float(getattr(data, "dt", 1.0))
-        if not np.isfinite(dt) or dt <= 0.0:
-            raise ValueError("trajectory sample spacing must be positive")
-        names, kinds, recorded_modes, matrices = _measurement_matrices(
-            data, stored_modes, config
-        )
-        backend_matrices = backend.asarray(matrices, dtype=values.dtype)
-        correlations = backend.zeros(
-            (n_traj, len(names), config.maximum_lag_points + 1),
-            dtype=values.dtype,
-        )
-
-        for lag in range(config.maximum_lag_points + 1):
-            pair_count = n_samples - lag
-            for start in range(0, pair_count, config.time_chunk_samples):
-                stop = min(pair_count, start + config.time_chunk_samples)
-                left = values[:, start:stop, :]
-                right = values[:, start + lag : stop + lag, :]
-                correlations[:, :, lag] += backend.einsum(
-                    "rti,mij,rtj->rm",
-                    left.conj(),
-                    backend_matrices,
-                    right,
-                )
-            correlations[:, :, lag] /= float(pair_count)
-
+        recorded_modes = _recorded_modes(data, stored_modes)
         return AnalysisResult(
-            data_dict=self._summarize(
-                per_trajectory=np.asarray(convert_to_numpy(correlations)),
-                names=names,
-                kinds=kinds,
+            data_dict=self._compute_payload(
+                values,
                 recorded_modes=recorded_modes,
-                matrices=matrices,
-                dt=dt,
-                n_samples=n_samples,
                 t0=float(getattr(data, "t0", 0.0)),
-            )
+                dt=dt,
+                backend=backend,
+            ),
         )
 
     def create_result_accumulator(self) -> CoherenceCarrierResultAccumulator:
@@ -833,6 +883,50 @@ class CoherenceCarrierResultAccumulator:
                     "coherence-carrier batches used different readout matrices"
                 )
         self.payloads.append(payload)
+
+    def consume_product(self, product: Dataset) -> None:
+        def value(name: str) -> Any:
+            return product.handle(name).materialize()
+
+        metadata = product.attributes.get("payload_meta", {})
+        if not isinstance(metadata, Mapping):
+            raise TypeError("coherence carrier product metadata is invalid")
+        self.update(
+            {
+                "measurement_names": metadata["measurement_names"],
+                "measurement_kinds": metadata["measurement_kinds"],
+                "recorded_modes": [
+                    int(mode) for mode in np.asarray(value("recorded_modes"))
+                ],
+                "measurement_matrices": value("measurement_matrices"),
+                "n_traj": int(value("n_traj")),
+                "n_samples": int(value("n_samples")),
+                "t0": float(value("t0")),
+                "dt": float(value("dt")),
+                "per_trajectory_correlation": value("per_trajectory_correlation"),
+            }
+        )
+
+    def merge(self, other: CoherenceCarrierResultAccumulator) -> None:
+        for payload in other.payloads:
+            self.update(payload)
+
+    def finalize_product(self, label: str) -> Mapping[str, Dataset] | None:
+        return _build_coherence_carrier_products(
+            self.finalize(), scan_size=None, label=label
+        )
+
+    def checkpoint(self) -> dict[str, Any]:
+        return {"payloads": list(self.payloads)}
+
+    def restore(self, checkpoint: dict[str, Any]) -> None:
+        payloads = checkpoint.get("payloads")
+        if not isinstance(payloads, list):
+            raise TypeError("coherence carrier checkpoint is missing payloads")
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                raise TypeError("coherence carrier checkpoint payload is invalid")
+            self.update(payload)
 
     def finalize(self) -> dict[str, Any]:
         if not self.payloads:

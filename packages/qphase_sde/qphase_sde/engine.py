@@ -26,6 +26,7 @@ from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy, get_xp
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
+from qphase.data import concat_datasets, stack_datasets
 
 from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.integrator.base import Integrator
@@ -469,9 +470,8 @@ class Engine(EngineBase):
                 and getattr(context, "product_graph", None) is not None
             ),
         )
-        if (
-            plan.trajectory_batch_count > 1
-            and (context is None or getattr(context, "product_graph", None) is None)
+        if plan.trajectory_batch_count > 1 and (
+            context is None or getattr(context, "product_graph", None) is None
         ):
             plan = replace(
                 plan,
@@ -616,6 +616,7 @@ class Engine(EngineBase):
         source: DatasetResultProtocol | None,
         *,
         context: Any | None = None,
+        completed_nodes: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> ResultProtocol | None:
         """Run an all-typed analyser set through the core ProductGraph."""
         if source is None:
@@ -697,12 +698,17 @@ class Engine(EngineBase):
                 node_metadata = dict(execution_metadata)
                 if incoming:
                     node_metadata["source_product"] = incoming[0].product
-                return analyser.execute(
+                outputs = analyser.execute(
                     inputs,
                     backend=backend,
                     label=str(name),
                     metadata=node_metadata,
+                    context=context,
                 )
+                cancellation = getattr(context, "cancellation", None)
+                if cancellation is not None:
+                    cancellation.raise_if_cancelled()
+                return outputs
 
             return runner
 
@@ -711,7 +717,9 @@ class Engine(EngineBase):
             for node_id, name in node_names.items()
         }
         node_products = ProductGraphExecutor(graph, runners).run(
-            {"input": source_products}, context=context
+            {"input": source_products},
+            context=context,
+            completed_nodes=completed_nodes,
         )
         products = {
             product_name: product
@@ -777,6 +785,14 @@ class Engine(EngineBase):
             products = self._concat_scan_products(
                 [bundle.products for bundle in tile_bundles]
             )
+            observer_payloads: dict[str, list[Any]] = {}
+            for bundle in tile_bundles:
+                payloads = bundle.metadata.get("observer_payloads", {})
+                if not isinstance(payloads, dict):
+                    continue
+                for name, value in payloads.items():
+                    values = value if isinstance(value, list) else [value]
+                    observer_payloads.setdefault(name, []).extend(values)
             grid = context.parameter_grid
             assert grid is not None
             flat_coordinates = grid.parameter_arrays(flatten=True)
@@ -793,6 +809,7 @@ class Engine(EngineBase):
                     "mode": "simulate_analyze",
                     "execution": "product_graph",
                     "execution_plan": plan.to_dict(),
+                    "observer_payloads": observer_payloads,
                 },
             )
         assert context.parameter_grid is not None
@@ -856,7 +873,7 @@ class Engine(EngineBase):
 
         products = self._concat_scan_products(tile_products)
         if tile_trajectories:
-            products["trajectories"] = self._concat_scan_datasets(tile_trajectories)
+            products["trajectories"] = concat_datasets(tile_trajectories, axis="scan")
         return SDEDataBundle(
             products,
             self._job_provenance(grid=grid),
@@ -872,11 +889,21 @@ class Engine(EngineBase):
     @staticmethod
     def _concat_scan_products(
         groups: list[dict[str, Any]],
+        *,
+        stack: bool = False,
     ) -> dict[str, Any]:
-        names = set().union(*(group.keys() for group in groups))
+        if not groups:
+            raise ValueError("cannot concatenate an empty product collection")
+        if len(groups) == 1:
+            return dict(groups[0])
+        names = set(groups[0])
+        if any(set(group) != names for group in groups[1:]):
+            raise ValueError("scan tiles produced different product sets")
         return {
-            name: Engine._concat_scan_datasets(
-                [group[name] for group in groups if name in group]
+            name: (
+                stack_datasets([group[name] for group in groups], axis="scan")
+                if stack
+                else concat_datasets([group[name] for group in groups], axis="scan")
             )
             for name in names
         }
@@ -903,27 +930,35 @@ class Engine(EngineBase):
         graph = getattr(context, "product_graph", None)
         if graph is None:
             raise RuntimeError("typed trajectory batching requires a ProductGraph")
-        output_owners = {
-            output.name: node.node_id.removeprefix("analyser.")
-            for node in graph.nodes
-            for output in node.outputs
+        graph_nodes = {node.node_id: node for node in graph.nodes}
+        node_ids = {
+            node.node_id.removeprefix("analyser."): node.node_id for node in graph.nodes
         }
-        output_labels = {
-            node.node_id.removeprefix("analyser."): [
-                output.name for output in node.outputs
-            ]
-            for node in graph.nodes
+        reducer_names = {
+            name
+            for name, analyser in analysers.items()
+            if analyser.reducer() is not None
         }
+        trajectory_roots = {
+            binding.consumer.removeprefix("analyser.")
+            for binding in graph.external_inputs
+            if binding.product == "trajectories"
+        }
+        missing_reducers = trajectory_roots - reducer_names
+        if missing_reducers:
+            raise RuntimeError(
+                "trajectory batching requires typed reducers for trajectory "
+                f"producers: {sorted(missing_reducers)}"
+            )
         reducer_sets = []
         for _ in range(point_count):
             reducers: dict[str, Any] = {}
-            for name, analyser in analysers.items():
+            for name in reducer_names:
+                analyser = analysers[name]
                 reducer = analyser.reducer()
-                if reducer is None:
-                    raise RuntimeError(
-                        f"typed analyser {name!r} has no trajectory reducer"
-                    )
-                labels = output_labels.get(name, [])
+                assert reducer is not None
+                node = graph_nodes[node_ids[name]]
+                labels = [output.name for output in node.outputs]
                 if len(labels) != 1:
                     raise RuntimeError(
                         f"typed analyser {name!r} must declare one reducer output"
@@ -937,7 +972,9 @@ class Engine(EngineBase):
                 np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0]
             )
         master_seed = int(master_seed) % (1 << 64)
-        observer_batches: dict[str, list[Any]] = {name: [] for name in observers}
+        observer_batches: dict[str, list[list[Any]]] = {
+            name: [[] for _ in range(point_count)] for name in observers
+        }
         result_meta: dict[str, Any] = {}
         reducer_states = [
             {
@@ -995,7 +1032,9 @@ class Engine(EngineBase):
                     rng_group_seeds=seeds,
                     rng_group_size=group_size,
                     observers=observers,
-                    progress_offset=(scan_start * plan.n_traj_per_point + start)
+                    progress_offset=(
+                        scan_start * plan.n_traj_per_point + start * point_count
+                    )
                     * plan.steps,
                     progress_scale=count * point_count,
                     progress_total=plan.scan_size * plan.n_traj_per_point * plan.steps,
@@ -1020,38 +1059,55 @@ class Engine(EngineBase):
                 scan_shape=(point_count,),
                 meta={"scan_combine": "zipped"},
             )
-            typed = self._run_typed_analyze(source, context=context)
-            if not isinstance(typed, SDEDataBundle):
-                raise RuntimeError("typed trajectory batch produced no data bundle")
+            trajectory = source.products["trajectories"]
+            batch_products: dict[str, Mapping[str, Any]] = {}
+            for name in reducer_names:
+                node = graph_nodes[node_ids[name]]
+                products = analysers[name].execute(
+                    {"trajectories": trajectory},
+                    backend=self._required_backend(),
+                    label=node.outputs[0].name,
+                    metadata={"scan_shape": [point_count]},
+                    context=context,
+                )
+                declared = {output.name for output in node.outputs}
+                if set(products) != declared:
+                    raise RuntimeError(
+                        f"typed analyser {name!r} returned {sorted(products)}, "
+                        f"expected {sorted(declared)}"
+                    )
+                batch_products[name] = products
             for point_offset, reducers in enumerate(reducer_sets):
-                for product_name, product in typed.products.items():
-                    owner = output_owners.get(product_name)
-                    if owner is None:
-                        raise RuntimeError(
-                            f"typed product {product_name!r} has no graph owner"
+                for owner, products in batch_products.items():
+                    reducer = reducers[owner]
+                    for product in products.values():
+                        point_product = (
+                            product.point_view(scan=point_offset)
+                            if "scan" in {axis.name for axis in product.axes}
+                            else product
                         )
-                    reducer = reducers.get(owner)
-                    if reducer is None:
-                        raise RuntimeError(
-                            f"typed analyser {owner!r} has no trajectory reducer"
+                        reducer.consume(
+                            point_product,
+                            reducer_states[point_offset][owner],
+                            reporter,
                         )
-                    point_product = (
-                        product.point_view(scan=point_offset)
-                        if "scan" in {axis.name for axis in product.axes}
-                        else product
-                    )
-                    reducer.consume(
-                        point_product,
-                        reducer_states[point_offset][owner],
-                        reporter,
-                    )
             for name in observers:
                 payload = self._analysis_to_host(partial.analysis.get(name))
-                if payload is not None:
-                    observer_batches[name].append(payload)
+                if payload is None:
+                    raise RuntimeError(
+                        f"observer {name!r} returned no typed batch payload"
+                    )
+                point_payloads = payload if isinstance(payload, list) else [payload]
+                if len(point_payloads) != point_count:
+                    raise RuntimeError(
+                        f"observer {name!r} returned {len(point_payloads)} scan "
+                        f"payloads for a {point_count}-point tile"
+                    )
+                for point_offset, point_payload in enumerate(point_payloads):
+                    observer_batches[name][point_offset].append(point_payload)
             if not result_meta:
                 result_meta.update(partial.meta)
-            del partial, source, typed
+            del partial, source, batch_products
             self._release_backend_pool()
 
         result_meta.update(
@@ -1065,153 +1121,57 @@ class Engine(EngineBase):
                 "execution_plan": plan.to_dict(),
             }
         )
-        point_bundles: list[SDEDataBundle] = []
+        point_products: list[dict[str, Any]] = []
         for reducers, states in zip(reducer_sets, reducer_states, strict=True):
-            products: dict[str, Any] = {}
+            finalized: dict[str, Any] = {}
             for name, reducer in reducers.items():
                 if reducer is None:
                     raise RuntimeError(f"typed analyser {name!r} has no reducer")
-                products.update(reducer.finalize(states[name]))
-            point_bundles.append(
-                SDEDataBundle(products, self._job_provenance(), meta=result_meta)
-            )
-        for name, payloads in observer_batches.items():
-            if payloads:
-                result_meta.setdefault("observer_payloads", {})[name] = (
-                    observers[name].merge_payloads(payloads)
+                finalized.update(reducer.finalize(states[name]))
+            point_products.append(finalized)
+
+        is_scan = adapter is not None
+        completed_products = (
+            self._concat_scan_products(point_products, stack=True)
+            if is_scan or point_count > 1
+            else point_products[0]
+        )
+        completed_nodes = {
+            node_ids[name]: {
+                product_name: completed_products[product_name]
+                for product_name in (
+                    output.name for output in graph_nodes[node_ids[name]].outputs
                 )
-        if point_count == 1:
-            return point_bundles[0]
-        return SDEDataBundle(
-            self._concat_scan_products(
-                [
-                    {
-                        name: self._add_single_scan_axis(product)
-                        for name, product in bundle.products.items()
-                    }
-                    for bundle in point_bundles
-                ]
-            ),
+            }
+            for name in reducer_names
+        }
+        result_meta["observer_payloads"] = {
+            name: [
+                observers[name].merge_payloads(observer_batches[name][point_offset])
+                for point_offset in range(point_count)
+            ]
+            for name in observers
+        }
+        if not is_scan and point_count == 1:
+            result_meta["observer_payloads"] = {
+                name: payloads[0]
+                for name, payloads in result_meta["observer_payloads"].items()
+            }
+        source = SDEDataBundle(
+            completed_products,
             self._job_provenance(),
-            scan_axes={"scan": np.arange(point_count)},
-            scan_shape=(point_count,),
-            meta=result_meta,
+            scan_axes={},
+            scan_shape=(point_count,) if is_scan else (),
+            meta={**result_meta, "scan_combine": "zipped"},
         )
-
-    @staticmethod
-    def _concat_scan_datasets(datasets: list[Any]) -> Any:
-        if not datasets:
-            raise ValueError("cannot concatenate an empty Dataset sequence")
-        first = datasets[0]
-        if first.attributes.get("table") in {
-            "peak_candidates",
-            "peak_paths",
-            "row_table",
-        }:
-            raise RuntimeError(
-                "ragged/table products require an analyser reducer; generic "
-                "scan concatenation is refused to prevent data loss"
-            )
-        scan_axis = {axis.name for axis in first.axes}
-        if "scan" not in scan_axis:
-            if len(datasets) > 1:
-                raise RuntimeError(
-                    "typed scan tiles produced a non-scan product that cannot "
-                    "be combined without a resource-package reducer"
-                )
-            return first
-        first_schema = first.schema.model_dump(mode="json")
-        first_schema["axes"] = [
-            {**axis, "size": None} if axis["name"] == "scan" else axis
-            for axis in first_schema["axes"]
-        ]
-        coordinate_variables = {
-            coordinate.variable for coordinate in first.coordinates()
-        }
-        first_variables = {
-            variable.name: variable for variable in first.variables
-        }
-        first_attributes = dict(first.attributes)
-        for dataset in datasets[1:]:
-            if type(dataset) is not type(first):
-                raise TypeError("typed scan tiles must use the same Dataset class")
-            if dataset.attributes != first_attributes:
-                raise ValueError("typed scan tiles have inconsistent attributes")
-            schema = dataset.schema.model_dump(mode="json")
-            schema["axes"] = [
-                {**axis, "size": None} if axis["name"] == "scan" else axis
-                for axis in schema["axes"]
-            ]
-            if schema != first_schema:
-                raise ValueError(
-                    "typed scan tiles have incompatible schema, axes, or "
-                    "sampling basis"
-                )
-            variables = {variable.name: variable for variable in dataset.variables}
-            if variables != first_variables:
-                raise ValueError("typed scan tiles have inconsistent variables")
-            for variable_name in coordinate_variables:
-                variable = first_variables[variable_name]
-                if "scan" not in variable.dims:
-                    left = np.asarray(first.handle(variable_name).materialize())
-                    right = np.asarray(dataset.handle(variable_name).materialize())
-                    if not np.array_equal(left, right):
-                        raise ValueError(
-                            "typed scan tiles have inconsistent non-scan coordinates"
-                        )
-        schema_data = first.schema.model_dump(mode="python")
-        for axis in schema_data["axes"]:
-            if axis["name"] == "scan":
-                axis["size"] = sum(
-                    int(dataset.axis("scan").size) for dataset in datasets
-                )
-        schema = type(first.schema).model_validate(schema_data)
-        arrays: dict[str, np.ndarray] = {}
-        for variable in first.variables:
-            values = [
-                np.asarray(dataset.handle(variable.name).materialize())
-                for dataset in datasets
-            ]
-            if "scan" in variable.dims:
-                arrays[variable.name] = np.concatenate(
-                    values, axis=variable.dims.index("scan")
-                )
-            else:
-                arrays[variable.name] = values[0]
-        return type(first).from_arrays(schema, arrays, owner="engine.sde")
-
-    @staticmethod
-    def _add_single_scan_axis(dataset: Any) -> Any:
-        """Add a singleton scan axis to one dense, pointwise Dataset."""
-        coordinate_variables = {
-            coordinate.variable for coordinate in dataset.coordinates()
-        }
-        schema_data = dataset.schema.model_dump(mode="python")
-        schema_data["axes"] = [
-            {"name": "scan", "role": "parameter", "size": 1},
-            *schema_data["axes"],
-        ]
-        variables = []
-        arrays: dict[str, np.ndarray] = {}
-        for variable in dataset.variables:
-            if variable.name in coordinate_variables:
-                variables.append(variable)
-                arrays[variable.name] = np.asarray(
-                    dataset.handle(variable.name).materialize()
-                )
-                continue
-            variables.append(
-                variable.model_copy(update={"dims": ("scan", *variable.dims)})
-            )
-            arrays[variable.name] = np.expand_dims(
-                np.asarray(dataset.handle(variable.name).materialize()), axis=0
-            )
-        schema_data["variables"] = variables
-        return type(dataset).from_arrays(
-            type(dataset.schema).model_validate(schema_data),
-            arrays,
-            owner="engine.sde",
+        analysed = self._run_typed_analyze(
+            source,
+            context=context,
+            completed_nodes=completed_nodes,
         )
+        if not isinstance(analysed, SDEDataBundle):
+            raise RuntimeError("typed trajectory reducers produced no data bundle")
+        return analysed
 
     def _merge_simulation_trajectory(
         self, source: SDEDataBundle, analysed: ResultProtocol

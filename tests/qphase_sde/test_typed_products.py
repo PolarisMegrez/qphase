@@ -68,7 +68,7 @@ class _MeanAnalyzer:
 
     def analyze(self, data, backend):
         del backend
-        return AnalysisResult({"mean": float(np.mean(np.asarray(data.data)))})
+        return AnalysisResult({"mean": float(np.mean(np.asarray(data.data).real))})
 
 
 class _ProductBuilderAnalyzer(_MeanAnalyzer):
@@ -282,6 +282,8 @@ def test_typed_reducer_merge_and_checkpoint_are_portable():
             "psd_std": np.full((5, 1), 0.1),
             "psd_sem": np.full((5, 1), 0.05),
             "modes": [0],
+            "sample_dt": 0.1,
+            "nyquist": np.pi / 0.1,
             "orientation": "phase_decreasing",
             "uncertainty": {"n_independent": 2},
         }

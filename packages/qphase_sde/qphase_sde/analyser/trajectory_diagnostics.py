@@ -46,7 +46,14 @@ from ..math.coordinates import (
 )
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .allan_statistics import calculate_allan_variance
-from .base import Analyzer, resolve_mode_columns, trajectory_requirement
+from .base import (
+    Analyzer,
+    map_trajectory_product,
+    resolve_mode_columns,
+    select_mode_columns,
+    trajectory_arrays,
+    trajectory_requirement,
+)
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
@@ -360,9 +367,79 @@ class TrajectoryDiagnostics(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         del metadata
-        return self._execute_trajectory_typed(inputs, backend=backend, label=label)
+        del backend
+        trajectory = inputs.get("trajectories")
+        if trajectory is None:
+            raise TypeError("trajectory_diagnostics requires trajectories")
+
+        def compute(point: Dataset) -> Mapping[str, Dataset]:
+            array, t0, dt, recorded = trajectory_arrays(point)
+            modes, columns = select_mode_columns(
+                recorded, cast(TrajectoryDiagnosticsConfig, self.config).modes
+            )
+            payload = self._compute_payload(array, modes, columns, t0=t0, dt=dt)
+            products = self.build_products(payload, scan_size=None, label=label)
+            if not products:
+                raise ValueError("trajectory_diagnostics produced no typed product")
+            return products
+
+        return map_trajectory_product(trajectory, compute, context=context)
+
+    def _compute_payload(
+        self,
+        array: Any,
+        modes: list[int],
+        columns: list[int],
+        *,
+        t0: float,
+        dt: float,
+    ) -> dict[str, Any]:
+        config = cast(TrajectoryDiagnosticsConfig, self.config)
+        values = np.asarray(convert_to_numpy(array))
+        if values.ndim != 3:
+            raise ValueError(
+                "trajectory diagnostics expects shape (n_traj, n_time, n_modes)"
+            )
+        if values.shape[1] < 3:
+            raise ValueError("trajectory diagnostics requires at least three samples")
+        if not np.iscomplexobj(values):
+            raise ValueError("trajectory diagnostics requires complex mode amplitudes")
+        if dt <= 0.0:
+            raise ValueError("trajectory sample spacing must be positive")
+        diagnostic_context = TrajectoryDiagnosticContext(
+            values=values,
+            dt=dt,
+            t0=t0,
+            modes=tuple(modes),
+            mode_columns=tuple(columns),
+            coordinate_builder=canonical_r_coordinates,
+        )
+        result: dict[str, Any] = {
+            "modes": modes,
+            "t0": t0,
+            "dt": dt,
+            "n_traj": int(values.shape[0]),
+            "n_samples": int(values.shape[1]),
+            **orientation_metadata(config.orientation),
+            "mode_results": {},
+        }
+        children: list[TrajectoryDiagnosticChild] = [_ModeSummaryChild()]
+        if config.coherence:
+            children.append(_CoherenceChild())
+        if config.allan:
+            children.append(_AllanChild())
+        if config.block_spectrum:
+            children.append(_BlockSpectrumChild())
+        if config.matrix_projection:
+            children.append(_MatrixProjectionChild())
+        if config.stationarity_details:
+            children.append(_StationarityChild())
+        for child in children:
+            child.apply(diagnostic_context, result, config)
+        return result
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         config = cast(TrajectoryDiagnosticsConfig, self.config)
@@ -434,62 +511,21 @@ class TrajectoryDiagnostics(Analyzer):
         )
 
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
+        del backend
         config = cast(TrajectoryDiagnosticsConfig, self.config)
         array = _trajectory_array(data)
-        values = np.asarray(convert_to_numpy(array))
-        if values.ndim != 3:
-            raise ValueError(
-                "trajectory diagnostics expects shape (n_traj, n_time, n_modes)"
-            )
-        if values.shape[1] < 3:
-            raise ValueError("trajectory diagnostics requires at least three samples")
-        if not np.iscomplexobj(values):
-            raise ValueError("trajectory diagnostics requires complex mode amplitudes")
-
         dt = float(getattr(data, "dt", 1.0))
         t0 = float(getattr(data, "t0", 0.0))
-        if dt <= 0.0:
-            raise ValueError("trajectory sample spacing must be positive")
-
         columns = resolve_mode_columns(data, config.modes)
-        diagnostic_context = TrajectoryDiagnosticContext(
-            values=values,
-            dt=dt,
-            t0=t0,
-            modes=tuple(config.modes),
-            mode_columns=tuple(columns),
-            coordinate_builder=canonical_r_coordinates,
-        )
-        result: dict[str, Any] = {
-            "modes": list(config.modes),
-            "t0": t0,
-            "dt": dt,
-            "n_traj": int(values.shape[0]),
-            "n_samples": int(values.shape[1]),
-            **orientation_metadata(config.orientation),
-            "mode_results": {},
-        }
-        children: list[TrajectoryDiagnosticChild] = [_ModeSummaryChild()]
-        if config.coherence:
-            children.append(_CoherenceChild())
-        if config.allan:
-            children.append(_AllanChild())
-        if config.block_spectrum:
-            children.append(_BlockSpectrumChild())
-        if config.matrix_projection:
-            children.append(_MatrixProjectionChild())
-        if config.stationarity_details:
-            children.append(_StationarityChild())
-        for child in children:
-            child.apply(diagnostic_context, result, config)
+        result = self._compute_payload(array, list(config.modes), columns, t0=t0, dt=dt)
         return AnalysisResult(
             data_dict=result,
             meta={
                 "modes": list(config.modes),
                 "t0": t0,
                 "dt": dt,
-                "n_traj": int(values.shape[0]),
-                "n_samples": int(values.shape[1]),
+                "n_traj": result["n_traj"],
+                "n_samples": result["n_samples"],
                 **orientation_metadata(config.orientation),
             },
         )

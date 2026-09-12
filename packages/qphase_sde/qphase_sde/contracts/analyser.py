@@ -166,6 +166,7 @@ class AnalyserExecutionContract(AnalyserDeclarationContract, Protocol):
         backend: Any,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         """Consume named typed products and return declared typed products."""
         ...
@@ -173,19 +174,14 @@ class AnalyserExecutionContract(AnalyserDeclarationContract, Protocol):
 
 @runtime_checkable
 class AnalyserProductBuilderProtocol(Protocol):
-    """Internal hook converting numerical output into typed products.
+    """Temporary hook converting direct-API numerical output into products.
 
-    This hook is an internal assembly detail used by built-in analysers after
-    their numerical kernel has completed. The public runtime entry is
-    ``AnalyserExecutionContract.execute``.
+    The production ProductGraph entry is ``AnalyserExecutionContract.execute``
+    and does not route through this hook. Built-in analysers retain it only for
+    the direct ``analyze()`` compatibility API until the Wave 5D deletion.
 
-    The bundle adapter discovers this hook by duck-typing — the engine never
-    branches on analyser names. An analyser implementing it is authoritative
-    for its payload: the returned mapping (usually one product under the
-    job-local ``label``) replaces the ``legacy_analysis/1`` fallback bridge
-    entirely, so builders must keep the legacy payload rebuildable
-    (original leaf names as variables, strings and ragged leaves in
-    ``payload_meta``) and must mark products ``graph_ready=True``.
+    This protocol is not part of the registered analyser execution contract,
+    and new third-party plugins must not depend on it.
     """
 
     def build_products(

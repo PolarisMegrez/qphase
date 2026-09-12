@@ -278,12 +278,13 @@ class CoherenceFrequencyAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         """Execute directly on typed input products."""
-        result = cast(AnalysisResult, self.analyze(inputs, backend))
-        scan_size = result.data_dict["estimates"].__len__()
+        del backend, metadata
         config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
         source = inputs[config.input_key]
+        estimates = self._compute_estimates(source)
         orientation = resolve_frequency_orientation(source.attributes)
         channel_name = f"channel_{config.channel}"
         configured_names = source.attributes.get("channel_names")
@@ -295,17 +296,37 @@ class CoherenceFrequencyAnalyzer(Analyzer):
             modes = np.asarray(source.handle("modes").materialize()).reshape(-1)
             if config.channel < modes.size:
                 channel_name = f"mode_{int(modes[config.channel])}"
-        products = self.build_products(
-            result.data_dict,
-            scan_size=scan_size,
-            label=label,
-            orientation=orientation,
-            channel_name=channel_name,
-            channel_index=config.channel,
+        return {
+            label: _materialize_estimates(
+                estimates,
+                scan_size=len(estimates),
+                label=label,
+                orientation=orientation,
+                channel_name=channel_name,
+                channel_index=config.channel,
+            )
+        }
+
+    def _compute_estimates(self, product: Dataset) -> list[CoherenceFrequencyEstimate]:
+        config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
+        scan_axis = (
+            product.axis("scan")
+            if "scan" in {axis.name for axis in product.axes}
+            else None
         )
-        if products is None:
-            raise ValueError("coherence_frequency produced no typed product")
-        return products
+        scan_count = 1
+        if scan_axis is not None:
+            if scan_axis.size is None:
+                raise ValueError("coherence-frequency input scan axis has no size")
+            scan_count = int(scan_axis.size)
+        child = _make_child(config, self._estimator)
+        estimator_name = self._selected_estimator_name()
+        return [
+            child.estimate(
+                _estimate_input(_point_product(product, index), config, estimator_name)
+            )
+            for index in range(scan_count)
+        ]
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         estimator_name = self._selected_estimator_name()
@@ -339,28 +360,10 @@ class CoherenceFrequencyAnalyzer(Analyzer):
             raise ValueError(
                 f"coherence_frequency input has no product {config.input_key!r}"
             )
-        scan_axis = (
-            product.axis("scan")
-            if "scan" in {axis.name for axis in product.axes}
-            else None
-        )
-        scan_count = 1
-        if scan_axis is not None:
-            size = scan_axis.size
-            if size is None:
-                raise ValueError("coherence-frequency input scan axis has no size")
-            scan_count = int(size)
-        child = _make_child(config, self._estimator)
-        estimator_name = self._selected_estimator_name()
-        estimates = [
-            child.estimate(
-                _estimate_input(_point_product(product, index), config, estimator_name)
-            )
-            for index in range(scan_count)
-        ]
+        estimates = self._compute_estimates(product)
         return AnalysisResult(
             data_dict={"estimates": estimates},
-            meta={"scan_param": config.scan_param, "scan_count": scan_count},
+            meta={"scan_param": config.scan_param, "scan_count": len(estimates)},
         )
 
     def build_products(

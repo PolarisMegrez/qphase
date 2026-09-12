@@ -37,7 +37,7 @@ from .frequency_orientation import (
 )
 from .result import AnalysisResult
 from .result_input import load_sde_results
-from .typed_input import TypedScanInput, typed_scan_input
+from .spectral_input import SpectralPoint, SpectralScanInput, spectral_scan_input
 
 __all__ = [
     "FiniteDelayCarrierAnalyzer",
@@ -108,8 +108,14 @@ class FiniteDelayCarrierConfig(PluginConfigBase):
 
 
 def _extract_spectrum(
-    analysis: dict[str, Any], psd_key: str, readout: int | Literal["trace"]
+    source_data: dict[str, Any] | SpectralPoint,
+    psd_key: str,
+    readout: int | Literal["trace"],
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    if isinstance(source_data, SpectralPoint):
+        spectrum, _, _ = source_data.readout(readout)
+        return source_data.axis, spectrum, dict(source_data.attributes)
+    analysis = source_data
     if psd_key not in analysis:
         raise QPhaseError(f"analysis is missing PSD payload {psd_key!r}")
     payload = analysis[psd_key]
@@ -147,14 +153,18 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         metadata = metadata or {}
         config = cast(FiniteDelayCarrierConfig, self.config)
-        typed = typed_scan_input(
-            inputs, scan_param=config.scan_param, metadata=metadata
+        typed = spectral_scan_input(
+            inputs,
+            psd_key=config.psd_key,
+            scan_param=config.scan_param,
+            metadata=metadata,
         )
-        result = self.analyze(typed, backend)
-        products = self.build_products(result.data_dict, scan_size=None, label=label)
+        payload, _ = self._compute_payload(typed, backend)
+        products = self.build_products(payload, scan_size=None, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
         return products
@@ -236,12 +246,14 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
         )
         return {label: product}
 
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
+    def _compute_payload(
+        self, data: Any, backend: BackendBase
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         del backend
         config = cast(FiniteDelayCarrierConfig, self.config)
         loaded = (
             data.points
-            if isinstance(data, TypedScanInput)
+            if isinstance(data, SpectralScanInput)
             else load_sde_results(data)
         )
         if not loaded:
@@ -251,14 +263,22 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
         rates = np.asarray(config.detector_rates, dtype=float)
         readouts = config.resolved_readouts()
         for item in loaded:
-            params = item.meta.get("params", {})
-            if config.scan_param not in params:
-                raise QPhaseError(
-                    f"input is missing scan parameter {config.scan_param!r}"
-                )
+            if isinstance(item, SpectralPoint):
+                scan_value = item.scan_value
+                job_name = item.job_name
+                source_data: dict[str, Any] | SpectralPoint = item
+            else:
+                params = item.meta.get("params", {})
+                if config.scan_param not in params:
+                    raise QPhaseError(
+                        f"input is missing scan parameter {config.scan_param!r}"
+                    )
+                scan_value = params[config.scan_param]
+                job_name = item.job_name
+                source_data = item.analysis
             for readout in readouts:
                 axis, spectrum, payload = _extract_spectrum(
-                    item.analysis, config.psd_key, readout
+                    source_data, config.psd_key, readout
                 )
                 orientation = resolve_frequency_orientation(payload)
                 if reference_orientation is None:
@@ -280,8 +300,8 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
                 for rate_index, rate in enumerate(rates):
                     rows.append(
                         {
-                            "job_name": item.job_name,
-                            config.scan_param: params[config.scan_param],
+                            "job_name": job_name,
+                            config.scan_param: scan_value,
                             "readout": readout,
                             "measurement_name": (
                                 "trace" if readout == "trace" else f"mode_{readout}"
@@ -326,14 +346,14 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
         metadata = orientation_metadata(
             reference_orientation or resolve_frequency_orientation(None)
         )
-        return AnalysisResult(
-            data_dict={
+        return (
+            {
                 "carrier_rows": rows,
                 "detector_rates": rates,
                 "written": written,
                 **metadata,
             },
-            meta={
+            {
                 "scan_param": config.scan_param,
                 "readout": readouts[0] if len(readouts) == 1 else None,
                 "readouts": readouts,
@@ -345,3 +365,7 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
                 **metadata,
             },
         )
+
+    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
+        payload, metadata = self._compute_payload(data, backend)
+        return AnalysisResult(data_dict=payload, meta=metadata)

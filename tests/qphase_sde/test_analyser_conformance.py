@@ -1,4 +1,5 @@
 import importlib.metadata
+import inspect
 
 import pytest
 from qphase.core.registry import discovery, registry
@@ -64,6 +65,7 @@ def test_registered_analyser_satisfies_contract(name):
     instance = cls(**MINIMAL_CONFIGS.get(name, {}))
     assert isinstance(instance, AnalyserDeclarationContract)
     assert isinstance(instance, AnalyserExecutionContract)
+    assert "context" in inspect.signature(instance.execute).parameters
 
     requirements = instance.input_requirements()
     assert isinstance(requirements, list)
@@ -94,3 +96,24 @@ def test_psd_does_not_declare_inline_peaks():
 
     default = PsdAnalyzer(kind="complex", modes=[0])
     assert [spec.name for spec in default.output_specs(label="probe")] == ["probe"]
+
+
+def test_analyser_base_does_not_require_legacy_analyze_api():
+    from qphase_sde.analyser.base import Analyzer
+
+    class TypedOnlyAnalyzer(Analyzer):
+        def execute(
+            self,
+            inputs,
+            *,
+            backend,
+            label,
+            metadata=None,
+            context=None,
+        ):
+            del backend, label, metadata, context
+            return inputs
+
+    analyser = TypedOnlyAnalyzer()
+    with pytest.raises(NotImplementedError, match="only supports typed execute"):
+        analyser.analyze(None, None)

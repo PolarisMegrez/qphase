@@ -37,7 +37,13 @@ from .allan_statistics import (
     calculate_allan_variance_device,
     summarize_trajectories,
 )
-from .base import Analyzer, resolve_mode_columns, trajectory_requirement
+from .base import (
+    Analyzer,
+    map_trajectory_product,
+    resolve_mode_columns,
+    trajectory_arrays,
+    trajectory_requirement,
+)
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
@@ -148,9 +154,109 @@ class AllanVarianceAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         del metadata
-        return self._execute_trajectory_typed(inputs, backend=backend, label=label)
+        trajectory = inputs.get("trajectories")
+        if trajectory is None:
+            raise TypeError("Allan analyser requires a trajectories product")
+
+        def compute(point: Dataset) -> Mapping[str, Dataset]:
+            array, t0, dt, recorded_modes = trajectory_arrays(point)
+            config = cast(AllanVarianceConfig, self.config)
+            mode_map = {mode: index for index, mode in enumerate(recorded_modes)}
+            missing = [mode for mode in config.modes if mode not in mode_map]
+            if missing:
+                raise ValueError(f"requested Allan modes were not recorded: {missing}")
+            payload = self._compute_payload(
+                array,
+                t0=t0,
+                dt=dt,
+                columns=[mode_map[mode] for mode in config.modes],
+                backend=backend,
+            )
+            products = _build_allan_products(payload, scan_size=None, label=label)
+            if not products:
+                raise ValueError("Allan analyser produced no typed product")
+            return products
+
+        return map_trajectory_product(trajectory, compute, context=context)
+
+    def _compute_payload(
+        self,
+        array: Any,
+        *,
+        t0: float,
+        dt: float,
+        columns: list[int],
+        backend: BackendBase,
+    ) -> dict[str, Any]:
+        config = cast(AllanVarianceConfig, self.config)
+        if array.ndim != 3 or not _is_complex_array(array):
+            raise ValueError(
+                "allan_variance expects complex shape (n_traj, n_time, n_modes)"
+            )
+        if array.shape[1] < 3:
+            raise ValueError("allan_variance requires at least three samples")
+        if dt <= 0.0:
+            raise ValueError("trajectory sample spacing must be positive")
+        frequency_meta = orientation_metadata(config.orientation)
+        on_device = backend.backend_name() == "cupy" and not isinstance(
+            array, np.ndarray
+        )
+        mode_results: dict[int, dict[str, Any]] = {}
+        for mode, column in zip(config.modes, columns, strict=True):
+            if on_device:
+                allan = calculate_allan_variance_device(
+                    array[:, :, column],
+                    dt,
+                    taus=config.taus,
+                    points=config.points,
+                    min_windows=config.min_windows,
+                    min_independent_windows=config.min_independent_windows,
+                    amplitude_floor=config.amplitude_floor,
+                    chunk_trajectories=config.device_chunk_trajectories,
+                )
+                phase_summary = _phase_increment_summary_device(
+                    array[:, :, column],
+                    dt,
+                    config.amplitude_floor,
+                    config.orientation,
+                    config.device_chunk_trajectories,
+                )
+            else:
+                series = _copy_mode_to_host(
+                    array, column, config.transfer_chunk_samples
+                )
+                allan = calculate_allan_variance(
+                    series,
+                    dt,
+                    taus=config.taus,
+                    points=config.points,
+                    min_windows=config.min_windows,
+                    min_independent_windows=config.min_independent_windows,
+                    amplitude_floor=config.amplitude_floor,
+                )
+                phase_summary = _phase_increment_summary(
+                    series,
+                    dt,
+                    config.amplitude_floor,
+                    config.orientation,
+                )
+            allan.update(frequency_meta)
+            mode_results[mode] = {
+                "allan": allan,
+                "phase_increment": phase_summary,
+            }
+        return {
+            "modes": list(config.modes),
+            "t0": t0,
+            "dt": dt,
+            "n_traj": int(array.shape[0]),
+            "n_samples": int(array.shape[1]),
+            **frequency_meta,
+            "mode_results": mode_results,
+        }
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         """Declare the single graph-ready statistics product of this analyser."""
@@ -206,75 +312,12 @@ class AllanVarianceAnalyzer(Analyzer):
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         config = cast(AllanVarianceConfig, self.config)
         array = getattr(data, "data", data)
-        if (
-            not hasattr(array, "ndim")
-            or array.ndim != 3
-            or not _is_complex_array(array)
-        ):
-            raise ValueError(
-                "allan_variance expects complex shape (n_traj, n_time, n_modes)"
-            )
-        if array.shape[1] < 3:
-            raise ValueError("allan_variance requires at least three samples")
         dt = float(getattr(data, "dt", 1.0))
         t0 = float(getattr(data, "t0", 0.0))
-        if dt <= 0.0:
-            raise ValueError("trajectory sample spacing must be positive")
         columns = resolve_mode_columns(data, config.modes)
-        frequency_meta = orientation_metadata(config.orientation)
-        on_device = backend.backend_name() == "cupy" and not isinstance(
-            array, np.ndarray
+        payload = self._compute_payload(
+            array, t0=t0, dt=dt, columns=columns, backend=backend
         )
-        mode_results: dict[int, dict[str, Any]] = {}
-        for mode, column in zip(config.modes, columns, strict=True):
-            if on_device:
-                allan = calculate_allan_variance_device(
-                    array[:, :, column],
-                    dt,
-                    taus=config.taus,
-                    points=config.points,
-                    min_windows=config.min_windows,
-                    min_independent_windows=config.min_independent_windows,
-                    amplitude_floor=config.amplitude_floor,
-                    chunk_trajectories=config.device_chunk_trajectories,
-                )
-                phase_summary = _phase_increment_summary_device(
-                    array[:, :, column],
-                    dt,
-                    config.amplitude_floor,
-                    config.orientation,
-                    config.device_chunk_trajectories,
-                )
-            else:
-                series = _copy_mode_to_host(
-                    array, column, config.transfer_chunk_samples
-                )
-                allan = calculate_allan_variance(
-                    series,
-                    dt,
-                    taus=config.taus,
-                    points=config.points,
-                    min_windows=config.min_windows,
-                    min_independent_windows=config.min_independent_windows,
-                    amplitude_floor=config.amplitude_floor,
-                )
-                phase_summary = _phase_increment_summary(
-                    series,
-                    dt,
-                    config.amplitude_floor,
-                    config.orientation,
-                )
-            allan.update(frequency_meta)
-            mode_results[mode] = {"allan": allan, "phase_increment": phase_summary}
-        payload = {
-            "modes": list(config.modes),
-            "t0": t0,
-            "dt": dt,
-            "n_traj": int(array.shape[0]),
-            "n_samples": int(array.shape[1]),
-            **frequency_meta,
-            "mode_results": mode_results,
-        }
         return AnalysisResult(data_dict=payload, meta=dict(payload, mode_results=None))
 
     def create_result_accumulator(self) -> AllanResultAccumulator:
@@ -512,12 +555,15 @@ class AllanResultAccumulator:
         self.payloads: list[dict[str, Any]] = []
 
     def update(self, payload: dict[str, Any]) -> None:
+        modes = [int(mode) for mode in np.asarray(payload["modes"]).reshape(-1)]
+        payload = dict(payload)
+        payload["modes"] = modes
         if self.payloads:
             first = self.payloads[0]
-            if first["modes"] != payload["modes"]:
+            if not np.array_equal(first["modes"], modes):
                 raise ValueError("Allan trajectory batches use different modes")
-            if first["n_samples"] != payload["n_samples"] or not math.isclose(
-                first["dt"], payload["dt"]
+            if int(first["n_samples"]) != int(payload["n_samples"]) or not math.isclose(
+                float(first["dt"]), float(payload["dt"])
             ):
                 raise ValueError("Allan trajectory batches use different time grids")
             if first["orientation"] != payload["orientation"]:
@@ -530,6 +576,63 @@ class AllanResultAccumulator:
                 if not np.array_equal(first_tau, next_tau):
                     raise ValueError("Allan trajectory batches use different tau grids")
         self.payloads.append(payload)
+
+    def consume_product(self, product: Dataset) -> None:
+        """Consume one typed Allan product by its declared domain fields."""
+        names = {variable.name for variable in product.variables}
+        modes = [
+            int(mode)
+            for mode in np.asarray(product.handle("modes").materialize()).reshape(-1)
+        ]
+        mode_results: dict[int, dict[str, Any]] = {}
+        for mode in modes:
+            allan_prefix = f"mode_results.{mode}.allan"
+            phase_prefix = f"mode_results.{mode}.phase_increment"
+            allan = {
+                leaf: product.handle(f"{allan_prefix}.{leaf}").materialize()
+                for leaf in _ALLAN_TABLE_LEAVES
+                if f"{allan_prefix}.{leaf}" in names
+            }
+            phase = {
+                leaf: product.handle(f"{phase_prefix}.{leaf}").materialize()
+                for leaf in _PHASE_INCREMENT_LEAVES
+                if f"{phase_prefix}.{leaf}" in names
+            }
+            mode_results[mode] = {"allan": allan, "phase_increment": phase}
+        payload_meta = product.attributes.get("payload_meta", {})
+        orientation = product.attributes.get("orientation")
+        if orientation is None and isinstance(payload_meta, Mapping):
+            orientation = payload_meta.get("orientation")
+        self.update(
+            {
+                "modes": modes,
+                "t0": float(product.handle("t0").materialize()),
+                "dt": float(product.handle("dt").materialize()),
+                "n_traj": int(product.handle("n_traj").materialize()),
+                "n_samples": int(product.handle("n_samples").materialize()),
+                "orientation": orientation,
+                "mode_results": mode_results,
+            }
+        )
+
+    def merge(self, other: AllanResultAccumulator) -> None:
+        for payload in other.payloads:
+            self.update(payload)
+
+    def finalize_product(self, label: str) -> Mapping[str, Dataset] | None:
+        return _build_allan_products(self.finalize(), scan_size=None, label=label)
+
+    def checkpoint(self) -> dict[str, Any]:
+        return {"payloads": list(self.payloads)}
+
+    def restore(self, checkpoint: dict[str, Any]) -> None:
+        payloads = checkpoint.get("payloads")
+        if not isinstance(payloads, list):
+            raise TypeError("Allan reducer checkpoint is missing payloads")
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                raise TypeError("Allan reducer checkpoint payload must be a mapping")
+            self.update(payload)
 
     def finalize(self) -> dict[str, Any]:
         if not self.payloads:

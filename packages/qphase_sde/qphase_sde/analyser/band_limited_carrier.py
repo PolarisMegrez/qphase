@@ -36,11 +36,11 @@ from .frequency_orientation import (
 )
 from .result import AnalysisResult
 from .result_input import load_sde_results
+from .spectral_input import SpectralPoint, SpectralScanInput, spectral_scan_input
 from .spectral_ridge import (
     SpectralRidgeAnalyzer,
     SpectralRidgeConfig,
 )
-from .typed_input import TypedScanInput, typed_scan_input
 
 __all__ = [
     "BandLimitedCarrierAnalyzer",
@@ -1169,6 +1169,9 @@ def _track_platform_segment(
 def _extract_readout(
     loaded: Any, psd_key: str, readout: int | Literal["trace"]
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    if isinstance(loaded, SpectralPoint):
+        spectrum, _, _ = loaded.readout(readout)
+        return loaded.axis, spectrum, dict(loaded.attributes)
     if psd_key not in loaded.analysis:
         raise QPhaseError(f"{loaded.path} has no analysis[{psd_key!r}] payload")
     payload = loaded.analysis[psd_key]
@@ -1254,14 +1257,18 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         metadata = metadata or {}
         config = cast(BandLimitedCarrierConfig, self.config)
-        typed = typed_scan_input(
-            inputs, scan_param=config.scan_param, metadata=metadata
+        typed = spectral_scan_input(
+            inputs,
+            psd_key=config.psd_key,
+            scan_param=config.scan_param,
+            metadata=metadata,
         )
-        result = self.analyze(typed, backend)
-        products = self.build_products(result.data_dict, scan_size=None, label=label)
+        payload, _ = self._compute_payload(typed, backend)
+        products = self.build_products(payload, scan_size=None, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
         return products
@@ -1383,12 +1390,14 @@ class BandLimitedCarrierAnalyzer(Analyzer):
             f"{label}.platforms": platform,
         }
 
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
+    def _compute_payload(
+        self, data: Any, backend: BackendBase
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         config = cast(BandLimitedCarrierConfig, self.config)
         center_config = config.center
         loaded_results = (
             data.points
-            if isinstance(data, TypedScanInput)
+            if isinstance(data, SpectralScanInput)
             else load_sde_results(data)
         )
         if not loaded_results:
@@ -1439,12 +1448,17 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         estimates: list[BandLimitedCarrierEstimate] = []
         reference_orientation: FrequencyOrientation | None = None
         for loaded in loaded_results:
-            params = loaded.meta.get("params", {})
-            if config.scan_param not in params:
-                raise QPhaseError(
-                    f"{loaded.path} meta.params is missing {config.scan_param!r}"
-                )
-            scan_value = params[config.scan_param]
+            if isinstance(loaded, SpectralPoint):
+                scan_value = loaded.scan_value
+                job_name = loaded.job_name
+            else:
+                params = loaded.meta.get("params", {})
+                if config.scan_param not in params:
+                    raise QPhaseError(
+                        f"{loaded.path} meta.params is missing {config.scan_param!r}"
+                    )
+                scan_value = params[config.scan_param]
+                job_name = loaded.job_name
             axis, spectrum, payload = _extract_readout(
                 loaded, config.psd_key, config.readout
             )
@@ -1525,7 +1539,7 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                     }
                 rows.append(
                     {
-                        "job_name": loaded.job_name,
+                        "job_name": job_name,
                         config.scan_param: scan_value,
                         "readout": config.readout,
                         "orientation": orientation,
@@ -1536,7 +1550,7 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                 for candidate in candidates:
                     candidate_rows.append(
                         {
-                            "job_name": loaded.job_name,
+                            "job_name": job_name,
                             config.scan_param: scan_value,
                             "readout": config.readout,
                             **ridge_fields,
@@ -1546,7 +1560,7 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                 for platform_index, platform in enumerate(estimate.platforms):
                     platform_rows.append(
                         {
-                            "job_name": loaded.job_name,
+                            "job_name": job_name,
                             config.scan_param: scan_value,
                             "readout": config.readout,
                             **ridge_fields,
@@ -1669,15 +1683,15 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         metadata = orientation_metadata(
             reference_orientation or resolve_frequency_orientation(None)
         )
-        return AnalysisResult(
-            data_dict={
+        return (
+            {
                 "carrier_rows": rows,
                 "candidate_rows": candidate_rows,
                 "platform_rows": platform_rows,
                 "written": written,
                 **metadata,
             },
-            meta={
+            {
                 "scan_param": config.scan_param,
                 "readout": config.readout,
                 "count": len(rows),
@@ -1692,3 +1706,7 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                 **metadata,
             },
         )
+
+    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
+        payload, metadata = self._compute_payload(data, backend)
+        return AnalysisResult(data_dict=payload, meta=metadata)

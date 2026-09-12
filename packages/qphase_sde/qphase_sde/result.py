@@ -305,6 +305,14 @@ class SDEDataBundle:
         flat = int(np.ravel_multi_index(tuple(index), self._scan_shape))
         meta = dict(self._meta)
         meta["scan_index"] = flat
+        observer_payloads = meta.get("observer_payloads")
+        if isinstance(observer_payloads, dict):
+            meta["observer_payloads"] = {
+                name: payloads[flat]
+                if isinstance(payloads, list) and len(payloads) == self.scan_size
+                else payloads
+                for name, payloads in observer_payloads.items()
+            }
         parameter_values = meta.get("scan_parameter_values")
         if isinstance(parameter_values, dict):
             meta["scan_point"] = {

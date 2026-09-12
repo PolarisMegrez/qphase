@@ -28,7 +28,14 @@ from ..contracts.analyser import (
 )
 from ..contracts.quantities import SDEMomentFamilySchema, SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .base import Analyzer, resolve_mode_columns, trajectory_requirement
+from .base import (
+    Analyzer,
+    map_trajectory_product,
+    resolve_mode_columns,
+    select_mode_columns,
+    trajectory_arrays,
+    trajectory_requirement,
+)
 from .result import AnalysisResult
 
 __all__ = [
@@ -215,57 +222,68 @@ class QuadraticMomentAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         del metadata
-        return self._execute_trajectory_typed(inputs, backend=backend, label=label)
+        trajectory = inputs.get("trajectories")
+        if trajectory is None:
+            raise TypeError("quadratic_moments requires a trajectories product")
 
-    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
-        return (
-            ProductDeclaration(
-                name=label,
-                kind=DataKind.STATISTICS,
-                quantity=SDEQuantity.MOMENTS.value,
-                fields=list(_QUADRATIC_MOMENT_FIELDS),
-            ),
-        )
+        def compute(point: Dataset) -> Mapping[str, Dataset]:
+            values, t0, dt, recorded = trajectory_arrays(point)
+            modes, columns = select_mode_columns(
+                recorded, cast(QuadraticMomentConfig, self.config).modes
+            )
+            payload = self._compute_payload(
+                values,
+                modes=modes,
+                columns=columns,
+                t0=t0,
+                dt=dt,
+                backend=backend,
+            )
+            products = _build_quadratic_moments_products(
+                payload, scan_size=None, label=label
+            )
+            if not products:
+                raise ValueError("quadratic_moments produced no typed product")
+            return products
 
-    def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
+        return map_trajectory_product(trajectory, compute, context=context)
+
+    def _compute_payload(
+        self,
+        values: Any,
+        *,
+        modes: list[int],
+        columns: list[int],
+        t0: float,
+        dt: float,
+        backend: BackendBase,
+    ) -> dict[str, Any]:
         config = cast(QuadraticMomentConfig, self.config)
-        values = getattr(data, "data", data)
-        if (
-            not hasattr(values, "ndim")
-            or values.ndim != 3
-            or not np.issubdtype(values.dtype, np.complexfloating)
-        ):
+        if values.ndim != 3 or not np.issubdtype(values.dtype, np.complexfloating):
             raise ValueError(
                 "quadratic_moments expects complex shape (n_traj, n_time, n_modes)"
             )
-        n_traj, n_samples, stored_modes = map(int, values.shape)
+        n_traj, n_samples, _ = map(int, values.shape)
         if n_traj < 1 or n_samples < 1:
             raise ValueError("quadratic_moments requires non-empty trajectories")
-
-        modes = _resolve_modes(data, config.modes, stored_modes)
-        columns = resolve_mode_columns(data, modes)
         names, matrices, centers, references = _compile_observables(
-            config.observables,
-            len(modes),
-            config.hermitian_tolerance,
+            config.observables, len(modes), config.hermitian_tolerance
         )
         backend_matrices = backend.asarray(matrices, dtype=values.dtype)
         backend_centers = backend.asarray(centers, dtype=values.real.dtype)
         trajectory_sums = backend.zeros(
-            (n_traj, len(names), config.max_order),
-            dtype=values.real.dtype,
+            (n_traj, len(names), config.max_order), dtype=values.real.dtype
         )
-
         boundaries = _block_boundaries(
             n_samples, config.time_blocks, config.min_block_samples
         )
         block_raw_moments: list[np.ndarray] = []
         for start, stop in zip(boundaries[:-1], boundaries[1:], strict=True):
             block_sums = backend.zeros(
-                (n_traj, len(names), config.max_order),
-                dtype=values.real.dtype,
+                (n_traj, len(names), config.max_order), dtype=values.real.dtype
             )
             for chunk_start in range(start, stop, config.time_chunk_samples):
                 chunk_stop = min(stop, chunk_start + config.time_chunk_samples)
@@ -284,18 +302,14 @@ class QuadraticMomentAnalyzer(Analyzer):
                     block_sums[:, :, order] += backend.einsum("rto->ro", power)
                     if order + 1 < config.max_order:
                         power = power * observable
-
             trajectory_sums += block_sums
             block_raw_moments.append(
                 np.asarray(convert_to_numpy(backend.mean(block_sums, axis=0)))
                 / float(stop - start)
             )
-
-        per_trajectory = np.asarray(convert_to_numpy(trajectory_sums)) / float(
-            n_samples
-        )
-        payload = self._summarize(
-            per_trajectory_raw_moments=per_trajectory,
+        return self._summarize(
+            per_trajectory_raw_moments=np.asarray(convert_to_numpy(trajectory_sums))
+            / float(n_samples),
             block_raw_moments=np.asarray(block_raw_moments),
             names=names,
             matrices=matrices,
@@ -303,9 +317,34 @@ class QuadraticMomentAnalyzer(Analyzer):
             reference_matrices=references,
             modes=modes,
             n_samples=n_samples,
+            t0=t0,
+            dt=dt,
+            boundaries=boundaries,
+        )
+
+    def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.STATISTICS,
+                quantity=SDEQuantity.MOMENTS.value,
+                fields=list(_QUADRATIC_MOMENT_FIELDS),
+            ),
+        )
+
+    def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
+        config = cast(QuadraticMomentConfig, self.config)
+        values = getattr(data, "data", data)
+        stored_modes = int(values.shape[2])
+        modes = _resolve_modes(data, config.modes, stored_modes)
+        columns = resolve_mode_columns(data, modes)
+        payload = self._compute_payload(
+            values,
+            modes=modes,
+            columns=columns,
             t0=float(getattr(data, "t0", 0.0)),
             dt=float(getattr(data, "dt", 1.0)),
-            boundaries=boundaries,
+            backend=backend,
         )
         return AnalysisResult(
             data_dict=payload,
@@ -538,6 +577,54 @@ class QuadraticMomentResultAccumulator:
                         "quadratic-moment batches used different time blocks"
                     )
         self.payloads.append(payload)
+
+    def consume_product(self, product: Dataset) -> None:
+        def value(name: str) -> Any:
+            return product.handle(name).materialize()
+
+        self.update(
+            {
+                "observable_names": product.attributes["payload_meta"][
+                    "observable_names"
+                ],
+                "modes": [int(mode) for mode in np.asarray(value("modes"))],
+                "matrices": value("matrices"),
+                "centers": value("centers"),
+                "reference_matrices": value("reference_matrices"),
+                "max_order": int(value("max_order")),
+                "n_traj": int(value("n_traj")),
+                "n_samples": int(value("n_samples")),
+                "t0": float(value("t0")),
+                "dt": float(value("dt")),
+                "per_trajectory_raw_moments": value("per_trajectory_raw_moments"),
+                "time_blocks": {
+                    "start_index": value("time_blocks.start_index"),
+                    "stop_index": value("time_blocks.stop_index"),
+                    "raw_moments": value("time_blocks.raw_moments"),
+                },
+            }
+        )
+
+    def merge(self, other: QuadraticMomentResultAccumulator) -> None:
+        for payload in other.payloads:
+            self.update(payload)
+
+    def finalize_product(self, label: str) -> Mapping[str, Dataset] | None:
+        return _build_quadratic_moments_products(
+            self.finalize(), scan_size=None, label=label
+        )
+
+    def checkpoint(self) -> dict[str, Any]:
+        return {"payloads": list(self.payloads)}
+
+    def restore(self, checkpoint: dict[str, Any]) -> None:
+        payloads = checkpoint.get("payloads")
+        if not isinstance(payloads, list):
+            raise TypeError("quadratic moments checkpoint is missing payloads")
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                raise TypeError("quadratic moments checkpoint payload is invalid")
+            self.update(payload)
 
     def finalize(self) -> dict[str, Any]:
         if not self.payloads:

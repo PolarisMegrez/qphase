@@ -29,7 +29,14 @@ from ..products import (
     assemble_typed_product,
     stack_payload_leaves,
 )
-from .base import Analyzer, resolve_mode_columns, trajectory_requirement
+from .base import (
+    Analyzer,
+    map_trajectory_product,
+    resolve_mode_columns,
+    select_mode_columns,
+    trajectory_arrays,
+    trajectory_requirement,
+)
 from .result import AnalysisResult
 
 __all__ = [
@@ -83,9 +90,108 @@ class DistAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         del metadata
-        return self._execute_trajectory_typed(inputs, backend=backend, label=label)
+        trajectory = inputs.get("trajectories")
+        if trajectory is None:
+            raise TypeError("dist requires a trajectories product")
+
+        def compute(point: Dataset) -> Mapping[str, Dataset]:
+            data, _, _, recorded = trajectory_arrays(point)
+            modes, columns = select_mode_columns(
+                recorded, cast(DistAnalyzerConfig, self.config).modes
+            )
+            payload = self._compute_payload(data, modes, columns, backend)
+            products = self.build_products(payload, scan_size=None, label=label)
+            if not products:
+                raise ValueError("dist produced no typed product")
+            return products
+
+        return map_trajectory_product(trajectory, compute, context=context)
+
+    def _compute_payload(
+        self,
+        data: Any,
+        modes: list[int],
+        mode_columns: list[int],
+        backend: BackendBase,
+    ) -> dict[str, Any]:
+        config = cast(DistAnalyzerConfig, self.config)
+        bins = config.bins
+        density = config.density
+        range_list = config.range
+        use_backend_hist = hasattr(backend, "histogram") and hasattr(
+            backend, "histogram2d"
+        )
+        if not use_backend_hist:
+            data_np = convert_to_numpy(data)
+        results = {}
+        for index, (mode, column) in enumerate(zip(modes, mode_columns, strict=True)):
+            samples = (
+                data[:, :, column].reshape(-1)
+                if use_backend_hist
+                else data_np[:, :, column].flatten()
+            )
+            is_complex = (
+                _is_complex(samples) if use_backend_hist else _np.iscomplexobj(samples)
+            )
+            if is_complex:
+                x = backend.real(samples) if use_backend_hist else samples.real
+                y = backend.imag(samples) if use_backend_hist else samples.imag
+                selected_range = None
+                if range_list and index < len(range_list):
+                    item = cast(tuple[float, float], tuple(range_list[index]))
+                    selected_range = [item, item]
+                if use_backend_hist:
+                    hist, xedges, yedges = backend.histogram2d(
+                        x, y, bins=bins, range=selected_range, density=density
+                    )
+                    hist = convert_to_numpy(hist)
+                    xedges = convert_to_numpy(xedges)
+                    yedges = convert_to_numpy(yedges)
+                else:
+                    hist, xedges, yedges = _np.histogram2d(
+                        x, y, bins=bins, range=selected_range, density=density
+                    )
+                results[mode] = {
+                    "hist": hist,
+                    "xedges": xedges,
+                    "yedges": yedges,
+                    "type": "2d_complex",
+                }
+            else:
+                selected_range_1d: tuple[float, float] | None = None
+                if range_list and index < len(range_list):
+                    selected_range_1d = cast(
+                        tuple[float, float], tuple(range_list[index])
+                    )
+                if use_backend_hist:
+                    hist, edges = backend.histogram(
+                        samples,
+                        bins=bins,
+                        range=selected_range_1d,
+                        density=density,
+                    )
+                    hist, edges = convert_to_numpy(hist), convert_to_numpy(edges)
+                else:
+                    hist, edges = _np.histogram(
+                        samples,
+                        bins=bins,
+                        range=selected_range_1d,
+                        density=density,
+                    )
+                results[mode] = {
+                    "hist": hist,
+                    "edges": edges,
+                    "type": "1d_real",
+                }
+        return {
+            "distributions": results,
+            "modes": modes,
+            "bins": bins,
+            "density": density,
+        }
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         config = cast(DistAnalyzerConfig, self.config)

@@ -6,6 +6,10 @@ import math
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from qphase.data import DataKind
+
+from .contracts.quantities import SDEQuantity
+
 __all__ = [
     "SDEExecutionPlan",
     "SDEMemoryEstimate",
@@ -178,9 +182,12 @@ def build_execution_plan(
         label="noise workspace",
     )
     backend_name = _backend_name(backend)
+    trajectory_analysers = _trajectory_analysers(
+        analysers, typed_execution=typed_execution
+    )
     analyzer_device_workspace, analyzer_host_workspace = _analyzer_workspace_bytes(
         trajectory_per_point,
-        analysers,
+        trajectory_analysers,
         n_traj=n_traj,
         saved_samples=saved_samples,
         n_record_modes=n_record_modes,
@@ -198,7 +205,7 @@ def build_execution_plan(
     host_reserve = _reserve_bytes(host_budget)
     analysis_enabled = bool(analysers)
     should_keep = config.keep_traj is True or not analysis_enabled
-    incremental = bool(analysers) and all(
+    incremental = bool(trajectory_analysers) and all(
         (
             (
                 callable(getattr(analyser, "reducer", None))
@@ -207,7 +214,7 @@ def build_execution_plan(
             or callable(getattr(analyser, "create_result_accumulator", None))
         )
         and _analyzer_capabilities(analyser).supports_trajectory_batching
-        for analyser in analysers.values()
+        for analyser in trajectory_analysers.values()
     )
     batching_mode = str(getattr(config, "trajectory_batching", "auto"))
     requested_batch = getattr(config, "trajectory_batch_size", None)
@@ -219,7 +226,7 @@ def build_execution_plan(
         saved_samples=saved_samples,
         n_record_modes=n_record_modes,
         real_itemsize=real_itemsize,
-        analysers=analysers,
+        analysers=trajectory_analysers,
     )
     if requested_batch is not None:
         trajectory_batch = min(n_traj, int(requested_batch))
@@ -247,8 +254,8 @@ def build_execution_plan(
         trajectory_batch = max(1, n_traj // 2)
     if trajectory_batch < n_traj and (not incremental or should_keep):
         raise SDEMemoryPlanningError(
-            "trajectory batching requires keep_traj=false and every configured "
-            "analyser to provide an incremental result accumulator"
+            "trajectory batching requires keep_traj=false and every analyser "
+            "that directly consumes trajectories to provide a typed reducer"
         )
 
     logical_rng_group = min(64, n_traj)
@@ -676,6 +683,30 @@ def _analyzer_capabilities(analyser: Any) -> Any:
             getattr(analyser, "create_result_accumulator", None)
         )
     )
+
+
+def _trajectory_analysers(
+    analysers: dict[str, Any], *, typed_execution: bool
+) -> dict[str, Any]:
+    """Select graph-frontier analysers that consume trajectory products."""
+    if not typed_execution:
+        return analysers
+    selected: dict[str, Any] = {}
+    for name, analyser in analysers.items():
+        provider = getattr(analyser, "input_requirements", None)
+        if not callable(provider):
+            selected[name] = analyser
+            continue
+        if any(
+            requirement.name == "trajectories"
+            or (
+                requirement.kind is DataKind.TIME_SERIES
+                and requirement.quantity == SDEQuantity.FIELD_AMPLITUDE.value
+            )
+            for requirement in provider()
+        ):
+            selected[name] = analyser
+    return selected
 
 
 def _accumulator_workspace_bytes(

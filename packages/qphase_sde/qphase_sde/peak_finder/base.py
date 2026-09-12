@@ -85,6 +85,7 @@ def materialize_candidate_product(
     scan_size: int | None,
     label: str,
     modes: Sequence[int],
+    source_product: str | None = None,
     candidate_tables: Sequence[Mapping[str, Any]] | None = None,
 ) -> Dataset:
     """Materialize per-scan finder results as a grouped peak product."""
@@ -193,7 +194,7 @@ def materialize_candidate_product(
         "mode_labels": channel_names,
         "graph_ready": True,
         "source_finder": "typed",
-        "source_product": label,
+        "source_product": source_product or label,
     }
     schema = ProductSchema.model_validate(schema_data)
     arrays: dict[str, Any] = {**columns}
@@ -211,7 +212,11 @@ def materialize_candidate_product(
         schema,
         arrays,
         owner="engine.sde",
-        provenance={"source_finder": "typed", "product": label},
+        provenance={
+            "source_finder": "typed",
+            "product": label,
+            "source_product": source_product or label,
+        },
     )
 
 

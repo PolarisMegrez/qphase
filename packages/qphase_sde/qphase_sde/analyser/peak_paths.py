@@ -122,16 +122,78 @@ class PeakPathsAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         """Execute directly on a typed candidate product mapping."""
-        result = cast(AnalysisResult, self.analyze(inputs, backend))
-        payload = dict(result.data_dict)
-        if isinstance(metadata, Mapping) and "source_product" in metadata:
-            payload["_source_product"] = str(metadata["source_product"])
-        products = self.build_products(payload, scan_size=None, label=label)
-        if products is None:
-            raise ValueError("peak_paths produced no typed path product")
-        return products
+        del backend
+        config = cast(PeakPathsAnalyzerConfig, self.config)
+        candidates = inputs.get(config.candidates_key)
+        if candidates is None:
+            raise ValueError(
+                f"peak_paths input has no product {config.candidates_key!r}"
+            )
+        paths, candidate_count, _ = self._compute_paths(candidates)
+        source_product = (
+            str(metadata["source_product"])
+            if isinstance(metadata, Mapping) and "source_product" in metadata
+            else config.candidates_key
+        )
+        return {
+            label: materialize_path_product(
+                paths,
+                candidate_count=candidate_count,
+                label=label,
+                source_product=source_product,
+            )
+        }
+
+    def _compute_paths(
+        self, candidates: Dataset
+    ) -> tuple[list[PeakPathResult], int, int]:
+        config = cast(PeakPathsAnalyzerConfig, self.config)
+        required = (
+            "candidate_offsets",
+            "group_scan_index",
+            "group_channel_index",
+            "location",
+            "intensity",
+            "status_code",
+        )
+        columns = {
+            name: np.asarray(candidates.handle(name).materialize())
+            for name in required
+            if name
+            not in {"candidate_offsets", "group_scan_index", "group_channel_index"}
+        }
+        offsets = np.asarray(candidates.handle("candidate_offsets").materialize())
+        group_scan = np.asarray(candidates.handle("group_scan_index").materialize())
+        group_channel = np.asarray(
+            candidates.handle("group_channel_index").materialize()
+        )
+        scan_axis = (
+            candidates.axis("scan")
+            if "scan" in {axis.name for axis in candidates.axes}
+            else None
+        )
+        scan_count = 1
+        if scan_axis is not None:
+            if scan_axis.size is None:
+                raise ValueError("peak-path input scan axis has no size")
+            scan_count = int(scan_axis.size)
+        channel_names = candidates.attributes.get("channel_names")
+        if not isinstance(channel_names, list) or not channel_names:
+            channel_count = int(group_channel.max()) + 1 if group_channel.size else 1
+            channel_names = [f"channel_{index}" for index in range(channel_count)]
+        tracker = _make_tracker(config, self._tracker)
+        paths = tracker.track(
+            offsets,
+            group_scan,
+            group_channel,
+            columns,
+            scan_count=scan_count,
+            channel_names=[str(name) for name in channel_names],
+        )
+        return paths, int(columns["location"].size), scan_count
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         return (
@@ -164,53 +226,11 @@ class PeakPathsAnalyzer(Analyzer):
             raise ValueError(
                 f"peak_paths input has no product {config.candidates_key!r}"
             )
-        required = (
-            "candidate_offsets",
-            "group_scan_index",
-            "group_channel_index",
-            "location",
-            "intensity",
-            "status_code",
-        )
-        columns = {
-            name: np.asarray(candidates.handle(name).materialize())
-            for name in required
-            if name
-            not in {"candidate_offsets", "group_scan_index", "group_channel_index"}
-        }
-        offsets = np.asarray(candidates.handle("candidate_offsets").materialize())
-        group_scan = np.asarray(candidates.handle("group_scan_index").materialize())
-        group_channel = np.asarray(
-            candidates.handle("group_channel_index").materialize()
-        )
-        scan_axis = (
-            candidates.axis("scan")
-            if "scan" in {axis.name for axis in candidates.axes}
-            else None
-        )
-        scan_count = 1
-        if scan_axis is not None:
-            size = scan_axis.size
-            if size is None:
-                raise ValueError("peak-path input scan axis has no size")
-            scan_count = int(size)
-        channel_names = candidates.attributes.get("channel_names")
-        if not isinstance(channel_names, list) or not channel_names:
-            channel_count = int(group_channel.max()) + 1 if group_channel.size else 1
-            channel_names = [f"channel_{index}" for index in range(channel_count)]
-        tracker = _make_tracker(config, self._tracker)
-        paths = tracker.track(
-            offsets,
-            group_scan,
-            group_channel,
-            columns,
-            scan_count=scan_count,
-            channel_names=[str(name) for name in channel_names],
-        )
+        paths, candidate_count, scan_count = self._compute_paths(candidates)
         return AnalysisResult(
             data_dict={
                 "paths": paths,
-                "candidate_count": int(columns["location"].size),
+                "candidate_count": candidate_count,
             },
             meta={"scan_param": config.scan_param, "scan_count": scan_count},
         )

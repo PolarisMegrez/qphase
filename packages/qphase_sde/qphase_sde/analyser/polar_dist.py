@@ -26,7 +26,14 @@ from qphase.data import (
 )
 
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .base import Analyzer, resolve_mode_columns, trajectory_requirement
+from .base import (
+    Analyzer,
+    map_trajectory_product,
+    resolve_mode_columns,
+    select_mode_columns,
+    trajectory_arrays,
+    trajectory_requirement,
+)
 from .result import AnalysisResult
 
 __all__ = [
@@ -79,9 +86,88 @@ class PolarDistAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         del metadata
-        return self._execute_trajectory_typed(inputs, backend=backend, label=label)
+        trajectory = inputs.get("trajectories")
+        if trajectory is None:
+            raise TypeError("polar_dist requires a trajectories product")
+
+        def compute(point: Dataset) -> Mapping[str, Dataset]:
+            data, _, _, recorded = trajectory_arrays(point)
+            modes, columns = select_mode_columns(
+                recorded, cast(PolarDistAnalyzerConfig, self.config).modes
+            )
+            payload = self._compute_payload(data, modes, columns, backend)
+            products = self.build_products(payload, scan_size=None, label=label)
+            if not products:
+                raise ValueError("polar_dist produced no typed product")
+            return products
+
+        return map_trajectory_product(trajectory, compute, context=context)
+
+    def _compute_payload(
+        self,
+        data: Any,
+        modes: list[int],
+        mode_columns: list[int],
+        backend: BackendBase,
+    ) -> dict[str, Any]:
+        config = cast(PolarDistAnalyzerConfig, self.config)
+        bins = config.bins
+        density = config.density
+        range_list = config.range
+        use_backend = hasattr(backend, "histogram") and hasattr(backend, "std")
+        if not use_backend:
+            data_np = convert_to_numpy(data)
+        results = {}
+        resolved_bins = bins
+        for index, (mode, column) in enumerate(zip(modes, mode_columns, strict=True)):
+            if use_backend:
+                samples = backend.abs(data[:, :, column].reshape(-1))
+            else:
+                samples = np.abs(data_np[:, :, column].flatten())
+            selected_range = (
+                range_list[index] if range_list and index < len(range_list) else None
+            )
+            if use_backend:
+                if isinstance(resolved_bins, str):
+                    edges = np.histogram_bin_edges(
+                        convert_to_numpy(samples),
+                        bins=resolved_bins,
+                        range=selected_range,
+                    )
+                    resolved_bins = len(edges) - 1
+                hist, edges = backend.histogram(
+                    samples,
+                    bins=resolved_bins,
+                    range=selected_range,
+                    density=density,
+                )
+                hist, edges = convert_to_numpy(hist), convert_to_numpy(edges)
+                mean = float(convert_to_numpy(backend.mean(samples)))
+                std = float(convert_to_numpy(backend.std(samples)))
+            else:
+                hist, edges = np.histogram(
+                    samples,
+                    bins=resolved_bins,
+                    range=selected_range,
+                    density=density,
+                )
+                mean, std = float(np.mean(samples)), float(np.std(samples))
+            results[mode] = {
+                "hist": hist,
+                "edges": edges,
+                "bin_centers": (edges[:-1] + edges[1:]) / 2,
+                "mean": mean,
+                "std": std,
+            }
+        return {
+            "distributions": results,
+            "modes": modes,
+            "bins_config": resolved_bins,
+            "density": density,
+        }
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         config = cast(PolarDistAnalyzerConfig, self.config)

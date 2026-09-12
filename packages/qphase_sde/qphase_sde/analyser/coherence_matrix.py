@@ -29,7 +29,14 @@ from ..contracts.analyser import (
     AnalyserWorkspaceRequest,
 )
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .base import Analyzer, resolve_mode_columns, trajectory_requirement
+from .base import (
+    Analyzer,
+    map_trajectory_product,
+    resolve_mode_columns,
+    select_mode_columns,
+    trajectory_arrays,
+    trajectory_requirement,
+)
 from .result import AnalysisResult
 
 __all__ = ["CoherenceMatrixAnalyzer", "CoherenceMatrixConfig"]
@@ -97,9 +104,82 @@ class CoherenceMatrixAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         del metadata
-        return self._execute_trajectory_typed(inputs, backend=backend, label=label)
+        trajectory = inputs.get("trajectories")
+        if trajectory is None:
+            raise TypeError("coherence_matrix requires a trajectories product")
+
+        def compute(point: Dataset) -> Mapping[str, Dataset]:
+            values, t0, dt, recorded = trajectory_arrays(point)
+            modes, columns = select_mode_columns(
+                recorded, cast(CoherenceMatrixConfig, self.config).modes
+            )
+            payload = self._compute_payload(
+                values,
+                modes=modes,
+                columns=columns,
+                t0=t0,
+                dt=dt,
+                backend=backend,
+            )
+            products = _build_coherence_matrix_products(
+                payload, scan_size=None, label=label
+            )
+            if not products:
+                raise ValueError("coherence_matrix produced no typed product")
+            return products
+
+        return map_trajectory_product(trajectory, compute, context=context)
+
+    def _compute_payload(
+        self,
+        values: Any,
+        *,
+        modes: list[int],
+        columns: list[int],
+        t0: float,
+        dt: float,
+        backend: BackendBase,
+    ) -> dict[str, Any]:
+        config = cast(CoherenceMatrixConfig, self.config)
+        if values.ndim != 3 or not np.issubdtype(values.dtype, np.complexfloating):
+            raise ValueError(
+                "coherence_matrix expects complex shape (n_traj, n_time, n_modes)"
+            )
+        n_traj, n_samples, _ = map(int, values.shape)
+        if n_traj < 1 or n_samples < 1:
+            raise ValueError("coherence_matrix requires non-empty trajectories")
+        n_modes = len(modes)
+        matrix_sum = backend.zeros((n_traj, n_modes, n_modes), dtype=values.dtype)
+        amplitude_sum = backend.zeros((n_traj, n_modes), dtype=values.dtype)
+        boundaries = _block_boundaries(
+            n_samples, config.time_blocks, config.min_block_samples
+        )
+        block_matrices = []
+        for start, stop in zip(boundaries[:-1], boundaries[1:], strict=True):
+            block_sum = backend.zeros((n_traj, n_modes, n_modes), dtype=values.dtype)
+            for chunk_start in range(start, stop, config.time_chunk_samples):
+                chunk_stop = min(stop, chunk_start + config.time_chunk_samples)
+                selected = values[:, chunk_start:chunk_stop, columns]
+                amplitude_sum += backend.einsum("rti->ri", selected)
+                block_sum += backend.einsum("rti,rtj->rij", selected, selected.conj())
+            matrix_sum += block_sum
+            matrix = backend.mean(block_sum, axis=0) / float(stop - start)
+            block_matrices.append(convert_to_numpy(matrix))
+        return self._summarize(
+            per_trajectory=np.asarray(convert_to_numpy(matrix_sum / float(n_samples))),
+            per_trajectory_mean=np.asarray(
+                convert_to_numpy(amplitude_sum / float(n_samples))
+            ),
+            block_matrices=np.asarray(block_matrices),
+            modes=modes,
+            n_samples=n_samples,
+            t0=t0,
+            dt=dt,
+            boundaries=boundaries,
+        )
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         """Declare the single graph-ready coherence-matrix product."""
@@ -141,51 +221,15 @@ class CoherenceMatrixAnalyzer(Analyzer):
     def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
         config = cast(CoherenceMatrixConfig, self.config)
         values = getattr(data, "data", data)
-        if (
-            not hasattr(values, "ndim")
-            or values.ndim != 3
-            or not np.issubdtype(values.dtype, np.complexfloating)
-        ):
-            raise ValueError(
-                "coherence_matrix expects complex shape (n_traj, n_time, n_modes)"
-            )
-        n_traj, n_samples, _ = map(int, values.shape)
-        if n_traj < 1 or n_samples < 1:
-            raise ValueError("coherence_matrix requires non-empty trajectories")
-
         modes = _resolve_modes(data, config.modes, int(values.shape[2]))
         columns = resolve_mode_columns(data, modes)
-        n_modes = len(modes)
-        matrix_sum = backend.zeros((n_traj, n_modes, n_modes), dtype=values.dtype)
-        amplitude_sum = backend.zeros((n_traj, n_modes), dtype=values.dtype)
-
-        boundaries = _block_boundaries(
-            n_samples, config.time_blocks, config.min_block_samples
-        )
-        block_matrices = []
-        for start, stop in zip(boundaries[:-1], boundaries[1:], strict=True):
-            block_sum = backend.zeros((n_traj, n_modes, n_modes), dtype=values.dtype)
-            for chunk_start in range(start, stop, config.time_chunk_samples):
-                chunk_stop = min(stop, chunk_start + config.time_chunk_samples)
-                selected = values[:, chunk_start:chunk_stop, columns]
-                amplitude_sum += backend.einsum("rti->ri", selected)
-                block_sum += backend.einsum("rti,rtj->rij", selected, selected.conj())
-            matrix_sum += block_sum
-            matrix = backend.mean(block_sum, axis=0) / float(stop - start)
-            block_matrices.append(convert_to_numpy(matrix))
-
-        per_trajectory = matrix_sum / float(n_samples)
-        mean_amplitude = amplitude_sum / float(n_samples)
-
-        payload = self._summarize(
-            per_trajectory=np.asarray(convert_to_numpy(per_trajectory)),
-            per_trajectory_mean=np.asarray(convert_to_numpy(mean_amplitude)),
-            block_matrices=np.asarray(block_matrices),
+        payload = self._compute_payload(
+            values,
             modes=modes,
-            n_samples=n_samples,
+            columns=columns,
             t0=float(getattr(data, "t0", 0.0)),
             dt=float(getattr(data, "dt", 1.0)),
-            boundaries=boundaries,
+            backend=backend,
         )
         meta = {
             "quantity": payload["quantity"],
@@ -490,6 +534,48 @@ class CoherenceMatrixResultAccumulator:
                         "coherence-matrix batches used different time blocks"
                     )
         self.payloads.append(payload)
+
+    def consume_product(self, product: Dataset) -> None:
+        def value(name: str) -> Any:
+            return product.handle(name).materialize()
+
+        self.update(
+            {
+                "modes": [int(mode) for mode in np.asarray(value("modes"))],
+                "n_traj": int(value("n_traj")),
+                "n_samples": int(value("n_samples")),
+                "t0": float(value("t0")),
+                "dt": float(value("dt")),
+                "per_trajectory_matrix": value("per_trajectory_matrix"),
+                "per_trajectory_mean_amplitude": value("per_trajectory_mean_amplitude"),
+                "time_blocks": {
+                    "start_index": value("time_blocks.start_index"),
+                    "stop_index": value("time_blocks.stop_index"),
+                    "matrix": value("time_blocks.matrix"),
+                },
+            }
+        )
+
+    def merge(self, other: CoherenceMatrixResultAccumulator) -> None:
+        for payload in other.payloads:
+            self.update(payload)
+
+    def finalize_product(self, label: str) -> Mapping[str, Dataset] | None:
+        return _build_coherence_matrix_products(
+            self.finalize(), scan_size=None, label=label
+        )
+
+    def checkpoint(self) -> dict[str, Any]:
+        return {"payloads": list(self.payloads)}
+
+    def restore(self, checkpoint: dict[str, Any]) -> None:
+        payloads = checkpoint.get("payloads")
+        if not isinstance(payloads, list):
+            raise TypeError("coherence matrix checkpoint is missing payloads")
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                raise TypeError("coherence matrix checkpoint payload is invalid")
+            self.update(payload)
 
     def finalize(self) -> dict[str, Any]:
         if not self.payloads:

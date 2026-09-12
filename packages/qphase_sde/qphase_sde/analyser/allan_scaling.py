@@ -241,9 +241,7 @@ def _collect_points(data: Any, config: AllanScalingConfig) -> list[_Point]:
     ):
         source = data.get(config.source_key)
         if source is None:
-            raise QPhaseError(
-                f"typed input has no Allan product {config.source_key!r}"
-            )
+            raise QPhaseError(f"typed input has no Allan product {config.source_key!r}")
         scan_size = (
             int(source.axis("scan").size)
             if "scan" in {axis.name for axis in source.axes}
@@ -264,12 +262,8 @@ def _collect_points(data: Any, config: AllanScalingConfig) -> list[_Point]:
                     product.handle(variable.name).materialize()
                 )
             scan_variable = f"parameter.{config.scan_param}"
-            if scan_variable not in {
-                variable.name for variable in product.variables
-            }:
-                raise QPhaseError(
-                    f"typed Allan product is missing {scan_variable!r}"
-                )
+            if scan_variable not in {variable.name for variable in product.variables}:
+                raise QPhaseError(f"typed Allan product is missing {scan_variable!r}")
             scan_value = float(
                 np.asarray(product.handle(scan_variable).materialize()).reshape(-1)[0]
             )
@@ -291,8 +285,9 @@ def _collect_points(data: Any, config: AllanScalingConfig) -> list[_Point]:
                     {
                         "dt": allan["sample_spacing"],
                         "n_samples": int(
-                            np.asarray(product.handle("n_samples").materialize())
-                            .reshape(-1)[0]
+                            np.asarray(
+                                product.handle("n_samples").materialize()
+                            ).reshape(-1)[0]
                         ),
                     },
                 )
@@ -754,11 +749,12 @@ class AllanScalingAnalyzer(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         """Run scaling analysis directly from a typed Allan Dataset."""
         del metadata
-        result = cast(AnalysisResult, self.analyze(inputs, backend))
-        products = self.build_products(result.data_dict, scan_size=None, label=label)
+        payload, _ = self._compute_payload(inputs, backend)
+        products = self.build_products(payload, scan_size=None, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
         return products
@@ -815,7 +811,9 @@ class AllanScalingAnalyzer(Analyzer):
         )
         return None if product is None else {label: product}
 
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
+    def _compute_payload(
+        self, data: Any, backend: BackendBase
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         del backend
         config = cast(AllanScalingConfig, self.config)
         points = _collect_points(data, config)
@@ -1002,9 +1000,9 @@ class AllanScalingAnalyzer(Analyzer):
             **orientation_metadata(points[0].orientation),
         }
         written = self._export(config, rows, summary)
-        return AnalysisResult(
-            data_dict={"rows": rows, "summary": summary, "written": written},
-            meta={
+        return (
+            {"rows": rows, "summary": summary, "written": written},
+            {
                 "status": status,
                 "scan_param": config.scan_param,
                 "mode": config.mode,
@@ -1012,6 +1010,10 @@ class AllanScalingAnalyzer(Analyzer):
                 **orientation_metadata(points[0].orientation),
             },
         )
+
+    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
+        payload, metadata = self._compute_payload(data, backend)
+        return AnalysisResult(data_dict=payload, meta=metadata)
 
     def _export(
         self,

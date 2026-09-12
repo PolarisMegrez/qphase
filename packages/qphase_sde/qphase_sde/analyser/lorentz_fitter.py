@@ -49,7 +49,7 @@ from .frequency_orientation import (
 from .result import AnalysisResult
 from .result_input import LoadedResult
 from .result_input import load_sde_results as _load_input
-from .typed_input import TypedScanInput, typed_scan_input
+from .spectral_input import SpectralPoint, SpectralScanInput, spectral_scan_input
 
 __all__ = ["LorentzFitter", "LorentzFitterConfig"]
 
@@ -455,12 +455,15 @@ def fit_lorentzian(
 
 
 def extract_psd_trace(
-    loaded: LoadedResult,
+    loaded: LoadedResult | SpectralPoint,
     *,
     psd_key: str = "psd",
     mode: int = 0,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     """Extract one mode trace from an analyser PSD payload."""
+    if isinstance(loaded, SpectralPoint):
+        trace, _, _ = loaded.readout(mode)
+        return loaded.axis, np.asarray(trace).reshape(-1), dict(loaded.attributes)
     if psd_key not in loaded.analysis:
         raise QPhaseError(f"{loaded.path} has no analysis[{psd_key!r}] payload")
 
@@ -483,7 +486,7 @@ def _extract_mode_column(
     matrix: np.ndarray,
     modes: list[int],
     mode: int,
-    path: Path,
+    path: Path | str,
     field: str,
 ) -> np.ndarray:
     """Extract a physical mode from a one- or two-dimensional PSD field."""
@@ -518,13 +521,31 @@ def _extract_psd_sigma(
 
 
 def _collect_distribution(
-    loaded: LoadedResult,
+    loaded: LoadedResult | SpectralPoint,
     key: str,
     mode: int,
     scan_param: str,
     scan_value: Any,
     rows: list[dict[str, Any]],
 ) -> None:
+    if isinstance(loaded, SpectralPoint):
+        product = loaded.products.get(key)
+        if product is None:
+            return
+        prefix = f"distributions.{mode}."
+        row: dict[str, Any] = {
+            variable.name.removeprefix(prefix): np.asarray(
+                product.handle(variable.name).materialize()
+            )
+            for variable in product.variables
+            if variable.name.startswith(prefix)
+        }
+        if not row:
+            return
+        row[scan_param] = scan_value
+        row["job_name"] = loaded.job_name
+        rows.append(row)
+        return
     payload = loaded.analysis.get(key)
     if not isinstance(payload, dict):
         return
@@ -553,14 +574,18 @@ class LorentzFitter(Analyzer):
         backend: BackendBase,
         label: str,
         metadata: Mapping[str, Any] | None = None,
+        context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         metadata = metadata or {}
         config = cast(LorentzFitterConfig, self.config)
-        typed = typed_scan_input(
-            inputs, scan_param=config.scan_param, metadata=metadata
+        typed = spectral_scan_input(
+            inputs,
+            psd_key=config.psd_key,
+            scan_param=config.scan_param,
+            metadata=metadata,
         )
-        result = self.analyze(typed, backend)
-        products = self.build_products(result.data_dict, scan_size=None, label=label)
+        payload, _ = self._compute_payload(typed, backend)
+        products = self.build_products(payload, scan_size=None, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
         return products
@@ -654,7 +679,9 @@ class LorentzFitter(Analyzer):
         )
         return {label: product}
 
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
+    def _compute_payload(
+        self, data: Any, backend: BackendBase
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Fit Lorentzians to aggregated PSD data and export merged outputs.
 
         Parameters
@@ -676,9 +703,7 @@ class LorentzFitter(Analyzer):
             raise RuntimeError("LorentzFitter config not initialized")
 
         loaded_results: Any = (
-            data.points
-            if isinstance(data, TypedScanInput)
-            else _load_input(data)
+            data.points if isinstance(data, SpectralScanInput) else _load_input(data)
         )
         if not loaded_results:
             raise QPhaseError("LorentzFitter received no input results")
@@ -692,12 +717,19 @@ class LorentzFitter(Analyzer):
         reference_orientation: FrequencyOrientation | None = None
 
         for loaded in loaded_results:
-            params = loaded.meta.get("params", {})
-            if config.scan_param not in params:
-                raise QPhaseError(
-                    f"{loaded.path} meta.params is missing {config.scan_param!r}"
-                )
-            scan_value = params[config.scan_param]
+            if isinstance(loaded, SpectralPoint):
+                scan_value = loaded.scan_value
+                job_name = loaded.job_name
+                source_label = "typed PSD product"
+            else:
+                params = loaded.meta.get("params", {})
+                if config.scan_param not in params:
+                    raise QPhaseError(
+                        f"{loaded.path} meta.params is missing {config.scan_param!r}"
+                    )
+                scan_value = params[config.scan_param]
+                job_name = loaded.job_name
+                source_label = str(loaded.path)
 
             axis, trace, payload = extract_psd_trace(
                 loaded, psd_key=config.psd_key, mode=config.mode
@@ -715,11 +747,22 @@ class LorentzFitter(Analyzer):
             elif reference_axis.shape != axis.shape or not np.allclose(
                 reference_axis, axis
             ):
-                raise QPhaseError(f"PSD frequency axis differs in {loaded.path}")
+                raise QPhaseError(f"PSD frequency axis differs in {source_label}")
 
             psd_sigma: np.ndarray | None = None
             if config.uncertainty != "off":
-                candidate = _extract_psd_sigma(payload, config.mode, loaded.path)
+                if isinstance(loaded, SpectralPoint):
+                    candidate = None
+                    if loaded.psd_sem is not None:
+                        candidate = _extract_mode_column(
+                            loaded.psd_sem,
+                            list(loaded.modes),
+                            config.mode,
+                            source_label,
+                            "psd_sem",
+                        )
+                else:
+                    candidate = _extract_psd_sigma(payload, config.mode, loaded.path)
                 usable = (
                     candidate is not None
                     and candidate.size == axis.size
@@ -730,7 +773,7 @@ class LorentzFitter(Analyzer):
                     psd_sigma = candidate
                 elif config.uncertainty == "required":
                     raise QPhaseError(
-                        f"{loaded.path} has no usable PSD standard error for "
+                        f"{source_label} has no usable PSD standard error for "
                         f"mode {config.mode}"
                     )
             fit_result = fit_lorentzian(
@@ -747,7 +790,7 @@ class LorentzFitter(Analyzer):
                 clip_sigma=config.clip_sigma,
             )
             row = {
-                "job_name": loaded.job_name,
+                "job_name": job_name,
                 config.scan_param: scan_value,
                 "orientation": orientation,
                 **fit_result.as_dict(),
@@ -839,8 +882,8 @@ class LorentzFitter(Analyzer):
                     out / "pdist_merged.pkl", pdist_rows
                 )
 
-        return AnalysisResult(
-            data_dict={
+        return (
+            {
                 "fit_rows": fit_rows,
                 "psd_columns": psd_columns,
                 "psd_sem_columns": psd_sem_columns,
@@ -850,7 +893,7 @@ class LorentzFitter(Analyzer):
                 ),
                 "written": {k: str(v) for k, v in written.items()},
             },
-            meta={
+            {
                 "scan_param": config.scan_param,
                 "mode": config.mode,
                 "count": len(loaded_results),
@@ -859,6 +902,10 @@ class LorentzFitter(Analyzer):
                 ),
             },
         )
+
+    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
+        payload, metadata = self._compute_payload(data, backend)
+        return AnalysisResult(data_dict=payload, meta=metadata)
 
     def _resolve_output_dir(self, config: LorentzFitterConfig) -> Path | None:
         """Return the output directory, preferring the engine-injected value."""

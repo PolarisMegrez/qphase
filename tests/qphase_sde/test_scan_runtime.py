@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -13,11 +15,15 @@ from qphase.data import (
     ProductSchema,
     StatisticsDataset,
     VariableSchema,
+    concat_datasets,
     load_bundle,
 )
 from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
+from qphase_sde.analyser.coherence_carrier import CoherenceCarrierAnalyzer
 from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyzer
 from qphase_sde.analyser.lorentz_fitter import _load_input
+from qphase_sde.analyser.moment_statistics import MomentStatisticsAnalyzer
+from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyzer
 from qphase_sde.analyser.result import AnalysisResult
@@ -25,6 +31,7 @@ from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.errors import SDEExecutionError
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
+from qphase_sde.peak_finder import ScipyPeakFinder
 from qphase_sde.result import SDEResult, bundle_from_result
 from qphase_sde.runtime.scan import SDEScanResult
 
@@ -50,7 +57,7 @@ def test_typed_scan_refuses_ragged_table_concatenation():
         schema, {"value": np.asarray([[1.0]])}, owner="test"
     )
     with pytest.raises(RuntimeError, match="ragged/table products"):
-        Engine._concat_scan_datasets([dataset, dataset])
+        concat_datasets([dataset, dataset], axis="scan")
 
 
 def test_typed_scan_concat_rejects_inconsistent_tile_metadata():
@@ -75,7 +82,7 @@ def test_typed_scan_concat_rejects_inconsistent_tile_metadata():
         changed_schema, {"value": np.asarray([2.0])}, owner="test"
     )
     with pytest.raises(ValueError, match="inconsistent attributes"):
-        Engine._concat_scan_datasets([first, second])
+        concat_datasets([first, second], axis="scan")
 
 
 class ScannedDummyModel:
@@ -367,7 +374,7 @@ def test_scan_runs_trajectory_batches_inside_each_parameter_point():
     engine = Engine(
         config=EngineConfig(
             t0=0.0,
-            t1=0.04,
+            t1=1.0,
             dt=0.01,
             n_traj=128,
             trajectory_batching="required",
@@ -410,9 +417,7 @@ def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
 
     discovery.discover_plugins()
     graph = compile_product_graph(
-        plugin_config={
-            "analyser": {"psd": {"modes": [0], "kind": "complex"}}
-        },
+        plugin_config={"analyser": {"psd": {"modes": [0], "kind": "complex"}}},
         registry=registry,
     )
     assert graph is not None
@@ -420,7 +425,7 @@ def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
     engine = Engine(
         config=EngineConfig(
             t0=0.0,
-            t1=0.04,
+            t1=1.0,
             dt=0.01,
             n_traj=128,
             trajectory_batching="required",
@@ -437,7 +442,10 @@ def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
         },
         product_graph=graph,
     )
+
     def run(memory_limit_mib):
+        events = []
+        reporter = ProgressReporter(events.append)
         run_engine = Engine(
             config=engine.config.model_copy(deep=True),
             plugins={
@@ -460,25 +468,42 @@ def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
                 }
             ).compile(),
             product_graph=graph,
-            progress=None,
+            progress=reporter,
             cancellation=None,
+            metadata={},
             resources=SimpleNamespace(
                 memory_limit_mib=memory_limit_mib,
                 gpu_memory_fraction=None,
             ),
         )
         run_result = run_engine.run(context=run_context)
-        return run_result, _product_arrays(run_result.products["psd"])
+        return run_result, _product_arrays(run_result.products["psd"]), events
 
-    result, wide_tile = run(3)
-    narrow_result, narrow_tile = run(2)
+    result, wide_tile, wide_events = run(4)
+    narrow_result, narrow_tile, narrow_events = run(2)
 
     assert result.shape == (16,)
     assert "trajectories" not in result.products
     assert result.products["psd"].axis("scan").size == 16
     assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
     assert result.metadata["execution_plan"]["scan_tile_size"] == 16
-    assert narrow_result.metadata["execution_plan"]["scan_tile_size"] <= 16
+    assert narrow_result.metadata["execution_plan"]["scan_tile_size"] < 16
+    assert narrow_result.metadata["execution_plan"]["tile_count"] > 1
+    sampling = [
+        event
+        for event in wide_events
+        if event.kind == "progress" and event.stage == "sampling"
+    ]
+    completed = [int(event.completed) for event in sampling]
+    assert completed == sorted(completed)
+    assert completed[-1] == 16 * 128 * 100
+    narrow_completed = [
+        int(event.completed)
+        for event in narrow_events
+        if event.kind == "progress" and event.stage == "sampling"
+    ]
+    assert narrow_completed == sorted(narrow_completed)
+    assert narrow_completed[-1] == 16 * 128 * 100
     for name in ("psd", "psd_std", "psd_sem", "uncertainty.n_independent"):
         np.testing.assert_allclose(wide_tile[name], narrow_tile[name], rtol=1e-12)
     artifact_dir = narrow_result.save_dataset(
@@ -494,6 +519,16 @@ def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
         narrow_tile["psd"],
         rtol=1e-12,
     )
+    probe = (
+        "import numpy as np; import qphase_sde; "
+        "from qphase.data import load_bundle; "
+        f"bundle=load_bundle(r'{tmp_path / 'typed_scan'}'); "
+        "assert bundle.shape == (16,); "
+        "assert bundle.products['psd'].axis('scan').size == 16; "
+        "assert np.isfinite(bundle.products['psd'].handle('psd')"
+        ".materialize()).all()"
+    )
+    subprocess.run([sys.executable, "-c", probe], check=True)
 
 
 def test_allan_variance_runs_through_engine_trajectory_batches():
@@ -627,6 +662,211 @@ def test_quadratic_moments_run_through_engine_trajectory_batches():
     assert payload["n_traj"] == 128
     assert payload["per_trajectory_raw_moments"].shape == (128, 1, 4)
     assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
+
+
+def test_typed_graph_batches_all_statistical_reducers():
+    from qphase.core.registry import discovery, registry
+    from qphase_sde.graph import compile_product_graph
+
+    analyser_config = {
+        "coherence_matrix": {
+            "modes": [0],
+            "time_blocks": 2,
+            "min_block_samples": 2,
+        },
+        "coherence_carrier": {
+            "modes": [0],
+            "include_trace": False,
+            "minimum_lag_points": 3,
+            "maximum_lag_points": 4,
+        },
+        "moment_statistics": {
+            "modes": [0],
+            "time_blocks": 2,
+            "min_block_samples": 2,
+        },
+        "quadratic_moments": {
+            "observables": {"occupation": {"matrix": [[1.0]]}},
+            "modes": [0],
+            "time_blocks": 2,
+            "min_block_samples": 2,
+        },
+    }
+    discovery.discover_plugins()
+    graph = compile_product_graph(
+        plugin_config={"analyser": analyser_config}, registry=registry
+    )
+    assert graph is not None
+    analysers = {
+        "coherence_matrix": CoherenceMatrixAnalyzer(
+            modes=[0], time_blocks=2, min_block_samples=2
+        ),
+        "coherence_carrier": CoherenceCarrierAnalyzer(
+            modes=[0],
+            include_trace=False,
+            minimum_lag_points=3,
+            maximum_lag_points=4,
+        ),
+        "moment_statistics": MomentStatisticsAnalyzer(
+            modes=[0], time_blocks=2, min_block_samples=2
+        ),
+        "quadratic_moments": QuadraticMomentAnalyzer(
+            observables={"occupation": {"matrix": [[1.0]]}},
+            modes=[0],
+            time_blocks=2,
+            min_block_samples=2,
+        ),
+    }
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.2,
+            dt=0.01,
+            n_traj=8,
+            trajectory_batching="required",
+            trajectory_batch_size=4,
+            seed=47,
+            ic=[["1.0+0.0j"]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": StochasticScannedModel(),
+            "analyser": analysers,
+        },
+        product_graph=graph,
+    )
+
+    result = engine.run(
+        context=SimpleNamespace(
+            parameter_grid=None,
+            product_graph=graph,
+            progress=None,
+            cancellation=None,
+            metadata={},
+        )
+    )
+
+    assert set(result.products) == set(analysers)
+    for product in result.products.values():
+        assert int(product.handle("n_traj").materialize()) == 8
+
+
+def test_trajectory_batching_reduces_psd_before_running_peak_finder():
+    from qphase.core.registry import discovery, registry
+    from qphase_sde.graph import compile_product_graph
+
+    config = {
+        "psd": {"modes": [0], "kind": "complex"},
+        "peaks": {
+            "scan_param": "scan",
+            "finder": {"scipy": {"noise_threshold": None}},
+        },
+    }
+    discovery.discover_plugins()
+    graph = compile_product_graph(plugin_config={"analyser": config}, registry=registry)
+    assert graph is not None
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.2,
+            dt=0.01,
+            n_traj=8,
+            trajectory_batching="required",
+            trajectory_batch_size=4,
+            seed=53,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": StochasticScannedModel(),
+            "analyser": {
+                "psd": PsdAnalyzer(kind="complex", modes=[0]),
+                "peaks": PeaksAnalyzer(
+                    PeaksAnalyzerConfig(scan_param="scan"),
+                    subplugins={
+                        "finder": ScipyPeakFinder(noise_threshold=None),
+                    },
+                ),
+            },
+        },
+        product_graph=graph,
+    )
+
+    result = engine.run(
+        context=SimpleNamespace(
+            parameter_grid=None,
+            product_graph=graph,
+            progress=None,
+            cancellation=None,
+            metadata={},
+        )
+    )
+
+    assert set(result.products) == {"peaks"}
+    assert result.products["peaks"].attributes["source_product"] == "psd"
+
+
+def test_scanned_trajectory_batching_runs_peak_finder_after_reduction():
+    from qphase.core.registry import discovery, registry
+    from qphase_sde.graph import compile_product_graph
+
+    config = {
+        "psd": {"modes": [0], "kind": "complex"},
+        "peaks": {
+            "scan_param": "rate",
+            "finder": {"scipy": {"noise_threshold": None}},
+        },
+    }
+    discovery.discover_plugins()
+    graph = compile_product_graph(plugin_config={"analyser": config}, registry=registry)
+    assert graph is not None
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.2,
+            dt=0.01,
+            n_traj=8,
+            trajectory_batching="required",
+            trajectory_batch_size=4,
+            seed=59,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": StochasticScannedModel(),
+            "analyser": {
+                "psd": PsdAnalyzer(kind="complex", modes=[0]),
+                "peaks": PeaksAnalyzer(
+                    PeaksAnalyzerConfig(scan_param="rate"),
+                    subplugins={
+                        "finder": ScipyPeakFinder(noise_threshold=None),
+                    },
+                ),
+            },
+        },
+        product_graph=graph,
+    )
+
+    result = engine.run(
+        context=SimpleNamespace(
+            parameter_grid=_grid(),
+            product_graph=graph,
+            progress=None,
+            cancellation=None,
+            metadata={},
+            resources=None,
+        )
+    )
+
+    peaks = result.products["peaks"]
+    assert peaks.axis("scan").size == 2
+    np.testing.assert_array_equal(peaks.coordinate("rate"), [1.0, 2.0])
 
 
 def test_sde_progress_uses_stable_trajectory_step_units():

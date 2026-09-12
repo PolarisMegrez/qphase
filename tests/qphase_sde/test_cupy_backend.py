@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase.core.scan import ScanSpec
 
 pytestmark = [pytest.mark.gpu, pytest.mark.integration]
 
@@ -28,7 +29,10 @@ if not _CUPY_AVAILABLE:
     pytest.skip("No CUDA device available", allow_module_level=True)
 
 from qphase.backend.cupy_backend import CuPyBackend  # noqa: E402
+from qphase_sde.analyser.psd import PsdAnalyzer  # noqa: E402
 from qphase_sde.engine import Engine, EngineConfig  # noqa: E402
+from qphase_sde.graph import compile_product_graph  # noqa: E402
+from qphase_sde.integrator.euler_maruyama import EulerMaruyama  # noqa: E402
 from qphase_sde.integrator.srk import GenericSRK  # noqa: E402
 from qphase_sde.model import FunctionalSDEModel  # noqa: E402
 
@@ -180,6 +184,96 @@ def test_cupy_vs_numpy_psd_periodogram():
     estimate_cp = analyzer._estimate_single(cp_be.asarray(signal), 0.1, backend=cp_be)
     np.testing.assert_allclose(estimate_np.std, estimate_cp.std, rtol=1e-4)
     np.testing.assert_allclose(estimate_np.sem, estimate_cp.sem, rtol=1e-4)
+
+
+def test_cupy_typed_scan_and_trajectory_batching_roundtrip(tmp_path):
+    from qphase.core.registry import discovery, registry
+
+    def model():
+        def drift(y, t, params):
+            del t
+            xp = cupy.get_array_module(y)
+            rate = xp.asarray(params["rate"])
+            return -rate[..., None] * y
+
+        def diffusion(y, t, params):
+            del t, params
+            xp = cupy.get_array_module(y)
+            return xp.zeros(y.shape + (1,), dtype=y.real.dtype)
+
+        return FunctionalSDEModel(
+            name="cupy_typed_scan",
+            n_modes=1,
+            noise_basis="real",
+            noise_dim=1,
+            params={"rate": 0.1},
+            drift=drift,
+            diffusion=diffusion,
+        )
+
+    discovery.discover_plugins()
+    graph = compile_product_graph(
+        plugin_config={"analyser": {"psd": {"modes": [0], "kind": "complex"}}},
+        registry=registry,
+    )
+    assert graph is not None
+    grid = ScanSpec.model_validate(
+        {
+            "axes": {
+                "rate": {
+                    "target": "model.cupy_typed_scan.rate",
+                    "values": [0.1, 0.2, 0.3, 0.4],
+                }
+            }
+        }
+    ).compile()
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.08,
+            dt=0.01,
+            n_traj=64,
+            trajectory_batching="required",
+            trajectory_batch_size=32,
+            seed=53,
+            ic=[["1.0+0.0j"]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": CuPyBackend(),
+            "model": model(),
+            "integrator": EulerMaruyama(),
+            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+        },
+        product_graph=graph,
+    )
+    context = type(
+        "Context",
+        (),
+        {
+            "parameter_grid": grid,
+            "product_graph": graph,
+            "progress": None,
+            "cancellation": None,
+            "metadata": {},
+            "resources": None,
+        },
+    )()
+
+    result = engine.run(context=context)
+
+    assert result.shape == (4,)
+    assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
+    assert np.isfinite(result.products["psd"].handle("psd").materialize()).all()
+    result.save_dataset(
+        tmp_path,
+        layout="single",
+        shard_target_bytes=1024 * 1024,
+    )
+    from qphase.data import load_bundle
+
+    restored = load_bundle(tmp_path)
+    assert restored.shape == (4,)
 
 
 def test_cupy_dist_matches_numpy():
