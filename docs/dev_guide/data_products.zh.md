@@ -108,7 +108,12 @@ engine 从插件声明编译出的、经无环校验的 `ProductNode` 图。每�
 同时引用来源节点的输出（`product`）与消费节点的输入槽（`requirement`），图校验这两个
 引用。requirement 可通过 `value_domain` 区分复数场轨迹与实值采样标量序列，也可通过
 `align_with` 指向同节点的兄弟 requirement，要求其输入与该兄弟输入的参数轴坐标逐元素
-对齐。图不再通过 hash 制造节点身份。
+对齐，并具有相同的参数轴与 sampling-basis 声明；这些检查在节点输入物化时执行。
+`qphase.data.concat_datasets()` 沿已有轴组合兼容的运行时 Dataset；
+`qphase.data.stack_datasets()` 则从逐点产品恢复新的外层轴，包括 `point_view()` 留下的
+标量参数坐标。除被组合的轴外，输入必须具有相同的 Dataset 类、设备、attributes、
+coordinates、variables 与 sampling bases。ragged table 必须由领域 reducer 处理，通用
+组合会直接拒绝。图不再通过 hash 制造节点身份。
 
 `EngineTaskProfile` 使插件需求随任务条件化：
 

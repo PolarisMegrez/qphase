@@ -97,6 +97,18 @@ Lorentz 拟合：
       mode: 0
 ```
 
+编译器会把 analyser `ProductGraph` 冻结到 compiled job。运行时，每个 analyser 直接消费
+命名 `Dataset` 输入并返回其声明的 typed products；engine 不会在节点之间重建
+`SDEResult` 或嵌套 analysis payload。trajectory batching 只对直接消费 trajectory 的图前沿
+producer 使用 typed reducer，并按 scan 点维护独立状态；全部批次完成后，归约产品重新进入
+冻结的 ProductGraph，下游节点只执行一次。积分阶段仍保持 scan tile 融合，dense tile 产品由
+core 的 schema 驱动组合函数拼接。observer payload 同样按 scan 点归约，并可通过
+`point_view()` 选择。
+
+typed analyser 的 `execute()` 契约会显式接收 scheduler execution context。
+内置逐点 analyser 在 scan 点之间检查取消；其他 analyser 也可通过同一 context 报告领域进度并
+响应取消，而无需把运行时服务混入科学 metadata。
+
 ## `SDEDataBundle`
 
 `engine.run()` 的每个返回路径都返回 `SDEDataBundle`：一组命名 typed data

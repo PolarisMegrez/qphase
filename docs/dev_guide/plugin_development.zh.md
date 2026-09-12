@@ -87,15 +87,19 @@ class MyModel:
 
 ### 示例：分析器实现
 
-分析器处理原始仿真结果。
+Analyser 通过 ProductGraph 消费并生成 typed data products。
 
 ```python
 from typing import Any, ClassVar
+import numpy as np
 from qphase.backend.base import BackendBase
-from qphase.core.protocols import ResultProtocol
-from qphase_sde.analyser.result import AnalysisResult
+from qphase.data import (
+    DataKind, ProductDeclaration, ProductRequirement, ProductSchema,
+    StatisticsDataset, VariableSchema,
+)
+from qphase_sde.analyser.base import Analyzer
 
-class MyAnalyser:
+class MyAnalyser(Analyzer):
     name: ClassVar[str] = "my_analyser"
     description: ClassVar[str] = "Calculates mean photon number"
     config_schema: ClassVar[type] = MyAnalyserConfig
@@ -103,21 +107,35 @@ class MyAnalyser:
     def __init__(self, config: MyAnalyserConfig, **kwargs: Any):
         self.cfg = config
 
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
-        """
-        处理仿真结果。
-        """
-        # 示例：计算轨迹的均值
-        # data 预期是张量或 TrajectorySet
-        if hasattr(data, "data"):
-            traj = data.data
-        else:
-            traj = data
+    def input_requirements(self):
+        return [ProductRequirement(
+            name="trajectories", kind=DataKind.TIME_SERIES,
+            required_fields=["alpha"],
+        )]
 
-        mean_val = backend.mean(traj, axis=0)
-        mean_power = backend.abs(mean_val) ** 2
+    def output_specs(self, *, label: str):
+        return (ProductDeclaration(
+            name=label, kind=DataKind.STATISTICS,
+            quantity="mean_power", fields=["mean_power"],
+        ),)
 
-        return AnalysisResult(data_dict={"mean_power": mean_power})
+    def execute(self, inputs, *, backend: BackendBase, label: str,
+                metadata=None, context=None):
+        del backend, metadata
+        if context is not None and context.cancellation is not None:
+            context.cancellation.raise_if_cancelled()
+        alpha = inputs["trajectories"].handle("alpha").materialize()
+        mean_power = np.asarray(np.mean(np.abs(alpha) ** 2))
+        schema = ProductSchema(
+            kind=DataKind.STATISTICS,
+            variables=[VariableSchema(
+                name="mean_power", dtype="float64", value_domain="real",
+                quantity="mean_power",
+            )],
+        )
+        return {label: StatisticsDataset.from_arrays(
+            schema, {"mean_power": mean_power}, owner="my_package",
+        )}
 ```
 
 ### 示例：带清单的引擎实现
@@ -157,8 +175,9 @@ class MyEngine:
 
 SDE analyser 应继承 `qphase_sde.analyser.Analyzer`。基类提供保守的 planner 默认值；
 当 analyser 会转移完整轨迹、支持 trajectory batching/time streaming，或分配较大
-workspace 时，应分别用 `AnalyzerExecutionCapabilities` 覆盖 `capabilities()`，并在
-`estimate_workspace()` 中给出主机/设备字节估算。在真正实现公开 accumulator/stream
+workspace 时，应使用 `AnalyserExecutionCapabilities` 覆盖
+`execution_capabilities()`，并在
+`workspace()` 中给出主机/设备字节估算。在真正实现公开 accumulator/stream
 协议之前不得声明支持 batching/streaming；这些声明会直接参与内存规划，并非仅作文档。
 
 ### 支持 Scan 的 Engine

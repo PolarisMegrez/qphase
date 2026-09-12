@@ -87,15 +87,19 @@ class MyModel:
 
 ### Example: Analyser Implementation
 
-Analysers process the raw simulation results.
+Analysers consume and produce typed data products through the ProductGraph.
 
 ```python
 from typing import Any, ClassVar
+import numpy as np
 from qphase.backend.base import BackendBase
-from qphase.core.protocols import ResultProtocol
-from qphase_sde.analyser.result import AnalysisResult
+from qphase.data import (
+    DataKind, Dataset, ProductDeclaration, ProductRequirement,
+    ProductSchema, StatisticsDataset, VariableSchema,
+)
+from qphase_sde.analyser.base import Analyzer
 
-class MyAnalyser:
+class MyAnalyser(Analyzer):
     name: ClassVar[str] = "my_analyser"
     description: ClassVar[str] = "Calculates mean photon number"
     config_schema: ClassVar[type] = MyAnalyserConfig
@@ -103,21 +107,35 @@ class MyAnalyser:
     def __init__(self, config: MyAnalyserConfig, **kwargs: Any):
         self.cfg = config
 
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
-        """
-        Process the simulation result.
-        """
-        # Example: Calculate mean of trajectory
-        # data is expected to be a tensor or TrajectorySet
-        if hasattr(data, "data"):
-            traj = data.data
-        else:
-            traj = data
+    def input_requirements(self):
+        return [ProductRequirement(
+            name="trajectories", kind=DataKind.TIME_SERIES,
+            required_fields=["alpha"],
+        )]
 
-        mean_val = backend.mean(traj, axis=0)
-        mean_power = backend.abs(mean_val) ** 2
+    def output_specs(self, *, label: str):
+        return (ProductDeclaration(
+            name=label, kind=DataKind.STATISTICS,
+            quantity="mean_power", fields=["mean_power"],
+        ),)
 
-        return AnalysisResult(data_dict={"mean_power": mean_power})
+    def execute(self, inputs, *, backend: BackendBase, label: str,
+                metadata=None, context=None):
+        del backend, metadata
+        if context is not None and context.cancellation is not None:
+            context.cancellation.raise_if_cancelled()
+        alpha = inputs["trajectories"].handle("alpha").materialize()
+        mean_power = np.asarray(np.mean(np.abs(alpha) ** 2))
+        schema = ProductSchema(
+            kind=DataKind.STATISTICS,
+            variables=[VariableSchema(
+                name="mean_power", dtype="float64", value_domain="real",
+                quantity="mean_power",
+            )],
+        )
+        return {label: StatisticsDataset.from_arrays(
+            schema, {"mean_power": mean_power}, owner="my_package",
+        )}
 ```
 
 ### Example: Engine Implementation with Manifest
@@ -157,8 +175,8 @@ class MyEngine:
 ```
 
 SDE analysers should inherit `qphase_sde.analyser.Analyzer`. The base class
-provides conservative planner defaults. Override `capabilities()` with an
-`AnalyzerExecutionCapabilities` value and `estimate_workspace()` with separate
+provides conservative planner defaults. Override `execution_capabilities()` with an
+`AnalyserExecutionCapabilities` value and `workspace()` with separate
 host/device byte estimates whenever the analyser transfers a full trajectory,
 supports trajectory batching or time streaming, or allocates a substantial
 workspace. Do not advertise batching/streaming until the corresponding public

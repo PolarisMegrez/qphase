@@ -141,8 +141,15 @@ listed). Edges reference both the producer output (`product`) and the consumer
 input slot (`requirement`), and the graph validates those references. A
 requirement may restrict the accepted `value_domain` (complex field trajectory
 vs sampled real scalar) and may name a sibling requirement via `align_with`
-whose parameter-axis coordinates its input must match elementwise. The graph
-does not hash nodes to manufacture identities.
+whose parameter axes, parameter-coordinate values, and sampling-basis
+declarations its input must match. These checks run when the node inputs are
+materialized. `qphase.data.concat_datasets()` composes compatible runtime
+datasets along an existing axis, while `qphase.data.stack_datasets()` restores
+a new outer axis from point products, including scalar parameter coordinates
+left by `point_view()`. Inputs must use the same Dataset class, device,
+attributes, coordinates, variables, and sampling bases except for the composed
+axis. Ragged tables require a domain reducer and are rejected by generic
+composition. The graph does not hash nodes to manufacture identities.
 
 `EngineTaskProfile` makes plugin requirements conditional on the job:
 

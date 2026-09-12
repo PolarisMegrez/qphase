@@ -253,6 +253,14 @@ trajectory storage. This is trajectory batching and post-integration reduction,
 not time streaming: one physical trajectory record must still fit the resource
 budget.
 
+When trajectory batching and parameter scanning are both active, each scan
+tile is integrated as one fused backend workload. Reducer state is independent
+for every scan point, so changing tile or trajectory-batch boundaries does not
+change parameter/RNG pairing or sampling uncertainty. Only analysers that
+directly consume trajectories need a reducer; downstream graph nodes run once
+after reduction. A graph whose published ragged products would require several
+scan tiles is rejected during planning, before integration.
+
 ## Kernelized Terms (CuPy)
 
 Some built-in models provide an optional **fused drift+diffusion kernel** for the CuPy backend. When a kernel is available and the job uses `backend: cupy`, the integrator prefers the kernel path over calling the Python `drift` and `diffusion` methods separately. This removes Python-layer dispatch overhead and fuses the two term evaluations into a single CUDA launch.

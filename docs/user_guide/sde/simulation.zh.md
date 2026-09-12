@@ -200,6 +200,12 @@ Allan 方差、无重叠 block 统计与频谱、平稳性判据，以及可选�
 这属于 trajectory batching 加积分后减量，而不是时间流式计算：单条物理轨迹记录仍须
 能够放入资源预算。
 
+当 trajectory batching 与参数扫描同时启用时，每个 scan tile 仍作为一个融合后端负载
+积分。每个 scan 点维护独立 reducer 状态，因此改变 tile 或 trajectory-batch 边界不会
+改变参数/RNG 配对或 sampling uncertainty。只有直接消费 trajectory 的 analyser 需要
+reducer；下游图节点在归约完成后只执行一次。若已发布的 ragged 产品必须跨多个 scan tile
+组合，planner 会在积分开始前拒绝该任务。
+
 ## Kernelized Terms（CuPy 核函数）
 
 部分内置模型为 CuPy 后端提供了可选的**融合漂移+扩散核函数**。当核函数可用且任务使用 `backend: cupy` 时，积分器会优先使用核函数路径，而不是分别调用 Python 的 `drift` 和 `diffusion` 方法。这样可以消除 Python 层调度开销，并将两项计算融合到一次 CUDA 启动中。
