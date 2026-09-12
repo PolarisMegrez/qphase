@@ -8,12 +8,15 @@ from qphase.core import ProductGraphExecutor
 from qphase.data import (
     AxisRole,
     AxisSchema,
+    CoordinateSchema,
     DataKind,
+    GraphEdge,
     ProductDeclaration,
     ProductGraph,
     ProductNode,
     ProductRequirement,
     ProductSchema,
+    SamplingBasisSchema,
     StatisticsDataset,
     VariableSchema,
 )
@@ -34,6 +37,44 @@ def _product(name: str = "value") -> StatisticsDataset:
     )
     return StatisticsDataset.from_arrays(
         schema, {name: np.asarray([1.0])}, owner="test"
+    )
+
+
+def _aligned_product(
+    values: list[float], *, sampling_count: int = 4
+) -> StatisticsDataset:
+    schema = ProductSchema(
+        kind=DataKind.STATISTICS,
+        axes=[AxisSchema(name="scan", role=AxisRole.PARAMETER, size=len(values))],
+        sampling_bases=[SamplingBasisSchema(name="trajectory", count=sampling_count)],
+        variables=[
+            VariableSchema(
+                name="value",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan",),
+            ),
+            VariableSchema(
+                name="parameter.x",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan",),
+            ),
+        ],
+        coordinates=[
+            CoordinateSchema(
+                name="x",
+                variable="parameter.x",
+                dims=("scan",),
+                role="parameter",
+            )
+        ],
+    )
+    array = np.asarray(values)
+    return StatisticsDataset.from_arrays(
+        schema,
+        {"value": array, "parameter.x": array},
+        owner="test",
     )
 
 
@@ -296,3 +337,102 @@ def test_executor_reports_non_mapping_output_failure():
             {"producer": lambda node, inputs: []},
         ).run({}, context=context)
     assert [item[1] for item in progress.messages] == ["producer", "producer"]
+
+
+@pytest.mark.parametrize(
+    ("other", "message"),
+    [
+        (_aligned_product([1.0, 3.0]), "disagree on coordinate"),
+        (_aligned_product([1.0, 2.0], sampling_count=8), "sampling bases"),
+    ],
+)
+def test_executor_enforces_align_with(other, message):
+    graph = ProductGraph(
+        nodes=[
+            ProductNode(
+                node_id="consumer",
+                producer="test.consumer",
+                requirements=[
+                    ProductRequirement(name="left", kind=DataKind.STATISTICS),
+                    ProductRequirement(
+                        name="right",
+                        kind=DataKind.STATISTICS,
+                        align_with="left",
+                    ),
+                ],
+                outputs=[ProductDeclaration(name="output", kind=DataKind.STATISTICS)],
+            )
+        ],
+        external_inputs=[
+            {
+                "consumer": "consumer",
+                "requirement": "left",
+                "source": "external",
+                "product": "left",
+            },
+            {
+                "consumer": "consumer",
+                "requirement": "right",
+                "source": "external",
+                "product": "right",
+            },
+        ],
+    )
+    with pytest.raises(ValueError, match=message):
+        ProductGraphExecutor(
+            graph,
+            {"consumer": lambda node, inputs: {"output": _product()}},
+        ).run(
+            {
+                "external": {
+                    "left": _aligned_product([1.0, 2.0]),
+                    "right": other,
+                }
+            }
+        )
+
+
+def test_executor_routes_completed_products_through_remaining_graph():
+    graph = ProductGraph(
+        nodes=[
+            ProductNode(
+                node_id="producer",
+                producer="test.producer",
+                outputs=[ProductDeclaration(name="value", kind=DataKind.STATISTICS)],
+            ),
+            ProductNode(
+                node_id="consumer",
+                producer="test.consumer",
+                requirements=[
+                    ProductRequirement(name="value", kind=DataKind.STATISTICS)
+                ],
+                outputs=[ProductDeclaration(name="output", kind=DataKind.STATISTICS)],
+            ),
+        ],
+        edges=[
+            GraphEdge(
+                producer="producer",
+                product="value",
+                consumer="consumer",
+                requirement="value",
+            )
+        ],
+    )
+    value = _product()
+    seen = []
+
+    def producer(node, inputs):
+        del node, inputs
+        raise AssertionError("a completed producer must not run")
+
+    def consumer(node, inputs):
+        del node
+        seen.append(inputs["value"])
+        return {"output": inputs["value"]}
+
+    result = ProductGraphExecutor(
+        graph, {"producer": producer, "consumer": consumer}
+    ).run({}, completed_nodes={"producer": {"value": value}})
+
+    assert seen == [value]
+    assert result == {"consumer": {"output": value}}

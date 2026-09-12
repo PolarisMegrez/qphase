@@ -34,6 +34,7 @@ graph
 
 from .artifact import ArtifactRef, DataMaterializerProtocol
 from .bundle import GenericDataBundle
+from .composition import concat_datasets, stack_datasets
 from .datasets import (
     Dataset,
     SpectralDataset,
@@ -181,4 +182,6 @@ __all__ = [
     "storage_adapter_available",
     "storage_referenced_files",
     "validate_backing",
+    "concat_datasets",
+    "stack_datasets",
 ]

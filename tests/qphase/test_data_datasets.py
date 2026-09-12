@@ -22,6 +22,8 @@ from qphase.data import (
     UncertaintySchema,
     VariableConstraints,
     VariableSchema,
+    concat_datasets,
+    stack_datasets,
 )
 
 
@@ -571,6 +573,37 @@ def test_point_view_keeps_scalar_parameter_coordinate():
     assert coordinate.dims == ()
     assert coordinate.role == "parameter"
     np.testing.assert_array_equal(view.coordinate("omega_b"), np.asarray(30.0))
+
+
+def test_concat_datasets_preserves_schema_coordinates_and_values():
+    dataset = _coordinate_view_dataset()
+    left = dataset.slice_view(scan=slice(0, 2))
+    right = dataset.slice_view(scan=slice(2, 4))
+
+    combined = concat_datasets([left, right], axis="scan")
+
+    assert combined.axis("scan").size == 4
+    assert combined.schema.sampling_bases == dataset.schema.sampling_bases
+    assert combined.attributes == dataset.attributes
+    np.testing.assert_array_equal(combined.coordinate("omega_b"), [10, 20, 30, 40])
+    np.testing.assert_array_equal(
+        combined.handle("x").materialize(), dataset.handle("x").materialize()
+    )
+
+
+def test_stack_datasets_restores_point_parameter_axis():
+    dataset = _coordinate_view_dataset()
+    points = [dataset.point_view(scan=index) for index in range(4)]
+
+    combined = stack_datasets(points, axis="scan")
+
+    assert combined.axis("scan").size == 4
+    assert combined.schema.variable("x").dims == ("scan", "trajectory", "time")
+    assert combined.schema.variable("omega_b").dims == ("scan",)
+    np.testing.assert_array_equal(combined.coordinate("omega_b"), [10, 20, 30, 40])
+    np.testing.assert_array_equal(
+        combined.handle("x").materialize(), dataset.handle("x").materialize()
+    )
 
 
 def test_slice_view_preserves_coordinates_through_roundtrip(tmp_path):

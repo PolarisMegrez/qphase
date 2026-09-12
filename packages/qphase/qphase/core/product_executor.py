@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
+import numpy as np
+
 from ..data.datasets import Dataset
 from ..data.graph import ProductGraph, ProductNode, requirement_matches
 
@@ -39,9 +41,24 @@ class ProductGraphExecutor:
         external_inputs: Mapping[str, Mapping[str, Dataset]],
         *,
         context: Any | None = None,
+        completed_nodes: Mapping[str, Mapping[str, Dataset]] | None = None,
     ) -> dict[str, dict[str, Dataset]]:
-        """Run nodes in order and return terminal or explicitly published products."""
+        """Run nodes in order and return terminal or explicitly published products.
+
+        ``completed_nodes`` supplies products finalized by an engine-owned
+        reducer. They enter the same declaration validation and liveness path
+        as products returned by a node runner.
+        """
         produced: dict[str, dict[str, Dataset]] = {}
+        completed = {
+            node_id: dict(products)
+            for node_id, products in (completed_nodes or {}).items()
+        }
+        unknown = set(completed) - {node.node_id for node in self.graph.nodes}
+        if unknown:
+            raise ValueError(
+                f"completed products reference unknown nodes: {sorted(unknown)}"
+            )
         published = self.graph.terminal_outputs()
         for node in self.graph.nodes:
             published[node.node_id].update(node.publish_outputs)
@@ -51,16 +68,20 @@ class ProductGraphExecutor:
         for node in self.graph.topological_order():
             self._check_cancelled(context)
             self._report(context, node, "started")
-            try:
-                inputs = self._resolve_inputs(node, produced, external_inputs)
-            except Exception:
-                self._report(context, node, "failed")
-                raise
-            try:
-                outputs = self.runners[node.node_id](node, inputs)
-            except Exception:
-                self._report(context, node, "failed")
-                raise
+            outputs: Mapping[str, Dataset]
+            if node.node_id in completed:
+                outputs = completed[node.node_id]
+            else:
+                try:
+                    inputs = self._resolve_inputs(node, produced, external_inputs)
+                except Exception:
+                    self._report(context, node, "failed")
+                    raise
+                try:
+                    outputs = self.runners[node.node_id](node, inputs)
+                except Exception:
+                    self._report(context, node, "failed")
+                    raise
             try:
                 if not isinstance(outputs, Mapping):
                     raise TypeError(
@@ -213,4 +234,72 @@ class ProductGraphExecutor:
                     f"{node.node_id!r} does not satisfy its schema requirement"
                 )
             inputs[requirement.name] = product
+        for requirement in node.requirements:
+            if requirement.align_with is None or requirement.name not in inputs:
+                continue
+            reference = inputs.get(requirement.align_with)
+            if reference is None:
+                if requirement.optional:
+                    continue
+                raise ValueError(
+                    f"alignment reference {requirement.align_with!r} is unavailable "
+                    f"for node {node.node_id!r}"
+                )
+            self._check_alignment(
+                node,
+                requirement.name,
+                inputs[requirement.name],
+                requirement.align_with,
+                reference,
+            )
         return inputs
+
+    @staticmethod
+    def _check_alignment(
+        node: ProductNode,
+        name: str,
+        product: Dataset,
+        reference_name: str,
+        reference: Dataset,
+    ) -> None:
+        product_axes = {
+            axis.name: axis for axis in product.axes if axis.role.value == "parameter"
+        }
+        reference_axes = {
+            axis.name: axis for axis in reference.axes if axis.role.value == "parameter"
+        }
+        if product_axes != reference_axes:
+            raise ValueError(
+                f"aligned inputs {name!r} and {reference_name!r} of node "
+                f"{node.node_id!r} have different parameter axes"
+            )
+        product_coordinates = {
+            coordinate.name: coordinate
+            for coordinate in product.coordinates()
+            if coordinate.role == "parameter"
+        }
+        reference_coordinates = {
+            coordinate.name: coordinate
+            for coordinate in reference.coordinates()
+            if coordinate.role == "parameter"
+        }
+        if set(product_coordinates) != set(reference_coordinates):
+            raise ValueError(
+                f"aligned inputs {name!r} and {reference_name!r} of node "
+                f"{node.node_id!r} have different parameter coordinates"
+            )
+        for coordinate_name in product_coordinates:
+            if not np.array_equal(
+                product.coordinate(coordinate_name),
+                reference.coordinate(coordinate_name),
+                equal_nan=True,
+            ):
+                raise ValueError(
+                    f"aligned inputs {name!r} and {reference_name!r} of node "
+                    f"{node.node_id!r} disagree on coordinate {coordinate_name!r}"
+                )
+        if product.schema.sampling_bases != reference.schema.sampling_bases:
+            raise ValueError(
+                f"aligned inputs {name!r} and {reference_name!r} of node "
+                f"{node.node_id!r} have different sampling bases"
+            )
