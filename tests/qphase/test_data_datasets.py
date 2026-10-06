@@ -692,6 +692,83 @@ def test_stack_datasets_records_all_source_identities():
     assert json.loads(json.dumps(provenance)) == provenance
 
 
+def test_nested_composition_preserves_artifact_leaf_identities():
+    left = concat_datasets(_distinct_provenance_datasets()[:2], axis="scan")
+    right = concat_datasets(
+        [
+            _provenance_scan_dataset(
+                3.0, {"artifact_id": "art-c", "product": "trajectories"}
+            ),
+            _provenance_scan_dataset(
+                4.0, {"artifact_id": "art-d", "product": "trajectories"}
+            ),
+        ],
+        axis="scan",
+    )
+
+    outer = concat_datasets([left, right], axis="scan")
+
+    composition = outer.provenance["composition"]
+    assert composition["operation"] == "concat"
+    assert composition["inputs"] == [
+        {
+            "composition": {
+                "operation": "concat",
+                "axis": "scan",
+                "inputs": [
+                    {"artifact_id": "art-a", "product": "trajectories"},
+                    {"artifact_id": "art-b", "product": "trajectories"},
+                ],
+            }
+        },
+        {
+            "composition": {
+                "operation": "concat",
+                "axis": "scan",
+                "inputs": [
+                    {"artifact_id": "art-c", "product": "trajectories"},
+                    {"artifact_id": "art-d", "product": "trajectories"},
+                ],
+            }
+        },
+    ]
+    assert json.loads(json.dumps(outer.provenance)) == outer.provenance
+
+
+def test_nested_composition_preserves_runtime_owner_tree():
+    left = concat_datasets(
+        [_provenance_scan_dataset(1.0, None), _provenance_scan_dataset(2.0, None)],
+        axis="scan",
+    )
+    right = concat_datasets(
+        [_provenance_scan_dataset(3.0, None), _provenance_scan_dataset(4.0, None)],
+        axis="scan",
+    )
+
+    stacked = stack_datasets([left, right], axis="batch")
+
+    composition = stacked.provenance["composition"]
+    assert composition["operation"] == "stack"
+    assert composition["axis"] == "batch"
+    assert composition["inputs"] == [
+        {
+            "composition": {
+                "operation": "concat",
+                "axis": "scan",
+                "inputs": [{"owner": "engine.fake"}, {"owner": "engine.fake"}],
+            }
+        },
+        {
+            "composition": {
+                "operation": "concat",
+                "axis": "scan",
+                "inputs": [{"owner": "engine.fake"}, {"owner": "engine.fake"}],
+            }
+        },
+    ]
+    assert json.loads(json.dumps(stacked.provenance)) == stacked.provenance
+
+
 def test_slice_view_preserves_coordinates_through_roundtrip(tmp_path):
     from qphase.data import load_products, save_products
 

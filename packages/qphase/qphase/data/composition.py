@@ -5,10 +5,12 @@ Composition provenance contract: the composed product records a
 ``axis``; for ``stack`` the created axis and its size follow from the output
 schema) plus an ordered ``inputs`` list carrying every source identity. Each
 entry holds the source's ``artifact_id``/``product`` provenance keys when it
-carries them, otherwise the owner marker of the source's runtime handles; no
-source is silently dropped. The first input's own ``artifact_id``/``product``
-keys are input identities, so they are not attributed to the composed
-product's top-level provenance.
+carries them; sources that are themselves compositions carry their inner
+``composition`` record, so nested stack/concat chains keep the full
+composition tree; any other source carries the owner marker of its runtime
+handles. No source is silently dropped. The first input's own
+``artifact_id``/``product`` keys are input identities, so they are not
+attributed to the composed product's top-level provenance.
 """
 
 from __future__ import annotations
@@ -28,8 +30,11 @@ def _source_identities(datasets: Sequence[Dataset]) -> list[dict[str, Any]]:
     """Ordered identity of every composition input.
 
     Sources carrying ``artifact_id``/``product`` provenance keys (artifact
-    restore path) are identified by them; any other source is identified by
-    the owner marker of its runtime handles.
+    restore path) are identified by them. Sources that are themselves
+    compositions carry their inner ``composition`` record, so nested
+    stack/concat chains keep the full composition tree instead of degrading
+    to the runtime owner marker. Any other source is identified by the owner
+    marker of its runtime handles.
     """
     identities: list[dict[str, Any]] = []
     for dataset in datasets:
@@ -41,6 +46,10 @@ def _source_identities(datasets: Sequence[Dataset]) -> list[dict[str, Any]]:
         }
         if identity:
             identities.append(identity)
+            continue
+        composition = provenance.get("composition")
+        if composition is not None:
+            identities.append({"composition": composition})
             continue
         owners = sorted(
             {dataset.handle(variable.name).owner for variable in dataset.variables}
