@@ -16,6 +16,21 @@ __all__ = ["ProductGraphExecutor"]
 NodeRunner = Callable[[ProductNode, Mapping[str, Dataset]], Mapping[str, Dataset]]
 
 
+def _has_duplicate_values(values: np.ndarray) -> bool:
+    """Whether a coordinate array repeats a value.
+
+    NaNs count as equal to each other (``equal_nan=True`` semantics), so more
+    than one NaN is a duplicate even though ``np.unique`` keeps them distinct.
+    """
+    array = np.asarray(values)
+    if array.dtype.kind in "fc":
+        nan_mask = np.isnan(array)
+        if np.count_nonzero(nan_mask) > 1:
+            return True
+        array = array[~nan_mask]
+    return bool(np.unique(array).size != array.size)
+
+
 class ProductGraphExecutor:
     """Execute a validated product graph through injected node runners.
 
@@ -289,6 +304,13 @@ class ProductGraphExecutor:
                 f"{node.node_id!r} have different parameter coordinates"
             )
         for coordinate_name in product_coordinates:
+            for label, dataset in ((name, product), (reference_name, reference)):
+                if _has_duplicate_values(dataset.coordinate(coordinate_name)):
+                    raise ValueError(
+                        f"aligned inputs {name!r} and {reference_name!r} of node "
+                        f"{node.node_id!r} have duplicate values in coordinate "
+                        f"{coordinate_name!r} of input {label!r}"
+                    )
             if not np.array_equal(
                 product.coordinate(coordinate_name),
                 reference.coordinate(coordinate_name),

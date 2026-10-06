@@ -18,6 +18,7 @@ from qphase.data import (
     ProductSchema,
     SamplingBasisSchema,
     StatisticsDataset,
+    TimeSeriesDataset,
     VariableSchema,
 )
 
@@ -76,6 +77,131 @@ def _aligned_product(
         {"value": array, "parameter.x": array},
         owner="test",
     )
+
+
+def _time_series_product() -> TimeSeriesDataset:
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[
+            AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=2),
+            AxisSchema(name="time", role=AxisRole.COORDINATE, size=3),
+        ],
+        variables=[
+            VariableSchema(
+                name="x",
+                dtype="float64",
+                value_domain="real",
+                dims=("trajectory", "time"),
+            )
+        ],
+    )
+    return TimeSeriesDataset.from_arrays(
+        schema, {"x": np.arange(6.0).reshape(2, 3)}, owner="test"
+    )
+
+
+def _shared_downstream_graph(*, publish: bool) -> ProductGraph:
+    """One time_series -> time_series node feeding two downstream consumers."""
+    return ProductGraph(
+        nodes=[
+            ProductNode(
+                node_id="transform",
+                producer="test.transform",
+                requirements=[
+                    ProductRequirement(name="input", kind=DataKind.TIME_SERIES)
+                ],
+                outputs=[ProductDeclaration(name="series", kind=DataKind.TIME_SERIES)],
+                publish_outputs=["series"] if publish else [],
+            ),
+            ProductNode(
+                node_id="left",
+                producer="test.left",
+                requirements=[
+                    ProductRequirement(name="series", kind=DataKind.TIME_SERIES)
+                ],
+                outputs=[ProductDeclaration(name="result", kind=DataKind.TIME_SERIES)],
+            ),
+            ProductNode(
+                node_id="right",
+                producer="test.right",
+                requirements=[
+                    ProductRequirement(name="series", kind=DataKind.TIME_SERIES)
+                ],
+                outputs=[ProductDeclaration(name="result", kind=DataKind.TIME_SERIES)],
+            ),
+        ],
+        edges=[
+            {
+                "producer": "transform",
+                "product": "series",
+                "consumer": "left",
+                "requirement": "series",
+            },
+            {
+                "producer": "transform",
+                "product": "series",
+                "consumer": "right",
+                "requirement": "series",
+            },
+        ],
+        external_inputs=[
+            {
+                "consumer": "transform",
+                "requirement": "input",
+                "source": "external",
+                "product": "raw",
+            }
+        ],
+    )
+
+
+def _run_shared_downstream(graph: ProductGraph):
+    calls: list[str] = []
+    received: dict[str, TimeSeriesDataset] = {}
+
+    def transform(node, inputs):
+        calls.append(node.node_id)
+        return {"series": inputs["input"]}
+
+    def consumer(node, inputs):
+        calls.append(node.node_id)
+        received[node.node_id] = inputs["series"]
+        return {"result": _time_series_product()}
+
+    result = ProductGraphExecutor(
+        graph,
+        {"transform": transform, "left": consumer, "right": consumer},
+    ).run({"external": {"raw": _time_series_product()}})
+    return result, calls, received
+
+
+def test_executor_shares_one_time_series_product_between_consumers():
+    result, calls, received = _run_shared_downstream(
+        _shared_downstream_graph(publish=True)
+    )
+
+    assert calls == ["transform", "left", "right"]
+    assert received["left"] is received["right"]
+    assert set(result) == {"transform", "left", "right"}
+    assert result["transform"]["series"] is received["left"]
+    assert set(result["left"]) == {"result"}
+    assert set(result["right"]) == {"result"}
+
+
+def test_executor_releases_shared_product_only_after_last_consumer():
+    result, calls, received = _run_shared_downstream(
+        _shared_downstream_graph(publish=False)
+    )
+
+    # Both consumers still receive the live shared product, so the executor
+    # must not release it before the last consumer has completed.
+    assert calls == ["transform", "left", "right"]
+    assert received["left"] is received["right"]
+    # Once the last consumer completed, the unpublished intermediate is
+    # released: only the terminal consumers appear in the outputs.
+    assert set(result) == {"left", "right"}
+    assert set(result["left"]) == {"result"}
+    assert set(result["right"]) == {"result"}
 
 
 def test_executor_resolves_external_input_and_checks_runtime_schema():
@@ -340,13 +466,41 @@ def test_executor_reports_non_mapping_output_failure():
 
 
 @pytest.mark.parametrize(
-    ("other", "message"),
+    ("left", "other", "message"),
     [
-        (_aligned_product([1.0, 3.0]), "disagree on coordinate"),
-        (_aligned_product([1.0, 2.0], sampling_count=8), "sampling bases"),
+        (
+            _aligned_product([1.0, 2.0]),
+            _aligned_product([1.0, 3.0]),
+            "disagree on coordinate",
+        ),
+        (
+            _aligned_product([1.0, 2.0]),
+            _aligned_product([1.0, 2.0], sampling_count=8),
+            "sampling bases",
+        ),
+        (
+            _aligned_product([1.0, 2.0]),
+            _aligned_product([1.0, 1.0]),
+            "duplicate values in coordinate 'x' of input 'right'",
+        ),
+        (
+            _aligned_product([1.0, 2.0]),
+            _aligned_product([np.nan, np.nan]),
+            "duplicate values in coordinate 'x' of input 'right'",
+        ),
+        (
+            _aligned_product([1.0, 1.0]),
+            _aligned_product([1.0, 2.0]),
+            "duplicate values in coordinate 'x' of input 'left'",
+        ),
+        (
+            _aligned_product([1.0, 1.0]),
+            _aligned_product([1.0, 1.0]),
+            "duplicate values in coordinate 'x' of input 'right'",
+        ),
     ],
 )
-def test_executor_enforces_align_with(other, message):
+def test_executor_enforces_align_with(left, other, message):
     graph = ProductGraph(
         nodes=[
             ProductNode(
@@ -385,7 +539,7 @@ def test_executor_enforces_align_with(other, message):
         ).run(
             {
                 "external": {
-                    "left": _aligned_product([1.0, 2.0]),
+                    "left": left,
                     "right": other,
                 }
             }
