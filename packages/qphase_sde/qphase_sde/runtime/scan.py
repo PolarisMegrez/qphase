@@ -76,8 +76,7 @@ class SDEParameterGridAdapter:
             raise ValueError(f"invalid SDE scan tile [{scan_start}, {scan_stop})")
         if not (0 <= trajectory_start < trajectory_stop <= self.base_n_traj):
             raise ValueError(
-                "invalid trajectory batch "
-                f"[{trajectory_start}, {trajectory_stop})"
+                f"invalid trajectory batch [{trajectory_start}, {trajectory_stop})"
             )
         point_count = scan_stop - scan_start
         batch_count = trajectory_stop - trajectory_start
