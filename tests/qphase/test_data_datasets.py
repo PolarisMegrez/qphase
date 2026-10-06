@@ -606,6 +606,92 @@ def test_stack_datasets_restores_point_parameter_axis():
     )
 
 
+def _provenance_scan_dataset(
+    value: float,
+    provenance: dict | None,
+    *,
+    owner: str = "engine.fake",
+) -> TimeSeriesDataset:
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[
+            AxisSchema(name="scan", role=AxisRole.PARAMETER, size=1),
+            AxisSchema(
+                name="time",
+                role=AxisRole.COORDINATE,
+                size=4,
+                coordinate="regular",
+                start=0.0,
+                step=0.5,
+            ),
+        ],
+        variables=[
+            VariableSchema(
+                name="x",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan", "time"),
+            )
+        ],
+    )
+    return TimeSeriesDataset.from_arrays(
+        schema,
+        {"x": np.full((1, 4), value)},
+        owner=owner,
+        provenance=provenance,
+    )
+
+
+def _distinct_provenance_datasets() -> list[TimeSeriesDataset]:
+    return [
+        _provenance_scan_dataset(
+            1.0,
+            {"artifact_id": "art-a", "product": "trajectories", "engine": "sde"},
+        ),
+        _provenance_scan_dataset(
+            2.0, {"artifact_id": "art-b", "product": "trajectories"}
+        ),
+        _provenance_scan_dataset(3.0, None),
+    ]
+
+
+_EXPECTED_COMPOSITION_INPUTS = [
+    {"artifact_id": "art-a", "product": "trajectories"},
+    {"artifact_id": "art-b", "product": "trajectories"},
+    {"owner": "engine.fake"},
+]
+
+
+def test_concat_datasets_records_all_source_identities():
+    combined = concat_datasets(_distinct_provenance_datasets(), axis="scan")
+
+    provenance = combined.provenance
+    composition = provenance["composition"]
+    assert composition["operation"] == "concat"
+    assert composition["axis"] == "scan"
+    assert composition["inputs"] == _EXPECTED_COMPOSITION_INPUTS
+    # The first input's artifact identity belongs to the input list, not to
+    # the composed product; shared non-identity provenance is retained.
+    assert "artifact_id" not in provenance
+    assert "product" not in provenance
+    assert provenance["engine"] == "sde"
+    assert json.loads(json.dumps(provenance)) == provenance
+
+
+def test_stack_datasets_records_all_source_identities():
+    combined = stack_datasets(_distinct_provenance_datasets(), axis="batch")
+
+    provenance = combined.provenance
+    composition = provenance["composition"]
+    assert composition["operation"] == "stack"
+    assert composition["axis"] == "batch"
+    assert composition["inputs"] == _EXPECTED_COMPOSITION_INPUTS
+    assert "artifact_id" not in provenance
+    assert "product" not in provenance
+    assert provenance["engine"] == "sde"
+    assert json.loads(json.dumps(provenance)) == provenance
+
+
 def test_slice_view_preserves_coordinates_through_roundtrip(tmp_path):
     from qphase.data import load_products, save_products
 

@@ -1,4 +1,15 @@
-"""Schema-driven composition of typed datasets."""
+"""Schema-driven composition of typed datasets.
+
+Composition provenance contract: the composed product records a
+``composition`` mapping with the operation parameters (``operation`` and
+``axis``; for ``stack`` the created axis and its size follow from the output
+schema) plus an ordered ``inputs`` list carrying every source identity. Each
+entry holds the source's ``artifact_id``/``product`` provenance keys when it
+carries them, otherwise the owner marker of the source's runtime handles; no
+source is silently dropped. The first input's own ``artifact_id``/``product``
+keys are input identities, so they are not attributed to the composed
+product's top-level provenance.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +22,54 @@ import numpy as np
 from .datasets import Dataset
 
 __all__ = ["concat_datasets", "stack_datasets"]
+
+
+def _source_identities(datasets: Sequence[Dataset]) -> list[dict[str, Any]]:
+    """Ordered identity of every composition input.
+
+    Sources carrying ``artifact_id``/``product`` provenance keys (artifact
+    restore path) are identified by them; any other source is identified by
+    the owner marker of its runtime handles.
+    """
+    identities: list[dict[str, Any]] = []
+    for dataset in datasets:
+        provenance = dataset.provenance
+        identity = {
+            key: provenance[key]
+            for key in ("artifact_id", "product")
+            if key in provenance
+        }
+        if identity:
+            identities.append(identity)
+            continue
+        owners = sorted(
+            {dataset.handle(variable.name).owner for variable in dataset.variables}
+        )
+        if len(owners) == 1:
+            identities.append({"owner": owners[0]})
+        else:
+            identities.append({"owners": owners})
+    return identities
+
+
+def _composition_provenance(
+    first: Dataset,
+    datasets: Sequence[Dataset],
+    *,
+    operation: str,
+    axis: str,
+) -> dict[str, Any]:
+    provenance = {
+        key: value
+        for key, value in first.provenance.items()
+        if key not in ("artifact_id", "product")
+    }
+    provenance["composition"] = {
+        "operation": operation,
+        "axis": axis,
+        "inputs": _source_identities(datasets),
+    }
+    return provenance
 
 
 def _normalized_schema(dataset: Dataset, axis: str) -> dict[str, Any]:
@@ -100,12 +159,7 @@ def concat_datasets(datasets: Sequence[Dataset], *, axis: str) -> Dataset:
     for item in schema_data["axes"]:
         if item["name"] == axis:
             item["size"] = sum(int(size) for size in axis_sizes if size is not None)
-    provenance = dict(first.provenance)
-    provenance["composition"] = {
-        "operation": "concat",
-        "axis": axis,
-        "input_count": len(datasets),
-    }
+    provenance = _composition_provenance(first, datasets, operation="concat", axis=axis)
     return type(first).from_arrays(
         type(first.schema).model_validate(schema_data),
         arrays,
@@ -187,12 +241,7 @@ def stack_datasets(
         else coordinate
         for coordinate in schema_data["coordinates"]
     ]
-    provenance = dict(first.provenance)
-    provenance["composition"] = {
-        "operation": "stack",
-        "axis": axis,
-        "input_count": len(datasets),
-    }
+    provenance = _composition_provenance(first, datasets, operation="stack", axis=axis)
     return type(first).from_arrays(
         type(first.schema).model_validate(schema_data),
         arrays,
