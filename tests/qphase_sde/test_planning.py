@@ -44,6 +44,40 @@ def _grid(size=31):
     ).compile()
 
 
+def _trajectory_graph(*names):
+    """Minimal typed graph: each named analyser node consumes trajectories."""
+    from qphase.data import (
+        DataKind,
+        ExternalInputBinding,
+        ProductDeclaration,
+        ProductGraph,
+        ProductNode,
+        ProductRequirement,
+    )
+
+    nodes = [
+        ProductNode(
+            node_id=f"analyser.{name}",
+            producer=f"analyser:{name}",
+            requirements=[
+                ProductRequirement(name="trajectories", kind=DataKind.TIME_SERIES)
+            ],
+            outputs=[ProductDeclaration(name=name, kind=DataKind.STATISTICS)],
+        )
+        for name in names
+    ]
+    bindings = [
+        ExternalInputBinding(
+            consumer=f"analyser.{name}",
+            requirement="trajectories",
+            source="input",
+            product="trajectories",
+        )
+        for name in names
+    ]
+    return ProductGraph(nodes=nodes, external_inputs=bindings)
+
+
 def test_planner_rejects_invalid_psd_bandwidth_before_allocation():
     config = EngineConfig(
         t0=0.0,
@@ -169,6 +203,7 @@ def test_typed_planner_rejects_non_tileable_products_before_running():
             analysers={"typed_ragged": typed_ragged},
             resources=SimpleNamespace(memory_limit_mib=2),
             typed_execution=True,
+            product_graph=_trajectory_graph("typed_ragged"),
         )
 
 

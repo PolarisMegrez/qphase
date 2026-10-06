@@ -538,7 +538,12 @@ def add_scan_parameter_coordinates(
     dataset: Dataset,
     coordinates: Mapping[str, np.ndarray],
 ) -> Dataset:
-    """Attach flattened scan parameters to one graph-ready product."""
+    """Attach flattened scan parameters to one graph-ready product.
+
+    Re-attaching coordinates that are already present with identical values
+    is a no-op, so per-tile attachment followed by a full-scan attachment
+    after the merge is safe; a genuine name or value collision still fails.
+    """
     if not coordinates or "scan" not in {axis.name for axis in dataset.axes}:
         return dataset
     from qphase.data.runtime import DictProductBacking, HostArrayHandle
@@ -553,15 +558,20 @@ def add_scan_parameter_coordinates(
     assert scan_size is not None
     for name, raw in coordinates.items():
         variable_name = f"parameter.{name}"
-        if variable_name in handles:
-            raise TypeError(
-                f"scan coordinate {variable_name!r} collides with product data"
-            )
         values = np.asarray(raw)
         if values.shape != (scan_size,):
             raise TypeError(
                 f"scan coordinate {name!r} has shape {values.shape}, "
                 f"expected {(scan_size,)}"
+            )
+        if variable_name in handles:
+            existing = np.asarray(dataset.handle(variable_name).materialize())
+            if existing.shape == values.shape and np.array_equal(
+                existing, values, equal_nan=True
+            ):
+                continue
+            raise TypeError(
+                f"scan coordinate {variable_name!r} collides with product data"
             )
         variable = VariableSchema(
             name=variable_name,

@@ -101,6 +101,7 @@ class PeaksAnalyzer(Analyzer):
                     "sample_index",
                     "status_code",
                 ],
+                table="peak_candidates",
             ),
         )
 

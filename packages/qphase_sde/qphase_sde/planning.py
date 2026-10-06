@@ -99,19 +99,25 @@ class SDEExecutionPlan:
     memory: SDEMemoryEstimate
     observer_check_interval_steps: int | None = None
     effective_chunk_steps: int | None = None
+    deferred_analysers: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Return JSON-compatible plan metadata.
 
         The observer-derived fields are omitted when not applicable so plans
-        without observers keep their previous shape.
+        without observers keep their previous shape; ``deferred_analysers``
+        is likewise omitted when no analyser is deferred to post-merge
+        execution.
         """
         payload = asdict(self)
         payload["scan_shape"] = list(self.scan_shape)
+        payload["deferred_analysers"] = list(self.deferred_analysers)
         if self.observer_check_interval_steps is None:
             payload.pop("observer_check_interval_steps")
         if self.effective_chunk_steps is None:
             payload.pop("effective_chunk_steps")
+        if not self.deferred_analysers:
+            payload.pop("deferred_analysers")
         return payload
 
 
@@ -127,8 +133,16 @@ def build_execution_plan(
     resources: Any | None,
     device_memory: tuple[int, int] | None = None,
     typed_execution: bool = False,
+    product_graph: Any | None = None,
 ) -> SDEExecutionPlan:
-    """Validate a job and choose an SDE-internal scan tile size."""
+    """Validate a job and choose an SDE-internal scan tile size.
+
+    With ``typed_execution`` and the compiler-frozen ``product_graph``, a
+    resource-driven multi-tile scan splits the graph into tile-scope nodes
+    (executed per tile) and final-scope nodes (deferred to one post-merge
+    execution on the full-scan products); the plan reports the deferred
+    analysers and accounts their full-scan retention honestly.
+    """
     time_grid = resolve_time_grid(
         t0=config.t0,
         t1=config.t1,
@@ -329,19 +343,70 @@ def build_execution_plan(
 
     tile_size = int(max(1, tile_size))
     tile_count = math.ceil(scan_size / tile_size)
-    if typed_execution and tile_size < scan_size:
-        unsupported = [
-            str(name)
-            for name, analyser in analysers.items()
-            if not _analyzer_capabilities(analyser).supports_scan_tiling
-            and callable(getattr(analyser, "output_specs", None))
-        ]
-        if unsupported:
+    deferred_analysers: tuple[str, ...] = ()
+    deferred_host_bytes = 0
+    if typed_execution and product_graph is not None and tile_size < scan_size:
+        tile_scope, final_scope = _typed_scan_scope(product_graph, analysers)
+        trajectory_consumers = {
+            binding.consumer
+            for binding in product_graph.external_inputs
+            if binding.product == "trajectories"
+        }
+        blocked = sorted(trajectory_consumers & final_scope)
+        if blocked:
             raise SDEMemoryPlanningError(
-                "scan tiling is required by the resource budget, but these "
-                "analysers do not provide a scan-tile reducer: "
-                f"{unsupported!r}"
+                "scan tiling is required by the resource budget, but analysers "
+                f"{[node.removeprefix('analyser.') for node in blocked]!r} "
+                "consume trajectories without scan-tile support; trajectories "
+                "cannot be merged across scan tiles. Reduce the scan size, "
+                "raise the memory budget, or use analysers that support scan "
+                "tiling."
             )
+        published = product_graph.terminal_outputs()
+        for node in product_graph.nodes:
+            published[node.node_id].update(node.publish_outputs)
+        table_products = sorted(
+            output.name
+            for node in product_graph.nodes
+            for output in node.outputs
+            if output.table is not None and output.name in published[node.node_id]
+        )
+        if table_products:
+            raise SDEMemoryPlanningError(
+                "scan tiling is required by the resource budget, but products "
+                f"{table_products!r} are ragged/table terminals; ragged/table "
+                "products require a domain-specific reducer (future work) and "
+                "cannot be merged across scan tiles. Reduce the scan size or "
+                "raise the memory budget so the scan fits one tile."
+            )
+        if final_scope:
+            deferred_analysers = tuple(
+                sorted(node.removeprefix("analyser.") for node in final_scope)
+            )
+            # Deferred execution retains the merged tile-scope products at
+            # full scan size until the final phase, whose analysers then run
+            # once on full-scan inputs. Merged product sizes are approximated
+            # by the accumulator-sized per-point products of the tile-scope
+            # trajectory analysers; each downstream tile-scope product is
+            # assumed no larger than those (it derives from them). The
+            # final-phase workspace is estimated against the merged input.
+            downstream_count = sum(
+                1
+                for node in tile_scope
+                if node.removeprefix("analyser.") not in trajectory_analysers
+            )
+            per_point_product_bytes = accumulator_workspace * (1 + downstream_count)
+            merged_bytes = scan_size * per_point_product_bytes
+            final_device, final_host = _analyzer_workspace_bytes(
+                max(1, merged_bytes),
+                {name: analysers[name] for name in deferred_analysers},
+                n_traj=n_traj,
+                saved_samples=saved_samples,
+                n_record_modes=n_record_modes,
+                real_itemsize=real_itemsize,
+                backend_name=backend_name,
+            )
+            deferred_host_bytes = merged_bytes + final_device + final_host
     peak = fixed + working_per_point * tile_size
     if backend_name == "cupy":
         device_peak = peak
@@ -352,7 +417,20 @@ def build_execution_plan(
     else:
         device_peak = 0
         host_peak = peak
+    host_peak += deferred_host_bytes
     if host_budget is not None and host_peak > host_budget:
+        if deferred_analysers:
+            raise SDEMemoryPlanningError(
+                "scan tiling defers analysers "
+                f"{list(deferred_analysers)!r} to post-merge execution: the "
+                "merged tile products plus final-phase workspace need an "
+                f"estimated {deferred_host_bytes / _MIB:.1f} MiB of host memory "
+                f"at full scan size, pushing the host estimate to "
+                f"{host_peak / _MIB:.1f} MiB over the "
+                f"{host_budget / _MIB:.1f} MiB host budget. Reduce the scan "
+                "size, raise the memory budget, or use analysers that support "
+                "scan tiling."
+            )
         raise SDEMemoryPlanningError(
             "The SDE analyser/retained trajectory requires "
             f"{host_peak / _MIB:.1f} MiB of host memory but the host budget is "
@@ -407,6 +485,7 @@ def build_execution_plan(
         memory=memory,
         observer_check_interval_steps=observer_check_interval_steps,
         effective_chunk_steps=effective_chunk_steps,
+        deferred_analysers=deferred_analysers,
     )
 
 
@@ -683,6 +762,35 @@ def _analyzer_capabilities(analyser: Any) -> Any:
             getattr(analyser, "create_result_accumulator", None)
         )
     )
+
+
+def _typed_scan_scope(
+    graph: Any, analysers: dict[str, Any]
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Partition graph nodes into tile-scope and final-scope node ids.
+
+    A node is tile-scope iff its analyser instance declares scan-tiling
+    support via ``execution_capabilities().supports_scan_tiling`` and every
+    graph ancestor is tile-scope; any other node — and with it all its
+    descendants — is final-scope and executes once on the merged full-scan
+    products after the tile phase.
+    """
+    capable: dict[str, bool] = {}
+    for node in graph.nodes:
+        analyser = analysers.get(node.node_id.removeprefix("analyser."))
+        capable[node.node_id] = (
+            analyser is not None
+            and _analyzer_capabilities(analyser).supports_scan_tiling
+        )
+    predecessors: dict[str, set[str]] = {node.node_id: set() for node in graph.nodes}
+    for edge in graph.edges:
+        predecessors[edge.consumer].add(edge.producer)
+    tile_scope: set[str] = set()
+    for node in graph.topological_order():
+        if capable[node.node_id] and predecessors[node.node_id] <= tile_scope:
+            tile_scope.add(node.node_id)
+    all_nodes = {node.node_id for node in graph.nodes}
+    return frozenset(tile_scope), frozenset(all_nodes - tile_scope)
 
 
 def _trajectory_analysers(

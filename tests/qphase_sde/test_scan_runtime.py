@@ -1063,3 +1063,340 @@ def test_engine_fails_when_analyser_builds_no_product(monkeypatch):
 
     with pytest.raises(SDEExecutionError, match="'psd'"):
         engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
+
+
+_ALLAN_SCALING_CONFIG = {
+    "scan_param": "rate",
+    "critical_value": 1.0,
+    "side": "positive",
+    "mode": 0,
+    "min_scaling_points": 3,
+    "bootstrap_samples": 0,
+    # Relaxed white-window gates: the wiring tests exercise graph routing and
+    # coordinate flow on a tiny dummy dataset, not the physics acceptance.
+    "min_averaging_samples": 1,
+    "min_independent_windows": 1,
+    "max_relative_sem": 100.0,
+    "min_local_r2": 0.0,
+    "min_tau_decades": 0.0,
+    "white_slope_min": -3.0,
+    "white_slope_max": 1.0,
+    "local_window_points": 3,
+}
+
+
+def _allan_chain_setup(publish_allan=False, **engine_overrides):
+    """Compiled allan_variance -> allan_scaling graph plus matching instances."""
+    from qphase.core.registry import discovery, registry
+    from qphase_sde.analyser.allan_scaling import AllanScalingAnalyzer
+    from qphase_sde.graph import compile_product_graph
+
+    analyser_config = {
+        "allan_variance": {
+            "modes": [0],
+            "points": 5,
+            "min_windows": 2,
+            "min_independent_windows": 1,
+        },
+        "allan_scaling": dict(_ALLAN_SCALING_CONFIG),
+    }
+    discovery.discover_plugins()
+    graph = compile_product_graph(
+        plugin_config={"analyser": analyser_config},
+        registry=registry,
+        publish_outputs=(
+            {"allan_variance": ["allan_variance"]} if publish_allan else None
+        ),
+    )
+    assert graph is not None
+    analysers = {
+        "allan_variance": AllanVarianceAnalyzer(
+            modes=[0], points=5, min_windows=2, min_independent_windows=1
+        ),
+        "allan_scaling": AllanScalingAnalyzer(
+            AllanScalingAnalyzer.config_schema(**_ALLAN_SCALING_CONFIG)
+        ),
+    }
+    config = EngineConfig(
+        t0=0.0,
+        t1=0.8,
+        dt=0.01,
+        n_traj=128,
+        seed=37,
+        ic=[["1.0+0.0j"]],
+        keep_traj=False,
+        **engine_overrides,
+    )
+    return graph, analysers, config
+
+
+def _run_allan_chain(graph, analysers, config, grid, resources=None):
+    engine = Engine(
+        config=config,
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": StochasticScannedModel(),
+            "analyser": analysers,
+        },
+        product_graph=graph,
+    )
+    return engine.run(
+        context=SimpleNamespace(
+            parameter_grid=grid,
+            product_graph=graph,
+            progress=None,
+            cancellation=None,
+            metadata={},
+            resources=resources,
+        )
+    )
+
+
+def test_typed_allan_chain_scan_carries_parameter_coordinates():
+    """Reducer-completed frontier products must carry real scan coordinates.
+
+    Regression probe for the Gate 5C blocker: allan_variance -> allan_scaling
+    on a 4-point scan with 2 trajectory batches failed with
+    "typed Allan product is missing parameter.rate" because the completed
+    reducer products entered the graph executor without scan coordinates.
+    """
+    graph, analysers, config = _allan_chain_setup(
+        publish_allan=True, trajectory_batching="required", trajectory_batch_size=64
+    )
+
+    result = _run_allan_chain(graph, analysers, config, _four_point_grid())
+
+    assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
+    assert set(result.products) == {"allan_variance", "allan_scaling"}
+    allan = result.products["allan_variance"]
+    assert allan.axis("scan").size == 4
+    np.testing.assert_array_equal(allan.coordinate("rate"), [1.0, 2.0, 3.0, 4.0])
+    scaling = _product_arrays(result.products["allan_scaling"])
+    # Points below the critical value are gated out; the three supercritical
+    # points feed the scaling summary.
+    assert scaling["summary.accepted_points"] >= 3
+
+
+def _sixteen_point_grid():
+    return ScanSpec.model_validate(
+        {
+            "axes": {
+                "rate": {
+                    "target": "model.scanned_dummy.rate",
+                    "values": list(np.arange(16, dtype=float) + 1.0),
+                }
+            }
+        }
+    ).compile()
+
+
+def _assert_products_equal(reference, candidate):
+    assert set(reference.products) == set(candidate.products)
+    for name, product in reference.products.items():
+        other = candidate.products[name]
+        assert product.schema == other.schema, name
+        for variable in product.variables:
+            expected = product.handle(variable.name).materialize()
+            actual = other.handle(variable.name).materialize()
+            if np.dtype(expected.dtype).kind in "fc":
+                np.testing.assert_allclose(actual, expected, rtol=1e-12, err_msg=name)
+            else:
+                np.testing.assert_array_equal(actual, expected, err_msg=name)
+
+
+def test_typed_allan_chain_multi_tile_matches_single_tile_batched():
+    """Tile/final split: a pointwise -> cross-scan chain is tiling-invariant.
+
+    allan_variance executes per scan tile; allan_scaling is deferred to one
+    post-merge execution on the full-scan products. The terminal products of
+    a two-tile run must equal the single-tile run exactly (RNG included).
+    """
+    graph, _, _ = _allan_chain_setup(
+        publish_allan=True, trajectory_batching="required", trajectory_batch_size=64
+    )
+
+    def run(memory_limit_mib):
+        _, analysers, run_config = _allan_chain_setup(
+            publish_allan=True,
+            trajectory_batching="required",
+            trajectory_batch_size=64,
+        )
+        run_config = run_config.model_copy(update={"t1": 1.0})
+        return _run_allan_chain(
+            graph,
+            analysers,
+            run_config,
+            _sixteen_point_grid(),
+            resources=SimpleNamespace(
+                memory_limit_mib=memory_limit_mib, gpu_memory_fraction=None
+            ),
+        )
+
+    single = run(4)
+    multi = run(2)
+
+    assert single.metadata["execution_plan"]["tile_count"] == 1
+    multi_plan = multi.metadata["execution_plan"]
+    assert multi_plan["tile_count"] > 1
+    assert multi_plan["trajectory_batch_count"] == 2
+    assert multi_plan["deferred_analysers"] == ["allan_scaling"]
+    _assert_products_equal(single, multi)
+
+
+def test_typed_allan_chain_tiling_is_invariant_unbatched():
+    """The non-batched tiled branch defers cross-scan analysers identically.
+
+    An unbatched single-tile scan runs the legacy RNG regime while tiled
+    scans draw per-point seeds (planner-frozen rng_strategy), so the
+    invariance pin compares two different multi-tile splittings, exactly
+    like the existing tile-size RNG independence test.
+    """
+    graph, _, _ = _allan_chain_setup(publish_allan=True, trajectory_batching="off")
+    grid = _sixteen_point_grid()
+
+    def run(memory_limit_mib):
+        _, analysers, run_config = _allan_chain_setup(
+            publish_allan=True, trajectory_batching="off"
+        )
+        run_config = run_config.model_copy(update={"t1": 1.0})
+        return _run_allan_chain(
+            graph,
+            analysers,
+            run_config,
+            grid,
+            resources=SimpleNamespace(
+                memory_limit_mib=memory_limit_mib, gpu_memory_fraction=None
+            ),
+        )
+
+    wide = run(4)
+    narrow = run(3)
+
+    for result in (wide, narrow):
+        plan = result.metadata["execution_plan"]
+        assert plan["tile_count"] > 1
+        assert plan["trajectory_batch_count"] == 1
+        assert plan["deferred_analysers"] == ["allan_scaling"]
+    assert (
+        wide.metadata["execution_plan"]["scan_tile_size"]
+        != (narrow.metadata["execution_plan"]["scan_tile_size"])
+    )
+    _assert_products_equal(wide, narrow)
+
+
+def _peaks_chain_setup():
+    """Compiled psd -> peaks graph plus matching instances (table terminal)."""
+    from qphase.core.registry import discovery, registry
+    from qphase_sde.graph import compile_product_graph
+
+    analyser_config = {
+        "psd": {"modes": [0], "kind": "complex"},
+        "peaks": {
+            "scan_param": "rate",
+            "finder": {"scipy": {"noise_threshold": None}},
+        },
+    }
+    discovery.discover_plugins()
+    graph = compile_product_graph(
+        plugin_config={"analyser": analyser_config}, registry=registry
+    )
+    assert graph is not None
+    analysers = {
+        "psd": PsdAnalyzer(kind="complex", modes=[0]),
+        "peaks": PeaksAnalyzer(
+            PeaksAnalyzerConfig(scan_param="rate"),
+            subplugins={"finder": ScipyPeakFinder(noise_threshold=None)},
+        ),
+    }
+    return graph, analysers
+
+
+def _peaks_plan(graph, analysers, memory_limit_mib):
+    from qphase_sde.planning import build_execution_plan
+
+    config = EngineConfig(
+        t0=0.0,
+        t1=1.0,
+        dt=0.01,
+        n_traj=128,
+        trajectory_batching="required",
+        trajectory_batch_size=64,
+        seed=59,
+        ic=[[1.0]],
+        keep_traj=False,
+    )
+    return build_execution_plan(
+        config=config,
+        grid=_sixteen_point_grid(),
+        model=StochasticScannedModel(),
+        backend=NumpyBackend(),
+        integrator=EulerMaruyama(),
+        analysers=analysers,
+        observers={},
+        resources=SimpleNamespace(
+            memory_limit_mib=memory_limit_mib, gpu_memory_fraction=None
+        ),
+        typed_execution=True,
+        product_graph=graph,
+    )
+
+
+def test_typed_multi_tile_plan_rejects_table_terminal():
+    """A multi-tile plan over a ragged/table terminal fails at PLAN time."""
+    from qphase_sde.planning import SDEMemoryPlanningError
+
+    graph, analysers = _peaks_chain_setup()
+
+    with pytest.raises(
+        SDEMemoryPlanningError, match=r"'peaks'.*domain-specific reducer"
+    ):
+        _peaks_plan(graph, analysers, 2)
+
+
+def test_typed_single_tile_plan_allows_table_terminal():
+    """Single-tile plans over the same table terminal still pass planning."""
+    graph, analysers = _peaks_chain_setup()
+
+    plan = _peaks_plan(graph, analysers, 4)
+
+    assert plan.tile_count == 1
+
+
+def test_typed_multi_tile_scan_rejects_table_terminal_at_plan_time():
+    """The engine surfaces the table-terminal rejection before simulating."""
+    from qphase_sde.planning import SDEMemoryPlanningError
+
+    graph, analysers = _peaks_chain_setup()
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=1.0,
+            dt=0.01,
+            n_traj=128,
+            trajectory_batching="required",
+            trajectory_batch_size=64,
+            seed=59,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": StochasticScannedModel(),
+            "analyser": analysers,
+        },
+        product_graph=graph,
+    )
+
+    with pytest.raises(SDEMemoryPlanningError, match="domain-specific reducer"):
+        engine.run(
+            context=SimpleNamespace(
+                parameter_grid=_sixteen_point_grid(),
+                product_graph=graph,
+                progress=None,
+                cancellation=None,
+                metadata={},
+                resources=SimpleNamespace(memory_limit_mib=2, gpu_memory_fraction=None),
+            )
+        )

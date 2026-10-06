@@ -38,6 +38,7 @@ from qphase_sde.observer.base import (
 )
 from qphase_sde.planning import (
     SDEExecutionPlan,
+    _typed_scan_scope,
     build_execution_plan,
     resolve_time_grid,
 )
@@ -65,6 +66,30 @@ class _GroupedRNG:
 
     handles: tuple[Any, ...]
     group_size: int
+
+
+def _tile_scope_sub_graph(graph: Any, tile_scope: frozenset[str]) -> Any:
+    """Build the induced tile-phase sub-graph over the tile-scope nodes.
+
+    Tile-scope is ancestor-closed, so every edge into a tile-scope consumer
+    stays internal and the remaining external bindings keep validating. All
+    outputs of the sub-graph nodes are published: the merged products must
+    re-enter the full graph as completed nodes in the final phase.
+    """
+    from qphase.data import ProductGraph
+
+    nodes = [
+        node.model_copy(
+            update={"publish_outputs": [output.name for output in node.outputs]}
+        )
+        for node in graph.nodes
+        if node.node_id in tile_scope
+    ]
+    edges = [edge for edge in graph.edges if edge.consumer in tile_scope]
+    external = [
+        binding for binding in graph.external_inputs if binding.consumer in tile_scope
+    ]
+    return ProductGraph(nodes=nodes, edges=edges, external_inputs=external)
 
 
 class EngineConfig(BaseModel):
@@ -469,6 +494,9 @@ class Engine(EngineBase):
                 context is not None
                 and getattr(context, "product_graph", None) is not None
             ),
+            product_graph=(
+                getattr(context, "product_graph", None) if context is not None else None
+            ),
         )
         if plan.trajectory_batch_count > 1 and (
             context is None or getattr(context, "product_graph", None) is None
@@ -617,8 +645,15 @@ class Engine(EngineBase):
         *,
         context: Any | None = None,
         completed_nodes: Mapping[str, Mapping[str, Any]] | None = None,
+        graph: Any | None = None,
     ) -> ResultProtocol | None:
-        """Run an all-typed analyser set through the core ProductGraph."""
+        """Run an all-typed analyser set through the core ProductGraph.
+
+        ``graph`` overrides the compiler-frozen graph for tile-phase
+        execution of a scan: the engine runs the induced tile-scope
+        sub-graph per tile and defers final-scope nodes to one post-merge
+        execution of the full graph.
+        """
         if source is None:
             return None
         analysers = self._normalised_analysers()
@@ -634,11 +669,12 @@ class Engine(EngineBase):
         source_products = getattr(source, "products", None)
         if not isinstance(source_products, dict):
             source_products = dict(source.data)
-        graph = (
-            getattr(context, "product_graph", None)
-            if context is not None
-            else self._product_graph
-        )
+        if graph is None:
+            graph = (
+                getattr(context, "product_graph", None)
+                if context is not None
+                else self._product_graph
+            )
         if graph is None:
             raise RuntimeError(
                 "typed analyser execution requires the compiler-resolved "
@@ -689,6 +725,9 @@ class Engine(EngineBase):
             scan_axes = {}
         execution_metadata["scan_axes"] = scan_axes
         execution_metadata["scan_shape"] = list(source.shape)
+        scan_coordinates = {
+            name: np.asarray(values).reshape(-1) for name, values in scan_axes.items()
+        }
 
         def make_runner(node_id: str, analyser: Any, name: str) -> Any:
             incoming = [edge for edge in graph.edges if edge.consumer == node_id]
@@ -708,7 +747,15 @@ class Engine(EngineBase):
                 cancellation = getattr(context, "cancellation", None)
                 if cancellation is not None:
                     cancellation.raise_if_cancelled()
-                return outputs
+                # Downstream consumers may read the scan parameter coordinates
+                # (e.g. allan_scaling reads parameter.<scan_param>), so attach
+                # them at production time, not only to the terminal products.
+                return {
+                    product_name: add_scan_parameter_coordinates(
+                        product, scan_coordinates
+                    )
+                    for product_name, product in outputs.items()
+                }
 
             return runner
 
@@ -725,9 +772,6 @@ class Engine(EngineBase):
             product_name: product
             for node_products_for_node in node_products.values()
             for product_name, product in node_products_for_node.items()
-        }
-        scan_coordinates = {
-            name: np.asarray(values).reshape(-1) for name, values in scan_axes.items()
         }
         products = {
             name: add_scan_parameter_coordinates(product, scan_coordinates)
@@ -754,8 +798,22 @@ class Engine(EngineBase):
         reporter: Any | None,
         context: Any,
     ) -> SDEDataBundle:
-        """Run a resource-bounded scan through the frozen typed graph."""
+        """Run a resource-bounded scan through the frozen typed graph.
+
+        The graph splits into tile-scope nodes (executed per scan tile) and
+        final-scope nodes (deferred to one execution on the merged full-scan
+        products), so cross-scan analysers never execute on partial tiles.
+        """
         from .products import add_scan_parameter_coordinates
+
+        graph = getattr(context, "product_graph", None)
+        if graph is None:
+            raise RuntimeError("typed scan tiling requires a ProductGraph")
+        tile_scope, final_scope = _typed_scan_scope(graph, self._normalised_analysers())
+        tile_graph = _tile_scope_sub_graph(graph, tile_scope) if final_scope else graph
+        assert context.parameter_grid is not None
+        grid = context.parameter_grid
+        flat_coordinates = grid.parameter_arrays(flatten=True)
 
         if plan.trajectory_batch_count > 1:
             tile_bundles: list[SDEDataBundle] = []
@@ -780,6 +838,7 @@ class Engine(EngineBase):
                         scan_stop=stop,
                         master_seed=adapter.master_seed,
                         observers=self._normalised_observers(),
+                        graph=tile_graph,
                     )
                 )
             products = self._concat_scan_products(
@@ -793,13 +852,18 @@ class Engine(EngineBase):
                 for name, value in payloads.items():
                     values = value if isinstance(value, list) else [value]
                     observer_payloads.setdefault(name, []).extend(values)
-            grid = context.parameter_grid
-            assert grid is not None
-            flat_coordinates = grid.parameter_arrays(flatten=True)
             products = {
                 name: add_scan_parameter_coordinates(product, flat_coordinates)
                 for name, product in products.items()
             }
+            if final_scope:
+                products = self._run_scan_final_phase(
+                    graph=graph,
+                    context=context,
+                    tile_scope=tile_scope,
+                    merged_products=products,
+                    grid=grid,
+                )
             return SDEDataBundle(
                 products,
                 self._job_provenance(grid=grid),
@@ -812,11 +876,8 @@ class Engine(EngineBase):
                     "observer_payloads": observer_payloads,
                 },
             )
-        assert context.parameter_grid is not None
-        grid = context.parameter_grid
         from .result import _trajectory_product
 
-        flat_coordinates = grid.parameter_arrays(flatten=True)
         tile_products: list[dict[str, Any]] = []
         tile_trajectories: list[Any] = []
         total_work = plan.scan_size * plan.n_traj_per_point * plan.steps
@@ -863,7 +924,9 @@ class Engine(EngineBase):
                 scan_shape=(point_count,),
                 meta={"scan_combine": "zipped"},
             )
-            analysed_tile = self._run_typed_analyze(tile_source, context=context)
+            analysed_tile = self._run_typed_analyze(
+                tile_source, context=context, graph=tile_graph
+            )
             if not isinstance(analysed_tile, SDEDataBundle):
                 raise RuntimeError("typed scan tile produced no SDE data bundle")
             tile_products.append(analysed_tile.products)
@@ -872,6 +935,18 @@ class Engine(EngineBase):
             self._release_backend_pool()
 
         products = self._concat_scan_products(tile_products)
+        products = {
+            name: add_scan_parameter_coordinates(product, flat_coordinates)
+            for name, product in products.items()
+        }
+        if final_scope:
+            products = self._run_scan_final_phase(
+                graph=graph,
+                context=context,
+                tile_scope=tile_scope,
+                merged_products=products,
+                grid=grid,
+            )
         if tile_trajectories:
             products["trajectories"] = concat_datasets(tile_trajectories, axis="scan")
         return SDEDataBundle(
@@ -885,6 +960,42 @@ class Engine(EngineBase):
                 "execution_plan": plan.to_dict(),
             },
         )
+
+    def _run_scan_final_phase(
+        self,
+        *,
+        graph: Any,
+        context: Any,
+        tile_scope: frozenset[str],
+        merged_products: dict[str, Any],
+        grid: Any,
+    ) -> dict[str, Any]:
+        """Run final-scope nodes once on the merged full-scan products.
+
+        The tile-scope nodes re-enter the full graph as completed nodes; the
+        executor then runs every final-scope node a single time with complete
+        inputs and returns the graph's published terminal products.
+        """
+        completed_nodes = {
+            node.node_id: {
+                output.name: merged_products[output.name] for output in node.outputs
+            }
+            for node in graph.nodes
+            if node.node_id in tile_scope
+        }
+        final_source = SDEDataBundle(
+            dict(merged_products),
+            self._job_provenance(grid=grid),
+            scan_axes=dict(grid.axes),
+            scan_shape=grid.shape,
+            meta={"scan_combine": grid.combine},
+        )
+        analysed = self._run_typed_analyze(
+            final_source, context=context, completed_nodes=completed_nodes
+        )
+        if not isinstance(analysed, SDEDataBundle):
+            raise RuntimeError("typed scan final phase produced no SDE data bundle")
+        return analysed.products
 
     @staticmethod
     def _concat_scan_products(
@@ -920,6 +1031,7 @@ class Engine(EngineBase):
         scan_stop: int = 1,
         master_seed: int | None,
         observers: dict[str, Any],
+        graph: Any | None = None,
     ) -> SDEDataBundle:
         """Run fused scan-tile trajectory batches through the frozen graph."""
         assert self.config is not None
@@ -927,7 +1039,8 @@ class Engine(EngineBase):
         if point_count < 1:
             raise ValueError("typed trajectory batch requires a non-empty scan tile")
         analysers = self._normalised_analysers()
-        graph = getattr(context, "product_graph", None)
+        if graph is None:
+            graph = getattr(context, "product_graph", None)
         if graph is None:
             raise RuntimeError("typed trajectory batching requires a ProductGraph")
         graph_nodes = {node.node_id: node for node in graph.nodes}
@@ -1136,6 +1249,23 @@ class Engine(EngineBase):
             if is_scan or point_count > 1
             else point_products[0]
         )
+        tile_coordinates: dict[str, np.ndarray] = {}
+        if is_scan:
+            grid = getattr(context, "parameter_grid", None)
+            if grid is not None:
+                from .products import add_scan_parameter_coordinates
+
+                # Reducer-completed frontier products must carry the real
+                # flat scan coordinates of this tile before downstream graph
+                # nodes consume them.
+                tile_coordinates = {
+                    name: np.asarray(values)[scan_start:scan_stop]
+                    for name, values in grid.parameter_arrays(flatten=True).items()
+                }
+                completed_products = {
+                    name: add_scan_parameter_coordinates(product, tile_coordinates)
+                    for name, product in completed_products.items()
+                }
         completed_nodes = {
             node_ids[name]: {
                 product_name: completed_products[product_name]
@@ -1160,7 +1290,7 @@ class Engine(EngineBase):
         source = SDEDataBundle(
             completed_products,
             self._job_provenance(),
-            scan_axes={},
+            scan_axes=tile_coordinates,
             scan_shape=(point_count,) if is_scan else (),
             meta={**result_meta, "scan_combine": "zipped"},
         )
@@ -1168,6 +1298,7 @@ class Engine(EngineBase):
             source,
             context=context,
             completed_nodes=completed_nodes,
+            graph=graph,
         )
         if not isinstance(analysed, SDEDataBundle):
             raise RuntimeError("typed trajectory reducers produced no data bundle")
@@ -1226,6 +1357,11 @@ class Engine(EngineBase):
         ]
         if plan.trajectory_batch_count > 1:
             parts.append(f"{plan.trajectory_batch_count} batches/point")
+        if plan.deferred_analysers:
+            parts.append(
+                "deferred to post-merge execution: "
+                + ", ".join(plan.deferred_analysers)
+            )
         if plan.budget_bytes is not None:
             parts.append(f"{plan.budget_bytes / (1024**3):.2f} GiB budget")
         return "; ".join(parts)

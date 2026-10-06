@@ -207,6 +207,7 @@ class PeakPathsAnalyzer(Analyzer):
                     "path_status_code",
                     "path_quality",
                 ],
+                table="peak_paths",
             ),
         )
 

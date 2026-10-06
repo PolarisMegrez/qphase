@@ -91,7 +91,13 @@ class ProductRequirement(BaseModel):
 
 
 class ProductDeclaration(BaseModel):
-    """Declared output product of one graph node."""
+    """Declared output product of one graph node.
+
+    ``table`` mirrors the ``attributes["table"]`` marker of the built
+    Dataset: ragged/table products cannot be merged across scan tiles by the
+    schema-driven composition operators and require a domain-specific
+    reducer. Planners reject multi-tile scans that would materialize them.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -99,6 +105,7 @@ class ProductDeclaration(BaseModel):
     kind: DataKind
     quantity: str | None = None
     fields: list[str] = Field(default_factory=list)
+    table: Literal["peak_candidates", "peak_paths", "row_table"] | None = None
 
 
 class ProductNode(BaseModel):
