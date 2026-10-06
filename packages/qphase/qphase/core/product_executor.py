@@ -16,19 +16,32 @@ __all__ = ["ProductGraphExecutor"]
 NodeRunner = Callable[[ProductNode, Mapping[str, Dataset]], Mapping[str, Dataset]]
 
 
-def _has_duplicate_values(values: np.ndarray) -> bool:
-    """Whether a coordinate array repeats a value.
+def _has_duplicate_tuples(columns: list[np.ndarray]) -> bool:
+    """Whether the joint rows over ``columns`` repeat a coordinate tuple.
 
-    NaNs count as equal to each other (``equal_nan=True`` semantics), so more
-    than one NaN is a duplicate even though ``np.unique`` keeps them distinct.
+    A Cartesian grid legitimately repeats values inside any single column, so
+    uniqueness must be judged on the joint tuple of all coordinates sharing
+    one parameter axis. NaNs count as equal to each other (``equal_nan=True``
+    semantics): rows whose NaN positions match and whose remaining values are
+    equal are duplicates.
     """
-    array = np.asarray(values)
-    if array.dtype.kind in "fc":
-        nan_mask = np.isnan(array)
-        if np.count_nonzero(nan_mask) > 1:
-            return True
-        array = array[~nan_mask]
-    return bool(np.unique(array).size != array.size)
+    codes = []
+    for column in columns:
+        array = np.asarray(column).reshape(-1)
+        if array.dtype.kind in "fc":
+            nan_mask = np.isnan(array)
+            if nan_mask.any():
+                _, inverse = np.unique(array[~nan_mask], return_inverse=True)
+                coded = np.full(array.shape, -1, dtype=np.int64)
+                coded[~nan_mask] = inverse
+                codes.append(coded)
+                continue
+        _, coded = np.unique(array, return_inverse=True)
+        codes.append(coded)
+    if not codes:
+        return False
+    rows = np.stack(codes, axis=1)
+    return bool(np.unique(rows, axis=0).shape[0] != rows.shape[0])
 
 
 class ProductGraphExecutor:
@@ -303,14 +316,25 @@ class ProductGraphExecutor:
                 f"aligned inputs {name!r} and {reference_name!r} of node "
                 f"{node.node_id!r} have different parameter coordinates"
             )
-        for coordinate_name in product_coordinates:
-            for label, dataset in ((name, product), (reference_name, reference)):
-                if _has_duplicate_values(dataset.coordinate(coordinate_name)):
+        for label, dataset in ((name, product), (reference_name, reference)):
+            groups: dict[tuple[str, ...], list[str]] = {}
+            for coordinate in dataset.coordinates():
+                if coordinate.role == "parameter":
+                    groups.setdefault(tuple(coordinate.dims), []).append(
+                        coordinate.name
+                    )
+            for dims, names in groups.items():
+                columns = [
+                    dataset.coordinate(coordinate_name) for coordinate_name in names
+                ]
+                if _has_duplicate_tuples(columns):
+                    axes = ", ".join(repr(dimension) for dimension in dims)
                     raise ValueError(
                         f"aligned inputs {name!r} and {reference_name!r} of node "
-                        f"{node.node_id!r} have duplicate values in coordinate "
-                        f"{coordinate_name!r} of input {label!r}"
+                        f"{node.node_id!r} have duplicate parameter coordinate "
+                        f"tuples on axis {axes} of input {label!r}"
                     )
+        for coordinate_name in product_coordinates:
             if not np.array_equal(
                 product.coordinate(coordinate_name),
                 reference.coordinate(coordinate_name),

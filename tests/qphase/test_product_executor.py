@@ -79,6 +79,60 @@ def _aligned_product(
     )
 
 
+def _cartesian_product(
+    xs: list[float], ys: list[float], *, sampling_count: int = 4
+) -> StatisticsDataset:
+    schema = ProductSchema(
+        kind=DataKind.STATISTICS,
+        axes=[AxisSchema(name="scan", role=AxisRole.PARAMETER, size=len(xs))],
+        sampling_bases=[SamplingBasisSchema(name="trajectory", count=sampling_count)],
+        variables=[
+            VariableSchema(
+                name="value",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan",),
+            ),
+            VariableSchema(
+                name="parameter.x",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan",),
+            ),
+            VariableSchema(
+                name="parameter.y",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan",),
+            ),
+        ],
+        coordinates=[
+            CoordinateSchema(
+                name="x",
+                variable="parameter.x",
+                dims=("scan",),
+                role="parameter",
+            ),
+            CoordinateSchema(
+                name="y",
+                variable="parameter.y",
+                dims=("scan",),
+                role="parameter",
+            ),
+        ],
+    )
+    x_array = np.asarray(xs)
+    return StatisticsDataset.from_arrays(
+        schema,
+        {
+            "value": x_array,
+            "parameter.x": x_array,
+            "parameter.y": np.asarray(ys),
+        },
+        owner="test",
+    )
+
+
 def _time_series_product() -> TimeSeriesDataset:
     schema = ProductSchema(
         kind=DataKind.TIME_SERIES,
@@ -465,43 +519,8 @@ def test_executor_reports_non_mapping_output_failure():
     assert [item[1] for item in progress.messages] == ["producer", "producer"]
 
 
-@pytest.mark.parametrize(
-    ("left", "other", "message"),
-    [
-        (
-            _aligned_product([1.0, 2.0]),
-            _aligned_product([1.0, 3.0]),
-            "disagree on coordinate",
-        ),
-        (
-            _aligned_product([1.0, 2.0]),
-            _aligned_product([1.0, 2.0], sampling_count=8),
-            "sampling bases",
-        ),
-        (
-            _aligned_product([1.0, 2.0]),
-            _aligned_product([1.0, 1.0]),
-            "duplicate values in coordinate 'x' of input 'right'",
-        ),
-        (
-            _aligned_product([1.0, 2.0]),
-            _aligned_product([np.nan, np.nan]),
-            "duplicate values in coordinate 'x' of input 'right'",
-        ),
-        (
-            _aligned_product([1.0, 1.0]),
-            _aligned_product([1.0, 2.0]),
-            "duplicate values in coordinate 'x' of input 'left'",
-        ),
-        (
-            _aligned_product([1.0, 1.0]),
-            _aligned_product([1.0, 1.0]),
-            "duplicate values in coordinate 'x' of input 'right'",
-        ),
-    ],
-)
-def test_executor_enforces_align_with(left, other, message):
-    graph = ProductGraph(
+def _alignment_graph() -> ProductGraph:
+    return ProductGraph(
         nodes=[
             ProductNode(
                 node_id="consumer",
@@ -532,9 +551,59 @@ def test_executor_enforces_align_with(left, other, message):
             },
         ],
     )
+
+
+@pytest.mark.parametrize(
+    ("left", "other", "message"),
+    [
+        (
+            _aligned_product([1.0, 2.0]),
+            _aligned_product([1.0, 3.0]),
+            "disagree on coordinate",
+        ),
+        (
+            _aligned_product([1.0, 2.0]),
+            _aligned_product([1.0, 2.0], sampling_count=8),
+            "sampling bases",
+        ),
+        (
+            _aligned_product([1.0, 2.0]),
+            _aligned_product([1.0, 1.0]),
+            "duplicate parameter coordinate tuples on axis 'scan' of input 'right'",
+        ),
+        (
+            _aligned_product([1.0, 2.0]),
+            _aligned_product([np.nan, np.nan]),
+            "duplicate parameter coordinate tuples on axis 'scan' of input 'right'",
+        ),
+        (
+            _aligned_product([1.0, 1.0]),
+            _aligned_product([1.0, 2.0]),
+            "duplicate parameter coordinate tuples on axis 'scan' of input 'left'",
+        ),
+        (
+            _aligned_product([1.0, 1.0]),
+            _aligned_product([1.0, 1.0]),
+            "duplicate parameter coordinate tuples on axis 'scan' of input 'right'",
+        ),
+        (
+            # A repeated full (x, y) tuple is a duplicate even in a grid.
+            _cartesian_product([1.0, 1.0, 2.0, 2.0], [10.0, 20.0, 10.0, 20.0]),
+            _cartesian_product([1.0, 1.0, 2.0, 2.0], [10.0, 10.0, 10.0, 20.0]),
+            "duplicate parameter coordinate tuples on axis 'scan' of input 'right'",
+        ),
+        (
+            # Joint tuples unique on both sides but in a different order.
+            _cartesian_product([1.0, 1.0, 2.0, 2.0], [10.0, 20.0, 10.0, 20.0]),
+            _cartesian_product([1.0, 2.0, 1.0, 2.0], [10.0, 10.0, 20.0, 20.0]),
+            "disagree on coordinate",
+        ),
+    ],
+)
+def test_executor_enforces_align_with(left, other, message):
     with pytest.raises(ValueError, match=message):
         ProductGraphExecutor(
-            graph,
+            _alignment_graph(),
             {"consumer": lambda node, inputs: {"output": _product()}},
         ).run(
             {
@@ -544,6 +613,18 @@ def test_executor_enforces_align_with(left, other, message):
                 }
             }
         )
+
+
+def test_executor_accepts_cartesian_grid_with_repeated_coordinate_columns():
+    left = _cartesian_product([1.0, 1.0, 2.0, 2.0], [10.0, 20.0, 10.0, 20.0])
+    right = _cartesian_product([1.0, 1.0, 2.0, 2.0], [10.0, 20.0, 10.0, 20.0])
+
+    result = ProductGraphExecutor(
+        _alignment_graph(),
+        {"consumer": lambda node, inputs: {"output": _product()}},
+    ).run({"external": {"left": left, "right": right}})
+
+    assert "output" in result["consumer"]
 
 
 def test_executor_routes_completed_products_through_remaining_graph():
