@@ -106,7 +106,12 @@ engine 从插件声明编译出的、经无环校验的 `ProductNode` 图。每�
 分配的 `node_id`，执行一次并原子返回其声明的 `outputs`；`publish_outputs` 是编译期
 解析出的持久化子集（terminal 输出默认发布，intermediate 仅在显式列出时发布）。图边
 同时引用来源节点的输出（`product`）与消费节点的输入槽（`requirement`），图校验这两个
-引用。requirement 可通过 `value_domain` 区分复数场轨迹与实值采样标量序列，也可通过
+引用。默认同名推断把 requirement 绑到同名 analyser 输出；job 级 `input_bindings`
+（`{analyser_label: {requirement_name: target}}`）可将单个 requirement 显式绑定到
+`<producer_label>.<product_name>`（内部边）或 `input.<product_name>`（外部 job 输入
+产品），只覆盖该 requirement 的推断——这也支持 self-transform（与本节点输出同名的
+requirement 可绑到 `input.*`；指向自身输出的内部边仍被拒绝）。requirement 可通过
+`value_domain` 区分复数场轨迹与实值采样标量序列，也可通过
 `align_with` 指向同节点的兄弟 requirement，要求其输入与该兄弟输入的参数轴坐标逐元素
 对齐，并具有相同的参数轴与 sampling-basis 声明；这些检查在节点输入物化时执行。
 `qphase.data.concat_datasets()` 沿已有轴组合兼容的运行时 Dataset；

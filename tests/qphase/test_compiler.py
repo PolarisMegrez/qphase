@@ -354,6 +354,127 @@ def test_compiler_sde_profile_reports_missing_required(tmp_path, sde_profile_plu
     assert "model" in message
 
 
+def test_compiler_yaml_job_input_bindings_reach_product_graph(
+    tmp_path, sde_profile_plugins
+):
+    """A YAML job's input_bindings compile into explicit graph edges."""
+    from qphase.core.workflow import load_workflow
+    from qphase.data import DataKind, ProductDeclaration, ProductRequirement
+
+    class StubConfig(BaseModel):
+        requirement: str | None = None
+
+    class StubAnalyser:
+        config_schema = StubConfig
+
+        def __init__(self, config):
+            self.config = config
+
+        def input_requirements(self):
+            if self.config.requirement is None:
+                return []
+            return [
+                ProductRequirement(
+                    name=self.config.requirement, kind=DataKind.STATISTICS
+                )
+            ]
+
+        def output_specs(self, *, label):
+            return (ProductDeclaration(name=label, kind=DataKind.STATISTICS),)
+
+    for name in ("binding_stub_source", "binding_stub_sink"):
+        registry.register("analyser", name, StubAnalyser, overwrite=True)
+    try:
+        workflow_path = tmp_path / "workflow.yaml"
+        workflow_path.write_text(
+            "schema: qphase.workflow/2\n"
+            "id: input-binding-test\n"
+            "title: Input binding test\n"
+            "jobs:\n"
+            "- name: ana\n"
+            "  engine: {sde: {mode: analyze}}\n"
+            "  analyser:\n"
+            "    binding_stub_source: {}\n"
+            "    binding_stub_sink: {requirement: spectrum}\n"
+            f"  input: {{from: {tmp_path.as_posix()!r}, mode: dataset}}\n"
+            "  input_bindings:\n"
+            "    binding_stub_sink:\n"
+            "      spectrum: binding_stub_source.binding_stub_source\n"
+        )
+        project = ProjectContext.create(tmp_path / "project")
+        compiled = WorkflowCompiler(project, SystemConfig()).compile(
+            load_workflow(workflow_path)
+        )
+    finally:
+        table = registry._tables.get("analyser", {})
+        table.pop("binding_stub_source", None)
+        table.pop("binding_stub_sink", None)
+
+    graph = compiled.job("ana").product_graph
+    assert graph is not None
+    assert [
+        (edge.producer, edge.product, edge.consumer, edge.requirement)
+        for edge in graph.edges
+    ] == [
+        (
+            "analyser.binding_stub_source",
+            "binding_stub_source",
+            "analyser.binding_stub_sink",
+            "spectrum",
+        )
+    ]
+
+
+def test_compiler_rejects_input_bindings_for_unknown_analyser(
+    tmp_path, sde_profile_plugins
+):
+    """Invalid binding entries are config errors naming the job and entry."""
+    from qphase.data import DataKind, ProductDeclaration, ProductRequirement
+
+    class StubConfig(BaseModel):
+        requirement: str | None = None
+
+    class StubAnalyser:
+        config_schema = StubConfig
+
+        def __init__(self, config):
+            self.config = config
+
+        def input_requirements(self):
+            if self.config.requirement is None:
+                return []
+            return [
+                ProductRequirement(
+                    name=self.config.requirement, kind=DataKind.STATISTICS
+                )
+            ]
+
+        def output_specs(self, *, label):
+            return (ProductDeclaration(name=label, kind=DataKind.STATISTICS),)
+
+    registry.register("analyser", "binding_stub_sink", StubAnalyser, overwrite=True)
+    try:
+        project = ProjectContext.create(tmp_path / "project")
+        with pytest.raises(QPhasePluginError) as excinfo:
+            WorkflowCompiler(project, SystemConfig()).compile(
+                _workflow(
+                    _sde_job(
+                        "ana",
+                        {"mode": "analyze"},
+                        analyser={"binding_stub_sink": {"requirement": "spectrum"}},
+                        input={"from": str(tmp_path), "mode": "dataset"},
+                        input_bindings={"missing": {"spectrum": "input.spectrum"}},
+                    )
+                )
+            )
+    finally:
+        registry._tables.get("analyser", {}).pop("binding_stub_sink", None)
+
+    message = str(excinfo.value)
+    assert "'ana'" in message
+    assert "unknown analyser 'missing'" in message
+
+
 def test_compiler_profile_resolver_replaces_defaults(tmp_path, profiled_engine):
     """A profile resolver refines requirements through the dotted-path hook."""
     project = ProjectContext.create(tmp_path / "project")

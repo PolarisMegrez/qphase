@@ -143,6 +143,14 @@ class JobConfig(BaseModel):
         description="Optional analyser outputs to persist explicitly",
     )
 
+    input_bindings: dict[str, dict[str, str]] = Field(
+        default_factory=dict,
+        description="Explicit analyser input product bindings: "
+        "{analyser_label: {requirement_name: target}} where target is "
+        "'<producer_label>.<product_name>' for an internal graph edge or "
+        "'input.<product_name>' for an external job-input product",
+    )
+
     model_config = ConfigDict(
         extra="allow",
         str_strip_whitespace=True,

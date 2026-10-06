@@ -15,6 +15,7 @@ def compile_product_graph(
     plugin_config: Mapping[str, Any],
     registry: Any,
     publish_outputs: Mapping[str, list[str]] | None = None,
+    input_bindings: Mapping[str, Mapping[str, str]] | None = None,
 ) -> ProductGraph | None:
     """Compile the analyser product graph from resolved plugin configuration.
 
@@ -22,6 +23,13 @@ def compile_product_graph(
     plugins, but never creates a backend or runs numerical code. The runtime
     receives this validated graph as part of ``CompiledJob`` and only supplies
     the already-created execution instances.
+
+    ``input_bindings`` maps ``{analyser_label: {requirement_name: target}}``
+    and replaces same-name inference for the listed requirements only: a
+    target of ``"<producer_label>.<product_name>"`` creates an internal edge,
+    while ``"input.<product_name>"`` binds the requirement to an external
+    job-input product. Requirements without an explicit binding keep the
+    same-name inference.
     """
     raw_analysers = plugin_config.get("analyser")
     if not isinstance(raw_analysers, Mapping) or not raw_analysers:
@@ -50,9 +58,7 @@ def compile_product_graph(
                 raise ValueError(f"duplicate analyser output {output.name!r}")
             output_owners[output.name] = (node_id, output.name)
         requested_publish = list((publish_outputs or {}).get(str(name), []))
-        unknown_publish = set(requested_publish) - {
-            output.name for output in outputs
-        }
+        unknown_publish = set(requested_publish) - {output.name for output in outputs}
         if unknown_publish:
             raise ValueError(
                 f"publish_outputs for analyser {name!r} references unknown "
@@ -76,10 +82,19 @@ def compile_product_graph(
                 f"publish_outputs references unknown analyser {analyser_name!r}"
             )
 
+    explicit = _resolve_input_bindings(input_bindings, node_by_name)
+
     edges: list[GraphEdge] = []
     external: list[ExternalInputBinding] = []
     for node in nodes:
         for requirement in node.requirements:
+            bound = explicit.get((node.node_id, requirement.name))
+            if bound is not None:
+                if isinstance(bound, GraphEdge):
+                    edges.append(bound)
+                else:
+                    external.append(bound)
+                continue
             owner = output_owners.get(requirement.name)
             if owner is not None:
                 if owner[0] == node.node_id:
@@ -107,3 +122,78 @@ def compile_product_graph(
                     )
                 )
     return ProductGraph(nodes=nodes, edges=edges, external_inputs=external)
+
+
+def _resolve_input_bindings(
+    input_bindings: Mapping[str, Mapping[str, str]] | None,
+    node_by_name: Mapping[str, ProductNode],
+) -> dict[tuple[str, str], GraphEdge | ExternalInputBinding]:
+    """Resolve explicit input bindings to graph edges or external bindings.
+
+    Returns the resolved binding per ``(consumer node id, requirement name)``
+    slot. Every entry is validated strictly: the analyser label, requirement
+    name, target syntax and, for internal targets, the producer label and its
+    declared product must all exist; binding a requirement to the analyser's
+    own output stays rejected as a self-cycle.
+    """
+    resolved: dict[tuple[str, str], GraphEdge | ExternalInputBinding] = {}
+    for analyser_name, bindings in (input_bindings or {}).items():
+        node = node_by_name.get(str(analyser_name))
+        if node is None:
+            raise ValueError(
+                f"input_bindings references unknown analyser {analyser_name!r}"
+            )
+        if not isinstance(bindings, Mapping):
+            raise TypeError(
+                f"input_bindings for analyser {analyser_name!r} must be a mapping"
+            )
+        requirement_names = {req.name for req in node.requirements}
+        for requirement_name, target in bindings.items():
+            requirement_name = str(requirement_name)
+            if requirement_name not in requirement_names:
+                raise ValueError(
+                    f"input_bindings for analyser {analyser_name!r} references "
+                    f"unknown requirement {requirement_name!r}"
+                )
+            source, separator, product = str(target).partition(".")
+            if not separator or not source or not product:
+                raise ValueError(
+                    f"input_bindings target {target!r} for requirement "
+                    f"{requirement_name!r} of analyser {analyser_name!r} must be "
+                    "'<producer_label>.<product_name>' or 'input.<product_name>'"
+                )
+            slot = (node.node_id, requirement_name)
+            if source == "input":
+                resolved[slot] = ExternalInputBinding(
+                    consumer=node.node_id,
+                    requirement=requirement_name,
+                    source="input",
+                    product=product,
+                )
+                continue
+            producer = node_by_name.get(source)
+            if producer is None:
+                raise ValueError(
+                    f"input_bindings target {target!r} for requirement "
+                    f"{requirement_name!r} of analyser {analyser_name!r} "
+                    f"references unknown producer {source!r}"
+                )
+            if product not in {output.name for output in producer.outputs}:
+                raise ValueError(
+                    f"input_bindings target {target!r} for requirement "
+                    f"{requirement_name!r} of analyser {analyser_name!r} "
+                    f"references undeclared output {product!r} of analyser "
+                    f"{source!r}"
+                )
+            if producer.node_id == node.node_id:
+                raise ValueError(
+                    f"analyser {node.node_id!r} cannot bind requirement "
+                    f"{requirement_name!r} to its own output {product!r}"
+                )
+            resolved[slot] = GraphEdge(
+                producer=producer.node_id,
+                product=product,
+                consumer=node.node_id,
+                requirement=requirement_name,
+            )
+    return resolved

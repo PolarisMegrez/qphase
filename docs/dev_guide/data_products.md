@@ -138,7 +138,15 @@ a compiler-assigned `node_id`, executes once and atomically returns its declared
 `outputs`; `publish_outputs` names the subset resolved for persistence (terminal
 outputs publish by default, intermediates stay graph-local unless explicitly
 listed). Edges reference both the producer output (`product`) and the consumer
-input slot (`requirement`), and the graph validates those references. A
+input slot (`requirement`), and the graph validates those references. By default
+a requirement binds the same-named analyser output; the job-level
+`input_bindings` mapping (`{analyser_label: {requirement_name: target}}`)
+instead pins one requirement to an explicit source —
+`<producer_label>.<product_name>` for an internal edge or
+`input.<product_name>` for an external job-input product — replacing name
+inference for that requirement only, which also enables self-transforms
+(binding a requirement that shares the analyser's own output name to `input.*`;
+an internal edge to the own output stays rejected). A
 requirement may restrict the accepted `value_domain` (complex field trajectory
 vs sampled real scalar) and may name a sibling requirement via `align_with`
 whose parameter axes, parameter-coordinate values, and sampling-basis

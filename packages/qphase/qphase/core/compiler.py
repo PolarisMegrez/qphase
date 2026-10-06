@@ -486,6 +486,7 @@ class WorkflowCompiler:
                 plugin_config=dict(selected),
                 registry=self.registry,
                 publish_outputs=dict(job.publish_outputs),
+                input_bindings=dict(job.input_bindings),
             )
         except QPhaseConfigError:
             raise

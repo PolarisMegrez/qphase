@@ -1,11 +1,27 @@
-"""Tests for the typed parent analysers introduced in Wave 5B."""
+"""Tests for the typed parent analysers introduced in Wave 5B.
+
+Wave 5C adds the explicit analyser ``input_bindings`` graph-compile and
+executor tests at the bottom of this file.
+"""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
+from pydantic import BaseModel
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase.core import ProductGraphExecutor
 from qphase.core.registry import discovery, registry
+from qphase.data import (
+    AxisRole,
+    AxisSchema,
+    DataKind,
+    ProductDeclaration,
+    ProductRequirement,
+    ProductSchema,
+    StatisticsDataset,
+    VariableSchema,
+)
 from qphase_sde.analyser.band_limited_carrier import (
     BandLimitedCarrierAnalyzer,
     BandLimitedCarrierConfig,
@@ -309,18 +325,14 @@ def test_cross_result_analysers_execute_from_typed_psd(monkeypatch):
     )
 
     analysers = [
-        SpectralRidgeAnalyzer(
-            SpectralRidgeConfig(scan_param="epsilon", readouts=[0])
-        ),
+        SpectralRidgeAnalyzer(SpectralRidgeConfig(scan_param="epsilon", readouts=[0])),
         BandLimitedCarrierAnalyzer(
             BandLimitedCarrierConfig(scan_param="epsilon", readout=0, export=[])
         ),
         FiniteDelayCarrierAnalyzer(
             FiniteDelayCarrierConfig(scan_param="epsilon", readout=0, export=[])
         ),
-        LorentzFitter(
-            LorentzFitterConfig(scan_param="epsilon", mode=0, export=[])
-        ),
+        LorentzFitter(LorentzFitterConfig(scan_param="epsilon", mode=0, export=[])),
     ]
     for analyser in analysers:
         products = analyser.execute(
@@ -328,3 +340,262 @@ def test_cross_result_analysers_execute_from_typed_psd(monkeypatch):
         )
         assert products
         assert all(product.attributes["table"] for product in products.values())
+
+
+# ---------------------------------------------------------------------------
+# Wave 5C: explicit analyser input product bindings
+# ---------------------------------------------------------------------------
+
+
+class _GraphStubConfig(BaseModel):
+    requirement: str | None = None
+    optional: bool = False
+
+
+class _GraphStubAnalyser:
+    """Minimal typed analyser whose single requirement name is configurable."""
+
+    config_schema = _GraphStubConfig
+
+    def __init__(self, config: _GraphStubConfig):
+        self.config = config
+
+    def input_requirements(self):
+        if self.config.requirement is None:
+            return []
+        return [
+            ProductRequirement(
+                name=self.config.requirement,
+                kind=DataKind.STATISTICS,
+                optional=self.config.optional,
+            )
+        ]
+
+    def output_specs(self, *, label):
+        return (ProductDeclaration(name=label, kind=DataKind.STATISTICS),)
+
+
+_STUB_ANALYSER_NAMES = ("stub_source_a", "stub_source_b", "stub_consumer", "stub_self")
+
+
+@pytest.fixture
+def graph_stub_analysers():
+    for name in _STUB_ANALYSER_NAMES:
+        registry.register("analyser", name, _GraphStubAnalyser, overwrite=True)
+    yield _STUB_ANALYSER_NAMES
+    table = registry._tables.get("analyser", {})
+    for name in _STUB_ANALYSER_NAMES:
+        table.pop(name, None)
+
+
+def _stub_graph(config, **kwargs):
+    return compile_product_graph(
+        plugin_config={"analyser": config}, registry=registry, **kwargs
+    )
+
+
+def _edge_tuples(graph):
+    return [
+        (edge.producer, edge.product, edge.consumer, edge.requirement)
+        for edge in graph.edges
+    ]
+
+
+def _statistics_product(variable: str = "value") -> StatisticsDataset:
+    schema = ProductSchema(
+        kind=DataKind.STATISTICS,
+        axes=[AxisSchema(name="sample", role=AxisRole.INDEX, size=1)],
+        variables=[
+            VariableSchema(
+                name=variable,
+                dtype="float64",
+                value_domain="real",
+                dims=("sample",),
+            )
+        ],
+    )
+    return StatisticsDataset.from_arrays(
+        schema, {variable: np.asarray([1.0])}, owner="test"
+    )
+
+
+def test_input_binding_internal_edge_overrides_inference(graph_stub_analysers):
+    config = {
+        "stub_source_a": {},
+        "stub_source_b": {},
+        "stub_consumer": {"requirement": "stub_source_b"},
+    }
+
+    inferred = _stub_graph(config)
+    assert _edge_tuples(inferred) == [
+        (
+            "analyser.stub_source_b",
+            "stub_source_b",
+            "analyser.stub_consumer",
+            "stub_source_b",
+        )
+    ]
+
+    bound = _stub_graph(
+        config,
+        input_bindings={
+            "stub_consumer": {"stub_source_b": "stub_source_a.stub_source_a"}
+        },
+    )
+    assert _edge_tuples(bound) == [
+        (
+            "analyser.stub_source_a",
+            "stub_source_a",
+            "analyser.stub_consumer",
+            "stub_source_b",
+        )
+    ]
+    assert bound.external_inputs == []
+
+
+def test_input_binding_external_self_transform_accepted(graph_stub_analysers):
+    config = {"stub_self": {"requirement": "stub_self"}}
+    with pytest.raises(ValueError, match="consumes its own output"):
+        _stub_graph(config)
+
+    graph = _stub_graph(
+        config,
+        input_bindings={"stub_self": {"stub_self": "input.stub_self"}},
+    )
+    assert graph.edges == []
+    assert [
+        (binding.consumer, binding.requirement, binding.source, binding.product)
+        for binding in graph.external_inputs
+    ] == [("analyser.stub_self", "stub_self", "input", "stub_self")]
+
+
+def test_input_binding_internal_self_edge_rejected(graph_stub_analysers):
+    with pytest.raises(ValueError, match="its own output"):
+        _stub_graph(
+            {"stub_self": {"requirement": "stub_self"}},
+            input_bindings={"stub_self": {"stub_self": "stub_self.stub_self"}},
+        )
+
+
+def test_input_binding_rejects_unknown_analyser(graph_stub_analysers):
+    with pytest.raises(ValueError, match="unknown analyser 'missing'"):
+        _stub_graph(
+            {"stub_consumer": {"requirement": "spectrum"}},
+            input_bindings={"missing": {"spectrum": "input.spectrum"}},
+        )
+
+
+def test_input_binding_rejects_unknown_requirement(graph_stub_analysers):
+    with pytest.raises(ValueError, match="unknown requirement 'missing'"):
+        _stub_graph(
+            {"stub_consumer": {"requirement": "spectrum"}},
+            input_bindings={"stub_consumer": {"missing": "input.spectrum"}},
+        )
+
+
+def test_input_binding_rejects_unknown_producer(graph_stub_analysers):
+    with pytest.raises(ValueError, match="unknown producer 'missing'"):
+        _stub_graph(
+            {
+                "stub_source_a": {},
+                "stub_consumer": {"requirement": "spectrum"},
+            },
+            input_bindings={"stub_consumer": {"spectrum": "missing.spectrum"}},
+        )
+
+
+def test_input_binding_rejects_unknown_producer_product(graph_stub_analysers):
+    with pytest.raises(ValueError, match="undeclared output 'missing'"):
+        _stub_graph(
+            {
+                "stub_source_a": {},
+                "stub_consumer": {"requirement": "spectrum"},
+            },
+            input_bindings={"stub_consumer": {"spectrum": "stub_source_a.missing"}},
+        )
+
+
+def test_input_binding_rejects_malformed_target(graph_stub_analysers):
+    config = {"stub_consumer": {"requirement": "spectrum"}}
+    with pytest.raises(ValueError, match="must be"):
+        _stub_graph(
+            config,
+            input_bindings={"stub_consumer": {"spectrum": "no_separator"}},
+        )
+    with pytest.raises(ValueError, match="must be"):
+        _stub_graph(
+            config,
+            input_bindings={"stub_consumer": {"spectrum": "input."}},
+        )
+
+
+def test_input_binding_inference_unchanged_without_bindings(graph_stub_analysers):
+    graph = _stub_graph(
+        {
+            "stub_source_a": {},
+            "stub_consumer": {"requirement": "stub_source_a"},
+        }
+    )
+    assert _edge_tuples(graph) == [
+        (
+            "analyser.stub_source_a",
+            "stub_source_a",
+            "analyser.stub_consumer",
+            "stub_source_a",
+        )
+    ]
+
+    external = _stub_graph({"stub_consumer": {"requirement": "spectrum"}})
+    assert external.edges == []
+    assert [
+        (binding.source, binding.product) for binding in external.external_inputs
+    ] == [("input", "spectrum")]
+
+    optional = _stub_graph(
+        {"stub_consumer": {"requirement": "spectrum", "optional": True}}
+    )
+    assert optional.edges == []
+    assert optional.external_inputs == []
+
+
+def test_input_binding_executor_selects_bound_producer(graph_stub_analysers):
+    config = {
+        "stub_source_a": {},
+        "stub_source_b": {},
+        "stub_consumer": {"requirement": "spectrum"},
+    }
+    runners = {}
+    chosen = _statistics_product("chosen")
+    seen: dict[str, StatisticsDataset] = {}
+
+    def producer_a(node, inputs):
+        return {"stub_source_a": _statistics_product("other")}
+
+    def producer_b(node, inputs):
+        return {"stub_source_b": chosen}
+
+    def consumer(node, inputs):
+        seen["spectrum"] = inputs["spectrum"]
+        return {"stub_consumer": _statistics_product("done")}
+
+    runners.update(
+        {
+            "analyser.stub_source_a": producer_a,
+            "analyser.stub_source_b": producer_b,
+            "analyser.stub_consumer": consumer,
+        }
+    )
+
+    unbound = _stub_graph(config)
+    with pytest.raises(
+        ValueError, match="external input 'input':'spectrum' is unavailable"
+    ):
+        ProductGraphExecutor(unbound, runners).run({"input": {}})
+
+    bound = _stub_graph(
+        config,
+        input_bindings={"stub_consumer": {"spectrum": "stub_source_b.stub_source_b"}},
+    )
+    result = ProductGraphExecutor(bound, runners).run({"input": {}})
+    assert seen["spectrum"] is chosen
+    assert set(result) == {"analyser.stub_source_a", "analyser.stub_consumer"}
