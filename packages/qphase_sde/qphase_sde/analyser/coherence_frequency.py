@@ -31,7 +31,7 @@ from ..contracts.coherence import (
     COHERENCE_FREQUENCY_PRODUCT,
     CoherenceFrequencyEstimate,
 )
-from .base import Analyzer
+from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
@@ -284,7 +284,7 @@ class CoherenceFrequencyAnalyzer(Analyzer):
         del backend, metadata
         config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
         source = inputs[config.input_key]
-        estimates = self._compute_estimates(source)
+        estimates = self._compute_estimates(source, context=context)
         orientation = resolve_frequency_orientation(source.attributes)
         channel_name = f"channel_{config.channel}"
         configured_names = source.attributes.get("channel_names")
@@ -307,7 +307,12 @@ class CoherenceFrequencyAnalyzer(Analyzer):
             )
         }
 
-    def _compute_estimates(self, product: Dataset) -> list[CoherenceFrequencyEstimate]:
+    def _compute_estimates(
+        self,
+        product: Dataset,
+        *,
+        context: Any | None = None,
+    ) -> list[CoherenceFrequencyEstimate]:
         config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
         scan_axis = (
             product.axis("scan")
@@ -321,12 +326,23 @@ class CoherenceFrequencyAnalyzer(Analyzer):
             scan_count = int(scan_axis.size)
         child = _make_child(config, self._estimator)
         estimator_name = self._selected_estimator_name()
-        return [
-            child.estimate(
-                _estimate_input(_point_product(product, index), config, estimator_name)
+        estimates: list[CoherenceFrequencyEstimate] = []
+        for index in range(scan_count):
+            check_execution_cancelled(context)
+            estimates.append(
+                child.estimate(
+                    _estimate_input(
+                        _point_product(product, index), config, estimator_name
+                    )
+                )
             )
-            for index in range(scan_count)
-        ]
+            report_execution_progress(
+                context,
+                completed=index + 1,
+                unit="spectrum",
+                message=f"coherence_frequency: estimated {index + 1} spectra",
+            )
+        return estimates
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         estimator_name = self._selected_estimator_name()

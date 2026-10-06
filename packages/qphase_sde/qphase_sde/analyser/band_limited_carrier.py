@@ -28,7 +28,7 @@ from ..contracts.analyser import (
     WorkEstimate,
 )
 from ..products import assemble_row_table_product
-from .base import Analyzer
+from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     FrequencyOrientation,
     orientation_metadata,
@@ -1026,6 +1026,7 @@ def track_band_limited_carrier(
     curvature_weight: float = 1.0,
     ambiguity_delta: float = 1.0,
     max_normalized_curvature: float = 3.0,
+    context: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Track a data-supported carrier platform across an ordered scan.
 
@@ -1050,6 +1051,7 @@ def track_band_limited_carrier(
     available = np.asarray([bool(item.platforms) for item in estimates], dtype=bool)
     indices = np.flatnonzero(available)
     for segment in _contiguous_segments(indices):
+        check_execution_cancelled(context)
         segment_estimates = [estimates[int(index)] for index in segment]
         widths = [item.spectral_width for item in segment_estimates]
         uncertainties = [
@@ -1070,6 +1072,7 @@ def track_band_limited_carrier(
             segment_estimates,
             frequency_scale=float(scale),
             curvature_weight=curvature_weight,
+            context=context,
         )
         path_status = "ok" if cost_gap > ambiguity_delta else "ambiguous_path"
         for source_index, platform_index in zip(segment, path, strict=True):
@@ -1095,6 +1098,7 @@ def _track_platform_segment(
     *,
     frequency_scale: float,
     curvature_weight: float,
+    context: Any | None = None,
 ) -> tuple[list[int], float, np.ndarray]:
     count = len(estimates)
     local_costs = []
@@ -1121,6 +1125,7 @@ def _track_platform_segment(
             cost += 0.02 * jump**2 * min(abs(step), 1.0) / max(abs(step), 1e-15)
             states.setdefault((first, second), []).append((cost, [first, second]))
     for point in range(2, count):
+        check_execution_cancelled(context)
         current: dict[tuple[int, int], list[tuple[float, list[int]]]] = {}
         left_step = float(scan_values[point - 1] - scan_values[point - 2])
         right_step = float(scan_values[point] - scan_values[point - 1])
@@ -1267,7 +1272,7 @@ class BandLimitedCarrierAnalyzer(Analyzer):
             scan_param=config.scan_param,
             metadata=metadata,
         )
-        payload, _ = self._compute_payload(typed, backend)
+        payload, _ = self._compute_payload(typed, backend, context=context)
         products = self.build_products(payload, scan_size=None, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
@@ -1391,11 +1396,15 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         }
 
     def _compute_payload(
-        self, data: Any, backend: BackendBase
+        self,
+        data: Any,
+        backend: BackendBase,
+        *,
+        context: Any | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         config = cast(BandLimitedCarrierConfig, self.config)
         center_config = config.center
-        loaded_results = (
+        loaded_results: Any = (
             data.points
             if isinstance(data, SpectralScanInput)
             else load_sde_results(data)
@@ -1428,7 +1437,9 @@ class BandLimitedCarrierAnalyzer(Analyzer):
             )
             ridge_result = cast(
                 AnalysisResult,
-                SpectralRidgeAnalyzer(ridge_config).analyze(data, backend),
+                SpectralRidgeAnalyzer(ridge_config).analyze(
+                    data, backend, context=context
+                ),
             )
             ridge_payload = ridge_result.data_dict
             measurement_name = (
@@ -1447,7 +1458,8 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         platform_rows: list[dict[str, Any]] = []
         estimates: list[BandLimitedCarrierEstimate] = []
         reference_orientation: FrequencyOrientation | None = None
-        for loaded in loaded_results:
+        for point_index, loaded in enumerate(loaded_results, start=1):
+            check_execution_cancelled(context)
             if isinstance(loaded, SpectralPoint):
                 scan_value = loaded.scan_value
                 job_name = loaded.job_name
@@ -1568,6 +1580,12 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                             **asdict(platform),
                         }
                     )
+            report_execution_progress(
+                context,
+                completed=point_index,
+                unit="spectrum",
+                message=f"band_limited_carrier: estimated {point_index} spectra",
+            )
 
         records = sorted(
             zip(rows, estimates, strict=True),
@@ -1590,6 +1608,7 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                 curvature_weight=config.tracking_curvature_weight,
                 ambiguity_delta=config.tracking_ambiguity_delta,
                 max_normalized_curvature=config.tracking_max_normalized_curvature,
+                context=context,
             )
             for row, tracking in zip(rows, tracked, strict=True):
                 row.update(tracking)

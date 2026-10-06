@@ -28,7 +28,7 @@ from ..contracts.analyser import AnalyserWorkspaceRequest, WorkEstimate
 from ..contracts.quantities import SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from ..result import SDEResult
-from .base import Analyzer
+from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     FrequencyOrientation,
     orientation_metadata,
@@ -234,7 +234,12 @@ def _epsilon(scan_value: float, config: AllanScalingConfig) -> float | None:
     return abs(signed)
 
 
-def _collect_points(data: Any, config: AllanScalingConfig) -> list[_Point]:
+def _collect_points(
+    data: Any,
+    config: AllanScalingConfig,
+    *,
+    context: Any | None = None,
+) -> list[_Point]:
     points: list[_Point] = []
     if isinstance(data, Mapping) and all(
         isinstance(value, Dataset) for value in data.values()
@@ -248,6 +253,7 @@ def _collect_points(data: Any, config: AllanScalingConfig) -> list[_Point]:
             else 1
         )
         for index in range(scan_size):
+            check_execution_cancelled(context)
             product = source.point_view(scan=index) if scan_size > 1 else source
             payload: dict[str, Any] = {}
             for variable in product.variables:
@@ -312,6 +318,7 @@ def _collect_points(data: Any, config: AllanScalingConfig) -> list[_Point]:
     # NOTE: load_sde_results bridges v4 bundles through legacy_result(); this
     # consumer must be retyped and the bridge removed in Phase 5.
     for loaded in load_sde_results(data):
+        check_execution_cancelled(context)
         result = loaded.result
         params = result.meta.get("params", {})
         if config.scan_param not in params:
@@ -460,9 +467,12 @@ def _candidate_runs(
     points: list[_Point],
     windows: list[_WhiteWindow],
     config: AllanScalingConfig,
+    *,
+    context: Any | None = None,
 ) -> list[tuple[list[int], tuple[float, float], float, float]]:
     candidates: list[tuple[list[int], tuple[float, float], float, float]] = []
     for run in _accepted_runs(windows):
+        check_execution_cancelled(context)
         for start in range(len(run)):
             for stop in range(start + config.min_scaling_points, len(run) + 1):
                 subset = run[start:stop]
@@ -516,6 +526,8 @@ def _fit_noise(
     windows: list[_WhiteWindow],
     indices: list[int],
     config: AllanScalingConfig,
+    *,
+    context: Any | None = None,
 ) -> dict[str, Any]:
     epsilon = np.asarray([points[index].epsilon for index in indices])
     intensity = np.asarray([windows[index].intensity for index in indices])
@@ -538,6 +550,7 @@ def _fit_noise(
     if config.bootstrap_samples:
         rng = np.random.default_rng(config.bootstrap_seed)
         for _ in range(config.bootstrap_samples):
+            check_execution_cancelled(context)
             sampled = []
             for index in indices:
                 values = cast(np.ndarray, windows[index].per_trajectory_intensity)
@@ -753,7 +766,7 @@ class AllanScalingAnalyzer(Analyzer):
     ) -> Mapping[str, Dataset]:
         """Run scaling analysis directly from a typed Allan Dataset."""
         del metadata
-        payload, _ = self._compute_payload(inputs, backend)
+        payload, _ = self._compute_payload(inputs, backend, context=context)
         products = self.build_products(payload, scan_size=None, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
@@ -812,13 +825,28 @@ class AllanScalingAnalyzer(Analyzer):
         return None if product is None else {label: product}
 
     def _compute_payload(
-        self, data: Any, backend: BackendBase
+        self,
+        data: Any,
+        backend: BackendBase,
+        *,
+        context: Any | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         del backend
         config = cast(AllanScalingConfig, self.config)
-        points = _collect_points(data, config)
-        windows = [_white_window(point, config) for point in points]
-        candidates = _candidate_runs(points, windows, config)
+        points = _collect_points(data, config, context=context)
+        windows: list[_WhiteWindow] = []
+        tau_bins_done = 0
+        for point in points:
+            check_execution_cancelled(context)
+            windows.append(_white_window(point, config))
+            tau_bins_done += np.asarray(point.allan.get("tau"), dtype=float).size
+            report_execution_progress(
+                context,
+                completed=tau_bins_done,
+                unit="tau",
+                message=f"allan_scaling: scanned {tau_bins_done} tau bins",
+            )
+        candidates = _candidate_runs(points, windows, config, context=context)
         selected: list[int] = []
         common_tau: tuple[float, float] | None = None
         if candidates:
@@ -831,6 +859,7 @@ class AllanScalingAnalyzer(Analyzer):
                 ]
             ] = []
             for subset, common, epsilon_span, tau_span in candidates:
+                check_execution_cancelled(context)
                 trial_windows = [replace(window) for window in windows]
                 for index in subset:
                     _set_common_intensity(
@@ -866,7 +895,12 @@ class AllanScalingAnalyzer(Analyzer):
             if selected
             else 0.0
         )
-        noise_fit = _fit_noise(points, windows, selected, config) if selected else None
+        noise_fit = (
+            _fit_noise(points, windows, selected, config, context=context)
+            if selected
+            else None
+        )
+        check_execution_cancelled(context)
         frequency_fit = (
             _fit_frequency(points, selected, config)
             if selected and config.fit_frequency
@@ -928,6 +962,7 @@ class AllanScalingAnalyzer(Analyzer):
         rows: list[dict[str, Any]] = []
         selected_set = set(selected)
         for index, (point, window) in enumerate(zip(points, windows, strict=True)):
+            check_execution_cancelled(context)
             frequency, frequency_sem = _frequency_summary(point)
             rows.append(
                 {

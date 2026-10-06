@@ -53,6 +53,7 @@ __all__ = [
     "map_trajectory_product",
     "trajectory_arrays",
     "check_execution_cancelled",
+    "report_execution_progress",
     "trajectory_requirement",
 ]
 
@@ -62,6 +63,27 @@ def check_execution_cancelled(context: Any | None) -> None:
     cancellation = getattr(context, "cancellation", None)
     if cancellation is not None:
         cancellation.raise_if_cancelled()
+
+
+def report_execution_progress(
+    context: Any | None,
+    *,
+    completed: float,
+    unit: str,
+    stage: str = "analyze",
+    message: str = "",
+) -> None:
+    """Report absolute completed work of an analyser loop, when a reporter exists.
+
+    Heartbeat-only by construction: no ``total`` is ever attached, matching the
+    analyser ``WorkEstimate(total=None)`` contract that forbids fabricated
+    ETAs. ``unit``/``stage`` must match the analyser's declared
+    :meth:`Analyzer.work_estimate` conventions (default stage prefix
+    ``"analyze"``).
+    """
+    progress = getattr(context, "progress", None)
+    if progress is not None:
+        progress.update(completed=completed, unit=unit, stage=stage, message=message)
 
 
 def resolve_mode_columns(data: Any, modes: list[int]) -> list[int]:

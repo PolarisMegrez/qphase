@@ -30,7 +30,7 @@ from ..contracts.analyser import (
     WorkEstimate,
 )
 from ..products import assemble_row_table_product
-from .base import Analyzer
+from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     FrequencyOrientation,
     orientation_metadata,
@@ -846,7 +846,7 @@ class SpectralRidgeAnalyzer(Analyzer):
             scan_param=cast(SpectralRidgeConfig, self.config).scan_param,
             metadata=metadata,
         )
-        payload, _ = self._compute_payload(typed, backend)
+        payload, _ = self._compute_payload(typed, backend, context=context)
         products = self.build_products(payload, scan_size=None, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
@@ -943,7 +943,11 @@ class SpectralRidgeAnalyzer(Analyzer):
         return {label: selected, f"{label}.candidates": candidate}
 
     def _compute_payload(
-        self, data: Any, backend: BackendBase
+        self,
+        data: Any,
+        backend: BackendBase,
+        *,
+        context: Any | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         del backend
         config = cast(SpectralRidgeConfig, self.config)
@@ -959,7 +963,9 @@ class SpectralRidgeAnalyzer(Analyzer):
         }
         reference_orientation: FrequencyOrientation | None = None
         uncertainty_sources: set[str] = set()
+        spectra_done = 0
         for item in loaded:
+            check_execution_cancelled(context)
             if isinstance(item, SpectralPoint):
                 scan_value = item.scan_value
                 job_name = item.job_name
@@ -1012,10 +1018,18 @@ class SpectralRidgeAnalyzer(Analyzer):
                     if sem is not None
                     else "fit_residual"
                 )
+            spectra_done += len(config.readouts)
+            report_execution_progress(
+                context,
+                completed=spectra_done,
+                unit="spectrum",
+                message=f"spectral_ridge: extracted {spectra_done} spectra",
+            )
 
         rows: list[dict[str, Any]] = []
         candidate_rows: list[dict[str, Any]] = []
         for readout in config.readouts:
+            check_execution_cancelled(context)
             readout_key = str(readout)
             points = sorted(point_data[readout_key], key=lambda item: item[0])
             candidate_sets = [item[2] for item in points]
@@ -1041,6 +1055,7 @@ class SpectralRidgeAnalyzer(Analyzer):
                 for segment in _tracking_segments(
                     scan_values, config.tracking_gap_factor
                 ):
+                    check_execution_cancelled(context)
                     paths = _track_candidate_paths(
                         candidate_sets[segment],
                         frequency_scale=max(frequency_scale, np.finfo(float).eps),
@@ -1079,6 +1094,7 @@ class SpectralRidgeAnalyzer(Analyzer):
             for point_index, ((scan_value, job_name, estimates), chosen) in enumerate(
                 zip(points, selected, strict=True)
             ):
+                check_execution_cancelled(context)
                 chosen = min(chosen, len(estimates) - 1)
                 estimate = estimates[chosen]
                 retention_tiers = _candidate_retention_tiers(
@@ -1239,6 +1255,12 @@ class SpectralRidgeAnalyzer(Analyzer):
             },
         )
 
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
-        payload, metadata = self._compute_payload(data, backend)
+    def analyze(
+        self,
+        data: Any,
+        backend: BackendBase,
+        *,
+        context: Any | None = None,
+    ) -> ResultProtocol:
+        payload, metadata = self._compute_payload(data, backend, context=context)
         return AnalysisResult(data_dict=payload, meta=metadata)

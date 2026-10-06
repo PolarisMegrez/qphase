@@ -33,7 +33,9 @@ from ..contracts.quantities import SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
     Analyzer,
+    check_execution_cancelled,
     map_trajectory_product,
+    report_execution_progress,
     trajectory_arrays,
     trajectory_requirement,
 )
@@ -469,6 +471,7 @@ class CoherenceCarrierAnalyzer(Analyzer):
                 t0=t0,
                 dt=dt,
                 backend=backend,
+                context=context,
             )
             products = _build_coherence_carrier_products(
                 payload, scan_size=None, label=label
@@ -487,6 +490,7 @@ class CoherenceCarrierAnalyzer(Analyzer):
         t0: float,
         dt: float,
         backend: BackendBase,
+        context: Any | None = None,
     ) -> dict[str, Any]:
         config = cast(CoherenceCarrierConfig, self.config)
         if values.ndim != 3 or not np.issubdtype(values.dtype, np.complexfloating):
@@ -510,7 +514,9 @@ class CoherenceCarrierAnalyzer(Analyzer):
             (n_traj, len(names), config.maximum_lag_points + 1),
             dtype=values.dtype,
         )
+        samples_done = 0
         for lag in range(config.maximum_lag_points + 1):
+            check_execution_cancelled(context)
             pair_count = n_samples - lag
             for start in range(0, pair_count, config.time_chunk_samples):
                 stop = min(pair_count, start + config.time_chunk_samples)
@@ -523,6 +529,16 @@ class CoherenceCarrierAnalyzer(Analyzer):
                     right,
                 )
             correlations[:, :, lag] /= float(pair_count)
+            samples_done += pair_count
+            report_execution_progress(
+                context,
+                completed=samples_done,
+                unit="sample",
+                message=(
+                    f"coherence_carrier: correlated lag {lag + 1}/"
+                    f"{config.maximum_lag_points + 1}"
+                ),
+            )
         return self._summarize(
             per_trajectory=np.asarray(convert_to_numpy(correlations)),
             names=names,
@@ -532,6 +548,7 @@ class CoherenceCarrierAnalyzer(Analyzer):
             dt=dt,
             n_samples=n_samples,
             t0=t0,
+            context=context,
         )
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
@@ -617,6 +634,7 @@ class CoherenceCarrierAnalyzer(Analyzer):
         dt: float,
         n_samples: int,
         t0: float,
+        context: Any | None = None,
     ) -> dict[str, Any]:
         config = cast(CoherenceCarrierConfig, self.config)
         estimates: list[CoherenceCarrierEstimate] = []
@@ -624,6 +642,7 @@ class CoherenceCarrierAnalyzer(Analyzer):
         candidate_sems = []
         candidate_residuals = []
         for index in range(len(names)):
+            check_execution_cancelled(context)
             estimate, candidates = estimate_coherence_carrier(
                 per_trajectory[:, index, :],
                 dt,

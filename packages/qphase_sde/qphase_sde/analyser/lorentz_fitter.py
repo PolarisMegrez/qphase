@@ -40,7 +40,7 @@ from ..contracts.analyser import AnalyserWorkspaceRequest, WorkEstimate
 from ..products import (
     assemble_row_table_product,
 )
-from .base import Analyzer
+from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     FrequencyOrientation,
     orientation_metadata,
@@ -584,7 +584,7 @@ class LorentzFitter(Analyzer):
             scan_param=config.scan_param,
             metadata=metadata,
         )
-        payload, _ = self._compute_payload(typed, backend)
+        payload, _ = self._compute_payload(typed, backend, context=context)
         products = self.build_products(payload, scan_size=None, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
@@ -680,7 +680,11 @@ class LorentzFitter(Analyzer):
         return {label: product}
 
     def _compute_payload(
-        self, data: Any, backend: BackendBase
+        self,
+        data: Any,
+        backend: BackendBase,
+        *,
+        context: Any | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Fit Lorentzians to aggregated PSD data and export merged outputs.
 
@@ -690,6 +694,9 @@ class LorentzFitter(Analyzer):
             ``AggregateResult``, directory path, or ``DirectoryInputResult``.
         backend : BackendBase
             Backend instance (unused; kept for protocol compatibility).
+        context : Any, optional
+            Execution context; the per-spectrum fit loop polls its
+            cancellation token and reports spectrum-cadence progress.
 
         Returns
         -------
@@ -716,7 +723,8 @@ class LorentzFitter(Analyzer):
         reference_axis: np.ndarray | None = None
         reference_orientation: FrequencyOrientation | None = None
 
-        for loaded in loaded_results:
+        for point_index, loaded in enumerate(loaded_results, start=1):
+            check_execution_cancelled(context)
             if isinstance(loaded, SpectralPoint):
                 scan_value = loaded.scan_value
                 job_name = loaded.job_name
@@ -817,6 +825,12 @@ class LorentzFitter(Analyzer):
                     scan_value,
                     pdist_rows,
                 )
+            report_execution_progress(
+                context,
+                completed=point_index,
+                unit="spectrum",
+                message=f"lorentz_fitter: fitted {point_index} spectra",
+            )
 
         fit_rows.sort(key=lambda row: _sort_key(row[config.scan_param]))
         psd_columns = dict(

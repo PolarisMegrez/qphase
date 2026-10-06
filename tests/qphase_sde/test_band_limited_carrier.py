@@ -421,3 +421,153 @@ def test_scan_tracker_rejects_unsupported_curvature_jump():
 
     assert np.isnan(tracked[2]["tracked_frequency"])
     assert tracked[2]["tracked_status"] == "discontinuous_path"
+
+
+def _typed_psd_product(scan_values: list[float]):
+    """Typed PSD scan product with parameter coordinates for execute()."""
+    from qphase_sde.analyser.psd import PsdAnalyzer
+    from qphase_sde.products import add_scan_parameter_coordinates
+
+    axis = np.linspace(-3.0, 3.0, 1024, endpoint=False)
+    payload = []
+    for value in scan_values:
+        psd = _lorentzian(axis, center=-0.1 - 0.05 * value, hwhm=0.07)
+        payload.append(
+            {
+                "axis": axis,
+                "psd": psd[:, None],
+                "psd_std": np.full((axis.size, 1), 0.01),
+                "psd_sem": np.full((axis.size, 1), 0.001),
+                "modes": [0],
+                "orientation": "phase_decreasing",
+                "uncertainty": {"n_independent": 4},
+            }
+        )
+    products = PsdAnalyzer(modes=[0], kind="complex").build_products(
+        payload, scan_size=len(scan_values), label="psd"
+    )
+    assert products is not None
+    return add_scan_parameter_coordinates(
+        products["psd"], {"epsilon": np.asarray(scan_values, dtype=float)}
+    )
+
+
+class _LoopAbortError(Exception):
+    """Raised by the fake cancellation token mid-loop."""
+
+
+class _FakeCancellation:
+    """Cancellation token that raises after a fixed number of polls."""
+
+    def __init__(self, abort_after: int) -> None:
+        self.calls = 0
+        self._abort_after = abort_after
+
+    def raise_if_cancelled(self) -> None:
+        self.calls += 1
+        if self.calls > self._abort_after:
+            raise _LoopAbortError
+
+
+class _FakeProgress:
+    """Progress reporter recording structured updates."""
+
+    def __init__(self) -> None:
+        self.updates: list[dict] = []
+
+    def update(
+        self,
+        completed=None,
+        total=None,
+        *,
+        unit=None,
+        stage=None,
+        message="",
+        metadata=None,
+    ):
+        self.updates.append(
+            {
+                "completed": completed,
+                "total": total,
+                "unit": unit,
+                "stage": stage,
+                "message": message,
+            }
+        )
+
+
+def test_band_limited_carrier_execute_aborts_mid_loop_on_cancellation():
+    from types import SimpleNamespace
+
+    psd = _typed_psd_product([0.0, 1.0, 2.0, 3.0, 4.0])
+    analyzer = BandLimitedCarrierAnalyzer(
+        BandLimitedCarrierConfig(
+            scan_param="epsilon", readout=0, maximum_lag=80.0, export=[]
+        )
+    )
+    context = SimpleNamespace(
+        cancellation=_FakeCancellation(abort_after=2), progress=None
+    )
+
+    with pytest.raises(_LoopAbortError):
+        analyzer.execute(
+            {"psd": psd},
+            backend=NumpyBackend(),
+            label="carrier",
+            context=context,
+        )
+    assert context.cancellation.calls < 5
+
+
+def test_band_limited_carrier_execute_reports_spectrum_progress():
+    from types import SimpleNamespace
+
+    psd = _typed_psd_product([0.0, 1.0, 2.0])
+    analyzer = BandLimitedCarrierAnalyzer(
+        BandLimitedCarrierConfig(
+            scan_param="epsilon", readout=0, maximum_lag=80.0, export=[]
+        )
+    )
+    progress = _FakeProgress()
+    context = SimpleNamespace(cancellation=None, progress=progress)
+
+    products = analyzer.execute(
+        {"psd": psd},
+        backend=NumpyBackend(),
+        label="carrier",
+        context=context,
+    )
+
+    assert products
+    assert progress.updates
+    completed = [update["completed"] for update in progress.updates]
+    assert completed == sorted(completed)
+    assert all(update["unit"] == "spectrum" for update in progress.updates)
+    assert all(
+        str(update["stage"]).startswith("analyze") for update in progress.updates
+    )
+    assert all(update["total"] is None for update in progress.updates)
+
+
+def test_band_limited_tracking_aborts_mid_loop_on_cancellation():
+    from types import SimpleNamespace
+
+    estimates = [
+        BandLimitedCarrierEstimate(
+            spectral_width=0.02,
+            platforms=(_platform(-0.20 + 0.01 * index),),
+            status="ok",
+        )
+        for index in range(8)
+    ]
+    context = SimpleNamespace(
+        cancellation=_FakeCancellation(abort_after=3), progress=None
+    )
+
+    with pytest.raises(_LoopAbortError):
+        track_band_limited_carrier(
+            np.asarray([float(index) for index in range(8)]),
+            estimates,
+            frequency_scale=0.05,
+            context=context,
+        )

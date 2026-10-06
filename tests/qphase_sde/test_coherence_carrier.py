@@ -147,3 +147,104 @@ def test_config_rejects_under_determined_local_polynomial():
             polynomial_order=3,
             minimum_lag_points=3,
         )
+
+
+class _LoopAbortError(Exception):
+    """Raised by the fake cancellation token mid-loop."""
+
+
+class _FakeCancellation:
+    """Cancellation token that raises after a fixed number of polls."""
+
+    def __init__(self, abort_after: int) -> None:
+        self.calls = 0
+        self._abort_after = abort_after
+
+    def raise_if_cancelled(self) -> None:
+        self.calls += 1
+        if self.calls > self._abort_after:
+            raise _LoopAbortError
+
+
+class _FakeProgress:
+    """Progress reporter recording structured updates."""
+
+    def __init__(self) -> None:
+        self.updates: list[dict] = []
+
+    def update(
+        self,
+        completed=None,
+        total=None,
+        *,
+        unit=None,
+        stage=None,
+        message="",
+        metadata=None,
+    ):
+        self.updates.append(
+            {
+                "completed": completed,
+                "total": total,
+                "unit": unit,
+                "stage": stage,
+                "message": message,
+            }
+        )
+
+
+def _typed_trajectories(trajectories: TrajectorySet):
+    from qphase_sde.result import _trajectory_product
+
+    return _trajectory_product(trajectories, scan_size=None, n_traj_per_point=None)
+
+
+def test_coherence_carrier_execute_aborts_mid_lag_loop_on_cancellation():
+    from types import SimpleNamespace
+
+    trajectories = _oscillator_trajectories([0.2, 0.8], [3, 2])
+    analyzer = CoherenceCarrierAnalyzer(
+        CoherenceCarrierConfig(modes=[0, 1], maximum_lag_points=24)
+    )
+    context = SimpleNamespace(
+        cancellation=_FakeCancellation(abort_after=3), progress=None
+    )
+
+    with pytest.raises(_LoopAbortError):
+        analyzer.execute(
+            {"trajectories": _typed_trajectories(trajectories)},
+            backend=NumpyBackend(),
+            label="carrier",
+            context=context,
+        )
+    # 1 map_trajectory_product poll + 25 lag polls + 2 measurement polls bound
+    # a complete run; the abort must cut the loop well before that.
+    assert context.cancellation.calls < 1 + 25 + 2 + 1
+
+
+def test_coherence_carrier_execute_reports_sample_progress():
+    from types import SimpleNamespace
+
+    trajectories = _oscillator_trajectories([0.2, 0.8], [3, 2])
+    analyzer = CoherenceCarrierAnalyzer(
+        CoherenceCarrierConfig(modes=[0, 1], maximum_lag_points=8)
+    )
+    progress = _FakeProgress()
+    context = SimpleNamespace(cancellation=None, progress=progress)
+
+    products = analyzer.execute(
+        {"trajectories": _typed_trajectories(trajectories)},
+        backend=NumpyBackend(),
+        label="carrier",
+        context=context,
+    )
+
+    assert products
+    assert progress.updates
+    completed = [update["completed"] for update in progress.updates]
+    assert completed == sorted(completed)
+    assert all(update["unit"] == "sample" for update in progress.updates)
+    assert all(
+        str(update["stage"]).startswith("analyze") for update in progress.updates
+    )
+    assert all(update["total"] is None for update in progress.updates)

@@ -211,3 +211,125 @@ def test_lorentz_fitter_analyzer_scan_rows_baseline(tmp_path):
     assert (tmp_path / "psd_merged.csv").exists()
     assert (tmp_path / "dist_merged.npz").exists()
     assert (tmp_path / "pdist_merged.pkl").exists()
+
+
+def _typed_psd_product(scan_values: list[float]):
+    """Typed PSD scan product with parameter coordinates for execute()."""
+    from qphase_sde.analyser.psd import PsdAnalyzer
+    from qphase_sde.products import add_scan_parameter_coordinates
+
+    axis = np.linspace(-3.0, 3.0, 1024, endpoint=False)
+    payload = []
+    for value in scan_values:
+        psd = 0.1 + 5.0 * 0.05**2 / ((axis + 0.1 - 0.05 * value) ** 2 + 0.05**2)
+        payload.append(
+            {
+                "axis": axis,
+                "psd": psd[:, None],
+                "psd_std": np.full((axis.size, 1), 0.01),
+                "psd_sem": np.full((axis.size, 1), 0.001),
+                "modes": [0],
+                "orientation": "phase_decreasing",
+                "uncertainty": {"n_independent": 4},
+            }
+        )
+    products = PsdAnalyzer(modes=[0], kind="complex").build_products(
+        payload, scan_size=len(scan_values), label="psd"
+    )
+    assert products is not None
+    return add_scan_parameter_coordinates(
+        products["psd"], {"epsilon": np.asarray(scan_values, dtype=float)}
+    )
+
+
+class _LoopAbortError(Exception):
+    """Raised by the fake cancellation token mid-loop."""
+
+
+class _FakeCancellation:
+    """Cancellation token that raises after a fixed number of polls."""
+
+    def __init__(self, abort_after: int) -> None:
+        self.calls = 0
+        self._abort_after = abort_after
+
+    def raise_if_cancelled(self) -> None:
+        self.calls += 1
+        if self.calls > self._abort_after:
+            raise _LoopAbortError
+
+
+class _FakeProgress:
+    """Progress reporter recording structured updates."""
+
+    def __init__(self) -> None:
+        self.updates: list[dict] = []
+
+    def update(
+        self,
+        completed=None,
+        total=None,
+        *,
+        unit=None,
+        stage=None,
+        message="",
+        metadata=None,
+    ):
+        self.updates.append(
+            {
+                "completed": completed,
+                "total": total,
+                "unit": unit,
+                "stage": stage,
+                "message": message,
+            }
+        )
+
+
+def test_lorentz_fitter_execute_aborts_mid_loop_on_cancellation():
+    from types import SimpleNamespace
+
+    psd = _typed_psd_product([0.0, 1.0, 2.0, 3.0, 4.0])
+    analyzer = LorentzFitter(
+        LorentzFitterConfig(scan_param="epsilon", mode=0, export=[])
+    )
+    context = SimpleNamespace(
+        cancellation=_FakeCancellation(abort_after=2), progress=None
+    )
+
+    with pytest.raises(_LoopAbortError):
+        analyzer.execute(
+            {"psd": psd},
+            backend=NumpyBackend(),
+            label="fit",
+            context=context,
+        )
+    assert context.cancellation.calls < 5
+
+
+def test_lorentz_fitter_execute_reports_spectrum_progress():
+    from types import SimpleNamespace
+
+    psd = _typed_psd_product([0.0, 1.0, 2.0])
+    analyzer = LorentzFitter(
+        LorentzFitterConfig(scan_param="epsilon", mode=0, export=[])
+    )
+    progress = _FakeProgress()
+    context = SimpleNamespace(cancellation=None, progress=progress)
+
+    products = analyzer.execute(
+        {"psd": psd},
+        backend=NumpyBackend(),
+        label="fit",
+        context=context,
+    )
+
+    assert products
+    assert progress.updates
+    completed = [update["completed"] for update in progress.updates]
+    assert completed == sorted(completed)
+    assert all(update["unit"] == "spectrum" for update in progress.updates)
+    assert all(
+        str(update["stage"]).startswith("analyze") for update in progress.updates
+    )
+    assert all(update["total"] is None for update in progress.updates)

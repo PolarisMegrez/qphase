@@ -18,7 +18,7 @@ from qphase.data import DataKind, Dataset, ProductDeclaration, ProductRequiremen
 
 from ..contracts.analyser import AnalyserExecutionCapabilities, WorkEstimate
 from ..peak_finder import materialize_candidate_product
-from .base import Analyzer
+from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .result import AnalysisResult
 from .result_input import load_sde_results
 
@@ -128,6 +128,7 @@ class PeaksAnalyzer(Analyzer):
         tables: list[Mapping[str, Any]] = []
         selected_modes: list[int] | None = None
         for scan_index in range(scan_size):
+            check_execution_cancelled(context)
             point = product.point_view(scan=scan_index) if has_scan else product
             axis = np.asarray(point.handle("axis").materialize(), dtype=float)
             spectrum = np.asarray(point.handle("psd").materialize(), dtype=float)
@@ -153,6 +154,12 @@ class PeaksAnalyzer(Analyzer):
                     scan_count=scan_size,
                     channel_names=[f"mode_{mode}" for mode in modes],
                 )
+            )
+            report_execution_progress(
+                context,
+                completed=scan_index + 1,
+                unit="spectrum",
+                message=f"peaks: searched {scan_index + 1} spectra",
             )
         return {
             label: materialize_candidate_product(

@@ -157,7 +157,20 @@ class AnalyserDeclarationContract(Protocol):
 
 @runtime_checkable
 class AnalyserExecutionContract(AnalyserDeclarationContract, Protocol):
-    """Typed execution surface used by the core ProductGraph executor."""
+    """Typed execution surface used by the core ProductGraph executor.
+
+    ``context`` is the scheduler-supplied execution context (``None`` for
+    direct calls). Long-running ``execute()`` implementations MUST poll
+    ``context.cancellation.raise_if_cancelled()`` inside their internal loops
+    — guarded as ``getattr(context, "cancellation", None)`` so direct calls
+    and attribute-poor contexts keep working — at their natural work-unit
+    cadence (per scan point, per fit, per lag), and SHOULD report progress
+    through ``context.progress`` at the same cadence using the unit and stage
+    prefix declared by :meth:`AnalyserDeclarationContract.work_estimate`.
+    When the work total is unknown the stage reports heartbeats and completed
+    counts only; implementations must not fabricate a total. Behaviour must be
+    identical when ``context`` is ``None``.
+    """
 
     def execute(
         self,

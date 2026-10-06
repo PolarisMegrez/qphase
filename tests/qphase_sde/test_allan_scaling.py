@@ -56,7 +56,7 @@ def _result(
                     "mean_angular_frequency_per_trajectory": phase_frequency
                 },
             }
-        }
+        },
     }
     return SDEResult(
         analysis={"allan_variance": payload},
@@ -181,9 +181,7 @@ def test_allan_scaling_execute_consumes_typed_product_mapping(tmp_path):
         scan_size=epsilon.size,
         label="allan_variance",
     )["allan_variance"]
-    typed = add_scan_parameter_coordinates(
-        typed, {"omega_c": 1.0 + epsilon}
-    )
+    typed = add_scan_parameter_coordinates(typed, {"omega_c": 1.0 + epsilon})
 
     products = analyzer.execute(
         {"allan_variance": typed},
@@ -212,3 +210,120 @@ def test_allan_scaling_consumes_restored_v4_artifact(tmp_path):
     assert summary["accepted_points"] == epsilon.size
     assert summary["noise_fit"]["exponent"] == pytest.approx(4.0 / 3.0)
     assert (out_dir / "allan_points.csv").exists()
+
+
+class _LoopAbortError(Exception):
+    """Raised by the fake cancellation token mid-loop."""
+
+
+class _FakeCancellation:
+    """Cancellation token that raises after a fixed number of polls."""
+
+    def __init__(self, abort_after: int) -> None:
+        self.calls = 0
+        self._abort_after = abort_after
+
+    def raise_if_cancelled(self) -> None:
+        self.calls += 1
+        if self.calls > self._abort_after:
+            raise _LoopAbortError
+
+
+class _FakeProgress:
+    """Progress reporter recording structured updates."""
+
+    def __init__(self) -> None:
+        self.updates: list[dict] = []
+
+    def update(
+        self,
+        completed=None,
+        total=None,
+        *,
+        unit=None,
+        stage=None,
+        message="",
+        metadata=None,
+    ):
+        self.updates.append(
+            {
+                "completed": completed,
+                "total": total,
+                "unit": unit,
+                "stage": stage,
+                "message": message,
+            }
+        )
+
+
+def _typed_allan_input(epsilon: np.ndarray):
+    """Typed Allan scan product with parameter coordinates for execute()."""
+    from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
+    from qphase_sde.products import add_scan_parameter_coordinates
+
+    typed = AllanVarianceAnalyzer(modes=[0]).build_products(
+        [_result(float(value)).analysis["allan_variance"] for value in epsilon],
+        scan_size=epsilon.size,
+        label="allan_variance",
+    )["allan_variance"]
+    return add_scan_parameter_coordinates(typed, {"omega_c": 1.0 + epsilon})
+
+
+def test_allan_scaling_execute_aborts_mid_loop_on_cancellation(tmp_path):
+    epsilon = np.geomspace(1e-3, 1e-1, 9)
+    analyzer = AllanScalingAnalyzer(_config(tmp_path))
+    context = SimpleNamespace(
+        cancellation=_FakeCancellation(abort_after=1), progress=None
+    )
+
+    with pytest.raises(_LoopAbortError):
+        analyzer.execute(
+            {"allan_variance": _typed_allan_input(epsilon)},
+            backend=NumpyBackend(),
+            label="allan_scaling",
+            context=context,
+        )
+    assert context.cancellation.calls < epsilon.size
+
+
+def test_allan_scaling_execute_aborts_inside_bootstrap_loop(tmp_path):
+    # Pre-bootstrap polling costs 9 (collect) + 9 (windows) + 1 (candidate run)
+    # + 15 (trial fits) = 34 polls; bootstrap_samples=200 then dominates, so an
+    # abort after 100 polls lands well inside the bootstrap resampling loop.
+    epsilon = np.geomspace(1e-3, 1e-1, 9)
+    analyzer = AllanScalingAnalyzer(_config(tmp_path))
+    context = SimpleNamespace(
+        cancellation=_FakeCancellation(abort_after=100), progress=None
+    )
+
+    with pytest.raises(_LoopAbortError):
+        analyzer.execute(
+            {"allan_variance": _typed_allan_input(epsilon)},
+            backend=NumpyBackend(),
+            label="allan_scaling",
+            context=context,
+        )
+
+
+def test_allan_scaling_execute_reports_tau_progress(tmp_path):
+    epsilon = np.geomspace(1e-3, 1e-1, 9)
+    analyzer = AllanScalingAnalyzer(_config(tmp_path))
+    progress = _FakeProgress()
+    context = SimpleNamespace(cancellation=None, progress=progress)
+
+    products = analyzer.execute(
+        {"allan_variance": _typed_allan_input(epsilon)},
+        backend=NumpyBackend(),
+        label="allan_scaling",
+        context=context,
+    )
+
+    assert products
+    assert progress.updates
+    completed = [update["completed"] for update in progress.updates]
+    assert completed == sorted(completed)
+    assert all(update["unit"] == "tau" for update in progress.updates)
+    assert all(
+        str(update["stage"]).startswith("analyze") for update in progress.updates
+    )
+    assert all(update["total"] is None for update in progress.updates)

@@ -29,7 +29,7 @@ from ..contracts.analyser import (
 from ..products import (
     assemble_row_table_product,
 )
-from .base import Analyzer
+from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     FrequencyOrientation,
     orientation_metadata,
@@ -163,7 +163,7 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
             scan_param=config.scan_param,
             metadata=metadata,
         )
-        payload, _ = self._compute_payload(typed, backend)
+        payload, _ = self._compute_payload(typed, backend, context=context)
         products = self.build_products(payload, scan_size=None, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
@@ -247,7 +247,11 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
         return {label: product}
 
     def _compute_payload(
-        self, data: Any, backend: BackendBase
+        self,
+        data: Any,
+        backend: BackendBase,
+        *,
+        context: Any | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         del backend
         config = cast(FiniteDelayCarrierConfig, self.config)
@@ -262,7 +266,9 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
         reference_orientation: FrequencyOrientation | None = None
         rates = np.asarray(config.detector_rates, dtype=float)
         readouts = config.resolved_readouts()
+        spectra_done = 0
         for item in loaded:
+            check_execution_cancelled(context)
             if isinstance(item, SpectralPoint):
                 scan_value = item.scan_value
                 job_name = item.job_name
@@ -324,6 +330,13 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
                             "orientation": orientation,
                         }
                     )
+            spectra_done += len(readouts)
+            report_execution_progress(
+                context,
+                completed=spectra_done,
+                unit="spectrum",
+                message=f"finite_delay_carrier: estimated {spectra_done} spectra",
+            )
         readout_order = {str(readout): index for index, readout in enumerate(readouts)}
         rows.sort(
             key=lambda row: (
