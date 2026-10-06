@@ -550,6 +550,8 @@ class Engine(EngineBase):
                         data,
                         reporter=reporter,
                         context=context,
+                        rng_group_seeds=adapter.point_seeds(0, adapter.grid.size),
+                        rng_group_size=adapter.base_n_traj,
                         skip_analysis=(
                             context is not None
                             and getattr(context, "product_graph", None) is not None

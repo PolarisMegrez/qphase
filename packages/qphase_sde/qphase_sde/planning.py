@@ -479,7 +479,7 @@ def build_execution_plan(
             "logical_trajectory_group_seedsequence_v1"
             if trajectory_batch_count > 1
             else "scan_point_seedsequence_v1"
-            if grid is not None and stream_analysis and tile_count > 1
+            if grid is not None
             else "legacy_batched_v1"
         ),
         memory=memory,

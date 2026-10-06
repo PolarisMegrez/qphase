@@ -273,13 +273,24 @@ def test_sde_scan_rng_is_independent_of_tile_size():
         )
         result = engine.run(context=context)
         means = list(result.products["mean"].handle("mean").materialize())
-        return result.metadata["execution_plan"]["scan_tile_size"], means
+        return (
+            result.metadata["execution_plan"]["scan_tile_size"],
+            result.metadata["execution_plan"]["tile_count"],
+            result.metadata["execution_plan"]["rng_strategy"],
+            means,
+        )
 
-    tile_one, means_one = run(3)
-    tile_two, means_two = run(4)
+    tile_unlimited, count_unlimited, strategy_unlimited, means_unlimited = run(None)
+    tile_one, _, _, means_one = run(3)
+    tile_two, _, _, means_two = run(4)
 
+    assert count_unlimited == 1
+    assert strategy_unlimited == "scan_point_seedsequence_v1"
     assert tile_one == 1
     assert tile_two == 2
+    # A single fused tile and any budget-driven tiling must draw the same
+    # per-point streams, bit for bit.
+    np.testing.assert_array_equal(means_unlimited, means_one)
     np.testing.assert_array_equal(means_one, means_two)
 
 
