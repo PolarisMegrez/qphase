@@ -142,6 +142,19 @@ class EngineConfig(BaseModel):
         description="Optional physical trajectory batch-size override",
         json_schema_extra={"scanable": False},
     )
+    rng_group_size: int = Field(
+        64,
+        ge=1,
+        description=(
+            "Logical RNG group size: one random stream serves this many "
+            "consecutive trajectories per scan point. Numerical provenance — "
+            "physical trajectory batches must be whole multiples of it, so "
+            "results are independent of the physical batch size. Different "
+            "group sizes draw different but distribution-equivalent "
+            "realizations."
+        ),
+        json_schema_extra={"scanable": False},
+    )
     seed: int | None = Field(
         None,
         description="Random seed",

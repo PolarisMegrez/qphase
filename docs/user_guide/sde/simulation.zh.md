@@ -128,7 +128,12 @@ engine 在分配轨迹前验证时间网格与 analyser 带宽，并分别估算
 当 analyser 已配置且 `keep_traj: false` 时，每个 trajectory batch 会依次完成积分、
 分析和释放。periodogram、Welch 与 multitaper PSD estimator 均支持该维度的在线聚合，
 并保持现有 `psd`、`psd_std`、`psd_sem` 字段及各自的时间分辨率。固定的逻辑 RNG
-group 保证相同 seed 下结果不依赖 scan tile 和物理 trajectory batch 大小。
+group 保证相同 seed 下结果不依赖 scan tile 和物理 trajectory batch 大小。每个参数点的
+随机流按 `rng_group_size`（默认 64）条连续 trajectory 构成的逻辑 group 派生，因此物理
+batch 必须覆盖完整 group：预算驱动的 batch 会向下取整到 group 的整数倍，显式指定的
+`trajectory_batch_size` 若不是整数倍会被拒绝，连一个 group 都放不下的预算会在规划期
+报错并提示减小 `rng_group_size`。group 大小是数值 provenance：相同取值在任意合法
+batch 划分下复现完全相同的随机流，不同取值则抽到不同但分布等价的 realization。
 专用 `allan_variance` analyser 也支持该路径：它拼接逐轨迹 Allan 统计量，重新计算系综
 SEM 与有效非重叠窗口数，并在 `keep_traj: false` 时不写出采样轨迹。
 在 CuPy 下 Allan 分析本身在设备端原生执行：按 `device_chunk_trajectories` 行分块的

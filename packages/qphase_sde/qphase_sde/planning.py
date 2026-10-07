@@ -232,6 +232,11 @@ def build_execution_plan(
     )
     batching_mode = str(getattr(config, "trajectory_batching", "auto"))
     requested_batch = getattr(config, "trajectory_batch_size", None)
+    # The logical RNG group size is numerical provenance: per-point streams
+    # are derived per (scan point, absolute group index), so it is fixed by
+    # configuration and never by the memory budget. Physical batches must
+    # cover whole groups to keep results independent of the batch size.
+    logical_rng_group = min(int(config.rng_group_size), n_traj)
     trajectory_batch = n_traj
     per_trajectory_work = (
         trajectory_per_point + state_per_point + noise_per_point
@@ -243,7 +248,20 @@ def build_execution_plan(
         analysers=trajectory_analysers,
     )
     if requested_batch is not None:
-        trajectory_batch = min(n_traj, int(requested_batch))
+        requested = int(requested_batch)
+        if (
+            batching_mode != "off"
+            and requested < n_traj
+            and requested < logical_rng_group
+        ):
+            raise ValueError(
+                f"trajectory_batch_size {requested} is below the logical RNG "
+                f"group size {logical_rng_group}: per-point random streams "
+                "are derived per logical group, so physical batches must "
+                "cover whole groups. Raise trajectory_batch_size to at least "
+                f"{logical_rng_group} or set a smaller rng_group_size."
+            )
+        trajectory_batch = min(n_traj, requested)
     elif budget is not None and incremental and not should_keep:
         available_for_trajectories = max(0, budget - reserve - accumulator_workspace)
         trajectory_batch = min(
@@ -272,14 +290,18 @@ def build_execution_plan(
             "that directly consumes trajectories to provide a typed reducer"
         )
 
-    logical_rng_group = min(64, n_traj)
-    if trajectory_batch < n_traj and trajectory_batch >= logical_rng_group:
-        trajectory_batch = max(
-            logical_rng_group,
-            trajectory_batch // logical_rng_group * logical_rng_group,
-        )
-    elif trajectory_batch < logical_rng_group:
-        logical_rng_group = trajectory_batch
+    if trajectory_batch < n_traj:
+        # Resolve to whole logical groups: requested sizes act as a cap and
+        # budget-derived sizes as an estimate; both round down, and the
+        # resolved batch is recorded in the plan payload.
+        trajectory_batch = trajectory_batch // logical_rng_group * logical_rng_group
+        if trajectory_batch < logical_rng_group:
+            raise SDEMemoryPlanningError(
+                "trajectory batching cannot fit one logical RNG group: the "
+                f"resolved batch size is below the group size "
+                f"{logical_rng_group}. Raise the memory budget or set a "
+                "smaller rng_group_size."
+            )
     trajectory_batch_count = math.ceil(n_traj / trajectory_batch)
     stream_analysis = (
         analysis_enabled

@@ -173,7 +173,15 @@ chunks and retains trajectory-level moment summaries through fourth order.
 Both moment analysers reduce bounded time chunks and therefore do not allocate
 a full derived-observable trajectory in addition to the complex samples.
 Stable logical RNG groups make results independent of the selected scan tile
-and physical trajectory batch size for a fixed seed.
+and physical trajectory batch size for a fixed seed. Per-point streams are
+derived per logical group of `rng_group_size` consecutive trajectories
+(default 64), so physical batches must cover whole groups: budget-driven
+batches round down to a whole multiple, a requested
+`trajectory_batch_size` that is not a multiple is rejected, and a budget
+that cannot fit one group fails during planning with a hint to lower
+`rng_group_size`. The group size is numerical provenance: the same value
+reproduces identical streams under any legal batching, while different
+values draw different but distribution-equivalent realizations.
 
 If the full trajectory is requested, it must fit the available resource budget
 and is materialized as one logical result. With CuPy, explicit

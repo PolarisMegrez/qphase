@@ -346,7 +346,7 @@ def test_lorentz_loader_consumes_sde_dataset_views():
 
 
 def test_trajectory_batch_size_does_not_change_psd_random_streams():
-    def run(batch_size):
+    def run(batch_size, rng_group_size=64):
         model = StochasticScannedModel()
         engine = Engine(
             config=EngineConfig(
@@ -356,6 +356,7 @@ def test_trajectory_batch_size_does_not_change_psd_random_streams():
                 n_traj=256,
                 trajectory_batching="required",
                 trajectory_batch_size=batch_size,
+                rng_group_size=rng_group_size,
                 seed=23,
                 ic=[[1.0]],
                 keep_traj=False,
@@ -378,6 +379,23 @@ def test_trajectory_batch_size_does_not_change_psd_random_streams():
     assert plan_128["trajectory_batch_count"] == 2
     np.testing.assert_allclose(batch_64["psd"], batch_128["psd"], rtol=1e-12)
     np.testing.assert_allclose(batch_64["psd_std"], batch_128["psd_std"], rtol=1e-12)
+
+    # Below one logical group the physical batch cannot cover whole groups:
+    # with the default group of 64 a batch of 32 is a config error, not a
+    # silently different random stream.
+    with pytest.raises(ValueError, match="rng_group_size"):
+        run(32)
+
+    # With a smaller provenance group, batches 16/32/64 all reproduce the
+    # same per-point streams; aggregation-order float noise stays far below
+    # the solver tolerance.
+    ref_psd, ref_plan = run(64, rng_group_size=16)
+    assert ref_plan["logical_rng_group_size"] == 16
+    for batch_size in (16, 32):
+        small_psd, small_plan = run(batch_size, rng_group_size=16)
+        assert small_plan["trajectory_batch_size"] == batch_size
+        np.testing.assert_allclose(small_psd["psd"], ref_psd["psd"], rtol=1e-12)
+        np.testing.assert_allclose(small_psd["psd_std"], ref_psd["psd_std"], rtol=1e-12)
 
 
 def test_scan_runs_trajectory_batches_inside_each_parameter_point():
@@ -736,6 +754,7 @@ def test_typed_graph_batches_all_statistical_reducers():
             n_traj=8,
             trajectory_batching="required",
             trajectory_batch_size=4,
+            rng_group_size=4,
             seed=47,
             ic=[["1.0+0.0j"]],
             keep_traj=False,
@@ -786,6 +805,7 @@ def test_trajectory_batching_reduces_psd_before_running_peak_finder():
             n_traj=8,
             trajectory_batching="required",
             trajectory_batch_size=4,
+            rng_group_size=4,
             seed=53,
             ic=[[1.0]],
             keep_traj=False,
@@ -843,6 +863,7 @@ def test_scanned_trajectory_batching_runs_peak_finder_after_reduction():
             n_traj=8,
             trajectory_batching="required",
             trajectory_batch_size=4,
+            rng_group_size=4,
             seed=59,
             ic=[[1.0]],
             keep_traj=False,

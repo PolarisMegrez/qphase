@@ -557,7 +557,7 @@ def test_trajectory_batching_merges_observer_payloads():
         return engine.run()
 
     reference = _payload(run(keep_traj=False))
-    merged = _payload(run(keep_traj=False, trajectory_batch_size=3))
+    merged = _payload(run(keep_traj=False, trajectory_batch_size=4, rng_group_size=4))
 
     # Global trajectory ids are the row index: 8 rows, no renumbering.
     assert merged["hit"].shape == (8,)
@@ -644,6 +644,7 @@ def test_typed_batched_scan_preserves_per_point_observer_payloads():
             n_traj=4,
             trajectory_batching="required",
             trajectory_batch_size=2,
+            rng_group_size=2,
             seed=7,
             ic=[[1.0]],
             keep_traj=False,
@@ -695,6 +696,7 @@ def test_typed_single_point_batch_preserves_observer_metadata():
             n_traj=8,
             trajectory_batching="required",
             trajectory_batch_size=4,
+            rng_group_size=4,
             seed=7,
             ic=[[0.0]],
             keep_traj=False,

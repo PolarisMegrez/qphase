@@ -235,6 +235,7 @@ def test_cupy_typed_scan_and_trajectory_batching_roundtrip(tmp_path):
             n_traj=64,
             trajectory_batching="required",
             trajectory_batch_size=32,
+            rng_group_size=32,
             seed=53,
             ic=[["1.0+0.0j"]],
             keep_traj=False,

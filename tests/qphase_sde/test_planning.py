@@ -167,14 +167,101 @@ def test_planner_batches_trajectories_when_one_point_exceeds_host_budget():
         backend=FakeNumpyBackend(),
         integrator=FakeIntegrator(),
         analysers={"psd": psd},
-        resources=SimpleNamespace(memory_limit_mib=4),
+        resources=SimpleNamespace(memory_limit_mib=32),
     )
 
     assert plan.trajectory_batch_size < config.n_traj
+    assert plan.trajectory_batch_size % plan.logical_rng_group_size == 0
     assert plan.trajectory_batch_count > 1
     assert plan.scan_tile_size == 1
     assert plan.budget_bytes is not None
     assert plan.memory.estimated_peak_bytes <= plan.budget_bytes
+
+
+def test_planner_rejects_budget_below_one_logical_rng_group():
+    config = EngineConfig(
+        t0=0.0,
+        t1=100.0,
+        dt=0.01,
+        n_traj=1000,
+        save_stride=1,
+        record_modes=[0],
+        keep_traj=False,
+    )
+    psd = SimpleNamespace(
+        name="psd",
+        config=SimpleNamespace(expected_freq_max=None),
+        create_result_accumulator=lambda: None,
+    )
+
+    with pytest.raises(SDEMemoryPlanningError, match="rng_group_size"):
+        build_execution_plan(
+            config=config,
+            grid=None,
+            model=FakeModel(),
+            backend=FakeNumpyBackend(),
+            integrator=FakeIntegrator(),
+            analysers={"psd": psd},
+            resources=SimpleNamespace(memory_limit_mib=4),
+        )
+
+
+def test_planner_rejects_requested_batch_misaligned_with_rng_group():
+    config = EngineConfig(
+        t0=0.0,
+        t1=10.0,
+        dt=0.01,
+        n_traj=256,
+        trajectory_batching="required",
+        trajectory_batch_size=48,
+        keep_traj=False,
+    )
+    psd = SimpleNamespace(
+        name="psd",
+        config=SimpleNamespace(expected_freq_max=None),
+        create_result_accumulator=lambda: None,
+    )
+
+    # 48 is below the default logical RNG group of 64: a hard config error.
+    with pytest.raises(ValueError, match="rng_group_size"):
+        build_execution_plan(
+            config=config,
+            grid=None,
+            model=FakeModel(),
+            backend=FakeNumpyBackend(),
+            integrator=FakeIntegrator(),
+            analysers={"psd": psd},
+            resources=None,
+        )
+
+    aligned = config.model_copy(update={"rng_group_size": 16})
+    plan = build_execution_plan(
+        config=aligned,
+        grid=None,
+        model=FakeModel(),
+        backend=FakeNumpyBackend(),
+        integrator=FakeIntegrator(),
+        analysers={"psd": psd},
+        resources=None,
+    )
+    assert plan.logical_rng_group_size == 16
+    assert plan.trajectory_batch_size == 48
+    assert plan.trajectory_batch_count == 6
+
+    # A requested size above one group rounds down to a whole multiple and
+    # the resolved batch is recorded in the plan payload.
+    capped = config.model_copy(update={"trajectory_batch_size": 100})
+    plan = build_execution_plan(
+        config=capped,
+        grid=None,
+        model=FakeModel(),
+        backend=FakeNumpyBackend(),
+        integrator=FakeIntegrator(),
+        analysers={"psd": psd},
+        resources=None,
+    )
+    assert plan.trajectory_batch_size == 64
+    assert plan.trajectory_batch_count == 4
 
 
 def test_typed_planner_rejects_non_tileable_products_before_running():
