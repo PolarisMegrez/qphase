@@ -642,3 +642,61 @@ def test_migrated_workflow_passes_real_planner_with_pinned_rng_group(
     assert plan.logical_rng_group_size == group
     assert plan.trajectory_batch_size % plan.logical_rng_group_size == 0
     assert plan.rng_strategy == "logical_trajectory_group_seedsequence_v1"
+
+
+@pytest.mark.parametrize("n_traj", [65, 100, 127])
+def test_required_batching_falls_back_to_one_full_rng_group(n_traj):
+    """Forced batching without an explicit batch picks one full RNG group
+    plus the tail instead of halving below the group and failing.
+    """
+    config = EngineConfig(
+        t0=0.0,
+        t1=10.0,
+        dt=0.01,
+        n_traj=n_traj,
+        save_stride=10,
+        record_modes=[0],
+        keep_traj=False,
+        trajectory_batching="required",
+    )
+
+    plan = build_execution_plan(
+        config=config,
+        grid=None,
+        model=FakeModel(),
+        backend=FakeNumpyBackend(),
+        integrator=FakeIntegrator(),
+        analysers={"psd": _FakeIncrementalAnalyser()},
+        resources=SimpleNamespace(gpu_memory_fraction=None),
+        device_memory=(80 * 1024**3, 80 * 1024**3),
+    )
+
+    assert plan.trajectory_batch_size == plan.logical_rng_group_size == 64
+    assert plan.trajectory_batch_count == 2
+
+
+@pytest.mark.parametrize("n_traj", [2, 32, 64])
+def test_required_batching_rejects_single_group_ensemble(n_traj):
+    """An ensemble covered by one logical RNG group cannot be force-batched."""
+    config = EngineConfig(
+        t0=0.0,
+        t1=10.0,
+        dt=0.01,
+        n_traj=n_traj,
+        save_stride=10,
+        record_modes=[0],
+        keep_traj=False,
+        trajectory_batching="required",
+    )
+
+    with pytest.raises(SDEMemoryPlanningError, match="rng_group_size"):
+        build_execution_plan(
+            config=config,
+            grid=None,
+            model=FakeModel(),
+            backend=FakeNumpyBackend(),
+            integrator=FakeIntegrator(),
+            analysers={"psd": _FakeIncrementalAnalyser()},
+            resources=SimpleNamespace(gpu_memory_fraction=None),
+            device_memory=(80 * 1024**3, 80 * 1024**3),
+        )

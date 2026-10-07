@@ -367,3 +367,45 @@ def test_engine_rejects_invalid_record_modes(record_modes):
             solver=EulerMaruyama(),
             seed=9,
         )
+
+
+def test_engine_adaptive_stepping_supports_grouped_rng():
+    """Adaptive stepping draws grouped noise through the Generator facade.
+
+    Regression: with n_traj spanning two logical RNG groups the engine hands
+    a grouped stream to the adaptive integrator; drawing must not depend on
+    the engine-private group container reaching the backend.
+    """
+    from qphase_sde.integrator.srk import GenericSRK, GenericSRKConfig
+
+    def run(**overrides):
+        config = EngineConfig(
+            dt=0.01,
+            t0=0.0,
+            t1=0.05,
+            n_traj=128,
+            seed=11,
+            ic=np.ones((128, 1)),
+            adaptive=True,
+            **overrides,
+        )
+        engine = Engine(
+            config=config,
+            plugins={
+                "backend": NumpyBackend(),
+                "integrator": GenericSRK(GenericSRKConfig(method="heun")),
+                "model": DummySDEModel(),
+            },
+        )
+        return _trajectory_alpha(engine.run())
+
+    first = run()
+    second = run()
+    assert first.shape[0] == 128
+    np.testing.assert_array_equal(first, second)
+
+    # Two groups of 64 draw from independent streams; a single group of 128
+    # is a different (distribution-equivalent) realization.
+    single_group = run(rng_group_size=128)
+    assert single_group.shape == first.shape
+    assert not np.allclose(first, single_group)

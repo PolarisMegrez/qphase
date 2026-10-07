@@ -284,7 +284,16 @@ def build_execution_plan(
     if batching_mode == "off":
         trajectory_batch = n_traj
     if batching_mode == "required" and trajectory_batch == n_traj and n_traj > 1:
-        trajectory_batch = max(1, n_traj // 2)
+        # Forced batching picks the smallest legal split: one full logical
+        # RNG group plus any tail. An ensemble covered by a single group
+        # cannot be force-batched at all.
+        if logical_rng_group >= n_traj:
+            raise SDEMemoryPlanningError(
+                f"trajectory_batching='required' cannot split an ensemble of "
+                f"{n_traj} trajectories into whole logical RNG groups of "
+                f"{logical_rng_group}; set a smaller rng_group_size."
+            )
+        trajectory_batch = logical_rng_group
     if trajectory_batch < n_traj and (not incremental or should_keep):
         raise SDEMemoryPlanningError(
             "trajectory batching requires keep_traj=false and every analyser "

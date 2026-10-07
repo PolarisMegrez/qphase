@@ -140,6 +140,27 @@ def _tile_scope_sub_graph(graph: Any, tile_scope: frozenset[str]) -> Any:
     return ProductGraph(nodes=nodes, edges=edges, external_inputs=external)
 
 
+class _AdaptiveNoiseRNG:
+    """Generator-style facade the engine hands to adaptive integrators.
+
+    Adaptive integrators draw noise internally through the ``normal(size=...)``
+    API declared by the integrator contract; this facade routes the draw
+    through the engine's grouped-stream machinery so per-group provenance is
+    preserved without exposing the private ``_GroupedRNG`` container to
+    integrator or backend code.
+    """
+
+    def __init__(self, backend: Any, rng: Any) -> None:
+        self._backend = backend
+        self._rng = rng
+
+    def normal(self, size: Any = None) -> Any:
+        shape = tuple(size) if size is not None else ()
+        out = self._backend.empty(shape, np.float64)
+        Engine._draw_standard_normal_into(self._backend, self._rng, out)
+        return out
+
+
 class EngineConfig(BaseModel):
     """Configuration for the SDE Engine.
 
@@ -2420,6 +2441,7 @@ class Engine(EngineBase):
         # Adaptive stepping setup
         use_adaptive = False
         noise_spec = None
+        adaptive_rng = None
         # Ensure config is not None (use default if None)
         config = self.config if self.config is not None else EngineConfig()
         if (
@@ -2442,6 +2464,12 @@ class Engine(EngineBase):
                 integrator.max_dt = config.max_dt
 
             noise_spec = NoiseSpec(kind="independent", dim=model.noise_dim)
+            # Adaptive integrators draw noise internally; hand grouped
+            # streams through a Generator-style facade so per-group
+            # provenance survives without leaking the private container.
+            adaptive_rng = (
+                _AdaptiveNoiseRNG(be, rng) if isinstance(rng, _GroupedRNG) else rng
+            )
 
         current_dt = dt
         k = 0
@@ -2526,7 +2554,7 @@ class Engine(EngineBase):
                 if use_adaptive:
                     assert noise_spec is not None
                     y_next, t_next, next_dt, error = integrator.step_adaptive(
-                        y, t, current_dt, tol, model, noise_spec, be, rng
+                        y, t, current_dt, tol, model, noise_spec, be, adaptive_rng
                     )
                     y = y_next
                     t = float(t_next)

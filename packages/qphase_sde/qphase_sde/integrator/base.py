@@ -23,6 +23,7 @@ __all__ = [
     "ChunkIntegrator",
     "ChunkStepResult",
     "Integrator",
+    "draw_standard_normal",
 ]
 
 
@@ -32,6 +33,24 @@ class ChunkStepResult:
 
     final_state: Any
     saved_states: Any
+
+
+def draw_standard_normal(
+    rng: Any, shape: tuple[int, ...], dtype: Any, backend: Any
+) -> Any:
+    """Draw standard-normal noise through the integrator-facing RNG contract.
+
+    ``rng`` is either ``None``, a backend-native RNG handle (drawn via
+    ``backend.randn``), or a facade exposing the standard Generator
+    ``normal(size=...)`` API — for example the engine's grouped-stream
+    facade, which keeps per-group stream provenance without exposing any
+    engine-private container to integrators or backends. The draw is cast
+    to ``dtype`` on the backend.
+    """
+    draw = getattr(rng, "normal", None)
+    if callable(draw):
+        return backend.asarray(draw(size=shape), dtype=dtype)
+    return backend.randn(rng, shape, dtype=dtype)
 
 
 @runtime_checkable
@@ -177,7 +196,11 @@ class Integrator(Protocol):
         backend : BackendBase
             Backend for array ops.
         rng : Any, optional
-            Random number generator state/object.
+            Random number generator state/object: a backend-native RNG
+            handle or a facade exposing the standard Generator
+            ``normal(size=...)`` API. Implementations should draw through
+            ``draw_standard_normal`` so grouped-stream facades work without
+            backend knowledge of engine-private types.
 
         Returns
         -------

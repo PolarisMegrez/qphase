@@ -17,7 +17,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 from qphase.backend.base import BackendBase
 
-from qphase_sde.integrator.base import Integrator
+from qphase_sde.integrator.base import Integrator, draw_standard_normal
 from qphase_sde.math import ops
 from qphase_sde.model import NoiseSpec, SDEModel
 
@@ -145,15 +145,12 @@ class GenericSRK(Integrator):
         if hasattr(backend, "asarray"):
             sqrt_dt_2 = backend.asarray(sqrt_dt_2, dtype=noise_dtype)
 
-        # Ensure rng is provided
-        if rng is None:
-            # Fallback if rng not provided (should not happen in engine)
-            # But backend.randn might fail or use global state
-            dW_a = backend.randn(None, shape, dtype=noise_dtype) * sqrt_dt_2
-            dW_b = backend.randn(None, shape, dtype=noise_dtype) * sqrt_dt_2
-        else:
-            dW_a = backend.randn(rng, shape, dtype=noise_dtype) * sqrt_dt_2
-            dW_b = backend.randn(rng, shape, dtype=noise_dtype) * sqrt_dt_2
+        # Draw the two half-step noises through the integrator-facing RNG
+        # contract; ``rng`` may be a backend-native handle or a facade with
+        # the standard Generator ``normal(size=...)`` API (e.g. grouped
+        # streams), and None falls back to the backend's global state.
+        dW_a = draw_standard_normal(rng, shape, noise_dtype, backend) * sqrt_dt_2
+        dW_b = draw_standard_normal(rng, shape, noise_dtype, backend) * sqrt_dt_2
 
         dW = dW_a + dW_b
 

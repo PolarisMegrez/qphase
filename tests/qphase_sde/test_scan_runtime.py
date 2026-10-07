@@ -480,6 +480,47 @@ def test_tail_rng_group_keeps_batching_invariance():
         np.testing.assert_allclose(ref_psd[name], batched_128[name], rtol=1e-12)
 
 
+def test_required_batching_falls_back_to_full_group_plus_tail():
+    """n_traj=65 with required batching and no explicit batch resolves to one
+    full RNG group plus a tail batch, reproducing the non-batched streams.
+    """
+
+    def run(batching, batch_size=None):
+        model = StochasticScannedModel()
+        engine = Engine(
+            config=EngineConfig(
+                t0=0.0,
+                t1=0.08,
+                dt=0.01,
+                n_traj=65,
+                trajectory_batching=batching,
+                trajectory_batch_size=batch_size,
+                seed=47,
+                ic=[[1.0]],
+                keep_traj=False,
+            ),
+            plugins={
+                "backend": NumpyBackend(),
+                "integrator": EulerMaruyama(),
+                "model": model,
+                "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            },
+        )
+        result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
+        return _product_arrays(result.products["psd"]), result.metadata[
+            "execution_plan"
+        ]
+
+    ref_psd, ref_plan = run("off")
+    batched_psd, batched_plan = run("required")
+
+    assert ref_plan["trajectory_batch_count"] == 1
+    assert batched_plan["trajectory_batch_size"] == 64
+    assert batched_plan["trajectory_batch_count"] == 2
+    for name in ("psd", "psd_std"):
+        np.testing.assert_allclose(ref_psd[name], batched_psd[name], rtol=1e-12)
+
+
 def test_scan_fused_and_batched_paths_share_point_streams():
     """Fused whole-scan and per-point batched runs draw identical streams."""
 
