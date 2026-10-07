@@ -26,6 +26,7 @@ jobs:
       keep_traj: false
       trajectory_batching: required
       trajectory_batch_size: 32
+      rng_group_size: 32
       max_state_norm: 200.0
       state_check_interval_steps: 2048
   backend: &backend

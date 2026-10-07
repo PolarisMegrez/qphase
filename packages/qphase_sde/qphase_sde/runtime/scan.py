@@ -114,15 +114,6 @@ class SDEParameterGridAdapter:
                 else:
                     object.__setattr__(self.engine.config, name, value)
 
-    def point_seeds(self, start: int, stop: int) -> tuple[int, ...]:
-        """Return deterministic per-point seeds independent of tile boundaries."""
-        seeds: list[int] = []
-        for flat_index in range(start, stop):
-            sequence = np.random.SeedSequence([self.master_seed, flat_index])
-            seed = int(sequence.generate_state(1, dtype=np.uint64)[0])
-            seeds.append(seed)
-        return tuple(seeds)
-
     def _validate_targets(self) -> dict[str, np.ndarray]:
         expected_prefix = f"model.{self.model.name}."
         scanned: dict[str, np.ndarray] = {}

@@ -252,14 +252,15 @@ def build_execution_plan(
         if (
             batching_mode != "off"
             and requested < n_traj
-            and requested < logical_rng_group
+            and (requested < logical_rng_group or requested % logical_rng_group)
         ):
             raise ValueError(
-                f"trajectory_batch_size {requested} is below the logical RNG "
-                f"group size {logical_rng_group}: per-point random streams "
-                "are derived per logical group, so physical batches must "
-                "cover whole groups. Raise trajectory_batch_size to at least "
-                f"{logical_rng_group} or set a smaller rng_group_size."
+                f"trajectory_batch_size {requested} is not a whole multiple of "
+                f"the logical RNG group size {logical_rng_group}: per-point "
+                "random streams are derived per logical group, so physical "
+                "batches must cover whole groups. Set trajectory_batch_size to "
+                f"a multiple of {logical_rng_group} or set a smaller "
+                "rng_group_size."
             )
         trajectory_batch = min(n_traj, requested)
     elif budget is not None and incremental and not should_keep:
@@ -291,9 +292,10 @@ def build_execution_plan(
         )
 
     if trajectory_batch < n_traj:
-        # Resolve to whole logical groups: requested sizes act as a cap and
-        # budget-derived sizes as an estimate; both round down, and the
-        # resolved batch is recorded in the plan payload.
+        # Budget-derived and required-fallback sizes are estimates and round
+        # down to whole logical groups; explicit user requests were already
+        # validated as whole multiples above. The resolved batch is recorded
+        # in the plan payload.
         trajectory_batch = trajectory_batch // logical_rng_group * logical_rng_group
         if trajectory_batch < logical_rng_group:
             raise SDEMemoryPlanningError(
@@ -497,13 +499,12 @@ def build_execution_plan(
         host_total_bytes=host_total,
         gpu_memory_fraction=fraction,
         stream_analysis=stream_analysis,
-        rng_strategy=(
-            "logical_trajectory_group_seedsequence_v1"
-            if trajectory_batch_count > 1
-            else "scan_point_seedsequence_v1"
-            if grid is not None
-            else "legacy_batched_v1"
-        ),
+        # Every execution path derives per-point streams from
+        # (master seed, scan point, logical group index): fused, tiled, and
+        # trajectory-batched runs of the same configuration draw identical
+        # streams, including a short tail group when the group size does not
+        # divide n_traj.
+        rng_strategy="logical_trajectory_group_seedsequence_v1",
         memory=memory,
         observer_check_interval_steps=observer_check_interval_steps,
         effective_chunk_steps=effective_chunk_steps,

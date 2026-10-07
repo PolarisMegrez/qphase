@@ -237,7 +237,7 @@ def test_sde_engine_analyzes_resource_limited_scan_tiles():
     mean = result.products["mean"].handle("mean").materialize()
     assert len(mean) == 2
     assert result.metadata["execution_plan"]["scan_tile_size"] == 1
-    assert result.metadata["rng_strategy"] == "scan_point_seedsequence_v1"
+    assert result.metadata["rng_strategy"] == "logical_trajectory_group_seedsequence_v1"
     assert engine.config.n_traj == 1000
     assert model.params == {"rate": 1.0}
 
@@ -285,7 +285,7 @@ def test_sde_scan_rng_is_independent_of_tile_size():
     tile_two, _, _, means_two = run(4)
 
     assert count_unlimited == 1
-    assert strategy_unlimited == "scan_point_seedsequence_v1"
+    assert strategy_unlimited == "logical_trajectory_group_seedsequence_v1"
     assert tile_one == 1
     assert tile_two == 2
     # A single fused tile and any budget-driven tiling must draw the same
@@ -396,6 +396,136 @@ def test_trajectory_batch_size_does_not_change_psd_random_streams():
         assert small_plan["trajectory_batch_size"] == batch_size
         np.testing.assert_allclose(small_psd["psd"], ref_psd["psd"], rtol=1e-12)
         np.testing.assert_allclose(small_psd["psd_std"], ref_psd["psd_std"], rtol=1e-12)
+
+
+def test_off_auto_and_required_batching_share_random_streams():
+    """Every batching mode derives streams per (seed, point, logical group)."""
+
+    def run(batching, batch_size=None):
+        model = StochasticScannedModel()
+        engine = Engine(
+            config=EngineConfig(
+                t0=0.0,
+                t1=0.08,
+                dt=0.01,
+                n_traj=256,
+                trajectory_batching=batching,
+                trajectory_batch_size=batch_size,
+                seed=31,
+                ic=[[1.0]],
+                keep_traj=False,
+            ),
+            plugins={
+                "backend": NumpyBackend(),
+                "integrator": EulerMaruyama(),
+                "model": model,
+                "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            },
+        )
+        result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
+        return _product_arrays(result.products["psd"]), result.metadata[
+            "execution_plan"
+        ]
+
+    off_psd, off_plan = run("off")
+    auto_psd, auto_plan = run("auto")
+    batched_psd, batched_plan = run("required", 64)
+
+    assert off_plan["trajectory_batch_count"] == 1
+    assert auto_plan["trajectory_batch_count"] == 1
+    assert batched_plan["trajectory_batch_count"] == 4
+    for name in ("psd", "psd_std"):
+        np.testing.assert_allclose(off_psd[name], batched_psd[name], rtol=1e-12)
+        np.testing.assert_allclose(auto_psd[name], batched_psd[name], rtol=1e-12)
+
+
+def test_tail_rng_group_keeps_batching_invariance():
+    """A short tail group (n_traj % group != 0) stays batching-invariant."""
+
+    def run(batching, batch_size=None):
+        model = StochasticScannedModel()
+        engine = Engine(
+            config=EngineConfig(
+                t0=0.0,
+                t1=0.08,
+                dt=0.01,
+                n_traj=250,
+                trajectory_batching=batching,
+                trajectory_batch_size=batch_size,
+                seed=37,
+                ic=[[1.0]],
+                keep_traj=False,
+            ),
+            plugins={
+                "backend": NumpyBackend(),
+                "integrator": EulerMaruyama(),
+                "model": model,
+                "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            },
+        )
+        result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
+        return _product_arrays(result.products["psd"]), result.metadata[
+            "execution_plan"
+        ]
+
+    ref_psd, ref_plan = run("off")
+    batched_64, plan_64 = run("required", 64)
+    batched_128, plan_128 = run("required", 128)
+
+    assert ref_plan["trajectory_batch_count"] == 1
+    assert plan_64["trajectory_batch_count"] == 4
+    assert plan_128["trajectory_batch_count"] == 2
+    for name in ("psd", "psd_std"):
+        np.testing.assert_allclose(ref_psd[name], batched_64[name], rtol=1e-12)
+        np.testing.assert_allclose(ref_psd[name], batched_128[name], rtol=1e-12)
+
+
+def test_scan_fused_and_batched_paths_share_point_streams():
+    """Fused whole-scan and per-point batched runs draw identical streams."""
+
+    def run(batching, batch_size=None):
+        model = StochasticScannedModel()
+        engine = Engine(
+            config=EngineConfig(
+                t0=0.0,
+                t1=0.08,
+                dt=0.01,
+                n_traj=250,
+                trajectory_batching=batching,
+                trajectory_batch_size=batch_size,
+                seed=43,
+                ic=[[1.0]],
+                keep_traj=False,
+            ),
+            plugins={
+                "backend": NumpyBackend(),
+                "integrator": EulerMaruyama(),
+                "model": model,
+                "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            },
+        )
+        result = engine.run(
+            context=SimpleNamespace(
+                parameter_grid=_grid(),
+                progress=None,
+                cancellation=None,
+            )
+        )
+        return _product_arrays(result.products["psd"]), result.metadata[
+            "execution_plan"
+        ]
+
+    fused_psd, fused_plan = run("off")
+    batched_psd, batched_plan = run("required", 128)
+
+    # The fused run covers per-point tail groups (64, 64, 64, 58) in the
+    # middle of the fused ensemble; the batched run covers them in the final
+    # batch of each point. Both must draw the same per-point streams.
+    assert fused_plan["trajectory_batch_count"] == 1
+    assert batched_plan["trajectory_batch_count"] == 2
+    assert fused_psd["psd"].shape[0] == 2
+    for name in ("psd", "psd_std"):
+        np.testing.assert_allclose(fused_psd[name], batched_psd[name], rtol=1e-12)
 
 
 def test_scan_runs_trajectory_batches_inside_each_parameter_point():

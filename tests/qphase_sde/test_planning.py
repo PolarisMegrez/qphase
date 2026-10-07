@@ -1,6 +1,8 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from qphase.core.scan import ScanSpec
 from qphase_sde.analyser.trajectory_diagnostics import TrajectoryDiagnostics
 from qphase_sde.contracts.analyser import AnalyserExecutionCapabilities
@@ -248,20 +250,20 @@ def test_planner_rejects_requested_batch_misaligned_with_rng_group():
     assert plan.trajectory_batch_size == 48
     assert plan.trajectory_batch_count == 6
 
-    # A requested size above one group rounds down to a whole multiple and
-    # the resolved batch is recorded in the plan payload.
+    # A requested size that is not a whole multiple of the group is a hard
+    # config error: silently rounding it would change the random streams the
+    # user asked for. Budget-derived sizes still round down (tested above).
     capped = config.model_copy(update={"trajectory_batch_size": 100})
-    plan = build_execution_plan(
-        config=capped,
-        grid=None,
-        model=FakeModel(),
-        backend=FakeNumpyBackend(),
-        integrator=FakeIntegrator(),
-        analysers={"psd": psd},
-        resources=None,
-    )
-    assert plan.trajectory_batch_size == 64
-    assert plan.trajectory_batch_count == 4
+    with pytest.raises(ValueError, match="rng_group_size"):
+        build_execution_plan(
+            config=capped,
+            grid=None,
+            model=FakeModel(),
+            backend=FakeNumpyBackend(),
+            integrator=FakeIntegrator(),
+            analysers={"psd": psd},
+            resources=None,
+        )
 
 
 def test_typed_planner_rejects_non_tileable_products_before_running():
@@ -501,3 +503,142 @@ def test_planner_accounts_for_host_diagnostics_on_cupy():
     assert plan.memory.analyzer_host_workspace_bytes > 0
     assert plan.host_budget_bytes == 4096 * 1024**2
     assert plan.memory.estimated_host_peak_bytes <= plan.host_budget_bytes
+
+
+class _FakeModel3Mode(FakeModel):
+    n_modes = 3
+
+
+class _FakeIncrementalAnalyser:
+    """Minimal analyser with the typed-reducer interface batching requires."""
+
+    def execution_capabilities(self):
+        return AnalyserExecutionCapabilities(supports_trajectory_batching=True)
+
+    def create_result_accumulator(self):
+        return object()
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Tracked production workflows whose pre-2.0 runs used a physical batch below
+# the old default RNG group (64); each sim job pins rng_group_size to its
+# original batch so the legacy (master, point, group) stream is reproduced.
+_MIGRATED_RNG_GROUP_JOBS = [
+    (
+        "configs/workflows/collective_loss_kerr_3mode/reference/acn_bcn/collective_loss_kerr_3mode_figure1_full.yaml",
+        "collective_loss_kerr_3mode_figure1_full_sim",
+        60,
+        60,
+    ),
+    (
+        "configs/workflows/collective_loss_kerr_3mode/reference/refined_dark/collective_loss_kerr_3mode_refined_dark_signed_figure1.yaml",
+        "collective_loss_kerr_3mode_refined_dark_signed_figure1_sim",
+        32,
+        32,
+    ),
+    (
+        "configs/workflows/collective_loss_kerr_3mode/reference/refined_dark/collective_loss_kerr_3mode_refined_dark_signed_rerun.yaml",
+        "collective_loss_kerr_3mode_refined_dark_signed_rerun_sim",
+        48,
+        48,
+    ),
+    (
+        "configs/workflows/collective_loss_kerr_3mode/reference/refined_dark/collective_loss_kerr_3mode_refined_dark_signed_supplement.yaml",
+        "collective_loss_kerr_3mode_refined_dark_signed_supplement_sim",
+        48,
+        48,
+    ),
+    (
+        "configs/workflows/kerr_full_3mode/kerr_full_3mode_frequency_q0.yaml",
+        "kerr_full_3mode_q0_kf3f_019_omega_c_positive",
+        4,
+        4,
+    ),
+    (
+        "configs/workflows/kerr_full_3mode/kerr_full_3mode_frequency_q0.yaml",
+        "kerr_full_3mode_q0_kf3f_036_omega_c_negative",
+        4,
+        4,
+    ),
+    (
+        "configs/workflows/kerr_full_3mode/kerr_full_3mode_frequency_q0_branch_followup.yaml",
+        "kerr_full_3mode_q0b_kf3f_019_inner",
+        4,
+        4,
+    ),
+    (
+        "configs/workflows/kerr_full_3mode/kerr_full_3mode_frequency_q0_branch_followup.yaml",
+        "kerr_full_3mode_q0b_kf3f_019_outer",
+        4,
+        4,
+    ),
+    (
+        "configs/workflows/kerr_full_3mode/kerr_full_3mode_frequency_q0_branch_followup.yaml",
+        "kerr_full_3mode_q0b_kf3f_036_crossover",
+        4,
+        4,
+    ),
+    (
+        "configs/workflows/kerr_full_3mode/kerr_full_3mode_frequency_q0_fallback.yaml",
+        "kerr_full_3mode_q0f_kf3f_032_outer",
+        4,
+        4,
+    ),
+    (
+        "configs/workflows/kerr_full_3mode/kerr_full_3mode_frequency_q1_3decade.yaml",
+        "kerr_full_3mode_q1_kf3f_032_sim",
+        4,
+        4,
+    ),
+    (
+        "configs/workflows/kerr_full_3mode/kerr_full_3mode_kf3f_001_batch_benchmark.yaml",
+        "kerr_full_3mode_kf3f_001_bench_batch32",
+        32,
+        32,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("workflow_path", "job_name", "batch", "group"),
+    _MIGRATED_RNG_GROUP_JOBS,
+    ids=[f"{Path(p).stem}:{j}" for p, j, _, _ in _MIGRATED_RNG_GROUP_JOBS],
+)
+def test_migrated_workflow_passes_real_planner_with_pinned_rng_group(
+    workflow_path, job_name, batch, group
+):
+    """Migrated workflows must load into EngineConfig and pass the real SDE
+    planner with the explicit batch aligned to the pinned RNG group.
+    """
+    doc = yaml.safe_load((_REPO_ROOT / workflow_path).read_text(encoding="utf-8"))
+    job = next(j for j in doc["jobs"] if j["name"] == job_name)
+    sde = job["engine"]["sde"]
+    assert sde["trajectory_batch_size"] == batch
+    assert sde["rng_group_size"] == group
+
+    config = EngineConfig(**sde)
+    assert config.rng_group_size == group
+
+    grid = ScanSpec.model_validate(job["scan"]).compile() if "scan" in job else None
+    integrator = SimpleNamespace(
+        config=SimpleNamespace(
+            chunk_steps=job["integrator"]["cayley_maruyama"]["chunk_steps"]
+        )
+    )
+
+    plan = build_execution_plan(
+        config=config,
+        grid=grid,
+        model=_FakeModel3Mode(),
+        backend=FakeBackend(),
+        integrator=integrator,
+        analysers={"psd": _FakeIncrementalAnalyser()},
+        resources=SimpleNamespace(gpu_memory_fraction=None),
+        device_memory=(80 * 1024**3, 80 * 1024**3),
+    )
+
+    assert plan.trajectory_batch_size == batch
+    assert plan.logical_rng_group_size == group
+    assert plan.trajectory_batch_size % plan.logical_rng_group_size == 0
+    assert plan.rng_strategy == "logical_trajectory_group_seedsequence_v1"

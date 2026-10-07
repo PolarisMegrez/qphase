@@ -50,6 +50,7 @@ jobs:
       keep_traj: false
       trajectory_batching: auto
       trajectory_batch_size: 60
+      rng_group_size: 60
       max_state_norm: 119.57177631836001
       state_check_interval_steps: 1024
   backend:

@@ -45,6 +45,7 @@ jobs:
       dt: 0.04
       n_traj: 64
       trajectory_batch_size: 32
+      rng_group_size: 32
       seed: 20260820
       ic:
       - - "32.5964406+0.0j"

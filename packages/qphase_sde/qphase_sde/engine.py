@@ -62,10 +62,58 @@ class TrajectoryDivergenceError(RuntimeError):
 
 @dataclass(frozen=True)
 class _GroupedRNG:
-    """Independent RNG handles grouped by scan point inside one fused tile."""
+    """Independent RNG handles, each driving a fixed run of trajectories.
+
+    ``counts`` gives the per-handle trajectory counts when groups are not
+    uniform (a short tail group ends a scan point's ensemble); ``None``
+    means every handle drives ``group_size`` trajectories.
+    """
 
     handles: tuple[Any, ...]
     group_size: int
+    counts: tuple[int, ...] | None = None
+
+
+def _rng_group_seed(master_seed: int, point_index: int, group_index: int) -> int:
+    """Derive one logical-group stream seed from (master, scan point, group)."""
+    sequence = np.random.SeedSequence(
+        [int(master_seed), int(point_index), int(group_index)]
+    )
+    return int(sequence.generate_state(1, dtype=np.uint64)[0])
+
+
+def _rng_group_counts(group_size: int, n_traj: int) -> tuple[int, ...]:
+    """Per-group trajectory counts covering ``n_traj`` rows, tail group last."""
+    group_count = -(-n_traj // group_size)
+    return (group_size,) * (group_count - 1) + (
+        n_traj - (group_count - 1) * group_size,
+    )
+
+
+def _fused_rng_groups(
+    master_seed: int,
+    point_start: int,
+    point_stop: int,
+    group_size: int,
+    n_traj_per_point: int,
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Point-major (seeds, counts) for a fused span of scan points.
+
+    Every trajectory's random stream derives from (master seed, absolute
+    scan point, logical group index), so fused, tiled, and
+    trajectory-batched executions of the same configuration draw identical
+    streams.
+    """
+    point_counts = _rng_group_counts(group_size, n_traj_per_point)
+    seeds: list[int] = []
+    counts: list[int] = []
+    for point in range(point_start, point_stop):
+        seeds.extend(
+            _rng_group_seed(master_seed, point, group)
+            for group in range(len(point_counts))
+        )
+        counts.extend(point_counts)
+    return tuple(seeds), tuple(counts)
 
 
 def _tile_scope_sub_graph(graph: Any, tile_scope: frozenset[str]) -> Any:
@@ -558,13 +606,21 @@ class Engine(EngineBase):
                     context=context,
                 )
             else:
+                group_seeds, group_counts = _fused_rng_groups(
+                    adapter.master_seed,
+                    0,
+                    adapter.grid.size,
+                    plan.logical_rng_group_size,
+                    adapter.base_n_traj,
+                )
                 with adapter:
                     combined = self._run_simulate(
                         data,
                         reporter=reporter,
                         context=context,
-                        rng_group_seeds=adapter.point_seeds(0, adapter.grid.size),
-                        rng_group_size=adapter.base_n_traj,
+                        rng_group_seeds=group_seeds,
+                        rng_group_size=plan.logical_rng_group_size,
+                        rng_group_counts=group_counts,
                         skip_analysis=(
                             context is not None
                             and getattr(context, "product_graph", None) is not None
@@ -626,10 +682,25 @@ class Engine(EngineBase):
                 observers=observers,
             )
         else:
+            master_seed = self.config.seed
+            if master_seed is None:
+                master_seed = int(
+                    np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0]
+                )
+            group_seeds, group_counts = _fused_rng_groups(
+                int(master_seed) % (1 << 64),
+                0,
+                1,
+                plan.logical_rng_group_size,
+                plan.n_traj_per_point,
+            )
             result = self._run_simulate(
                 data,
                 reporter=reporter,
                 context=context,
+                rng_group_seeds=group_seeds,
+                rng_group_size=plan.logical_rng_group_size,
+                rng_group_counts=group_counts,
                 observers=observers,
                 skip_analysis=(
                     context is not None
@@ -907,13 +978,21 @@ class Engine(EngineBase):
                     f"(points {start + 1}-{stop})",
                     stage="sampling",
                 )
+            group_seeds, group_counts = _fused_rng_groups(
+                adapter.master_seed,
+                start,
+                stop,
+                plan.logical_rng_group_size,
+                adapter.base_n_traj,
+            )
             with adapter.tile(start, stop):
                 tile_result = self._run_simulate(
                     data,
                     reporter=reporter,
                     context=context,
-                    rng_group_seeds=adapter.point_seeds(start, stop),
-                    rng_group_size=adapter.base_n_traj,
+                    rng_group_seeds=group_seeds,
+                    rng_group_size=plan.logical_rng_group_size,
+                    rng_group_counts=group_counts,
                     progress_offset=start * plan.n_traj_per_point * plan.steps,
                     progress_scale=point_count * plan.n_traj_per_point,
                     progress_total=total_work,
@@ -1122,22 +1201,22 @@ class Engine(EngineBase):
             if cancellation is not None:
                 cancellation.raise_if_cancelled()
             group_size = plan.logical_rng_group_size
-            if count % group_size:
-                if stop != plan.n_traj_per_point or count >= group_size:
-                    raise RuntimeError(
-                        "trajectory batch boundaries must align with logical RNG groups"
-                    )
-                group_size = count
-            first_group = start // plan.logical_rng_group_size
-            seeds = tuple(
-                int(
-                    np.random.SeedSequence(
-                        [master_seed, point, first_group + offset]
-                    ).generate_state(1, dtype=np.uint64)[0]
+            if start % group_size:
+                raise RuntimeError(
+                    "trajectory batch boundaries must align with logical RNG groups"
                 )
-                for point in range(scan_start, scan_stop)
-                for offset in range(count // group_size)
+            first_group = start // group_size
+            last_group = (stop - 1) // group_size
+            batch_group_counts = tuple(
+                min(stop, (group + 1) * group_size) - group * group_size
+                for group in range(first_group, last_group + 1)
             )
+            seeds = tuple(
+                _rng_group_seed(master_seed, point, group)
+                for point in range(scan_start, scan_stop)
+                for group in range(first_group, last_group + 1)
+            )
+            group_counts = batch_group_counts * point_count
             if reporter is not None:
                 reporter.status(
                     f"SDE typed trajectory batch {batch_index + 1}/"
@@ -1159,6 +1238,7 @@ class Engine(EngineBase):
                     context=context,
                     rng_group_seeds=seeds,
                     rng_group_size=group_size,
+                    rng_group_counts=group_counts,
                     observers=observers,
                     progress_offset=(
                         scan_start * plan.n_traj_per_point + start * point_count
@@ -1480,12 +1560,20 @@ class Engine(EngineBase):
                         master_seed=adapter.master_seed,
                     )
                 else:
+                    group_seeds, group_counts = _fused_rng_groups(
+                        adapter.master_seed,
+                        start,
+                        stop,
+                        plan.logical_rng_group_size,
+                        adapter.base_n_traj,
+                    )
                     tile_result = self._run_simulate(
                         data,
                         reporter=reporter,
                         context=context,
-                        rng_group_seeds=adapter.point_seeds(start, stop),
-                        rng_group_size=adapter.base_n_traj,
+                        rng_group_seeds=group_seeds,
+                        rng_group_size=plan.logical_rng_group_size,
+                        rng_group_counts=group_counts,
                         progress_offset=(start * plan.n_traj_per_point * plan.steps),
                         progress_scale=point_count * plan.n_traj_per_point,
                         progress_total=total_work,
@@ -1602,21 +1690,19 @@ class Engine(EngineBase):
             if cancellation is not None:
                 cancellation.raise_if_cancelled()
             group_size = plan.logical_rng_group_size
-            if count % group_size:
-                if stop != total_trajectories or count >= group_size:
-                    raise RuntimeError(
-                        "trajectory batch boundaries must align with logical RNG groups"
-                    )
-                group_size = count
-            first_group = start // plan.logical_rng_group_size
-            group_count = count // group_size
-            seeds = tuple(
-                int(
-                    np.random.SeedSequence(
-                        [master_seed, point_index, first_group + offset]
-                    ).generate_state(1, dtype=np.uint64)[0]
+            if start % group_size:
+                raise RuntimeError(
+                    "trajectory batch boundaries must align with logical RNG groups"
                 )
-                for offset in range(group_count)
+            first_group = start // group_size
+            last_group = (stop - 1) // group_size
+            group_counts = tuple(
+                min(stop, (group + 1) * group_size) - group * group_size
+                for group in range(first_group, last_group + 1)
+            )
+            seeds = tuple(
+                _rng_group_seed(master_seed, point_index, group)
+                for group in range(first_group, last_group + 1)
             )
             if reporter is not None:
                 reporter.status(
@@ -1635,6 +1721,7 @@ class Engine(EngineBase):
                     context=context,
                     rng_group_seeds=seeds,
                     rng_group_size=group_size,
+                    rng_group_counts=group_counts,
                     observers=observers,
                     progress_offset=(point_index * total_trajectories + start)
                     * plan.steps,
@@ -1748,6 +1835,7 @@ class Engine(EngineBase):
         context: Any | None = None,
         rng_group_seeds: tuple[int, ...] | None = None,
         rng_group_size: int | None = None,
+        rng_group_counts: tuple[int, ...] | None = None,
         observers: dict[str, Any] | None = None,
         progress_offset: int = 0,
         progress_scale: int | None = None,
@@ -1834,6 +1922,7 @@ class Engine(EngineBase):
             progress_cb=sde_progress_cb,
             rng_group_seeds=rng_group_seeds,
             rng_group_size=rng_group_size,
+            rng_group_counts=rng_group_counts,
             observers=observers,
         )
         # Lift observer payloads out of the trajectory metadata immediately so
@@ -2032,6 +2121,7 @@ class Engine(EngineBase):
         rng: Any | None = None,
         rng_group_seeds: tuple[int, ...] | None = None,
         rng_group_size: int | None = None,
+        rng_group_counts: tuple[int, ...] | None = None,
         observers: dict[str, Any] | None = None,
     ) -> TrajectorySet:
         """Run a multi-trajectory SDE simulation.
@@ -2091,9 +2181,12 @@ class Engine(EngineBase):
         rng : any, optional
             Pre-configured RNG handle(s) (from scheduler)
         rng_group_seeds : tuple[int, ...], optional
-            Stable seeds for scan-point groups inside a fused tile.
+            Stable per-group seeds covering the trajectory ensemble.
         rng_group_size : int, optional
             Number of adjacent trajectories driven by each grouped seed.
+        rng_group_counts : tuple[int, ...], optional
+            Explicit per-group trajectory counts when the last group is
+            short; ``None`` derives uniform groups from ``rng_group_size``.
         observers : dict[str, Any], optional
             Online observers (SDEObserverProtocol) checked against the live
             state at their configured cadence. Observers never mutate the
@@ -2214,15 +2307,39 @@ class Engine(EngineBase):
             try:
                 if rng_group_seeds is not None:
                     group_size = int(rng_group_size or 0)
-                    if group_size < 1 or len(rng_group_seeds) * group_size != n_traj:
+                    if group_size < 1 or not rng_group_seeds:
                         raise ValueError(
                             "rng_group_seeds and rng_group_size do not cover n_traj"
                         )
+                    if rng_group_counts is None:
+                        n_groups = len(rng_group_seeds)
+                        if (
+                            n_groups * group_size < n_traj
+                            or (n_groups - 1) * group_size >= n_traj
+                        ):
+                            raise ValueError(
+                                "rng_group_seeds and rng_group_size do not cover "
+                                "n_traj"
+                            )
+                        counts = (group_size,) * (n_groups - 1) + (
+                            n_traj - (n_groups - 1) * group_size,
+                        )
+                    else:
+                        counts = tuple(int(value) for value in rng_group_counts)
+                        if (
+                            len(counts) != len(rng_group_seeds)
+                            or any(value < 1 for value in counts)
+                            or sum(counts) != n_traj
+                        ):
+                            raise ValueError(
+                                "rng_group_counts must match rng_group_seeds and "
+                                "cover n_traj"
+                            )
                     handles = tuple(be.rng(int(value)) for value in rng_group_seeds)
                     rng = (
                         handles[0]
                         if len(handles) == 1
-                        else _GroupedRNG(handles, group_size)
+                        else _GroupedRNG(handles, group_size, counts)
                     )
                 elif per_traj_seeds is not None and len(per_traj_seeds) == n_traj:
                     rng = [be.rng(int(s)) for s in per_traj_seeds]
@@ -2624,14 +2741,20 @@ class Engine(EngineBase):
             return out
 
         trajectory_axis = 1 if out.ndim == 3 else 0
-        expected = len(rng.handles) * rng.group_size
+        counts = rng.counts
+        if counts is None:
+            counts = (rng.group_size,) * len(rng.handles)
+        if len(counts) != len(rng.handles):
+            raise ValueError("grouped RNG counts do not match the handle count")
+        expected = sum(counts)
         if int(out.shape[trajectory_axis]) != expected:
             raise ValueError("grouped RNG shape does not match the fused scan tile")
         fill = getattr(backend, "randn_into", None)
-        for index, handle in enumerate(rng.handles):
+        start = 0
+        for handle, count in zip(rng.handles, counts, strict=True):
             selection = [slice(None)] * out.ndim
-            start = index * rng.group_size
-            selection[trajectory_axis] = slice(start, start + rng.group_size)
+            selection[trajectory_axis] = slice(start, start + count)
+            start += count
             target = out[tuple(selection)]
             if callable(fill):
                 fill(handle, target)
