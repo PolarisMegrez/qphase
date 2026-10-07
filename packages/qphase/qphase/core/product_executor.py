@@ -316,6 +316,15 @@ class ProductGraphExecutor:
                 f"aligned inputs {name!r} and {reference_name!r} of node "
                 f"{node.node_id!r} have different parameter coordinates"
             )
+        for coordinate_name in product_coordinates:
+            product_dims = tuple(product_coordinates[coordinate_name].dims)
+            reference_dims = tuple(reference_coordinates[coordinate_name].dims)
+            if product_dims != reference_dims:
+                raise ValueError(
+                    f"aligned inputs {name!r} and {reference_name!r} of node "
+                    f"{node.node_id!r} bind coordinate {coordinate_name!r} to "
+                    "different axes"
+                )
         for label, dataset in ((name, product), (reference_name, reference)):
             groups: dict[tuple[str, ...], list[str]] = {}
             for coordinate in dataset.coordinates():

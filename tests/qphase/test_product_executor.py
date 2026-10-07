@@ -133,6 +133,44 @@ def _cartesian_product(
     )
 
 
+def _dual_axis_product(x_axis: str) -> StatisticsDataset:
+    schema = ProductSchema(
+        kind=DataKind.STATISTICS,
+        axes=[
+            AxisSchema(name="scan_a", role=AxisRole.PARAMETER, size=2),
+            AxisSchema(name="scan_b", role=AxisRole.PARAMETER, size=2),
+        ],
+        sampling_bases=[SamplingBasisSchema(name="trajectory", count=4)],
+        variables=[
+            VariableSchema(
+                name="value",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan_a", "scan_b"),
+            ),
+            VariableSchema(
+                name="parameter.x",
+                dtype="float64",
+                value_domain="real",
+                dims=(x_axis,),
+            ),
+        ],
+        coordinates=[
+            CoordinateSchema(
+                name="x",
+                variable="parameter.x",
+                dims=(x_axis,),
+                role="parameter",
+            )
+        ],
+    )
+    return StatisticsDataset.from_arrays(
+        schema,
+        {"value": np.zeros((2, 2)), "parameter.x": np.asarray([1.0, 2.0])},
+        owner="test",
+    )
+
+
 def _time_series_product() -> TimeSeriesDataset:
     schema = ProductSchema(
         kind=DataKind.TIME_SERIES,
@@ -597,6 +635,12 @@ def _alignment_graph() -> ProductGraph:
             _cartesian_product([1.0, 1.0, 2.0, 2.0], [10.0, 20.0, 10.0, 20.0]),
             _cartesian_product([1.0, 2.0, 1.0, 2.0], [10.0, 10.0, 20.0, 20.0]),
             "disagree on coordinate",
+        ),
+        (
+            # Same coordinate name and values bound to different axes.
+            _dual_axis_product("scan_a"),
+            _dual_axis_product("scan_b"),
+            "bind coordinate 'x' to different axes",
         ),
     ],
 )
