@@ -104,6 +104,8 @@ integrator:
 
 **注意**：即使启用了自适应步进，引擎也会对结果进行插值，以按照 `dt` 和 `return_stride` 定义的固定间隔保存数据。这确保了输出数据始终位于规则的时间网格上，便于后续分析。
 
+**限制**：自适应步进暂不支持资源分区执行。误差控制的时间网格在整个融合 ensemble 上共享，因此 planner 会拒绝 `adaptive` 与 trajectory 分批（`trajectory_batching: required`，或显式小于 `n_traj` 的 `trajectory_batch_size`）的组合，也会拒绝资源预算被迫划分的 scan tile。自适应任务必须能以单 batch、单 scan tile 放入预算；与固定步长运行不同，其结果不保证在重新分区后保持不变。
+
 ## 自定义模型
 
 若需仿真自定义系统，用户需要定义一个实现 `SDEModel` 协议的模型类。这涉及指定 `drift` 和 `diffusion` 函数。

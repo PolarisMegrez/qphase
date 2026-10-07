@@ -129,6 +129,8 @@ integrator:
 
 **Note**: Even with adaptive stepping, the engine will interpolate the results to save data at fixed intervals defined by `dt` and `return_stride`. This ensures that your output data is always on a regular time grid, simplifying analysis.
 
+**Limitation**: Adaptive stepping does not support resource-partitioned execution. The error-controlled time grid is shared across the whole fused ensemble, so the planner rejects `adaptive` combined with trajectory batching (`trajectory_batching: required`, or an explicit `trajectory_batch_size` below `n_traj`) and with any scan tiling forced by the resource budget. An adaptive job must fit the budget as a single batch and a single scan tile; unlike fixed-step runs, results are not guaranteed to be invariant under repartitioning.
+
 ## Defining Models
 
 To simulate a system, you need to define a model that implements the `SDEModel` protocol. This involves specifying the `drift` and `diffusion` functions.

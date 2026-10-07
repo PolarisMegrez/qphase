@@ -237,6 +237,15 @@ def build_execution_plan(
     # configuration and never by the memory budget. Physical batches must
     # cover whole groups to keep results independent of the batch size.
     logical_rng_group = min(int(config.rng_group_size), n_traj)
+    # Adaptive stepping shares one error-controlled time grid across the
+    # fused array, so any resource partitioning (trajectory batches or scan
+    # tiles) would change the numerical result; the planner rejects it.
+    supports_adaptive = getattr(integrator, "supports_adaptive_step", None)
+    adaptive_active = bool(
+        getattr(config, "adaptive", False)
+        and callable(supports_adaptive)
+        and supports_adaptive()
+    )
     trajectory_batch = n_traj
     per_trajectory_work = (
         trajectory_per_point + state_per_point + noise_per_point
@@ -247,8 +256,22 @@ def build_execution_plan(
         real_itemsize=real_itemsize,
         analysers=trajectory_analysers,
     )
+    if adaptive_active and batching_mode == "required":
+        raise ValueError(
+            "adaptive stepping is incompatible with "
+            "trajectory_batching='required': the error-controlled time grid "
+            "is shared across the fused ensemble, so trajectories cannot be "
+            "split into physical batches"
+        )
     if requested_batch is not None:
         requested = int(requested_batch)
+        if adaptive_active and batching_mode != "off" and requested < n_traj:
+            raise ValueError(
+                "adaptive stepping is incompatible with trajectory_batch_size "
+                f"{requested} < n_traj {n_traj}: the error-controlled time "
+                "grid is shared across the fused ensemble, so trajectories "
+                "cannot be split into physical batches"
+            )
         if (
             batching_mode != "off"
             and requested < n_traj
@@ -313,6 +336,13 @@ def build_execution_plan(
                 f"{logical_rng_group}. Raise the memory budget or set a "
                 "smaller rng_group_size."
             )
+    if adaptive_active and trajectory_batch < n_traj:
+        raise SDEMemoryPlanningError(
+            "adaptive stepping shares one error-controlled time grid across "
+            "the whole ensemble, so trajectory batching would change the "
+            "numerical result; raise the memory budget or disable adaptive "
+            "stepping"
+        )
     trajectory_batch_count = math.ceil(n_traj / trajectory_batch)
     stream_analysis = (
         analysis_enabled
@@ -376,6 +406,13 @@ def build_execution_plan(
 
     tile_size = int(max(1, tile_size))
     tile_count = math.ceil(scan_size / tile_size)
+    if adaptive_active and tile_count > 1:
+        raise SDEMemoryPlanningError(
+            "adaptive stepping shares one error-controlled time grid across "
+            "the fused scan, so scan tiling would change the numerical "
+            "result; raise the memory budget, reduce the scan size, or "
+            "disable adaptive stepping"
+        )
     deferred_analysers: tuple[str, ...] = ()
     deferred_host_bytes = 0
     if typed_execution and product_graph is not None and tile_size < scan_size:

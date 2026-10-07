@@ -700,3 +700,88 @@ def test_required_batching_rejects_single_group_ensemble(n_traj):
             resources=SimpleNamespace(gpu_memory_fraction=None),
             device_memory=(80 * 1024**3, 80 * 1024**3),
         )
+
+
+class _FakeAdaptiveIntegrator(FakeIntegrator):
+    def supports_adaptive_step(self):
+        return True
+
+
+def _adaptive_config(**overrides):
+    base = {
+        "t0": 0.0,
+        "t1": 10.0,
+        "dt": 0.01,
+        "n_traj": 128,
+        "save_stride": 10,
+        "record_modes": [0],
+        "keep_traj": False,
+        "adaptive": True,
+    }
+    base.update(overrides)
+    return EngineConfig(**base)
+
+
+def _adaptive_plan(config, **overrides):
+    kwargs = {
+        "config": config,
+        "grid": None,
+        "model": FakeModel(),
+        "backend": FakeNumpyBackend(),
+        "integrator": _FakeAdaptiveIntegrator(),
+        "analysers": {"psd": _FakeIncrementalAnalyser()},
+        "resources": SimpleNamespace(gpu_memory_fraction=None),
+        "device_memory": (80 * 1024**3, 80 * 1024**3),
+    }
+    kwargs.update(overrides)
+    return build_execution_plan(**kwargs)
+
+
+def test_planner_rejects_adaptive_with_required_batching():
+    with pytest.raises(ValueError, match="adaptive stepping"):
+        _adaptive_plan(_adaptive_config(trajectory_batching="required"))
+
+
+def test_planner_rejects_adaptive_with_explicit_batch_below_ensemble():
+    with pytest.raises(ValueError, match="adaptive stepping"):
+        _adaptive_plan(_adaptive_config(trajectory_batch_size=64))
+
+
+def test_planner_rejects_adaptive_when_budget_forces_batching():
+    config = _adaptive_config(
+        n_traj=1000,
+        t1=100.0,
+        save_stride=1,
+    )
+    with pytest.raises(SDEMemoryPlanningError, match="adaptive stepping"):
+        _adaptive_plan(
+            config,
+            resources=SimpleNamespace(memory_limit_mib=32),
+            device_memory=None,
+        )
+
+
+def test_planner_rejects_adaptive_when_budget_forces_scan_tiling():
+    config = _adaptive_config(
+        n_traj=1000,
+        t1=400000.0,
+        dt=0.08,
+        save_stride=100,
+        trajectory_batching="off",
+    )
+    with pytest.raises(SDEMemoryPlanningError, match="adaptive stepping"):
+        _adaptive_plan(
+            config,
+            grid=_grid(31),
+            backend=FakeBackend(),
+            resources=SimpleNamespace(gpu_memory_fraction=0.75),
+            device_memory=(4 * 1024**3, 4 * 1024**3),
+        )
+
+
+def test_planner_allows_adaptive_single_batch_single_tile():
+    config = _adaptive_config(n_traj=8)
+    plan = _adaptive_plan(config, grid=_grid(3))
+    assert plan.trajectory_batch_size == 8
+    assert plan.trajectory_batch_count == 1
+    assert plan.tile_count == 1
