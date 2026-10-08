@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Literal
 
 import numpy as np
@@ -52,7 +52,6 @@ class Engine(EngineBase):
         self,
         data: Any | None = None,
         context: Any | None = None,
-        progress_cb: Callable[..., Any] | None = None,
     ) -> ResultProtocol:
         model = self._required("model")
         backend = self._required("backend")
@@ -60,8 +59,6 @@ class Engine(EngineBase):
         reporter = context.progress if context is not None else None
         if reporter is not None:
             reporter.status("Solving CAM fixed points", stage="solve")
-        elif progress_cb is not None:
-            progress_cb(None, None, "Solving CAM fixed points", "solve")
         grid = context.parameter_grid if context is not None else None
         output_kind = getattr(solver, "output_kind", "fixed_points")
         if grid is not None and solver.name == "continuation":
@@ -101,8 +98,6 @@ class Engine(EngineBase):
                 )
         if reporter is not None:
             reporter.status("CAM analysis complete", stage="complete")
-        elif progress_cb is not None:
-            progress_cb(1.0, None, "CAM analysis complete", "complete")
         return result
 
     def _solve_bifurcation_grid(

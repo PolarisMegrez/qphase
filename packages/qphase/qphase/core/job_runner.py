@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import logging
 import time
 from collections import OrderedDict
@@ -156,20 +155,9 @@ def invoke_engine(
     engine: Any,
     data: Any,
     context: ExecutionContext,
-    progress_cb: Any | None,
 ) -> ResultProtocol:
-    """Invoke an engine using only the arguments it declares."""
-    signature = inspect.signature(engine.run)
-    accepts_kwargs = any(
-        parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for parameter in signature.parameters.values()
-    )
-    kwargs: dict[str, Any] = {"data": data}
-    if accepts_kwargs or "context" in signature.parameters:
-        kwargs["context"] = context
-    if accepts_kwargs or "progress_cb" in signature.parameters:
-        kwargs["progress_cb"] = progress_cb
-    return engine.run(**kwargs)
+    """Invoke an engine through the typed execution boundary."""
+    return engine.run(data=data, context=context)
 
 
 def write_snapshot(
@@ -421,7 +409,6 @@ def _run_job_inner(
         )
 
     reporter = ProgressReporter(_sink)
-    legacy_cb = reporter.legacy_callback()
     effective_system = job.merge_with_system_config(scheduler.system_config)
     backend = plugins.get("backend")
     backend_name = None
@@ -516,7 +503,6 @@ def _run_job_inner(
                     engine,
                     view,
                     context,
-                    child_reporter.legacy_callback(),
                 )
             finally:
                 context.progress = reporter
@@ -537,7 +523,7 @@ def _run_job_inner(
             meta={"source": job.input.from_, "mode": "map"},
         )
     else:
-        output_result = invoke_engine(engine, input_result, context, legacy_cb)
+        output_result = invoke_engine(engine, input_result, context)
 
     if not isinstance(output_result, ResultProtocol):
         raise QPhaseRuntimeError(

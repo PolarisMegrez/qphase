@@ -18,17 +18,12 @@ ResultProtocol
     Protocol for serializable result containers.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
-
-# Deprecated callback retained for one compatibility cycle. New engines report
-# natural work counts through ``ExecutionContext.progress``.
-LegacyProgressCallback = Callable[[float | None, float | None, str, str | None], None]
-ProgressCallback = LegacyProgressCallback
 
 
 @dataclass(frozen=True)
@@ -205,7 +200,6 @@ class EngineBase(PluginBase, Protocol):
         data: Any | None = None,
         *,
         context: Any | None = None,
-        progress_cb: ProgressCallback | None = None,
     ) -> ResultProtocol:
         """Execute the main computational task and return the result.
 
@@ -217,9 +211,6 @@ class EngineBase(PluginBase, Protocol):
         context : ExecutionContext | None, optional
             Scheduler-owned runtime services and an optional parameter grid.
             Engines report work through ``context.progress``.
-        progress_cb : ProgressCallback | None, optional
-            Deprecated percent-based compatibility callback. New engines must
-            consume ``context`` instead of estimating durations themselves.
 
         Returns
         -------

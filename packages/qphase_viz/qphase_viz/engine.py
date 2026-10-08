@@ -94,7 +94,6 @@ class VizResult(ResultProtocol):
             out_dir.mkdir(parents=True, exist_ok=True)
 
         for name, res in self._analysis.items():
-            # res should be AnalysisResult or similar
             if hasattr(res, "save"):
                 res.save(out_dir / f"{name}_analysis.npz")
 
@@ -124,7 +123,6 @@ class VizEngine(EngineBase):
         data: Any | None = None,
         *,
         context: Any | None = None,
-        progress_cb: Any | None = None,
     ) -> VizResult:
         """Execute visualization tasks.
 
@@ -134,8 +132,6 @@ class VizEngine(EngineBase):
             Input data, expected to be an ArrayBase (e.g., TrajectorySet).
         context : Any | None
             Structured execution services supplied by the scheduler.
-        progress_cb : Any | None
-            Optional callback for progress updates.
 
         """
         if data is None:
@@ -179,8 +175,5 @@ class VizEngine(EngineBase):
                     stage="rendering",
                     message=f"Ran {plotter.name}",
                 )
-            elif progress_cb:
-                percent = (i + 1) / total_plugins
-                progress_cb(percent, None, f"Ran {plotter.name}", "rendering")
 
         return VizResult(generated_files)

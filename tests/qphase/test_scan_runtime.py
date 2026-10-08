@@ -49,8 +49,8 @@ class DatasetSourceEngine:
     def __init__(self, config=None, plugins=None):
         del config, plugins
 
-    def run(self, data=None, context=None, progress_cb=None):
-        del data, context, progress_cb
+    def run(self, data=None, context=None):
+        del data, context
         return TinyDataset()
 
 
@@ -62,8 +62,8 @@ class CountingMapEngine:
     def __init__(self, config=None, plugins=None):
         del config, plugins
 
-    def run(self, data=None, context=None, progress_cb=None):
-        del context, progress_cb
+    def run(self, data=None, context=None):
+        del context
         type(self).calls += 1
         return DummyResult(data=data.data)
 

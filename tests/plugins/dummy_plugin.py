@@ -41,7 +41,8 @@ class DummyPlugin:
         self.config = config
         self.kwargs = kwargs
 
-    def run(self, data=None):
+    def run(self, data=None, *, context=None):
+        del data, context
         return DummyResult(
             data={"status": "ok", "param": self.config.param}, metadata={"dummy": True}
         )

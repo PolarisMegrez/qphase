@@ -19,13 +19,10 @@ Public API
 from __future__ import annotations
 
 import time
-import warnings
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
-
-from .errors import QPhaseWarning, get_logger
 
 __all__ = [
     "ProgressEvent",
@@ -35,8 +32,6 @@ __all__ = [
     "ProgressTracker",
     "SnapshotKind",
 ]
-
-log = get_logger()
 
 ProgressEventKind = Literal["stage_started", "progress", "status", "stage_completed"]
 SnapshotKind = Literal[
@@ -168,10 +163,7 @@ class ProgressReporter:
     """Stable progress API handed to resource engines via ``ExecutionContext``.
 
     Engines report work with :meth:`update`/:meth:`advance` and group it with
-    the :meth:`stage` context manager. The legacy ``report(percent,
-    total_duration_estimate, ...)`` call keeps working for one deprecation
-    cycle and is converted to a fractional ``completed/total`` event; the
-    engine-provided duration estimate is ignored.
+    the :meth:`stage` context manager.
     """
 
     def __init__(
@@ -183,11 +175,6 @@ class ProgressReporter:
         self._stage_total: float | None = None
         self._stage_unit: str | None = None
         self._completed: float = 0.0
-        self._legacy_warned = False
-
-    # ------------------------------------------------------------------
-    # New work-based API
-    # ------------------------------------------------------------------
     def update(
         self,
         completed: float | None = None,
@@ -293,110 +280,9 @@ class ProgressReporter:
             ) = previous
 
     # ------------------------------------------------------------------
-    # Legacy percent API (one deprecation cycle)
-    # ------------------------------------------------------------------
-    def report(
-        self,
-        percent: float | None,
-        *,
-        total_duration_estimate: float | None = None,
-        message: str = "",
-        stage: str | None = None,
-    ) -> None:
-        """Adapt a deprecated percent-based report to a fractional event."""
-        del total_duration_estimate  # engine duration estimates are ignored
-        self._warn_legacy_once()
-        if percent is None:
-            self._send(ProgressEvent(kind="status", stage=stage, message=message))
-            return
-        clamped = min(max(float(percent), 0.0), 1.0)
-        self._send(
-            ProgressEvent(
-                kind="progress",
-                stage=stage,
-                completed=clamped,
-                total=1.0,
-                message=message,
-            )
-        )
-
-    def __call__(
-        self,
-        percent: float | None,
-        total_duration_estimate: float | None = None,
-        message: str = "",
-        stage: str | None = None,
-    ) -> None:
-        """Support the legacy ``(percent, total_est, message, stage)`` call."""
-        self.report(
-            percent,
-            total_duration_estimate=total_duration_estimate,
-            message=message,
-            stage=stage,
-        )
-
-    def legacy_callback(
-        self,
-    ) -> Callable[[float | None, float | None, str, str | None], None]:
-        """Return an old-signature callback that feeds this reporter.
-
-        Used by the scheduler to support engines that still accept
-        ``progress_cb`` instead of consuming ``context.progress``.
-        """
-
-        def _callback(
-            percent: float | None,
-            total_duration_estimate: float | None,
-            message: str,
-            stage: str | None,
-        ) -> None:
-            self.report(
-                percent,
-                total_duration_estimate=total_duration_estimate,
-                message=message,
-                stage=stage,
-            )
-
-        return _callback
-
-    @classmethod
-    def wrap_legacy(
-        cls,
-        callback: Callable[[float | None, float | None, str, str | None], None] | None,
-    ) -> ProgressReporter:
-        """Adapt an old percent callback so new-API callers can drive it."""
-        reporter = cls()
-        if callback is not None:
-
-            def _emit(event: ProgressEvent) -> None:
-                fraction = None
-                if (
-                    event.completed is not None
-                    and event.total is not None
-                    and event.total > 0
-                ):
-                    fraction = min(max(event.completed / event.total, 0.0), 1.0)
-                callback(fraction, None, event.message, event.stage)
-
-            reporter._emit = _emit
-        return reporter
-
-    # ------------------------------------------------------------------
     def _send(self, event: ProgressEvent) -> None:
         if self._emit is not None:
             self._emit(event)
-
-    def _warn_legacy_once(self) -> None:
-        if self._legacy_warned:
-            return
-        self._legacy_warned = True
-        message = (
-            "[991] DEPRECATED: ProgressReporter.report(percent, "
-            "total_duration_estimate=...) is deprecated; use "
-            "update(completed, total, unit=..., stage=...) instead."
-        )
-        warnings.warn(message, QPhaseWarning, stacklevel=3)
-        log.warning(message)
 
 
 @dataclass
