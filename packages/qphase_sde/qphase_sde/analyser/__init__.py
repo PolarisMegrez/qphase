@@ -50,7 +50,6 @@ from .finite_delay_carrier import (
 )
 from .frequency_orientation import (
     DEFAULT_FREQUENCY_ORIENTATION,
-    LEGACY_FREQUENCY_ORIENTATION,
     ORIENTATION_ALIASES,
     FrequencyOrientation,
     OrientationInput,
@@ -113,7 +112,6 @@ __all__ = [
     "DistAnalyzer",
     "DistAnalyzerConfig",
     "DEFAULT_FREQUENCY_ORIENTATION",
-    "LEGACY_FREQUENCY_ORIENTATION",
     "ORIENTATION_ALIASES",
     "OrientationInput",
     "FrequencyOrientation",

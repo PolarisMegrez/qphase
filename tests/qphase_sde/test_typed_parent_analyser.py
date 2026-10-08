@@ -41,7 +41,7 @@ from qphase_sde.analyser.peak_paths import (
     PeakPathsAnalyzerConfig,
 )
 from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
-from qphase_sde.analyser.psd import PsdAnalyzer
+from qphase_sde.analyser.psd import PsdAnalyzer, _build_psd_products
 from qphase_sde.analyser.spectral_ridge import (
     SpectralRidgeAnalyzer,
     SpectralRidgeConfig,
@@ -78,7 +78,9 @@ def _spectrum_bundle() -> SDEDataBundle:
             }
         )
     analyzer = PsdAnalyzer(modes=[0], kind="complex")
-    products = analyzer.build_products(payload, scan_size=2, label="psd")
+    products = _build_psd_products(
+        payload, scan_size=2, label="psd", analyser=analyzer
+    )
     assert products is not None
     return SDEDataBundle(
         products,
@@ -109,14 +111,17 @@ def test_coherence_frequency_parent_publishes_typed_product(tmp_path):
         },
     )
 
-    payload = analyzer.analyze(source, NumpyBackend()).data_dict
-    products = analyzer.build_products(payload, scan_size=2, label="frequency")
+    products = analyzer.execute(
+        {"psd": source.products["psd"]},
+        backend=NumpyBackend(),
+        label="frequency",
+    )
 
     assert products is not None
     product = products["frequency"]
     assert product.attributes["graph_ready"] is True
     assert product.attributes["orientation"] == "phase_decreasing"
-    assert product.attributes["channel_names"] == ["channel_0"]
+    assert product.attributes["channel_names"] == ["mode_0"]
     assert product.attributes["channel_indices"] == [0]
     assert product.axis("scan").size == 2
     assert product.handle("frequency").materialize().shape == (2, 1)
@@ -149,9 +154,10 @@ def test_peak_paths_parent_consumes_peak_product():
         PeaksAnalyzerConfig(scan_param="epsilon"),
         subplugins={"finder": ScipyPeakFinder()},
     )
-    peak_payload = peak_analyzer.analyze(source, NumpyBackend()).data_dict
-    peak_products = peak_analyzer.build_products(
-        peak_payload, scan_size=2, label="peaks"
+    peak_products = peak_analyzer.execute(
+        {"psd": source.products["psd"]},
+        backend=NumpyBackend(),
+        label="peaks",
     )
     assert peak_products is not None
     candidate_source = SDEDataBundle(
@@ -165,8 +171,11 @@ def test_peak_paths_parent_consumes_peak_product():
         subplugins={"tracker": RidgePeakTracker()},
     )
 
-    payload = analyzer.analyze(candidate_source, NumpyBackend()).data_dict
-    products = analyzer.build_products(payload, scan_size=None, label="paths")
+    products = analyzer.execute(
+        {"peaks": candidate_source.products["peaks"]},
+        backend=NumpyBackend(),
+        label="paths",
+    )
 
     assert products is not None
     assert products["paths"].attributes["graph_ready"] is True
@@ -231,8 +240,12 @@ def test_coherence_frequency_parent_resolves_child_through_registry():
         ),
         subplugins={"estimator": RegistryChild(freq_min=-2.0, freq_max=0.2)},
     )
-    result = analyzer.analyze(source, NumpyBackend())
-    assert len(result.data_dict["estimates"]) == 2
+    result = analyzer.execute(
+        {"psd": source.products["psd"]},
+        backend=NumpyBackend(),
+        label="frequency",
+    )["frequency"]
+    assert result.axis("scan").size == 2
 
 
 def test_short_delay_coherence_product_closes_sampling_basis(tmp_path):
@@ -300,28 +313,10 @@ def test_product_graph_rejects_unknown_published_output():
         )
 
 
-def test_cross_result_analysers_execute_from_typed_psd(monkeypatch):
+def test_cross_result_analysers_execute_from_typed_psd():
     source = _spectrum_bundle()
     psd = add_scan_parameter_coordinates(
         source.products["psd"], {"epsilon": np.asarray([0.0, 1.0])}
-    )
-
-    def fail_legacy_loader(*args, **kwargs):
-        raise AssertionError("typed execute unexpectedly used the legacy loader")
-
-    monkeypatch.setattr(
-        "qphase_sde.analyser.spectral_ridge.load_sde_results", fail_legacy_loader
-    )
-    monkeypatch.setattr(
-        "qphase_sde.analyser.band_limited_carrier.load_sde_results",
-        fail_legacy_loader,
-    )
-    monkeypatch.setattr(
-        "qphase_sde.analyser.finite_delay_carrier.load_sde_results",
-        fail_legacy_loader,
-    )
-    monkeypatch.setattr(
-        "qphase_sde.analyser.lorentz_fitter._load_input", fail_legacy_loader
     )
 
     analysers = [

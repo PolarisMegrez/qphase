@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any, ClassVar, cast
 
 import numpy as np
 from pydantic import ConfigDict, Field
 from qphase.backend.base import BackendBase
-from qphase.core.aggregation import DirectoryInputResult
 from qphase.core.protocols import (
     PluginConfigBase,
     PluginManifest,
-    ResultProtocol,
     SubpluginSlot,
 )
 from qphase.data import (
@@ -22,7 +19,6 @@ from qphase.data import (
     ProductDeclaration,
     ProductRequirement,
     StatisticsDataset,
-    load_bundle,
 )
 
 from ..coherence_frequency.base import CoherenceFrequencyProtocol
@@ -38,7 +34,6 @@ from .frequency_orientation import (
     orientation_metadata,
     resolve_frequency_orientation,
 )
-from .result import AnalysisResult
 
 __all__ = ["CoherenceFrequencyAnalyzer", "CoherenceFrequencyAnalyzerConfig"]
 
@@ -62,21 +57,6 @@ class CoherenceFrequencyAnalyzerConfig(PluginConfigBase):
         if len(self.estimator) != 1:
             raise ValueError("coherence_frequency.estimator must select one child")
         return str(next(iter(self.estimator)))
-
-
-def _products_from_input(data: Any) -> Mapping[str, Dataset]:
-    if isinstance(data, DirectoryInputResult):
-        restored = load_bundle(Path(data.path))
-        products = getattr(restored, "products", None)
-    else:
-        products = getattr(data, "products", None)
-        if products is None and isinstance(data, Mapping):
-            products = data
-    if not isinstance(products, Mapping) or not all(
-        isinstance(value, Dataset) for value in products.values()
-    ):
-        raise ValueError("coherence_frequency requires a typed SDE data bundle input")
-    return products
 
 
 def _make_child(
@@ -366,49 +346,3 @@ class CoherenceFrequencyAnalyzer(Analyzer):
     def work_estimate(self, request: Any) -> WorkEstimate:
         del request
         return WorkEstimate(unit="spectrum", total=None)
-
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
-        del backend
-        config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
-        products = _products_from_input(data)
-        product = products.get(config.input_key)
-        if product is None:
-            raise ValueError(
-                f"coherence_frequency input has no product {config.input_key!r}"
-            )
-        estimates = self._compute_estimates(product)
-        return AnalysisResult(
-            data_dict={"estimates": estimates},
-            meta={"scan_param": config.scan_param, "scan_count": len(estimates)},
-        )
-
-    def build_products(
-        self,
-        payload: Any,
-        *,
-        scan_size: int | None,
-        label: str,
-        orientation: FrequencyOrientation = DEFAULT_FREQUENCY_ORIENTATION,
-        channel_name: str = "channel_0",
-        channel_index: int = 0,
-    ) -> dict[str, Dataset] | None:
-        if not isinstance(payload, Mapping) or not isinstance(
-            payload.get("estimates"), list
-        ):
-            raise TypeError("coherence_frequency payload must contain estimates")
-        estimates = payload["estimates"]
-        if not all(isinstance(item, CoherenceFrequencyEstimate) for item in estimates):
-            raise TypeError("coherence_frequency estimates have an invalid type")
-        size = len(estimates) if scan_size is None else scan_size
-        if size != len(estimates):
-            raise ValueError("coherence_frequency estimates do not match scan size")
-        return {
-            label: _materialize_estimates(
-                estimates,
-                scan_size=size,
-                label=label,
-                orientation=orientation,
-                channel_name=channel_name,
-                channel_index=channel_index,
-            )
-        }

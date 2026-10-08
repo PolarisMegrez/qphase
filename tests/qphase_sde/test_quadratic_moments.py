@@ -6,11 +6,43 @@ from qphase_sde.analyser.quadratic_moments import (
     QuadraticMomentConfig,
 )
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
+from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
 
 def _analyzer(**kwargs):
     return QuadraticMomentAnalyzer(QuadraticMomentConfig(**kwargs))
+
+
+def _product_payload(product):
+    payload = {}
+    values = list(product.attributes.get("payload_meta", {}).items()) + [
+        (variable.name, product.handle(variable.name).materialize())
+        for variable in product.variables
+    ]
+    for name, value in values:
+        if np.asarray(value).ndim == 0:
+            value = np.asarray(value).item()
+        target = payload
+        parts = name.split(".")
+        for part in parts[:-1]:
+            key = int(part) if part.isdigit() else part
+            target = target.setdefault(key, {})
+        target[parts[-1]] = value
+    return payload
+
+
+def _payload(analyzer, trajectory: TrajectorySet):
+    product = analyzer.execute(
+        {
+            "trajectories": _trajectory_product(
+                trajectory, scan_size=None, n_traj_per_point=None
+            )
+        },
+        backend=NumpyBackend(),
+        label="quadratic_moments",
+    )["quadratic_moments"]
+    return product, _product_payload(product)
 
 
 def _cumulants(raw):
@@ -36,7 +68,7 @@ def test_quadratic_moments_match_direct_reduction():
     matrix = np.asarray([[1.0, 0.25 + 0.1j], [0.25 - 0.1j, -0.5]])
     reference = np.asarray([[2.0, 0.2j], [-0.2j, 1.0]])
     center = float(np.trace(matrix @ reference).real)
-    payload = (
+    _, payload = _payload(
         _analyzer(
             observables={
                 "soft": {
@@ -49,9 +81,8 @@ def test_quadratic_moments_match_direct_reduction():
             time_blocks=4,
             min_block_samples=4,
             time_chunk_samples=9,
-        )
-        .analyze(TrajectorySet(data, t0=3.0, dt=0.25), NumpyBackend())
-        .data_dict
+        ),
+        TrajectorySet(data, t0=3.0, dt=0.25),
     )
 
     soft = np.einsum("rti,ij,rtj->rt", data.conj(), matrix, data).real - center
@@ -74,13 +105,12 @@ def test_quadratic_moments_resolve_physical_recorded_modes():
     data[:, :, 0] = 2.0
     data[:, :, 1] = 3.0j
     trajectory = TrajectorySet(data, meta={"mode_indices": [2, 5]})
-    payload = (
+    _, payload = _payload(
         _analyzer(
             modes=[5],
             observables={"occupation": {"matrix": [[1.0]]}},
-        )
-        .analyze(trajectory, NumpyBackend())
-        .data_dict
+        ),
+        trajectory,
     )
 
     assert payload["modes"] == [5]
@@ -92,7 +122,7 @@ def test_quadratic_moments_reject_nonhermitian_matrix():
     data = np.ones((2, 8, 2), dtype=complex)
     analyzer = _analyzer(observables={"bad": {"matrix": [[1.0, 1.0], [0.0, 1.0]]}})
     with pytest.raises(ValueError, match="not Hermitian"):
-        analyzer.analyze(TrajectorySet(data), NumpyBackend())
+        _payload(analyzer, TrajectorySet(data))
 
 
 def test_quadratic_moments_accumulator_matches_full_ensemble():
@@ -109,16 +139,16 @@ def test_quadratic_moments_accumulator_matches_full_ensemble():
         min_block_samples=4,
         time_chunk_samples=11,
     )
-    full = analyzer.analyze(
-        TrajectorySet(data, t0=5.0, dt=0.25), NumpyBackend()
-    ).data_dict
+    _, full = _payload(analyzer, TrajectorySet(data, t0=5.0, dt=0.25))
     accumulator = analyzer.create_result_accumulator()
     for start, stop in ((0, 3), (3, 7), (7, 11)):
-        partial = analyzer.analyze(
-            TrajectorySet(data[start:stop], t0=5.0, dt=0.25), NumpyBackend()
-        ).data_dict
-        accumulator.update(partial)
-    merged = accumulator.finalize()
+        partial, _ = _payload(
+            analyzer, TrajectorySet(data[start:stop], t0=5.0, dt=0.25)
+        )
+        accumulator.consume_product(partial)
+    products = accumulator.finalize_product("quadratic_moments")
+    assert products is not None
+    merged = _product_payload(products["quadratic_moments"])
 
     for key in (
         "raw_moments",

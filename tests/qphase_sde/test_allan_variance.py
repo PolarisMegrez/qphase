@@ -6,6 +6,7 @@ from qphase_sde.analyser.allan_variance import (
     AllanVarianceConfig,
 )
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
+from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
 
@@ -38,10 +39,39 @@ def _analyzer() -> AllanVarianceAnalyzer:
     )
 
 
+def _product_payload(product):
+    payload = {}
+    values = list(product.attributes.get("payload_meta", {}).items()) + [
+        (variable.name, product.handle(variable.name).materialize())
+        for variable in product.variables
+    ]
+    for name, value in values:
+        if np.asarray(value).ndim == 0:
+            value = np.asarray(value).item()
+        target = payload
+        parts = name.split(".")
+        for part in parts[:-1]:
+            key = int(part) if part.isdigit() else part
+            target = target.setdefault(key, {})
+        target[parts[-1]] = value
+    return payload
+
+
+def _execute(analyzer, trajectory: TrajectorySet, backend=None):
+    product = analyzer.execute(
+        {
+            "trajectories": _trajectory_product(
+                trajectory, scan_size=None, n_traj_per_point=None
+            )
+        },
+        backend=backend or NumpyBackend(),
+        label="allan_variance",
+    )["allan_variance"]
+    return product, _product_payload(product)
+
+
 def test_allan_variance_reports_nonoverlap_counts_and_frequency():
-    payload = (
-        _analyzer().analyze(_phase_diffusion_trajectory(), NumpyBackend()).data_dict
-    )
+    _, payload = _execute(_analyzer(), _phase_diffusion_trajectory())
     mode = payload["mode_results"][2]
     allan = mode["allan"]
 
@@ -68,14 +98,13 @@ def test_allan_frequency_uses_configured_phase_orientation():
         np.repeat(values, 2, axis=0), dt=dt, meta={"mode_indices": [0]}
     )
 
-    phase_decreasing = (
+    _, phase_decreasing = _execute(
         AllanVarianceAnalyzer(
             AllanVarianceConfig(modes=[0], points=4, min_independent_windows=2)
-        )
-        .analyze(trajectory, NumpyBackend())
-        .data_dict
+        ),
+        trajectory,
     )
-    legacy = (
+    _, legacy = _execute(
         AllanVarianceAnalyzer(
             AllanVarianceConfig(
                 modes=[0],
@@ -83,9 +112,8 @@ def test_allan_frequency_uses_configured_phase_orientation():
                 min_independent_windows=2,
                 orientation="phase_increasing",
             )
-        )
-        .analyze(trajectory, NumpyBackend())
-        .data_dict
+        ),
+        trajectory,
     )
 
     decreasing_frequency = phase_decreasing["mode_results"][0]["phase_increment"][
@@ -102,20 +130,22 @@ def test_allan_frequency_uses_configured_phase_orientation():
 def test_allan_accumulator_matches_full_trajectory_analysis():
     trajectory = _phase_diffusion_trajectory()
     analyzer = _analyzer()
-    full = analyzer.analyze(trajectory, NumpyBackend()).data_dict
+    _, full = _execute(analyzer, trajectory)
     accumulator = analyzer.create_result_accumulator()
     for start, stop in ((0, 2), (2, 6), (6, 9)):
-        partial = analyzer.analyze(
+        partial, _ = _execute(
+            analyzer,
             TrajectorySet(
                 trajectory.data[start:stop],
                 t0=trajectory.t0,
                 dt=trajectory.dt,
                 meta=dict(trajectory.meta),
             ),
-            NumpyBackend(),
-        ).data_dict
-        accumulator.update(partial)
-    merged = accumulator.finalize()
+        )
+        accumulator.consume_product(partial)
+    products = accumulator.finalize_product("allan_variance")
+    assert products is not None
+    merged = _product_payload(products["allan_variance"])
 
     assert merged["n_traj"] == 9
     full_mode = full["mode_results"][2]
@@ -151,18 +181,15 @@ def test_typed_allan_reducer_accepts_multiple_batches():
     assert reducer is not None
     state = reducer.prepare(None, None)
     for start, stop in ((0, 4), (4, 9)):
-        payload = analyzer.analyze(
+        product, _ = _execute(
+            analyzer,
             TrajectorySet(
                 trajectory.data[start:stop],
                 t0=trajectory.t0,
                 dt=trajectory.dt,
                 meta=dict(trajectory.meta),
             ),
-            NumpyBackend(),
-        ).data_dict
-        product = analyzer.build_products(
-            payload, scan_size=None, label="allan_variance"
-        )["allan_variance"]
+        )
         reducer.consume(product, state, None)
 
     merged = reducer.finalize(state)["allan_variance"]
@@ -250,8 +277,8 @@ def test_allan_device_transfer_is_time_chunked():
         )
     )
 
-    payload = analyzer.analyze(trajectory, NumpyBackend()).data_dict
-    reference = analyzer.analyze(source, NumpyBackend()).data_dict
+    _, payload = _execute(analyzer, trajectory)
+    _, reference = _execute(analyzer, source)
 
     assert max(device.transfer_lengths) <= 127
     assert sum(device.transfer_lengths) == source.n_steps
@@ -262,25 +289,40 @@ def test_allan_device_transfer_is_time_chunked():
 
 
 class _DeviceLikeSlice:
-    def __init__(self, array: np.ndarray) -> None:
+    def __init__(self, array: np.ndarray, transfer_lengths: list[int]) -> None:
         self.array = array
+        self.shape = array.shape
+        self.ndim = array.ndim
+        self.dtype = array.dtype
+        self.transfer_lengths = transfer_lengths
+
+    def __getitem__(self, key):
+        selected = self.array[key]
+        self.transfer_lengths.append(int(selected.shape[1]))
+        return _DeviceLikeSlice(selected, self.transfer_lengths)
 
     def get(self) -> np.ndarray:
         return self.array.copy()
 
 
 class _DeviceLikeArray:
-    def __init__(self, array: np.ndarray) -> None:
+    def __init__(
+        self, array: np.ndarray, transfer_lengths: list[int] | None = None
+    ) -> None:
         self.array = array
         self.shape = array.shape
         self.ndim = array.ndim
         self.dtype = array.dtype
-        self.transfer_lengths: list[int] = []
+        self.transfer_lengths = transfer_lengths if transfer_lengths is not None else []
+
+    def reshape(self, *shape):
+        return _DeviceLikeArray(self.array.reshape(*shape), self.transfer_lengths)
 
     def __getitem__(self, key):
         selected = self.array[key]
-        self.transfer_lengths.append(int(selected.shape[1]))
-        return _DeviceLikeSlice(selected)
+        if self.ndim == 3:
+            self.transfer_lengths.append(int(selected.shape[1]))
+        return _DeviceLikeSlice(selected, self.transfer_lengths)
 
 
 _ALLAN_COMPARE_KEYS = (
@@ -351,7 +393,7 @@ def test_allan_device_path_matches_host_complex64_long_record():
         dt=complex128_source.dt,
         meta=dict(complex128_source.meta),
     )
-    _analyzer().analyze(complex128_device, CuPyBackend())
+    _execute(_analyzer(), complex128_device, CuPyBackend())
 
     rng = np.random.default_rng(20260901)
     n_traj, n_time = 4, 500_001
@@ -381,11 +423,11 @@ def test_allan_device_path_matches_host_complex64_long_record():
         )
     )
 
-    reference = analyzer.analyze(trajectory, NumpyBackend()).data_dict
+    _, reference = _execute(analyzer, trajectory)
     device_trajectory = TrajectorySet(
         cp.asarray(values), t0=0.0, dt=dt, meta={"mode_indices": [0]}
     )
-    payload = analyzer.analyze(device_trajectory, CuPyBackend()).data_dict
+    _, payload = _execute(analyzer, device_trajectory, CuPyBackend())
 
     for key in _ALLAN_COMPARE_KEYS:
         rtol = 2e-7 if key.endswith("_sem") else 2e-8
@@ -430,7 +472,7 @@ def test_allan_device_path_matches_host():
             device_chunk_trajectories=4,
         )
     )
-    reference = analyzer.analyze(source, NumpyBackend()).data_dict
+    _, reference = _execute(analyzer, source)
     device_trajectory = TrajectorySet(
         cp.asarray(source.data),
         t0=source.t0,
@@ -438,7 +480,7 @@ def test_allan_device_path_matches_host():
         meta=dict(source.meta),
     )
 
-    payload = analyzer.analyze(device_trajectory, CuPyBackend()).data_dict
+    _, payload = _execute(analyzer, device_trajectory, CuPyBackend())
 
     assert payload["n_traj"] == reference["n_traj"]
     assert payload["n_samples"] == reference["n_samples"]
@@ -472,11 +514,11 @@ def test_allan_device_path_matches_host_with_masked_windows():
         )
     )
 
-    reference = analyzer.analyze(trajectory, NumpyBackend()).data_dict
+    _, reference = _execute(analyzer, trajectory)
     device_trajectory = TrajectorySet(
         cp.asarray(values), t0=0.0, dt=0.1, meta={"mode_indices": [0]}
     )
-    payload = analyzer.analyze(device_trajectory, CuPyBackend()).data_dict
+    _, payload = _execute(analyzer, device_trajectory, CuPyBackend())
 
     _assert_mode_results_equal(payload, reference, 0)
     # Masked trajectories lose windows relative to unmasked ones.

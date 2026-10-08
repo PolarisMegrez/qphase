@@ -32,8 +32,6 @@ WorkEstimate
     Natural work-unit estimate for structured progress.
 AnalyserDeclarationContract
     The 2.0 analyser declaration protocol.
-AnalyserProductBuilderProtocol
-    Internal product assembly hook used by the built-in analyser base.
 """
 
 from __future__ import annotations
@@ -51,7 +49,6 @@ __all__ = [
     "AnalyserDeclarationContract",
     "AnalyserExecutionContract",
     "AnalyserExecutionCapabilities",
-    "AnalyserProductBuilderProtocol",
     "AnalyserWorkspaceEstimate",
     "AnalyserWorkspaceRequest",
     "WorkEstimate",
@@ -182,39 +179,4 @@ class AnalyserExecutionContract(AnalyserDeclarationContract, Protocol):
         context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         """Consume named typed products and return declared typed products."""
-        ...
-
-
-@runtime_checkable
-class AnalyserProductBuilderProtocol(Protocol):
-    """Temporary hook converting direct-API numerical output into products.
-
-    The production ProductGraph entry is ``AnalyserExecutionContract.execute``
-    and does not route through this hook. Built-in analysers retain it only for
-    the direct ``analyze()`` compatibility API until the Wave 5D deletion.
-
-    This protocol is not part of the registered analyser execution contract,
-    and new third-party plugins must not depend on it.
-    """
-
-    def build_products(
-        self,
-        payload: Any,
-        *,
-        scan_size: int | None,
-        label: str,
-    ) -> Mapping[str, Dataset] | None:
-        """Build typed products from one ``analyze()`` payload.
-
-        ``scan_size`` is ``None`` when the job had no parameter grid (the
-        payload is the bare per-point mapping and products carry no scan
-        axis) and the exact scan size of a genuine scan otherwise — a
-        1-point scan keeps a scan axis of size 1. Scan payloads are the bare
-        per-point mapping for ``scan_size == 1`` and the list of
-        ``scan_size`` per-point payloads for larger scans; ``label`` is the
-        job-local analyser label used as the default product name.
-        Returning ``None`` or an empty mapping is a producer failure: the
-        bundle adapter raises and the job ends failed. Invalid payloads
-        raise, never silently degrade.
-        """
         ...

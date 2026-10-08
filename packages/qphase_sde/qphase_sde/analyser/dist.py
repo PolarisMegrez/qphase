@@ -32,12 +32,10 @@ from ..products import (
 from .base import (
     Analyzer,
     map_trajectory_product,
-    resolve_mode_columns,
     select_mode_columns,
     trajectory_arrays,
     trajectory_requirement,
 )
-from .result import AnalysisResult
 
 __all__ = [
     "DistAnalyzer",
@@ -68,6 +66,54 @@ class DistAnalyzerConfig(PluginConfigBase):
         if not self.modes:
             raise ValueError("modes must be non-empty")
         return self
+
+
+def _build_dist_products(
+    payload: Any,
+    *,
+    modes: list[int],
+    scan_size: int | None,
+    label: str,
+) -> dict[str, Dataset] | None:
+    leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
+    if leaves is None:
+        return None
+    sample_payload = payload[0] if isinstance(payload, list) else payload
+    distributions = (
+        sample_payload.get("distributions", {})
+        if isinstance(sample_payload, dict)
+        else {}
+    )
+    declared_dims: dict[str, tuple[str, ...]] = {"modes": ("mode",)}
+    axis_specs: dict[str, TypedAxisSpec] = {
+        "mode": TypedAxisSpec("mode", AxisRole.COMPONENT)
+    }
+    for mode in modes:
+        prefix = f"distributions.{mode}"
+        kind = distributions.get(mode, {}).get("type")
+        if kind == "2d_complex":
+            declared_dims[f"{prefix}.hist"] = ("bin_x", "bin_y")
+            axis_specs["bin_x"] = TypedAxisSpec("bin_x", AxisRole.COORDINATE)
+            axis_specs["bin_y"] = TypedAxisSpec("bin_y", AxisRole.COORDINATE)
+            declared_dims[f"{prefix}.xedges"] = ("edge_x",)
+            declared_dims[f"{prefix}.yedges"] = ("edge_y",)
+            axis_specs["edge_x"] = TypedAxisSpec("edge_x", AxisRole.COORDINATE)
+            axis_specs["edge_y"] = TypedAxisSpec("edge_y", AxisRole.COORDINATE)
+        else:
+            declared_dims[f"{prefix}.hist"] = ("bin",)
+            declared_dims[f"{prefix}.edges"] = ("edge",)
+            axis_specs["bin"] = TypedAxisSpec("bin", AxisRole.COORDINATE)
+            axis_specs["edge"] = TypedAxisSpec("edge", AxisRole.COORDINATE)
+    product = assemble_typed_product(
+        label,
+        leaves,
+        scan_size=scan_size,
+        kind=DataKind.STATISTICS,
+        declared_dims=declared_dims,
+        axis_specs=axis_specs,
+        attributes={"graph_ready": True, "typed_builder": "dist/1"},
+    )
+    return None if product is None else {label: product}
 
 
 class DistAnalyzer(Analyzer):
@@ -103,7 +149,9 @@ class DistAnalyzer(Analyzer):
                 recorded, cast(DistAnalyzerConfig, self.config).modes
             )
             payload = self._compute_payload(data, modes, columns, backend)
-            products = self.build_products(payload, scan_size=None, label=label)
+            products = _build_dist_products(
+                payload, modes=modes, scan_size=None, label=label
+            )
             if not products:
                 raise ValueError("dist produced no typed product")
             return products
@@ -209,167 +257,3 @@ class DistAnalyzer(Analyzer):
                 fields=fields,
             ),
         )
-
-    def build_products(
-        self, payload: Any, *, scan_size: int | None, label: str
-    ) -> dict[str, Dataset] | None:
-        leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
-        if leaves is None:
-            return None
-        sample_payload = payload[0] if isinstance(payload, list) else payload
-        distributions = (
-            sample_payload.get("distributions", {})
-            if isinstance(sample_payload, dict)
-            else {}
-        )
-        declared_dims: dict[str, tuple[str, ...]] = {}
-        axis_specs: dict[str, TypedAxisSpec] = {}
-        declared_dims["modes"] = ("mode",)
-        axis_specs["mode"] = TypedAxisSpec("mode", AxisRole.COMPONENT)
-        for mode in cast(DistAnalyzerConfig, self.config).modes:
-            prefix = f"distributions.{mode}"
-            kind = distributions.get(mode, {}).get("type")
-            if kind == "2d_complex":
-                declared_dims[f"{prefix}.hist"] = ("bin_x", "bin_y")
-                axis_specs["bin_x"] = TypedAxisSpec("bin_x", AxisRole.COORDINATE)
-                axis_specs["bin_y"] = TypedAxisSpec("bin_y", AxisRole.COORDINATE)
-                declared_dims[f"{prefix}.xedges"] = ("edge_x",)
-                declared_dims[f"{prefix}.yedges"] = ("edge_y",)
-                axis_specs["edge_x"] = TypedAxisSpec("edge_x", AxisRole.COORDINATE)
-                axis_specs["edge_y"] = TypedAxisSpec("edge_y", AxisRole.COORDINATE)
-            else:
-                declared_dims[f"{prefix}.hist"] = ("bin",)
-                declared_dims[f"{prefix}.edges"] = ("edge",)
-                axis_specs["bin"] = TypedAxisSpec("bin", AxisRole.COORDINATE)
-                axis_specs["edge"] = TypedAxisSpec("edge", AxisRole.COORDINATE)
-        product = assemble_typed_product(
-            label,
-            leaves,
-            scan_size=scan_size,
-            kind=DataKind.STATISTICS,
-            declared_dims=declared_dims,
-            axis_specs=axis_specs,
-            attributes={"graph_ready": True, "typed_builder": "dist/1"},
-        )
-        return None if product is None else {label: product}
-
-    def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
-        """Compute distribution for multiple modes.
-
-        Parameters
-        ----------
-        data : Any
-            Complex-like time series array of shape ``(n_traj, n_time, n_modes)``
-            or TrajectorySet.
-        backend : BackendBase
-            Backend to use for computation.
-
-        Returns
-        -------
-        AnalysisResult
-            Result containing distribution data.
-
-        """
-        config = cast(DistAnalyzerConfig, self.config)
-        modes = config.modes
-        mode_columns = resolve_mode_columns(data, modes)
-        bins = config.bins
-        density = config.density
-        range_list = config.range
-
-        # Extract data array. Some array-like objects (e.g. TrajectorySet) wrap
-        # the actual array in a ``.data`` attribute. NumPy/CuPy arrays also
-        # expose a ``.data`` attribute, but it is a memoryview/MemoryPointer,
-        # not an array. If ``data`` itself is already array-like (has ndim),
-        # use it directly; otherwise unwrap ``data.data``.
-        if hasattr(data, "ndim") and hasattr(data, "shape"):
-            data_arr = data
-        elif (
-            hasattr(data, "data")
-            and hasattr(data.data, "ndim")
-            and hasattr(data.data, "shape")
-        ):
-            data_arr = data.data
-        else:
-            data_arr = data
-
-        # Use backend-native histogram when available to avoid pulling the full
-        # trajectory to CPU on GPU backends. Fall back to numpy for backends that
-        # do not implement histogram/histogram2d.
-        use_backend_hist = hasattr(backend, "histogram") and hasattr(
-            backend, "histogram2d"
-        )
-
-        if not use_backend_hist:
-            data_np = convert_to_numpy(data_arr)
-
-        results = {}
-
-        for i, (m, column) in enumerate(zip(modes, mode_columns, strict=True)):
-            # Flatten trajectories and time
-            # data shape: (n_traj, n_time, n_modes)
-            if use_backend_hist:
-                samples = data_arr[:, :, column].reshape(-1)
-            else:
-                samples = data_np[:, :, column].flatten()
-
-            is_complex = (
-                _is_complex(samples) if use_backend_hist else _np.iscomplexobj(samples)
-            )
-            if is_complex:
-                # 2D Histogram
-                if use_backend_hist:
-                    x = backend.real(samples)
-                    y = backend.imag(samples)
-                else:
-                    x = samples.real
-                    y = samples.imag
-
-                hist_range_2d: list[tuple[float, float]] | None = None
-                if range_list and i < len(range_list):
-                    r = cast(tuple[float, float], tuple(range_list[i]))
-                    hist_range_2d = [r, r]
-
-                if use_backend_hist:
-                    H, xedges, yedges = backend.histogram2d(
-                        x, y, bins=bins, range=hist_range_2d, density=density
-                    )
-                    H = convert_to_numpy(H)
-                    xedges = convert_to_numpy(xedges)
-                    yedges = convert_to_numpy(yedges)
-                else:
-                    H, xedges, yedges = _np.histogram2d(
-                        x, y, bins=bins, range=hist_range_2d, density=density
-                    )
-                results[m] = {
-                    "hist": H,
-                    "xedges": xedges,
-                    "yedges": yedges,
-                    "type": "2d_complex",
-                }
-            else:
-                # 1D Histogram
-                hist_range_1d: tuple[float, float] | None = None
-                if range_list and i < len(range_list):
-                    hist_range_1d = cast(tuple[float, float], tuple(range_list[i]))
-
-                if use_backend_hist:
-                    H, edges = backend.histogram(
-                        samples, bins=bins, range=hist_range_1d, density=density
-                    )
-                    H = convert_to_numpy(H)
-                    edges = convert_to_numpy(edges)
-                else:
-                    H, edges = _np.histogram(
-                        samples, bins=bins, range=hist_range_1d, density=density
-                    )
-                results[m] = {"hist": H, "edges": edges, "type": "1d_real"}
-
-        result_dict = {
-            "distributions": results,
-            "modes": modes,
-            "bins": bins,
-            "density": density,
-        }
-
-        return AnalysisResult(data_dict=result_dict, meta=result_dict)

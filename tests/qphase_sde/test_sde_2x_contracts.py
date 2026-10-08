@@ -103,14 +103,11 @@ def test_contracts_never_reference_concrete_sde_plugins():
 
 
 def test_frequency_orientation_single_canonical_source():
-    """Contracts are the canonical orientation definition; 1.x agrees."""
-    from qphase_sde.analyser import frequency_orientation as legacy
+    """Analyser runtime imports the canonical contract definition."""
+    from qphase_sde.analyser import frequency_orientation as runtime
 
     assert quantities.DEFAULT_FREQUENCY_ORIENTATION == (
-        legacy.DEFAULT_FREQUENCY_ORIENTATION
-    )
-    assert quantities.LEGACY_FREQUENCY_ORIENTATION == (
-        legacy.LEGACY_FREQUENCY_ORIENTATION
+        runtime.DEFAULT_FREQUENCY_ORIENTATION
     )
 
 

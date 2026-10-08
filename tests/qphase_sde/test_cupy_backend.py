@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.scan import ScanSpec
+from qphase.data import ExternalInputBinding, ProductGraph, ProductNode
 
 pytestmark = [pytest.mark.gpu, pytest.mark.integration]
 
@@ -35,6 +36,28 @@ from qphase_sde.graph import compile_product_graph  # noqa: E402
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama  # noqa: E402
 from qphase_sde.integrator.srk import GenericSRK  # noqa: E402
 from qphase_sde.model import FunctionalSDEModel  # noqa: E402
+from qphase_sde.state import TrajectorySet  # noqa: E402
+
+
+def _graph_for(label, analyzer):
+    node = ProductNode(
+        node_id=f"analyser.{label}",
+        producer=f"analyser:{label}",
+        requirements=list(analyzer.input_requirements()),
+        outputs=list(analyzer.output_specs(label=label)),
+    )
+    return ProductGraph(
+        nodes=[node],
+        external_inputs=[
+            ExternalInputBinding(
+                consumer=node.node_id,
+                requirement=requirement.name,
+                source="input",
+                product=requirement.name,
+            )
+            for requirement in node.requirements
+        ],
+    )
 
 
 def _dummy_model():
@@ -112,7 +135,7 @@ def test_cupy_contract_noise_matches_numpy():
 
 
 def test_cupy_engine_honours_explicit_trajectory_retention():
-    """CuPy analysis runs on device, then an explicit record moves to host."""
+    """Explicitly retained typed trajectories stay device-resident in memory."""
     be = CuPyBackend()
     engine = Engine(
         config=EngineConfig(
@@ -129,30 +152,13 @@ def test_cupy_engine_honours_explicit_trajectory_retention():
             "model": _dummy_model(),
             "integrator": GenericSRK(),
             # GenericSRK defaults to method="heun"
-            "analyser": {
-                "psd": type(
-                    "PsdStub",
-                    (),
-                    {
-                        "name": "psd",
-                        "analyze": lambda self, data, backend: type(
-                            "Res",
-                            (),
-                            {"data_dict": {"ok": True}},
-                        )(),
-                    },
-                )()
-            },
         },
     )
 
     bundle = engine.run()
     assert "trajectories" in bundle.products
     alpha = bundle.products["trajectories"].handle("alpha").materialize()
-    assert isinstance(alpha, np.ndarray)
-    assert bundle.metadata["trajectory_storage"] == "host"
-    ok = bundle.products["psd"].handle("ok").materialize()
-    assert bool(ok) is True
+    assert isinstance(alpha, cupy.ndarray)
 
 
 def test_cupy_vs_numpy_psd_periodogram():
@@ -174,16 +180,42 @@ def test_cupy_vs_numpy_psd_periodogram():
         config=PsdAnalyzerConfig(modes=[0], kind="complex", convention="symmetric")
     )
 
-    axis_np, P_np = analyzer._compute_single(signal, 0.1, backend=np_be)
-    axis_cp, P_cp = analyzer._compute_single(cp_be.asarray(signal), 0.1, backend=cp_be)
+    from qphase_sde.result import _trajectory_product
+
+    np_input = _trajectory_product(
+        TrajectorySet(signal[:, :, None], t0=0.0, dt=0.1),
+        scan_size=None,
+        n_traj_per_point=None,
+    )
+    cp_input = _trajectory_product(
+        TrajectorySet(cp_be.asarray(signal[:, :, None]), t0=0.0, dt=0.1),
+        scan_size=None,
+        n_traj_per_point=None,
+    )
+    product_np = analyzer.execute(
+        {"trajectories": np_input}, backend=np_be, label="psd"
+    )["psd"]
+    product_cp = analyzer.execute(
+        {"trajectories": cp_input}, backend=cp_be, label="psd"
+    )["psd"]
+    axis_np = product_np.handle("axis").materialize()
+    axis_cp = product_cp.handle("axis").materialize()
+    P_np = product_np.handle("psd").materialize()
+    P_cp = product_cp.handle("psd").materialize()
 
     np.testing.assert_allclose(axis_np, axis_cp, rtol=1e-6)
     np.testing.assert_allclose(P_np, P_cp, rtol=1e-4)
 
-    estimate_np = analyzer._estimate_single(signal, 0.1, backend=np_be)
-    estimate_cp = analyzer._estimate_single(cp_be.asarray(signal), 0.1, backend=cp_be)
-    np.testing.assert_allclose(estimate_np.std, estimate_cp.std, rtol=1e-4)
-    np.testing.assert_allclose(estimate_np.sem, estimate_cp.sem, rtol=1e-4)
+    np.testing.assert_allclose(
+        product_np.handle("psd_std").materialize(),
+        product_cp.handle("psd_std").materialize(),
+        rtol=1e-4,
+    )
+    np.testing.assert_allclose(
+        product_np.handle("psd_sem").materialize(),
+        product_cp.handle("psd_sem").materialize(),
+        rtol=1e-4,
+    )
 
 
 def test_cupy_typed_scan_and_trajectory_batching_roundtrip(tmp_path):
@@ -280,6 +312,7 @@ def test_cupy_typed_scan_and_trajectory_batching_roundtrip(tmp_path):
 def test_cupy_dist_matches_numpy():
     """CuPy dist analyzer matches numpy reference."""
     from qphase_sde.analyser.dist import DistAnalyzer, DistAnalyzerConfig
+    from qphase_sde.result import _trajectory_product
 
     np_be = NumpyBackend()
     cp_be = CuPyBackend()
@@ -289,15 +322,35 @@ def test_cupy_dist_matches_numpy():
 
     dist_np = DistAnalyzer(
         config=DistAnalyzerConfig(modes=[0], bins=20, density=True)
-    ).analyze(data, np_be)
+    ).execute(
+        {
+            "trajectories": _trajectory_product(
+                TrajectorySet(data, t0=0.0, dt=1.0),
+                scan_size=None,
+                n_traj_per_point=None,
+            )
+        },
+        backend=np_be,
+        label="dist",
+    )["dist"]
     data_cp = cp_be.asarray(data)
     dist_cp = DistAnalyzer(
         config=DistAnalyzerConfig(modes=[0], bins=20, density=True)
-    ).analyze(data_cp, cp_be)
+    ).execute(
+        {
+            "trajectories": _trajectory_product(
+                TrajectorySet(data_cp, t0=0.0, dt=1.0),
+                scan_size=None,
+                n_traj_per_point=None,
+            )
+        },
+        backend=cp_be,
+        label="dist",
+    )["dist"]
 
     np.testing.assert_allclose(
-        dist_np.data_dict["distributions"][0]["hist"],
-        dist_cp.data_dict["distributions"][0]["hist"],
+        dist_np.handle("distributions.0.hist").materialize(),
+        dist_cp.handle("distributions.0.hist").materialize(),
         rtol=1e-5,
     )
 
@@ -308,6 +361,7 @@ def test_cupy_polar_dist_matches_numpy():
         PolarDistAnalyzer,
         PolarDistAnalyzerConfig,
     )
+    from qphase_sde.result import _trajectory_product
 
     np_be = NumpyBackend()
     cp_be = CuPyBackend()
@@ -317,14 +371,34 @@ def test_cupy_polar_dist_matches_numpy():
 
     pdist_np = PolarDistAnalyzer(
         config=PolarDistAnalyzerConfig(modes=[0], bins=20, density=True)
-    ).analyze(data, np_be)
+    ).execute(
+        {
+            "trajectories": _trajectory_product(
+                TrajectorySet(data, t0=0.0, dt=1.0),
+                scan_size=None,
+                n_traj_per_point=None,
+            )
+        },
+        backend=np_be,
+        label="polar_dist",
+    )["polar_dist"]
     pdist_cp = PolarDistAnalyzer(
         config=PolarDistAnalyzerConfig(modes=[0], bins=20, density=True)
-    ).analyze(cp_be.asarray(data), cp_be)
+    ).execute(
+        {
+            "trajectories": _trajectory_product(
+                TrajectorySet(cp_be.asarray(data), t0=0.0, dt=1.0),
+                scan_size=None,
+                n_traj_per_point=None,
+            )
+        },
+        backend=cp_be,
+        label="polar_dist",
+    )["polar_dist"]
 
     np.testing.assert_allclose(
-        pdist_np.data_dict["distributions"][0]["hist"],
-        pdist_cp.data_dict["distributions"][0]["hist"],
+        pdist_np.handle("distributions.0.hist").materialize(),
+        pdist_cp.handle("distributions.0.hist").materialize(),
         rtol=1e-5,
     )
 
@@ -345,6 +419,7 @@ def test_cupy_vdp_end_to_end_smoke():
         g=0.5,
     ).to_diffusive_sde_model()
 
+    analyzer = PsdAnalyzer(config=PsdAnalyzerConfig(modes=[0], kind="complex"))
     engine = Engine(
         config=EngineConfig(
             t0=0.0,
@@ -360,16 +435,15 @@ def test_cupy_vdp_end_to_end_smoke():
             "backend": cp_be,
             "model": model,
             "integrator": GenericSRK(),
-            "analyser": {
-                "psd": PsdAnalyzer(config=PsdAnalyzerConfig(modes=[0], kind="complex"))
-            },
+            "analyser": {"psd": analyzer},
         },
+        product_graph=_graph_for("psd", analyzer),
     )
 
     bundle = engine.run()
     assert "trajectories" in bundle.products
     alpha = bundle.products["trajectories"].handle("alpha").materialize()
-    assert isinstance(alpha, np.ndarray)
+    assert isinstance(alpha, cupy.ndarray)
     assert "psd" in bundle.products
     psd_data = bundle.products["psd"]
     variables = {variable.name for variable in psd_data.variables}
@@ -453,7 +527,6 @@ jobs:
 
     # Typed bundles persist as a v4 artifact directory, not an npz result.
     from qphase.data import load_products
-    from qphase_sde.result import legacy_view_from_products
 
     manifest_path = captured_job_dir / "artifact_manifest.json"
     assert manifest_path.exists()
@@ -461,7 +534,8 @@ jobs:
         name: dataset.materialize()
         for name, dataset in load_products(captured_job_dir).items()
     }
-    result = legacy_view_from_products(products)
-    assert result.trajectory is not None
-    assert isinstance(result.trajectory.data, np.ndarray)
-    assert "psd" in result.analysis
+    assert "trajectories" in products
+    assert isinstance(
+        products["trajectories"].handle("alpha").materialize(), np.ndarray
+    )
+    assert "psd" in products

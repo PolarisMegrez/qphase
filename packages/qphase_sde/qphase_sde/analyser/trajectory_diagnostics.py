@@ -49,7 +49,6 @@ from .allan_statistics import calculate_allan_variance
 from .base import (
     Analyzer,
     map_trajectory_product,
-    resolve_mode_columns,
     select_mode_columns,
     trajectory_arrays,
     trajectory_requirement,
@@ -63,7 +62,6 @@ from .frequency_orientation import (
     orientation_schema_extra,
     orientation_sign,
 )
-from .result import AnalysisResult
 from .trajectory_diagnostic import (
     TrajectoryDiagnosticChild,
     TrajectoryDiagnosticContext,
@@ -275,6 +273,61 @@ class TrajectoryDiagnosticsConfig(PluginConfigBase):
         return self
 
 
+def _build_trajectory_diagnostics_products(
+    payload: Any, *, scan_size: int | None, label: str
+) -> dict[str, Dataset] | None:
+    leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
+    if leaves is None:
+        return None
+    declared_dims: dict[str, tuple[str, ...]] = {}
+    for key, array in leaves.arrays.items():
+        if key == "modes":
+            declared_dims[key] = ("mode",)
+        elif ".allan." in key and array.ndim == 2:
+            declared_dims[key] = ("trajectory", "tau")
+        elif ".allan." in key and array.ndim == 1:
+            declared_dims[key] = ("tau",)
+        elif ".coherence." in key and array.ndim == 2:
+            declared_dims[key] = ("trajectory", "lag")
+        elif key.endswith(
+            ("mean_amplitude_per_trajectory", "mean_power_per_trajectory")
+        ):
+            declared_dims[key] = ("trajectory",)
+        elif "per_trajectory" in key and ".phase_increment." in key:
+            declared_dims[key] = ("trajectory",)
+        elif "per_trajectory" in key and ".coherence." in key:
+            declared_dims[key] = (
+                ("trajectory", "lag") if array.ndim == 2 else ("trajectory",)
+            )
+        elif key.endswith("lag_window_seconds") and array.ndim == 1:
+            declared_dims[key] = ("fit_parameter",)
+        elif key.endswith("block_statistics") and array.ndim == 1:
+            declared_dims[key] = ("block",)
+        elif ".coherence." in key and array.ndim == 1:
+            declared_dims[key] = ("lag",)
+    axis_specs = {
+        "mode": TypedAxisSpec("mode", AxisRole.COMPONENT),
+        "trajectory": TypedAxisSpec("trajectory", AxisRole.REALIZATION),
+        "tau": TypedAxisSpec("tau", AxisRole.COORDINATE, units="time"),
+        "lag": TypedAxisSpec("lag", AxisRole.COORDINATE, units="time"),
+        "fit_parameter": TypedAxisSpec("fit_parameter", AxisRole.INDEX),
+        "block": TypedAxisSpec("block", AxisRole.INDEX),
+    }
+    product = assemble_typed_product(
+        label,
+        leaves,
+        scan_size=scan_size,
+        kind=DataKind.STATISTICS,
+        declared_dims=declared_dims,
+        axis_specs=axis_specs,
+        attributes={
+            "graph_ready": True,
+            "typed_builder": "trajectory_diagnostics/1",
+        },
+    )
+    return None if product is None else {label: product}
+
+
 class TrajectoryDiagnostics(Analyzer):
     """Analyze saved complex trajectories without assuming a spectral line shape."""
 
@@ -283,60 +336,6 @@ class TrajectoryDiagnostics(Analyzer):
     config_schema: ClassVar[type[TrajectoryDiagnosticsConfig]] = (
         TrajectoryDiagnosticsConfig
     )
-
-    def build_products(
-        self, payload: Any, *, scan_size: int | None, label: str
-    ) -> dict[str, Dataset] | None:
-        leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
-        if leaves is None:
-            return None
-        declared_dims: dict[str, tuple[str, ...]] = {}
-        for key, array in leaves.arrays.items():
-            if key == "modes":
-                declared_dims[key] = ("mode",)
-            elif ".allan." in key and array.ndim == 2:
-                declared_dims[key] = ("trajectory", "tau")
-            elif ".allan." in key and array.ndim == 1:
-                declared_dims[key] = ("tau",)
-            elif ".coherence." in key and array.ndim == 2:
-                declared_dims[key] = ("trajectory", "lag")
-            elif key.endswith(
-                ("mean_amplitude_per_trajectory", "mean_power_per_trajectory")
-            ):
-                declared_dims[key] = ("trajectory",)
-            elif "per_trajectory" in key and ".phase_increment." in key:
-                declared_dims[key] = ("trajectory",)
-            elif "per_trajectory" in key and ".coherence." in key:
-                declared_dims[key] = (
-                    ("trajectory", "lag") if array.ndim == 2 else ("trajectory",)
-                )
-            elif key.endswith("lag_window_seconds") and array.ndim == 1:
-                declared_dims[key] = ("fit_parameter",)
-            elif key.endswith("block_statistics") and array.ndim == 1:
-                declared_dims[key] = ("block",)
-            elif ".coherence." in key and array.ndim == 1:
-                declared_dims[key] = ("lag",)
-        axis_specs = {
-            "mode": TypedAxisSpec("mode", AxisRole.COMPONENT),
-            "trajectory": TypedAxisSpec("trajectory", AxisRole.REALIZATION),
-            "tau": TypedAxisSpec("tau", AxisRole.COORDINATE, units="time"),
-            "lag": TypedAxisSpec("lag", AxisRole.COORDINATE, units="time"),
-            "fit_parameter": TypedAxisSpec("fit_parameter", AxisRole.INDEX),
-            "block": TypedAxisSpec("block", AxisRole.INDEX),
-        }
-        product = assemble_typed_product(
-            label,
-            leaves,
-            scan_size=scan_size,
-            kind=DataKind.STATISTICS,
-            declared_dims=declared_dims,
-            axis_specs=axis_specs,
-            attributes={
-                "graph_ready": True,
-                "typed_builder": "trajectory_diagnostics/1",
-            },
-        )
-        return None if product is None else {label: product}
 
     def execution_capabilities(self) -> AnalyserExecutionCapabilities:
         """Declare the current full-record host implementation."""
@@ -381,7 +380,9 @@ class TrajectoryDiagnostics(Analyzer):
                 recorded, cast(TrajectoryDiagnosticsConfig, self.config).modes
             )
             payload = self._compute_payload(array, modes, columns, t0=t0, dt=dt)
-            products = self.build_products(payload, scan_size=None, label=label)
+            products = _build_trajectory_diagnostics_products(
+                payload, scan_size=None, label=label
+            )
             if not products:
                 raise ValueError("trajectory_diagnostics produced no typed product")
             return products
@@ -510,26 +511,6 @@ class TrajectoryDiagnostics(Analyzer):
             ),
         )
 
-    def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
-        del backend
-        config = cast(TrajectoryDiagnosticsConfig, self.config)
-        array = _trajectory_array(data)
-        dt = float(getattr(data, "dt", 1.0))
-        t0 = float(getattr(data, "t0", 0.0))
-        columns = resolve_mode_columns(data, config.modes)
-        result = self._compute_payload(array, list(config.modes), columns, t0=t0, dt=dt)
-        return AnalysisResult(
-            data_dict=result,
-            meta={
-                "modes": list(config.modes),
-                "t0": t0,
-                "dt": dt,
-                "n_traj": result["n_traj"],
-                "n_samples": result["n_samples"],
-                **orientation_metadata(config.orientation),
-            },
-        )
-
 
 class _ModeSummaryChild:
     name = "mode_summary"
@@ -654,15 +635,6 @@ class _StationarityChild:
             config.block_durations,
             n_modes=context.values.shape[-1],
         )
-
-
-def _trajectory_array(data: Any) -> Any:
-    if hasattr(data, "ndim") and hasattr(data, "shape"):
-        return data
-    wrapped = getattr(data, "data", None)
-    if hasattr(wrapped, "ndim") and hasattr(wrapped, "shape"):
-        return wrapped
-    raise TypeError("trajectory diagnostics requires array-like trajectory data")
 
 
 def _duration_samples(duration: float, dt: float, label: str) -> int:

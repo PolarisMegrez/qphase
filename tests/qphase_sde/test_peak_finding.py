@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
+from qphase_sde.analyser.psd import PsdAnalyzer, _build_psd_products
 from qphase_sde.peak_finder import (
     PeakInfo,
     RationalPeakFinder,
@@ -13,7 +14,6 @@ from qphase_sde.peak_finder import (
     ScipyPeakFinderConfig,
     TypedPeakFinder,
 )
-from qphase_sde.result import SDEResult
 
 
 def _lorentzian(
@@ -180,28 +180,15 @@ def test_builtin_finder_emits_grouped_typed_candidate_table():
 
 
 def test_peaks_analyser_publishes_grouped_product():
-    axis = np.linspace(-1.0, 1.0, 101)
-    inputs = {
-        f"point_{index}": SDEResult(
-            analysis={
-                "psd": {
-                    "axis": axis,
-                    "psd": np.exp(-(((axis - 0.2 - 0.1 * index) / 0.08) ** 2))[:, None],
-                    "modes": [0],
-                    "orientation": "phase_decreasing",
-                }
-            },
-            meta={"params": {"epsilon": float(index)}},
-        )
-        for index in range(2)
-    }
     analyzer = PeaksAnalyzer(
         PeaksAnalyzerConfig(scan_param="epsilon"),
         subplugins={"finder": ScipyPeakFinder()},
     )
-    payload = analyzer.analyze(inputs, NumpyBackend()).data_dict
-    products = analyzer.build_products(payload, scan_size=2, label="peaks")
-    assert products is not None
+    products = analyzer.execute(
+        {"psd": _typed_psd_product([0.0, 1.0], points=101)},
+        backend=NumpyBackend(),
+        label="peaks",
+    )
     product = products["peaks"]
     assert product.attributes["graph_ready"] is True
     assert product.axis("scan").size == 2
@@ -227,23 +214,12 @@ def test_peaks_analyser_resolves_finder_through_registry():
         PeaksAnalyzerConfig(scan_param="epsilon"),
         subplugins={"finder": RegistryFinder()},
     )
-    result = analyzer.analyze(
-        {
-            "point": SDEResult(
-                analysis={
-                    "psd": {
-                        "axis": np.linspace(-1.0, 1.0, 101),
-                        "psd": np.exp(
-                            -(((np.linspace(-1.0, 1.0, 101) - 0.2) / 0.08) ** 2)
-                        )[:, None],
-                        "modes": [0],
-                    }
-                }
-            )
-        },
-        NumpyBackend(),
-    )
-    assert len(result.data_dict["candidate_tables"]) == 1
+    result = analyzer.execute(
+        {"psd": _typed_psd_product([0.0], points=101)},
+        backend=NumpyBackend(),
+        label="peaks",
+    )["peaks"]
+    assert result.axis("group").size == 1
 
 
 def test_peak_paths_analyser_publishes_typed_path_product():
@@ -252,38 +228,14 @@ def test_peak_paths_analyser_publishes_typed_path_product():
         PeakPathsAnalyzerConfig,
     )
     from qphase_sde.peak_tracker import RidgePeakTracker, RidgePeakTrackerConfig
-    from qphase_sde.result import SDEDataBundle, SDEProvenance
-
-    axis = np.linspace(-1.0, 1.0, 101)
     peak_analyzer = PeaksAnalyzer(
         PeaksAnalyzerConfig(scan_param="epsilon"),
         subplugins={"finder": ScipyPeakFinder()},
     )
-    payload = peak_analyzer.analyze(
-        {
-            f"point_{index}": SDEResult(
-                analysis={
-                    "psd": {
-                        "axis": axis,
-                        "psd": np.exp(-(((axis - 0.2 - 0.1 * index) / 0.08) ** 2))[
-                            :, None
-                        ],
-                        "modes": [0],
-                    }
-                },
-                meta={"params": {"epsilon": float(index)}},
-            )
-            for index in range(2)
-        },
-        NumpyBackend(),
-    ).data_dict
-    candidates = peak_analyzer.build_products(payload, scan_size=2, label="peaks")
-    assert candidates is not None
-    source = SDEDataBundle(
-        candidates,
-        SDEProvenance(dt=1.0),
-        scan_axes={"epsilon": np.asarray([0.0, 1.0])},
-        scan_shape=(2,),
+    candidates = peak_analyzer.execute(
+        {"psd": _typed_psd_product([0.0, 1.0], points=101)},
+        backend=NumpyBackend(),
+        label="peaks",
     )
     analyzer = PeakPathsAnalyzer(
         PeakPathsAnalyzerConfig(
@@ -292,8 +244,11 @@ def test_peak_paths_analyser_publishes_typed_path_product():
         ),
         subplugins={"tracker": RidgePeakTracker(path_count=1)},
     )
-    result = analyzer.analyze(source, NumpyBackend())
-    products = analyzer.build_products(result.data_dict, scan_size=None, label="paths")
+    products = analyzer.execute(
+        {"peaks": candidates["peaks"]},
+        backend=NumpyBackend(),
+        label="paths",
+    )
 
     assert products is not None
     product = products["paths"]
@@ -302,14 +257,12 @@ def test_peak_paths_analyser_publishes_typed_path_product():
     assert product.axis("path").size == 1
 
 
-def _typed_psd_product(scan_values: list[float]):
+def _typed_psd_product(scan_values: list[float], *, points: int = 401):
     """Typed PSD scan product for execute()."""
-    from qphase_sde.analyser.psd import PsdAnalyzer
-
-    axis = np.linspace(-1.0, 1.0, 401)
+    axis = np.linspace(-1.0, 1.0, points)
     payload = []
     for value in scan_values:
-        psd = np.exp(-(((axis - 0.2 - 0.05 * value) / 0.08) ** 2))
+        psd = np.exp(-(((axis - 0.2 - 0.1 * value) / 0.08) ** 2))
         payload.append(
             {
                 "axis": axis,
@@ -321,8 +274,12 @@ def _typed_psd_product(scan_values: list[float]):
                 "uncertainty": {"n_independent": 4},
             }
         )
-    products = PsdAnalyzer(modes=[0], kind="complex").build_products(
-        payload, scan_size=len(scan_values), label="psd"
+    analyzer = PsdAnalyzer(modes=[0], kind="complex")
+    products = _build_psd_products(
+        payload[0] if len(payload) == 1 else payload,
+        scan_size=len(scan_values),
+        label="psd",
+        analyser=analyzer,
     )
     assert products is not None
     return products["psd"]

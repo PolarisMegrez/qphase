@@ -40,7 +40,6 @@ from .allan_statistics import (
 from .base import (
     Analyzer,
     map_trajectory_product,
-    resolve_mode_columns,
     trajectory_arrays,
     trajectory_requirement,
 )
@@ -51,8 +50,8 @@ from .frequency_orientation import (
     orientation_metadata,
     orientation_schema_extra,
     orientation_sign,
+    resolve_frequency_orientation,
 )
-from .result import AnalysisResult
 
 __all__ = ["AllanVarianceAnalyzer", "AllanVarianceConfig"]
 
@@ -309,29 +308,8 @@ class AllanVarianceAnalyzer(Analyzer):
             )
         return AnalyserWorkspaceEstimate(host_bytes=5 * mode_bytes)
 
-    def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
-        config = cast(AllanVarianceConfig, self.config)
-        array = getattr(data, "data", data)
-        dt = float(getattr(data, "dt", 1.0))
-        t0 = float(getattr(data, "t0", 0.0))
-        columns = resolve_mode_columns(data, config.modes)
-        payload = self._compute_payload(
-            array, t0=t0, dt=dt, columns=columns, backend=backend
-        )
-        return AnalysisResult(data_dict=payload, meta=dict(payload, mode_results=None))
-
     def create_result_accumulator(self) -> AllanResultAccumulator:
         return AllanResultAccumulator()
-
-    def build_products(
-        self,
-        payload: Any,
-        *,
-        scan_size: int | None,
-        label: str,
-    ) -> Mapping[str, Dataset] | None:
-        """Build the graph-ready typed statistics product of one payload."""
-        return _build_allan_products(payload, scan_size=scan_size, label=label)
 
 
 #: Trailing-axis declarations of the per-mode Allan payload leaves. The glob
@@ -396,6 +374,19 @@ def _build_allan_products(
     leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
     if leaves is None:
         return None
+    point_payloads = payload if isinstance(payload, list) else [payload]
+    if not point_payloads or not all(
+        isinstance(point, Mapping) and "orientation" in point
+        for point in point_payloads
+    ):
+        raise ValueError("Allan payload must declare its frequency orientation")
+    orientations = {
+        resolve_frequency_orientation({"orientation": point["orientation"]})
+        for point in point_payloads
+    }
+    if len(orientations) != 1:
+        raise ValueError("Allan scan points use different frequency orientations")
+    orientation = orientations.pop()
     variance_keys = _variance_leaf_keys(leaves.arrays)
     coordinates: list[CoordinateSchema] = []
     tau_keys = sorted(
@@ -441,7 +432,11 @@ def _build_allan_products(
             SamplingBasisSchema(name="trajectory", source_axis="trajectory")
         ],
         coordinates=coordinates,
-        attributes={"estimator": "non_overlapping_windows", "graph_ready": True},
+        attributes={
+            "estimator": "non_overlapping_windows",
+            "graph_ready": True,
+            "orientation": orientation,
+        },
     )
     if dataset is None:
         return None
@@ -554,7 +549,7 @@ class AllanResultAccumulator:
     def __init__(self) -> None:
         self.payloads: list[dict[str, Any]] = []
 
-    def update(self, payload: dict[str, Any]) -> None:
+    def _append_payload(self, payload: dict[str, Any]) -> None:
         modes = [int(mode) for mode in np.asarray(payload["modes"]).reshape(-1)]
         payload = dict(payload)
         payload["modes"] = modes
@@ -603,7 +598,7 @@ class AllanResultAccumulator:
         orientation = product.attributes.get("orientation")
         if orientation is None and isinstance(payload_meta, Mapping):
             orientation = payload_meta.get("orientation")
-        self.update(
+        self._append_payload(
             {
                 "modes": modes,
                 "t0": float(product.handle("t0").materialize()),
@@ -617,10 +612,12 @@ class AllanResultAccumulator:
 
     def merge(self, other: AllanResultAccumulator) -> None:
         for payload in other.payloads:
-            self.update(payload)
+            self._append_payload(payload)
 
     def finalize_product(self, label: str) -> Mapping[str, Dataset] | None:
-        return _build_allan_products(self.finalize(), scan_size=None, label=label)
+        return _build_allan_products(
+            self._finalized_payload(), scan_size=None, label=label
+        )
 
     def checkpoint(self) -> dict[str, Any]:
         return {"payloads": list(self.payloads)}
@@ -632,9 +629,9 @@ class AllanResultAccumulator:
         for payload in payloads:
             if not isinstance(payload, dict):
                 raise TypeError("Allan reducer checkpoint payload must be a mapping")
-            self.update(payload)
+            self._append_payload(payload)
 
-    def finalize(self) -> dict[str, Any]:
+    def _finalized_payload(self) -> dict[str, Any]:
         if not self.payloads:
             raise RuntimeError("cannot finalize an empty Allan accumulator")
         first = self.payloads[0]

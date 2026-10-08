@@ -47,7 +47,6 @@ from .frequency_orientation import (
     orientation_schema_extra,
     orientation_sign,
 )
-from .result import AnalysisResult
 
 __all__ = [
     "CoherenceCarrierAnalyzer",
@@ -367,26 +366,6 @@ def estimate_coherence_carrier(
     )
 
 
-def _recorded_modes(data: Any, stored: int) -> list[int]:
-    meta = getattr(data, "meta", None)
-    configured = meta.get("mode_indices") if isinstance(meta, dict) else None
-    if configured is None:
-        return list(range(stored))
-    modes = [int(mode) for mode in configured]
-    if len(modes) != stored:
-        raise ValueError("trajectory mode_indices do not match stored columns")
-    return modes
-
-
-def _measurement_matrices(
-    data: Any,
-    stored_modes: int,
-    config: CoherenceCarrierConfig,
-) -> tuple[list[str], list[str], list[int], np.ndarray]:
-    recorded = _recorded_modes(data, stored_modes)
-    return _measurement_matrices_for_recorded(recorded, config)
-
-
 def _measurement_matrices_for_recorded(
     recorded: list[int],
     config: CoherenceCarrierConfig,
@@ -593,35 +572,8 @@ class CoherenceCarrierAnalyzer(Analyzer):
             )
         return AnalyserWorkspaceEstimate(host_bytes=chunk_bytes + retained_bytes)
 
-    def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
-        values = getattr(data, "data", data)
-        stored_modes = int(values.shape[2])
-        dt = float(getattr(data, "dt", 1.0))
-        recorded_modes = _recorded_modes(data, stored_modes)
-        return AnalysisResult(
-            data_dict=self._compute_payload(
-                values,
-                recorded_modes=recorded_modes,
-                t0=float(getattr(data, "t0", 0.0)),
-                dt=dt,
-                backend=backend,
-            ),
-        )
-
     def create_result_accumulator(self) -> CoherenceCarrierResultAccumulator:
         return CoherenceCarrierResultAccumulator(self)
-
-    def build_products(
-        self,
-        payload: Any,
-        *,
-        scan_size: int | None,
-        label: str,
-    ) -> Mapping[str, Dataset] | None:
-        """Build the graph-ready typed product of one ``analyze()`` payload."""
-        return _build_coherence_carrier_products(
-            payload, scan_size=scan_size, label=label
-        )
 
     def _summarize(
         self,
@@ -880,7 +832,7 @@ class CoherenceCarrierResultAccumulator:
         self.analyzer = analyzer
         self.payloads: list[dict[str, Any]] = []
 
-    def update(self, payload: dict[str, Any]) -> None:
+    def _append_payload(self, payload: dict[str, Any]) -> None:
         if self.payloads:
             first = self.payloads[0]
             for key in (
@@ -910,7 +862,7 @@ class CoherenceCarrierResultAccumulator:
         metadata = product.attributes.get("payload_meta", {})
         if not isinstance(metadata, Mapping):
             raise TypeError("coherence carrier product metadata is invalid")
-        self.update(
+        self._append_payload(
             {
                 "measurement_names": metadata["measurement_names"],
                 "measurement_kinds": metadata["measurement_kinds"],
@@ -928,11 +880,11 @@ class CoherenceCarrierResultAccumulator:
 
     def merge(self, other: CoherenceCarrierResultAccumulator) -> None:
         for payload in other.payloads:
-            self.update(payload)
+            self._append_payload(payload)
 
     def finalize_product(self, label: str) -> Mapping[str, Dataset] | None:
         return _build_coherence_carrier_products(
-            self.finalize(), scan_size=None, label=label
+            self._finalized_payload(), scan_size=None, label=label
         )
 
     def checkpoint(self) -> dict[str, Any]:
@@ -945,9 +897,9 @@ class CoherenceCarrierResultAccumulator:
         for payload in payloads:
             if not isinstance(payload, dict):
                 raise TypeError("coherence carrier checkpoint payload is invalid")
-            self.update(payload)
+            self._append_payload(payload)
 
-    def finalize(self) -> dict[str, Any]:
+    def _finalized_payload(self) -> dict[str, Any]:
         if not self.payloads:
             raise RuntimeError("cannot finalize an empty coherence-carrier accumulator")
         first = self.payloads[0]

@@ -17,8 +17,7 @@ class TypedProductReducer(ReducerProtocol):
 
     The existing numerical accumulators remain analyser-owned. This adapter
     changes only the execution boundary: input is a typed Dataset and output
-    is the analyser's declared typed Dataset mapping. No ``SDEResult`` or
-    engine-level legacy view is involved.
+    is the analyser's declared typed Dataset mapping.
     """
 
     def __init__(self, analyzer: Any, *, label: str) -> None:

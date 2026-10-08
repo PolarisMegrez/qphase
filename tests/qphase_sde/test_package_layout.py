@@ -25,7 +25,7 @@ SDE_ROOT = SDE_PACKAGE_ROOT / "qphase_sde"
 CONTRACTS_DIR = SDE_ROOT / "contracts"
 
 REMOVED_ROOT_MODULES = ("batch", "buffers", "scan", "ops", "coordinates", "utils")
-RUNTIME_MODULES = ("batch", "buffers", "scan")
+RUNTIME_MODULES = ("buffers", "scan")
 MATH_MODULES = ("ops", "coordinates")
 
 #: Entry-point namespaces reserved by the core registry, not plugin classes.

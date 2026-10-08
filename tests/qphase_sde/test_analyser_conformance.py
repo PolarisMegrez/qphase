@@ -115,5 +115,4 @@ def test_analyser_base_does_not_require_legacy_analyze_api():
             return inputs
 
     analyser = TypedOnlyAnalyzer()
-    with pytest.raises(NotImplementedError, match="only supports typed execute"):
-        analyser.analyze(None, None)
+    assert not hasattr(analyser, "analyze")

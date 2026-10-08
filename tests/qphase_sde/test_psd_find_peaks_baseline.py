@@ -18,7 +18,7 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.peak_finder import ScipyPeakFinder, ScipyPeakFinderConfig
-from qphase_sde.result import SDEResult
+from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
 RTOL = 1e-6
@@ -42,12 +42,21 @@ def _tone_fixture() -> TrajectorySet:
     return TrajectorySet(data=data + noise, dt=DT, meta={"mode_indices": [0, 1]})
 
 
+def _spectrum_product():
+    analyzer = PsdAnalyzer(modes=[0, 1], kind="complex")
+    return analyzer.execute(
+        {
+            "trajectories": _trajectory_product(
+                _tone_fixture(), scan_size=None, n_traj_per_point=None
+            )
+        },
+        backend=NumpyBackend(),
+        label="psd",
+    )["psd"]
+
+
 def _baseline_peaks() -> dict[str, dict[int, dict[str, object]]]:
-    spectrum = (
-        PsdAnalyzer(modes=[0, 1], kind="complex")
-        .analyze(_tone_fixture(), NumpyBackend())
-        .data_dict
-    )
+    spectrum = _spectrum_product()
     finder = ScipyPeakFinder(
         ScipyPeakFinderConfig(
             distance=5,
@@ -56,8 +65,8 @@ def _baseline_peaks() -> dict[str, dict[int, dict[str, object]]]:
             prominence=None,
         )
     )
-    axis = np.asarray(spectrum["axis"])
-    matrix = np.asarray(spectrum["psd"])
+    axis = np.asarray(spectrum.handle("axis").materialize())
+    matrix = np.asarray(spectrum.handle("psd").materialize())
     return {
         "peaks": {
             mode: finder.find_peaks(axis, matrix[:, index]).model_dump()
@@ -67,13 +76,9 @@ def _baseline_peaks() -> dict[str, dict[int, dict[str, object]]]:
 
 
 def test_psd_find_peaks_false_emits_empty_payload():
-    out = (
-        PsdAnalyzer(modes=[0, 1], kind="complex")
-        .analyze(_tone_fixture(), NumpyBackend())
-        .data_dict
-    )
+    out = _spectrum_product()
 
-    assert "peaks" not in out
+    assert "peaks" not in {variable.name for variable in out.variables}
 
 
 def test_psd_find_peaks_true_payload_baseline():
@@ -324,11 +329,7 @@ def test_psd_find_peaks_true_payload_baseline():
 
 
 def test_standalone_peak_analyser_uses_baseline_spectrum():
-    spectrum = (
-        PsdAnalyzer(modes=[0, 1], kind="complex")
-        .analyze(_tone_fixture(), NumpyBackend())
-        .data_dict
-    )
+    spectrum = _spectrum_product()
     analyzer = PeaksAnalyzer(
         PeaksAnalyzerConfig(
             scan_param="unused",
@@ -345,13 +346,13 @@ def test_standalone_peak_analyser_uses_baseline_spectrum():
         },
     )
 
-    payload = analyzer.analyze(
-        SDEResult(analysis={"psd": spectrum}), NumpyBackend()
-    ).data_dict
+    product = analyzer.execute(
+        {"psd": spectrum}, backend=NumpyBackend(), label="peaks"
+    )["peaks"]
 
-    assert len(payload["candidate_tables"]) == 1
-    assert payload["modes"] == [0, 1]
-    assert payload["candidate_tables"][0]["columns"]["location"][0] == pytest.approx(
+    assert product.axis("group").size == 2
+    assert product.attributes["channel_names"] == ["mode_0", "mode_1"]
+    assert product.handle("location").materialize()[0] == pytest.approx(
         -60.6921101512001, rel=RTOL
     )
 

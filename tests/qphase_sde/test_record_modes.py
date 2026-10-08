@@ -11,7 +11,7 @@ from qphase_sde.analyser.dist import DistAnalyzer
 from qphase_sde.analyser.polar_dist import PolarDistAnalyzer
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.contracts.bundle import SDEProvenance
-from qphase_sde.result import SDEResult, bundle_from_result
+from qphase_sde.result import SDEDataBundle, _trajectory_product
 from qphase_sde.state import TrajectorySet
 
 pytestmark = pytest.mark.integration
@@ -32,14 +32,21 @@ def _trajectory() -> TrajectorySet:
 
 def test_analyzers_use_physical_mode_mapping():
     trajectory = _trajectory()
+    product = _trajectory_product(trajectory, scan_size=None, n_traj_per_point=None)
 
-    psd = PsdAnalyzer(kind="complex", modes=[3]).analyze(trajectory, BACKEND)
-    dist = DistAnalyzer(modes=[3], bins=16).analyze(trajectory, BACKEND)
-    polar = PolarDistAnalyzer(modes=[3], bins=16).analyze(trajectory, BACKEND)
+    psd = PsdAnalyzer(kind="complex", modes=[3]).execute(
+        {"trajectories": product}, backend=BACKEND, label="psd"
+    )["psd"]
+    dist = DistAnalyzer(modes=[3], bins=16).execute(
+        {"trajectories": product}, backend=BACKEND, label="dist"
+    )["dist"]
+    polar = PolarDistAnalyzer(modes=[3], bins=16).execute(
+        {"trajectories": product}, backend=BACKEND, label="polar"
+    )["polar"]
 
-    assert psd.data_dict["modes"] == [3]
-    assert 3 in dist.data_dict["distributions"]
-    assert 3 in polar.data_dict["distributions"]
+    np.testing.assert_array_equal(psd.handle("modes").materialize(), [3])
+    assert "distributions.3.hist" in {item.name for item in dist.variables}
+    assert "distributions.3.hist" in {item.name for item in polar.variables}
 
 
 def test_missing_recorded_mode_is_rejected():
@@ -48,12 +55,15 @@ def test_missing_recorded_mode_is_rejected():
 
 
 def test_result_round_trip_preserves_trajectory_mode_mapping(tmp_path):
-    bundle = bundle_from_result(
-        SDEResult(trajectory=_trajectory()),
+    trajectory = _trajectory_product(
+        _trajectory(), scan_size=None, n_traj_per_point=None
+    )
+    bundle = SDEDataBundle(
+        {"trajectories": trajectory},
         provenance=SDEProvenance(dt=0.1),
     )
     bundle.save(tmp_path)
 
     loaded = load_bundle(tmp_path)
 
-    assert loaded.legacy_result().trajectory.meta["mode_indices"] == [3]
+    assert loaded.products["trajectories"].attributes["mode_indices"] == [3]

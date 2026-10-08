@@ -31,12 +31,10 @@ from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leav
 from .base import (
     Analyzer,
     map_trajectory_product,
-    resolve_mode_columns,
     select_mode_columns,
     trajectory_arrays,
     trajectory_requirement,
 )
-from .result import AnalysisResult
 
 __all__ = [
     "QuadraticMomentAnalyzer",
@@ -332,46 +330,8 @@ class QuadraticMomentAnalyzer(Analyzer):
             ),
         )
 
-    def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
-        config = cast(QuadraticMomentConfig, self.config)
-        values = getattr(data, "data", data)
-        stored_modes = int(values.shape[2])
-        modes = _resolve_modes(data, config.modes, stored_modes)
-        columns = resolve_mode_columns(data, modes)
-        payload = self._compute_payload(
-            values,
-            modes=modes,
-            columns=columns,
-            t0=float(getattr(data, "t0", 0.0)),
-            dt=float(getattr(data, "dt", 1.0)),
-            backend=backend,
-        )
-        return AnalysisResult(
-            data_dict=payload,
-            meta={
-                "quantity": payload["quantity"],
-                "observable_names": payload["observable_names"],
-                "modes": payload["modes"],
-                "n_traj": payload["n_traj"],
-                "n_samples": payload["n_samples"],
-                "uncertainty_unit": "trajectory",
-            },
-        )
-
     def create_result_accumulator(self) -> QuadraticMomentResultAccumulator:
         return QuadraticMomentResultAccumulator(self)
-
-    def build_products(
-        self,
-        payload: Any,
-        *,
-        scan_size: int | None,
-        label: str,
-    ) -> Mapping[str, Dataset] | None:
-        """Build the graph-ready typed product of one ``analyze()`` payload."""
-        return _build_quadratic_moments_products(
-            payload, scan_size=scan_size, label=label
-        )
 
     def _summarize(
         self,
@@ -560,7 +520,7 @@ class QuadraticMomentResultAccumulator:
         self.analyzer = analyzer
         self.payloads: list[dict[str, Any]] = []
 
-    def update(self, payload: dict[str, Any]) -> None:
+    def _consume_payload(self, payload: dict[str, Any]) -> None:
         if self.payloads:
             first = self.payloads[0]
             for key in ("observable_names", "modes", "n_samples", "max_order"):
@@ -582,7 +542,7 @@ class QuadraticMomentResultAccumulator:
         def value(name: str) -> Any:
             return product.handle(name).materialize()
 
-        self.update(
+        self._consume_payload(
             {
                 "observable_names": product.attributes["payload_meta"][
                     "observable_names"
@@ -607,11 +567,11 @@ class QuadraticMomentResultAccumulator:
 
     def merge(self, other: QuadraticMomentResultAccumulator) -> None:
         for payload in other.payloads:
-            self.update(payload)
+            self._consume_payload(payload)
 
     def finalize_product(self, label: str) -> Mapping[str, Dataset] | None:
         return _build_quadratic_moments_products(
-            self.finalize(), scan_size=None, label=label
+            self._finalize_payload(), scan_size=None, label=label
         )
 
     def checkpoint(self) -> dict[str, Any]:
@@ -624,9 +584,9 @@ class QuadraticMomentResultAccumulator:
         for payload in payloads:
             if not isinstance(payload, dict):
                 raise TypeError("quadratic moments checkpoint payload is invalid")
-            self.update(payload)
+            self._consume_payload(payload)
 
-    def finalize(self) -> dict[str, Any]:
+    def _finalize_payload(self) -> dict[str, Any]:
         if not self.payloads:
             raise RuntimeError("cannot finalize an empty quadratic-moment accumulator")
         first = self.payloads[0]
@@ -767,18 +727,6 @@ def _cumulant_jackknife_sem(
     return np.sqrt(
         (count - 1) / count * np.sum((values - mean[None, :, :]) ** 2, axis=0)
     )
-
-
-def _resolve_modes(data: Any, configured: list[int] | None, stored: int) -> list[int]:
-    if configured is not None:
-        return list(configured)
-    meta = getattr(data, "meta", None)
-    mode_indices = meta.get("mode_indices") if isinstance(meta, dict) else None
-    if mode_indices is None:
-        return list(range(stored))
-    if len(mode_indices) != stored:
-        raise ValueError("trajectory mode_indices do not match the stored mode count")
-    return [int(mode) for mode in mode_indices]
 
 
 def _block_boundaries(n_samples: int, requested: int, minimum: int) -> np.ndarray:

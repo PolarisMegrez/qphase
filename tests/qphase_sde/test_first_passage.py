@@ -193,14 +193,14 @@ def _alpha(bundle):
 
 
 def _payload(bundle, name="first_passage"):
-    """Observer payload dict: variables plus string leaves from payload_meta."""
-    dataset = bundle.products[name]
-    payload = {
-        variable.name: convert_to_numpy(dataset.handle(variable.name).materialize())
-        for variable in dataset.variables
+    """Observer payload from the bundle's typed execution metadata."""
+    payload = bundle.metadata["observer_payloads"][name]
+    return {
+        key: convert_to_numpy(value)
+        if hasattr(value, "shape") and hasattr(value, "dtype")
+        else value
+        for key, value in payload.items()
     }
-    payload.update(dataset.attributes.get("payload_meta", {}))
-    return payload
 
 
 def _growth_payload(observer=None, **kwargs):
@@ -554,6 +554,16 @@ def test_trajectory_batching_merges_observer_payloads():
             **config,
         )
         engine.plugins["analyser"] = {"psd": PsdAnalyzer(kind="complex", modes=[0])}
+        from qphase.core.registry import discovery, registry
+        from qphase_sde.graph import compile_product_graph
+
+        discovery.discover_plugins()
+        engine._product_graph = compile_product_graph(
+            plugin_config={
+                "analyser": {"psd": {"kind": "complex", "modes": [0]}}
+            },
+            registry=registry,
+        )
         return engine.run()
 
     reference = _payload(run(keep_traj=False))

@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, cast
 
 import numpy as np
 from pydantic import BeforeValidator
 
-FrequencyOrientation = Literal["phase_decreasing", "phase_increasing"]
+from ..contracts.quantities import (
+    DEFAULT_FREQUENCY_ORIENTATION,
+    FrequencyOrientation,
+)
+
 OrientationInput = Annotated[
     FrequencyOrientation,
     BeforeValidator(lambda value: normalize_orientation_alias(value)),
 ]
 
-DEFAULT_FREQUENCY_ORIENTATION: FrequencyOrientation = "phase_decreasing"
-LEGACY_FREQUENCY_ORIENTATION: FrequencyOrientation = "phase_increasing"
 ORIENTATION_ALIASES: dict[str, str] = {
     "fft": "phase_increasing",
     "physical": "phase_decreasing",
@@ -38,9 +40,15 @@ def orientation_schema_extra() -> dict[str, Any]:
 def resolve_frequency_orientation(
     metadata: Mapping[str, Any] | None,
 ) -> FrequencyOrientation:
-    """Resolve result metadata, treating pre-contract results as legacy output."""
+    """Resolve the orientation recorded in upstream product metadata.
+
+    Every typed spectral product records its orientation at production time,
+    so a missing key is a producer bug, not a legacy result to tolerate.
+    """
     if metadata is None or "orientation" not in metadata:
-        return LEGACY_FREQUENCY_ORIENTATION
+        raise ValueError(
+            "upstream product metadata does not record a frequency orientation"
+        )
     orientation = metadata["orientation"]
     if orientation not in {"phase_decreasing", "phase_increasing"}:
         raise ValueError(f"Unsupported frequency orientation: {orientation!r}")
@@ -90,7 +98,6 @@ def orientation_metadata(orientation: FrequencyOrientation) -> dict[str, str]:
 __all__ = [
     "DEFAULT_FREQUENCY_ORIENTATION",
     "FrequencyOrientation",
-    "LEGACY_FREQUENCY_ORIENTATION",
     "ORIENTATION_ALIASES",
     "OrientationInput",
     "orientation_metadata",

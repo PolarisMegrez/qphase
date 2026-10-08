@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.core.aggregation import write_table_csv
 from qphase.core.errors import QPhaseError
-from qphase.core.protocols import PluginConfigBase, ResultProtocol
+from qphase.core.protocols import PluginConfigBase
 from qphase.data import (
     AxisRole,
     DataKind,
@@ -27,15 +27,12 @@ from scipy.optimize import curve_fit
 from ..contracts.analyser import AnalyserWorkspaceRequest, WorkEstimate
 from ..contracts.quantities import SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from ..result import SDEResult
 from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     FrequencyOrientation,
     orientation_metadata,
     resolve_frequency_orientation,
 )
-from .result import AnalysisResult
-from .result_input import load_sde_results
 
 __all__ = [
     "AllanScalingAnalyzer",
@@ -78,7 +75,6 @@ class AllanScalingConfig(PluginConfigBase):
     critical_value: float = Field(..., description="Critical scan-parameter value")
     mode: int = Field(0, ge=0)
     source_key: str = Field("allan_variance")
-    legacy_source_key: str | None = Field("trajectory_diagnostics")
     side: Literal["absolute", "positive", "negative"] = Field("absolute")
     white_slope_min: float = Field(-1.2)
     white_slope_max: float = Field(-0.8)
@@ -175,56 +171,6 @@ def _mode_payload(payload: dict[str, Any], mode: int) -> dict[str, Any]:
     return result
 
 
-def _extract_source(
-    result: SDEResult, config: AllanScalingConfig
-) -> tuple[dict[str, Any], dict[str, Any], FrequencyOrientation]:
-    payload = result.analysis.get(config.source_key)
-    if not isinstance(payload, dict) and config.legacy_source_key is not None:
-        payload = result.analysis.get(config.legacy_source_key)
-    if not isinstance(payload, dict):
-        raise QPhaseError(
-            f"SDE result has neither {config.source_key!r} nor a usable legacy source"
-        )
-    mode_payload = _mode_payload(payload, config.mode)
-    allan = mode_payload.get("allan")
-    phase = mode_payload.get("phase_increment", {})
-    if not isinstance(allan, dict) or not isinstance(phase, dict):
-        raise QPhaseError("Allan mode payload is incomplete")
-    allan = dict(allan)
-    allan["sample_spacing"] = float(payload.get("dt", math.nan))
-    if "total_independent_window_count" not in allan:
-        _estimate_legacy_independent_counts(allan, payload)
-    return allan, phase, resolve_frequency_orientation(payload)
-
-
-def _estimate_legacy_independent_counts(
-    allan: dict[str, Any], payload: dict[str, Any]
-) -> None:
-    """Add an auditable conservative count estimate for legacy Allan payloads."""
-    tau = np.asarray(allan.get("tau"), dtype=float)
-    valid = np.asarray(allan.get("valid_second_differences"), dtype=float)
-    dt = float(payload.get("dt", math.nan))
-    n_samples = int(payload.get("n_samples", 0))
-    if (
-        tau.ndim != 1
-        or valid.ndim != 2
-        or valid.shape[1] != tau.size
-        or not np.isfinite(dt)
-        or dt <= 0.0
-        or n_samples < 3
-    ):
-        allan["total_independent_window_count"] = np.zeros(tau.shape, dtype=int)
-        allan["independent_window_count_source"] = "unavailable_legacy_payload"
-        return
-    averaging_samples = np.rint(tau / dt).astype(int)
-    overlapping_nominal = np.maximum(n_samples - 2 * averaging_samples, 1)
-    independent_nominal = np.maximum((n_samples - 1) // (2 * averaging_samples), 0)
-    valid_fraction = np.clip(valid / overlapping_nominal[None, :], 0.0, 1.0)
-    estimated = np.floor(valid_fraction * independent_nominal[None, :]).astype(int)
-    allan["total_independent_window_count"] = np.sum(estimated, axis=0, dtype=np.int64)
-    allan["independent_window_count_source"] = "estimated_from_legacy_overlap_counts"
-
-
 def _epsilon(scan_value: float, config: AllanScalingConfig) -> float | None:
     signed = scan_value - config.critical_value
     if config.side == "positive" and signed <= 0.0:
@@ -235,102 +181,63 @@ def _epsilon(scan_value: float, config: AllanScalingConfig) -> float | None:
 
 
 def _collect_points(
-    data: Any,
+    data: Mapping[str, Dataset],
     config: AllanScalingConfig,
     *,
     context: Any | None = None,
 ) -> list[_Point]:
     points: list[_Point] = []
-    if isinstance(data, Mapping) and all(
-        isinstance(value, Dataset) for value in data.values()
-    ):
-        source = data.get(config.source_key)
-        if source is None:
-            raise QPhaseError(f"typed input has no Allan product {config.source_key!r}")
-        scan_size = (
-            int(source.axis("scan").size)
-            if "scan" in {axis.name for axis in source.axes}
-            else 1
-        )
-        for index in range(scan_size):
-            check_execution_cancelled(context)
-            product = source.point_view(scan=index) if scan_size > 1 else source
-            payload: dict[str, Any] = {}
-            for variable in product.variables:
-                parts = variable.name.split(".")
-                target = payload
-                for part in parts[:-1]:
-                    child = target.setdefault(part, {})
-                    if not isinstance(child, dict):
-                        raise QPhaseError("typed Allan product has invalid field paths")
-                    target = child
-                target[parts[-1]] = np.asarray(
-                    product.handle(variable.name).materialize()
-                )
-            scan_variable = f"parameter.{config.scan_param}"
-            if scan_variable not in {variable.name for variable in product.variables}:
-                raise QPhaseError(f"typed Allan product is missing {scan_variable!r}")
-            scan_value = float(
-                np.asarray(product.handle(scan_variable).materialize()).reshape(-1)[0]
-            )
-            epsilon = _epsilon(scan_value, config)
-            if epsilon is None or epsilon <= 0.0:
-                continue
-            mode_payload = _mode_payload(payload, config.mode)
-            allan = mode_payload.get("allan")
-            phase = mode_payload.get("phase_increment", {})
-            if not isinstance(allan, dict) or not isinstance(phase, dict):
-                raise QPhaseError("typed Allan product has incomplete mode fields")
-            allan = dict(allan)
-            allan["sample_spacing"] = float(
-                np.asarray(product.handle("dt").materialize()).reshape(-1)[0]
-            )
-            if "total_independent_window_count" not in allan:
-                _estimate_legacy_independent_counts(
-                    allan,
-                    {
-                        "dt": allan["sample_spacing"],
-                        "n_samples": int(
-                            np.asarray(
-                                product.handle("n_samples").materialize()
-                            ).reshape(-1)[0]
-                        ),
-                    },
-                )
-            points.append(
-                _Point(
-                    scan_value,
-                    epsilon,
-                    allan,
-                    phase,
-                    resolve_frequency_orientation(product.attributes),
-                )
-            )
-        if not points:
-            raise QPhaseError(
-                "AllanScalingAnalyzer received no nonzero perturbation points"
-            )
-        orientations = {point.orientation for point in points}
-        if len(orientations) != 1:
-            raise QPhaseError("Allan scan points use different frequency orientations")
-        points.sort(key=lambda point: point.epsilon)
-        return points
-    # NOTE: load_sde_results bridges v4 bundles through legacy_result(); this
-    # consumer must be retyped and the bridge removed in Phase 5.
-    for loaded in load_sde_results(data):
+    if not all(isinstance(value, Dataset) for value in data.values()):
+        raise TypeError("allan_scaling requires typed Dataset inputs")
+    source = data.get(config.source_key)
+    if source is None:
+        raise QPhaseError(f"typed input has no Allan product {config.source_key!r}")
+    scan_size = 1
+    if "scan" in {axis.name for axis in source.axes}:
+        raw_scan_size = source.axis("scan").size
+        if raw_scan_size is None:
+            raise QPhaseError("typed Allan product has an open scan axis")
+        scan_size = int(raw_scan_size)
+    for index in range(scan_size):
         check_execution_cancelled(context)
-        result = loaded.result
-        params = result.meta.get("params", {})
-        if config.scan_param not in params:
-            raise QPhaseError(
-                f"SDE result meta.params is missing {config.scan_param!r}"
-            )
-        scan_value = float(params[config.scan_param])
+        product = source.point_view(scan=index) if scan_size > 1 else source
+        payload: dict[str, Any] = {}
+        for variable in product.variables:
+            parts = variable.name.split(".")
+            target = payload
+            for part in parts[:-1]:
+                child = target.setdefault(part, {})
+                if not isinstance(child, dict):
+                    raise QPhaseError("typed Allan product has invalid field paths")
+                target = child
+            target[parts[-1]] = np.asarray(product.handle(variable.name).materialize())
+        scan_variable = f"parameter.{config.scan_param}"
+        if scan_variable not in {variable.name for variable in product.variables}:
+            raise QPhaseError(f"typed Allan product is missing {scan_variable!r}")
+        scan_value = float(
+            np.asarray(product.handle(scan_variable).materialize()).reshape(-1)[0]
+        )
         epsilon = _epsilon(scan_value, config)
         if epsilon is None or epsilon <= 0.0:
             continue
-        allan, phase, orientation = _extract_source(result, config)
-        points.append(_Point(scan_value, epsilon, allan, phase, orientation))
+        mode_payload = _mode_payload(payload, config.mode)
+        allan = mode_payload.get("allan")
+        phase = mode_payload.get("phase_increment", {})
+        if not isinstance(allan, dict) or not isinstance(phase, dict):
+            raise QPhaseError("typed Allan product has incomplete mode fields")
+        allan = dict(allan)
+        allan["sample_spacing"] = float(
+            np.asarray(product.handle("dt").materialize()).reshape(-1)[0]
+        )
+        points.append(
+            _Point(
+                scan_value,
+                epsilon,
+                allan,
+                phase,
+                resolve_frequency_orientation(product.attributes),
+            )
+        )
     points.sort(key=lambda point: point.epsilon)
     if not points:
         raise QPhaseError(
@@ -715,6 +622,34 @@ def _exponent_matches(
     return True
 
 
+def _build_allan_scaling_products(
+    payload: Any, *, scan_size: int | None, label: str
+) -> dict[str, Dataset] | None:
+    leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
+    if leaves is None:
+        return None
+    declared_dims: dict[str, tuple[str, ...]] = {}
+    for key in leaves.arrays:
+        if key == "summary.gate_failures":
+            declared_dims[key] = ("gate_failure",)
+        elif key.endswith("exponent_ci95"):
+            declared_dims[key] = ("confidence_bound",)
+    axis_specs = {
+        "gate_failure": TypedAxisSpec("gate_failure", AxisRole.INDEX),
+        "confidence_bound": TypedAxisSpec("confidence_bound", AxisRole.INDEX),
+    }
+    product = assemble_typed_product(
+        label,
+        leaves,
+        scan_size=scan_size,
+        kind=DataKind.STATISTICS,
+        declared_dims=declared_dims,
+        axis_specs=axis_specs,
+        attributes={"graph_ready": True, "typed_builder": "allan_scaling/1"},
+    )
+    return None if product is None else {label: product}
+
+
 class AllanScalingAnalyzer(Analyzer):
     """Detect white-FM windows and fit Allan-noise scaling across a scan."""
 
@@ -766,8 +701,8 @@ class AllanScalingAnalyzer(Analyzer):
     ) -> Mapping[str, Dataset]:
         """Run scaling analysis directly from a typed Allan Dataset."""
         del metadata
-        payload, _ = self._compute_payload(inputs, backend, context=context)
-        products = self.build_products(payload, scan_size=None, label=label)
+        payload = self._compute_payload(inputs, backend, context=context)
+        products = _build_allan_scaling_products(payload, scan_size=None, label=label)
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
         return products
@@ -797,40 +732,13 @@ class AllanScalingAnalyzer(Analyzer):
             ),
         )
 
-    def build_products(
-        self, payload: Any, *, scan_size: int | None, label: str
-    ) -> dict[str, Dataset] | None:
-        leaves = stack_payload_leaves(label, payload, scan_size=scan_size)
-        if leaves is None:
-            return None
-        declared_dims: dict[str, tuple[str, ...]] = {}
-        for key, _array in leaves.arrays.items():
-            if key == "summary.gate_failures":
-                declared_dims[key] = ("gate_failure",)
-            elif key.endswith("exponent_ci95"):
-                declared_dims[key] = ("confidence_bound",)
-        axis_specs = {
-            "gate_failure": TypedAxisSpec("gate_failure", AxisRole.INDEX),
-            "confidence_bound": TypedAxisSpec("confidence_bound", AxisRole.INDEX),
-        }
-        product = assemble_typed_product(
-            label,
-            leaves,
-            scan_size=scan_size,
-            kind=DataKind.STATISTICS,
-            declared_dims=declared_dims,
-            axis_specs=axis_specs,
-            attributes={"graph_ready": True, "typed_builder": "allan_scaling/1"},
-        )
-        return None if product is None else {label: product}
-
     def _compute_payload(
         self,
-        data: Any,
+        data: Mapping[str, Dataset],
         backend: BackendBase,
         *,
         context: Any | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> dict[str, Any]:
         del backend
         config = cast(AllanScalingConfig, self.config)
         points = _collect_points(data, config, context=context)
@@ -1035,20 +943,7 @@ class AllanScalingAnalyzer(Analyzer):
             **orientation_metadata(points[0].orientation),
         }
         written = self._export(config, rows, summary)
-        return (
-            {"rows": rows, "summary": summary, "written": written},
-            {
-                "status": status,
-                "scan_param": config.scan_param,
-                "mode": config.mode,
-                "count": len(points),
-                **orientation_metadata(points[0].orientation),
-            },
-        )
-
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
-        payload, metadata = self._compute_payload(data, backend)
-        return AnalysisResult(data_dict=payload, meta=metadata)
+        return {"rows": rows, "summary": summary, "written": written}
 
     def _export(
         self,

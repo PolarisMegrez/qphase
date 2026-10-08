@@ -15,26 +15,25 @@ from qphase_sde.coherence_frequency import BandLimitedCoherenceFrequency
 
 def _typed_psd_product(scan_values: list[float]):
     """Typed PSD scan product for execute()."""
-    axis = np.linspace(-4.0, 4.0, 2048, endpoint=False)
-    payload = []
+    from qphase_sde.products import add_scan_parameter_coordinates
+    from qphase_sde.result import _trajectory_product
+    from qphase_sde.state import TrajectorySet
+
+    time = np.arange(2048) * 0.1
+    points = []
     for value in scan_values:
-        psd = 0.03 + 2.0 * 0.08**2 / ((axis + 0.7 + 0.1 * value) ** 2 + 0.08**2)
-        payload.append(
-            {
-                "axis": axis,
-                "psd": psd[:, None],
-                "psd_std": np.full((axis.size, 1), 0.01),
-                "psd_sem": np.full((axis.size, 1), 0.001),
-                "modes": [0],
-                "orientation": "phase_decreasing",
-                "uncertainty": {"n_independent": 4},
-            }
-        )
-    products = PsdAnalyzer(modes=[0], kind="complex").build_products(
-        payload, scan_size=len(scan_values), label="psd"
+        signal = np.exp(1j * (0.7 + 0.1 * value) * time)
+        points.append(np.repeat(signal[None, :, None], 4, axis=0))
+    trajectory = TrajectorySet(np.concatenate(points), t0=0.0, dt=0.1)
+    product = _trajectory_product(
+        trajectory, scan_size=len(scan_values), n_traj_per_point=4
     )
-    assert products is not None
-    return products["psd"]
+    psd = PsdAnalyzer(modes=[0], kind="complex").execute(
+        {"trajectories": product}, backend=NumpyBackend(), label="psd"
+    )["psd"]
+    return add_scan_parameter_coordinates(
+        psd, {"epsilon": np.asarray(scan_values, dtype=float)}
+    )
 
 
 def _analyzer() -> CoherenceFrequencyAnalyzer:

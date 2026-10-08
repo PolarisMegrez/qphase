@@ -9,9 +9,8 @@ Axis roles follow the core contract: ``scan`` is a *parameter* axis (it is
 swept, not sampled), and statistical uncertainties always count over a
 *realization* axis (``trajectory``) — never over the scan axis.
 
-The frequency orientation convention is *defined* here; the 1.x helper module
-``qphase_sde.analyser.frequency_orientation`` remains the runtime
-implementation until Phase 2 re-points it at this canonical definition.
+The frequency orientation convention is defined here and consumed by analyser
+implementations.
 
 Moment families are SDE-private: the core schema has no ``moment_family``
 field, so the versioned :class:`SDEMomentFamilySchema` descriptor is embedded
@@ -54,7 +53,6 @@ from qphase.data import (
 __all__ = [
     "ALLAN_PRODUCT",
     "DEFAULT_FREQUENCY_ORIENTATION",
-    "LEGACY_FREQUENCY_ORIENTATION",
     "MOMENT_FAMILY_PRODUCT",
     "SPECTRUM_PRODUCT",
     "FrequencyOrientation",
@@ -64,12 +62,10 @@ __all__ = [
 ]
 
 
-#: Canonical frequency orientation values (mirrored by the 1.x runtime module
-#: ``qphase_sde.analyser.frequency_orientation`` until Phase 2).
+#: Canonical frequency orientation values.
 FrequencyOrientation = Literal["phase_decreasing", "phase_increasing"]
 
 DEFAULT_FREQUENCY_ORIENTATION: FrequencyOrientation = "phase_decreasing"
-LEGACY_FREQUENCY_ORIENTATION: FrequencyOrientation = "phase_increasing"
 
 
 class SDEQuantity(str, Enum):

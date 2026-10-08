@@ -1,10 +1,9 @@
 """qphase_sde: SDE Engine
 ---------------------------------------------------------
-Object-oriented wrapper around the core simulation logic that supports
-dependency injection of backend and integrator via constructor.
-
-The Engine class now contains the full simulation logic, making the
-functional run() interface a simple wrapper for backward compatibility.
+The SDE engine integrates trajectories and executes the compiler-frozen
+ProductGraph over typed data products. Simulate jobs always produce a
+``trajectories`` time-series product; analyser outputs are typed Datasets
+assembled into an :class:`~qphase_sde.result.SDEDataBundle`.
 
 Public API
 ----------
@@ -16,7 +15,7 @@ import logging
 import time as _time
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -42,12 +41,8 @@ from qphase_sde.planning import (
     build_execution_plan,
     resolve_time_grid,
 )
-from qphase_sde.result import (
-    SDEDataBundle,
-    SDEResult,
-    _fingerprint_text,
-    bundle_from_result,
-)
+from qphase_sde.products import add_scan_parameter_coordinates
+from qphase_sde.result import SDEDataBundle, _fingerprint_text, _trajectory_product
 from qphase_sde.runtime.buffers import SDEBufferCache
 from qphase_sde.state import TrajectorySet
 
@@ -114,6 +109,22 @@ def _fused_rng_groups(
         )
         counts.extend(point_counts)
     return tuple(seeds), tuple(counts)
+
+
+@dataclass(frozen=True)
+class _SimulatedRun:
+    """In-memory outcome of one integration pass, before typed products.
+
+    Analysers never run inside the integration pass: the trajectory feeds
+    the typed product graph as the ``trajectories`` product, and observer
+    payloads ride along separately so they survive trajectory retention
+    choices. This is engine-internal — it is never persisted or returned
+    from the plugin boundary.
+    """
+
+    trajectory: TrajectorySet
+    meta: dict[str, Any]
+    observer_payloads: dict[str, Any]
 
 
 def _tile_scope_sub_graph(graph: Any, tile_scope: frozenset[str]) -> Any:
@@ -316,110 +327,6 @@ class EngineConfig(BaseModel):
     )
 
 
-class EngineContext:
-    """Engine runtime context for dependency injection."""
-
-    def __init__(self):
-        self.backend: BackendBase | None = None
-        self.integrator: Integrator | None = None
-
-    def set_backend(self, backend: BackendBase) -> None:
-        self.backend = backend
-
-    def set_integrator(self, integrator: Integrator) -> None:
-        self.integrator = integrator
-
-    def get_backend(self) -> BackendBase:
-        if self.backend is None:
-            raise RuntimeError(
-                "Backend not set. Use set_backend() or pass backend to engine."
-            )
-        return self.backend
-
-    def get_integrator(self) -> Integrator:
-        if self.integrator is None:
-            raise RuntimeError(
-                "Integrator not set. Use set_integrator() or pass integrator to engine."
-            )
-        return self.integrator
-
-
-_context = EngineContext()
-
-
-def set_backend(backend: BackendBase) -> None:
-    """Set global backend for dependency injection."""
-    _context.set_backend(backend)
-
-
-def set_integrator(integrator: Integrator) -> None:
-    """Set global integrator for dependency injection."""
-    _context.set_integrator(integrator)
-
-
-def get_backend() -> BackendBase:
-    """Get global backend from dependency injection."""
-    return _context.get_backend()
-
-
-def get_integrator() -> Integrator:
-    """Get global integrator from dependency injection."""
-    return _context.get_integrator()
-
-
-def _coerce_analysis_input(data: Any | None) -> Any | None:
-    """Coerce 2.0 trajectory products back to a TrajectorySet for analysers.
-
-    Accepts an SDEDataBundle (in-workflow hand-off) or a products mapping
-    (current artifact restored through the manifest loader). Inputs carrying a
-    ``trajectories`` product are coerced to a TrajectorySet for
-    trajectory-consuming analysers (single-point only: scan products must be
-    mapped per point by the scheduler, not flattened here). Inputs without
-    trajectories (e.g. spectral products feeding cross-job fitters) pass
-    through unchanged; those analysers normalize them via
-    ``load_sde_results``.
-    """
-    products: Any | None = None
-    if isinstance(data, SDEDataBundle):
-        products = data.products
-    elif (
-        isinstance(data, dict)
-        and data
-        and all(
-            hasattr(value, "schema") and hasattr(value, "handle")
-            for value in data.values()
-        )
-    ):
-        products = data
-    if products is None:
-        return data
-    product = products.get("trajectories")
-    if product is None:
-        return data
-    axis_names = {axis.name for axis in product.axes}
-    scan_axis = product.axis("scan") if "scan" in axis_names else None
-    if scan_axis is not None and scan_axis.size not in (None, 1):
-        raise RuntimeError(
-            "SDE analyze mode cannot flatten a scan trajectory product; map "
-            "over scan points (input.mode=map) instead"
-        )
-    alpha = product.handle("alpha").materialize()
-    if alpha.ndim == 4:
-        alpha = alpha[0]
-    time_axis = product.axis("time") if "time" in axis_names else None
-    t0 = (
-        float(time_axis.start)
-        if time_axis is not None and time_axis.start is not None
-        else 0.0
-    )
-    dt = (
-        float(time_axis.step)
-        if time_axis is not None and time_axis.step is not None
-        else 1.0
-    )
-    return TrajectorySet(data=alpha, t0=t0, dt=dt, meta={})
-
-
 def _analysis_source_scan(data: Any | None) -> DatasetResultProtocol | None:
     """Return the input dataset when analyze mode receives one directly."""
     if isinstance(data, DatasetResultProtocol):
@@ -474,78 +381,64 @@ class Engine(EngineBase):
         self,
         config: EngineConfig | None = None,
         plugins: dict[str, Any] | None = None,
-        **kwargs: Any,
+        *,
+        product_graph: Any | None = None,
     ):
-        """Initialize Engine with optional default backend and integrator.
+        """Initialize Engine with scheduler-resolved plugin instances.
 
         Parameters
         ----------
         config : EngineConfig, optional
             Configuration object (injected by Registry)
         plugins : dict, optional
-            Plugin dictionary (injected by Registry)
-        **kwargs : Any
-            Additional arguments (e.g. 'backend', 'integrator' for legacy support)
+            Plugin instances keyed by plugin class (injected by Registry).
+            ``backend`` and ``integrator`` must each resolve to a single
+            instance; ``analyser``/``observer`` may be name→instance dicts.
+        product_graph : ProductGraph, optional
+            Compiler-frozen analyser product graph of this job.
 
         """
         self.config = config
         self.plugins = plugins or {}
-        self._product_graph = kwargs.get("product_graph")
+        self._product_graph = product_graph
 
-        # Legacy support for direct injection via kwargs
-        backend = kwargs.get("backend")
-        integrator = kwargs.get("integrator")
+        # The scheduler resolves the task profile's required backend and
+        # integrator to exactly one instance each; an ambiguous mapping is a
+        # wiring error, not something to resolve by preference.
+        backend = self.plugins.get("backend")
+        if isinstance(backend, dict):
+            raise RuntimeError(
+                "SDE engine requires exactly one backend plugin instance, got "
+                f"a mapping with {sorted(backend)}"
+            )
+        self._default_backend = backend
 
-        # Resolve Backend
-        # Scheduler might pass a dict of backends if multiple are available
-        p_backend = self.plugins.get("backend", backend)
-        if isinstance(p_backend, dict):
-            # If multiple available, check defaults or pick first
-            default_name = self.manifest.defaults.get("backend")
-            if default_name and default_name in p_backend:
-                self._default_backend = p_backend[default_name]
-            elif p_backend:  # Ensure not empty
-                # Pick arbitrary first one if no preference
-                self._default_backend = next(iter(p_backend.values()))
-            else:
-                self._default_backend = None
-        else:
-            self._default_backend = p_backend
-
-        # Resolve Integrator
-        # Scheduler might pass a dict of integrators if multiple are available
-        p_integrator = self.plugins.get("integrator", integrator)
-        if isinstance(p_integrator, dict):
-            # If multiple available, check defaults or pick first
-            default_name = self.manifest.defaults.get("integrator")
-            if default_name and default_name in p_integrator:
-                self._default_integrator = p_integrator[default_name]
-            elif p_integrator:  # Ensure not empty
-                # Pick arbitrary first one if no preference
-                self._default_integrator = next(iter(p_integrator.values()))
-            else:
-                self._default_integrator = None
-        else:
-            self._default_integrator = p_integrator
+        integrator = self.plugins.get("integrator")
+        if isinstance(integrator, dict):
+            raise RuntimeError(
+                "SDE engine requires exactly one integrator plugin instance, "
+                f"got a mapping with {sorted(integrator)}"
+            )
+        self._default_integrator = integrator
 
     def run(
-        self,
-        data: Any | None = None,
-        *,
-        context: Any | None = None,
-        progress_cb: (
-            Callable[[float | None, float | None, str, str | None], None] | None
-        ) = None,
+        self, data: Any | None = None, *, context: Any | None = None
     ) -> ResultProtocol:
         """Execute the engine (Plugin Protocol)."""
         if not self.config:
             raise RuntimeError("Engine not configured.")
 
         reporter = context.progress if context is not None else None
-        if reporter is None and progress_cb is not None:
-            from qphase.core.progress import ProgressReporter
-
-            reporter = ProgressReporter.wrap_legacy(progress_cb)
+        graph = getattr(context, "product_graph", None) if context is not None else None
+        if graph is None:
+            graph = self._product_graph
+        analysers = self._normalised_analysers()
+        if graph is None and analysers:
+            raise RuntimeError(
+                "SDE job configures analysers but has no compiler-frozen "
+                "ProductGraph; run the job through the qphase compiler/"
+                "scheduler so the analyser graph is validated up front"
+            )
 
         if getattr(self.config, "mode", "simulate") == "analyze":
             source_scan = _analysis_source_scan(data)
@@ -553,13 +446,10 @@ class Engine(EngineBase):
                 raise TypeError(
                     "analyze mode requires a typed DatasetResultProtocol input"
                 )
-            typed = self._run_typed_analyze(source_scan, context=context)
-            if typed is None:
-                raise TypeError("analyze mode requires typed analyser execution")
-            return typed
+            return self._run_typed_analyze(source_scan, context=context, graph=graph)
+
         grid = context.parameter_grid if context is not None else None
         model = self._required_model()
-        analysers = self._normalised_analysers()
         observers = self._normalised_observers()
         backend = self._required_backend()
         integrator = self._required_integrator()
@@ -572,22 +462,8 @@ class Engine(EngineBase):
             analysers=analysers,
             observers=observers,
             resources=getattr(context, "resources", None),
-            typed_execution=(
-                context is not None
-                and getattr(context, "product_graph", None) is not None
-            ),
-            product_graph=(
-                getattr(context, "product_graph", None) if context is not None else None
-            ),
+            product_graph=graph,
         )
-        if plan.trajectory_batch_count > 1 and (
-            context is None or getattr(context, "product_graph", None) is None
-        ):
-            plan = replace(
-                plan,
-                scan_tile_size=1,
-                tile_count=plan.scan_size,
-            )
         plan_payload = plan.to_dict()
         log.info("SDE execution plan: %s", plan_payload)
         if context is not None and isinstance(getattr(context, "metadata", None), dict):
@@ -602,180 +478,149 @@ class Engine(EngineBase):
                 importance="normal",
             )
         if grid is not None:
-            from qphase_sde.runtime.scan import SDEParameterGridAdapter, SDEScanResult
+            from qphase_sde.runtime.scan import SDEParameterGridAdapter
 
             adapter = SDEParameterGridAdapter(self, grid)
             if plan.stream_analysis and (
                 plan.tile_count > 1 or plan.trajectory_batch_count > 1
             ):
-                if (
-                    context is not None
-                    and getattr(context, "product_graph", None) is not None
-                ):
-                    return self._run_scan_tiled_typed(
-                        data,
-                        adapter=adapter,
-                        plan=plan,
-                        reporter=reporter,
-                        context=context,
-                    )
-                combined: SDEResult = self._run_scan_tiled(
+                return self._run_scan_tiled_typed(
                     data,
                     adapter=adapter,
                     plan=plan,
                     reporter=reporter,
                     context=context,
                 )
-            else:
-                group_seeds, group_counts = _fused_rng_groups(
-                    adapter.master_seed,
-                    0,
-                    adapter.grid.size,
-                    plan.logical_rng_group_size,
-                    adapter.base_n_traj,
+            group_seeds, group_counts = _fused_rng_groups(
+                adapter.master_seed,
+                0,
+                adapter.grid.size,
+                plan.logical_rng_group_size,
+                adapter.base_n_traj,
+            )
+            with adapter:
+                outcome = self._run_simulate(
+                    data,
+                    reporter=reporter,
+                    context=context,
+                    rng_group_seeds=group_seeds,
+                    rng_group_size=plan.logical_rng_group_size,
+                    rng_group_counts=group_counts,
                 )
-                with adapter:
-                    combined = self._run_simulate(
-                        data,
-                        reporter=reporter,
-                        context=context,
-                        rng_group_seeds=group_seeds,
-                        rng_group_size=plan.logical_rng_group_size,
-                        rng_group_counts=group_counts,
-                        skip_analysis=(
-                            context is not None
-                            and getattr(context, "product_graph", None) is not None
-                        ),
-                    )
-            if not isinstance(combined, SDEResult):
-                raise TypeError("SDE simulation did not return an SDEResult")
-            combined.meta.update(
+            meta = dict(outcome.meta)
+            meta.update(
                 {
                     "scan_shape": grid.shape,
                     "scan_combine": grid.combine,
-                    "execution_plan": plan.to_dict(),
+                    "execution_plan": plan_payload,
                 }
             )
-            scan_result = SDEScanResult(
-                combined,
-                grid,
-                adapter.base_params,
-                adapter.base_n_traj,
+            if outcome.observer_payloads:
+                meta["observer_payloads"] = outcome.observer_payloads
+            source = SDEDataBundle(
+                {
+                    "trajectories": add_scan_parameter_coordinates(
+                        _trajectory_product(
+                            outcome.trajectory,
+                            scan_size=grid.size,
+                            n_traj_per_point=adapter.base_n_traj,
+                        ),
+                        grid.parameter_arrays(flatten=True),
+                    )
+                },
+                self._job_provenance(grid=grid),
+                scan_axes=dict(grid.axes),
+                scan_shape=grid.shape,
+                meta=meta,
+                n_traj_per_point=adapter.base_n_traj,
             )
-            if (
-                context is not None
-                and getattr(context, "product_graph", None) is not None
-            ):
-                source = bundle_from_result(
-                    scan_result,
-                    provenance=self._job_provenance(grid=grid),
-                    analysers={},
-                )
-                typed = self._run_typed_analyze(source, context=context)
-                if typed is None:
-                    raise RuntimeError("typed simulation analysis produced no result")
-                return self._merge_simulation_trajectory(source, typed)
-            return bundle_from_result(
-                scan_result,
-                provenance=self._job_provenance(grid=grid),
-                analysers=analysers,
-            )
+            if graph is None:
+                return source
+            typed = self._run_typed_analyze(source, context=context, graph=graph)
+            return self._merge_simulation_trajectory(source, typed)
         if plan.trajectory_batch_count > 1:
-            if (
-                context is not None
-                and getattr(context, "product_graph", None) is not None
-            ):
-                return self._run_trajectory_batched_typed(
-                    data,
-                    plan=plan,
-                    reporter=reporter,
-                    context=context,
-                    master_seed=self.config.seed,
-                    observers=observers,
-                )
-            result: SDEResult = self._run_trajectory_batched(
+            return self._run_trajectory_batched_typed(
                 data,
                 plan=plan,
                 reporter=reporter,
                 context=context,
-                point_index=0,
                 master_seed=self.config.seed,
                 observers=observers,
+                graph=graph,
             )
-        else:
-            master_seed = self.config.seed
-            if master_seed is None:
-                master_seed = int(
-                    np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0]
-                )
-            group_seeds, group_counts = _fused_rng_groups(
-                int(master_seed) % (1 << 64),
-                0,
-                1,
-                plan.logical_rng_group_size,
-                plan.n_traj_per_point,
+        master_seed = self.config.seed
+        if master_seed is None:
+            master_seed = int(
+                np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0]
             )
-            result = self._run_simulate(
-                data,
-                reporter=reporter,
-                context=context,
-                rng_group_seeds=group_seeds,
-                rng_group_size=plan.logical_rng_group_size,
-                rng_group_counts=group_counts,
-                observers=observers,
-                skip_analysis=(
-                    context is not None
-                    and getattr(context, "product_graph", None) is not None
-                ),
-            )
-        if isinstance(result, SDEResult):
-            result.meta.setdefault("execution_plan", plan.to_dict())
-        if not isinstance(result, SDEResult):
-            raise TypeError("SDE simulation did not return an SDEResult")
-        if context is not None and getattr(context, "product_graph", None) is not None:
-            source = bundle_from_result(
-                result, provenance=self._job_provenance(), analysers={}
-            )
-            typed = self._run_typed_analyze(source, context=context)
-            if typed is None:
-                raise RuntimeError("typed simulation analysis produced no result")
-            return self._merge_simulation_trajectory(source, typed)
-        return bundle_from_result(
-            result,
-            provenance=self._job_provenance(),
-            analysers=analysers,
+        group_seeds, group_counts = _fused_rng_groups(
+            int(master_seed) % (1 << 64),
+            0,
+            1,
+            plan.logical_rng_group_size,
+            plan.n_traj_per_point,
         )
+        outcome = self._run_simulate(
+            data,
+            reporter=reporter,
+            context=context,
+            rng_group_seeds=group_seeds,
+            rng_group_size=plan.logical_rng_group_size,
+            rng_group_counts=group_counts,
+            observers=observers,
+        )
+        meta = dict(outcome.meta)
+        meta.setdefault("execution_plan", plan_payload)
+        if outcome.observer_payloads:
+            meta["observer_payloads"] = outcome.observer_payloads
+        source = SDEDataBundle(
+            {
+                "trajectories": _trajectory_product(
+                    outcome.trajectory,
+                    scan_size=None,
+                    n_traj_per_point=plan.n_traj_per_point,
+                )
+            },
+            self._job_provenance(),
+            meta=meta,
+        )
+        if graph is None:
+            return source
+        typed = self._run_typed_analyze(source, context=context, graph=graph)
+        return self._merge_simulation_trajectory(source, typed)
 
     def _run_typed_analyze(
         self,
-        source: DatasetResultProtocol | None,
+        source: DatasetResultProtocol,
         *,
         context: Any | None = None,
         completed_nodes: Mapping[str, Mapping[str, Any]] | None = None,
         graph: Any | None = None,
-    ) -> ResultProtocol | None:
-        """Run an all-typed analyser set through the core ProductGraph.
+    ) -> SDEDataBundle:
+        """Run the analyser set through the compiler-frozen ProductGraph.
 
         ``graph`` overrides the compiler-frozen graph for tile-phase
         execution of a scan: the engine runs the induced tile-scope
         sub-graph per tile and defers final-scope nodes to one post-merge
         execution of the full graph.
         """
-        if source is None:
-            return None
         analysers = self._normalised_analysers()
-        if not analysers or not all(
-            callable(getattr(analyser, "execute", None))
-            for analyser in analysers.values()
-        ):
-            return None
+        if not analysers:
+            raise RuntimeError("typed analyser execution requires analysers")
         from qphase.core import ProductGraphExecutor
-
-        from .products import add_scan_parameter_coordinates
 
         source_products = getattr(source, "products", None)
         if not isinstance(source_products, dict):
             source_products = dict(source.data)
+        if not source.shape:
+            trajectories = source_products.get("trajectories")
+            if (
+                trajectories is not None
+                and "scan" in {axis.name for axis in trajectories.axes}
+                and trajectories.axis("scan").size == 1
+            ):
+                source_products = dict(source_products)
+                source_products["trajectories"] = trajectories.point_view(scan=0)
         if graph is None:
             graph = (
                 getattr(context, "product_graph", None)
@@ -838,6 +683,10 @@ class Engine(EngineBase):
 
         def make_runner(node_id: str, analyser: Any, name: str) -> Any:
             incoming = [edge for edge in graph.edges if edge.consumer == node_id]
+            preserves_scan = bool(source.shape) and any(
+                binding.consumer == node_id and binding.product == "trajectories"
+                for binding in graph.external_inputs
+            )
 
             def runner(node: Any, inputs: Any) -> Any:
                 del node
@@ -857,12 +706,16 @@ class Engine(EngineBase):
                 # Downstream consumers may read the scan parameter coordinates
                 # (e.g. allan_scaling reads parameter.<scan_param>), so attach
                 # them at production time, not only to the terminal products.
-                return {
-                    product_name: add_scan_parameter_coordinates(
+                normalized = {}
+                for product_name, product in outputs.items():
+                    if preserves_scan and "scan" not in {
+                        axis.name for axis in product.axes
+                    }:
+                        product = stack_datasets([product], axis="scan")
+                    normalized[product_name] = add_scan_parameter_coordinates(
                         product, scan_coordinates
                     )
-                    for product_name, product in outputs.items()
-                }
+                return normalized
 
             return runner
 
@@ -911,9 +764,9 @@ class Engine(EngineBase):
         final-scope nodes (deferred to one execution on the merged full-scan
         products), so cross-scan analysers never execute on partial tiles.
         """
-        from .products import add_scan_parameter_coordinates
-
         graph = getattr(context, "product_graph", None)
+        if graph is None:
+            graph = self._product_graph
         if graph is None:
             raise RuntimeError("typed scan tiling requires a ProductGraph")
         tile_scope, final_scope = _typed_scan_scope(graph, self._normalised_analysers())
@@ -983,10 +836,9 @@ class Engine(EngineBase):
                     "observer_payloads": observer_payloads,
                 },
             )
-        from .result import _trajectory_product
-
         tile_products: list[dict[str, Any]] = []
         tile_trajectories: list[Any] = []
+        streamed_observer_payloads: dict[str, list[Any]] = {}
         total_work = plan.scan_size * plan.n_traj_per_point * plan.steps
         for tile_index, start in enumerate(
             range(0, plan.scan_size, plan.scan_tile_size)
@@ -1007,7 +859,7 @@ class Engine(EngineBase):
                 adapter.base_n_traj,
             )
             with adapter.tile(start, stop):
-                tile_result = self._run_simulate(
+                tile_outcome = self._run_simulate(
                     data,
                     reporter=reporter,
                     context=context,
@@ -1018,10 +870,10 @@ class Engine(EngineBase):
                     progress_scale=point_count * plan.n_traj_per_point,
                     progress_total=total_work,
                     progress_label=f"tile {tile_index + 1}/{plan.tile_count}",
-                    skip_analysis=True,
                 )
-            if tile_result.trajectory is None:
-                raise RuntimeError("typed scan tile did not retain trajectories")
+            for name, payload in tile_outcome.observer_payloads.items():
+                values = payload if isinstance(payload, list) else [payload]
+                streamed_observer_payloads.setdefault(name, []).extend(values)
             tile_scan_axes = {
                 name: np.asarray(values)[start:stop]
                 for name, values in flat_coordinates.items()
@@ -1029,7 +881,7 @@ class Engine(EngineBase):
             tile_source = SDEDataBundle(
                 {
                     "trajectories": _trajectory_product(
-                        tile_result.trajectory,
+                        tile_outcome.trajectory,
                         scan_size=point_count,
                         n_traj_per_point=plan.n_traj_per_point,
                     )
@@ -1042,8 +894,6 @@ class Engine(EngineBase):
             analysed_tile = self._run_typed_analyze(
                 tile_source, context=context, graph=tile_graph
             )
-            if not isinstance(analysed_tile, SDEDataBundle):
-                raise RuntimeError("typed scan tile produced no SDE data bundle")
             tile_products.append(analysed_tile.products)
             if self.config is not None and self.config.keep_traj:
                 tile_trajectories.append(tile_source.products["trajectories"])
@@ -1073,6 +923,7 @@ class Engine(EngineBase):
                 "mode": "simulate_analyze",
                 "execution": "product_graph",
                 "execution_plan": plan.to_dict(),
+                "observer_payloads": streamed_observer_payloads,
             },
         )
 
@@ -1108,8 +959,6 @@ class Engine(EngineBase):
         analysed = self._run_typed_analyze(
             final_source, context=context, completed_nodes=completed_nodes
         )
-        if not isinstance(analysed, SDEDataBundle):
-            raise RuntimeError("typed scan final phase produced no SDE data bundle")
         return analysed.products
 
     @staticmethod
@@ -1121,7 +970,12 @@ class Engine(EngineBase):
         if not groups:
             raise ValueError("cannot concatenate an empty product collection")
         if len(groups) == 1:
-            return dict(groups[0])
+            if not stack:
+                return dict(groups[0])
+            return {
+                name: stack_datasets([product], axis="scan")
+                for name, product in groups[0].items()
+            }
         names = set(groups[0])
         if any(set(group) != names for group in groups[1:]):
             raise ValueError("scan tiles produced different product sets")
@@ -1269,12 +1123,7 @@ class Engine(EngineBase):
                     progress_total=plan.scan_size * plan.n_traj_per_point * plan.steps,
                     progress_label=f"typed trajectory batch {batch_index + 1}/"
                     f"{plan.trajectory_batch_count}",
-                    skip_analysis=True,
                 )
-            if partial.trajectory is None:
-                raise RuntimeError("typed trajectory batch did not retain trajectories")
-            from .result import _trajectory_product
-
             source = SDEDataBundle(
                 {
                     "trajectories": _trajectory_product(
@@ -1321,7 +1170,7 @@ class Engine(EngineBase):
                             reporter,
                         )
             for name in observers:
-                payload = self._analysis_to_host(partial.analysis.get(name))
+                payload = self._analysis_to_host(partial.observer_payloads.get(name))
                 if payload is None:
                     raise RuntimeError(
                         f"observer {name!r} returned no typed batch payload"
@@ -1369,8 +1218,6 @@ class Engine(EngineBase):
         if is_scan:
             grid = getattr(context, "parameter_grid", None)
             if grid is not None:
-                from .products import add_scan_parameter_coordinates
-
                 # Reducer-completed frontier products must carry the real
                 # flat scan coordinates of this tile before downstream graph
                 # nodes consume them.
@@ -1416,8 +1263,6 @@ class Engine(EngineBase):
             completed_nodes=completed_nodes,
             graph=graph,
         )
-        if not isinstance(analysed, SDEDataBundle):
-            raise RuntimeError("typed trajectory reducers produced no data bundle")
         return analysed
 
     def _merge_simulation_trajectory(
@@ -1532,272 +1377,6 @@ class Engine(EngineBase):
             return convert_to_numpy(value)
         return value
 
-    def _run_scan_tiled(
-        self,
-        data: Any | None,
-        *,
-        adapter: Any,
-        plan: SDEExecutionPlan,
-        reporter: Any | None,
-        context: Any | None,
-    ) -> SDEResult:
-        """Integrate and analyze scan tiles without retaining the full trajectory."""
-        assert self.config is not None
-        analysers = self._normalised_analysers()
-        observers = self._normalised_observers()
-        accumulated: dict[str, list[Any]] = {name: [] for name in analysers}
-        accumulated_observers: dict[str, list[Any]] = {name: [] for name in observers}
-        result_meta: dict[str, Any] = {}
-        total_work = plan.scan_size * plan.n_traj_per_point * plan.steps
-
-        for tile_index, start in enumerate(
-            range(0, plan.scan_size, plan.scan_tile_size)
-        ):
-            stop = min(start + plan.scan_tile_size, plan.scan_size)
-            point_count = stop - start
-            cancellation = getattr(context, "cancellation", None)
-            if cancellation is not None:
-                cancellation.raise_if_cancelled()
-            if reporter is not None:
-                reporter.status(
-                    f"SDE scan tile {tile_index + 1}/{plan.tile_count} "
-                    f"(points {start + 1}-{stop})",
-                    stage="sampling",
-                    metadata={"tile_index": tile_index, "tile_count": plan.tile_count},
-                )
-
-            with adapter.tile(start, stop):
-                if plan.trajectory_batch_count > 1:
-                    if point_count != 1:
-                        raise RuntimeError(
-                            "trajectory-batched SDE scans require one point per tile"
-                        )
-                    tile_result: SDEResult = self._run_trajectory_batched(
-                        data,
-                        plan=plan,
-                        reporter=reporter,
-                        context=context,
-                        point_index=start,
-                        master_seed=adapter.master_seed,
-                    )
-                else:
-                    group_seeds, group_counts = _fused_rng_groups(
-                        adapter.master_seed,
-                        start,
-                        stop,
-                        plan.logical_rng_group_size,
-                        adapter.base_n_traj,
-                    )
-                    tile_result = self._run_simulate(
-                        data,
-                        reporter=reporter,
-                        context=context,
-                        rng_group_seeds=group_seeds,
-                        rng_group_size=plan.logical_rng_group_size,
-                        rng_group_counts=group_counts,
-                        progress_offset=(start * plan.n_traj_per_point * plan.steps),
-                        progress_scale=point_count * plan.n_traj_per_point,
-                        progress_total=total_work,
-                        progress_label=f"tile {tile_index + 1}/{plan.tile_count}",
-                    )
-            if not isinstance(tile_result, SDEResult):
-                raise TypeError("SDE tile did not return an SDEResult")
-            if tile_result.trajectory is not None:
-                raise RuntimeError(
-                    "resource-aware scan tiling requires the tile trajectory to "
-                    "be released after analysis"
-                )
-            for name in analysers:
-                value = self._analysis_to_host(tile_result.analysis.get(name))
-                if point_count == 1:
-                    accumulated[name].append(value)
-                elif isinstance(value, list) and len(value) == point_count:
-                    accumulated[name].extend(value)
-                else:
-                    raise TypeError(
-                        f"analyser {name!r} did not return {point_count} "
-                        "point results for an SDE scan tile"
-                    )
-            for name in observers:
-                value = self._analysis_to_host(tile_result.analysis.get(name))
-                if point_count == 1 and value is not None:
-                    accumulated_observers[name].append(value)
-                elif isinstance(value, list) and len(value) == point_count:
-                    accumulated_observers[name].extend(value)
-                else:
-                    raise TypeError(
-                        f"observer {name!r} did not return {point_count} "
-                        "point payloads for an SDE scan tile"
-                    )
-            if not result_meta:
-                result_meta.update(tile_result.meta)
-            self._release_backend_pool()
-            if reporter is not None:
-                reporter.update(
-                    completed=stop * plan.n_traj_per_point * plan.steps,
-                    total=total_work,
-                    unit="trajectory-step",
-                    stage="sampling",
-                    message=(
-                        f"Completed SDE scan tile {tile_index + 1}/{plan.tile_count}"
-                    ),
-                    metadata={"tile_index": tile_index, "tile_count": plan.tile_count},
-                )
-
-        result_meta.update(
-            {
-                "params": dict(adapter.base_params),
-                "rng_master_seed": adapter.master_seed,
-                "rng_strategy": plan.rng_strategy,
-                "drop_trajectory_reason": "analyzed_by_scan_tile",
-                "execution_plan": plan.to_dict(),
-            }
-        )
-        for name, payloads in accumulated_observers.items():
-            accumulated[name] = payloads
-        analysis: dict[str, Any] = accumulated
-        if plan.scan_size == 1:
-            # Payload wrapping convention: list-wrapped per-point payloads
-            # exist iff scan_size > 1. A 1-point scan stores the bare
-            # per-point payload, exactly like a non-scan run.
-            analysis = {
-                name: payloads[0] if payloads else None
-                for name, payloads in accumulated.items()
-            }
-        return SDEResult(trajectory=None, analysis=analysis, meta=result_meta)
-
-    def _run_trajectory_batched(
-        self,
-        data: Any | None,
-        *,
-        plan: SDEExecutionPlan,
-        reporter: Any | None,
-        context: Any | None,
-        point_index: int,
-        master_seed: int | None,
-        observers: dict[str, Any] | None = None,
-    ) -> SDEResult:
-        """Integrate one parameter point in bounded trajectory batches."""
-        assert self.config is not None
-        analysers = self._normalised_analysers()
-        if observers is None:
-            observers = self._normalised_observers()
-        accumulators = {
-            name: analyser.create_result_accumulator()
-            for name, analyser in analysers.items()
-        }
-        if len(accumulators) != len(analysers):
-            raise RuntimeError(
-                "trajectory batching requires an accumulator for every analyser"
-            )
-        # Observer payloads are collected per batch and merged afterwards.
-        observer_batches: dict[str, list[Any]] = {name: [] for name in observers}
-
-        if master_seed is None:
-            master_seed = int(
-                np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0]
-            )
-        master_seed = int(master_seed) % (1 << 64)
-        total_trajectories = plan.n_traj_per_point
-        base_params = dict(self._required_model().params)
-        result_meta: dict[str, Any] = {}
-
-        for batch_index, start in enumerate(
-            range(0, total_trajectories, plan.trajectory_batch_size)
-        ):
-            stop = min(start + plan.trajectory_batch_size, total_trajectories)
-            count = stop - start
-            cancellation = getattr(context, "cancellation", None)
-            if cancellation is not None:
-                cancellation.raise_if_cancelled()
-            group_size = plan.logical_rng_group_size
-            if start % group_size:
-                raise RuntimeError(
-                    "trajectory batch boundaries must align with logical RNG groups"
-                )
-            first_group = start // group_size
-            last_group = (stop - 1) // group_size
-            group_counts = tuple(
-                min(stop, (group + 1) * group_size) - group * group_size
-                for group in range(first_group, last_group + 1)
-            )
-            seeds = tuple(
-                _rng_group_seed(master_seed, point_index, group)
-                for group in range(first_group, last_group + 1)
-            )
-            if reporter is not None:
-                reporter.status(
-                    f"SDE trajectory batch {batch_index + 1}/"
-                    f"{plan.trajectory_batch_count}",
-                    stage="sampling",
-                    metadata={
-                        "trajectory_batch_index": batch_index,
-                        "trajectory_batch_count": plan.trajectory_batch_count,
-                    },
-                )
-            with self._trajectory_batch_scope(start, stop, total_trajectories):
-                partial = self._run_simulate(
-                    data,
-                    reporter=reporter,
-                    context=context,
-                    rng_group_seeds=seeds,
-                    rng_group_size=group_size,
-                    rng_group_counts=group_counts,
-                    observers=observers,
-                    progress_offset=(point_index * total_trajectories + start)
-                    * plan.steps,
-                    progress_scale=count,
-                    progress_total=(plan.scan_size * total_trajectories * plan.steps),
-                    progress_label=(
-                        f"trajectory batch {batch_index + 1}/"
-                        f"{plan.trajectory_batch_count}"
-                    ),
-                )
-            if not isinstance(partial, SDEResult):
-                raise TypeError("SDE trajectory batch did not return an SDEResult")
-            if partial.trajectory is not None:
-                raise RuntimeError(
-                    "trajectory batching requires keep_traj=false after analysis"
-                )
-            for name, accumulator in accumulators.items():
-                accumulator.update(self._analysis_to_host(partial.analysis[name]))
-            for name in observers:
-                payload = self._analysis_to_host(partial.analysis.get(name))
-                if payload is None:
-                    raise RuntimeError(
-                        f"observer {name!r} returned no payload for trajectory "
-                        f"batch {batch_index + 1}"
-                    )
-                observer_batches[name].append(payload)
-            if not result_meta:
-                result_meta.update(partial.meta)
-            del partial
-            self._release_backend_pool()
-
-        result_meta.update(
-            {
-                "params": base_params,
-                "rng_master_seed": master_seed,
-                "rng_strategy": plan.rng_strategy,
-                "drop_trajectory_reason": "online_trajectory_aggregation",
-                "trajectory_batch_size": plan.trajectory_batch_size,
-                "trajectory_batch_count": plan.trajectory_batch_count,
-                "execution_plan": plan.to_dict(),
-            }
-        )
-        analysis: dict[str, Any] = {
-            name: accumulator.finalize() for name, accumulator in accumulators.items()
-        }
-        for name, payloads in observer_batches.items():
-            # The row index of merged per-trajectory arrays is the global
-            # trajectory id: batches concatenate in order without renumbering.
-            analysis[name] = observers[name].merge_payloads(payloads)
-        return SDEResult(
-            trajectory=None,
-            analysis=analysis,
-            meta=result_meta,
-        )
-
     @contextmanager
     def _trajectory_batch_scope(self, start: int, stop: int, total_trajectories: int):
         """Temporarily slice trajectory-shaped configuration and model values."""
@@ -1862,17 +1441,19 @@ class Engine(EngineBase):
         progress_scale: int | None = None,
         progress_total: int | None = None,
         progress_label: str | None = None,
-        skip_analysis: bool = False,
-    ) -> SDEResult:
-        """Execute SDE simulation and optional per-job analysis."""
+    ) -> _SimulatedRun:
+        """Execute one SDE integration pass; analysers never run here.
+
+        The trajectory always comes back retained: whether it is published
+        as a product is decided by the typed graph/merge layer above, never
+        inside the integration pass.
+        """
         assert self.config is not None
 
         if observers is None:
             observers = self._normalised_observers()
 
-        model = self.plugins.get("model")
-        if not model:
-            raise RuntimeError("Engine requires 'model' plugin.")
+        model = self._required_model()
 
         time_grid = resolve_time_grid(
             t0=self.config.t0,
@@ -1903,7 +1484,7 @@ class Engine(EngineBase):
                 raise RuntimeError("No IC provided.")
 
         # Adapt the integration loop's counters to structured, monotonic work.
-        sde_progress_cb = None
+        progress_hook = None
         if reporter is not None:
 
             def _sde_cb(
@@ -1931,28 +1512,26 @@ class Engine(EngineBase):
                     metadata=metadata,
                 )
 
-            sde_progress_cb = _sde_cb
+            progress_hook = _sde_cb
 
-        traj_set: TrajectorySet | None = self.run_sde(
+        traj_set: TrajectorySet = self.run_sde(
             model=model,
             ic=ic,
             time=time_cfg,
             n_traj=self.config.n_traj,
             seed=self.config.seed,
             return_stride=self.config.save_stride,
-            progress_cb=sde_progress_cb,
+            _progress_hook=progress_hook,
             rng_group_seeds=rng_group_seeds,
             rng_group_size=rng_group_size,
             rng_group_counts=rng_group_counts,
             observers=observers,
         )
         # Lift observer payloads out of the trajectory metadata immediately so
-        # they persist even when the trajectory itself is dropped below. They
-        # intentionally do not participate in the keep/drop auto-decision: a
-        # record-only observer must not change trajectory retention.
-        observer_results: dict[str, Any] = {}
-        if traj_set is not None:
-            observer_results = dict(traj_set.meta.pop("observers", {}))
+        # they ride along independently of trajectory retention choices in the
+        # typed product layer. They intentionally do not participate in the
+        # keep/drop decision: a record-only observer must not change retention.
+        observer_results: dict[str, Any] = dict(traj_set.meta.pop("observers", {}))
         n_scan = getattr(self.config, "_batch_scan_count", 1)
         if not isinstance(n_scan, int) or n_scan < 1:
             n_scan = 1
@@ -1983,140 +1562,20 @@ class Engine(EngineBase):
                 ),
             )
 
-        # Determine the backend name used for simulation to decide whether the
-        # trajectory can be retained. GPU backends (especially cupy) should not
-        # keep the full raw trajectory by default, because downstream plotting
-        # expects numpy arrays and retaining it would cause large D2H transfers.
-        backend_name = ""
-        if self._default_backend is not None:
-            try:
-                backend_name = self._default_backend.backend_name()
-            except Exception:
-                backend_name = ""
-
-        # Run analyzers if configured
-        analysis_results: dict[str, Any] = {}
-        meta: dict[str, Any] = {}
-
-        analysers = self.plugins.get("analyser")
-        if analysers and not skip_analysis:
-            # Normalize to dict of name -> instance
-            if not isinstance(analysers, dict):
-                # Single instance
-                analysers = {getattr(analysers, "name", "analyser"): analysers}
-
-            if reporter is not None:
-                analyser_names = tuple(str(name) for name in analysers)
-                stage = (
-                    "spectral-analysis"
-                    if any(name.lower() == "psd" for name in analyser_names)
-                    else "analysis"
-                )
-                reporter.status(
-                    f"Analyzing {self.config.n_traj} trajectories",
-                    stage=stage,
-                    metadata={"analysers": analyser_names},
-                )
-
-            # Get backend used for simulation
-            be = self._default_backend
-            if be is None:
-                try:
-                    be = get_backend()
-                except RuntimeError:
-                    # Should not happen if run_sde succeeded, but for safety
-                    from qphase.backend.numpy_backend import NumpyBackend
-
-                    be = NumpyBackend()
-
-            # Detect batch mode: the scheduler fuses scan points into one ensemble.
-            if n_scan > 1 and traj_set is not None:
-                # Split the combined trajectory into per-scan-point slices and run
-                # each analyzer on each slice so that PSD/dist/etc. remain per-point.
-                data = traj_set.data
-                n_total_traj = data.shape[0]
-                if n_total_traj % n_scan != 0:
-                    raise ValueError(
-                        f"Batch trajectory has {n_total_traj} trajectories, "
-                        f"not divisible by scan count {n_scan}"
-                    )
-                n_traj_per_scan = n_total_traj // n_scan
-
-                per_scan_results: list[dict[str, Any]] = []
-                for i in range(n_scan):
-                    start = i * n_traj_per_scan
-                    end = start + n_traj_per_scan
-                    sub_traj = TrajectorySet(
-                        data=data[start:end],
-                        t0=traj_set.t0,
-                        dt=traj_set.dt,
-                        meta=dict(traj_set.meta),
-                    )
-                    scan_res: dict[str, Any] = {}
-                    for name, analyzer in analysers.items():
-                        if hasattr(analyzer, "analyze"):
-                            res = analyzer.analyze(sub_traj, be)
-                            scan_res[name] = res.data_dict
-                    per_scan_results.append(scan_res)
-
-                # Store as lists keyed by analyzer name; the result splitter will
-                # distribute the i-th element to the i-th original job.
-                for name in analysers.keys():
-                    analysis_results[name] = [r.get(name) for r in per_scan_results]
-            else:
-                for name, analyzer in analysers.items():
-                    if hasattr(analyzer, "analyze"):
-                        res = analyzer.analyze(traj_set, be)
-                        # Analyzer names come from the plugin configuration keys.
-                        # But name comes from config key
-                        analysis_results[name] = res.data_dict
-
-            # Decide whether to keep trajectory based on config
-            should_keep = self.config.keep_traj
-
-            if should_keep is None:
-                # Default behavior: drop if analyzed to save resources
-                should_keep = not bool(analysis_results)
-
-            if should_keep and backend_name == "cupy" and traj_set is not None:
-                # Explicit retention is a user-visible output request. Analysis
-                # runs on the device first, then the retained record moves to
-                # host memory so result serialization does not pin GPU memory.
-                traj_set = TrajectorySet(
-                    data=convert_to_numpy(traj_set.data),
-                    t0=traj_set.t0,
-                    dt=traj_set.dt,
-                    meta=dict(traj_set.meta),
-                )
-                meta["trajectory_storage"] = "host"
-                meta["trajectory_transfer"] = "device_to_host_after_analysis"
-
-            if not should_keep and traj_set is not None:
-                # Preserve metadata before dropping trajectory
-                meta["t0"] = traj_set.t0
-                meta["dt"] = traj_set.dt
-                meta.update(traj_set.meta)
-                # Record reason for dropping
-                meta["drop_trajectory_reason"] = (
-                    "analyzed" if analysis_results else "user_requested"
-                )
-                # Drop trajectory to save memory
-                traj_set = None
-
-        # Observer outputs live alongside analyser outputs under their plugin
-        # keys so they survive trajectory drops and scan/batch merging.
-        analysis_results.update(observer_results)
-
         # Ensure model parameters are in metadata
-        if model:
-            if hasattr(model, "config") and hasattr(model.config, "model_dump"):
-                meta["params"] = model.config.model_dump()
-            elif hasattr(model, "parameters"):
-                meta["params"] = model.parameters
-            elif hasattr(model, "params"):
-                meta["params"] = model.params
+        meta: dict[str, Any] = {}
+        if hasattr(model, "config") and hasattr(model.config, "model_dump"):
+            meta["params"] = model.config.model_dump()
+        elif hasattr(model, "parameters"):
+            meta["params"] = model.parameters
+        elif hasattr(model, "params"):
+            meta["params"] = model.params
 
-        return SDEResult(trajectory=traj_set, meta=meta, analysis=analysis_results)
+        return _SimulatedRun(
+            trajectory=traj_set,
+            meta=meta,
+            observer_payloads=observer_results,
+        )
 
     def run_sde(
         self,
@@ -2133,7 +1592,7 @@ class Engine(EngineBase):
         return_stride: int = 1,
         rng_stream: str = "per_trajectory",
         *,
-        progress_cb: Callable[[int, int, float, int, int], None] | None = None,
+        _progress_hook: Callable[[int, int, float, int, int], None] | None = None,
         progress_interval_seconds: float = 1.0,
         ic_index: int = 0,
         ic_total: int = 1,
@@ -2187,8 +1646,6 @@ class Engine(EngineBase):
             Decimation factor for returned TrajectorySet
         rng_stream : str
             RNG strategy: 'per_trajectory' or 'batched'
-        progress_cb : callable, optional
-            Progress callback function
         progress_interval_seconds : float
             Minimum time between progress reports
         ic_index : int
@@ -2223,18 +1680,11 @@ class Engine(EngineBase):
         # Resolve dependencies
         be = backend or self._default_backend
         if be is None:
-            # Fallback to global default if available
-            try:
-                be = get_backend()
-            except RuntimeError as err:
-                raise RuntimeError("No backend provided or configured.") from err
+            raise RuntimeError("No backend provided or configured.")
 
         integrator = solver or self._default_integrator
         if integrator is None:
-            try:
-                integrator = get_integrator()
-            except RuntimeError as err:
-                raise RuntimeError("No integrator provided or configured.") from err
+            raise RuntimeError("No integrator provided or configured.")
 
         # Parse time config
         t0 = float(time.get("t0", 0.0))
@@ -2620,7 +2070,7 @@ class Engine(EngineBase):
                 )
 
             # Progress reporting
-            if progress_cb is not None:
+            if _progress_hook is not None:
                 now = _time.monotonic()
                 if now >= next_report_time:
                     progress = (t - t0) / (t_end - t0)
@@ -2650,7 +2100,7 @@ class Engine(EngineBase):
                         eta = elapsed / progress * (1 - progress)
 
                     try:
-                        progress_cb(
+                        _progress_hook(
                             int(progress * steps), steps, eta, ic_index, ic_total
                         )
                     except Exception:

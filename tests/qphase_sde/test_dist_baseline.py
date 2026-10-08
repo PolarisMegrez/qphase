@@ -16,9 +16,43 @@ from __future__ import annotations
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.dist import DistAnalyzer, DistAnalyzerConfig
+from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
 RTOL = 1e-10
+
+
+def _execute(analyzer: DistAnalyzer, trajectory: TrajectorySet) -> dict:
+    product = analyzer.execute(
+        {
+            "trajectories": _trajectory_product(
+                trajectory, scan_size=None, n_traj_per_point=None
+            )
+        },
+        backend=NumpyBackend(),
+        label="dist",
+    )["dist"]
+    payload: dict = {}
+    leaves = dict(product.attributes["payload_meta"])
+    leaves.update(
+        {
+            variable.name: product.handle(variable.name).materialize()
+            for variable in product.variables
+        }
+    )
+    for name, value in leaves.items():
+        target = payload
+        parts = name.split(".")
+        for part in parts[:-1]:
+            key = int(part) if part.isdigit() else part
+            target = target.setdefault(key, {})
+        key = int(parts[-1]) if parts[-1].isdigit() else parts[-1]
+        target[key] = (
+            value.item()
+            if isinstance(value, np.ndarray) and value.ndim == 0
+            else value
+        )
+    return payload
 
 
 def _complex_fixture() -> TrajectorySet:
@@ -41,10 +75,9 @@ def _complex_fixture() -> TrajectorySet:
 
 
 def test_dist_2d_complex_histogram_baseline():
-    out = (
-        DistAnalyzer(config=DistAnalyzerConfig(modes=[0, 1], bins=8, density=True))
-        .analyze(_complex_fixture(), NumpyBackend())
-        .data_dict
+    out = _execute(
+        DistAnalyzer(config=DistAnalyzerConfig(modes=[0, 1], bins=8, density=True)),
+        _complex_fixture(),
     )
 
     assert out["distributions"][0]["type"] == "2d_complex"
@@ -303,10 +336,9 @@ def test_dist_1d_real_histogram_baseline():
         data=rng.standard_normal((2, 48, 1)), dt=0.1, meta={"mode_indices": [0]}
     )
 
-    out = (
-        DistAnalyzer(config=DistAnalyzerConfig(modes=[0], bins=6, density=False))
-        .analyze(ts, NumpyBackend())
-        .data_dict
+    out = _execute(
+        DistAnalyzer(config=DistAnalyzerConfig(modes=[0], bins=6, density=False)),
+        ts,
     )
 
     assert out["distributions"][0]["type"] == "1d_real"
@@ -333,14 +365,13 @@ def test_dist_1d_real_histogram_baseline():
 
 
 def test_dist_explicit_range_baseline():
-    out = (
+    out = _execute(
         DistAnalyzer(
             config=DistAnalyzerConfig(
                 modes=[0, 1], bins=6, density=True, range=[[-1.5, 1.5], [-1.0, 2.0]]
             )
-        )
-        .analyze(_complex_fixture(), NumpyBackend())
-        .data_dict
+        ),
+        _complex_fixture(),
     )
 
     np.testing.assert_allclose(
@@ -467,6 +498,6 @@ def test_dist_explicit_range_baseline():
         rtol=0,
         atol=0,
     )
-    assert out["modes"] == [0, 1]
+    np.testing.assert_array_equal(out["modes"], [0, 1])
     assert out["bins"] == 6
     assert out["density"] is True

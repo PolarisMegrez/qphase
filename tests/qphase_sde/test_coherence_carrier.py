@@ -10,6 +10,7 @@ from qphase_sde.analyser.coherence_carrier import (
     CoherenceCarrierConfig,
     estimate_coherence_carrier,
 )
+from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
 
@@ -34,6 +35,33 @@ def _oscillator_trajectories(
         dt=dt,
         meta={"mode_indices": list(range(len(frequencies)))},
     )
+
+
+def _product_payload(product):
+    payload = {}
+    values = list(product.attributes.get("payload_meta", {}).items()) + [
+        (variable.name, product.handle(variable.name).materialize())
+        for variable in product.variables
+    ]
+    for name, value in values:
+        if np.asarray(value).ndim == 0:
+            value = np.asarray(value).item()
+        target = payload
+        parts = name.split(".")
+        for part in parts[:-1]:
+            key = int(part) if part.isdigit() else part
+            target = target.setdefault(key, {})
+        target[parts[-1]] = value
+    return payload
+
+
+def _execute(analyzer, trajectories: TrajectorySet, backend=None):
+    product = analyzer.execute(
+        {"trajectories": _typed_trajectories(trajectories)},
+        backend=backend or NumpyBackend(),
+        label="carrier",
+    )["carrier"]
+    return product, _product_payload(product)
 
 
 def test_short_delay_carrier_recovers_phase_orientation():
@@ -89,7 +117,7 @@ def test_trace_carrier_equals_cam_rayleigh_quotient():
         )
     )
 
-    result = analyzer.analyze(trajectories, NumpyBackend()).data_dict
+    _, result = _execute(analyzer, trajectories)
 
     expected_trace = (3.0 * frequencies[0] + 2.0 * frequencies[1]) / 5.0
     assert result["measurement_names"] == ["mode_0", "mode_1", "trace"]
@@ -109,7 +137,7 @@ def test_coherent_channel_uses_same_weight_matrix_as_cam():
         )
     )
 
-    payload = analyzer.analyze(trajectories, NumpyBackend()).data_dict
+    _, payload = _execute(analyzer, trajectories)
     weight = np.asarray(payload["measurement_matrices"])[0]
 
     assert payload["measurement_names"] == ["balanced"]
@@ -123,7 +151,7 @@ def test_trajectory_batch_accumulator_recomputes_ratio_and_uncertainty():
     trajectories = _oscillator_trajectories([0.2, 0.8], [3, 2])
     analyzer = CoherenceCarrierAnalyzer(CoherenceCarrierConfig(maximum_lag_points=8))
     backend = NumpyBackend()
-    complete = analyzer.analyze(trajectories, backend).data_dict
+    _, complete = _execute(analyzer, trajectories, backend)
     accumulator = analyzer.create_result_accumulator()
     for indices in (slice(0, 3), slice(3, 5)):
         batch = TrajectorySet(
@@ -131,9 +159,12 @@ def test_trajectory_batch_accumulator_recomputes_ratio_and_uncertainty():
             dt=trajectories.dt,
             meta=dict(trajectories.meta),
         )
-        accumulator.update(analyzer.analyze(batch, backend).data_dict)
+        partial, _ = _execute(analyzer, batch, backend)
+        accumulator.consume_product(partial)
 
-    merged = accumulator.finalize()
+    products = accumulator.finalize_product("carrier")
+    assert products is not None
+    merged = _product_payload(products["carrier"])
 
     assert merged["frequency"] == pytest.approx(complete["frequency"])
     assert merged["frequency_sem"] == pytest.approx(complete["frequency_sem"])
@@ -194,8 +225,6 @@ class _FakeProgress:
 
 
 def _typed_trajectories(trajectories: TrajectorySet):
-    from qphase_sde.result import _trajectory_product
-
     return _trajectory_product(trajectories, scan_size=None, n_traj_per_point=None)
 
 

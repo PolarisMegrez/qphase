@@ -25,10 +25,10 @@ from qphase_sde.analyser.lorentz_fitter import (
 from qphase_sde.analyser.lorentz_fitter import (
     _lorentzian_with_baseline as lorentzian_with_baseline,
 )
-from qphase_sde.analyser.psd import PsdAnalyzer
-from qphase_sde.analyser.result import AnalysisResult
+from qphase_sde.analyser.psd import PsdAnalyzer, _build_psd_products
 from qphase_sde.contracts.bundle import SDEProvenance
-from qphase_sde.result import SDEResult, bundle_from_result
+from qphase_sde.products import add_scan_parameter_coordinates
+from qphase_sde.result import SDEDataBundle
 
 pytestmark = pytest.mark.integration
 
@@ -208,7 +208,7 @@ def test_fit_lorentzian_clip_by_std_sigma():
 
 def test_lorentz_fitter_config_clip_by_std(tmp_path):
     """LorentzFitter passes clip_by_std/clip_sigma down to fit_lorentzian."""
-    run_dir = _make_run_dir(tmp_path)
+    psd = _make_scan_product()
     analyzer = LorentzFitter(
         LorentzFitterConfig(
             scan_param="epsilon",
@@ -217,21 +217,22 @@ def test_lorentz_fitter_config_clip_by_std(tmp_path):
             clip_sigma=2.0,
         )
     )
-    result = analyzer.analyze(run_dir, backend=NumpyBackend())
-
-    assert isinstance(result, AnalysisResult)
-    assert len(result.data_dict["fit_rows"]) == 2
-    assert result.data_dict["orientation"] == "phase_increasing"
+    product = analyzer.execute(
+        {"psd": psd}, backend=NumpyBackend(), label="fit"
+    )["fit"]
+    payload = product.attributes["payload_meta"]
+    assert len(payload["fit_rows"]) == 2
+    assert payload["orientation"] == "phase_increasing"
     assert all(
-        row["orientation"] == "phase_increasing" for row in result.data_dict["fit_rows"]
+        row["orientation"] == "phase_increasing" for row in payload["fit_rows"]
     )
-    for row in result.data_dict["fit_rows"]:
+    for row in payload["fit_rows"]:
         assert row["status"] in {"ok", "low_quality"}
 
 
 def test_lorentz_fitter_analyze_directory(tmp_path):
     """LorentzFitter can process a run directory directly."""
-    run_dir = _make_run_dir(tmp_path)
+    psd = _make_scan_product()
     output_dir = tmp_path / "exports"
 
     analyzer = LorentzFitter(
@@ -241,21 +242,22 @@ def test_lorentz_fitter_analyze_directory(tmp_path):
             output_dir=str(output_dir),
         )
     )
-    result = analyzer.analyze(run_dir, backend=NumpyBackend())
-
-    assert isinstance(result, AnalysisResult)
-    assert len(result.data_dict["fit_rows"]) == 2
+    product = analyzer.execute(
+        {"psd": psd}, backend=NumpyBackend(), label="fit"
+    )["fit"]
+    rows = product.attributes["payload_meta"]["fit_rows"]
+    assert len(rows) == 2
     assert (output_dir / "fit_results.csv").exists()
     assert (output_dir / "psd_merged.csv").exists()
     assert all(
         row["uncertainty_source"] == "residual_covariance"
-        for row in result.data_dict["fit_rows"]
+        for row in rows
     )
 
 
 def test_lorentz_fitter_transfers_psd_sem_to_csv(tmp_path):
     """Aggregated PSD SEM propagates to fit uncertainty and remains auditable."""
-    run_dir = _make_run_dir(tmp_path, with_uncertainty=True)
+    psd = _make_scan_product(with_uncertainty=True)
     output_dir = tmp_path / "weighted_exports"
     analyzer = LorentzFitter(
         LorentzFitterConfig(
@@ -266,10 +268,11 @@ def test_lorentz_fitter_transfers_psd_sem_to_csv(tmp_path):
         )
     )
 
-    result = analyzer.analyze(run_dir, backend=NumpyBackend())
-    assert isinstance(result, AnalysisResult)
+    product = analyzer.execute(
+        {"psd": psd}, backend=NumpyBackend(), label="fit"
+    )["fit"]
 
-    for row in result.data_dict["fit_rows"]:
+    for row in product.attributes["payload_meta"]["fit_rows"]:
         assert row["uncertainty_source"] == "psd_sem_sandwich"
         assert float(row["center_std"]) > 0.0
         assert float(row["linewidth_std"]) > 0.0
@@ -296,13 +299,17 @@ def test_lorentz_fitter_transfers_psd_sem_to_csv(tmp_path):
 
 
 def test_lorentz_fitter_can_require_psd_uncertainty(tmp_path):
-    """Required propagation rejects legacy PSD payloads without a SEM field."""
+    """Required propagation rejects typed PSD products without a SEM field."""
     analyzer = LorentzFitter(
         LorentzFitterConfig(scan_param="epsilon", mode=0, uncertainty="required")
     )
 
     with pytest.raises(QPhaseError, match="no usable PSD standard error"):
-        analyzer.analyze(_make_run_dir(tmp_path), backend=NumpyBackend())
+        analyzer.execute(
+            {"psd": _make_scan_product()},
+            backend=NumpyBackend(),
+            label="fit",
+        )
 
 
 def test_lorentz_fitter_engine_analyze_mode(tmp_path, temp_project):
@@ -360,45 +367,71 @@ def test_export_dist_schema_version(tmp_path):
     assert len(pdist_bundle["rows"]) == len(pdist_rows)
 
 
+def _psd_payload(epsilon: float, *, with_uncertainty: bool = False) -> dict:
+    axis = np.linspace(-2.0, 2.0, 201)
+    psd = lorentzian_with_baseline(
+        axis,
+        center=epsilon,
+        gamma=0.1,
+        amplitude=1.0 + epsilon,
+        base=0.05,
+    )
+    payload = {
+        "axis": axis,
+        "psd": psd[:, None],
+        "modes": [0],
+        "sample_dt": 1.0,
+        "nyquist": np.pi,
+        "kind": "complex",
+        "convention": "symmetric",
+        "orientation": "phase_increasing",
+    }
+    if with_uncertainty:
+        payload["psd_sem"] = np.full((axis.size, 1), 0.01)
+        payload["uncertainty"] = {
+            "kind": "standard_error",
+            "field": "psd_sem",
+            "independent_unit": "trajectory",
+            "n_independent": 100,
+        }
+    return payload
+
+
+def _make_scan_product(*, with_uncertainty: bool = False):
+    analyzer = PsdAnalyzer(kind="complex", modes=[0])
+    products = _build_psd_products(
+        [
+            _psd_payload(value, with_uncertainty=with_uncertainty)
+            for value in (0.1, 0.2)
+        ],
+        scan_size=2,
+        label="psd",
+        analyser=analyzer,
+    )
+    assert products is not None
+    return add_scan_parameter_coordinates(
+        products["psd"], {"epsilon": np.asarray([0.1, 0.2])}
+    )
+
+
 def _make_run_dir(tmp_path: Path, *, with_uncertainty: bool = False) -> Path:
     run_dir = tmp_path / "run"
-    axis = np.linspace(-2.0, 2.0, 201)
+    analyzer = PsdAnalyzer(kind="complex", modes=[0])
     for index, epsilon in enumerate([0.1, 0.2], start=1):
         job_dir = run_dir / f"job_{index:03d}"
         job_dir.mkdir(parents=True)
-        psd = lorentzian_with_baseline(
-            axis,
-            center=epsilon,
-            gamma=0.1,
-            amplitude=1.0 + epsilon,
-            base=0.05,
+        products = _build_psd_products(
+            _psd_payload(epsilon, with_uncertainty=with_uncertainty),
+            scan_size=None,
+            label="psd",
+            analyser=analyzer,
         )
-        psd_payload = {
-            "axis": axis,
-            "psd": psd[:, None],
-            "modes": [0],
-            "sample_dt": 1.0,
-            "nyquist": np.pi,
-            "kind": "complex",
-            "convention": "symmetric",
-        }
-        if with_uncertainty:
-            psd_payload["psd_sem"] = np.full((axis.size, 1), 0.01)
-            psd_payload["uncertainty"] = {
-                "kind": "standard_error",
-                "field": "psd_sem",
-                "independent_unit": "trajectory",
-                "n_independent": 100,
-            }
+        assert products is not None
 
-        result = SDEResult(
+        bundle = SDEDataBundle(
+            products,
+            SDEProvenance(dt=1.0),
             meta={"params": {"epsilon": epsilon}, "job_name": job_dir.name},
-            analysis={"psd": psd_payload},
-        )
-        bundle = bundle_from_result(
-            result,
-            provenance=SDEProvenance(dt=1.0),
-            analysers={"psd": PsdAnalyzer(kind="complex", modes=[0])},
         )
         bundle.save(job_dir)
     return run_dir

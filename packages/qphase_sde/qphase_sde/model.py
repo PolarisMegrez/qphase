@@ -9,7 +9,6 @@ Public API
 ----------
 `SDEModel` : Protocol for SDE models consumed by the engine.
 `MatrixDriftSDEModel` : Optional protocol for matrix-valued drift operators.
-`DiffusiveSDEModel` : Alias for SDEModel (for backward compatibility).
 `FunctionalSDEModel` : Concrete implementation of SDEModel using functions.
 `PhaseSpaceModel` : Model defined by phase space drift and diffusion coefficients.
 `NoiseSpec` : Specification of real-valued noise channels.
@@ -28,7 +27,6 @@ import numpy as np
 __all__ = [
     "SDEModel",
     "MatrixDriftSDEModel",
-    "DiffusiveSDEModel",
     "FunctionalSDEModel",
     "PhaseSpaceModel",
     "NoiseSpec",
@@ -158,10 +156,6 @@ class MatrixDriftSDEModel(SDEModel, Protocol):
     def drift_matrix(self, y: Any, t: float, params: dict[str, Any]) -> Any:
         """Return drift matrices with shape ``(..., n_modes, n_modes)``."""
         ...
-
-
-# Alias for backward compatibility
-DiffusiveSDEModel = SDEModel
 
 
 @dataclass

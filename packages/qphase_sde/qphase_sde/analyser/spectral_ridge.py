@@ -13,7 +13,7 @@ from pydantic import Field, field_validator, model_validator
 from qphase.backend.base import BackendBase
 from qphase.core.aggregation import write_table_csv
 from qphase.core.errors import QPhaseError
-from qphase.core.protocols import PluginConfigBase, ResultProtocol
+from qphase.core.protocols import PluginConfigBase
 from qphase.data import (
     DataKind,
     Dataset,
@@ -32,12 +32,11 @@ from ..contracts.analyser import (
 from ..products import assemble_row_table_product
 from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
+    DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
     orientation_metadata,
     resolve_frequency_orientation,
 )
-from .result import AnalysisResult
-from .result_input import load_sde_results
 from .spectral_input import SpectralPoint, SpectralScanInput, spectral_scan_input
 
 Readout = int | Literal["trace"]
@@ -780,45 +779,69 @@ def _tracking_segments(
 
 
 def _extract_readout(
-    source_data: dict[str, Any] | SpectralPoint,
-    psd_key: str,
+    source_data: SpectralPoint,
     readout: Readout,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, dict[str, Any], str]:
-    if isinstance(source_data, SpectralPoint):
-        spectrum, sem, source = source_data.readout(readout)
-        return (
-            source_data.axis,
-            spectrum,
-            sem,
-            dict(source_data.attributes),
-            source,
-        )
-    analysis = source_data
-    if psd_key not in analysis:
-        raise QPhaseError(f"analysis is missing PSD payload {psd_key!r}")
-    payload = analysis[psd_key]
-    axis = np.asarray(payload["axis"], dtype=float).reshape(-1)
-    matrix = np.asarray(payload["psd"], dtype=float)
-    sem_matrix = (
-        np.asarray(payload["psd_sem"], dtype=float) if "psd_sem" in payload else None
+    spectrum, sem, source = source_data.readout(readout)
+    return (
+        source_data.axis,
+        spectrum,
+        sem,
+        dict(source_data.attributes),
+        source,
     )
-    if matrix.ndim == 1:
-        return axis, matrix, sem_matrix, payload, "direct_psd_sem"
-    if matrix.ndim != 2:
-        raise QPhaseError("PSD payload has an unsupported shape")
-    if readout == "trace":
-        spectrum = np.sum(matrix, axis=1)
-        sem = None if sem_matrix is None else np.sum(np.abs(sem_matrix), axis=1)
-        return axis, spectrum, sem, payload, "mode_sem_upper_bound"
-    modes = [int(mode) for mode in payload.get("modes", [])]
-    if readout in modes:
-        column = modes.index(readout)
-    elif readout < matrix.shape[1]:
-        column = readout
-    else:
-        raise QPhaseError(f"mode {readout} is absent from PSD payload")
-    sem = None if sem_matrix is None else sem_matrix[:, column]
-    return axis, matrix[:, column], sem, payload, "direct_psd_sem"
+
+
+def _build_spectral_ridge_products(
+    payload: Any,
+    *,
+    scan_size: int | None,
+    label: str,
+    config: SpectralRidgeConfig,
+) -> dict[str, Dataset]:
+    if not isinstance(payload, dict):
+        raise TypeError("spectral_ridge payload must be a mapping")
+    rows = payload.get("ridge_rows", [])
+    candidates = payload.get("candidate_rows", [])
+    if not isinstance(rows, list) or not isinstance(candidates, list):
+        raise TypeError("spectral_ridge row tables must be lists")
+    metadata = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"ridge_rows", "candidate_rows"}
+    }
+    selected = assemble_row_table_product(
+        label,
+        rows,
+        scan_size=scan_size,
+        fields=_ridge_selected_fields(config.scan_param),
+        integer_fields=("point_index",),
+        scan_index_field="point_index",
+        scan_value_field=config.scan_param,
+        quantities={"frequency": "peak_location"},
+        payload_key="ridge_rows",
+        payload_meta=metadata,
+        attributes={"table": "spectral_ridge"},
+    )
+    candidate = assemble_row_table_product(
+        f"{label}.candidates",
+        candidates,
+        scan_size=scan_size,
+        fields=_ridge_candidate_fields(config.scan_param),
+        integer_fields=(
+            "point_index",
+            "candidate_index",
+            "selected",
+            "retained_for_association",
+        ),
+        scan_index_field="point_index",
+        scan_value_field=config.scan_param,
+        quantities={"frequency": "peak_location"},
+        payload_key="candidate_rows",
+        payload_meta=metadata,
+        attributes={"table": "spectral_ridge_candidates"},
+    )
+    return {label: selected, f"{label}.candidates": candidate}
 
 
 class SpectralRidgeAnalyzer(Analyzer):
@@ -847,7 +870,12 @@ class SpectralRidgeAnalyzer(Analyzer):
             metadata=metadata,
         )
         payload, _ = self._compute_payload(typed, backend, context=context)
-        products = self.build_products(payload, scan_size=None, label=label)
+        products = _build_spectral_ridge_products(
+            payload,
+            scan_size=None,
+            label=label,
+            config=cast(SpectralRidgeConfig, self.config),
+        )
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
         return products
@@ -889,73 +917,16 @@ class SpectralRidgeAnalyzer(Analyzer):
             ),
         )
 
-    def build_products(
-        self,
-        payload: Any,
-        *,
-        scan_size: int | None,
-        label: str,
-    ) -> dict[str, Dataset] | None:
-        """Build graph-ready row products while retaining the legacy payload."""
-        if not isinstance(payload, dict):
-            raise TypeError("spectral_ridge payload must be a mapping")
-        config = cast(SpectralRidgeConfig, self.config)
-        rows = payload.get("ridge_rows", [])
-        candidates = payload.get("candidate_rows", [])
-        if not isinstance(rows, list) or not isinstance(candidates, list):
-            raise TypeError("spectral_ridge row tables must be lists")
-        metadata = {
-            key: value
-            for key, value in payload.items()
-            if key not in {"ridge_rows", "candidate_rows"}
-        }
-        selected = assemble_row_table_product(
-            label,
-            rows,
-            scan_size=scan_size,
-            fields=_ridge_selected_fields(config.scan_param),
-            integer_fields=("point_index",),
-            scan_index_field="point_index",
-            scan_value_field=config.scan_param,
-            quantities={"frequency": "peak_location"},
-            payload_key="ridge_rows",
-            payload_meta=metadata,
-            attributes={"table": "spectral_ridge"},
-        )
-        candidate = assemble_row_table_product(
-            f"{label}.candidates",
-            candidates,
-            scan_size=scan_size,
-            fields=_ridge_candidate_fields(config.scan_param),
-            integer_fields=(
-                "point_index",
-                "candidate_index",
-                "selected",
-                "retained_for_association",
-            ),
-            scan_index_field="point_index",
-            scan_value_field=config.scan_param,
-            quantities={"frequency": "peak_location"},
-            payload_key="candidate_rows",
-            payload_meta=metadata,
-            attributes={"table": "spectral_ridge_candidates"},
-        )
-        return {label: selected, f"{label}.candidates": candidate}
-
     def _compute_payload(
         self,
-        data: Any,
+        data: SpectralScanInput,
         backend: BackendBase,
         *,
         context: Any | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         del backend
         config = cast(SpectralRidgeConfig, self.config)
-        loaded = (
-            data.points
-            if isinstance(data, SpectralScanInput)
-            else load_sde_results(data)
-        )
+        loaded = data.points
         if not loaded:
             raise QPhaseError("spectral_ridge received no input results")
         point_data: dict[str, list[tuple[float, Any, list[SpectralRidgeEstimate]]]] = {
@@ -966,22 +937,11 @@ class SpectralRidgeAnalyzer(Analyzer):
         spectra_done = 0
         for item in loaded:
             check_execution_cancelled(context)
-            if isinstance(item, SpectralPoint):
-                scan_value = item.scan_value
-                job_name = item.job_name
-                source_data: dict[str, Any] | SpectralPoint = item
-            else:
-                params = item.meta.get("params", {})
-                if config.scan_param not in params:
-                    raise QPhaseError(
-                        f"input is missing scan parameter {config.scan_param!r}"
-                    )
-                scan_value = float(params[config.scan_param])
-                job_name = item.job_name
-                source_data = item.analysis
+            scan_value = item.scan_value
+            job_name = item.job_name
             for readout in config.readouts:
                 axis, spectrum, sem, payload, source = _extract_readout(
-                    source_data, config.psd_key, readout
+                    item, readout
                 )
                 orientation = resolve_frequency_orientation(payload)
                 if reference_orientation is None:
@@ -1218,8 +1178,9 @@ class SpectralRidgeAnalyzer(Analyzer):
                     destination / "spectral_ridge_candidates.csv",
                 )
                 written["spectral_ridge_candidates"] = str(output_path)
+        # Empty scans use this analyser's declared frequency-axis convention.
         metadata = orientation_metadata(
-            reference_orientation or resolve_frequency_orientation(None)
+            reference_orientation or DEFAULT_FREQUENCY_ORIENTATION
         )
         return (
             {
@@ -1254,13 +1215,3 @@ class SpectralRidgeAnalyzer(Analyzer):
                 **metadata,
             },
         )
-
-    def analyze(
-        self,
-        data: Any,
-        backend: BackendBase,
-        *,
-        context: Any | None = None,
-    ) -> ResultProtocol:
-        payload, metadata = self._compute_payload(data, backend, context=context)
-        return AnalysisResult(data_dict=payload, meta=metadata)

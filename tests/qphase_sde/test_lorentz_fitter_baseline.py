@@ -24,7 +24,8 @@ from qphase_sde.analyser.lorentz_fitter import (
     LorentzFitterConfig,
     fit_lorentzian,
 )
-from qphase_sde.result import SDEResult
+from qphase_sde.analyser.psd import PsdAnalyzer, _build_psd_products
+from qphase_sde.products import add_scan_parameter_coordinates
 
 RTOL = 1e-8
 
@@ -118,36 +119,36 @@ def test_fit_lorentzian_window_and_clip_baseline():
     assert result.reduced_chi2 == pytest.approx(1.027084798428129, rel=RTOL)
 
 
-def _scan_results() -> dict[str, SDEResult]:
+def _scan_product():
     axis = np.linspace(-2.0, 2.0, 401)
     rng = np.random.default_rng(20260910)
-    results = {}
-    for epsilon, (center, gamma, amplitude) in [
-        (0.1, (-0.28, 0.06, 3.0)),
-        (0.2, (-0.18, 0.09, 5.0)),
+    payloads = []
+    for center, gamma, amplitude in [
+        (-0.28, 0.06, 3.0),
+        (-0.18, 0.09, 5.0),
     ]:
         trace = (
             _lorentzian(axis, center, gamma, amplitude, 0.1)
             + rng.standard_normal(axis.size) * 0.01
         )
         sem = np.full_like(axis, 0.01)
-        results[f"point_{epsilon}"] = SDEResult(
-            analysis={
-                "psd": {
-                    "axis": axis,
-                    "psd": trace[:, None],
-                    "psd_sem": sem[:, None],
-                    "modes": [0],
-                    "orientation": "phase_decreasing",
-                },
-                "dist": {"distributions": {0: {"hist": np.arange(4.0), "label": "d0"}}},
-                "pdist": {
-                    "distributions": {0: {"hist": np.arange(3.0), "label": "p0"}}
-                },
-            },
-            meta={"params": {"epsilon": epsilon}, "job_name": f"point_{epsilon}"},
+        payloads.append(
+            {
+                "axis": axis,
+                "psd": trace[:, None],
+                "psd_sem": sem[:, None],
+                "modes": [0],
+                "orientation": "phase_decreasing",
+            }
         )
-    return results
+    analyzer = PsdAnalyzer(modes=[0], kind="complex")
+    products = _build_psd_products(
+        payloads, scan_size=2, label="psd", analyser=analyzer
+    )
+    assert products is not None
+    return add_scan_parameter_coordinates(
+        products["psd"], {"epsilon": np.asarray([0.1, 0.2])}
+    )
 
 
 def test_lorentz_fitter_analyzer_scan_rows_baseline(tmp_path):
@@ -156,19 +157,21 @@ def test_lorentz_fitter_analyzer_scan_rows_baseline(tmp_path):
             scan_param="epsilon",
             mode=0,
             uncertainty="auto",
-            export_dist=True,
             export=["fit_results.csv", "psd_merged.csv"],
             output_dir=str(tmp_path),
         )
     )
 
-    out = fitter.analyze(_scan_results(), NumpyBackend()).data_dict
+    product = fitter.execute(
+        {"psd": _scan_product()}, backend=NumpyBackend(), label="fit"
+    )["fit"]
 
+    out = product.attributes["payload_meta"]
     rows = out["fit_rows"]
     assert len(rows) == 2
 
     assert rows[0]["epsilon"] == 0.1
-    assert rows[0]["job_name"] == "point_0.1"
+    assert rows[0]["job_name"] == ""
     assert rows[0]["orientation"] == "phase_decreasing"
     assert rows[0]["status"] == "ok"
     assert rows[0]["uncertainty_source"] == "psd_sem_sandwich"
@@ -185,7 +188,7 @@ def test_lorentz_fitter_analyzer_scan_rows_baseline(tmp_path):
     assert rows[0]["reduced_chi2"] == pytest.approx(1.1274132851675074, rel=RTOL)
 
     assert rows[1]["epsilon"] == 0.2
-    assert rows[1]["job_name"] == "point_0.2"
+    assert rows[1]["job_name"] == ""
     assert rows[1]["status"] == "ok"
     assert rows[1]["uncertainty_source"] == "psd_sem_sandwich"
     assert rows[1]["center"] == pytest.approx(-0.18010397192848482, rel=RTOL)
@@ -202,22 +205,15 @@ def test_lorentz_fitter_analyzer_scan_rows_baseline(tmp_path):
     assert sorted(out["psd_columns"]) == ["0.1", "0.2"]
     assert sorted(out["psd_sem_columns"]) == ["0.1", "0.2"]
     assert sorted(out["written"]) == [
-        "dist_merged",
         "fit_results",
-        "pdist_merged",
         "psd_merged",
     ]
     assert (tmp_path / "fit_results.csv").exists()
     assert (tmp_path / "psd_merged.csv").exists()
-    assert (tmp_path / "dist_merged.npz").exists()
-    assert (tmp_path / "pdist_merged.pkl").exists()
 
 
 def _typed_psd_product(scan_values: list[float]):
     """Typed PSD scan product with parameter coordinates for execute()."""
-    from qphase_sde.analyser.psd import PsdAnalyzer
-    from qphase_sde.products import add_scan_parameter_coordinates
-
     axis = np.linspace(-3.0, 3.0, 1024, endpoint=False)
     payload = []
     for value in scan_values:
@@ -233,8 +229,9 @@ def _typed_psd_product(scan_values: list[float]):
                 "uncertainty": {"n_independent": 4},
             }
         )
-    products = PsdAnalyzer(modes=[0], kind="complex").build_products(
-        payload, scan_size=len(scan_values), label="psd"
+    analyzer = PsdAnalyzer(modes=[0], kind="complex")
+    products = _build_psd_products(
+        payload, scan_size=len(scan_values), label="psd", analyser=analyzer
     )
     assert products is not None
     return add_scan_parameter_coordinates(

@@ -3,6 +3,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase.data import (
+    AxisRole,
+    AxisSchema,
+    DataKind,
+    ProductSchema,
+    SpectralDataset,
+    VariableSchema,
+)
 from qphase_sde.analyser.spectral_ridge import (
     SpectralRidgeAnalyzer,
     SpectralRidgeConfig,
@@ -12,11 +20,70 @@ from qphase_sde.analyser.spectral_ridge import (
     _tracking_segments,
     estimate_spectral_ridges,
 )
-from qphase_sde.result import SDEResult
+from qphase_sde.products import add_scan_parameter_coordinates
 
 
 def _gaussian(axis: np.ndarray, center: float, width: float) -> np.ndarray:
     return np.exp(-0.5 * ((axis - center) / width) ** 2)
+
+
+def _spectral_product(axis, spectra, scan_values, modes):
+    spectra = np.asarray(spectra)
+    scan_size, _, channels = spectra.shape
+    schema = ProductSchema(
+        kind=DataKind.SPECTRAL,
+        axes=[
+            AxisSchema(name="scan", role=AxisRole.PARAMETER, size=scan_size),
+            AxisSchema(name="frequency", role=AxisRole.COORDINATE, size=axis.size),
+            AxisSchema(name="channel", role=AxisRole.COMPONENT, size=channels),
+        ],
+        variables=[
+            VariableSchema(
+                name="axis",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan", "frequency"),
+            ),
+            VariableSchema(
+                name="psd",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan", "frequency", "channel"),
+            ),
+            VariableSchema(
+                name="psd_sem",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan", "frequency", "channel"),
+            ),
+            VariableSchema(
+                name="modes",
+                dtype="int64",
+                value_domain="real",
+                dims=("scan", "channel"),
+            ),
+        ],
+        attributes={
+            "frequency_units": "inverse_time",
+            "orientation": "phase_decreasing",
+            "sidedness": "two_sided",
+            "normalization": "density",
+            "window": "rectangular",
+            "estimator": "synthetic",
+            "graph_ready": True,
+        },
+    )
+    product = SpectralDataset.from_arrays(
+        schema,
+        {
+            "axis": np.repeat(axis[None, :], scan_size, axis=0),
+            "psd": spectra,
+            "psd_sem": np.full(spectra.shape, 0.001),
+            "modes": np.repeat(np.asarray(modes)[None, :], scan_size, axis=0),
+        },
+        owner="test",
+    )
+    return add_scan_parameter_coordinates(product, {"epsilon": np.asarray(scan_values)})
 
 
 def test_scale_space_ridge_recovers_smooth_peak():
@@ -42,26 +109,15 @@ def test_scale_space_ridge_recovers_smooth_peak():
 
 def test_spectral_ridge_analyzer_handles_multiple_readouts(tmp_path: Path):
     axis = np.linspace(-2.0, 2.0, 4001)
-    results = {}
-    for point, shift in enumerate((0.0, 0.1)):
+    spectra = []
+    for shift in (0.0, 0.1):
         spectrum = np.column_stack(
             [
                 0.01 + _gaussian(axis, -0.4 + shift, 0.08),
                 0.02 + 0.7 * _gaussian(axis, 0.6 + shift, 0.1),
             ]
         )
-        results[f"point_{point}"] = SDEResult(
-            analysis={
-                "psd": {
-                    "axis": axis,
-                    "psd": spectrum,
-                    "psd_sem": np.full(spectrum.shape, 0.001),
-                    "modes": [0, 1],
-                    "orientation": "phase_decreasing",
-                }
-            },
-            meta={"params": {"epsilon": float(point)}},
-        )
+        spectra.append(spectrum)
     analyzer = SpectralRidgeAnalyzer(
         SpectralRidgeConfig(
             scan_param="epsilon",
@@ -71,7 +127,12 @@ def test_spectral_ridge_analyzer_handles_multiple_readouts(tmp_path: Path):
         )
     )
 
-    payload = analyzer.analyze(results, NumpyBackend()).data_dict
+    products = analyzer.execute(
+        {"psd": _spectral_product(axis, spectra, [0.0, 1.0], [0, 1])},
+        backend=NumpyBackend(),
+        label="ridge",
+    )
+    payload = products["ridge"].attributes["payload_meta"]
 
     assert len(payload["ridge_rows"]) == 4
     mode_0 = [
@@ -85,39 +146,23 @@ def test_spectral_ridge_analyzer_handles_multiple_readouts(tmp_path: Path):
     assert (tmp_path / "spectral_ridge_candidates.csv").exists()
 
 
-def test_spectral_ridge_builds_typed_rows_and_restores_legacy_payload():
+def test_spectral_ridge_builds_typed_rows():
     axis = np.linspace(-2.0, 2.0, 4001)
-    result = SDEResult(
-        analysis={
-            "psd": {
-                "axis": axis,
-                "psd": (0.01 + _gaussian(axis, 0.2, 0.08))[:, None],
-                "modes": [0],
-                "orientation": "phase_decreasing",
-            }
-        },
-        meta={"params": {"epsilon": 0.0}},
-    )
+    spectrum = (0.01 + _gaussian(axis, 0.2, 0.08))[None, :, None]
     analyzer = SpectralRidgeAnalyzer(
         SpectralRidgeConfig(
             scan_param="epsilon", readouts=[0], smoothing_scale_bins=[2.0, 4.0, 8.0]
         )
     )
-    payload = analyzer.analyze({"point": result}, NumpyBackend()).data_dict
-    products = analyzer.build_products(payload, scan_size=1, label="ridge")
-    assert products is not None
+    products = analyzer.execute(
+        {"psd": _spectral_product(axis, spectrum, [0.0], [0])},
+        backend=NumpyBackend(),
+        label="ridge",
+    )
     assert set(products) == {"ridge", "ridge.candidates"}
     assert all(product.attributes["graph_ready"] for product in products.values())
-    assert products["ridge"].axis("scan").size == 1
     assert products["ridge"].axis("row").size >= 1
-
-    from qphase_sde.result import legacy_view_from_products
-
-    legacy = legacy_view_from_products(products)
-    assert legacy.analysis["ridge"]["ridge_rows"][0]["frequency"] == pytest.approx(
-        payload["ridge_rows"][0]["frequency"]
-    )
-    assert "ridge_rows" in legacy.analysis["ridge"]
+    assert "ridge_rows" in products["ridge"].attributes["payload_meta"]
 
 
 def test_spectral_ridge_rejects_duplicate_readouts():
@@ -136,18 +181,6 @@ def test_tracking_segments_split_explicit_scan_gap():
 def test_spectral_ridge_reports_competing_peak_ambiguity():
     axis = np.linspace(-2.0, 2.0, 4001)
     spectrum = 0.01 + _gaussian(axis, -0.6, 0.08) + 0.99 * _gaussian(axis, 0.7, 0.08)
-    result = SDEResult(
-        analysis={
-            "psd": {
-                "axis": axis,
-                "psd": spectrum[:, None],
-                "psd_sem": np.full((axis.size, 1), 0.001),
-                "modes": [0],
-                "orientation": "phase_decreasing",
-            }
-        },
-        meta={"params": {"epsilon": 0.0}},
-    )
     analyzer = SpectralRidgeAnalyzer(
         SpectralRidgeConfig(
             scan_param="epsilon",
@@ -156,7 +189,12 @@ def test_spectral_ridge_reports_competing_peak_ambiguity():
         )
     )
 
-    row = analyzer.analyze({"point": result}, NumpyBackend()).data_dict["ridge_rows"][0]
+    products = analyzer.execute(
+        {"psd": _spectral_product(axis, spectrum[None, :, None], [0.0], [0])},
+        backend=NumpyBackend(),
+        label="ridge",
+    )
+    row = products["ridge"].attributes["payload_meta"]["ridge_rows"][0]
 
     assert row["ambiguity_candidate_count"] == 2
     assert row["ambiguity_lower"] < -0.5
@@ -255,31 +293,12 @@ def test_retention_fallback_guarantees_one_candidate():
 
 def _typed_psd_product(scan_values: list[float]):
     """Typed two-point PSD scan product with parameter coordinates."""
-    from qphase_sde.analyser.psd import PsdAnalyzer
-    from qphase_sde.products import add_scan_parameter_coordinates
-
     axis = np.linspace(-3.0, 3.0, 1024, endpoint=False)
     payload = []
     for value in scan_values:
         psd = 0.03 + 2.0 * 0.08**2 / ((axis + 0.1 + 0.05 * value) ** 2 + 0.08**2)
-        payload.append(
-            {
-                "axis": axis,
-                "psd": psd[:, None],
-                "psd_std": np.full((axis.size, 1), 0.01),
-                "psd_sem": np.full((axis.size, 1), 0.001),
-                "modes": [0],
-                "orientation": "phase_decreasing",
-                "uncertainty": {"n_independent": 4},
-            }
-        )
-    products = PsdAnalyzer(modes=[0], kind="complex").build_products(
-        payload, scan_size=len(scan_values), label="psd"
-    )
-    assert products is not None
-    return add_scan_parameter_coordinates(
-        products["psd"], {"epsilon": np.asarray(scan_values, dtype=float)}
-    )
+        payload.append(psd[:, None])
+    return _spectral_product(axis, payload, scan_values, [0])
 
 
 class _LoopAbortError(Exception):

@@ -26,6 +26,7 @@ from qphase_sde.contracts.bundle import (
 )
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
+from qphase_sde.products import add_scan_parameter_coordinates
 from qphase_sde.result import SDEDataBundle
 
 
@@ -79,10 +80,29 @@ def _scan_bundle():
             "backend": NumpyBackend(),
             "integrator": EulerMaruyama(),
             "model": _ScanModel(),
-            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
         },
     )
-    return engine.run(context=SimpleNamespace(parameter_grid=_grid(), progress=None))
+    source = engine.run(
+        context=SimpleNamespace(parameter_grid=_grid(), progress=None)
+    )
+    psd = PsdAnalyzer(kind="complex", modes=[0]).execute(
+        source.products, backend=NumpyBackend(), label="psd"
+    )
+    psd["psd"] = add_scan_parameter_coordinates(
+        psd["psd"], {"rate": np.asarray(source.axes["rate"], dtype=float)}
+    )
+    return SDEDataBundle(
+        {**source.products, **psd},
+        source.provenance,
+        scan_axes=source.axes,
+        scan_shape=source.shape,
+        meta={
+            key: value
+            for key, value in source.metadata.items()
+            if key != "provenance"
+        },
+        n_traj_per_point=source.n_traj_per_point,
+    )
 
 
 def _save_scan_bundle(job_dir: Path) -> SDEDataBundle:
@@ -212,9 +232,11 @@ def test_restored_scan_bundle_feeds_downstream_analysers(tmp_path):
     backend = NumpyBackend()
 
     # Dataset mode: the cross-job Lorentz fitter consumes the whole bundle.
-    fit = LorentzFitter(scan_param="rate").analyze(restored, backend)
-    fit_rows = fit.data_dict["fit_rows"]
-    assert [row["rate"] for row in fit_rows] == [1.0, 2.0]
+    fit = LorentzFitter(scan_param="rate").execute(
+        restored.products, backend=backend, label="fit"
+    )["fit"]
+    assert fit.handle("row_valid").materialize().shape == (2,)
+    np.testing.assert_allclose(restored.products["psd"].coordinate("rate"), [1.0, 2.0])
 
     # Map mode: per-point views feed trajectory-level analysers (Allan).
     views = list(iter_dataset_views(restored))
@@ -224,10 +246,14 @@ def test_restored_scan_bundle_feeds_downstream_analysers(tmp_path):
     )
     for _label, view in views:
         assert isinstance(view, SDEDataBundle)
-        legacy = view.legacy_result()
-        payload = allan.analyze(legacy.trajectory, backend).data_dict
-        assert "mode_results" in payload
-        assert legacy.meta["params"]["rate"] in (1.0, 2.0)
+        product = allan.execute(
+            view.products, backend=backend, label="allan_variance"
+        )["allan_variance"]
+        assert any(
+            variable.name.startswith("mode_results.")
+            for variable in product.variables
+        )
+        assert view.metadata["params"]["rate"] in (1.0, 2.0)
 
 
 def test_scan_bundle_restores_in_clean_subprocess(tmp_path):

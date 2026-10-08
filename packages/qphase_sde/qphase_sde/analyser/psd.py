@@ -29,7 +29,6 @@ from typing import Any, ClassVar, Literal, cast
 import numpy as _np
 from pydantic import ConfigDict, Field, model_validator
 from qphase.backend.base import BackendBase
-from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import (
     PluginConfigBase,
     PluginManifest,
@@ -69,7 +68,6 @@ from ..spectral_estimator import (
 from .base import (
     Analyzer,
     map_trajectory_product,
-    resolve_mode_columns,
     trajectory_arrays,
     trajectory_requirement,
 )
@@ -81,7 +79,6 @@ from .frequency_orientation import (
     orientation_metadata,
     orientation_schema_extra,
 )
-from .result import AnalysisResult
 
 __all__ = [
     "PsdAnalyzer",
@@ -119,63 +116,11 @@ class PsdAnalyzerConfig(PluginConfigBase):
             "units; analysis fails if it reaches the Nyquist limit"
         ),
     )
-    window: str | None = Field(
-        None,
-        description="Window function name (e.g. 'hanning')",
-        json_schema_extra={"template_hidden": True},
-    )
-    method: Literal["periodogram", "welch", "multitaper"] = Field(
-        "periodogram",
-        description="PSD estimation method: periodogram, Welch, or multitaper",
-        json_schema_extra={"template_hidden": True},
-    )
-    nperseg: int | None = Field(
-        None,
-        ge=1,
-        description="Welch segment length (default: n_time // 4)",
-        json_schema_extra={"template_hidden": True},
-    )
-    noverlap: int | None = Field(
-        None,
-        ge=0,
-        description="Welch overlap (default: nperseg // 2)",
-        json_schema_extra={"template_hidden": True},
-    )
-    nfft: int | None = Field(
-        None,
-        ge=1,
-        description="FFT length for Welch (default: nperseg)",
-        json_schema_extra={"template_hidden": True},
-    )
-    nw: float = Field(
-        2.5,
-        gt=0.0,
-        description="Multitaper time-half-bandwidth product NW",
-        json_schema_extra={"template_hidden": True},
-    )
-    k_tapers: int | None = Field(
-        None,
-        ge=1,
-        description="Number of DPSS tapers (default: int(2*nw)-1)",
-        json_schema_extra={"template_hidden": True},
-    )
-
     @model_validator(mode="after")
     def validate_modes(self) -> "PsdAnalyzerConfig":
         if not self.modes:
             raise ValueError("modes must be non-empty")
         return self
-
-
-def _legacy_estimator_values(config: PsdAnalyzerConfig) -> dict[str, Any]:
-    fields = {
-        "periodogram": ("window",),
-        "welch": ("window", "nperseg", "noverlap", "nfft"),
-        "multitaper": ("nw", "k_tapers"),
-    }[config.method]
-    return {
-        name: value for name in fields if (value := getattr(config, name)) is not None
-    }
 
 
 class PsdAnalyzer(Analyzer):
@@ -206,43 +151,7 @@ class PsdAnalyzer(Analyzer):
         if subplugins is not None:
             self.estimator: SpectralEstimator = subplugins["estimator"]
         else:
-            legacy = cast(PsdAnalyzerConfig, self.config)
-            self.estimator = create_builtin_estimator(
-                legacy.method, _legacy_estimator_values(legacy)
-            )
-
-    @classmethod
-    def normalize_plugin_config(cls, values: dict[str, Any]) -> dict[str, Any]:
-        """Translate the one-cycle flat estimator syntax before graph resolution."""
-        result = dict(values)
-        legacy_fields = {
-            "method",
-            "window",
-            "nperseg",
-            "noverlap",
-            "nfft",
-            "nw",
-            "k_tapers",
-        }
-        if "estimator" in result:
-            conflicts = legacy_fields & set(result)
-            if conflicts:
-                names = ", ".join(sorted(conflicts))
-                raise ValueError(
-                    f"estimator cannot be combined with legacy PSD fields: {names}"
-                )
-            return result
-        method = result.pop("method", "periodogram")
-        selected_fields = {
-            "periodogram": {"window"},
-            "welch": {"window", "nperseg", "noverlap", "nfft"},
-            "multitaper": {"nw", "k_tapers"},
-        }[method]
-        child_config = {
-            key: result.pop(key) for key in selected_fields if key in result
-        }
-        result["estimator"] = {method: child_config}
-        return result
+            self.estimator = create_builtin_estimator("periodogram", {})
 
     def input_requirements(self) -> list[ProductRequirement]:
         # Both real and complex records are accepted (``kind="modular"`` uses
@@ -415,110 +324,9 @@ class PsdAnalyzer(Analyzer):
             return AnalyserWorkspaceEstimate(device_bytes=workspace)
         return AnalyserWorkspaceEstimate(host_bytes=workspace)
 
-    def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
-        """Compute PSD for multiple modes.
-
-        Parameters
-        ----------
-        data : Any
-            Complex-like time series array of shape ``(n_traj, n_time, n_modes)``
-            or TrajectorySet.
-        backend : BackendBase
-            Backend to use for computation.
-
-        Returns
-        -------
-        AnalysisResult
-            Result containing PSD data.
-
-        """
-        config = cast(PsdAnalyzerConfig, self.config)
-
-        # Determine dt: priority to config override, then data attribute, then default
-        dt = 1.0
-        if config.dt is not None:
-            dt = config.dt
-        elif hasattr(data, "dt"):
-            dt = float(data.dt)
-
-        modes = config.modes
-        mode_columns = resolve_mode_columns(data, modes)
-
-        # Extract data array. Some array-like objects (e.g. TrajectorySet) wrap
-        # the actual array in a ``.data`` attribute. NumPy/CuPy arrays also
-        # expose a ``.data`` attribute, but it is a memoryview/MemoryPointer,
-        # not an array. If ``data`` itself is already array-like (has ndim),
-        # use it directly; otherwise unwrap ``data.data``.
-        if hasattr(data, "ndim") and hasattr(data, "shape"):
-            data_arr = data
-        elif (
-            hasattr(data, "data")
-            and hasattr(data.data, "ndim")
-            and hasattr(data.data, "shape")
-        ):
-            data_arr = data.data
-        else:
-            data_arr = data
-
-        result_dict = self._compute_payload(
-            data_arr,
-            dt=dt,
-            mode_columns=mode_columns,
-            backend=backend,
-        )
-
-        return AnalysisResult(data_dict=result_dict, meta=result_dict)
-
     def create_result_accumulator(self) -> "PsdResultAccumulator":
         """Create an exact cross-trajectory PSD statistics accumulator."""
         return PsdResultAccumulator(self)
-
-    def build_products(
-        self,
-        payload: Any,
-        *,
-        scan_size: int | None,
-        label: str,
-    ) -> Mapping[str, Dataset] | None:
-        """Build the graph-ready typed spectral product of one payload."""
-        return _build_psd_products(
-            payload, scan_size=scan_size, label=label, analyser=self
-        )
-
-    def _compute_single(
-        self,
-        x: Any,
-        dt: float,
-        *,
-        kind: str = "complex",
-        convention: str = "symmetric",
-        orientation: FrequencyOrientation = DEFAULT_FREQUENCY_ORIENTATION,
-        window: str | None = None,
-        method: str | None = None,
-        nperseg: int | None = None,
-        noverlap: int | None = None,
-        nfft: int | None = None,
-        nw: float = 2.5,
-        k_tapers: int | None = None,
-        backend: Any | None = None,
-    ) -> tuple[Any, Any]:
-        """Compute mean two-sided PSD for one mode (compatibility wrapper)."""
-        estimate = self._estimate_single(
-            x,
-            dt,
-            kind=kind,
-            convention=convention,
-            orientation=orientation,
-            window=window,
-            method=method,
-            nperseg=nperseg,
-            noverlap=noverlap,
-            nfft=nfft,
-            nw=nw,
-            k_tapers=k_tapers,
-            backend=backend,
-        )
-        return estimate.axis, estimate.mean
 
     def _estimate_single(
         self,
@@ -528,21 +336,9 @@ class PsdAnalyzer(Analyzer):
         kind: str = "complex",
         convention: str = "symmetric",
         orientation: FrequencyOrientation = DEFAULT_FREQUENCY_ORIENTATION,
-        window: str | None = None,
-        method: str | None = None,
-        nperseg: int | None = None,
-        noverlap: int | None = None,
-        nfft: int | None = None,
-        nw: float = 2.5,
-        k_tapers: int | None = None,
-        backend: Any | None = None,
+        backend: BackendBase,
     ) -> _PsdEstimate:
         """Compute PSD and cross-trajectory uncertainty for a single mode."""
-        if backend is None:
-            from qphase.backend.numpy_backend import NumpyBackend
-
-            backend = NumpyBackend()
-
         # Convert input to backend array
         x_arr = backend.asarray(x)
 
@@ -565,24 +361,7 @@ class PsdAnalyzer(Analyzer):
         elif ndim is None or ndim < 1:
             raise ValueError("[524] input `x` must be a 1-D or 2-D array")
 
-        estimator = self.estimator
-        if method is not None:
-            estimator = create_builtin_estimator(
-                method,
-                {
-                    key: value
-                    for key, value in {
-                        "window": window,
-                        "nperseg": nperseg,
-                        "noverlap": noverlap,
-                        "nfft": nfft,
-                        "nw": nw,
-                        "k_tapers": k_tapers,
-                    }.items()
-                    if value is not None
-                },
-            )
-        estimate = estimator.estimate(x_proc, dt, convention, backend)
+        estimate = self.estimator.estimate(x_proc, dt, convention, backend)
         axis, mean, std, sem = orient_spectrum(
             estimate.axis,
             estimate.mean,
@@ -598,261 +377,7 @@ class PsdAnalyzer(Analyzer):
             n_independent=estimate.n_independent,
         )
 
-    @staticmethod
-    def _trajectory_statistics(
-        spectra: _np.ndarray,
-    ) -> tuple[_np.ndarray, _np.ndarray, _np.ndarray]:
-        """Return mean, sample standard deviation, and SEM across trajectories."""
-        n_independent = int(spectra.shape[0])
-        mean = _np.mean(spectra, axis=0)
-        if n_independent < 2:
-            unavailable = _np.full(mean.shape, _np.nan, dtype=mean.dtype)
-            return mean, unavailable, unavailable.copy()
-
-        std = _np.std(spectra, axis=0, ddof=1)
-        sem = std / _np.sqrt(float(n_independent))
-        return mean, std, sem
-
-    def _get_window(self, window: str | None, n: int) -> _np.ndarray:
-        """Return a NumPy window of length ``n``."""
-        if window is None:
-            return _np.ones(n)
-        try:
-            return getattr(_np, window)(n)
-        except AttributeError:
-            # Unknown window name: fall back to rectangular
-            return _np.ones(n)
-
-    def _scale_and_shift(
-        self,
-        axis: _np.ndarray,
-        P: _np.ndarray,
-        dt: float,
-        convention: str,
-        n_fft: int,
-        energy: float,
-    ) -> tuple[_np.ndarray, _np.ndarray]:
-        """Apply PSD scaling, shift zero frequency to center, and return."""
-        if energy <= 0.0:
-            energy = 1.0
-        if convention in ("symmetric", "unitary"):
-            scale_p = n_fft * dt / (2.0 * _np.pi * energy)
-            P = P * scale_p
-            axis = axis * 2.0 * _np.pi
-        else:
-            scale_p = dt / energy
-            P = P * scale_p
-        axis = _np.fft.fftshift(axis)
-        P = _np.fft.fftshift(P)
-        return axis, P
-
-    def _scale_and_shift_estimate(
-        self,
-        axis: _np.ndarray,
-        mean: _np.ndarray,
-        std: _np.ndarray,
-        sem: _np.ndarray,
-        dt: float,
-        convention: str,
-        n_fft: int,
-        energy: float,
-        n_independent: int,
-    ) -> _PsdEstimate:
-        """Apply the same linear PSD scaling to its mean and uncertainty."""
-        shifted_axis, shifted_mean = self._scale_and_shift(
-            axis, mean, dt, convention, n_fft, energy
-        )
-        _, shifted_std = self._scale_and_shift(axis, std, dt, convention, n_fft, energy)
-        _, shifted_sem = self._scale_and_shift(axis, sem, dt, convention, n_fft, energy)
-        return _PsdEstimate(
-            axis=shifted_axis,
-            mean=shifted_mean,
-            std=shifted_std,
-            sem=shifted_sem,
-            n_independent=n_independent,
-        )
-
-    def _compute_periodogram(
-        self,
-        x_proc: Any,
-        dt: float,
-        convention: str,
-        window: str | None,
-        backend: Any,
-    ) -> _PsdEstimate:
-        """Classical averaged periodogram over trajectories.
-
-        All heavy array operations stay on the active backend until the very end,
-        minimizing device-to-host transfers for GPU backends.
-        """
-        n_time = int(x_proc.shape[-1])
-
-        if window:
-            w = self._get_window(window, n_time)
-            w_backend = backend.asarray(w)
-            x_proc = x_proc * w_backend
-        else:
-            w = _np.ones(n_time)
-
-        norm: Literal["backward", "ortho", "forward"] | None
-        if convention in ("symmetric", "unitary"):
-            norm = "ortho"
-        else:
-            norm = None
-
-        X = backend.fft(x_proc, axis=-1, norm=norm)
-        trajectory_psd = backend.abs(X) ** 2
-        del X
-        mean_backend = backend.mean(trajectory_psd, axis=0)
-        n_independent = int(x_proc.shape[0])
-
-        mean = convert_to_numpy(mean_backend)
-        if n_independent > 1:
-            # Reuse the power buffer to avoid another n_traj x n_freq allocation.
-            trajectory_psd -= mean_backend
-            trajectory_psd *= trajectory_psd
-            variance_backend = backend.mean(trajectory_psd, axis=0) * (
-                n_independent / (n_independent - 1)
-            )
-            variance = convert_to_numpy(variance_backend)
-            std = _np.sqrt(_np.maximum(variance, 0.0))
-            sem = std / _np.sqrt(float(n_independent))
-        else:
-            std = _np.full(mean.shape, _np.nan, dtype=mean.dtype)
-            sem = std.copy()
-
-        axis = convert_to_numpy(backend.fftfreq(n_time, d=dt))
-        energy = float(_np.sum(w * w))
-        return self._scale_and_shift_estimate(
-            axis,
-            mean,
-            std,
-            sem,
-            dt,
-            convention,
-            n_time,
-            energy,
-            n_independent,
-        )
-
-    def _compute_welch(
-        self,
-        x: _np.ndarray,
-        dt: float,
-        convention: str,
-        window: str | None,
-        nperseg: int | None,
-        noverlap: int | None,
-        nfft: int | None,
-    ) -> _PsdEstimate:
-        """Welch PSD with segments averaged before cross-trajectory statistics."""
-        n_traj, n_time = x.shape
-        if nperseg is None:
-            nperseg = max(1, n_time // 4)
-        if noverlap is None:
-            noverlap = nperseg // 2
-        if nfft is None:
-            nfft = nperseg
-
-        if nperseg > n_time:
-            nperseg = n_time
-            noverlap = 0
-        step = nperseg - noverlap
-        if step <= 0:
-            raise ValueError("noverlap must be smaller than nperseg")
-
-        w = self._get_window(window, nperseg)
-        if window is None:
-            # Welch defaults to a Hann window.
-            w = _np.hanning(nperseg)
-        w = w.astype(x.real.dtype if _np.iscomplexobj(x) else x.dtype)
-        energy = float(_np.sum(w * w))
-
-        norm: Literal["backward", "ortho", "forward"] | None
-        if convention in ("symmetric", "unitary"):
-            norm = "ortho"
-        else:
-            norm = None
-
-        trajectory_spectra: list[_np.ndarray] = []
-        for traj in x:
-            segment_spectra: list[_np.ndarray] = []
-            start = 0
-            while start + nperseg <= n_time:
-                seg = traj[start : start + nperseg] * w
-                if nfft > nperseg:
-                    seg = _np.pad(seg, (0, nfft - nperseg), mode="constant")
-                X = _np.fft.fft(seg, norm=norm)
-                segment_spectra.append(_np.abs(X) ** 2)
-                start += step
-            trajectory_spectra.append(_np.mean(segment_spectra, axis=0))
-
-        spectra = _np.stack(trajectory_spectra, axis=0)
-        mean, std, sem = self._trajectory_statistics(spectra)
-        axis = _np.fft.fftfreq(nfft, d=dt)
-        return self._scale_and_shift_estimate(
-            axis,
-            mean,
-            std,
-            sem,
-            dt,
-            convention,
-            nfft,
-            energy,
-            n_traj,
-        )
-
-    def _compute_multitaper(
-        self,
-        x: _np.ndarray,
-        dt: float,
-        convention: str,
-        nw: float,
-        k_tapers: int | None,
-    ) -> _PsdEstimate:
-        """Multitaper PSD with tapers averaged within each trajectory."""
-        from scipy.signal.windows import dpss
-
-        n_traj, n_time = x.shape
-        if k_tapers is None:
-            k_tapers = max(1, int(2.0 * nw) - 1)
-
-        tapers = dpss(n_time, nw, Kmax=k_tapers, sym=False)
-        tapers = tapers.astype(x.real.dtype if _np.iscomplexobj(x) else x.dtype)
-        energy = 1.0  # dpss windows are normalized to unit energy
-
-        norm: Literal["backward", "ortho", "forward"] | None
-        if convention in ("symmetric", "unitary"):
-            norm = "ortho"
-        else:
-            norm = None
-
-        trajectory_spectra: list[_np.ndarray] = []
-        for traj in x:
-            tapered_spectra: list[_np.ndarray] = []
-            for taper in tapers:
-                seg = traj * taper
-                X = _np.fft.fft(seg, norm=norm)
-                tapered_spectra.append(_np.abs(X) ** 2)
-            trajectory_spectra.append(_np.mean(tapered_spectra, axis=0))
-
-        spectra = _np.stack(trajectory_spectra, axis=0)
-        mean, std, sem = self._trajectory_statistics(spectra)
-        axis = _np.fft.fftfreq(n_time, d=dt)
-        return self._scale_and_shift_estimate(
-            axis,
-            mean,
-            std,
-            sem,
-            dt,
-            convention,
-            n_time,
-            energy,
-            n_traj,
-        )
-
-
-#: Numeric payload leaves of ``analyze()``; string leaves stay in payload metadata.
+#: Numeric payload leaves; string leaves stay in payload metadata.
 _PSD_PRODUCT_FIELDS = (
     "axis",
     "psd",
@@ -1028,8 +553,7 @@ class PsdResultAccumulator:
         self.m2: _np.ndarray | None = None
         self.payload: dict[str, Any] | None = None
 
-    def update(self, payload: dict[str, Any]) -> None:
-        """Merge one independently analysed trajectory batch."""
+    def _consume_payload(self, payload: dict[str, Any]) -> None:
         partial_count = int(payload["uncertainty"]["n_independent"])
         partial_mean = _np.asarray(payload["psd"])
         partial_std = _np.asarray(payload["psd_std"])
@@ -1075,27 +599,29 @@ class PsdResultAccumulator:
             "estimator": product.attributes["estimator"],
             "uncertainty": {"n_independent": count},
         }
-        self.update(payload)
+        self._consume_payload(payload)
 
     def merge(self, other: "PsdResultAccumulator") -> None:
-        self.update(other.finalize())
+        self._consume_payload(other._finalized_payload())
 
     def finalize_product(self, label: str) -> Mapping[str, Dataset] | None:
         return _build_psd_products(
-            self.finalize(), scan_size=None, label=label, analyser=self.analyzer
+            self._finalized_payload(),
+            scan_size=None,
+            label=label,
+            analyser=self.analyzer,
         )
 
     def checkpoint(self) -> dict[str, Any]:
-        return {"payload": self.finalize()}
+        return {"payload": self._finalized_payload()}
 
     def restore(self, checkpoint: dict[str, Any]) -> None:
         payload = checkpoint.get("payload")
         if not isinstance(payload, dict):
             raise TypeError("PSD reducer checkpoint is missing its payload")
-        self.update(payload)
+        self._consume_payload(payload)
 
-    def finalize(self) -> dict[str, Any]:
-        """Return the standard PSD payload expected by downstream analysers."""
+    def _finalized_payload(self) -> dict[str, Any]:
         if self.payload is None or self.mean is None or self.m2 is None:
             raise RuntimeError("cannot finalize an empty PSD accumulator")
         payload = dict(self.payload)

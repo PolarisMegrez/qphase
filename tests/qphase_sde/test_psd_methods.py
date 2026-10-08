@@ -20,9 +20,43 @@ from qphase.core.registry import discovery, registry
 from qphase.service import RegistryService
 from qphase_sde.analyser.frequency_orientation import resolve_frequency_orientation
 from qphase_sde.analyser.psd import PsdAnalyzer, PsdAnalyzerConfig
+from qphase_sde.result import _trajectory_product
+from qphase_sde.spectral_estimator import create_builtin_estimator
 from qphase_sde.state import TrajectorySet
 
 BACKEND = NumpyBackend()
+
+
+def _analyzer(method="periodogram", *, estimator_config=None, **kwargs):
+    return PsdAnalyzer(
+        **kwargs,
+        subplugins={
+            "estimator": create_builtin_estimator(method, estimator_config or {})
+        },
+    )
+
+
+def _product(analyzer, data, backend=BACKEND):
+    trajectory = _trajectory_product(data, scan_size=None, n_traj_per_point=None)
+    return analyzer.execute({"trajectories": trajectory}, backend=backend, label="psd")[
+        "psd"
+    ]
+
+
+def _payload(analyzer, data, backend=BACKEND):
+    product = _product(analyzer, data, backend)
+    payload = {
+        variable.name: np.asarray(product.handle(variable.name).materialize())
+        for variable in product.variables
+    }
+    payload.update(product.attributes)
+    payload.update(product.attributes.get("payload_meta", {}))
+    payload["uncertainty"] = {
+        "n_independent": int(payload["uncertainty.n_independent"]),
+        "available": bool(np.isfinite(payload["psd_sem"]).any()),
+        "independent_unit": "trajectory",
+    }
+    return payload
 
 
 def _make_sine_data(
@@ -56,17 +90,16 @@ def test_psd_method_peak_location(method):
         dt=dt,
     )
 
-    analyzer = PsdAnalyzer(
+    analyzer = _analyzer(
+        method,
+        estimator_config={"nperseg": 256} if method == "welch" else {},
         kind="complex",
         modes=[0],
         convention="symmetric",
-        method=method,
-        nperseg=256 if method == "welch" else None,
     )
-    result = analyzer.analyze(data, BACKEND)
-
-    axis = result.data_dict["axis"]
-    psd = result.data_dict["psd"]
+    payload = _payload(analyzer, data)
+    axis = payload["axis"]
+    psd = payload["psd"]
     assert axis.ndim == 1
     assert psd.shape == (axis.size, 1)
 
@@ -89,15 +122,14 @@ def test_psd_method_unitary_convention(method):
         dt=dt,
     )
 
-    analyzer = PsdAnalyzer(
+    analyzer = _analyzer(
+        method,
+        estimator_config={"nperseg": 128} if method == "welch" else {},
         kind="complex",
         modes=[0],
         convention="unitary",
-        method=method,
-        nperseg=128 if method == "welch" else None,
     )
-    result = analyzer.analyze(data, BACKEND)
-    axis = result.data_dict["axis"]
+    axis = _payload(analyzer, data)["axis"]
     # Unitary convention uses angular frequency, so the Nyquist limit is pi/dt.
     assert np.isclose(np.max(np.abs(axis)), np.pi / dt, rtol=1e-12)
 
@@ -111,16 +143,15 @@ def test_psd_default_maps_decreasing_phase_to_positive_frequency(method):
     data = TrajectorySet(data=np.repeat(values, 3, axis=0), t0=0.0, dt=dt)
     kwargs = {"nperseg": 1024} if method == "welch" else {}
 
-    payload = (
-        PsdAnalyzer(
+    payload = _payload(
+        _analyzer(
+            method,
+            estimator_config=kwargs,
             kind="complex",
             modes=[0],
             convention="symmetric",
-            method=method,
-            **kwargs,
-        )
-        .analyze(data, BACKEND)
-        .data_dict
+        ),
+        data,
     )
 
     peak = float(payload["axis"][np.argmax(payload["psd"][:, 0])])
@@ -136,15 +167,14 @@ def test_psd_phase_increasing_preserves_forward_fft_axis():
     values = np.exp(-1j * omega * time)[None, :, None]
     data = TrajectorySet(data=np.repeat(values, 2, axis=0), t0=0.0, dt=dt)
 
-    payload = (
+    payload = _payload(
         PsdAnalyzer(
             kind="complex",
             modes=[0],
             convention="symmetric",
             orientation="phase_increasing",
-        )
-        .analyze(data, BACKEND)
-        .data_dict
+        ),
+        data,
     )
 
     peak = float(payload["axis"][np.argmax(payload["psd"][:, 0])])
@@ -152,9 +182,11 @@ def test_psd_phase_increasing_preserves_forward_fft_axis():
     assert payload["orientation"] == "phase_increasing"
 
 
-def test_frequency_orientation_resolver_marks_missing_metadata_as_legacy():
-    assert resolve_frequency_orientation(None) == "phase_increasing"
-    assert resolve_frequency_orientation({}) == "phase_increasing"
+def test_frequency_orientation_resolver_rejects_missing_metadata():
+    with pytest.raises(ValueError, match="does not record"):
+        resolve_frequency_orientation(None)
+    with pytest.raises(ValueError, match="does not record"):
+        resolve_frequency_orientation({})
     assert (
         resolve_frequency_orientation({"orientation": "phase_decreasing"})
         == "phase_decreasing"
@@ -190,16 +222,14 @@ def test_welch_nperseg_default_reduces_variance():
         dt=dt,
     )
 
-    analyzer = PsdAnalyzer(
+    analyzer = _analyzer(
+        "welch",
+        estimator_config={"nperseg": 256, "noverlap": 128},
         kind="complex",
         modes=[0],
         convention="symmetric",
-        method="welch",
-        nperseg=256,
-        noverlap=128,
     )
-    result = analyzer.analyze(data, BACKEND)
-    axis = result.data_dict["axis"]
+    axis = _payload(analyzer, data)["axis"]
     # 256-point FFT gives 256 frequency bins (two-sided).
     assert axis.size == 256
 
@@ -213,16 +243,16 @@ def test_multitaper_k_tapers_default():
         dt=dt,
     )
 
-    analyzer = PsdAnalyzer(
+    analyzer = _analyzer(
+        "multitaper",
+        estimator_config={"nw": 2.5},
         kind="complex",
         modes=[0],
         convention="symmetric",
-        method="multitaper",
-        nw=2.5,
     )
-    result = analyzer.analyze(data, BACKEND)
-    axis = result.data_dict["axis"]
-    psd = result.data_dict["psd"]
+    payload = _payload(analyzer, data)
+    axis = payload["axis"]
+    psd = payload["psd"]
     peak_idx = int(np.argmax(psd[:, 0]))
     assert abs(abs(axis[peak_idx]) - 1.5) < 0.1
 
@@ -236,13 +266,15 @@ def test_periodogram_reports_cross_trajectory_standard_error():
     values = amplitudes * np.exp(1j * 0.7 * t)[None, :]
     data = TrajectorySet(data=values[:, :, None], t0=0.0, dt=dt)
 
-    result = PsdAnalyzer(
-        kind="complex",
-        modes=[0],
-        convention="pragmatic",
-        orientation="phase_increasing",
-    ).analyze(data, BACKEND)
-    payload = result.data_dict
+    payload = _payload(
+        PsdAnalyzer(
+            kind="complex",
+            modes=[0],
+            convention="pragmatic",
+            orientation="phase_increasing",
+        ),
+        data,
+    )
 
     trajectory_psd = np.abs(np.fft.fft(values, axis=-1)) ** 2
     trajectory_psd *= dt / n_time
@@ -268,13 +300,15 @@ def test_psd_methods_report_sem_for_each_mode(method):
         t0=0.0,
         dt=0.1,
     )
-    result = PsdAnalyzer(
-        kind="complex",
-        modes=[0],
-        method=method,
-        nperseg=64 if method == "welch" else None,
-    ).analyze(data, BACKEND)
-    payload = result.data_dict
+    payload = _payload(
+        _analyzer(
+            method,
+            estimator_config={"nperseg": 64} if method == "welch" else {},
+            kind="complex",
+            modes=[0],
+        ),
+        data,
+    )
 
     assert payload["psd_std"].shape == payload["psd"].shape
     assert payload["psd_sem"].shape == payload["psd"].shape
@@ -289,7 +323,7 @@ def test_single_trajectory_marks_psd_uncertainty_unavailable():
         t0=0.0,
         dt=0.1,
     )
-    payload = PsdAnalyzer(kind="complex", modes=[0]).analyze(data, BACKEND).data_dict
+    payload = _payload(PsdAnalyzer(kind="complex", modes=[0]), data)
 
     assert np.all(np.isnan(payload["psd_std"]))
     assert np.all(np.isnan(payload["psd_sem"]))
@@ -300,26 +334,34 @@ def test_single_trajectory_marks_psd_uncertainty_unavailable():
 def test_psd_accumulator_matches_full_trajectory_analysis(method):
     """Online aggregation preserves the estimator's trajectory statistics."""
     values = _make_sine_data(n_traj=11, n_time=256)
-    analyzer = PsdAnalyzer(
+    analyzer = _analyzer(
+        method,
+        estimator_config={"nperseg": 64} if method == "welch" else {},
         kind="complex",
         modes=[0],
-        method=method,
-        nperseg=64 if method == "welch" else None,
     )
-    full = analyzer.analyze(TrajectorySet(values, t0=0.0, dt=0.1), BACKEND).data_dict
-    accumulator = analyzer.create_result_accumulator()
+    full_product = _product(analyzer, TrajectorySet(values, t0=0.0, dt=0.1))
+    reducer = analyzer.reducer()
+    assert reducer is not None
+    accumulator = reducer.prepare(None, None)
     for start, stop in ((0, 3), (3, 8), (8, 11)):
-        partial = analyzer.analyze(
-            TrajectorySet(values[start:stop], t0=0.0, dt=0.1), BACKEND
-        ).data_dict
-        accumulator.update(partial)
-    merged = accumulator.finalize()
+        partial = _product(analyzer, TrajectorySet(values[start:stop], t0=0.0, dt=0.1))
+        reducer.consume(partial, accumulator, None)
+    merged_product = reducer.finalize(accumulator)["psd"]
+    merged = {
+        v.name: np.asarray(merged_product.handle(v.name).materialize())
+        for v in merged_product.variables
+    }
+    full = {
+        v.name: np.asarray(full_product.handle(v.name).materialize())
+        for v in full_product.variables
+    }
 
     np.testing.assert_array_equal(merged["axis"], full["axis"])
     np.testing.assert_allclose(merged["psd"], full["psd"], rtol=1e-12)
     np.testing.assert_allclose(merged["psd_std"], full["psd_std"], rtol=1e-12)
     np.testing.assert_allclose(merged["psd_sem"], full["psd_sem"], rtol=1e-12)
-    assert merged["uncertainty"]["n_independent"] == 11
+    assert int(merged["uncertainty.n_independent"]) == 11
 
 
 def test_expected_freq_max_guards_against_aliasing():
@@ -334,10 +376,10 @@ def test_expected_freq_max_guards_against_aliasing():
     )
 
     with pytest.raises(ValueError, match="Nyquist limit"):
-        analyzer.analyze(undersampled, BACKEND)
+        _product(analyzer, undersampled)
 
     adequately_sampled = TrajectorySet(data=values, t0=0.0, dt=9.0)
-    payload = analyzer.analyze(adequately_sampled, BACKEND).data_dict
+    payload = _payload(analyzer, adequately_sampled)
     assert np.isclose(payload["nyquist"], np.pi / 9.0)
     assert payload["sample_dt"] == 9.0
 
@@ -346,7 +388,7 @@ def test_psd_method_invalid():
     """An unsupported method is rejected at configuration time."""
     from pydantic import ValidationError
 
-    with pytest.raises(ValidationError, match="periodogram"):
+    with pytest.raises(ValidationError, match="method"):
         PsdAnalyzer(
             kind="complex",
             modes=[0],
@@ -384,20 +426,19 @@ def test_psd_estimator_subplugins_are_discoverable_and_constructed():
     assert "nperseg" not in template
 
 
-def test_psd_legacy_method_is_normalized_by_plugin_resolver():
+def test_psd_legacy_method_is_rejected_by_plugin_resolver():
     discovery.discover_plugins()
-    analyzer = registry.create_plugin_instance(
-        "analyser",
-        {
-            "name": "psd",
-            "kind": "complex",
-            "modes": [0],
-            "method": "multitaper",
-            "nw": 3.5,
-        },
-    )
-    assert analyzer.estimator.name == "multitaper"
-    assert analyzer.estimator.config.nw == 3.5
+    with pytest.raises(Exception, match="method|extra"):
+        registry.create_plugin_instance(
+            "analyser",
+            {
+                "name": "psd",
+                "kind": "complex",
+                "modes": [0],
+                "method": "multitaper",
+                "nw": 3.5,
+            },
+        )
 
 
 def test_estimator_capabilities_do_not_overclaim_time_streaming():

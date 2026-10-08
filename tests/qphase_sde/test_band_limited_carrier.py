@@ -5,6 +5,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase.data import (
+    AxisRole,
+    AxisSchema,
+    DataKind,
+    ProductSchema,
+    SpectralDataset,
+    VariableSchema,
+)
 from qphase_sde.analyser.band_limited_carrier import (
     BandLimitedCarrierAnalyzer,
     BandLimitedCarrierCandidate,
@@ -17,7 +25,7 @@ from qphase_sde.analyser.band_limited_carrier import (
     track_band_limited_carrier,
 )
 from qphase_sde.analyser.spectral_ridge import SpectralRidgeConfig
-from qphase_sde.result import SDEResult
+from qphase_sde.products import add_scan_parameter_coordinates
 
 
 def _lorentzian(
@@ -29,6 +37,65 @@ def _lorentzian(
     baseline: float = 0.03,
 ) -> np.ndarray:
     return baseline + amplitude * hwhm**2 / ((axis - center) ** 2 + hwhm**2)
+
+
+def _spectral_product(axis, spectra, scan_values, modes):
+    spectra = np.asarray(spectra)
+    scan_size, _, channels = spectra.shape
+    schema = ProductSchema(
+        kind=DataKind.SPECTRAL,
+        axes=[
+            AxisSchema(name="scan", role=AxisRole.PARAMETER, size=scan_size),
+            AxisSchema(name="frequency", role=AxisRole.COORDINATE, size=axis.size),
+            AxisSchema(name="channel", role=AxisRole.COMPONENT, size=channels),
+        ],
+        variables=[
+            VariableSchema(
+                name="axis",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan", "frequency"),
+            ),
+            VariableSchema(
+                name="psd",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan", "frequency", "channel"),
+            ),
+            VariableSchema(
+                name="psd_sem",
+                dtype="float64",
+                value_domain="real",
+                dims=("scan", "frequency", "channel"),
+            ),
+            VariableSchema(
+                name="modes",
+                dtype="int64",
+                value_domain="real",
+                dims=("scan", "channel"),
+            ),
+        ],
+        attributes={
+            "frequency_units": "inverse_time",
+            "orientation": "phase_decreasing",
+            "sidedness": "two_sided",
+            "normalization": "density",
+            "window": "rectangular",
+            "estimator": "synthetic",
+            "graph_ready": True,
+        },
+    )
+    product = SpectralDataset.from_arrays(
+        schema,
+        {
+            "axis": np.repeat(axis[None, :], scan_size, axis=0),
+            "psd": spectra,
+            "psd_sem": np.full(spectra.shape, 0.001),
+            "modes": np.repeat(np.asarray(modes)[None, :], scan_size, axis=0),
+        },
+        owner="test",
+    )
+    return add_scan_parameter_coordinates(product, {"epsilon": np.asarray(scan_values)})
 
 
 def test_adaptive_band_recovers_lorentz_carrier_without_profile_fit():
@@ -104,21 +171,11 @@ def test_fixed_ridge_center_recovers_selected_peak_in_multipeak_spectrum():
 
 def test_analyzer_exports_trace_rows_and_bandwidth_audit(tmp_path):
     axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
-    results: dict[str, SDEResult] = {}
-    for index, parameter in enumerate((0.1, 0.2)):
+    spectra = []
+    for parameter in (0.1, 0.2):
         mode_0 = _lorentzian(axis, center=-parameter, hwhm=0.07)
         mode_1 = _lorentzian(axis, center=-parameter, hwhm=0.07, amplitude=0.5)
-        results[f"point_{index}"] = SDEResult(
-            analysis={
-                "psd": {
-                    "axis": axis,
-                    "psd": np.column_stack((mode_0, mode_1)),
-                    "modes": [0, 1],
-                    "orientation": "phase_decreasing",
-                }
-            },
-            meta={"params": {"epsilon": parameter}},
-        )
+        spectra.append(np.column_stack((mode_0, mode_1)))
     analyzer = BandLimitedCarrierAnalyzer(
         BandLimitedCarrierConfig(
             scan_param="epsilon",
@@ -129,12 +186,19 @@ def test_analyzer_exports_trace_rows_and_bandwidth_audit(tmp_path):
         )
     )
 
-    payload = analyzer.analyze(results, NumpyBackend()).data_dict
+    products = analyzer.execute(
+        {"psd": _spectral_product(axis, spectra, [0.1, 0.2], [0, 1])},
+        backend=NumpyBackend(),
+        label="carrier",
+    )
+    payload = products["carrier"].attributes["payload_meta"]
+    candidates = products["carrier.candidates"].attributes["payload_meta"]
+    platforms = products["carrier.platforms"].attributes["payload_meta"]
 
     assert [row["epsilon"] for row in payload["carrier_rows"]] == [0.1, 0.2]
     assert payload["carrier_rows"][0]["frequency"] == pytest.approx(-0.1, abs=3e-5)
-    assert len(payload["candidate_rows"]) == 18
-    assert payload["platform_rows"]
+    assert len(candidates["candidate_rows"]) == 18
+    assert platforms["platform_rows"]
     assert payload["carrier_rows"][0]["tracked_status"] == "ok"
     assert (tmp_path / "carrier_results.csv").exists()
     assert (tmp_path / "carrier_candidates.csv").exists()
@@ -144,49 +208,29 @@ def test_analyzer_exports_trace_rows_and_bandwidth_audit(tmp_path):
 
 def test_analyzer_builds_typed_result_and_audit_products():
     axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
-    result = SDEResult(
-        analysis={
-            "psd": {
-                "axis": axis,
-                "psd": _lorentzian(axis, center=-0.1, hwhm=0.07)[:, None],
-                "modes": [0],
-                "orientation": "phase_decreasing",
-            }
-        },
-        meta={"params": {"epsilon": 0.1}},
-    )
+    spectrum = _lorentzian(axis, center=-0.1, hwhm=0.07)[None, :, None]
     analyzer = BandLimitedCarrierAnalyzer(
         BandLimitedCarrierConfig(
             scan_param="epsilon", freq_min=-1.0, freq_max=0.2, maximum_lag=80.0
         )
     )
-    payload = analyzer.analyze({"point": result}, NumpyBackend()).data_dict
-    products = analyzer.build_products(payload, scan_size=1, label="carrier")
-    assert products is not None
+    products = analyzer.execute(
+        {"psd": _spectral_product(axis, spectrum, [0.1], [0])},
+        backend=NumpyBackend(),
+        label="carrier",
+    )
     assert set(products) == {
         "carrier",
         "carrier.candidates",
         "carrier.platforms",
     }
     assert all(product.attributes["graph_ready"] for product in products.values())
-    assert products["carrier"].axis("scan").size == 1
+    assert products["carrier"].axis("row").size == 1
 
 
 def test_analyzer_writes_header_only_csvs_when_no_candidates(tmp_path):
     axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
-    results: dict[str, SDEResult] = {
-        "point_0": SDEResult(
-            analysis={
-                "psd": {
-                    "axis": axis,
-                    "psd": np.full((axis.size, 1), 0.03),
-                    "modes": [0],
-                    "orientation": "phase_decreasing",
-                }
-            },
-            meta={"params": {"epsilon": 0.1}},
-        )
-    }
+    spectrum = np.full((1, axis.size, 1), 0.03)
     analyzer = BandLimitedCarrierAnalyzer(
         BandLimitedCarrierConfig(
             scan_param="epsilon",
@@ -197,11 +241,18 @@ def test_analyzer_writes_header_only_csvs_when_no_candidates(tmp_path):
         )
     )
 
-    payload = analyzer.analyze(results, NumpyBackend()).data_dict
+    products = analyzer.execute(
+        {"psd": _spectral_product(axis, spectrum, [0.1], [0])},
+        backend=NumpyBackend(),
+        label="carrier",
+    )
+    payload = products["carrier"].attributes["payload_meta"]
+    candidates_payload = products["carrier.candidates"].attributes["payload_meta"]
+    platforms_payload = products["carrier.platforms"].attributes["payload_meta"]
 
     assert payload["carrier_rows"]
-    assert payload["candidate_rows"] == []
-    assert payload["platform_rows"] == []
+    assert candidates_payload["candidate_rows"] == []
+    assert platforms_payload["platform_rows"] == []
     candidates_csv = (
         (tmp_path / "carrier_candidates.csv").read_text(encoding="utf-8").splitlines()
     )
@@ -216,8 +267,8 @@ def test_analyzer_writes_header_only_csvs_when_no_candidates(tmp_path):
 
 def test_analyzer_outputs_each_retained_ridge_candidate(tmp_path):
     axis = np.linspace(-3.0, 3.0, 8192, endpoint=False)
-    results: dict[str, SDEResult] = {}
-    for index, shift in enumerate((0.0, 0.04, 0.08)):
+    spectra = []
+    for shift in (0.0, 0.04, 0.08):
         spectrum = _lorentzian(axis, center=-0.7 + shift, hwhm=0.045, amplitude=2.0)
         spectrum += _lorentzian(
             axis,
@@ -226,18 +277,7 @@ def test_analyzer_outputs_each_retained_ridge_candidate(tmp_path):
             amplitude=2.0,
             baseline=0.0,
         )
-        results[f"point_{index}"] = SDEResult(
-            analysis={
-                "psd": {
-                    "axis": axis,
-                    "psd": spectrum[:, None],
-                    "psd_sem": np.full((axis.size, 1), 0.001),
-                    "modes": [0],
-                    "orientation": "phase_decreasing",
-                }
-            },
-            meta={"params": {"epsilon": float(index)}},
-        )
+        spectra.append(spectrum[:, None])
     ridge_config = SpectralRidgeConfig(
         scan_param="epsilon",
         readouts=[0],
@@ -259,7 +299,12 @@ def test_analyzer_outputs_each_retained_ridge_candidate(tmp_path):
         )
     )
 
-    payload = analyzer.analyze(results, NumpyBackend()).data_dict
+    products = analyzer.execute(
+        {"psd": _spectral_product(axis, spectra, [0.0, 1.0, 2.0], [0])},
+        backend=NumpyBackend(),
+        label="carrier",
+    )
+    payload = products["carrier"].attributes["payload_meta"]
 
     rows = payload["carrier_rows"]
     assert len(rows) >= 6
@@ -425,9 +470,6 @@ def test_scan_tracker_rejects_unsupported_curvature_jump():
 
 def _typed_psd_product(scan_values: list[float]):
     """Typed PSD scan product with parameter coordinates for execute()."""
-    from qphase_sde.analyser.psd import PsdAnalyzer
-    from qphase_sde.products import add_scan_parameter_coordinates
-
     axis = np.linspace(-3.0, 3.0, 1024, endpoint=False)
     payload = []
     for value in scan_values:
@@ -443,13 +485,8 @@ def _typed_psd_product(scan_values: list[float]):
                 "uncertainty": {"n_independent": 4},
             }
         )
-    products = PsdAnalyzer(modes=[0], kind="complex").build_products(
-        payload, scan_size=len(scan_values), label="psd"
-    )
-    assert products is not None
-    return add_scan_parameter_coordinates(
-        products["psd"], {"epsilon": np.asarray(scan_values, dtype=float)}
-    )
+    spectra = [point["psd"] for point in payload]
+    return _spectral_product(axis, spectra, scan_values, [0])
 
 
 class _LoopAbortError(Exception):

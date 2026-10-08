@@ -31,12 +31,10 @@ from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leav
 from .base import (
     Analyzer,
     map_trajectory_product,
-    resolve_mode_columns,
     select_mode_columns,
     trajectory_arrays,
     trajectory_requirement,
 )
-from .result import AnalysisResult
 
 __all__ = ["MomentStatisticsAnalyzer", "MomentStatisticsConfig"]
 
@@ -270,42 +268,8 @@ class MomentStatisticsAnalyzer(Analyzer):
             ),
         )
 
-    def analyze(self, data: Any, backend: BackendBase) -> AnalysisResult:
-        config = cast(MomentStatisticsConfig, self.config)
-        values = getattr(data, "data", data)
-        modes = _resolve_modes(data, config.modes, int(values.shape[2]))
-        columns = resolve_mode_columns(data, modes)
-        payload = self._compute_payload(
-            values,
-            modes=modes,
-            columns=columns,
-            t0=float(getattr(data, "t0", 0.0)),
-            dt=float(getattr(data, "dt", 1.0)),
-            backend=backend,
-        )
-        meta = {
-            "quantity": payload["quantity"],
-            "modes": payload["modes"],
-            "n_traj": payload["n_traj"],
-            "n_samples": payload["n_samples"],
-            "uncertainty_unit": "trajectory",
-        }
-        return AnalysisResult(data_dict=payload, meta=meta)
-
     def create_result_accumulator(self) -> MomentStatisticsResultAccumulator:
         return MomentStatisticsResultAccumulator(self)
-
-    def build_products(
-        self,
-        payload: Any,
-        *,
-        scan_size: int | None,
-        label: str,
-    ) -> Mapping[str, Dataset] | None:
-        """Build the graph-ready typed product of one ``analyze()`` payload."""
-        return _build_moment_statistics_products(
-            payload, scan_size=scan_size, label=label
-        )
 
     def _summarize(
         self,
@@ -502,7 +466,7 @@ class MomentStatisticsResultAccumulator:
         self.analyzer = analyzer
         self.payloads: list[dict[str, Any]] = []
 
-    def update(self, payload: dict[str, Any]) -> None:
+    def _consume_payload(self, payload: dict[str, Any]) -> None:
         if self.payloads:
             first = self.payloads[0]
             if first["modes"] != payload["modes"]:
@@ -522,7 +486,7 @@ class MomentStatisticsResultAccumulator:
         def value(name: str) -> Any:
             return product.handle(name).materialize()
 
-        self.update(
+        self._consume_payload(
             {
                 "modes": [int(mode) for mode in np.asarray(value("modes"))],
                 "n_traj": int(value("n_traj")),
@@ -544,11 +508,11 @@ class MomentStatisticsResultAccumulator:
 
     def merge(self, other: MomentStatisticsResultAccumulator) -> None:
         for payload in other.payloads:
-            self.update(payload)
+            self._consume_payload(payload)
 
     def finalize_product(self, label: str) -> Mapping[str, Dataset] | None:
         return _build_moment_statistics_products(
-            self.finalize(), scan_size=None, label=label
+            self._finalize_payload(), scan_size=None, label=label
         )
 
     def checkpoint(self) -> dict[str, Any]:
@@ -561,9 +525,9 @@ class MomentStatisticsResultAccumulator:
         for payload in payloads:
             if not isinstance(payload, dict):
                 raise TypeError("moment statistics checkpoint payload is invalid")
-            self.update(payload)
+            self._consume_payload(payload)
 
-    def finalize(self) -> dict[str, Any]:
+    def _finalize_payload(self) -> dict[str, Any]:
         if not self.payloads:
             raise RuntimeError("cannot finalize an empty moment-statistics accumulator")
         first = self.payloads[0]
@@ -605,18 +569,6 @@ class MomentStatisticsResultAccumulator:
                 )
             ),
         )
-
-
-def _resolve_modes(data: Any, configured: list[int] | None, stored: int) -> list[int]:
-    if configured is not None:
-        return list(configured)
-    meta = getattr(data, "meta", None)
-    mode_indices = meta.get("mode_indices") if isinstance(meta, dict) else None
-    if mode_indices is None:
-        return list(range(stored))
-    if len(mode_indices) != stored:
-        raise ValueError("trajectory mode_indices do not match the stored mode count")
-    return [int(mode) for mode in mode_indices]
 
 
 def _block_boundaries(n_samples: int, requested: int, minimum: int) -> np.ndarray:

@@ -3,15 +3,10 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-from qphase.backend.xputil import convert_to_numpy
 from qphase.core.scan import ParameterGrid
-
-from qphase_sde.result import SDEResult
-from qphase_sde.runtime.batch import SDEResultSplitter
 
 
 class SDEParameterGridAdapter:
@@ -171,75 +166,3 @@ class SDEParameterGridAdapter:
             current.update(params)
             return
         raise TypeError(f"model {self.model.name!r} does not expose mutable parameters")
-
-
-@dataclass
-class SDEScanResult:
-    """One fused SDE result exposed as a named logical scan dataset."""
-
-    combined: SDEResult
-    grid: ParameterGrid
-    base_params: dict[str, Any]
-    n_traj_per_point: int
-    meta: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def data(self) -> Any:
-        return self.combined.data
-
-    @property
-    def metadata(self) -> dict[str, Any]:
-        return {**self.combined.metadata, **self.meta}
-
-    @property
-    def label(self) -> Any:
-        return self.meta.get("label")
-
-    @property
-    def axes(self) -> dict[str, Any]:
-        return dict(self.grid.axes)
-
-    @property
-    def shape(self) -> tuple[int, ...]:
-        return self.grid.shape
-
-    @property
-    def nbytes(self) -> int:
-        total = 0
-        trajectory = self.combined.trajectory
-        if trajectory is not None:
-            total += int(convert_to_numpy(trajectory.data).nbytes)
-        total += _nested_nbytes(self.combined.analysis)
-        return total
-
-    def params_at(self, index: tuple[int, ...]) -> dict[str, Any]:
-        params = dict(self.base_params)
-        point = self.grid.point(index)
-        for target, value in point.targets.items():
-            params[target.rsplit(".", 1)[-1]] = value
-        return params
-
-    def point_view(self, index: tuple[int, ...]) -> SDEResult:
-        point = self.grid.point(index)
-        return SDEResultSplitter.point_view(
-            self.combined,
-            index=point.flat_index,
-            scan_count=self.grid.size,
-            params=self.params_at(index),
-            job_name=_point_name(point.values),
-        )
-
-
-def _nested_nbytes(value: Any) -> int:
-    if isinstance(value, dict):
-        return sum(_nested_nbytes(item) for item in value.values())
-    if isinstance(value, list | tuple):
-        return sum(_nested_nbytes(item) for item in value)
-    try:
-        return int(np.asarray(convert_to_numpy(value)).nbytes)
-    except Exception:
-        return 0
-
-
-def _point_name(values: Any) -> str:
-    return ",".join(f"{name}={value}" for name, value in values.items())

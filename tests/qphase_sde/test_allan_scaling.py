@@ -10,15 +10,15 @@ import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.artifacts import ArtifactStore
 from qphase.core.result_loader import load_result
-from qphase.core.scan import ScanSpec
 from qphase_sde.analyser.allan_scaling import (
     AllanScalingAnalyzer,
     AllanScalingConfig,
     NormalFormExpectation,
 )
+from qphase_sde.analyser.allan_variance import _build_allan_products
 from qphase_sde.contracts.bundle import SDEProvenance
-from qphase_sde.result import SDEResult, bundle_from_result
-from qphase_sde.runtime.scan import SDEScanResult
+from qphase_sde.products import add_scan_parameter_coordinates
+from qphase_sde.result import SDEDataBundle
 
 
 def _result(
@@ -26,7 +26,7 @@ def _result(
     *,
     allan_tau_slope: float = -1.0,
     trajectories: int = 24,
-) -> SDEResult:
+) -> dict:
     tau = np.geomspace(10.0, 10000.0, 13)
     expected_intensity = epsilon ** (-4.0 / 3.0)
     multipliers = np.linspace(0.9, 1.1, trajectories)
@@ -40,6 +40,7 @@ def _result(
     payload = {
         "t0": 0.0,
         "dt": 1.0,
+        "orientation": "phase_increasing",
         "n_traj": trajectories,
         "n_samples": 100000,
         "mode_results": {
@@ -58,10 +59,34 @@ def _result(
             }
         },
     }
-    return SDEResult(
-        analysis={"allan_variance": payload},
-        meta={"params": {"omega_c": 1.0 + epsilon}},
-    )
+    return payload
+
+
+def _product_payload(product):
+    payload = {}
+    values = list(product.attributes.get("payload_meta", {}).items()) + [
+        (variable.name, product.handle(variable.name).materialize())
+        for variable in product.variables
+    ]
+    for name, value in values:
+        if np.asarray(value).ndim == 0:
+            value = np.asarray(value).item()
+        target = payload
+        parts = name.split(".")
+        for part in parts[:-1]:
+            key = int(part) if part.isdigit() else part
+            target = target.setdefault(key, {})
+        target[parts[-1]] = value
+    return payload
+
+
+def _execute(analyzer, inputs):
+    product = analyzer.execute(
+        inputs,
+        backend=NumpyBackend(),
+        label="allan_scaling",
+    )["allan_scaling"]
+    return _product_payload(product)
 
 
 def _config(tmp_path) -> AllanScalingConfig:
@@ -82,10 +107,11 @@ def _config(tmp_path) -> AllanScalingConfig:
 
 def test_allan_scaling_recovers_white_fm_normal_form(tmp_path):
     epsilon = np.geomspace(1e-3, 1e-1, 9)
-    data = {f"point-{index}": _result(value) for index, value in enumerate(epsilon)}
-
-    result = AllanScalingAnalyzer(_config(tmp_path)).analyze(data, NumpyBackend())
-    summary = result.data_dict["summary"]
+    result = _execute(
+        AllanScalingAnalyzer(_config(tmp_path)),
+        {"allan_variance": _typed_allan_input(epsilon)},
+    )
+    summary = result["summary"]
 
     assert summary["status"] == "ok"
     assert summary["epsilon_window_decades"] == pytest.approx(2.0)
@@ -97,9 +123,9 @@ def test_allan_scaling_recovers_white_fm_normal_form(tmp_path):
     assert summary["normal_form"]["allan_match"] is True
     assert summary["orientation"] == "phase_increasing"
     assert all(
-        row["orientation"] == "phase_increasing" for row in result.data_dict["rows"]
+        row["orientation"] == "phase_increasing" for row in result["rows"]
     )
-    assert all(row["accepted"] for row in result.data_dict["rows"])
+    assert all(row["accepted"] for row in result["rows"])
     assert (tmp_path / "allan_points.csv").exists()
     with (tmp_path / "allan_scaling.json").open(encoding="utf-8") as handle:
         assert json.load(handle)["status"] == "ok"
@@ -107,13 +133,15 @@ def test_allan_scaling_recovers_white_fm_normal_form(tmp_path):
 
 def test_allan_scaling_rejects_colored_fm_even_with_scan_power_law(tmp_path):
     epsilon = np.geomspace(1e-3, 1e-1, 9)
-    data = {
-        f"point-{index}": _result(value, allan_tau_slope=-0.4)
-        for index, value in enumerate(epsilon)
-    }
-
-    result = AllanScalingAnalyzer(_config(tmp_path)).analyze(data, NumpyBackend())
-    summary = result.data_dict["summary"]
+    result = _execute(
+        AllanScalingAnalyzer(_config(tmp_path)),
+        {
+            "allan_variance": _typed_allan_input(
+                epsilon, allan_tau_slope=-0.4
+            )
+        },
+    )
+    summary = result["summary"]
 
     assert summary["status"] == "target_not_met"
     assert "epsilon_window_too_narrow" in summary["gate_failures"]
@@ -121,7 +149,7 @@ def test_allan_scaling_rejects_colored_fm_even_with_scan_power_law(tmp_path):
     assert summary["noise_fit"] is None
     assert all(
         row["reason"] == "no local white-FM tau window"
-        for row in result.data_dict["rows"]
+        for row in result["rows"]
     )
 
 
@@ -133,26 +161,16 @@ def test_normal_form_expectation_includes_observable_projection_order():
 
 
 def _scan_bundle(epsilon: np.ndarray, trajectories: int = 24):
-    """In-memory v4 scan bundle holding synthetic per-point Allan payloads."""
-    results = [_result(float(value), trajectories=trajectories) for value in epsilon]
-    combined = SDEResult(
-        analysis={
-            "allan_variance": [result.analysis["allan_variance"] for result in results]
-        },
+    """In-memory typed scan bundle holding synthetic per-point Allan payloads."""
+    product = _typed_allan_input(epsilon, trajectories=trajectories)
+    return SDEDataBundle(
+        {"allan_variance": product},
+        SDEProvenance(dt=1.0),
+        scan_axes={"omega_c": [1.0 + float(value) for value in epsilon]},
+        scan_shape=(epsilon.size,),
         meta={"params": {"omega_c": 1.0}},
+        n_traj_per_point=trajectories,
     )
-    grid = ScanSpec.model_validate(
-        {
-            "axes": {
-                "omega_c": {
-                    "target": "model.scan.omega_c",
-                    "values": [1.0 + float(value) for value in epsilon],
-                }
-            }
-        }
-    ).compile()
-    dataset = SDEScanResult(combined, grid, {"omega_c": 1.0}, trajectories)
-    return bundle_from_result(dataset, provenance=SDEProvenance(dt=1.0))
 
 
 def test_allan_scaling_consumes_v4_scan_bundle(tmp_path):
@@ -160,27 +178,27 @@ def test_allan_scaling_consumes_v4_scan_bundle(tmp_path):
     epsilon = np.geomspace(1e-3, 1e-1, 9)
     bundle = _scan_bundle(epsilon)
 
-    result = AllanScalingAnalyzer(_config(tmp_path)).analyze(bundle, NumpyBackend())
-    summary = result.data_dict["summary"]
+    result = _execute(AllanScalingAnalyzer(_config(tmp_path)), bundle.products)
+    summary = result["summary"]
 
     assert summary["status"] == "ok"
     assert summary["accepted_points"] == epsilon.size
     assert summary["noise_fit"]["exponent"] == pytest.approx(4.0 / 3.0)
     assert summary["normal_form"]["allan_match"] is True
-    assert len(result.data_dict["rows"]) == epsilon.size
+    assert len(result["rows"]) == epsilon.size
 
 
 def test_allan_scaling_execute_consumes_typed_product_mapping(tmp_path):
     epsilon = np.geomspace(1e-3, 1e-1, 9)
     analyzer = AllanScalingAnalyzer(_config(tmp_path))
-    from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
-    from qphase_sde.products import add_scan_parameter_coordinates
-
-    typed = AllanVarianceAnalyzer(modes=[0]).build_products(
-        [_result(float(value)).analysis["allan_variance"] for value in epsilon],
+    products = _build_allan_products(
+        [_result(float(value)) for value in epsilon],
         scan_size=epsilon.size,
         label="allan_variance",
-    )["allan_variance"]
+    )
+    assert products is not None
+    typed = products["allan_variance"]
+    typed.schema.attributes["orientation"] = "phase_increasing"
     typed = add_scan_parameter_coordinates(typed, {"omega_c": 1.0 + epsilon})
 
     products = analyzer.execute(
@@ -203,8 +221,8 @@ def test_allan_scaling_consumes_restored_v4_artifact(tmp_path):
     restored = load_result("sim", job_dir)
 
     out_dir = tmp_path / "analysis"
-    result = AllanScalingAnalyzer(_config(out_dir)).analyze(restored, NumpyBackend())
-    summary = result.data_dict["summary"]
+    result = _execute(AllanScalingAnalyzer(_config(out_dir)), restored.products)
+    summary = result["summary"]
 
     assert summary["status"] == "ok"
     assert summary["accepted_points"] == epsilon.size
@@ -256,16 +274,28 @@ class _FakeProgress:
         )
 
 
-def _typed_allan_input(epsilon: np.ndarray):
+def _typed_allan_input(
+    epsilon: np.ndarray,
+    *,
+    trajectories: int = 24,
+    allan_tau_slope: float = -1.0,
+):
     """Typed Allan scan product with parameter coordinates for execute()."""
-    from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
-    from qphase_sde.products import add_scan_parameter_coordinates
-
-    typed = AllanVarianceAnalyzer(modes=[0]).build_products(
-        [_result(float(value)).analysis["allan_variance"] for value in epsilon],
+    products = _build_allan_products(
+        [
+            _result(
+                float(value),
+                trajectories=trajectories,
+                allan_tau_slope=allan_tau_slope,
+            )
+            for value in epsilon
+        ],
         scan_size=epsilon.size,
         label="allan_variance",
-    )["allan_variance"]
+    )
+    assert products is not None
+    typed = products["allan_variance"]
+    typed.schema.attributes["orientation"] = "phase_increasing"
     return add_scan_parameter_coordinates(typed, {"omega_c": 1.0 + epsilon})
 
 

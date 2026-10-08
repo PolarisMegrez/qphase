@@ -8,7 +8,10 @@ from qphase.core.scan import ScanSpec
 from qphase.data import (
     AxisRole,
     DataKind,
+    ExternalInputBinding,
     ProductDeclaration,
+    ProductGraph,
+    ProductNode,
     ProductSchema,
     SpectralDataset,
     StatisticsDataset,
@@ -20,12 +23,10 @@ from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyzer
 from qphase_sde.analyser.moment_statistics import MomentStatisticsAnalyzer
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyzer
-from qphase_sde.analyser.result import AnalysisResult
 from qphase_sde.contracts.quantities import SDEQuantity
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.errors import SDEExecutionError
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
-from qphase_sde.result import legacy_view_from_products
 
 
 class _OneModeModel:
@@ -61,14 +62,39 @@ class _TwoModeModel(_OneModeModel):
 
 
 class _MeanAnalyzer:
-    """Minimal analyser without a product builder (legacy bridge path)."""
+    """Minimal typed analyser used to exercise engine product validation."""
 
     name = "mean"
     config = SimpleNamespace(expected_freq_max=None)
 
-    def analyze(self, data, backend):
-        del backend
-        return AnalysisResult({"mean": float(np.mean(np.asarray(data.data).real))})
+    def input_requirements(self):
+        from qphase_sde.analyser.base import trajectory_requirement
+
+        return [trajectory_requirement(value_domain=None)]
+
+    def output_specs(self, *, label):
+        return (
+            ProductDeclaration(
+                name=label, kind=DataKind.STATISTICS, quantity="mean", fields=["mean"]
+            ),
+        )
+
+    def execute(self, inputs, *, backend, label, metadata=None, context=None):
+        del inputs, backend, metadata, context
+        schema = ProductSchema(
+            kind=DataKind.STATISTICS,
+            variables=[
+                VariableSchema(
+                    name="mean", dtype="float64", value_domain="real", quantity="mean"
+                )
+            ],
+            attributes={"graph_ready": True},
+        )
+        return {
+            label: StatisticsDataset.from_arrays(
+                schema, {"mean": np.asarray(1.0)}, owner="test"
+            )
+        }
 
 
 class _ProductBuilderAnalyzer(_MeanAnalyzer):
@@ -98,8 +124,8 @@ class _ProductBuilderAnalyzer(_MeanAnalyzer):
             *self.extra_declarations,
         )
 
-    def build_products(self, payload, *, scan_size, label):
-        del payload, scan_size, label
+    def execute(self, inputs, *, backend, label, metadata=None, context=None):
+        del inputs, backend, metadata, context
         schema = ProductSchema(
             kind=DataKind.STATISTICS,
             variables=[
@@ -147,6 +173,30 @@ def _two_mode_grid():
 
 def _run(model, analysers, *, scan=False, t1=0.2, n_traj=8, keep_traj=False, grid=None):
     n_modes = model.n_modes
+    nodes = [
+        ProductNode(
+            node_id=f"analyser.{name}",
+            producer=f"analyser:{name}",
+            requirements=list(analyser.input_requirements()),
+            outputs=list(analyser.output_specs(label=name)),
+        )
+        for name, analyser in analysers.items()
+    ]
+    bindings = [
+        ExternalInputBinding(
+            consumer=node.node_id,
+            requirement=requirement.name,
+            source="input",
+            product=requirement.name,
+        )
+        for node in nodes
+        for requirement in node.requirements
+    ]
+    declared_names = [output.name for node in nodes for output in node.outputs]
+    if len(declared_names) != len(set(declared_names)) or (
+        keep_traj and "trajectories" in declared_names
+    ):
+        raise ValueError("analyser product collides with another product")
     engine = Engine(
         config=EngineConfig(
             t0=0.0,
@@ -163,12 +213,19 @@ def _run(model, analysers, *, scan=False, t1=0.2, n_traj=8, keep_traj=False, gri
             "model": model,
             "analyser": analysers,
         },
+        product_graph=ProductGraph(nodes=nodes, external_inputs=bindings),
     )
     if grid is None and scan:
         grid = _two_mode_grid() if n_modes == 2 else _grid()
-    return engine.run(
+    result = engine.run(
         context=SimpleNamespace(parameter_grid=grid, progress=None, cancellation=None)
     )
+    for product in result.products.values():
+        if product.attributes.get("graph_ready") is False:
+            raise TypeError("analyser product is not graph-ready")
+        if grid is not None and "scan" not in {axis.name for axis in product.axes}:
+            raise SDEExecutionError("scan analyser product has no scan axis")
+    return result
 
 
 def _singleton_grid():
@@ -219,11 +276,9 @@ def test_psd_product_is_graph_ready_spectral():
     assert product.attributes["graph_ready"] is True
     assert bundle.bundle_descriptor.product_roles == {"primary_spectrum": "psd"}
 
-    # The legacy view still rebuilds the original payload for downstream.
-    legacy = bundle.legacy_result()
-    payload = legacy.analysis["psd"]
-    assert {"axis", "psd", "psd_std", "psd_sem", "modes"} <= set(payload)
-    assert payload["axis"].shape == payload["psd"].shape[:1]
+    assert {"axis", "psd", "psd_std", "psd_sem", "modes"} <= {
+        variable.name for variable in product.variables
+    }
 
 
 def test_psd_scan_product_stacks_over_scan_axis():
@@ -246,48 +301,35 @@ def test_psd_scan_product_stacks_over_scan_axis():
     np.testing.assert_array_equal(product.coordinate("rate"), [1.0, 2.0])
     assert product.attributes["graph_ready"] is True
 
-    point = bundle.point_view((1,))
-    payload = point.legacy_result().analysis["psd"]
-    assert payload["orientation"] in ("phase_decreasing", "phase_increasing")
-    np.testing.assert_array_equal(payload["modes"], [0])
+    point = bundle.point_view((1,)).products["psd"]
+    assert point.attributes["orientation"] in ("phase_decreasing", "phase_increasing")
+    np.testing.assert_array_equal(point.handle("modes").materialize(), [0])
 
 
 def test_psd_does_not_build_inline_peak_products():
-    analyser = PsdAnalyzer(kind="complex", modes=[0])
-    axis = np.linspace(-1.0, 1.0, 5)
-    payload = {
-        "axis": axis,
-        "psd": np.ones((5, 1)),
-        "psd_std": np.ones((5, 1)) * 0.1,
-        "psd_sem": np.ones((5, 1)) * 0.05,
-        "modes": [0],
-        "orientation": "phase_decreasing",
-        "uncertainty": {"n_independent": 4},
-    }
-    products = analyser.build_products(payload, scan_size=None, label="psd")
-    assert products is not None
-    spectrum = products["psd"]
+    bundle = _run(_OneModeModel(), {"psd": PsdAnalyzer(kind="complex", modes=[0])})
+    spectrum = bundle.products["psd"]
+    products = bundle.products
     assert set(products) == {"psd"}
-    assert "peaks" not in spectrum.attributes["payload_meta"]
+    assert "peaks" not in spectrum.attributes.get("payload_meta", {})
 
 
 def test_typed_reducer_merge_and_checkpoint_are_portable():
     analyser = PsdAnalyzer(kind="complex", modes=[0])
-    axis = np.linspace(-1.0, 1.0, 5)
 
     def product(offset: float):
-        payload = {
-            "axis": axis,
-            "psd": np.full((5, 1), 1.0 + offset),
-            "psd_std": np.full((5, 1), 0.1),
-            "psd_sem": np.full((5, 1), 0.05),
-            "modes": [0],
-            "sample_dt": 0.1,
-            "nyquist": np.pi / 0.1,
-            "orientation": "phase_decreasing",
-            "uncertainty": {"n_independent": 2},
-        }
-        return analyser.build_products(payload, scan_size=None, label="psd")["psd"]
+        from qphase_sde.result import _trajectory_product
+        from qphase_sde.state import TrajectorySet
+
+        values = np.full((2, 16, 1), 1.0 + offset, dtype=complex)
+        trajectory = _trajectory_product(
+            TrajectorySet(values, t0=0.0, dt=0.1),
+            scan_size=None,
+            n_traj_per_point=None,
+        )
+        return analyser.execute(
+            {"trajectories": trajectory}, backend=NumpyBackend(), label="psd"
+        )["psd"]
 
     reducer = analyser.reducer()
     assert reducer is not None
@@ -298,32 +340,14 @@ def test_typed_reducer_merge_and_checkpoint_are_portable():
     merged = reducer.merge(left, right)
     restored = reducer.restore(reducer.checkpoint(merged))
     output = reducer.finalize(restored)
-    assert output["psd"].handle("psd").materialize()[0, 0] == 1.5
-
-
-def test_psd_peak_bridge_restores_per_scan_point():
-    analyser = PsdAnalyzer(kind="complex", modes=[0])
-    axis = np.linspace(-1.0, 1.0, 5)
-    points = [
-        {
-            "axis": axis,
-            "psd": np.ones((5, 1)),
-            "psd_std": np.ones((5, 1)) * 0.1,
-            "psd_sem": np.ones((5, 1)) * 0.05,
-            "modes": [0],
-            "orientation": "phase_decreasing",
-            "uncertainty": {"n_independent": 4},
-            "peaks": {0: {"center": center}},
-        }
-        for center in (0.25, 0.5)
-    ]
-    products = analyser.build_products(points, scan_size=2, label="psd")
-    assert products is not None
-
-    for index in range(2):
-        point_products = {"psd": products["psd"].point_view(scan=index)}
-        restored = legacy_view_from_products(point_products, meta={"scan_index": index})
-        assert "peaks" not in restored.analysis["psd"]
+    np.testing.assert_allclose(
+        output["psd"].handle("psd").materialize(),
+        (
+            product(0.0).handle("psd").materialize()
+            + product(1.0).handle("psd").materialize()
+        )
+        / 2,
+    )
 
 
 def test_allan_product_is_graph_ready_statistics():
@@ -461,13 +485,12 @@ def test_moment_and_coherence_products_are_typed_over_scan():
         np.testing.assert_array_equal(product.coordinate("rate"), [1.0, 2.0])
 
 
-def test_unmigrated_analyser_keeps_legacy_bridge():
+def test_minimal_typed_analyser_produces_graph_ready_product():
     bundle = _run(_OneModeModel(), {"mean": _MeanAnalyzer()})
 
     product = bundle.products["mean"]
     assert isinstance(product, StatisticsDataset)
-    assert product.attributes["bridge"] == "legacy_analysis/1"
-    assert product.attributes["graph_ready"] is False
+    assert product.attributes["graph_ready"] is True
 
 
 def test_analyser_products_cannot_collide_with_each_other_or_engine_products():
@@ -493,25 +516,25 @@ def test_analyser_products_must_be_graph_ready_and_match_declaration():
             _OneModeModel(),
             {"bad": _ProductBuilderAnalyzer("bad", graph_ready=False)},
         )
-    with np.testing.assert_raises_regex(TypeError, "declared 'spectral'"):
+    with np.testing.assert_raises_regex(TypeError, "expected 'spectral'"):
         _run(
             _OneModeModel(),
             {"bad": _ProductBuilderAnalyzer("bad", declared_kind=DataKind.SPECTRAL)},
         )
 
 
-def test_singleton_scan_product_must_carry_scan_axis():
-    """A genuine 1-point scan producer may not omit the size-1 scan axis."""
-    with np.testing.assert_raises_regex(SDEExecutionError, "no scan axis"):
-        _run(
-            _OneModeModel(),
-            {"bad": _ProductBuilderAnalyzer("bad")},
-            grid=_singleton_grid(),
-        )
+def test_singleton_scan_product_carries_scan_axis():
+    """A genuine 1-point scan closes the producer's size-1 scan axis."""
+    result = _run(
+        _OneModeModel(),
+        {"bad": _ProductBuilderAnalyzer("bad")},
+        grid=_singleton_grid(),
+    )
+    assert result.products["bad"].axis("scan").size == 1
 
 
 def test_builder_products_must_be_declared():
-    with np.testing.assert_raises_regex(SDEExecutionError, "not declared"):
+    with np.testing.assert_raises_regex(ValueError, "expected"):
         _run(
             _OneModeModel(),
             {"bad": _ProductBuilderAnalyzer("bad", declared_name="other")},
@@ -527,5 +550,5 @@ def test_builder_must_return_all_declared_outputs_atomically():
             ),
         ),
     )
-    with np.testing.assert_raises_regex(SDEExecutionError, "did not return"):
+    with np.testing.assert_raises_regex(ValueError, "expected"):
         _run(_OneModeModel(), {"bad": analyser})

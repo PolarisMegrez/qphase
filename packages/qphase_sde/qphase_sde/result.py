@@ -2,18 +2,14 @@
 ---------------------------------------------------------
 Container for SDE simulation results.
 
-``SDEResult`` is the legacy-shaped container used by the engine's private
-assembly paths and the ``legacy_result()`` consumption view; the 2.x engine
-returns :class:`SDEDataBundle`, a
-catalog of typed data products plus provenance that satisfies the core
+The 2.x engine returns :class:`SDEDataBundle`, a catalog of typed data
+products plus provenance that satisfies the core
 ``ResultProtocol``/``DatasetResultProtocol`` and the frozen
 :class:`~qphase_sde.contracts.bundle.SDEDataBundleProtocol`.
 
 Public API
 ----------
-``SDEResult`` : Legacy container for SDE simulation results.
 ``SDEDataBundle`` : 2.0 bundle of typed data products plus provenance.
-``bundle_from_result`` : Boundary adapter from legacy results to bundles.
 ``recorded_distribution_versions`` : Real installed distribution versions
 recorded in artifact provenance.
 """
@@ -21,12 +17,11 @@ recorded in artifact provenance.
 import importlib.metadata
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
-from qphase.core.dataset import DatasetResultProtocol, DatasetSaveReport
+from qphase.core.dataset import DatasetSaveReport
 from qphase.data import (
     AxisRole,
     AxisSchema,
@@ -48,12 +43,8 @@ from qphase_sde.contracts.bundle import (
     SDEProvenance,
 )
 from qphase_sde.contracts.quantities import SDEQuantity
-from qphase_sde.errors import SDEExecutionError
 from qphase_sde.products import (
-    add_scan_parameter_coordinates,
-    assemble_typed_product,
     json_safe_meta,
-    stack_payload_leaves,
 )
 
 
@@ -75,58 +66,6 @@ def recorded_distribution_versions() -> dict[str, str]:
     return versions
 
 
-@dataclass
-class SDEResult:
-    """Container for SDE simulation results.
-
-    Attributes
-    ----------
-    trajectory : Any
-        The trajectory data (e.g., numpy array or TrajectorySet).
-    meta : dict[str, Any]
-        Metadata about the simulation (config, runtime info, etc.).
-
-    """
-
-    trajectory: Any = None
-    analysis: dict[str, Any] = field(default_factory=dict)
-    meta: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def data(self) -> Any:
-        """Alias for trajectory to satisfy ResultProtocol.
-
-        If trajectory was dropped (e.g. after analysis), return analysis results.
-        """
-        if self.trajectory is not None:
-            return self.trajectory
-        if self.analysis:
-            return self.analysis
-        return None
-
-    @property
-    def metadata(self) -> dict[str, Any]:
-        """Alias for meta to satisfy ResultProtocol."""
-        return self.meta
-
-    @property
-    def label(self) -> Any:
-        """Get the label (e.g. parameter value) from metadata."""
-        return self.meta.get("label")
-
-    @label.setter
-    def label(self, value: Any) -> None:
-        """Set the label in metadata."""
-        self.meta["label"] = value
-
-    @property
-    def index(self) -> Any:
-        """Get the index (time/parameter) from the trajectory if available."""
-        if hasattr(self.trajectory, "index"):
-            return self.trajectory.index
-        if hasattr(self.trajectory, "times"):
-            return self.trajectory.times
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -329,9 +268,8 @@ class SDEDataBundle:
         meta["params"] = dict(meta["scan_point"])
         params = meta.get("params")
         if isinstance(params, dict):
-            # Mirror the 1.x SDEScanResult.point_view contract: the per-point
-            # view reports this point's swept parameter values, not the fused
-            # whole-scan arrays.
+            # The per-point view reports this point's swept parameter values,
+            # not the fused whole-scan arrays.
             params = dict(params)
             params.update(meta["scan_point"])
             meta["params"] = params
@@ -432,19 +370,6 @@ class SDEDataBundle:
             ),
             schema_version=ARTIFACT_SCHEMA_VERSION,
         )
-
-    def legacy_result(self) -> "SDEResult":
-        """Legacy SDEResult view of a single-point bundle (Phase 1 bridge).
-
-        Cross-job analysers written against the 1.x containers consume this
-        view through ``load_sde_results``; scan bundles must be mapped per
-        point via :meth:`point_view` first.
-        """
-        if self._scan_shape:
-            raise ValueError(
-                "scan bundle has no single legacy view; use point_view first"
-            )
-        return legacy_view_from_products(self._products, meta=dict(self._meta))
 
     def _manifest_provenance(self) -> dict[str, Any]:
         safe_meta, dropped = _json_safe_meta(self._meta)
@@ -611,405 +536,6 @@ def _trajectory_product(
         ),
     }
     return TimeSeriesDataset(schema, DictProductBacking(handles))
-
-
-def _analysis_product(
-    name: str,
-    payload: Any,
-    *,
-    scan_size: int | None,
-) -> Dataset | None:
-    """Bridge one legacy analyser payload into a statistics product.
-
-    Fallback path (``bridge="legacy_analysis/1"``, ``graph_ready=False``):
-    numeric payload leaves become variables over a
-    parameter scan axis plus open positional index axes. Analysers with a
-    typed product builder never take this path; the bridge covers analysers
-    without a builder. Missing per-point payloads and inconsistent
-    per-point keys are rejected; nothing is ever pickled.
-
-    ``scan_size`` follows the bundle convention: ``None`` for a job without
-    a parameter grid (no scan axis), otherwise the exact scan size — a
-    1-point scan keeps a size-1 scan axis.
-    """
-    leaves = stack_payload_leaves(name, payload, scan_size=scan_size)
-    if leaves is None:
-        return None
-    return assemble_typed_product(
-        name,
-        leaves,
-        scan_size=scan_size,
-        kind=DataKind.STATISTICS,
-        attributes={
-            "bridge": "legacy_analysis/1",
-            "graph_ready": False,
-        },
-    )
-
-
-def _assign_nested(payload: dict[Any, Any], dotted_key: str, value: Any) -> None:
-    """Assign ``value`` into ``payload`` following a dotted key path.
-
-    Digit-only path segments become integer keys: legacy analyser payloads
-    index per-mode tables by mode number.
-    """
-    parts = dotted_key.split(".")
-    target = payload
-    for part in parts[:-1]:
-        key: Any = int(part) if part.isdigit() else part
-        child = target.get(key)
-        if not isinstance(child, dict):
-            child = {}
-            target[key] = child
-        target = child
-    leaf = parts[-1]
-    target[int(leaf) if leaf.isdigit() else leaf] = value
-
-
-def legacy_view_from_products(
-    products: Mapping[str, Dataset],
-    *,
-    meta: dict[str, Any] | None = None,
-) -> SDEResult:
-    """Rebuild a legacy SDEResult view from typed products (Phase 1 bridge).
-
-    Inverse of the bundle bridges: the ``trajectories`` product becomes a
-    TrajectorySet, and each ``legacy_analysis/1`` statistics product becomes
-    its original analyser payload (variables plus ``payload_meta`` leaves).
-    Single-point semantics: callers must map scan products per point first
-    (e.g. through :meth:`SDEDataBundle.point_view`).
-    """
-    from qphase_sde.state import TrajectorySet
-
-    trajectory = None
-    analysis: dict[str, Any] = {}
-    deferred_bridges: list[tuple[str, str, dict[Any, Any]]] = []
-    for name, product in products.items():
-        axis_names = {axis.name for axis in product.axes}
-        if (
-            product.attributes.get("table") == "peak_candidates"
-            and product.attributes.get("source_product") in products
-        ):
-            continue
-        if _SCAN_AXIS in axis_names:
-            scan_axis = product.axis(_SCAN_AXIS)
-            if scan_axis.size not in (None, 1):
-                raise ValueError(
-                    f"product {name!r} still has a scan axis of size "
-                    f"{scan_axis.size}; map per scan point first"
-                )
-        if name == "trajectories":
-            alpha = product.handle("alpha").materialize()
-            if alpha.ndim == 4:
-                alpha = alpha[0]
-            time_axis = product.axis("time") if "time" in axis_names else None
-            t0 = (
-                float(time_axis.start)
-                if time_axis is not None and time_axis.start is not None
-                else 0.0
-            )
-            dt = (
-                float(time_axis.step)
-                if time_axis is not None and time_axis.step is not None
-                else 1.0
-            )
-            traj_meta = {
-                key: value
-                for key, value in product.attributes.items()
-                if key not in TRAJECTORY_PRODUCT.attributes
-            }
-            trajectory = TrajectorySet(data=alpha, t0=t0, dt=dt, meta=traj_meta)
-            continue
-        payload: dict[Any, Any] = {}
-        for variable in product.variables:
-            _assign_nested(
-                payload, variable.name, product.handle(variable.name).materialize()
-            )
-        per_point = set(product.attributes.get("per_point_meta", ()))
-        scan_index = (meta or {}).get("scan_index")
-        for meta_key, meta_value in product.attributes.get("payload_meta", {}).items():
-            if meta_key in per_point and scan_index is not None:
-                meta_value = list(meta_value)[int(scan_index)]
-            _assign_nested(payload, meta_key, meta_value)
-        if product.attributes.get("bridge") == "legacy_peaks/1":
-            source = product.attributes.get("source_product")
-            field = product.attributes.get("payload_field")
-            if not isinstance(source, str) or not isinstance(field, str):
-                raise ValueError(
-                    f"legacy peak product {name!r} lacks an explicit source route"
-                )
-            deferred_bridges.append((source, field, payload))
-            continue
-        analysis[name] = payload
-    for source, field, payload in deferred_bridges:
-        if source not in analysis:
-            raise ValueError(
-                f"legacy peak bridge references missing source product {source!r}"
-            )
-        if field not in payload:
-            raise ValueError(
-                f"legacy peak bridge for {source!r} misses payload field {field!r}"
-            )
-        if field in analysis[source]:
-            raise ValueError(f"legacy peak bridge would overwrite {source!r}.{field}")
-        analysis[source][field] = payload[field]
-    return SDEResult(trajectory=trajectory, analysis=analysis, meta=dict(meta or {}))
-
-
-def bundle_from_result(
-    result: Any,
-    *,
-    provenance: SDEProvenance,
-    n_traj_per_point: int | None = None,
-    analysers: Mapping[str, Any] | None = None,
-    source_scan: DatasetResultProtocol | None = None,
-) -> SDEDataBundle:
-    """Adapt a legacy SDEResult/SDEScanResult into an SDEDataBundle.
-
-    Adapter applied at the engine's public boundary: private execution paths
-    assemble legacy-shaped results, while the engine's return value is always
-    a bundle.
-
-    ``analysers`` maps job-local analyser labels to the analyser instances
-    that produced the payloads. An analyser implementing
-    :class:`~qphase_sde.contracts.analyser.AnalyserProductBuilderProtocol`
-    converts its own payload into graph-ready typed products; payloads of
-    analysers without the hook fall back to the
-    ``legacy_analysis/1`` bridge (``graph_ready=False``).
-
-    Scan cardinality convention: ``scan_size`` passed to builders and bridges
-    is ``None`` when the job had no parameter grid (products carry no scan
-    axis) and the exact grid size otherwise — a 1-point scan keeps a scan
-    axis of size 1. Payloads are bare per-point mappings for
-    ``scan_size == 1`` and lists of per-point payloads for larger scans.
-
-    ``source_scan`` supplies an upstream dataset identity for analyze jobs;
-    only producers declaring ``preserves_input_scan`` receive that size while
-    building their output. Other analysers may publish a cross-scan aggregate
-    without a scan axis.
-
-    Producer failures are fail-fast: a payload of a registered analyser (a
-    name present in ``analysers``) that builds no product, a product whose
-    scan axis is missing or contradicts the job scan size, a product not
-    declared by the analyser's ``output_specs()``, or a declared output the
-    producer did not return atomically raises
-    :class:`~qphase_sde.errors.SDEExecutionError` and the job ends failed.
-    Payloads of names outside ``analysers`` (observer/metadata payloads
-    merged into ``analysis``) that carry no numeric leaves are not products;
-    they are routed into the bundle metadata under ``observer_payloads``.
-    """
-    grid = getattr(result, "grid", None)
-    combined = getattr(result, "combined", result)
-    if not isinstance(combined, SDEResult):
-        raise TypeError(f"cannot build an SDEDataBundle from {type(result).__name__}")
-    scan_size: int | None
-    if grid is not None:
-        scan_size = int(grid.size)
-        scan_shape = tuple(grid.shape)
-        scan_axes = dict(grid.axes)
-        scan_coordinates = grid.parameter_arrays(flatten=True)
-        if n_traj_per_point is None:
-            n_traj_per_point = getattr(result, "n_traj_per_point", None)
-    elif source_scan is not None and source_scan.shape:
-        scan_shape = tuple(source_scan.shape)
-        scan_size = math.prod(scan_shape)
-        scan_axes = dict(source_scan.axes)
-        metadata = getattr(source_scan, "metadata", {})
-        combine = metadata.get("scan_combine") if isinstance(metadata, dict) else None
-        if combine == "zipped":
-            scan_coordinates = {
-                name: np.asarray(values).reshape(-1)
-                for name, values in scan_axes.items()
-            }
-        else:
-            meshes = np.meshgrid(*scan_axes.values(), indexing="ij")
-            scan_coordinates = {
-                name: values.reshape(-1)
-                for name, values in zip(scan_axes, meshes, strict=True)
-            }
-    else:
-        scan_size, scan_shape, scan_axes = None, (), {}
-        scan_coordinates = {}
-
-    products: dict[str, Dataset] = {}
-    if combined.trajectory is not None:
-        products["trajectories"] = add_scan_parameter_coordinates(
-            _trajectory_product(
-                combined.trajectory,
-                scan_size=scan_size,
-                n_traj_per_point=n_traj_per_point,
-            ),
-            scan_coordinates,
-        )
-    observer_payloads: dict[str, Any] = {}
-    for name, payload in combined.analysis.items():
-        analyser = analysers.get(str(name)) if analysers is not None else None
-        builder = getattr(analyser, "build_products", None)
-        if builder is not None:
-            # The analyser's own builder is authoritative for its payload:
-            # an empty result is a producer failure, never a bridge fallback.
-            builder_scan_size = (
-                scan_size
-                if source_scan is None
-                or getattr(analyser, "preserves_input_scan", False)
-                else None
-            )
-            built = (
-                builder(payload, scan_size=builder_scan_size, label=str(name))
-                if payload is not None
-                else None
-            )
-            if not built:
-                raise SDEExecutionError(
-                    f"analyser {name!r} produced no data product from its "
-                    "payload; the producer output is incomplete and the job "
-                    "is marked failed"
-                )
-            declaration_factory = getattr(analyser, "output_specs", None)
-            declarations = (
-                declaration_factory(label=str(name))
-                if callable(declaration_factory)
-                else None
-            )
-            declared_names = (
-                {item.name for item in declarations}
-                if declarations is not None
-                else None
-            )
-            for product_name, product in built.items():
-                if product_name in products:
-                    raise ValueError(
-                        f"analyser product {product_name!r} collides with "
-                        "an existing engine or analyser product"
-                    )
-                if not isinstance(product, Dataset):
-                    raise TypeError(
-                        f"analyser product {product_name!r} must be a Dataset"
-                    )
-                graph_ready = product.attributes.get("graph_ready") is True
-                legacy_bridge = product.attributes.get("bridge") in {
-                    "legacy_analysis/1",
-                    "legacy_peaks/1",
-                }
-                if not graph_ready and not legacy_bridge:
-                    raise TypeError(
-                        f"analyser product {product_name!r} is not graph-ready"
-                    )
-                if declared_names is not None and product_name not in declared_names:
-                    raise SDEExecutionError(
-                        f"analyser product {product_name!r} is not declared by "
-                        f"the output_specs() of analyser {name!r}; the "
-                        "producer output is inconsistent and the job is "
-                        "marked failed"
-                    )
-                declaration = (
-                    next(
-                        (item for item in declarations if item.name == product_name),
-                        None,
-                    )
-                    if declarations is not None
-                    else None
-                )
-                if declaration is not None and graph_ready:
-                    if product.kind is not declaration.kind:
-                        raise TypeError(
-                            f"analyser product {product_name!r} has kind "
-                            f"{product.kind.value!r}, declared "
-                            f"{declaration.kind.value!r}"
-                        )
-                    fields = {variable.name for variable in product.variables}
-                    missing = sorted(set(declaration.fields) - fields)
-                    if missing:
-                        raise TypeError(
-                            f"analyser product {product_name!r} misses "
-                            f"declared fields {missing}"
-                        )
-                    if declaration.quantity and not any(
-                        variable.quantity == declaration.quantity
-                        for variable in product.variables
-                    ):
-                        raise TypeError(
-                            f"analyser product {product_name!r} misses "
-                            f"declared quantity {declaration.quantity!r}"
-                        )
-                product_axes = {axis.name for axis in product.axes}
-                if (
-                    graph_ready
-                    and scan_size is not None
-                    and _SCAN_AXIS not in product_axes
-                    and source_scan is None
-                ):
-                    raise SDEExecutionError(
-                        f"analyser product {product_name!r} has no scan axis, "
-                        f"but the job scan size is {scan_size}; the producer "
-                        "output is incomplete and the job is marked failed"
-                    )
-                if _SCAN_AXIS in product_axes:
-                    if scan_size is None:
-                        raise SDEExecutionError(
-                            f"analyser product {product_name!r} has a scan "
-                            "axis, but the execution has no scan identity; "
-                            "the producer output is incomplete and the job "
-                            "is marked failed"
-                        )
-                    product_scan_size = product.axis(_SCAN_AXIS).size
-                    if product_scan_size is None or product_scan_size != scan_size:
-                        raise SDEExecutionError(
-                            f"analyser product {product_name!r} has a scan "
-                            f"axis of size {product_scan_size}, but the job "
-                            f"scan size is {scan_size}; the producer output "
-                            "is inconsistent and the job is marked failed"
-                        )
-                products[product_name] = (
-                    add_scan_parameter_coordinates(product, scan_coordinates)
-                    if graph_ready
-                    else product
-                )
-            if declared_names is not None:
-                missing_outputs = sorted(declared_names - set(built))
-                if missing_outputs:
-                    raise SDEExecutionError(
-                        f"analyser {name!r} did not return its declared "
-                        f"outputs {missing_outputs}; a multi-output producer "
-                        "returns all declared outputs atomically, so the "
-                        "producer output is incomplete and the job is marked "
-                        "failed"
-                    )
-            continue
-        product = _analysis_product(str(name), payload, scan_size=scan_size)
-        if product is not None:
-            products[str(name)] = product
-        elif payload is None:
-            if analyser is not None:
-                raise SDEExecutionError(
-                    f"analyser {name!r} produced no payload; the producer "
-                    "output is incomplete and the job is marked failed"
-                )
-        elif analyser is not None:
-            raise SDEExecutionError(
-                f"analyser {name!r} produced a payload with no numeric "
-                "leaves, so no data product could be assembled; the "
-                "producer output is incomplete and the job is marked failed"
-            )
-        else:
-            # Observer/metadata payload without numeric leaves: never a
-            # product, but kept in the bundle metadata under its plugin name.
-            observer_payloads[str(name)] = payload
-
-    meta = dict(combined.meta)
-    extra_meta = getattr(result, "meta", None)
-    if isinstance(extra_meta, dict):
-        meta.update(extra_meta)
-    if observer_payloads:
-        meta["observer_payloads"] = observer_payloads
-    return SDEDataBundle(
-        products,
-        provenance,
-        scan_axes=scan_axes,
-        scan_shape=scan_shape,
-        meta=meta,
-        n_traj_per_point=n_traj_per_point,
-    )
 
 
 # ---------------------------------------------------------------------------

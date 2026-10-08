@@ -132,16 +132,15 @@ def build_execution_plan(
     observers: dict[str, Any] | None = None,
     resources: Any | None,
     device_memory: tuple[int, int] | None = None,
-    typed_execution: bool = False,
     product_graph: Any | None = None,
 ) -> SDEExecutionPlan:
     """Validate a job and choose an SDE-internal scan tile size.
 
-    With ``typed_execution`` and the compiler-frozen ``product_graph``, a
-    resource-driven multi-tile scan splits the graph into tile-scope nodes
-    (executed per tile) and final-scope nodes (deferred to one post-merge
-    execution on the full-scan products); the plan reports the deferred
-    analysers and accounts their full-scan retention honestly.
+    With the compiler-frozen ``product_graph``, a resource-driven multi-tile
+    scan splits the graph into tile-scope nodes (executed per tile) and
+    final-scope nodes (deferred to one post-merge execution on the full-scan
+    products); the plan reports the deferred analysers and accounts their
+    full-scan retention honestly.
     """
     time_grid = resolve_time_grid(
         t0=config.t0,
@@ -196,9 +195,7 @@ def build_execution_plan(
         label="noise workspace",
     )
     backend_name = _backend_name(backend)
-    trajectory_analysers = _trajectory_analysers(
-        analysers, typed_execution=typed_execution
-    )
+    trajectory_analysers = _trajectory_analysers(analysers)
     analyzer_device_workspace, analyzer_host_workspace = _analyzer_workspace_bytes(
         trajectory_per_point,
         trajectory_analysers,
@@ -415,7 +412,7 @@ def build_execution_plan(
         )
     deferred_analysers: tuple[str, ...] = ()
     deferred_host_bytes = 0
-    if typed_execution and product_graph is not None and tile_size < scan_size:
+    if product_graph is not None and tile_size < scan_size:
         tile_scope, final_scope = _typed_scan_scope(product_graph, analysers)
         trajectory_consumers = {
             binding.consumer
@@ -862,12 +859,8 @@ def _typed_scan_scope(
     return frozenset(tile_scope), frozenset(all_nodes - tile_scope)
 
 
-def _trajectory_analysers(
-    analysers: dict[str, Any], *, typed_execution: bool
-) -> dict[str, Any]:
+def _trajectory_analysers(analysers: dict[str, Any]) -> dict[str, Any]:
     """Select graph-frontier analysers that consume trajectory products."""
-    if not typed_execution:
-        return analysers
     selected: dict[str, Any] = {}
     for name, analyser in analysers.items():
         provider = getattr(analyser, "input_requirements", None)

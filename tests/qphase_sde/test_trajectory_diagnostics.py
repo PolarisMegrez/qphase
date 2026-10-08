@@ -7,7 +7,53 @@ from qphase_sde.analyser.trajectory_diagnostics import (
     TrajectoryDiagnostics,
     TrajectoryDiagnosticsConfig,
 )
+from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
+
+
+def _execute(analyser: TrajectoryDiagnostics, trajectory: TrajectorySet) -> dict:
+    product = analyser.execute(
+        {
+            "trajectories": _trajectory_product(
+                trajectory, scan_size=None, n_traj_per_point=None
+            )
+        },
+        backend=NumpyBackend(),
+        label="diagnostics",
+    )["diagnostics"]
+    payload: dict = {}
+    leaves = dict(product.attributes["payload_meta"])
+    leaves.update(
+        {
+            variable.name: product.handle(variable.name).materialize()
+            for variable in product.variables
+        }
+    )
+    for name, value in leaves.items():
+        target = payload
+        parts = name.split(".")
+        for part in parts[:-1]:
+            key = int(part) if part.isdigit() else part
+            target = target.setdefault(key, {})
+        key = int(parts[-1]) if parts[-1].isdigit() else parts[-1]
+        target[key] = (
+            value.item()
+            if isinstance(value, np.ndarray) and value.ndim == 0
+            else value
+        )
+
+    def restore_arrays(value):
+        if isinstance(value, dict):
+            return {key: restore_arrays(item) for key, item in value.items()}
+        if isinstance(value, list):
+            if any(isinstance(item, dict) for item in value):
+                return [restore_arrays(item) for item in value]
+            return np.asarray(value)
+        return value
+
+    payload = restore_arrays(payload)
+    payload["_dropped_keys"] = product.attributes["dropped_keys"]
+    return payload
 
 
 def _rotating_trajectory(omega=0.7, *, n_traj=3, n_time=512, dt=0.1):
@@ -28,15 +74,16 @@ def test_trajectory_diagnostics_recovers_coherence_frequency_and_zero_allan():
         )
     )
 
-    result = analyser.analyze(trajectory, NumpyBackend()).data_dict
+    result = _execute(analyser, trajectory)
     mode = result["mode_results"][2]
 
     assert result["t0"] == pytest.approx(20.0)
     np.testing.assert_allclose(
-        mode["block_statistics"][0]["mean_angular_frequency"],
+        mode["phase_increment"]["mean_angular_frequency_per_trajectory"],
         0.7,
         atol=1e-12,
     )
+    assert "mode_results.2.block_statistics" in result["_dropped_keys"]
     expected_g1 = np.exp(-1j * 0.7 * mode["coherence"]["lag"])
     np.testing.assert_allclose(
         mode["coherence"]["g1_normalized"], expected_g1, atol=1e-12
@@ -54,7 +101,7 @@ def test_trajectory_diagnostics_validates_time_scales_against_saved_dt():
     )
 
     with pytest.raises(ValueError, match="block duration=.*multiple of dt"):
-        analyser.analyze(_rotating_trajectory(), NumpyBackend())
+        _execute(analyser, _rotating_trajectory())
 
 
 def test_trajectory_diagnostics_rejects_real_input():
@@ -62,7 +109,7 @@ def test_trajectory_diagnostics_rejects_real_input():
     analyser = TrajectoryDiagnostics(TrajectoryDiagnosticsConfig(modes=[0]))
 
     with pytest.raises(ValueError, match="complex mode amplitudes"):
-        analyser.analyze(data, NumpyBackend())
+        _execute(analyser, data)
 
 
 def test_trajectory_diagnostic_context_builds_shared_coordinates_once():
@@ -116,7 +163,7 @@ def test_g1_model_fit_recovers_phase_diffusion_rate():
         TrajectoryDiagnosticsConfig(modes=[0], allan=False, coherence_max_lag=20.0)
     )
 
-    result = analyser.analyze(trajectory, NumpyBackend()).data_dict
+    result = _execute(analyser, trajectory)
     fits = result["mode_results"][0]["coherence"]["model_fits"]
 
     assert fits["preferred_model"] == "exponential"
@@ -132,7 +179,7 @@ def test_g1_model_fit_prefers_gaussian_for_static_disorder():
         TrajectoryDiagnosticsConfig(modes=[0], allan=False, coherence_max_lag=10.0)
     )
 
-    result = analyser.analyze(trajectory, NumpyBackend()).data_dict
+    result = _execute(analyser, trajectory)
     fits = result["mode_results"][0]["coherence"]["model_fits"]
     models = fits["models"]
 
@@ -149,7 +196,7 @@ def test_g1_model_fit_handles_degenerate_signals():
         TrajectoryDiagnosticsConfig(modes=[0], allan=False)
     )
 
-    result = analyser.analyze(zeros, NumpyBackend()).data_dict
+    result = _execute(analyser, zeros)
     fits = result["mode_results"][0]["coherence"]["model_fits"]
 
     assert "preferred_model" not in fits
@@ -178,7 +225,7 @@ def test_block_spectrum_recovers_tone_features():
         )
     )
 
-    result = analyser.analyze(trajectory, NumpyBackend()).data_dict
+    result = _execute(analyser, trajectory)
     entry = result["mode_results"][0]["block_spectrum"]["entries"][0]
 
     assert entry["status"] == "ok"
@@ -208,7 +255,7 @@ def test_block_spectrum_reports_configured_and_insufficient_states():
         )
     )
 
-    result = analyser.analyze(trajectory, NumpyBackend()).data_dict
+    result = _execute(analyser, trajectory)
     mode = result["mode_results"][2]
     assert mode["block_spectrum"] == {"status": "no_blocks_configured"}
 
@@ -222,7 +269,7 @@ def test_block_spectrum_reports_configured_and_insufficient_states():
             allan=False,
         )
     )
-    result = analyser.analyze(trajectory, NumpyBackend()).data_dict
+    result = _execute(analyser, trajectory)
     entries = result["mode_results"][2]["block_spectrum"]["entries"]
     assert [entry["status"] for entry in entries] == [
         "insufficient_data",
@@ -241,7 +288,7 @@ def test_outputs_carry_explicit_units_and_definitions():
         )
     )
 
-    result = analyser.analyze(trajectory, NumpyBackend()).data_dict
+    result = _execute(analyser, trajectory)
     mode = result["mode_results"][2]
 
     coherence = mode["coherence"]
@@ -257,7 +304,7 @@ def test_outputs_carry_explicit_units_and_definitions():
     assert allan["quantity"] == "allan_variance"
     assert allan["variable"] == "angular_frequency"
     assert allan["tau_unit"] == "seconds"
-    assert mode["block_statistics"][0]["frequency_unit"] == "angular"
+    assert "mode_results.2.block_statistics" in result["_dropped_keys"]
 
 
 def _two_mode_trajectory(*, n_traj=2, n_time=512, dt=0.1, amp0=1.3, amp1=0.7):
@@ -288,7 +335,7 @@ def test_matrix_projection_recovers_mode_population_and_layout():
         )
     )
 
-    result = analyser.analyze(trajectory, NumpyBackend()).data_dict
+    result = _execute(analyser, trajectory)
     projection = result["matrix_projection"]
 
     assert projection["status"] == "ok"
@@ -343,7 +390,7 @@ def test_matrix_projection_subtracts_reference():
         )
     )
 
-    result = analyser.analyze(trajectory, NumpyBackend()).data_dict
+    result = _execute(analyser, trajectory)
     projection = result["matrix_projection"]
 
     assert projection["reference_norm"] == pytest.approx(0.5)
@@ -392,7 +439,7 @@ def test_matrix_projection_config_validation():
         )
     )
     with pytest.raises(ValueError, match=r"length n_modes\*\*2 = 4"):
-        analyser.analyze(_two_mode_trajectory(), NumpyBackend())
+        _execute(analyser, _two_mode_trajectory())
 
 
 def test_matrix_projection_block_spectrum_reuses_periodogram_features():
@@ -410,7 +457,7 @@ def test_matrix_projection_block_spectrum_reuses_periodogram_features():
         )
     )
 
-    result = analyser.analyze(trajectory, NumpyBackend()).data_dict
+    result = _execute(analyser, trajectory)
     entry = result["matrix_projection"]["block_spectrum"]["entries"][0]
 
     assert entry["status"] == "ok"
@@ -440,7 +487,7 @@ def _stationarity_entry(trajectory, **config_kwargs):
     }
     config.update(config_kwargs)
     analyser = TrajectoryDiagnostics(TrajectoryDiagnosticsConfig(**config))
-    result = analyser.analyze(trajectory, NumpyBackend()).data_dict
+    result = _execute(analyser, trajectory)
     return result["stationarity"]
 
 

@@ -291,7 +291,6 @@ def test_typed_planner_rejects_non_tileable_products_before_running():
             integrator=FakeIntegrator(),
             analysers={"typed_ragged": typed_ragged},
             resources=SimpleNamespace(memory_limit_mib=2),
-            typed_execution=True,
             product_graph=_trajectory_graph("typed_ragged"),
         )
 

@@ -8,7 +8,8 @@ from qphase_sde.analyser.finite_delay_carrier import (
     FiniteDelayCarrierConfig,
     finite_delay_carrier_from_spectrum,
 )
-from qphase_sde.result import SDEResult
+from qphase_sde.analyser.psd import PsdAnalyzer, _build_psd_products
+from qphase_sde.products import add_scan_parameter_coordinates
 
 
 def test_finite_delay_carrier_recovers_single_frequency_for_all_rates():
@@ -31,19 +32,16 @@ def test_finite_delay_carrier_recovers_single_frequency_for_all_rates():
 
 def test_finite_delay_carrier_analyzer_exports_scan_rows(tmp_path: Path):
     axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
-    results = {}
-    for index, center in enumerate((-0.3, -0.2)):
+    payloads = []
+    for center in (-0.3, -0.2):
         spectrum = np.exp(-0.5 * ((axis - center) / 0.06) ** 2)
-        results[f"point_{index}"] = SDEResult(
-            analysis={
-                "psd": {
-                    "axis": axis,
-                    "psd": spectrum[:, None],
-                    "modes": [0],
-                    "orientation": "phase_decreasing",
-                }
-            },
-            meta={"params": {"epsilon": float(index)}},
+        payloads.append(
+            {
+                "axis": axis,
+                "psd": spectrum[:, None],
+                "modes": [0],
+                "orientation": "phase_decreasing",
+            }
         )
     analyzer = FiniteDelayCarrierAnalyzer(
         FiniteDelayCarrierConfig(
@@ -53,11 +51,22 @@ def test_finite_delay_carrier_analyzer_exports_scan_rows(tmp_path: Path):
         )
     )
 
-    payload = analyzer.analyze(results, NumpyBackend()).data_dict
+    psd_analyzer = PsdAnalyzer(modes=[0], kind="complex")
+    products = _build_psd_products(
+        payloads, scan_size=2, label="psd", analyser=psd_analyzer
+    )
+    assert products is not None
+    psd = add_scan_parameter_coordinates(
+        products["psd"], {"epsilon": np.asarray([0.0, 1.0])}
+    )
+    product = analyzer.execute(
+        {"psd": psd}, backend=NumpyBackend(), label="carrier"
+    )["carrier"]
+    rows = product.attributes["payload_meta"]["carrier_rows"]
 
-    assert len(payload["carrier_rows"]) == 4
+    assert len(rows) == 4
     np.testing.assert_allclose(
-        [row["frequency"] for row in payload["carrier_rows"]],
+        [row["frequency"] for row in rows],
         [-0.3, -0.3, -0.2, -0.2],
         atol=2e-5,
     )
@@ -72,16 +81,17 @@ def test_finite_delay_carrier_analyzer_evaluates_multiple_readouts():
             np.exp(-0.5 * ((axis - 0.7) / 0.08) ** 2),
         ]
     )
-    result = SDEResult(
-        analysis={
-            "psd": {
-                "axis": axis,
-                "psd": spectrum,
-                "modes": [0, 1],
-                "orientation": "phase_decreasing",
-            }
+    psd_analyzer = PsdAnalyzer(modes=[0, 1], kind="complex")
+    products = _build_psd_products(
+        {
+            "axis": axis,
+            "psd": spectrum,
+            "modes": [0, 1],
+            "orientation": "phase_decreasing",
         },
-        meta={"params": {"epsilon": 0.0}},
+        scan_size=None,
+        label="psd",
+        analyser=psd_analyzer,
     )
     analyzer = FiniteDelayCarrierAnalyzer(
         FiniteDelayCarrierConfig(
@@ -91,25 +101,29 @@ def test_finite_delay_carrier_analyzer_evaluates_multiple_readouts():
         )
     )
 
-    payload = analyzer.analyze({"point": result}, NumpyBackend()).data_dict
+    assert products is not None
+    product = analyzer.execute(
+        {"psd": products["psd"]},
+        backend=NumpyBackend(),
+        label="carrier",
+        metadata={"params": {"epsilon": 0.0}},
+    )["carrier"]
+    rows = product.attributes["payload_meta"]["carrier_rows"]
 
-    assert [row["measurement_name"] for row in payload["carrier_rows"]] == [
+    assert [row["measurement_name"] for row in rows] == [
         "mode_0",
         "mode_1",
     ]
     np.testing.assert_allclose(
-        [row["frequency"] for row in payload["carrier_rows"]],
+        [row["frequency"] for row in rows],
         [-0.4, 0.7],
         atol=2e-5,
     )
-    assert payload["carrier_rows"][0]["measurement_kind"] == "bare_mode"
+    assert rows[0]["measurement_kind"] == "bare_mode"
 
 
 def _typed_psd_product(scan_values: list[float]):
     """Typed PSD scan product with parameter coordinates for execute()."""
-    from qphase_sde.analyser.psd import PsdAnalyzer
-    from qphase_sde.products import add_scan_parameter_coordinates
-
     axis = np.linspace(-3.0, 3.0, 1024, endpoint=False)
     payload = []
     for value in scan_values:
@@ -125,8 +139,9 @@ def _typed_psd_product(scan_values: list[float]):
                 "uncertainty": {"n_independent": 4},
             }
         )
-    products = PsdAnalyzer(modes=[0], kind="complex").build_products(
-        payload, scan_size=len(scan_values), label="psd"
+    analyzer = PsdAnalyzer(modes=[0], kind="complex")
+    products = _build_psd_products(
+        payload, scan_size=len(scan_values), label="psd", analyser=analyzer
     )
     assert products is not None
     return add_scan_parameter_coordinates(

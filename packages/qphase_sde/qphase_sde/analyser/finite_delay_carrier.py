@@ -11,7 +11,7 @@ import numpy as np
 from pydantic import Field, field_validator, model_validator
 from qphase.backend.base import BackendBase
 from qphase.core.errors import QPhaseError
-from qphase.core.protocols import PluginConfigBase, ResultProtocol
+from qphase.core.protocols import PluginConfigBase
 from qphase.data import (
     DataKind,
     Dataset,
@@ -31,12 +31,11 @@ from ..products import (
 )
 from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
+    DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
     orientation_metadata,
     resolve_frequency_orientation,
 )
-from .result import AnalysisResult
-from .result_input import load_sde_results
 from .spectral_input import SpectralPoint, SpectralScanInput, spectral_scan_input
 
 __all__ = [
@@ -108,35 +107,47 @@ class FiniteDelayCarrierConfig(PluginConfigBase):
 
 
 def _extract_spectrum(
-    source_data: dict[str, Any] | SpectralPoint,
-    psd_key: str,
+    source_data: SpectralPoint,
     readout: int | Literal["trace"],
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
-    if isinstance(source_data, SpectralPoint):
-        spectrum, _, _ = source_data.readout(readout)
-        return source_data.axis, spectrum, dict(source_data.attributes)
-    analysis = source_data
-    if psd_key not in analysis:
-        raise QPhaseError(f"analysis is missing PSD payload {psd_key!r}")
-    payload = analysis[psd_key]
-    axis = np.asarray(payload["axis"], dtype=float).reshape(-1)
-    matrix = np.asarray(payload["psd"], dtype=float)
-    if matrix.ndim == 1:
-        spectrum = matrix
-    elif matrix.ndim == 2 and readout == "trace":
-        spectrum = np.sum(matrix, axis=1)
-    elif matrix.ndim == 2 and isinstance(readout, int):
-        modes = [int(mode) for mode in payload.get("modes", [])]
-        if readout in modes:
-            column = modes.index(readout)
-        elif readout < matrix.shape[1]:
-            column = readout
-        else:
-            raise QPhaseError(f"mode {readout} is absent from PSD payload")
-        spectrum = matrix[:, column]
-    else:
-        raise QPhaseError("PSD payload has an unsupported shape")
-    return axis, spectrum, payload
+    spectrum, _, _ = source_data.readout(readout)
+    return source_data.axis, spectrum, dict(source_data.attributes)
+
+
+def _build_finite_delay_carrier_products(
+    payload: Any,
+    *,
+    config: FiniteDelayCarrierConfig,
+    scan_size: int | None,
+    label: str,
+) -> dict[str, Dataset]:
+    if not isinstance(payload, dict):
+        raise TypeError("finite_delay_carrier payload must be a mapping")
+    rows = payload.get("carrier_rows", [])
+    if not isinstance(rows, list):
+        raise TypeError("finite_delay_carrier carrier_rows must be a list")
+    metadata = {key: value for key, value in payload.items() if key != "carrier_rows"}
+    product = assemble_row_table_product(
+        label,
+        rows,
+        scan_size=scan_size,
+        fields=[
+            "detector_rate",
+            "frequency",
+            "instantaneous_frequency",
+            "finite_delay_correction",
+            "coherent_weight",
+            "lag_end",
+            "sample_count",
+            "sample_lag",
+        ],
+        integer_fields=("sample_count",),
+        scan_value_field=config.scan_param if scan_size is not None else None,
+        payload_key="carrier_rows",
+        payload_meta=metadata,
+        attributes={"table": "finite_delay_carrier"},
+    )
+    return {label: product}
 
 
 class FiniteDelayCarrierAnalyzer(Analyzer):
@@ -164,7 +175,9 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
             metadata=metadata,
         )
         payload, _ = self._compute_payload(typed, backend, context=context)
-        products = self.build_products(payload, scan_size=None, label=label)
+        products = _build_finite_delay_carrier_products(
+            payload, config=config, scan_size=None, label=label
+        )
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
         return products
@@ -208,58 +221,16 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
                 ],
             ),
         )
-
-    def build_products(
-        self, payload: Any, *, scan_size: int | None, label: str
-    ) -> dict[str, Dataset] | None:
-        if not isinstance(payload, dict):
-            raise TypeError("finite_delay_carrier payload must be a mapping")
-        rows = payload.get("carrier_rows", [])
-        if not isinstance(rows, list):
-            raise TypeError("finite_delay_carrier carrier_rows must be a list")
-        metadata = {
-            key: value for key, value in payload.items() if key != "carrier_rows"
-        }
-        product = assemble_row_table_product(
-            label,
-            rows,
-            scan_size=scan_size,
-            fields=[
-                "detector_rate",
-                "frequency",
-                "instantaneous_frequency",
-                "finite_delay_correction",
-                "coherent_weight",
-                "lag_end",
-                "sample_count",
-                "sample_lag",
-            ],
-            integer_fields=("sample_count",),
-            scan_value_field=(
-                cast(FiniteDelayCarrierConfig, self.config).scan_param
-                if scan_size is not None
-                else None
-            ),
-            payload_key="carrier_rows",
-            payload_meta=metadata,
-            attributes={"table": "finite_delay_carrier"},
-        )
-        return {label: product}
-
     def _compute_payload(
         self,
-        data: Any,
+        data: SpectralScanInput,
         backend: BackendBase,
         *,
         context: Any | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         del backend
         config = cast(FiniteDelayCarrierConfig, self.config)
-        loaded = (
-            data.points
-            if isinstance(data, SpectralScanInput)
-            else load_sde_results(data)
-        )
+        loaded = data.points
         if not loaded:
             raise QPhaseError("finite_delay_carrier received no input results")
         rows: list[dict[str, Any]] = []
@@ -269,23 +240,10 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
         spectra_done = 0
         for item in loaded:
             check_execution_cancelled(context)
-            if isinstance(item, SpectralPoint):
-                scan_value = item.scan_value
-                job_name = item.job_name
-                source_data: dict[str, Any] | SpectralPoint = item
-            else:
-                params = item.meta.get("params", {})
-                if config.scan_param not in params:
-                    raise QPhaseError(
-                        f"input is missing scan parameter {config.scan_param!r}"
-                    )
-                scan_value = params[config.scan_param]
-                job_name = item.job_name
-                source_data = item.analysis
+            scan_value = item.scan_value
+            job_name = item.job_name
             for readout in readouts:
-                axis, spectrum, payload = _extract_spectrum(
-                    source_data, config.psd_key, readout
-                )
+                axis, spectrum, payload = _extract_spectrum(item, readout)
                 orientation = resolve_frequency_orientation(payload)
                 if reference_orientation is None:
                     reference_orientation = orientation
@@ -357,7 +315,7 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
                 writer.writerows(rows)
             written["finite_delay_carrier"] = str(path)
         metadata = orientation_metadata(
-            reference_orientation or resolve_frequency_orientation(None)
+            reference_orientation or DEFAULT_FREQUENCY_ORIENTATION
         )
         return (
             {
@@ -378,7 +336,3 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
                 **metadata,
             },
         )
-
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
-        payload, metadata = self._compute_payload(data, backend)
-        return AnalysisResult(data_dict=payload, meta=metadata)

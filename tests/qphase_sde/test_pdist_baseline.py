@@ -16,9 +16,43 @@ import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
+from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
 RTOL = 1e-10
+
+
+def _execute(analyzer: PolarDistAnalyzer, trajectory: TrajectorySet) -> dict:
+    product = analyzer.execute(
+        {
+            "trajectories": _trajectory_product(
+                trajectory, scan_size=None, n_traj_per_point=None
+            )
+        },
+        backend=NumpyBackend(),
+        label="pdist",
+    )["pdist"]
+    payload: dict = {}
+    leaves = dict(product.attributes["payload_meta"])
+    leaves.update(
+        {
+            variable.name: product.handle(variable.name).materialize()
+            for variable in product.variables
+        }
+    )
+    for name, value in leaves.items():
+        target = payload
+        parts = name.split(".")
+        for part in parts[:-1]:
+            key = int(part) if part.isdigit() else part
+            target = target.setdefault(key, {})
+        key = int(parts[-1]) if parts[-1].isdigit() else parts[-1]
+        target[key] = (
+            value.item()
+            if isinstance(value, np.ndarray) and value.ndim == 0
+            else value
+        )
+    return payload
 
 
 def _complex_fixture() -> TrajectorySet:
@@ -41,12 +75,11 @@ def _complex_fixture() -> TrajectorySet:
 
 
 def test_pdist_fixed_bins_baseline():
-    out = (
+    out = _execute(
         PolarDistAnalyzer(
             config=PolarDistAnalyzerConfig(modes=[0, 1], bins=8, density=True)
-        )
-        .analyze(_complex_fixture(), NumpyBackend())
-        .data_dict
+        ),
+        _complex_fixture(),
     )
 
     mode0 = out["distributions"][0]
@@ -155,18 +188,17 @@ def test_pdist_fixed_bins_baseline():
     assert mode1["mean"] == pytest.approx(0.7599774774908049, rel=RTOL)
     assert mode1["std"] == pytest.approx(0.3730394308789979, rel=RTOL)
 
-    assert out["modes"] == [0, 1]
+    np.testing.assert_array_equal(out["modes"], [0, 1])
     assert out["bins_config"] == 8
     assert out["density"] is True
 
 
 def test_pdist_auto_bins_baseline():
-    out = (
+    out = _execute(
         PolarDistAnalyzer(
             config=PolarDistAnalyzerConfig(modes=[0], bins="auto", density=True)
-        )
-        .analyze(_complex_fixture(), NumpyBackend())
-        .data_dict
+        ),
+        _complex_fixture(),
     )
 
     mode0 = out["distributions"][0]

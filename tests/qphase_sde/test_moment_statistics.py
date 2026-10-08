@@ -5,6 +5,7 @@ from qphase_sde.analyser.moment_statistics import (
     MomentStatisticsConfig,
 )
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
+from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
 
@@ -12,18 +13,48 @@ def _analyzer(**kwargs):
     return MomentStatisticsAnalyzer(MomentStatisticsConfig(**kwargs))
 
 
+def _payload(analyzer, trajectory: TrajectorySet):
+    product = analyzer.execute(
+        {
+            "trajectories": _trajectory_product(
+                trajectory, scan_size=None, n_traj_per_point=None
+            )
+        },
+        backend=NumpyBackend(),
+        label="moment_statistics",
+    )["moment_statistics"]
+    return product, _product_payload(product)
+
+
+def _product_payload(product):
+    payload = {}
+    values = list(product.attributes.get("payload_meta", {}).items()) + [
+        (variable.name, product.handle(variable.name).materialize())
+        for variable in product.variables
+    ]
+    for name, value in values:
+        if np.asarray(value).ndim == 0:
+            value = np.asarray(value).item()
+        target = payload
+        parts = name.split(".")
+        for part in parts[:-1]:
+            key = int(part) if part.isdigit() else part
+            target = target.setdefault(key, {})
+        target[parts[-1]] = value
+    return payload
+
+
 def test_moment_statistics_matches_direct_reduction():
     rng = np.random.default_rng(20260810)
     data = rng.normal(size=(7, 31, 3)) + 1j * rng.normal(size=(7, 31, 3))
-    payload = (
+    _, payload = _payload(
         _analyzer(
             modes=[0, 2],
             time_blocks=4,
             min_block_samples=4,
             time_chunk_samples=7,
-        )
-        .analyze(TrajectorySet(data, t0=4.0, dt=0.25), NumpyBackend())
-        .data_dict
+        ),
+        TrajectorySet(data, t0=4.0, dt=0.25),
     )
 
     intensity = np.abs(data[:, :, [0, 2]]) ** 2
@@ -50,9 +81,7 @@ def test_moment_statistics_matches_direct_reduction():
 def test_moment_statistics_constant_amplitudes_have_unit_g2():
     vector = np.asarray([1.0 + 2.0j, 3.0 - 1.0j])
     data = np.broadcast_to(vector, (5, 64, 2)).copy()
-    payload = (
-        _analyzer(time_blocks=4).analyze(TrajectorySet(data), NumpyBackend()).data_dict
-    )
+    _, payload = _payload(_analyzer(time_blocks=4), TrajectorySet(data))
 
     np.testing.assert_allclose(payload["occupation"], np.abs(vector) ** 2)
     np.testing.assert_allclose(payload["g2"], np.ones((2, 2)))
@@ -61,7 +90,7 @@ def test_moment_statistics_constant_amplitudes_have_unit_g2():
 
 def test_moment_statistics_marks_zero_occupation_ratios_unavailable():
     data = np.zeros((4, 32, 2), dtype=complex)
-    payload = _analyzer().analyze(TrajectorySet(data), NumpyBackend()).data_dict
+    _, payload = _payload(_analyzer(), TrajectorySet(data))
 
     np.testing.assert_allclose(payload["occupation"], 0.0)
     assert np.all(np.isnan(payload["g2"]))
@@ -73,7 +102,7 @@ def test_moment_statistics_resolves_physical_recorded_modes():
     data[:, :, 0] = 2.0
     data[:, :, 1] = 3.0j
     trajectory = TrajectorySet(data, meta={"mode_indices": [2, 5]})
-    payload = _analyzer(modes=[5]).analyze(trajectory, NumpyBackend()).data_dict
+    _, payload = _payload(_analyzer(modes=[5]), trajectory)
 
     assert payload["modes"] == [5]
     np.testing.assert_allclose(payload["occupation"], [9.0])
@@ -84,16 +113,16 @@ def test_moment_statistics_accumulator_matches_full_ensemble():
     rng = np.random.default_rng(12345)
     data = rng.normal(size=(11, 48, 3)) + 1j * rng.normal(size=(11, 48, 3))
     analyzer = _analyzer(time_blocks=6, min_block_samples=4, time_chunk_samples=11)
-    full = analyzer.analyze(
-        TrajectorySet(data, t0=5.0, dt=0.25), NumpyBackend()
-    ).data_dict
+    _, full = _payload(analyzer, TrajectorySet(data, t0=5.0, dt=0.25))
     accumulator = analyzer.create_result_accumulator()
     for start, stop in ((0, 3), (3, 7), (7, 11)):
-        partial = analyzer.analyze(
-            TrajectorySet(data[start:stop], t0=5.0, dt=0.25), NumpyBackend()
-        ).data_dict
-        accumulator.update(partial)
-    merged = accumulator.finalize()
+        partial, _ = _payload(
+            analyzer, TrajectorySet(data[start:stop], t0=5.0, dt=0.25)
+        )
+        accumulator.consume_product(partial)
+    products = accumulator.finalize_product("moment_statistics")
+    assert products is not None
+    merged = _product_payload(products["moment_statistics"])
 
     for key in (
         "occupation",

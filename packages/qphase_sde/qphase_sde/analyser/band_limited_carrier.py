@@ -13,7 +13,7 @@ from pydantic import Field, field_validator, model_validator
 from qphase.backend.base import BackendBase
 from qphase.core.aggregation import write_table_csv
 from qphase.core.errors import QPhaseError
-from qphase.core.protocols import PluginConfigBase, ResultProtocol
+from qphase.core.protocols import PluginConfigBase
 from qphase.data import (
     DataKind,
     Dataset,
@@ -30,12 +30,11 @@ from ..contracts.analyser import (
 from ..products import assemble_row_table_product
 from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
+    DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
     orientation_metadata,
     resolve_frequency_orientation,
 )
-from .result import AnalysisResult
-from .result_input import load_sde_results
 from .spectral_input import SpectralPoint, SpectralScanInput, spectral_scan_input
 from .spectral_ridge import (
     SpectralRidgeAnalyzer,
@@ -1172,32 +1171,10 @@ def _track_platform_segment(
 
 
 def _extract_readout(
-    loaded: Any, psd_key: str, readout: int | Literal["trace"]
+    loaded: SpectralPoint, readout: int | Literal["trace"]
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
-    if isinstance(loaded, SpectralPoint):
-        spectrum, _, _ = loaded.readout(readout)
-        return loaded.axis, spectrum, dict(loaded.attributes)
-    if psd_key not in loaded.analysis:
-        raise QPhaseError(f"{loaded.path} has no analysis[{psd_key!r}] payload")
-    payload = loaded.analysis[psd_key]
-    axis = np.asarray(payload["axis"], dtype=float).reshape(-1)
-    matrix = np.asarray(payload["psd"], dtype=float)
-    if matrix.ndim == 1:
-        spectrum = matrix
-    elif matrix.ndim == 2 and readout == "trace":
-        spectrum = np.sum(matrix, axis=1)
-    elif matrix.ndim == 2 and isinstance(readout, int):
-        modes = [int(mode) for mode in payload.get("modes", [])]
-        if readout in modes:
-            column = modes.index(readout)
-        elif 0 <= readout < matrix.shape[1]:
-            column = readout
-        else:
-            raise QPhaseError(f"mode {readout} is absent from {loaded.path}")
-        spectrum = matrix[:, column]
-    else:
-        raise QPhaseError(f"PSD in {loaded.path} must be one- or two-dimensional")
-    return axis, np.asarray(spectrum, dtype=float).reshape(-1), payload
+    spectrum, _, _ = loaded.readout(readout)
+    return loaded.axis, spectrum, dict(loaded.attributes)
 
 
 def _sort_key(value: Any) -> tuple[int, Any]:
@@ -1246,6 +1223,80 @@ def _estimate_from_config(
     )
 
 
+def _build_band_limited_carrier_products(
+    payload: Any,
+    *,
+    scan_size: int | None,
+    label: str,
+    config: BandLimitedCarrierConfig,
+) -> dict[str, Dataset]:
+    if not isinstance(payload, dict):
+        raise TypeError("band_limited_carrier payload must be a mapping")
+    rows = payload.get("carrier_rows", [])
+    candidates = payload.get("candidate_rows", [])
+    platforms = payload.get("platform_rows", [])
+    if not all(isinstance(value, list) for value in (rows, candidates, platforms)):
+        raise TypeError("band_limited_carrier row tables must be lists")
+    metadata = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"carrier_rows", "candidate_rows", "platform_rows"}
+    }
+    result = assemble_row_table_product(
+        label,
+        rows,
+        scan_size=scan_size,
+        fields=_carrier_result_fields(config.scan_param),
+        integer_fields=(
+            "consensus_count",
+            "lag_points",
+            "touched_maximum_lag",
+            "platform_count",
+            "tracked_platform_index",
+        ),
+        scan_value_field=config.scan_param,
+        quantities={"frequency": "coherence_frequency"},
+        payload_key="carrier_rows",
+        payload_meta=metadata,
+        attributes={"table": "band_limited_carrier"},
+    )
+    candidate = assemble_row_table_product(
+        f"{label}.candidates",
+        candidates,
+        scan_size=scan_size,
+        fields=_carrier_candidate_fields(config.scan_param),
+        integer_fields=("lag_points", "touched_maximum_lag"),
+        scan_value_field=config.scan_param,
+        quantities={"frequency": "coherence_frequency"},
+        payload_key="candidate_rows",
+        payload_meta=metadata,
+        attributes={"table": "band_limited_carrier_candidates"},
+    )
+    platform = assemble_row_table_product(
+        f"{label}.platforms",
+        platforms,
+        scan_size=scan_size,
+        fields=_carrier_platform_fields(config.scan_param),
+        integer_fields=(
+            "platform_index",
+            "first_candidate",
+            "last_candidate",
+            "candidate_count",
+            "touched_maximum_lag",
+        ),
+        scan_value_field=config.scan_param,
+        quantities={"frequency": "coherence_frequency"},
+        payload_key="platform_rows",
+        payload_meta=metadata,
+        attributes={"table": "band_limited_carrier_platforms"},
+    )
+    return {
+        label: result,
+        f"{label}.candidates": candidate,
+        f"{label}.platforms": platform,
+    }
+
+
 class BandLimitedCarrierAnalyzer(Analyzer):
     """Cross-result adaptive carrier estimator for saved PSD datasets."""
 
@@ -1273,7 +1324,12 @@ class BandLimitedCarrierAnalyzer(Analyzer):
             metadata=metadata,
         )
         payload, _ = self._compute_payload(typed, backend, context=context)
-        products = self.build_products(payload, scan_size=None, label=label)
+        products = _build_band_limited_carrier_products(
+            payload,
+            scan_size=None,
+            label=label,
+            config=config,
+        )
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
         return products
@@ -1320,95 +1376,16 @@ class BandLimitedCarrierAnalyzer(Analyzer):
             ),
         )
 
-    def build_products(
-        self,
-        payload: Any,
-        *,
-        scan_size: int | None,
-        label: str,
-    ) -> dict[str, Dataset] | None:
-        """Build graph-ready products for results and their audit tables."""
-        if not isinstance(payload, dict):
-            raise TypeError("band_limited_carrier payload must be a mapping")
-        config = cast(BandLimitedCarrierConfig, self.config)
-        rows = payload.get("carrier_rows", [])
-        candidates = payload.get("candidate_rows", [])
-        platforms = payload.get("platform_rows", [])
-        if not all(isinstance(value, list) for value in (rows, candidates, platforms)):
-            raise TypeError("band_limited_carrier row tables must be lists")
-        metadata = {
-            key: value
-            for key, value in payload.items()
-            if key not in {"carrier_rows", "candidate_rows", "platform_rows"}
-        }
-        result = assemble_row_table_product(
-            label,
-            rows,
-            scan_size=scan_size,
-            fields=_carrier_result_fields(config.scan_param),
-            integer_fields=(
-                "consensus_count",
-                "lag_points",
-                "touched_maximum_lag",
-                "platform_count",
-                "tracked_platform_index",
-            ),
-            scan_value_field=config.scan_param,
-            quantities={"frequency": "coherence_frequency"},
-            payload_key="carrier_rows",
-            payload_meta=metadata,
-            attributes={"table": "band_limited_carrier"},
-        )
-        candidate = assemble_row_table_product(
-            f"{label}.candidates",
-            candidates,
-            scan_size=scan_size,
-            fields=_carrier_candidate_fields(config.scan_param),
-            integer_fields=("lag_points", "touched_maximum_lag"),
-            scan_value_field=config.scan_param,
-            quantities={"frequency": "coherence_frequency"},
-            payload_key="candidate_rows",
-            payload_meta=metadata,
-            attributes={"table": "band_limited_carrier_candidates"},
-        )
-        platform = assemble_row_table_product(
-            f"{label}.platforms",
-            platforms,
-            scan_size=scan_size,
-            fields=_carrier_platform_fields(config.scan_param),
-            integer_fields=(
-                "platform_index",
-                "first_candidate",
-                "last_candidate",
-                "candidate_count",
-                "touched_maximum_lag",
-            ),
-            scan_value_field=config.scan_param,
-            quantities={"frequency": "coherence_frequency"},
-            payload_key="platform_rows",
-            payload_meta=metadata,
-            attributes={"table": "band_limited_carrier_platforms"},
-        )
-        return {
-            label: result,
-            f"{label}.candidates": candidate,
-            f"{label}.platforms": platform,
-        }
-
     def _compute_payload(
         self,
-        data: Any,
+        data: SpectralScanInput,
         backend: BackendBase,
         *,
         context: Any | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         config = cast(BandLimitedCarrierConfig, self.config)
         center_config = config.center
-        loaded_results: Any = (
-            data.points
-            if isinstance(data, SpectralScanInput)
-            else load_sde_results(data)
-        )
+        loaded_results = data.points
         if not loaded_results:
             raise QPhaseError("band_limited_carrier received no input results")
 
@@ -1435,13 +1412,11 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                     "output_dir": None,
                 }
             )
-            ridge_result = cast(
-                AnalysisResult,
-                SpectralRidgeAnalyzer(ridge_config).analyze(
-                    data, backend, context=context
-                ),
+            ridge_payload, _ = SpectralRidgeAnalyzer(ridge_config)._compute_payload(
+                data,
+                backend,
+                context=context,
             )
-            ridge_payload = ridge_result.data_dict
             measurement_name = (
                 "trace" if config.readout == "trace" else f"mode_{config.readout}"
             )
@@ -1460,20 +1435,9 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         reference_orientation: FrequencyOrientation | None = None
         for point_index, loaded in enumerate(loaded_results, start=1):
             check_execution_cancelled(context)
-            if isinstance(loaded, SpectralPoint):
-                scan_value = loaded.scan_value
-                job_name = loaded.job_name
-            else:
-                params = loaded.meta.get("params", {})
-                if config.scan_param not in params:
-                    raise QPhaseError(
-                        f"{loaded.path} meta.params is missing {config.scan_param!r}"
-                    )
-                scan_value = params[config.scan_param]
-                job_name = loaded.job_name
-            axis, spectrum, payload = _extract_readout(
-                loaded, config.psd_key, config.readout
-            )
+            scan_value = loaded.scan_value
+            job_name = loaded.job_name
+            axis, spectrum, payload = _extract_readout(loaded, config.readout)
             orientation = resolve_frequency_orientation(payload)
             if reference_orientation is None:
                 reference_orientation = orientation
@@ -1699,8 +1663,9 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                     fieldnames=platform_fieldnames,
                 )
                 written["carrier_platforms"] = str(path)
+        # Empty scans use this analyser's declared frequency-axis convention.
         metadata = orientation_metadata(
-            reference_orientation or resolve_frequency_orientation(None)
+            reference_orientation or DEFAULT_FREQUENCY_ORIENTATION
         )
         return (
             {
@@ -1725,7 +1690,3 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                 **metadata,
             },
         )
-
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
-        payload, metadata = self._compute_payload(data, backend)
-        return AnalysisResult(data_dict=payload, meta=metadata)

@@ -1,7 +1,7 @@
 """qphase_sde: Typed Analyser Product Assembly (2.0)
 ---------------------------------------------------------
-Shared machinery turning legacy ``analyze()`` payloads into typed data
-products. Analyser-owned builders declare their payload's trailing dims,
+Shared machinery turning analyser payloads into typed data products.
+Analyser-owned builders declare their payload's trailing dims,
 quantities, uncertainties and sampling bases; this module handles the
 mechanics they all share:
 
@@ -11,10 +11,8 @@ mechanics they all share:
 - assembling a :class:`~qphase.data.ProductSchema` with named, role-typed
   axes and materializing the dataset.
 
-The legacy bridge (``bridge="legacy_analysis/1"``) uses the same mechanics
-with positional axes only, so bridged and graph-ready products round-trip
-through the legacy view identically. Builders never pickle payloads and
-never copy arrays beyond the scan stacking the engine already performed.
+Builders never pickle payloads and never copy arrays beyond the scan stacking
+the engine already performed.
 """
 
 from __future__ import annotations

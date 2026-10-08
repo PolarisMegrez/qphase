@@ -5,6 +5,7 @@ from qphase_sde.analyser.coherence_matrix import (
     CoherenceMatrixConfig,
 )
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
+from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
 
@@ -12,13 +13,42 @@ def _analyzer(**kwargs):
     return CoherenceMatrixAnalyzer(CoherenceMatrixConfig(**kwargs))
 
 
+def _product_payload(product):
+    payload = {}
+    values = list(product.attributes.get("payload_meta", {}).items()) + [
+        (variable.name, product.handle(variable.name).materialize())
+        for variable in product.variables
+    ]
+    for name, value in values:
+        if np.asarray(value).ndim == 0:
+            value = np.asarray(value).item()
+        target = payload
+        parts = name.split(".")
+        for part in parts[:-1]:
+            key = int(part) if part.isdigit() else part
+            target = target.setdefault(key, {})
+        target[parts[-1]] = value
+    return payload
+
+
+def _payload(analyzer, trajectory: TrajectorySet):
+    product = analyzer.execute(
+        {
+            "trajectories": _trajectory_product(
+                trajectory, scan_size=None, n_traj_per_point=None
+            )
+        },
+        backend=NumpyBackend(),
+        label="coherence_matrix",
+    )["coherence_matrix"]
+    return product, _product_payload(product)
+
+
 def test_coherence_matrix_reports_rank_one_modal_purity():
     vector = np.asarray([1.0 + 1.0j, 2.0 - 0.5j])
     data = np.broadcast_to(vector, (6, 64, 2)).copy()
-    payload = (
-        _analyzer(time_blocks=4)
-        .analyze(TrajectorySet(data, t0=10.0, dt=0.5), NumpyBackend())
-        .data_dict
+    _, payload = _payload(
+        _analyzer(time_blocks=4), TrajectorySet(data, t0=10.0, dt=0.5)
     )
 
     expected = np.outer(vector, vector.conj())
@@ -34,10 +64,8 @@ def test_coherence_matrix_distinguishes_incoherent_modal_mixture():
     data = np.zeros((8, 32, 2), dtype=complex)
     data[:4, :, 0] = 1.0
     data[4:, :, 1] = 1.0
-    payload = (
-        _analyzer(time_blocks=4, min_block_samples=4)
-        .analyze(TrajectorySet(data), NumpyBackend())
-        .data_dict
+    _, payload = _payload(
+        _analyzer(time_blocks=4, min_block_samples=4), TrajectorySet(data)
     )
 
     np.testing.assert_allclose(payload["matrix"], 0.5 * np.eye(2))
@@ -53,7 +81,7 @@ def test_coherence_matrix_resolves_physical_recorded_modes():
     data[:, :, 0] = 2.0
     data[:, :, 1] = 3.0j
     trajectory = TrajectorySet(data, meta={"mode_indices": [2, 5]})
-    payload = _analyzer(modes=[5]).analyze(trajectory, NumpyBackend()).data_dict
+    _, payload = _payload(_analyzer(modes=[5]), trajectory)
 
     assert payload["modes"] == [5]
     np.testing.assert_allclose(payload["matrix"], [[9.0]])
@@ -65,14 +93,16 @@ def test_coherence_matrix_accumulator_matches_full_ensemble():
     data = rng.normal(size=(11, 48, 3)) + 1j * rng.normal(size=(11, 48, 3))
     trajectory = TrajectorySet(data, t0=5.0, dt=0.25)
     analyzer = _analyzer(time_blocks=6, min_block_samples=4)
-    full = analyzer.analyze(trajectory, NumpyBackend()).data_dict
+    _, full = _payload(analyzer, trajectory)
     accumulator = analyzer.create_result_accumulator()
     for start, stop in ((0, 3), (3, 7), (7, 11)):
-        partial = analyzer.analyze(
-            TrajectorySet(data[start:stop], t0=5.0, dt=0.25), NumpyBackend()
-        ).data_dict
-        accumulator.update(partial)
-    merged = accumulator.finalize()
+        partial, _ = _payload(
+            analyzer, TrajectorySet(data[start:stop], t0=5.0, dt=0.25)
+        )
+        accumulator.consume_product(partial)
+    products = accumulator.finalize_product("coherence_matrix")
+    assert products is not None
+    merged = _product_payload(products["coherence_matrix"])
 
     for key in (
         "matrix",

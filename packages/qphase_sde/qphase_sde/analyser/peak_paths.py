@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any, ClassVar, cast
 
 import numpy as np
 from pydantic import ConfigDict, Field
 from qphase.backend.base import BackendBase
-from qphase.core.aggregation import DirectoryInputResult
 from qphase.core.protocols import (
     PluginConfigBase,
     PluginManifest,
-    ResultProtocol,
     SubpluginSlot,
 )
 from qphase.data import (
@@ -21,14 +18,12 @@ from qphase.data import (
     Dataset,
     ProductDeclaration,
     ProductRequirement,
-    load_bundle,
 )
 
 from ..contracts.analyser import AnalyserExecutionCapabilities, WorkEstimate
 from ..contracts.peaks import PEAK_PATH_PRODUCT, PeakPathResult
 from ..peak_tracker import materialize_path_product
 from .base import Analyzer
-from .result import AnalysisResult
 
 __all__ = ["PeakPathsAnalyzer", "PeakPathsAnalyzerConfig"]
 
@@ -44,21 +39,6 @@ class PeakPathsAnalyzerConfig(PluginConfigBase):
         default_factory=lambda: {"ridge": {}},
         description="Configuration of the peak-tracker child plugin",
     )
-
-
-def _products_from_input(data: Any) -> Mapping[str, Dataset]:
-    if isinstance(data, DirectoryInputResult):
-        restored = load_bundle(Path(data.path))
-        products = getattr(restored, "products", None)
-    else:
-        products = getattr(data, "products", None)
-        if products is None and isinstance(data, Mapping):
-            products = data
-    if not isinstance(products, Mapping) or not all(
-        isinstance(value, Dataset) for value in products.values()
-    ):
-        raise ValueError("peak_paths requires a typed SDE data bundle input")
-    return products
 
 
 def _make_tracker(config: PeakPathsAnalyzerConfig, injected: Any | None) -> Any:
@@ -217,50 +197,3 @@ class PeakPathsAnalyzer(Analyzer):
     def work_estimate(self, request: Any) -> WorkEstimate:
         del request
         return WorkEstimate(unit="candidate", total=None)
-
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
-        del backend
-        config = cast(PeakPathsAnalyzerConfig, self.config)
-        products = _products_from_input(data)
-        candidates = products.get(config.candidates_key)
-        if candidates is None:
-            raise ValueError(
-                f"peak_paths input has no product {config.candidates_key!r}"
-            )
-        paths, candidate_count, scan_count = self._compute_paths(candidates)
-        return AnalysisResult(
-            data_dict={
-                "paths": paths,
-                "candidate_count": candidate_count,
-            },
-            meta={"scan_param": config.scan_param, "scan_count": scan_count},
-        )
-
-    def build_products(
-        self,
-        payload: Any,
-        *,
-        scan_size: int | None,
-        label: str,
-    ) -> dict[str, Dataset] | None:
-        del scan_size
-        if not isinstance(payload, Mapping):
-            raise TypeError("peak_paths payload must be a mapping")
-        paths = payload.get("paths")
-        if not isinstance(paths, list) or not all(
-            isinstance(path, PeakPathResult) for path in paths
-        ):
-            raise TypeError("peak_paths payload must contain PeakPathResult rows")
-        return {
-            label: materialize_path_product(
-                paths,
-                candidate_count=int(payload["candidate_count"]),
-                label=label,
-                source_product=str(
-                    payload.get(
-                        "_source_product",
-                        cast(PeakPathsAnalyzerConfig, self.config).candidates_key,
-                    )
-                ),
-            )
-        }

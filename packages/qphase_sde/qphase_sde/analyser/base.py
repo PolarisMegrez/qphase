@@ -11,10 +11,8 @@ class that consumes them. ``Analyzer`` satisfies
 ``execution_capabilities``/``workspace``/``work_estimate``/
 ``input_requirements``/``output_specs``/``reducer``.
 
-The engine's typed graph invokes ``execute()``. Built-in implementations may
-share numerical kernels with the legacy direct ``analyze()`` API, but graph
-execution consumes and returns typed Datasets without passing through an
-``AnalysisResult``.
+The engine's typed graph invokes ``execute()``; graph execution consumes and
+returns typed Datasets without any intermediate legacy container.
 
 Public API
 ----------
@@ -28,7 +26,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, ClassVar, Literal
 
 from qphase.backend.base import BackendBase
-from qphase.core.protocols import PluginBase, PluginConfigBase, ResultProtocol
+from qphase.core.protocols import PluginBase, PluginConfigBase
 from qphase.data import (
     DataKind,
     Dataset,
@@ -199,14 +197,12 @@ class Analyzer(PluginBase, ABC):
     """Base class for analyzers.
 
     All analyzers must inherit from this class and implement the abstract
-    :meth:`execute` typed entry. Built-ins may retain the temporary direct
-    :meth:`analyze` API. Together with
+    :meth:`execute` typed entry. Together with
     the subclass-declared ``input_requirements``/``output_specs`` and the
     ``execution_capabilities``/``workspace``/``work_estimate``/``reducer``
     defaults below, this satisfies
     ``qphase_sde.contracts.analyser:AnalyserDeclarationContract``;
-    ``execute()`` is the graph-facing typed entry and has no default legacy
-    adapter.
+    ``execute()`` is the single graph-facing execution entry.
     """
 
     config_schema: ClassVar[type[PluginConfigBase]]
@@ -276,23 +272,3 @@ class Analyzer(PluginBase, ABC):
         context: Any | None = None,
     ) -> Mapping[str, Dataset]:
         """Consume typed products and return declared typed products."""
-
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
-        """Run the temporary direct analysis API when a plugin supports it.
-
-        Parameters
-        ----------
-        data : Any
-            Input data for analysis.
-        backend : BackendBase
-            Backend to use for computation.
-
-        Returns
-        -------
-        ResultProtocol
-            Analysis results.
-
-        """
-        raise NotImplementedError(
-            f"analyser {type(self).__name__!r} only supports typed execute()"
-        )

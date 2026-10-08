@@ -1,8 +1,7 @@
 """qphase_sde: Lorentzian Fitter (cross-job analyzer)
 ---------------------------------------------------------
-Analyzer plugin that operates on aggregated SDE results (or a result directory)
-to perform cross-job Lorentzian fitting, PSD merging, and distribution
-collection. It replaces the legacy root-level ``qphase_sde.postprocess`` module.
+Analyzer plugin that operates on typed spectral scan inputs to perform
+cross-job Lorentzian fitting, PSD merging, and distribution collection.
 
 Public API
 ----------
@@ -26,7 +25,7 @@ from qphase.core.aggregation import (
     write_table_csv,
 )
 from qphase.core.errors import QPhaseError
-from qphase.core.protocols import PluginConfigBase, ResultProtocol
+from qphase.core.protocols import PluginConfigBase
 from qphase.data import (
     DataKind,
     Dataset,
@@ -42,13 +41,11 @@ from ..products import (
 )
 from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
+    DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
     orientation_metadata,
     resolve_frequency_orientation,
 )
-from .result import AnalysisResult
-from .result_input import LoadedResult
-from .result_input import load_sde_results as _load_input
 from .spectral_input import SpectralPoint, SpectralScanInput, spectral_scan_input
 
 __all__ = ["LorentzFitter", "LorentzFitterConfig"]
@@ -455,31 +452,13 @@ def fit_lorentzian(
 
 
 def extract_psd_trace(
-    loaded: LoadedResult | SpectralPoint,
+    loaded: SpectralPoint,
     *,
-    psd_key: str = "psd",
     mode: int = 0,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     """Extract one mode trace from an analyser PSD payload."""
-    if isinstance(loaded, SpectralPoint):
-        trace, _, _ = loaded.readout(mode)
-        return loaded.axis, np.asarray(trace).reshape(-1), dict(loaded.attributes)
-    if psd_key not in loaded.analysis:
-        raise QPhaseError(f"{loaded.path} has no analysis[{psd_key!r}] payload")
-
-    psd_payload = loaded.analysis[psd_key]
-    axis = np.asarray(psd_payload["axis"], dtype=float).reshape(-1)
-    psd_matrix = np.asarray(psd_payload["psd"], dtype=float)
-    modes = list(psd_payload.get("modes", []))
-    trace = _extract_mode_column(psd_matrix, modes, mode, loaded.path, "psd")
-
-    trace = np.asarray(trace, dtype=float).reshape(-1)
-    if axis.size != trace.size:
-        raise QPhaseError(
-            f"PSD axis length {axis.size} does not match trace length "
-            f"{trace.size} in {loaded.path}"
-        )
-    return axis, trace, psd_payload
+    trace, _, _ = loaded.readout(mode)
+    return loaded.axis, np.asarray(trace).reshape(-1), dict(loaded.attributes)
 
 
 def _extract_mode_column(
@@ -504,58 +483,69 @@ def _extract_mode_column(
     return np.asarray(matrix[:, mode_index], dtype=float).reshape(-1)
 
 
-def _extract_psd_sigma(
-    payload: dict[str, Any], mode: int, path: Path
-) -> np.ndarray | None:
-    """Extract the standard error field advertised by a PSD payload."""
-    uncertainty = payload.get("uncertainty", {})
-    if not isinstance(uncertainty, dict):
-        uncertainty = {}
-    field = str(uncertainty.get("field", "psd_sem"))
-    if field not in payload:
-        return None
-
-    matrix = np.asarray(payload[field], dtype=float)
-    modes = list(payload.get("modes", []))
-    return _extract_mode_column(matrix, modes, mode, path, field)
-
-
 def _collect_distribution(
-    loaded: LoadedResult | SpectralPoint,
+    loaded: SpectralPoint,
     key: str,
     mode: int,
     scan_param: str,
     scan_value: Any,
     rows: list[dict[str, Any]],
 ) -> None:
-    if isinstance(loaded, SpectralPoint):
-        product = loaded.products.get(key)
-        if product is None:
-            return
-        prefix = f"distributions.{mode}."
-        row: dict[str, Any] = {
-            variable.name.removeprefix(prefix): np.asarray(
-                product.handle(variable.name).materialize()
-            )
-            for variable in product.variables
-            if variable.name.startswith(prefix)
-        }
-        if not row:
-            return
-        row[scan_param] = scan_value
-        row["job_name"] = loaded.job_name
-        rows.append(row)
+    product = loaded.products.get(key)
+    if product is None:
         return
-    payload = loaded.analysis.get(key)
-    if not isinstance(payload, dict):
+    prefix = f"distributions.{mode}."
+    row: dict[str, Any] = {
+        variable.name.removeprefix(prefix): np.asarray(
+            product.handle(variable.name).materialize()
+        )
+        for variable in product.variables
+        if variable.name.startswith(prefix)
+    }
+    if not row:
         return
-    distributions = payload.get("distributions")
-    if not isinstance(distributions, dict) or mode not in distributions:
-        return
-    row = dict(distributions[mode])
     row[scan_param] = scan_value
     row["job_name"] = loaded.job_name
     rows.append(row)
+
+
+def _build_lorentz_products(
+    payload: Any,
+    *,
+    config: LorentzFitterConfig,
+    scan_size: int | None,
+    label: str,
+) -> dict[str, Dataset]:
+    if not isinstance(payload, dict):
+        raise TypeError("lorentz_fitter payload must be a mapping")
+    rows = payload.get("fit_rows", [])
+    if not isinstance(rows, list):
+        raise TypeError("lorentz_fitter fit_rows must be a list")
+    metadata = {key: value for key, value in payload.items() if key != "fit_rows"}
+    product = assemble_row_table_product(
+        label,
+        rows,
+        scan_size=scan_size,
+        fields=[
+            "center",
+            "center_std",
+            "linewidth",
+            "linewidth_std",
+            "base",
+            "base_std",
+            "amplitude",
+            "amplitude_std",
+            "peak_intensity",
+            "peak_intensity_std",
+            "R2",
+            "reduced_chi2",
+        ],
+        scan_value_field=config.scan_param if scan_size is not None else None,
+        payload_key="fit_rows",
+        payload_meta=metadata,
+        attributes={"table": "lorentz_fit"},
+    )
+    return {label: product}
 
 
 class LorentzFitter(Analyzer):
@@ -585,7 +575,9 @@ class LorentzFitter(Analyzer):
             metadata=metadata,
         )
         payload, _ = self._compute_payload(typed, backend, context=context)
-        products = self.build_products(payload, scan_size=None, label=label)
+        products = _build_lorentz_products(
+            payload, config=config, scan_size=None, label=label
+        )
         if not products:
             raise ValueError(f"analyser {label!r} produced no typed products")
         return products
@@ -644,44 +636,9 @@ class LorentzFitter(Analyzer):
             ),
         )
 
-    def build_products(
-        self, payload: Any, *, scan_size: int | None, label: str
-    ) -> dict[str, Dataset] | None:
-        if not isinstance(payload, dict):
-            raise TypeError("lorentz_fitter payload must be a mapping")
-        rows = payload.get("fit_rows", [])
-        if not isinstance(rows, list):
-            raise TypeError("lorentz_fitter fit_rows must be a list")
-        config = cast(LorentzFitterConfig, self.config)
-        metadata = {key: value for key, value in payload.items() if key != "fit_rows"}
-        product = assemble_row_table_product(
-            label,
-            rows,
-            scan_size=scan_size,
-            fields=[
-                "center",
-                "center_std",
-                "linewidth",
-                "linewidth_std",
-                "base",
-                "base_std",
-                "amplitude",
-                "amplitude_std",
-                "peak_intensity",
-                "peak_intensity_std",
-                "R2",
-                "reduced_chi2",
-            ],
-            scan_value_field=config.scan_param if scan_size is not None else None,
-            payload_key="fit_rows",
-            payload_meta=metadata,
-            attributes={"table": "lorentz_fit"},
-        )
-        return {label: product}
-
     def _compute_payload(
         self,
-        data: Any,
+        data: SpectralScanInput,
         backend: BackendBase,
         *,
         context: Any | None = None,
@@ -690,8 +647,8 @@ class LorentzFitter(Analyzer):
 
         Parameters
         ----------
-        data : Any
-            ``AggregateResult``, directory path, or ``DirectoryInputResult``.
+        data : SpectralScanInput
+            Typed spectral scan input.
         backend : BackendBase
             Backend instance (unused; kept for protocol compatibility).
         context : Any, optional
@@ -700,8 +657,8 @@ class LorentzFitter(Analyzer):
 
         Returns
         -------
-        AnalysisResult
-            Result containing fit rows and export metadata.
+        tuple[dict[str, Any], dict[str, Any]]
+            Fit rows and export metadata.
 
         """
         del backend  # not used; we operate on already-computed PSD arrays
@@ -709,9 +666,7 @@ class LorentzFitter(Analyzer):
         if not isinstance(config, LorentzFitterConfig):
             raise RuntimeError("LorentzFitter config not initialized")
 
-        loaded_results: Any = (
-            data.points if isinstance(data, SpectralScanInput) else _load_input(data)
-        )
+        loaded_results = data.points
         if not loaded_results:
             raise QPhaseError("LorentzFitter received no input results")
 
@@ -725,23 +680,11 @@ class LorentzFitter(Analyzer):
 
         for point_index, loaded in enumerate(loaded_results, start=1):
             check_execution_cancelled(context)
-            if isinstance(loaded, SpectralPoint):
-                scan_value = loaded.scan_value
-                job_name = loaded.job_name
-                source_label = "typed PSD product"
-            else:
-                params = loaded.meta.get("params", {})
-                if config.scan_param not in params:
-                    raise QPhaseError(
-                        f"{loaded.path} meta.params is missing {config.scan_param!r}"
-                    )
-                scan_value = params[config.scan_param]
-                job_name = loaded.job_name
-                source_label = str(loaded.path)
+            scan_value = loaded.scan_value
+            job_name = loaded.job_name
+            source_label = "typed PSD product"
 
-            axis, trace, payload = extract_psd_trace(
-                loaded, psd_key=config.psd_key, mode=config.mode
-            )
+            axis, trace, payload = extract_psd_trace(loaded, mode=config.mode)
             orientation = resolve_frequency_orientation(payload)
             if reference_orientation is None:
                 reference_orientation = orientation
@@ -759,18 +702,15 @@ class LorentzFitter(Analyzer):
 
             psd_sigma: np.ndarray | None = None
             if config.uncertainty != "off":
-                if isinstance(loaded, SpectralPoint):
-                    candidate = None
-                    if loaded.psd_sem is not None:
-                        candidate = _extract_mode_column(
-                            loaded.psd_sem,
-                            list(loaded.modes),
-                            config.mode,
-                            source_label,
-                            "psd_sem",
-                        )
-                else:
-                    candidate = _extract_psd_sigma(payload, config.mode, loaded.path)
+                candidate = None
+                if loaded.psd_sem is not None:
+                    candidate = _extract_mode_column(
+                        loaded.psd_sem,
+                        list(loaded.modes),
+                        config.mode,
+                        source_label,
+                        "psd_sem",
+                    )
                 usable = (
                     candidate is not None
                     and candidate.size == axis.size
@@ -903,7 +843,7 @@ class LorentzFitter(Analyzer):
                 "psd_sem_columns": psd_sem_columns,
                 "axis": reference_axis,
                 **orientation_metadata(
-                    reference_orientation or resolve_frequency_orientation(None)
+                    reference_orientation or DEFAULT_FREQUENCY_ORIENTATION
                 ),
                 "written": {k: str(v) for k, v in written.items()},
             },
@@ -912,14 +852,10 @@ class LorentzFitter(Analyzer):
                 "mode": config.mode,
                 "count": len(loaded_results),
                 **orientation_metadata(
-                    reference_orientation or resolve_frequency_orientation(None)
+                    reference_orientation or DEFAULT_FREQUENCY_ORIENTATION
                 ),
             },
         )
-
-    def analyze(self, data: Any, backend: BackendBase) -> ResultProtocol:
-        payload, metadata = self._compute_payload(data, backend)
-        return AnalysisResult(data_dict=payload, meta=metadata)
 
     def _resolve_output_dir(self, config: LorentzFitterConfig) -> Path | None:
         """Return the output directory, preferring the engine-injected value."""

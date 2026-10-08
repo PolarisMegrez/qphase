@@ -12,6 +12,10 @@ from qphase.data import (
     AxisRole,
     AxisSchema,
     DataKind,
+    ExternalInputBinding,
+    ProductDeclaration,
+    ProductGraph,
+    ProductNode,
     ProductSchema,
     StatisticsDataset,
     VariableSchema,
@@ -19,21 +23,23 @@ from qphase.data import (
     load_bundle,
 )
 from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
+from qphase_sde.analyser.base import (
+    Analyzer,
+    map_trajectory_product,
+    trajectory_arrays,
+    trajectory_requirement,
+)
 from qphase_sde.analyser.coherence_carrier import CoherenceCarrierAnalyzer
 from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyzer
-from qphase_sde.analyser.lorentz_fitter import _load_input
 from qphase_sde.analyser.moment_statistics import MomentStatisticsAnalyzer
 from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyzer
-from qphase_sde.analyser.result import AnalysisResult
 from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.engine import Engine, EngineConfig
-from qphase_sde.errors import SDEExecutionError
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 from qphase_sde.peak_finder import ScipyPeakFinder
-from qphase_sde.result import SDEResult, bundle_from_result
-from qphase_sde.runtime.scan import SDEScanResult
+from qphase_sde.result import SDEDataBundle, _trajectory_product
 
 
 def test_typed_scan_refuses_ragged_table_concatenation():
@@ -107,13 +113,83 @@ class ScannedDummyModel:
         return np.zeros(y.shape + (1,))
 
 
-class MeanAnalyzer:
+class MeanAnalyzer(Analyzer):
     name = "mean"
     config = SimpleNamespace(expected_freq_max=None)
 
-    def analyze(self, data, backend):
-        del backend
-        return AnalysisResult({"mean": float(np.mean(np.asarray(data.data)))})
+    def input_requirements(self):
+        return [trajectory_requirement(value_domain=None)]
+
+    def execution_capabilities(self):
+        from qphase_sde.contracts.analyser import AnalyserExecutionCapabilities
+
+        return AnalyserExecutionCapabilities(supports_scan_tiling=True)
+
+    def output_specs(self, *, label):
+        return (
+            ProductDeclaration(name=label, kind=DataKind.STATISTICS, fields=["mean"]),
+        )
+
+    def execute(
+        self, inputs, *, backend, label, metadata=None, context=None
+    ):
+        del backend, metadata
+        trajectory = inputs["trajectories"]
+
+        def compute(point):
+            values, _, _, _ = trajectory_arrays(point)
+            schema = ProductSchema(
+                kind=DataKind.STATISTICS,
+                variables=[
+                    VariableSchema(
+                        name="mean", dtype="<f8", value_domain="real", dims=()
+                    )
+                ],
+                attributes={"graph_ready": True},
+            )
+            return {
+                label: StatisticsDataset.from_arrays(
+                    schema,
+                    {"mean": np.asarray(float(np.mean(np.asarray(values))))},
+                    owner="test.mean",
+                )
+            }
+
+        return map_trajectory_product(trajectory, compute, context=context)
+
+
+def _mean_graph() -> ProductGraph:
+    return ProductGraph(
+        nodes=[
+            ProductNode(
+                node_id="analyser.mean",
+                producer="analyser:mean",
+                requirements=[trajectory_requirement(value_domain=None)],
+                outputs=list(MeanAnalyzer().output_specs(label="mean")),
+                publish_outputs=["mean"],
+            )
+        ],
+        external_inputs=[
+            ExternalInputBinding(
+                consumer="analyser.mean",
+                requirement="trajectories",
+                source="input",
+                product="trajectories",
+            )
+        ],
+    )
+
+
+def _graph(analyser_config):
+    from qphase.core.registry import discovery, registry
+    from qphase_sde.graph import compile_product_graph
+
+    discovery.discover_plugins()
+    graph = compile_product_graph(
+        plugin_config={"analyser": analyser_config}, registry=registry
+    )
+    assert graph is not None
+    return graph
 
 
 class StochasticScannedModel(ScannedDummyModel):
@@ -220,6 +296,7 @@ def test_sde_engine_analyzes_resource_limited_scan_tiles():
             "model": model,
             "analyser": {"mean": MeanAnalyzer()},
         },
+        product_graph=_mean_graph(),
     )
     context = SimpleNamespace(
         parameter_grid=_grid(),
@@ -237,7 +314,10 @@ def test_sde_engine_analyzes_resource_limited_scan_tiles():
     mean = result.products["mean"].handle("mean").materialize()
     assert len(mean) == 2
     assert result.metadata["execution_plan"]["scan_tile_size"] == 1
-    assert result.metadata["rng_strategy"] == "logical_trajectory_group_seedsequence_v1"
+    assert (
+        result.metadata["execution_plan"]["rng_strategy"]
+        == "logical_trajectory_group_seedsequence_v1"
+    )
     assert engine.config.n_traj == 1000
     assert model.params == {"rate": 1.0}
 
@@ -261,6 +341,7 @@ def test_sde_scan_rng_is_independent_of_tile_size():
                 "model": model,
                 "analyser": {"mean": MeanAnalyzer()},
             },
+            product_graph=_mean_graph(),
         )
         context = SimpleNamespace(
             parameter_grid=_four_point_grid(),
@@ -295,14 +376,11 @@ def test_sde_scan_rng_is_independent_of_tile_size():
 
 
 def test_scan_bundle_saves_finite_shards(tmp_path):
-    combined = SDEResult(
-        trajectory=SimpleNamespace(
+    trajectory = SimpleNamespace(
             data=np.zeros((8, 3, 1)),
             t0=0.0,
             dt=0.1,
             meta={},
-        ),
-        analysis={"psd": [{"value": index} for index in range(4)]},
     )
     grid = ScanSpec.model_validate(
         {
@@ -314,8 +392,17 @@ def test_scan_bundle_saves_finite_shards(tmp_path):
             }
         }
     ).compile()
-    scan_result = SDEScanResult(combined, grid, {"rate": 1.0}, 2)
-    bundle = bundle_from_result(scan_result, provenance=SDEProvenance(dt=0.1))
+    bundle = SDEDataBundle(
+        {
+            "trajectories": _trajectory_product(
+                trajectory, scan_size=4, n_traj_per_point=2
+            )
+        },
+        SDEProvenance(dt=0.1),
+        scan_axes=dict(grid.axes),
+        scan_shape=grid.shape,
+        n_traj_per_point=2,
+    )
 
     report = bundle.save_dataset(
         tmp_path / "sde",
@@ -328,21 +415,6 @@ def test_scan_bundle_saves_finite_shards(tmp_path):
     loaded = load_bundle(tmp_path / "sde")
     assert loaded.shape == (4,)
     assert loaded.point_view((3,)).metadata["scan_point"]["rate"] == 4.0
-
-
-def test_lorentz_loader_consumes_sde_dataset_views():
-    combined = SDEResult(
-        trajectory=None,
-        meta={"params": {"rate": 1.0}},
-        analysis={"psd": [{"frequency": [0.0]}, {"frequency": [0.0]}]},
-    )
-    dataset = SDEScanResult(combined, _grid(), {"rate": 1.0}, 1)
-    bundle = bundle_from_result(dataset, provenance=SDEProvenance(dt=1.0))
-
-    loaded = _load_input(bundle)
-
-    assert len(loaded) == 2
-    assert [item.meta["params"]["rate"] for item in loaded] == [1.0, 2.0]
 
 
 def test_trajectory_batch_size_does_not_change_psd_random_streams():
@@ -367,6 +439,7 @@ def test_trajectory_batch_size_does_not_change_psd_random_streams():
                 "model": model,
                 "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
             },
+            product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
         )
         result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
         psd = _product_arrays(result.products["psd"])
@@ -421,6 +494,7 @@ def test_off_auto_and_required_batching_share_random_streams():
                 "model": model,
                 "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
             },
+            product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
         )
         result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
         return _product_arrays(result.products["psd"]), result.metadata[
@@ -462,6 +536,7 @@ def test_tail_rng_group_keeps_batching_invariance():
                 "model": model,
                 "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
             },
+            product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
         )
         result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
         return _product_arrays(result.products["psd"]), result.metadata[
@@ -505,6 +580,7 @@ def test_required_batching_falls_back_to_full_group_plus_tail():
                 "model": model,
                 "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
             },
+            product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
         )
         result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
         return _product_arrays(result.products["psd"]), result.metadata[
@@ -544,6 +620,7 @@ def test_scan_fused_and_batched_paths_share_point_streams():
                 "model": model,
                 "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
             },
+            product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
         )
         result = engine.run(
             context=SimpleNamespace(
@@ -589,6 +666,7 @@ def test_scan_runs_trajectory_batches_inside_each_parameter_point():
             "model": model,
             "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
         },
+        product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
     )
 
     result = engine.run(
@@ -758,6 +836,16 @@ def test_allan_variance_runs_through_engine_trajectory_batches():
                 )
             },
         },
+        product_graph=_graph(
+            {
+                "allan_variance": {
+                    "modes": [0],
+                    "points": 5,
+                    "min_windows": 2,
+                    "min_independent_windows": 1,
+                }
+            }
+        ),
     )
 
     result = engine.run(
@@ -803,6 +891,15 @@ def test_coherence_matrix_runs_through_engine_trajectory_batches():
                 )
             },
         },
+        product_graph=_graph(
+            {
+                "coherence_matrix": {
+                    "modes": [0],
+                    "time_blocks": 2,
+                    "min_block_samples": 2,
+                }
+            }
+        ),
     )
 
     result = engine.run(
@@ -847,6 +944,17 @@ def test_quadratic_moments_run_through_engine_trajectory_batches():
                 )
             },
         },
+        product_graph=_graph(
+            {
+                "quadratic_moments": {
+                    "observables": {
+                        "occupation": {"matrix": [[1.0]], "center": 0.25}
+                    },
+                    "time_blocks": 2,
+                    "min_block_samples": 2,
+                }
+            }
+        ),
     )
 
     result = engine.run(
@@ -1094,6 +1202,7 @@ def test_sde_progress_uses_stable_trajectory_step_units():
             "model": model,
             "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
         },
+        product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
     )
 
     engine.run(
@@ -1114,7 +1223,7 @@ def test_sde_progress_uses_stable_trajectory_step_units():
     assert {event.unit for event in sampling} == {"trajectory-step"}
     assert {event.total for event in sampling} == {2 * 128 * 4}
     assert sampling[-1].completed == 2 * 128 * 4
-    assert any(event.stage == "spectral-analysis" for event in events)
+    assert any(event.stage == "analyser.psd" for event in events)
     plan_status = next(
         event
         for event in events
@@ -1143,6 +1252,7 @@ def _psd_engine(**config_overrides):
             "model": ScannedDummyModel(),
             "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
         },
+        product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
     )
     return engine
 
@@ -1192,11 +1302,11 @@ def test_singleton_scan_with_trajectory_batching_keeps_products():
             atol=1e-15,
         )
 
-    # The per-point view drops the scan axis and rebuilds the legacy payload.
-    legacy = batched.point_view((0,)).legacy_result()
-    payload = legacy.analysis["psd"]
-    assert payload["axis"].shape == payload["psd"].shape[:1]
-    assert payload["psd"].shape == payload["axis"].shape + (1,)
+    point_product = batched.point_view((0,)).products["psd"]
+    axis = point_product.handle("axis").materialize()
+    values = point_product.handle("psd").materialize()
+    assert axis.shape == values.shape[:1]
+    assert values.shape == axis.shape + (1,)
 
 
 def test_singleton_scan_without_batching_keeps_scan_axis():
@@ -1238,13 +1348,13 @@ def test_no_grid_run_products_stay_non_scan():
     assert "dropped_products" not in result.metadata
 
 
-def test_engine_fails_when_analyser_builds_no_product(monkeypatch):
-    """A registered analyser whose builder produces nothing fails the job."""
+def test_engine_fails_when_analyser_execute_builds_no_product(monkeypatch):
+    """A registered analyser whose typed execution returns nothing fails."""
     analyser = PsdAnalyzer(kind="complex", modes=[0])
     monkeypatch.setattr(
         analyser,
-        "build_products",
-        lambda payload, *, scan_size, label: None,
+        "execute",
+        lambda inputs, *, backend, label, metadata=None, context=None: {},
     )
     engine = Engine(
         config=EngineConfig(
@@ -1262,9 +1372,10 @@ def test_engine_fails_when_analyser_builds_no_product(monkeypatch):
             "model": ScannedDummyModel(),
             "analyser": {"psd": analyser},
         },
+        product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
     )
 
-    with pytest.raises(SDEExecutionError, match="'psd'"):
+    with pytest.raises(ValueError, match="returned products"):
         engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
 
 
@@ -1540,7 +1651,6 @@ def _peaks_plan(graph, analysers, memory_limit_mib):
         resources=SimpleNamespace(
             memory_limit_mib=memory_limit_mib, gpu_memory_fraction=None
         ),
-        typed_execution=True,
         product_graph=graph,
     )
 
