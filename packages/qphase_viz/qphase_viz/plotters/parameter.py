@@ -20,12 +20,21 @@ def _get_psd_analyzer_classes():
     """Lazy import of PsdAnalyzer to keep qphase_sde optional."""
     try:
         from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
+        from qphase_sde.peak_finder import ScipyPeakFinder
+        from qphase_sde.result import _trajectory_product
+        from qphase_sde.spectral_estimator import create_builtin_estimator
     except ImportError as e:
         raise ImportError(
             "Parameter evolution from raw trajectories requires "
             "qphase-viz[sde] (qphase-sde)."
         ) from e
-    return PsdAnalyzer, PsdAnalyzerConfig
+    return (
+        PsdAnalyzer,
+        PsdAnalyzerConfig,
+        ScipyPeakFinder,
+        _trajectory_product,
+        create_builtin_estimator,
+    )
 
 
 class ParameterEvolutionPlotter(PlotterProtocol):
@@ -125,22 +134,41 @@ class ParameterEvolutionPlotter(PlotterProtocol):
         traj = data
         if spec.metric.startswith("psd_"):
             # We need PSD
-            PsdAnalyzer, PsdAnalyzerConfig = _get_psd_analyzer_classes()
+            (
+                PsdAnalyzer,
+                PsdAnalyzerConfig,
+                ScipyPeakFinder,
+                trajectory_product,
+                create_estimator,
+            ) = _get_psd_analyzer_classes()
             # Configure analyzer
             analyzer_config = PsdAnalyzerConfig(
                 kind="complex",
                 modes=[spec.channel],
                 convention="symmetric",
                 dt=getattr(traj, "dt", 1.0),
-                window=spec.psd_window,
-                find_peaks=True,  # Always find peaks for metric extraction
             )
-            analyzer = PsdAnalyzer(analyzer_config)
-            res = analyzer.analyze(traj, backend=NumpyBackend())
-
-            peaks_info = res.data.get("peaks", {}).get(spec.channel, {})
-            p_vals = peaks_info.get("values", [])
-            p_freqs = peaks_info.get("frequencies", [])
+            analyzer = PsdAnalyzer(
+                analyzer_config,
+                subplugins={
+                    "estimator": create_estimator(
+                        "periodogram", {"window": spec.psd_window}
+                    )
+                },
+            )
+            trajectory = trajectory_product(
+                traj, scan_size=None, n_traj_per_point=None
+            ).point_view(scan=0)
+            product = analyzer.execute(
+                {"trajectories": trajectory},
+                backend=NumpyBackend(),
+                label="psd",
+            )["psd"]
+            axis = product.handle("axis").materialize()
+            psd = product.handle("psd").materialize()[:, 0]
+            peaks = ScipyPeakFinder().find_peaks(axis, psd)
+            p_vals = peaks.values
+            p_freqs = peaks.frequencies
 
             if len(p_vals) == 0:
                 return np.nan

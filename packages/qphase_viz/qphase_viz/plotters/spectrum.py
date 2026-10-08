@@ -23,12 +23,21 @@ def _get_psd_analyzer_classes():
     """Lazy import of PsdAnalyzer to keep qphase_sde optional."""
     try:
         from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
+        from qphase_sde.peak_finder import ScipyPeakFinder
+        from qphase_sde.result import _trajectory_product
+        from qphase_sde.spectral_estimator import create_builtin_estimator
     except ImportError as e:
         raise ImportError(
             "Power spectrum plotting from raw trajectories requires "
             "qphase-viz[sde] (qphase-sde)."
         ) from e
-    return PsdAnalyzer, PsdAnalyzerConfig
+    return (
+        PsdAnalyzer,
+        PsdAnalyzerConfig,
+        ScipyPeakFinder,
+        _trajectory_product,
+        create_builtin_estimator,
+    )
 
 
 class PowerSpectrumPlotter(PlotterProtocol):
@@ -79,7 +88,13 @@ class PowerSpectrumPlotter(PlotterProtocol):
             peaks_info = psd_data.get("peaks", {})
         else:
             # Compute using PsdAnalyzer
-            PsdAnalyzer, PsdAnalyzerConfig = _get_psd_analyzer_classes()
+            (
+                PsdAnalyzer,
+                PsdAnalyzerConfig,
+                ScipyPeakFinder,
+                trajectory_product,
+                create_estimator,
+            ) = _get_psd_analyzer_classes()
             if hasattr(data, "dt"):
                 dt = data.dt
             elif hasattr(data, "times"):
@@ -100,19 +115,38 @@ class PowerSpectrumPlotter(PlotterProtocol):
                 modes=channels,
                 convention="symmetric",
                 dt=dt,
-                window=spec.window,
-                find_peaks=spec.annotate_peaks,
             )
-            analyzer = PsdAnalyzer(analyzer_config)
+            analyzer = PsdAnalyzer(
+                analyzer_config,
+                subplugins={
+                    "estimator": create_estimator(
+                        "periodogram", {"window": spec.window}
+                    )
+                },
+            )
 
-            # Run analysis
-            # Use NumpyBackend for plotting context
-            res = analyzer.analyze(data, backend=NumpyBackend())
-
-            f = res.data["axis"]
-            Pxx_all = res.data["psd"]
-            available_modes = channels
-            peaks_info = res.data.get("peaks", {})
+            trajectory = trajectory_product(
+                data, scan_size=None, n_traj_per_point=None
+            ).point_view(scan=0)
+            product = analyzer.execute(
+                {"trajectories": trajectory},
+                backend=NumpyBackend(),
+                label="psd",
+            )["psd"]
+            f = product.handle("axis").materialize()
+            Pxx_all = product.handle("psd").materialize()
+            available_modes = [
+                int(mode) for mode in product.handle("modes").materialize()
+            ]
+            finder = ScipyPeakFinder()
+            peaks_info = (
+                {
+                    mode: finder.find_peaks(f, Pxx_all[:, index]).model_dump()
+                    for index, mode in enumerate(available_modes)
+                }
+                if spec.annotate_peaks
+                else {}
+            )
 
         # Plotting
         for ch in channels:
