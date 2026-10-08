@@ -89,8 +89,7 @@ context.progress.update(
 )
 ```
 
-基于百分比的旧 `progress_cb` 仅保留一个兼容周期；新 engine 必须使用
-`ExecutionContext.progress`。
+`ExecutionContext.progress` 是 engine 唯一的进度报告边界。
 
 ### 3. `BackendBase`
 计算后端的契约（参见[后端系统](backend.md)）。

@@ -63,8 +63,7 @@ def run(self, input_data=None, *, context=None):
     ...
 ```
 
-旧 `progress_cb` 参数保留一个兼容周期，但 scheduler 自身始终使用
-`ExecutionContext`。
+scheduler 只通过 `ExecutionContext` 传递结构化进度等运行时服务。
 
 ## 扫描职责
 

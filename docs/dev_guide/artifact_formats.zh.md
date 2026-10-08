@@ -159,27 +159,21 @@ ridge 等结构化结果已在 Phase 5 排期为 typed product。
   shape extent 必须是严格正整数；所有带 `scan` 轴的产品必须等于 bundle 的扁平
   scan size；稳定的 `trajectories`/`primary_spectrum` role 必须分别指向兼容的
   time-series/spectral 产品。
-- 其余 analyser 在 Phase 2 之前仍通过带版本的 `legacy_analysis/1` 桥接
-  （`graph_ready=False`）持久化：数值叶成为变量，嵌套 dict 按点号路径拍
-  平，字符串/JSON 安全叶进入 `attributes["payload_meta"]`，逐点 ragged
-  叶退化为记录在 `per_point_meta` 下的 meta 列表，无法桥接的键报告在
-  `dropped_keys` 下。
+- analyser 输出均为 graph-ready typed products：数值叶是 schema 变量，
+  JSON 安全的描述值位于 `attributes["payload_meta"]`，ragged 领域使用专用
+  typed table 产品。
 - manifest provenance 记录 `engine`、`sde` 下带版本的
   `qphase_sde.provenance/1`、JSON 安全的任务 `meta`（以及
   `meta_dropped`），以及 `qphase` 与 `qphase_sde` 的真实安装 distribution
   `versions`。其中 `dt` 是 SDE 积分步长，不是 core 通用 provenance 字段，
   也不是保存时序的 sample interval；其他资源包定义自己的数值 provenance schema。
 - 导入 `qphase_sde.result` 即注册 `sde/1` bundle adapter，因此干净进程可
-  直接凭 v4 manifest 恢复 scan bundle（shape、轴、逐点参数视图）；
-  `legacy_result()` 渲染单点 1.x 视图，`point_view` 把
+  直接凭 v4 manifest 恢复 scan bundle（shape、轴、逐点参数视图）；`point_view` 把
   `metadata["params"]` 重写为该点的 scan 参数。
 - SDE bundle roles 只记录稳定含义：保留轨迹时的 `trajectories`，以及恰有一个
   频谱产品时的 `primary_spectrum`。其余产品按 kind、quantity 和 fields 选择。
-- peak candidates/paths 当前不声明为 graph-ready 公共产品。分组 ragged schema
-  与 producer 是 ProductGraph executor 之前必须完成的 Global Phase 5A。在此
-  之前，旧 PSD peak metadata 保存为带显式 `source_product` 与
-  `payload_field` 路由的 `legacy_peaks/1` bridge；`legacy_result()` 可还原原始
-  `analysis["psd"]["peaks"]` 字段，但不会把它声明为 graph-ready peak 产品。
+- peak candidates/paths 是 graph-ready 分组 table 产品，包含显式 source-product
+  identity 与 typed 数值列。
 
 ## Service 与 GUI 访问
 

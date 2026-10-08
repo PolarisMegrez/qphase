@@ -70,8 +70,8 @@ def run(self, input_data=None, *, context=None):
     ...
 ```
 
-The legacy `progress_cb` argument remains available during one compatibility
-period, but the scheduler itself uses `ExecutionContext`.
+The scheduler passes runtime services, including structured progress, only
+through `ExecutionContext`.
 
 ## Scan Ownership
 

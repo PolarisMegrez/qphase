@@ -89,8 +89,7 @@ context.progress.update(
 )
 ```
 
-The legacy percent-based `progress_cb` remains available for one compatibility
-cycle. New engines must use `ExecutionContext.progress`.
+`ExecutionContext.progress` is the only engine progress-reporting boundary.
 
 ### 3. `BackendBase`
 The contract for computational backends (see [Backend System](backend.md)).

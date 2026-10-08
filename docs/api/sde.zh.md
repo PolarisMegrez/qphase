@@ -112,19 +112,15 @@ nav_order: 2
 *   `drift(y, t, params) -> Any`：计算漂移向量 $\mathbf{a}(\mathbf{y}, t)$。
 *   `diffusion(y, t, params) -> Any`：计算扩散矩阵 $\mathbf{b}(\mathbf{y}, t)$。
 
-#### `class qphase_sde.model.DiffusiveSDEModel`
+#### `class qphase_sde.model.FunctionalSDEModel`
 
-朗之万型 SDE（连续高斯噪声）的具体实现。
-
-#### `class qphase_sde.model.JumpSDEModel`
-
-跳跃-扩散 SDE 的具体实现。
+基于函数实现的朗之万型 SDE 模型。
 
 ### 转换器
 
-#### `qphase_sde.model.fpe_to_sde(fpe: PhaseSpaceModel) -> DiffusiveSDEModel`
+#### `qphase_sde.model.fpe_to_sde(fpe: PhaseSpaceModel) -> FunctionalSDEModel`
 
-将二阶 PhaseSpaceModel 转换为 DiffusiveSDEModel。
+将二阶 `PhaseSpaceModel` 转换为 `FunctionalSDEModel`。
 *   漂移 $A = D_1$
 *   扩散 $B = \sqrt{D_2}$
 

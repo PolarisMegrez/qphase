@@ -99,7 +99,7 @@ Lorentz 拟合：
 
 编译器会把 analyser `ProductGraph` 冻结到 compiled job。运行时，每个 analyser 直接消费
 命名 `Dataset` 输入并返回其声明的 typed products；engine 不会在节点之间重建
-`SDEResult` 或嵌套 analysis payload。trajectory batching 只对直接消费 trajectory 的图前沿
+非类型化结果容器。trajectory batching 只对直接消费 trajectory 的图前沿
 producer 使用 typed reducer，并按 scan 点维护独立状态；全部批次完成后，归约产品重新进入
 冻结的 ProductGraph，下游节点只执行一次。积分阶段仍保持 scan tile 融合，dense tile 产品由
 core 的 schema 驱动组合函数拼接。observer payload 同样按 scan 点归约，并可通过

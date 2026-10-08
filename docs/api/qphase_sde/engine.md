@@ -111,8 +111,8 @@ post-processing, for example fitting Lorentzians to a logical scan dataset:
 
 The compiler freezes the analyser `ProductGraph` into the compiled job. At
 runtime every analyser consumes named `Dataset` inputs and returns its declared
-typed products directly; the engine does not rebuild `SDEResult` or nested
-analysis payloads between nodes. Trajectory batching applies typed reducers
+typed products directly; no untyped result containers are rebuilt between
+nodes. Trajectory batching applies typed reducers
 only to graph-frontier producers that directly consume trajectories. Reducers
 keep independent state for each scan point; after all batches, their completed
 products re-enter the frozen graph and downstream nodes execute once. Scan

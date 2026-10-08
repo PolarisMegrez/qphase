@@ -27,21 +27,20 @@ $$ \frac{\partial P}{\partial t} = \sum_{n=1}^\infty \frac{(-1)^n}{n!} \frac{\pa
 *   **核心组件：** 漂移向量 ($D_1$)、扩散张量 ($D_2$)，以及可能的高阶项 ($D_3, \dots$)。
 
 ### 第三层：随机模型 (SDE Model)
-**对应类：** `qphase_sde.model.DiffusiveSDEModel`、`qphase_sde.model.JumpSDEModel`
+**对应类：** `qphase_sde.model.FunctionalSDEModel`
 
 描述用于数值仿真的随机轨迹。这是仿真引擎直接使用的层级。
 
-*   **DiffusiveSDEModel (Langevin)：** 适用于仅包含一阶和二阶项的系统（高斯噪声）。
+*   **FunctionalSDEModel (Langevin)：** 基于函数描述一阶和二阶项（高斯噪声）。
     $$ d\mathbf{y} = \mathbf{a}(\mathbf{y}, t) dt + \mathbf{b}(\mathbf{y}, t) d\mathbf{W} $$
-*   **JumpSDEModel：** 适用于将高阶项映射为跳跃过程的系统。
 
 ## 建模工作流
 
 1.  **定义物理模型：** 首先定义一个包含漂移 ($D_1$) 和扩散 ($D_2$) 系数的 `PhaseSpaceModel`（第二层）。
-2.  **自动转换：** 使用 `qphase_sde.model.fpe_to_sde()` 函数将 FPE 模型自动转换为 `DiffusiveSDEModel`（第三层）。
+2.  **自动转换：** 使用 `qphase_sde.model.fpe_to_sde()` 将 FPE 模型转换为 `FunctionalSDEModel`（第三层）。
 3.  **执行仿真：** 将生成的第三层模型传递给 `Engine` 进行计算。
 
-此外，高级用户也可以直接定义 `DiffusiveSDEModel`，以便手动控制噪声分解方式。
+此外，也可以直接定义 `FunctionalSDEModel`，以便手动控制噪声分解方式。
 
 ## 示例：范德波尔振荡器 (Van der Pol Oscillator)
 

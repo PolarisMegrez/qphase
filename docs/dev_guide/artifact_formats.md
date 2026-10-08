@@ -199,12 +199,9 @@ descriptor:
   carrying a `scan` axis has the flattened bundle scan size, and the stable
   `trajectories`/`primary_spectrum` roles point to compatible time-series and
   spectral products.
-- remaining analysers persist through the versioned `legacy_analysis/1`
-  bridge (`graph_ready=False`) until Phase 2: numeric leaves become
-  variables, nested dicts are flattened with dotted paths, string/JSON-safe
-  leaves land in `attributes["payload_meta"]`, ragged per-point leaves
-  degrade to meta lists recorded under `per_point_meta`, and unbridgeable
-  keys are reported under `dropped_keys`.
+- analyser outputs are graph-ready typed products. Numeric leaves are schema
+  variables, JSON-safe descriptive values live in `attributes["payload_meta"]`,
+  and ragged domains use dedicated typed table products.
 - manifest provenance records `engine`, the versioned
   `qphase_sde.provenance/1` record under `sde`, JSON-safe job `meta` (plus
   `meta_dropped`), and the real installed distribution `versions` of `qphase`
@@ -213,19 +210,13 @@ descriptor:
   packages define their own numerical provenance schemas.
 - importing `qphase_sde.result` registers the `sde/1` bundle adapter, so a
   clean process restores scan bundles (shape, axes, per-point parameter
-  views) straight from the v4 manifest; `legacy_result()` renders the
-  single-point 1.x view and `point_view` rewrites `metadata["params"]` to
-  the point's scan parameters.
+  views) straight from the v4 manifest; `point_view` rewrites
+  `metadata["params"]` to the point's scan parameters.
 - SDE bundle roles expose only stable meanings: `trajectories` when retained
   and `primary_spectrum` when exactly one spectral product exists. Other
   products are selected by kind, quantity and fields.
-- Peak candidates and paths are not currently declared as graph-ready public
-  products. Their grouped ragged schema and producers are a mandatory Global
-  Phase 5A prerequisite to the ProductGraph executor. Until then, legacy PSD
-  peak metadata is stored in a `legacy_peaks/1` bridge carrying explicit
-  `source_product` and `payload_field` routes, so `legacy_result()` restores
-  the original `analysis["psd"]["peaks"]` field without treating it as a
-  graph-ready peak product.
+- Peak candidates and paths are graph-ready grouped table products with
+  explicit source-product identities and typed numeric columns.
 
 ## Service and GUI access
 

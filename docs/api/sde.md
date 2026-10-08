@@ -112,19 +112,15 @@ The interface for defining physical systems consumed by the engine.
 *   `drift(y, t, params) -> Any`: Computes the drift vector $\mathbf{a}(\mathbf{y}, t)$.
 *   `diffusion(y, t, params) -> Any`: Computes the diffusion matrix $\mathbf{b}(\mathbf{y}, t)$.
 
-#### `class qphase_sde.model.DiffusiveSDEModel`
+#### `class qphase_sde.model.FunctionalSDEModel`
 
-Concrete implementation for Langevin-type SDEs (Continuous, Gaussian noise).
-
-#### `class qphase_sde.model.JumpSDEModel`
-
-Concrete implementation for Jump-Diffusion SDEs.
+Concrete function-backed implementation for Langevin-type SDEs.
 
 ### Converters
 
-#### `qphase_sde.model.fpe_to_sde(fpe: PhaseSpaceModel) -> DiffusiveSDEModel`
+#### `qphase_sde.model.fpe_to_sde(fpe: PhaseSpaceModel) -> FunctionalSDEModel`
 
-Converts a 2nd-order PhaseSpaceModel to a DiffusiveSDEModel.
+Converts a second-order `PhaseSpaceModel` to a `FunctionalSDEModel`.
 *   Drift $A = D_1$
 *   Diffusion $B = \sqrt{D_2}$
 

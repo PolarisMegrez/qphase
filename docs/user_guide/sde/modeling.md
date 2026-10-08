@@ -30,21 +30,20 @@ $$ \frac{\partial P}{\partial t} = \sum_{n=1}^\infty \frac{(-1)^n}{n!} \frac{\pa
 *   **Components:** Drift vector ($D_1$), Diffusion tensor ($D_2$), and potentially higher-order terms ($D_3, \dots$).
 
 ### Level 3: Stochastic Model (SDE)
-**Classes:** `qphase_sde.model.DiffusiveSDEModel`, `qphase_sde.model.JumpSDEModel`
+**Class:** `qphase_sde.model.FunctionalSDEModel`
 
 Describes the stochastic trajectories for numerical simulation. This is the level consumed by the simulation engine.
 
-*   **DiffusiveSDEModel (Langevin):** For systems with only 1st and 2nd order terms (Gaussian noise).
+*   **FunctionalSDEModel (Langevin):** A function-backed model for first- and second-order terms (Gaussian noise).
     $$ d\mathbf{y} = \mathbf{a}(\mathbf{y}, t) dt + \mathbf{b}(\mathbf{y}, t) d\mathbf{W} $$
-*   **JumpSDEModel:** For systems with higher-order terms mapped to jump processes.
 
 ## Workflow
 
 1.  **Define Physics:** Start by defining a `PhaseSpaceModel` (Level 2) containing the drift ($D_1$) and diffusion ($D_2$) coefficients.
-2.  **Convert:** Use `qphase_sde.model.fpe_to_sde()` to automatically convert the FPE model to a `DiffusiveSDEModel` (Level 3).
+2.  **Convert:** Use `qphase_sde.model.fpe_to_sde()` to convert the FPE model to a `FunctionalSDEModel` (Level 3).
 3.  **Simulate:** Pass the Level 3 model to the `Engine`.
 
-Alternatively, advanced users can define a `DiffusiveSDEModel` directly if they want manual control over the noise decomposition.
+Alternatively, define a `FunctionalSDEModel` directly for manual control over the noise decomposition.
 
 ## Example: Van der Pol Oscillator
 
