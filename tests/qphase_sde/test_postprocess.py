@@ -312,8 +312,8 @@ def test_lorentz_fitter_can_require_psd_uncertainty(tmp_path):
         )
 
 
-def test_lorentz_fitter_engine_analyze_mode(tmp_path, temp_project):
-    """The SDE engine can run in analyze mode via the scheduler."""
+def test_external_artifact_routes_to_analyze_product_graph(tmp_path, temp_project):
+    """The scheduler restores an external v4 artifact before SDE execution."""
     run_dir = _make_run_dir(tmp_path)
     system_config = SystemConfig()
     job_list = WorkflowSpec(

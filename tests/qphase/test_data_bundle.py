@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 from qphase.core.catalog import CatalogQuery, ProjectObjectCatalog
+from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.project import ProjectContext
 from qphase.core.result_loader import load_result
 from qphase.data import (
@@ -250,6 +251,7 @@ def test_generic_bundle_roundtrip(tmp_path):
 
     bundle = load_bundle(tmp_path)
     assert isinstance(bundle, GenericDataBundle)
+    assert isinstance(bundle, DatasetResultProtocol)
     assert bundle.bundle_descriptor.type_id == GENERIC_BUNDLE_TYPE_ID
     assert bundle.provenance["plugin"] == "test"
     assert bundle.metadata["artifact_id"] == manifest.artifact_id

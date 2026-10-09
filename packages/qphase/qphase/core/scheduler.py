@@ -636,10 +636,9 @@ class Scheduler:
         is resolved the required input slots of the job's task profile
         snapshot are matched against the product schemas the resolved input
         exposes (typed bundles publish ``products`` as a name → ``Dataset``
-        mapping). Inputs exposing no typed product mapping — legacy results,
-        directory handles — carry no extractable schemas and are skipped,
-        the same "no schema information" boundary as compile-time plain-path
-        inputs.
+        mapping). Plain directory inputs carry no extractable schemas and are
+        skipped, matching the compile-time plain-path boundary. Artifact v4
+        directories are restored by :class:`ResultRouter` before this check.
         """
         profile = compiled_job.task_profile
         if profile is None or input_result is None:

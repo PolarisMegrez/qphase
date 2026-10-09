@@ -100,6 +100,16 @@ class GenericDataBundle:
             **self._metadata,
         }
 
+    @property
+    def label(self) -> Any:
+        """Return the optional result label from bundle metadata."""
+        return self._metadata.get("label")
+
+    @label.setter
+    def label(self, value: Any) -> None:
+        """Set the optional result label in bundle metadata."""
+        self._metadata["label"] = value
+
     def save(self, path: str | Path) -> None:
         """Re-persist the products with the same bundle descriptor."""
         save_products(

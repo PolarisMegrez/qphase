@@ -16,7 +16,6 @@ import time as _time
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 import numpy as np
@@ -327,22 +326,6 @@ class EngineConfig(BaseModel):
     )
 
 
-def _analysis_source_scan(data: Any | None) -> DatasetResultProtocol | None:
-    """Return the input dataset when analyze mode receives one directly."""
-    if isinstance(data, DatasetResultProtocol):
-        return data
-    path = getattr(data, "path", None)
-    if path is None:
-        return None
-    artifact = Path(path) / "artifact_manifest.json"
-    if not artifact.is_file():
-        return None
-    from qphase.data import load_bundle
-
-    restored = load_bundle(Path(path))
-    return restored if isinstance(restored, DatasetResultProtocol) else None
-
-
 # -----------------------------------------------------------------------------
 # Engine Class
 # -----------------------------------------------------------------------------
@@ -441,12 +424,11 @@ class Engine(EngineBase):
             )
 
         if getattr(self.config, "mode", "simulate") == "analyze":
-            source_scan = _analysis_source_scan(data)
-            if source_scan is None:
+            if not isinstance(data, DatasetResultProtocol):
                 raise TypeError(
                     "analyze mode requires a typed DatasetResultProtocol input"
                 )
-            return self._run_typed_analyze(source_scan, context=context, graph=graph)
+            return self._run_typed_analyze(data, context=context, graph=graph)
 
         grid = context.parameter_grid if context is not None else None
         model = self._required_model()

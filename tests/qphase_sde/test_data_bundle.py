@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from qphase.core.aggregation import DirectoryInputResult
 from qphase.core.artifacts import ArtifactStore
 from qphase.core.dataset import DatasetResultProtocol, ResultProtocol
 from qphase.data import (
@@ -186,11 +185,6 @@ def test_analyser_output_inherits_source_scan_identity(tmp_path):
     assert result.bundle_descriptor.descriptor["scan"]["shape"] == [2, 2]
 
     source.save(tmp_path / "source")
-    restored_result = engine.run(DirectoryInputResult(path=tmp_path / "source"))
-    assert restored_result.shape == (2, 2)
-    assert restored_result.products["peaks"].axis("scan").size == 4
-
-
 def test_bundle_require_filters_by_kind_quantity_fields():
     bundle = _traj_bundle()
     by_kind = bundle.require(kind=DataKind.TIME_SERIES)

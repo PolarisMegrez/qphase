@@ -70,6 +70,24 @@ class ResultRouter:
         input_path = Path(input_source)
         if input_path.exists():
             if input_path.is_dir():
+                if (input_path / "artifact_manifest.json").is_file():
+                    from .result_loader import load_result
+
+                    log.info(
+                        "Restoring typed artifact input for job '%s' from '%s'...",
+                        job.name,
+                        input_path,
+                    )
+                    try:
+                        return load_result(input_source, input_path)
+                    except OSError as exc:
+                        raise QPhaseIOError(
+                            f"failed to load artifact input '{input_source}': {exc}",
+                            code=ErrorCode.ARTIFACT_IO,
+                            context={"source": input_source, "path": str(input_path)},
+                        ) from exc
+                    except QPhaseError:
+                        raise
                 log.info(
                     "Job '%s' input '%s' is a directory; passing it to the "
                     "resource engine.",
