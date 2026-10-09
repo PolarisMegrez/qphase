@@ -366,9 +366,8 @@ def _build_allan_products(
 ) -> dict[str, Dataset] | None:
     """Assemble the typed statistics product of one Allan analyser payload.
 
-    Variable names keep the original dotted leaf keys (and string leaves stay
-    in ``payload_meta``) so the legacy view rebuilds the exact ``analyze()``
-    payload; typed ``tau``/``trajectory`` axes, the Allan quantity and the
+    Variable names keep stable dotted leaf keys and string leaves stay in
+    ``payload_meta``. Typed ``tau``/``trajectory`` axes, the Allan quantity and
     trajectory-sampling SEM uncertainties are layered on top.
     """
     leaves = stack_payload_leaves(label, payload, scan_size=scan_size)

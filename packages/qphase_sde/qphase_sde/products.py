@@ -118,8 +118,7 @@ def split_payload_leaves(
             continue
         if array.dtype.hasobject or array.dtype.kind in "US":
             # Non-numeric leaves (orientation strings, small config values)
-            # are payload metadata, not variables: keep the JSON-safe ones so
-            # legacy views can rebuild the original analyser payload.
+            # are typed product metadata rather than numeric variables.
             safe, _ = json_safe_meta({key: value})
             if key in safe:
                 meta[key] = safe[key]
@@ -389,8 +388,8 @@ def assemble_typed_product(
     1-point scan keeps a size-1 scan axis) plus the trailing dims declared
     for it (exact key or ``fnmatch`` glob, for per-mode dotted keys). Leaves
     without a declaration fall back to positional ``dim<N>`` index axes,
-    matching the legacy bridge layout. String and ragged leaves stay in
-    ``payload_meta`` so legacy views rebuild the original payload.
+        preserving stable dotted variable names. String and ragged leaves stay
+        in ``payload_meta`` as schema-described product metadata.
 
     Returns ``None`` when the payload has no numeric leaf (a product schema
     requires at least one variable); the bundle adapter treats that as a

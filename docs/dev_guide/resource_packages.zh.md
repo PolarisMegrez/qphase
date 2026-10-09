@@ -10,7 +10,7 @@ description: 资源包契约
 
 **资源包**是 QPhase 的可管理资产单元：一个 Python 发行包，恰好打包一个执行 engine、
 其插件类、数据产品与公开契约。`qphase_sde` 与 `qphase_cam` 都是资源包；`qphase_viz`
-可以采用同一契约并只声明更小的 profile。
+作为可视化 consumer 使用相同的 typed bundle 边界。
 
 资源包的权威描述是其 **`ResourcePackageManifest`**，而不是源码树。安装后的 wheel 不保证
 保留可遍历的源码布局，因此 scheduler、registry、CLI 与 GUI 必须仅凭 manifest 与 entry

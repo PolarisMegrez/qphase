@@ -23,19 +23,21 @@ analyser:
     kind: complex
     orientation: phase_decreasing
     expected_freq_max: 0.34
-    find_peaks: true
     estimator:
       periodogram:
         window: null
+  peaks:
+    scan_param: omega_a
+    finder:
+      scipy: {}
 ```
 
 | 键 | 类型 | 说明 |
 | :-- | :-- | :-- |
 | `modes` | `list[int]` | 要分析的模式索引。 |
-| `kind` | `str` | PSD 变体，如 `complex`、`real`、`imag`。 |
+| `kind` | `str` | `complex` 表示复场，`modular` 表示其模长。 |
 | `orientation` | `str` | 正频率方向。`phase_decreasing` 将 `exp(-i*omega*t)` 映射到 `+omega`；`phase_increasing` 保留前向 FFT 频率轴。 |
 | `expected_freq_max` | `float \| None` | 输出频率轴单位下预期的最大频率幅值；达到 Nyquist 上限时分析直接失败。 |
-| `find_peaks` | `bool` | 是否报告峰值位置。 |
 | `estimator` | 子插件选择 | 必须且只能选择 `periodogram`、`welch`、`multitaper` 之一。 |
 
 Estimator 对比：
@@ -67,6 +69,9 @@ QPhase 默认采用 `phase_decreasing`。对于
 `phase_increasing` 用于一般信号处理或严格复现前向 FFT 轴。该选项只改变频率轴方向，
 不改变 PSD 归一化、线宽或积分功率。
 
+每个 typed spectral product 都必须声明 orientation。缺失 orientation metadata
+属于 producer 错误，分析会直接失败，不会回退到 FFT 方向解释。
+
 配置输入也接受俗名：`physical` 等价于 `phase_decreasing`，`fft` 等价于
 `phase_increasing`。它们只用于输入；序列化配置和结果元数据始终使用正式名称。
 此处 `physical` 仅表示 QPhase 默认约定，并不表示跨领域唯一的物理约定。
@@ -95,7 +100,8 @@ QPhase 默认采用 `phase_decreasing`。对于
 计算不确定度，因此不会把相关 segment 当成独立样本。只有一条轨迹时，
 `psd_std` 和 `psd_sem` 为 `NaN`，并标记不确定度不可用。
 
-当 `find_peaks: true` 时，元数据还包含检测到的峰位与高度。
+`analyser.peaks` 将检测到的位置和强度发布为 typed grouped candidate table；
+PSD 不在 metadata 中嵌入 peak 字段。
 
 ## `coherence_carrier`
 

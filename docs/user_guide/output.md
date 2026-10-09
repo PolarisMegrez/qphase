@@ -104,7 +104,10 @@ jobs:
     engine:
       sde: {t0: 0.0, t1: 1.0, dt: 0.01, n_traj: 8, seed: 42}
     analyser:
-      psd: {modes: [0], kind: complex, find_peaks: true}
+      psd: {modes: [0], kind: complex}
+      peaks:
+        scan_param: omega_a
+        finder: {scipy: {}}
 
   - name: fit
     input: {from: simulate, mode: dataset}

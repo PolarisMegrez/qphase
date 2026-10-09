@@ -140,24 +140,24 @@ Defines the properties of the noise driving the system.
 
 ## Analyzers
 
-### `protocol qphase_sde.analyser.AnalyzerProtocol`
+### `protocol qphase_sde.contracts.analyser.AnalyserExecutionContract`
 
 The interface for analysis plugins.
 
 **Methods:**
 
-*   `analyze(data: Any, backend: BackendBase) -> ResultProtocol`: Performs analysis on the simulation data.
+*   `execute(inputs: Mapping[str, Dataset], *, backend, label, metadata, context) -> Mapping[str, Dataset]`: Consumes typed products and returns declared typed products.
 
 ### PSD Analyzer
 
-`qphase_sde.analyser.PsdAnalyzer` consumes a `TrajectorySet` and writes a PSD payload:
+`qphase_sde.analyser.PsdAnalyzer` consumes the typed `trajectories` product and writes a spectral `Dataset`:
 
 *   `axis`: frequency axis.
 *   `psd`: PSD matrix with shape `(n_frequency, n_modes)`.
 *   `modes`: analyzed mode indices.
-*   `peaks`: optional peak finder output from the PSD analyzer.
-
-PSD analyzer peak detection is local to one job. Cross-job Lorentzian fitting is handled by the `analyser.lorentz_fitter` plugin when the SDE engine runs in `mode: analyze`.
+Peak detection is a separate `analyser.peaks` graph node consuming the PSD
+product. Cross-job Lorentzian fitting is handled by `analyser.lorentz_fitter`
+when the SDE engine runs in `mode: analyze`.
 
 ## Postprocessing
 

@@ -23,19 +23,21 @@ analyser:
     kind: complex
     orientation: phase_decreasing
     expected_freq_max: 0.34
-    find_peaks: true
     estimator:
       periodogram:
         window: null
+  peaks:
+    scan_param: omega_a
+    finder:
+      scipy: {}
 ```
 
 | Key | Type | Description |
 | :-- | :-- | :-- |
 | `modes` | `list[int]` | Mode indices to analyze. |
-| `kind` | `str` | PSD variant, e.g. `complex`, `real`, `imag`. |
+| `kind` | `str` | `complex` for the complex field or `modular` for its magnitude. |
 | `orientation` | `str` | Positive-frequency orientation. `phase_decreasing` maps `exp(-i*omega*t)` to `+omega`; `phase_increasing` preserves the forward-FFT axis. |
 | `expected_freq_max` | `float \| None` | Optional largest expected frequency magnitude in output-axis units. Analysis fails when it reaches the Nyquist limit. |
-| `find_peaks` | `bool` | Whether to report peak locations. |
 | `estimator` | child selection | Exactly one of `periodogram`, `welch`, or `multitaper`. |
 
 Estimator comparison:
@@ -71,6 +73,10 @@ quantum-optical emission-spectrum definition
 reproduction of the raw forward-FFT axis. Orientation changes neither PSD
 normalization nor linewidth or integrated power.
 
+Every typed spectral product must declare its orientation. Missing orientation
+metadata is a producer error and analysis fails; no FFT-orientation fallback is
+applied.
+
 For concise input, `physical` is accepted as an alias of `phase_decreasing`,
 and `fft` as an alias of `phase_increasing`. These are config-only aliases:
 serialized configuration and result metadata always use the canonical names.
@@ -103,7 +109,8 @@ trajectory first. The uncertainty is then computed across trajectories, so
 correlated segments are not counted as independent samples. With one trajectory,
 `psd_std` and `psd_sem` contain `NaN` and uncertainty is marked unavailable.
 
-When `find_peaks: true`, metadata also includes detected peak positions and heights.
+`analyser.peaks` publishes detected positions and intensities as a typed grouped
+candidate table. PSD never embeds peak fields in its metadata.
 
 ## `coherence_carrier`
 

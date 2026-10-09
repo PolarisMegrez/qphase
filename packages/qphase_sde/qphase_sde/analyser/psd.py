@@ -428,9 +428,8 @@ def _build_psd_products(
 ) -> dict[str, Dataset] | None:
     """Assemble the typed spectral product of one PSD analyser payload.
 
-    Variable names keep the original dotted leaf keys (and string or ragged
-    leaves stay in ``payload_meta``) so the legacy view rebuilds the exact
-    ``analyze()`` payload; typed axes, the PSD quantity and the
+    Variable names keep stable dotted leaf keys while string or ragged leaves
+    stay in ``payload_meta``. Typed axes, the PSD quantity and the
     trajectory-sampling uncertainties are layered on top.
 
     ``scan_size`` is ``None`` for a job without a parameter grid, otherwise

@@ -10,8 +10,8 @@ description: Resource Package Contract
 
 A **resource package** is the managed asset unit of QPhase: a Python distribution that
 bundles exactly one execution engine, its plugin classes, data products and public
-contracts. `qphase_sde` and `qphase_cam` are resource packages; `qphase_viz` may adopt
-the same contract with a smaller profile.
+contracts. `qphase_sde` and `qphase_cam` are resource packages; `qphase_viz`
+uses the same typed bundle boundary as a visualization consumer.
 
 The authoritative description of a resource package is its
 **`ResourcePackageManifest`**, not its source tree. Installed wheels are not guaranteed

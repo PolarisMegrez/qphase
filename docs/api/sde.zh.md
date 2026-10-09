@@ -140,24 +140,22 @@ nav_order: 2
 
 ## 分析器
 
-### `protocol qphase_sde.analyser.AnalyzerProtocol`
+### `protocol qphase_sde.contracts.analyser.AnalyserExecutionContract`
 
 分析插件的接口。
 
 **方法：**
 
-*   `analyze(data: Any, backend: BackendBase) -> ResultProtocol`：对仿真数据执行分析。
+*   `execute(inputs: Mapping[str, Dataset], *, backend, label, metadata, context) -> Mapping[str, Dataset]`：消费 typed products 并返回声明的 typed products。
 
 ### PSD 分析器
 
-`qphase_sde.analyser.PsdAnalyzer` 消费 `TrajectorySet` 并写出 PSD 载荷：
+`qphase_sde.analyser.PsdAnalyzer` 消费 typed `trajectories` product，并写出 spectral `Dataset`：
 
 *   `axis`：频率轴。
 *   `psd`：形状为 `(n_frequency, n_modes)` 的 PSD 矩阵。
 *   `modes`：被分析的模式索引。
-*   `peaks`：可选的 PSD 分析器内部寻峰结果。
-
-PSD 分析器的寻峰只针对单个 job。跨 job 的 Lorentz 线型拟合通过 SDE 引擎的 `mode: analyze` 配合 `analyser.lorentz_fitter` 插件完成。
+峰值检测由独立的 `analyser.peaks` 图节点完成，该节点消费 PSD product。跨 job 的 Lorentz 线型拟合通过 SDE 引擎的 `mode: analyze` 配合 `analyser.lorentz_fitter` 插件完成。
 
 ## 后处理
 
