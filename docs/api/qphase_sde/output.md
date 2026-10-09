@@ -39,8 +39,8 @@ The `psd` analyzer stores:
 *   `psd` — mean PSD values per mode.
 *   `psd_std` / `psd_sem` — cross-trajectory sample standard deviation and standard error.
 *   `orientation` and its defining formula fields — the sign convention of the
-    frequency axis. Missing metadata identifies a legacy forward-FFT result and
-    must be interpreted as `phase_increasing`.
+    frequency axis. Missing orientation metadata is a producer/schema error and
+    the consumer rejects the product.
 
 For a scan, the PSD product carries the named scan axis of the logical SDE
 bundle. A downstream `mode: analyze` job consumes that bundle once with the

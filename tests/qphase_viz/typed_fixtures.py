@@ -133,6 +133,27 @@ def spectrum_bundle() -> SDEDataBundle:
     )
 
 
+def spectrum_scan_bundle() -> SDEDataBundle:
+    scan = (0.1, 0.2, 0.3)
+    base = trajectory_bundle(scan_values=scan)
+    spectrum = PsdAnalyzer(kind="complex", modes=[0, 1]).execute(
+        {"trajectories": base.products["trajectories"]},
+        backend=NumpyBackend(),
+        label="psd",
+    )["psd"]
+    spectrum = add_scan_parameter_coordinates(
+        spectrum, {"omega": np.asarray(scan)}
+    )
+    return SDEDataBundle(
+        {**base.products, "psd": spectrum},
+        base.provenance,
+        scan_axes={"omega": np.asarray(scan)},
+        scan_shape=(len(scan),),
+        meta={"scan_combine": "zipped"},
+        n_traj_per_point=base.n_traj_per_point,
+    )
+
+
 def restored(bundle: SDEDataBundle, path: Path) -> SDEDataBundle:
     bundle.save(path)
     result = load_bundle(path)

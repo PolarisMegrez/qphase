@@ -17,7 +17,11 @@ from qphase.core.dataset import DatasetResultProtocol
 from qphase.data import DataKind, SpectralQuantity
 
 from ..config import PowerSpectrumConfig, PowerSpectrumSpec
-from ..typed_input import ProductNotFoundError, select_product
+from ..typed_input import (
+    ProductNotFoundError,
+    require_single_scan_point,
+    select_product,
+)
 from .base import PlotterProtocol
 
 
@@ -93,6 +97,7 @@ class PowerSpectrumPlotter(PlotterProtocol):
                 quantity="field_amplitude",
                 fields=("alpha",),
             )
+            require_single_scan_point(data, trajectory)
             analyzer_config = PsdAnalyzerConfig(
                 kind="complex",
                 modes=channels,
@@ -112,6 +117,8 @@ class PowerSpectrumPlotter(PlotterProtocol):
                 backend=NumpyBackend(),
                 label="psd",
             )["psd"]
+
+        require_single_scan_point(data, product)
 
         f = np.asarray(product.handle("axis").materialize())
         spectra = np.asarray(product.handle("psd").materialize())

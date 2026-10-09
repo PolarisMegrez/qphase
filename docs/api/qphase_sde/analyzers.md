@@ -636,7 +636,7 @@ analyser:
 | :-- | :-- | :-- |
 | `scan_param` | `str` | Sweep parameter used to merge PSDs. |
 | `mode` | `int` | Mode index to fit. |
-| `uncertainty` | `auto \| required \| off` | `auto` propagates `psd_sem` to parameter covariance and falls back for legacy payloads; `required` rejects missing SEM; `off` uses residual covariance. It never changes fit weights. |
+| `uncertainty` | `auto \| required \| off` | `auto` propagates `psd_sem` when present and otherwise uses residual covariance; `required` rejects missing SEM; `off` always uses residual covariance. It never changes fit weights. |
 | `fit_window` | `list[float] \| None` | Manual `[min, max]` frequency window. If `None`, the window is derived from `freq_min`/`freq_max` or peak search. |
 | `freq_min` / `freq_max` | `float \| None` | Optional global frequency bounds. |
 | `clip_by_std` | `bool` | Enable squared-PSD-weighted clipping to ignore distant tails. |
@@ -663,7 +663,7 @@ analyser:
 | `peak_intensity_std` | Standard deviation including amplitude/base covariance. |
 | `R2` | Coefficient of determination. |
 | `reduced_chi2` | Reduced chi-square when fitting with `psd_sem`; otherwise `NaN`. |
-| `uncertainty_source` | `psd_sem_sandwich` or the legacy `residual_covariance` fallback. |
+| `uncertainty_source` | `psd_sem_sandwich` or `residual_covariance`. |
 | `status` | `ok` or `failed`. |
 | `error` | Empty unless fitting failed. |
 | `warning` | Diagnostics, e.g. std/FWHM mismatch. |

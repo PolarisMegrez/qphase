@@ -16,7 +16,7 @@ from qphase.core.dataset import DatasetResultProtocol
 from qphase.data import DataKind
 
 from ..config import PhasePlaneConfig, PhasePlaneSpec
-from ..typed_input import select_product, trajectory_array
+from ..typed_input import require_single_scan_point, select_product, trajectory_array
 from .base import PlotterProtocol
 
 
@@ -113,6 +113,7 @@ class PhasePlanePlotter(PlotterProtocol):
             quantity="field_amplitude",
             fields=("alpha",),
         )
+        require_single_scan_point(data, product)
         values = trajectory_array(product)
         y = values.reshape(-1, values.shape[-2], values.shape[-1])
 

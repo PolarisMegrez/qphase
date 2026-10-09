@@ -75,7 +75,8 @@ class LorentzFitterConfig(PluginConfigBase):
         "auto",
         description=(
             "Propagate PSD standard errors to parameter covariance when available; "
-            "required rejects legacy payloads and off uses residual covariance"
+            "auto uses residual covariance when SEM is absent, required rejects "
+            "missing SEM, and off always uses residual covariance"
         ),
     )
     clip_by_std: bool = Field(

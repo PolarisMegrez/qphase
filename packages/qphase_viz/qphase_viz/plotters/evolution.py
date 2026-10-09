@@ -16,7 +16,12 @@ from qphase.core.dataset import DatasetResultProtocol
 from qphase.data import DataKind
 
 from ..config import TimeSeriesConfig, TimeSeriesSpec
-from ..typed_input import select_product, time_values, trajectory_array
+from ..typed_input import (
+    require_single_scan_point,
+    select_product,
+    time_values,
+    trajectory_array,
+)
 from .base import PlotterProtocol
 
 
@@ -55,6 +60,7 @@ class TimeSeriesPlotter(PlotterProtocol):
             quantity="field_amplitude",
             fields=("alpha",),
         )
+        require_single_scan_point(data, product)
         y = trajectory_array(product)
         y = y.reshape(-1, y.shape[-2], y.shape[-1])
         t = time_values(product)

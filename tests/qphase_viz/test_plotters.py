@@ -15,6 +15,7 @@ from tests.qphase_viz.typed_fixtures import (
     peak_scan_bundle,
     restored,
     spectrum_bundle,
+    spectrum_scan_bundle,
     trajectory_bundle,
 )
 
@@ -104,4 +105,61 @@ def test_parameter_evolution_renders_restored_bundle(tmp_path):
     files = ParameterEvolutionPlotter(
         plots=[{"parameter": "omega", "metric": "psd_peak_val", "channel": 0}]
     ).plot(bundle, tmp_path, "png")
+    _assert_files_generated(files, tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("plotter", "bundle_factory"),
+    [
+        (
+            TimeSeriesPlotter(plots=[{"channels": [0]}]),
+            lambda: trajectory_bundle(scan_values=(0.1, 0.2, 0.3)),
+        ),
+        (
+            PhasePlanePlotter(plots=[{"channel_x": 0}]),
+            lambda: trajectory_bundle(scan_values=(0.1, 0.2, 0.3)),
+        ),
+        (
+            PowerSpectrumPlotter(plots=[{"channels": [0]}]),
+            spectrum_scan_bundle,
+        ),
+    ],
+)
+@pytest.mark.parametrize("restore_first", [False, True])
+def test_non_scan_plotters_reject_multi_point_scan(
+    tmp_path, plotter, bundle_factory, restore_first
+):
+    bundle = bundle_factory()
+    if restore_first:
+        bundle = restored(bundle, tmp_path / "artifact")
+    with pytest.raises(ValueError, match="input.mode: map.*select.*point_view"):
+        plotter.plot(bundle, tmp_path, "png")
+
+
+@pytest.mark.parametrize(
+    "plotter",
+    [
+        TimeSeriesPlotter(plots=[{"channels": [0]}]),
+        PhasePlanePlotter(plots=[{"channel_x": 0}]),
+        PowerSpectrumPlotter(plots=[{"channels": [0]}]),
+    ],
+)
+def test_non_scan_plotters_accept_singleton_scan(tmp_path, plotter):
+    files = plotter.plot(
+        trajectory_bundle(scan_values=(0.1,)), tmp_path, "png"
+    )
+    _assert_files_generated(files, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "plotter",
+    [
+        TimeSeriesPlotter(plots=[{"channels": [0]}]),
+        PhasePlanePlotter(plots=[{"channel_x": 0}]),
+        PowerSpectrumPlotter(plots=[{"channels": [0]}]),
+    ],
+)
+def test_non_scan_plotters_accept_point_view(tmp_path, plotter):
+    bundle = trajectory_bundle(scan_values=(0.1, 0.2, 0.3)).point_view((1,))
+    files = plotter.plot(bundle, tmp_path, "png")
     _assert_files_generated(files, tmp_path)

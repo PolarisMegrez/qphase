@@ -542,7 +542,7 @@ analyser:
 | :-- | :-- | :-- |
 | `scan_param` | `str` | 用于合并 PSD 的扫描参数。 |
 | `mode` | `int` | 要拟合的模式索引。 |
-| `uncertainty` | `auto \| required \| off` | `auto` 将 `psd_sem` 传播到参数协方差，旧载荷自动回退；`required` 拒绝缺少 SEM 的载荷；`off` 使用残差协方差。该选项不会改变拟合权重。 |
+| `uncertainty` | `auto \| required \| off` | `auto` 在存在 `psd_sem` 时传播到参数协方差，否则使用残差协方差；`required` 拒绝缺少 SEM；`off` 始终使用残差协方差。该选项不会改变拟合权重。 |
 | `fit_window` | `list[float] \| None` | 手动 `[min, max]` 频率窗口。为 `None` 时，窗口由 `freq_min`/`freq_max` 或寻峰结果推导。 |
 | `freq_min` / `freq_max` | `float \| None` | 可选的全局频率边界。 |
 | `clip_by_std` | `bool` | 启用基于平方 PSD 加权的裁剪，忽略远端尾部。 |
@@ -569,7 +569,7 @@ analyser:
 | `peak_intensity_std` | 包含 amplitude/base 协方差的标准差。 |
 | `R2` | 决定系数。 |
 | `reduced_chi2` | 使用 `psd_sem` 时的约化卡方；否则为 `NaN`。 |
-| `uncertainty_source` | `psd_sem_sandwich` 或兼容旧结果的 `residual_covariance`。 |
+| `uncertainty_source` | `psd_sem_sandwich` 或 `residual_covariance`。 |
 | `status` | `ok` 或 `failed`。 |
 | `error` | 拟合失败时的错误信息。 |
 | `warning` | 诊断信息，如 std/FWHM 不匹配。 |

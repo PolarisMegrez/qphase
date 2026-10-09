@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -76,6 +77,23 @@ def trajectory_array(product: Dataset) -> np.ndarray:
     if values.ndim != 4:
         raise ValueError("trajectory alpha must have rank 3 or 4")
     return values
+
+
+def require_single_scan_point(data: Any, product: Dataset) -> None:
+    """Reject implicit aggregation across multiple scan points."""
+    bundle, _ = bundle_products(data)
+    bundle_points = math.prod(bundle.shape) if bundle.shape else 1
+    product_points = 1
+    if "scan" in {axis.name for axis in product.axes}:
+        scan_size = product.axis("scan").size
+        if scan_size is None:
+            raise ValueError("visualization product has an open scan axis")
+        product_points = int(scan_size)
+    if max(bundle_points, product_points) > 1:
+        raise ValueError(
+            "this visualizer requires one scan point; use input.mode: map, "
+            "input.select, or bundle.point_view(...) for a multi-point scan"
+        )
 
 
 def time_values(product: Dataset) -> np.ndarray:
