@@ -1,58 +1,22 @@
-"""Smoke tests for qphase_viz plotters (headless Agg rendering)."""
+"""Smoke tests for typed qphase_viz plotters."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
+import pytest
+from qphase_sde.result import SDEDataBundle
 from qphase_viz.plotters.evolution import TimeSeriesPlotter
 from qphase_viz.plotters.parameter import ParameterEvolutionPlotter
 from qphase_viz.plotters.phase import PhasePlanePlotter
 from qphase_viz.plotters.spectrum import PowerSpectrumPlotter
 
-
-class _FakeTrajectory:
-    """Minimal TrajectorySet-like object (no qphase_sde dependency)."""
-
-    def __init__(self, data: np.ndarray, dt: float = 0.1):
-        self._data = data
-        self.dt = dt
-
-    def to_numpy(self) -> np.ndarray:
-        return self._data
-
-    @property
-    def times(self) -> np.ndarray:
-        return np.arange(self._data.shape[1]) * self.dt
-
-
-class _FakeResult:
-    """Minimal ResultProtocol-like object for aggregate plotting."""
-
-    def __init__(self, data, metadata):
-        self._data = data
-        self._metadata = metadata
-
-    @property
-    def data(self):
-        return self._data
-
-    @property
-    def metadata(self):
-        return self._metadata
-
-
-def _trajectory(n_traj: int = 4, n_steps: int = 64, n_modes: int = 2):
-    """Synthetic complex trajectories with a decaying oscillation."""
-    t = np.arange(n_steps) * 0.1
-    rng = np.random.default_rng(42)
-    data = np.empty((n_traj, n_steps, n_modes), dtype=np.complex128)
-    for mode in range(n_modes):
-        envelope = np.exp(-0.1 * t) * np.exp(1j * (mode + 1) * t)
-        data[:, :, mode] = envelope[None, :] * (
-            1.0 + 0.05 * rng.standard_normal((n_traj, n_steps))
-        )
-    return _FakeTrajectory(data)
+from tests.qphase_viz.typed_fixtures import (
+    peak_scan_bundle,
+    restored,
+    spectrum_bundle,
+    trajectory_bundle,
+)
 
 
 def _assert_files_generated(files: list[Path], output_dir: Path) -> None:
@@ -63,50 +27,81 @@ def _assert_files_generated(files: list[Path], output_dir: Path) -> None:
         assert path.stat().st_size > 0
 
 
-def test_time_series_plotter_renders(tmp_path):
+def test_time_series_plotter_renders_typed_bundle(tmp_path):
     plotter = TimeSeriesPlotter(
         plots=[{"channels": [0, 1], "transform": "real", "trajectories": "mean"}]
     )
-    files = plotter.plot(_trajectory(), tmp_path, "png")
+    files = plotter.plot(trajectory_bundle(), tmp_path, "png")
     _assert_files_generated(files, tmp_path)
 
 
-def test_phase_plane_plotter_renders_hist2d(tmp_path):
-    plotter = PhasePlanePlotter(plots=[{"channel_x": 0, "mode": "hist2d", "bins": 8}])
-    files = plotter.plot(_trajectory(), tmp_path, "png")
+def test_phase_plane_plotter_renders_typed_bundle(tmp_path):
+    plotter = PhasePlanePlotter(
+        plots=[{"channel_x": 0, "mode": "hist2d", "bins": 8}]
+    )
+    files = plotter.plot(trajectory_bundle(), tmp_path, "png")
     _assert_files_generated(files, tmp_path)
 
 
-def test_power_spectrum_plotter_from_precomputed_psd(tmp_path):
-    """Pre-computed PSD dicts render without touching qphase_sde."""
-    axis = np.linspace(-1.0, 1.0, 64)
-    psd = np.exp(-((axis - 0.3) ** 2) / 0.01)[:, None]  # (64, 1)
-    data = {"axis": axis, "psd": psd, "modes": [0]}
+def test_power_spectrum_uses_existing_typed_psd(tmp_path, monkeypatch):
+    bundle = spectrum_bundle()
+    import qphase_sde.analyser.psd
 
+    monkeypatch.setattr(
+        qphase_sde.analyser.psd.PsdAnalyzer,
+        "execute",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("recomputed")),
+    )
+    files = PowerSpectrumPlotter(
+        plots=[{"channels": [0], "scale": "log"}]
+    ).plot(bundle, tmp_path, "png")
+    _assert_files_generated(files, tmp_path)
+
+
+def test_power_spectrum_computes_from_typed_trajectory(tmp_path):
+    files = PowerSpectrumPlotter(
+        plots=[{"channels": [0], "scale": "log"}]
+    ).plot(trajectory_bundle(), tmp_path, "png")
+    _assert_files_generated(files, tmp_path)
+
+
+def test_power_spectrum_rejects_ambiguous_typed_psd(tmp_path):
+    source = spectrum_bundle()
+    products = source.products
+    ambiguous = SDEDataBundle(
+        {**products, "other_psd": products["psd"]},
+        source.provenance,
+        n_traj_per_point=source.n_traj_per_point,
+    )
     plotter = PowerSpectrumPlotter(plots=[{"channels": [0], "scale": "log"}])
-    files = plotter.plot(data, tmp_path, "png")
+    with pytest.raises(ValueError, match="exactly one match"):
+        plotter.plot(ambiguous, tmp_path, "png")
+
+
+def test_parameter_evolution_uses_typed_peak_product(tmp_path):
+    files = ParameterEvolutionPlotter(
+        plots=[{"parameter": "omega", "metric": "psd_peak_freq", "channel": 0}]
+    ).plot(peak_scan_bundle(), tmp_path, "png")
     _assert_files_generated(files, tmp_path)
 
 
-def test_parameter_evolution_plotter_from_precomputed_peaks(tmp_path):
-    """Aggregate dicts with pre-computed PSD peaks render without qphase_sde."""
-    data = {
-        f"sim[omega_a={value}]": _FakeResult(
-            data={"peaks": {0: {"values": [1.0], "frequencies": [value]}}},
-            metadata={"params": {"omega_a": value}},
-        )
-        for value in (0.1, 0.2, 0.3)
-    }
-
-    plotter = ParameterEvolutionPlotter(
-        plots=[{"parameter": "omega_a", "metric": "psd_peak_freq", "channel": 0}]
-    )
-    files = plotter.plot(data, tmp_path, "png")
+def test_time_phase_and_spectrum_render_restored_bundle(tmp_path):
+    bundle = restored(trajectory_bundle(), tmp_path / "artifact")
+    files = TimeSeriesPlotter(
+        plots=[{"channels": [0], "transform": "abs"}]
+    ).plot(bundle, tmp_path, "png")
+    files += PhasePlanePlotter(
+        plots=[{"channel_x": 0, "mode": "hist2d", "bins": 8}]
+    ).plot(bundle, tmp_path, "png")
+    files += PowerSpectrumPlotter(
+        plots=[{"channels": [0], "scale": "log"}]
+    ).plot(bundle, tmp_path, "png")
     _assert_files_generated(files, tmp_path)
 
 
-def test_parameter_evolution_plotter_ignores_non_aggregate(tmp_path):
-    plotter = ParameterEvolutionPlotter(
-        plots=[{"parameter": "omega_a", "metric": "psd_peak_freq", "channel": 0}]
-    )
-    assert plotter.plot(np.zeros((2, 4, 1)), tmp_path, "png") == []
+def test_parameter_evolution_renders_restored_bundle(tmp_path):
+    bundle = restored(peak_scan_bundle(), tmp_path / "artifact")
+    files = ParameterEvolutionPlotter(
+        plots=[{"parameter": "omega", "metric": "psd_peak_val", "channel": 0}]
+    ).plot(bundle, tmp_path, "png")
+    _assert_files_generated(files, tmp_path)

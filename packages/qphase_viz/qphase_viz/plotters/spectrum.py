@@ -12,10 +12,12 @@ from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
 import numpy as np
-from qphase.backend.base import ArrayBase
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase.core.dataset import DatasetResultProtocol
+from qphase.data import DataKind, SpectralQuantity
 
 from ..config import PowerSpectrumConfig, PowerSpectrumSpec
+from ..typed_input import ProductNotFoundError, select_product
 from .base import PlotterProtocol
 
 
@@ -23,8 +25,6 @@ def _get_psd_analyzer_classes():
     """Lazy import of PsdAnalyzer to keep qphase_sde optional."""
     try:
         from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
-        from qphase_sde.peak_finder import ScipyPeakFinder
-        from qphase_sde.result import _trajectory_product
         from qphase_sde.spectral_estimator import create_builtin_estimator
     except ImportError as e:
         raise ImportError(
@@ -34,8 +34,6 @@ def _get_psd_analyzer_classes():
     return (
         PsdAnalyzer,
         PsdAnalyzerConfig,
-        ScipyPeakFinder,
-        _trajectory_product,
         create_builtin_estimator,
     )
 
@@ -54,67 +52,51 @@ class PowerSpectrumPlotter(PlotterProtocol):
             config = PowerSpectrumConfig(**kwargs)
         self.config = config
 
-    def plot(self, data: ArrayBase, output_dir: Path, format: str) -> list[Path]:
+    def plot(
+        self, data: DatasetResultProtocol, output_dir: Path, format: str
+    ) -> list[Path]:
         generated_files = []
         for spec in self.config.plots:
             generated_files.append(self._plot_single(data, spec, output_dir, format))
         return generated_files
 
     def _plot_single(
-        self, data: ArrayBase, spec: PowerSpectrumSpec, output_dir: Path, format: str
+        self,
+        data: DatasetResultProtocol,
+        spec: PowerSpectrumSpec,
+        output_dir: Path,
+        format: str,
     ) -> Path:
         config = spec.model_dump()
         fig, ax = plt.subplots(figsize=config["figsize"], dpi=config["dpi"])
         channels = config["channels"]
         scale = config["scale"]
 
-        # Check if data is pre-computed PSD (dict)
-        # Handle nesting in analyzer key (e.g. data['psd']['psd'])
-        psd_data = None
-        if isinstance(data, dict):
-            if "psd" in data and "axis" in data:
-                psd_data = data
-            elif (
-                "psd" in data and isinstance(data["psd"], dict) and "psd" in data["psd"]
-            ):
-                psd_data = data["psd"]
-
-        if psd_data:
-            # Pre-computed PSD
-            f = psd_data["axis"]
-            Pxx_all = psd_data["psd"]
-            available_modes = psd_data.get("modes", list(range(Pxx_all.shape[1])))
-            # Extract peaks if available
-            peaks_info = psd_data.get("peaks", {})
-        else:
-            # Compute using PsdAnalyzer
+        try:
+            product = select_product(
+                data,
+                role="primary_spectrum",
+                kind=DataKind.SPECTRAL,
+                quantity=SpectralQuantity.POWER_SPECTRAL_DENSITY.value,
+                fields=("axis", "psd"),
+            )
+        except ProductNotFoundError:
             (
                 PsdAnalyzer,
                 PsdAnalyzerConfig,
-                ScipyPeakFinder,
-                trajectory_product,
                 create_estimator,
             ) = _get_psd_analyzer_classes()
-            if hasattr(data, "dt"):
-                dt = data.dt
-            elif hasattr(data, "times"):
-                t = data.times
-                if len(t) > 1:
-                    dt = t[1] - t[0]
-                else:
-                    dt = 1.0
-            else:
-                dt = 1.0
-
-            # Configure analyzer
-            # We assume complex signal by default for generality
-            # Note: peak finding parameters rely on PsdAnalyzer defaults
-            # now to ensure consistency
+            trajectory = select_product(
+                data,
+                role="trajectories",
+                kind=DataKind.TIME_SERIES,
+                quantity="field_amplitude",
+                fields=("alpha",),
+            )
             analyzer_config = PsdAnalyzerConfig(
                 kind="complex",
                 modes=channels,
                 convention="symmetric",
-                dt=dt,
             )
             analyzer = PsdAnalyzer(
                 analyzer_config,
@@ -125,27 +107,41 @@ class PowerSpectrumPlotter(PlotterProtocol):
                 },
             )
 
-            trajectory = trajectory_product(
-                data, scan_size=None, n_traj_per_point=None
-            ).point_view(scan=0)
             product = analyzer.execute(
                 {"trajectories": trajectory},
                 backend=NumpyBackend(),
                 label="psd",
             )["psd"]
-            f = product.handle("axis").materialize()
-            Pxx_all = product.handle("psd").materialize()
-            available_modes = [
-                int(mode) for mode in product.handle("modes").materialize()
-            ]
-            finder = ScipyPeakFinder()
-            peaks_info = (
-                {
-                    mode: finder.find_peaks(f, Pxx_all[:, index]).model_dump()
-                    for index, mode in enumerate(available_modes)
-                }
-                if spec.annotate_peaks
-                else {}
+
+        f = np.asarray(product.handle("axis").materialize())
+        spectra = np.asarray(product.handle("psd").materialize())
+        if f.ndim == 2:
+            if not np.allclose(f, f[0]):
+                raise ValueError("PSD scan points use different frequency axes")
+            f = f[0]
+        if spectra.ndim == 3:
+            spectra = np.mean(spectra, axis=0)
+        if spectra.ndim == 1:
+            spectra = spectra[:, None]
+        Pxx_all = spectra
+        variables = {variable.name for variable in product.variables}
+        available_modes = (
+            [int(mode) for mode in product.handle("modes").materialize()]
+            if "modes" in variables
+            else list(range(Pxx_all.shape[1]))
+        )
+        peak_product = None
+        if spec.annotate_peaks:
+            peak_product = select_product(
+                data,
+                kind=DataKind.STATISTICS,
+                quantity="peak_location",
+                fields=(
+                    "group_channel_index",
+                    "candidate_offsets",
+                    "location",
+                    "intensity",
+                ),
             )
 
         # Plotting
@@ -164,32 +160,40 @@ class PowerSpectrumPlotter(PlotterProtocol):
                     ylabel = "PSD [V**2/Hz]"
 
                 (line,) = ax.plot(f, val, label=f"Ch{ch}")
-
-                # Annotate peaks
-                if spec.annotate_peaks and ch in peaks_info:
-                    p_freqs = peaks_info[ch]["frequencies"]
-                    p_vals = peaks_info[ch]["values"]
-
-                    # If scale is dB, we need to transform peak values too for plotting
-                    if scale == "dB":
-                        p_vals_plot = 10 * np.log10(p_vals + 1e-20)
-                    else:
-                        p_vals_plot = p_vals
-
-                    ax.plot(p_freqs, p_vals_plot, "x", color=line.get_color())
-
-                    # Add text labels for top 3 peaks
-                    # Sort by value
-                    sorted_idx = np.argsort(p_vals)[::-1]
-                    for i in sorted_idx[:3]:
-                        ax.annotate(
-                            f"{p_freqs[i]:.2f}",
-                            xy=(p_freqs[i], p_vals_plot[i]),
-                            xytext=(0, 5),
-                            textcoords="offset points",
-                            ha="center",
-                            fontsize=8,
+                if peak_product is not None:
+                    group_channels = np.asarray(
+                        peak_product.handle("group_channel_index").materialize()
+                    )
+                    offsets = np.asarray(
+                        peak_product.handle("candidate_offsets").materialize()
+                    )
+                    locations = np.asarray(
+                        peak_product.handle("location").materialize()
+                    )
+                    intensities = np.asarray(
+                        peak_product.handle("intensity").materialize()
+                    )
+                    indices: list[int] = []
+                    for group, channel in enumerate(group_channels):
+                        if int(channel) == idx:
+                            indices.extend(
+                                range(int(offsets[group]), int(offsets[group + 1]))
+                            )
+                    if indices:
+                        selected = np.array(indices, dtype=np.int64)
+                        selected = selected[
+                            np.argsort(intensities[selected])[-3:]
+                        ]
+                        peak_values = intensities[selected]
+                        if scale == "dB":
+                            peak_values = 10 * np.log10(peak_values + 1e-20)
+                        ax.plot(
+                            locations[selected],
+                            peak_values,
+                            "x",
+                            color=line.get_color(),
                         )
+
             else:
                 print(f"Warning: Channel {ch} not found in PSD data.")
 

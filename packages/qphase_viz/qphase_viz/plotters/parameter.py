@@ -3,38 +3,17 @@
 Plots metrics (e.g. PSD peaks) against scanning parameters.
 """
 
-import re
 from pathlib import Path
 from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
 import numpy as np
-from qphase.backend.numpy_backend import NumpyBackend
-from qphase.core.protocols import ResultProtocol
+from qphase.core.dataset import DatasetResultProtocol
+from qphase.data import DataKind
 
 from ..config import ParameterEvolutionConfig, ParameterEvolutionSpec
+from ..typed_input import scan_values, select_product, trajectory_array
 from .base import PlotterProtocol
-
-
-def _get_psd_analyzer_classes():
-    """Lazy import of PsdAnalyzer to keep qphase_sde optional."""
-    try:
-        from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
-        from qphase_sde.peak_finder import ScipyPeakFinder
-        from qphase_sde.result import _trajectory_product
-        from qphase_sde.spectral_estimator import create_builtin_estimator
-    except ImportError as e:
-        raise ImportError(
-            "Parameter evolution from raw trajectories requires "
-            "qphase-viz[sde] (qphase-sde)."
-        ) from e
-    return (
-        PsdAnalyzer,
-        PsdAnalyzerConfig,
-        ScipyPeakFinder,
-        _trajectory_product,
-        create_builtin_estimator,
-    )
 
 
 class ParameterEvolutionPlotter(PlotterProtocol):
@@ -51,170 +30,78 @@ class ParameterEvolutionPlotter(PlotterProtocol):
             config = ParameterEvolutionConfig(**kwargs)
         self.config = config
 
-    def plot(self, data: Any, output_dir: Path, format: str) -> list[Path]:
-        # data should be a dict of results (AggregateResult.data)
-        if not isinstance(data, dict):
-            # If not aggregated, we can't plot evolution
-            return []
-
+    def plot(
+        self, data: DatasetResultProtocol, output_dir: Path, format: str
+    ) -> list[Path]:
         generated_files = []
         for spec in self.config.plots:
             generated_files.append(self._plot_single(data, spec, output_dir, format))
         return generated_files
 
-    def _extract_parameter(
-        self, job_name: str, param_name: str, result: ResultProtocol | None = None
-    ) -> float | None:
-        """Extract parameter value from result metadata or job name string."""
-        # Try metadata first
-        if result:
-            meta = getattr(result, "metadata", {})
-            # Check 'params' dict
-            params = meta.get("params", {})
-            if param_name in params:
-                try:
-                    return float(params[param_name])
-                except (ValueError, TypeError):
-                    pass
-
-            # Also check implicit filters used during aggregation.
-            # Usually the iterator parameter is the grouped job value.
-            pass
-
-        # Fallback to Regex on job name
-        # Pattern: name[p1=v1, p2=v2]
-        # Regex to find "param_name=value"
-        # Value can be number, scientific notation
-        pattern = f"{param_name}=([^,\\]_]+)"
-        match = re.search(pattern, job_name)
-        if match:
-            try:
-                return float(match.group(1))
-            except ValueError:
-                return None
-        return None
-
-    def _compute_metric(
-        self, result: ResultProtocol, spec: ParameterEvolutionSpec
-    ) -> float:
-        """Compute the requested metric for a single result."""
-        # Get data
-        data = result.data
-
-        # Case 1: Pre-computed Analysis (Dictionary)
-        if isinstance(data, dict):
-            if spec.metric.startswith("psd_"):
-                # Expecting data['peaks']
-                peaks_info = data.get("peaks", {}).get(spec.channel, {})
-                if not peaks_info:
-                    # Maybe nested in 'psd'
-                    peaks_info = (
-                        data.get("psd", {}).get("peaks", {}).get(spec.channel, {})
-                    )
-
-                p_vals = peaks_info.get("values", [])
-                p_freqs = peaks_info.get("frequencies", [])
-
-                if len(p_vals) == 0:
-                    return np.nan
-
-                # Find dominant peak
-                idx = np.argmax(p_vals)
-
-                if spec.metric == "psd_peak_freq":
-                    return p_freqs[idx]
-                elif spec.metric == "psd_peak_val":
-                    return p_vals[idx]
-
-            # If not PSD metric, maybe mean/var?
-            # Analysis dict might not have mean/var unless calculated.
-            return np.nan
-
-        # Case 2: Trajectory object
-        traj = data
-        if spec.metric.startswith("psd_"):
-            # We need PSD
-            (
-                PsdAnalyzer,
-                PsdAnalyzerConfig,
-                ScipyPeakFinder,
-                trajectory_product,
-                create_estimator,
-            ) = _get_psd_analyzer_classes()
-            # Configure analyzer
-            analyzer_config = PsdAnalyzerConfig(
-                kind="complex",
-                modes=[spec.channel],
-                convention="symmetric",
-                dt=getattr(traj, "dt", 1.0),
+    def _metric_points(
+        self, data: DatasetResultProtocol, spec: ParameterEvolutionSpec
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if spec.metric.startswith("psd_peak_"):
+            product = select_product(
+                data,
+                kind=DataKind.STATISTICS,
+                quantity="peak_location",
+                fields=(
+                    "group_scan_index",
+                    "group_channel_index",
+                    "candidate_offsets",
+                    "location",
+                    "intensity",
+                ),
             )
-            analyzer = PsdAnalyzer(
-                analyzer_config,
-                subplugins={
-                    "estimator": create_estimator(
-                        "periodogram", {"window": spec.psd_window}
-                    )
-                },
+            x = scan_values(data, product, spec.parameter)
+            group_scan = np.asarray(product.handle("group_scan_index").materialize())
+            group_channel = np.asarray(
+                product.handle("group_channel_index").materialize()
             )
-            trajectory = trajectory_product(
-                traj, scan_size=None, n_traj_per_point=None
-            ).point_view(scan=0)
-            product = analyzer.execute(
-                {"trajectories": trajectory},
-                backend=NumpyBackend(),
-                label="psd",
-            )["psd"]
-            axis = product.handle("axis").materialize()
-            psd = product.handle("psd").materialize()[:, 0]
-            peaks = ScipyPeakFinder().find_peaks(axis, psd)
-            p_vals = peaks.values
-            p_freqs = peaks.frequencies
+            offsets = np.asarray(product.handle("candidate_offsets").materialize())
+            locations = np.asarray(product.handle("location").materialize())
+            intensities = np.asarray(product.handle("intensity").materialize())
+            y = np.full(x.shape, np.nan, dtype=float)
+            for group, (scan, channel) in enumerate(
+                zip(group_scan, group_channel, strict=True)
+            ):
+                if int(channel) != spec.channel:
+                    continue
+                start, stop = int(offsets[group]), int(offsets[group + 1])
+                if stop <= start:
+                    continue
+                selected = start + int(np.argmax(intensities[start:stop]))
+                y[int(scan)] = (
+                    locations[selected]
+                    if spec.metric == "psd_peak_freq"
+                    else intensities[selected]
+                )
+            return x, y
 
-            if len(p_vals) == 0:
-                return np.nan
-
-            # Find dominant peak
-            idx = np.argmax(p_vals)
-
-            if spec.metric == "psd_peak_freq":
-                return p_freqs[idx]
-            elif spec.metric == "psd_peak_val":
-                return p_vals[idx]
-
-        elif spec.metric == "mean":
-            # Mean of trajectory (abs)
-            # traj.data shape (n_traj, n_time, n_modes)
-            data_arr = traj.data
-            if hasattr(data_arr, "ndim") and data_arr.ndim == 3:
-                return float(np.mean(np.abs(data_arr[:, :, spec.channel])))
-
-        elif spec.metric == "variance":
-            data_arr = traj.data
-            if hasattr(data_arr, "ndim") and data_arr.ndim == 3:
-                return float(np.var(np.abs(data_arr[:, :, spec.channel])))
-
-        return np.nan
+        product = select_product(
+            data,
+            role="trajectories",
+            kind=DataKind.TIME_SERIES,
+            quantity="field_amplitude",
+            fields=("alpha",),
+        )
+        values = np.abs(trajectory_array(product)[..., spec.channel])
+        x = scan_values(data, product, spec.parameter)
+        reducer = np.mean if spec.metric == "mean" else np.var
+        return x, reducer(values, axis=(1, 2))
 
     def _plot_single(
         self,
-        data: dict[str, ResultProtocol],
+        data: DatasetResultProtocol,
         spec: ParameterEvolutionSpec,
         output_dir: Path,
         format: str,
     ) -> Path:
-        # Extract (param, metric) pairs
-        points = []
-        for job_name, result in data.items():
-            param_val = self._extract_parameter(job_name, spec.parameter, result)
-            if param_val is not None:
-                metric_val = self._compute_metric(result, spec)
-                points.append((param_val, metric_val))
-
-        # Sort by parameter
-        points.sort(key=lambda x: x[0])
-
-        x = [p[0] for p in points]
-        y = [p[1] for p in points]
+        x_values, y_values = self._metric_points(data, spec)
+        order = np.argsort(x_values)
+        x = x_values[order].tolist()
+        y = y_values[order].tolist()
 
         # Plot
         config = spec.model_dump()

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
+from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.errors import QPhaseRuntimeError
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 
@@ -128,14 +129,18 @@ class VizEngine(EngineBase):
 
         Parameters
         ----------
-        data : Any
-            Input data, expected to be an ArrayBase (e.g., TrajectorySet).
+        data : DatasetResultProtocol
+            Typed input bundle containing products selected by each plotter.
         context : Any | None
             Structured execution services supplied by the scheduler.
 
         """
         if data is None:
             raise QPhaseRuntimeError("VizEngine requires input data.")
+        if not isinstance(data, DatasetResultProtocol):
+            raise QPhaseRuntimeError(
+                "VizEngine requires a typed DatasetResultProtocol input."
+            )
 
         # Apply global styles
         _set_default_rcparams()

@@ -12,10 +12,11 @@ from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
 import numpy as np
-from qphase.backend.base import ArrayBase
-from qphase.backend.xputil import convert_to_numpy
+from qphase.core.dataset import DatasetResultProtocol
+from qphase.data import DataKind
 
 from ..config import TimeSeriesConfig, TimeSeriesSpec
+from ..typed_input import select_product, time_values, trajectory_array
 from .base import PlotterProtocol
 
 
@@ -31,26 +32,32 @@ class TimeSeriesPlotter(PlotterProtocol):
             config = TimeSeriesConfig(**kwargs)
         self.config = config
 
-    def plot(self, data: ArrayBase, output_dir: Path, format: str) -> list[Path]:
+    def plot(
+        self, data: DatasetResultProtocol, output_dir: Path, format: str
+    ) -> list[Path]:
         generated_files = []
         for spec in self.config.plots:
             generated_files.append(self._plot_single(data, spec, output_dir, format))
         return generated_files
 
     def _plot_single(
-        self, data: ArrayBase, spec: TimeSeriesSpec, output_dir: Path, format: str
+        self,
+        data: DatasetResultProtocol,
+        spec: TimeSeriesSpec,
+        output_dir: Path,
+        format: str,
     ) -> Path:
         config = spec.model_dump()
-        # Extract data
-        # Expecting TrajectorySet: (n_traj, n_steps, n_modes)
-        # or State: (n_traj, n_modes) - but State has no time axis usually?
-        # Assume TrajectorySet-like structure
-
-        y = data.to_numpy()  # (N, T, M)
-        if hasattr(data, "times"):
-            t = convert_to_numpy(data.times)
-        else:
-            t = np.arange(y.shape[1])
+        product = select_product(
+            data,
+            role="trajectories",
+            kind=DataKind.TIME_SERIES,
+            quantity="field_amplitude",
+            fields=("alpha",),
+        )
+        y = trajectory_array(product)
+        y = y.reshape(-1, y.shape[-2], y.shape[-1])
+        t = time_values(product)
 
         channels = config["channels"]
         transform = config["transform"]

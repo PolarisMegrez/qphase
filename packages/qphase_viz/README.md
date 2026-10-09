@@ -2,7 +2,8 @@
 
 **Plotting Utilities for QPhase**
 
-`qphase-viz` provides a set of plotting tools for visualizing data from quantum phase-space simulations. It is designed to work with `qphase` but can also be used independently to generate figures.
+`qphase-viz` renders typed QPhase data bundles. Plotters select products by
+stable bundle role, data kind, quantity, and required fields.
 
 ## Features
 
@@ -26,32 +27,41 @@ pip install qphase-viz
 ## Usage
 
 ### As a QPhase Plugin
-Add a visualization job to your `qphase` configuration:
+Add a visualization job that consumes a typed upstream bundle:
 
 ```yaml
+schema: qphase.workflow/2
+id: typed_viz
+title: Typed visualization
 jobs:
-  - name: "plot_phase"
-    type: "viz"
-    dependencies: ["my_simulation"]
-    config:
-      plots:
-        - kind: "phase_plane"
-          mode: 0
-          style: "density"
-        - kind: "spectrum"
-          source: "output.npy"
+  - name: plot_phase
+    input: {from: my_simulation, mode: dataset}
+    engine:
+      viz: {output_dir: figures, format: png}
+    visualizer:
+      phase_plane:
+        plots: [{channel_x: 0, mode: hist2d}]
+      power_spectrum:
+        plots: [{channels: [0], scale: log}]
 ```
 
-### Standalone Usage
+### Python Usage
 ```python
 from qphase_viz.engine import VizEngine
-from qphase_viz.config import PhasePlaneConfig
+from qphase_viz.plotters.phase import PhasePlanePlotter
 
-# Configure and run
-config = PhasePlaneConfig(mode=0)
-engine = VizEngine()
-engine.plot(data, config)
+engine = VizEngine(
+    plugins={"visualizer": PhasePlanePlotter(plots=[{"channel_x": 0}])}
+)
+result = engine.run(bundle)  # bundle implements DatasetResultProtocol
 ```
+
+Time-series and phase-plane plotters require a typed field-amplitude
+time-series product. The spectrum plotter uses an existing PSD product when
+available and otherwise computes it from that typed trajectory product.
+Parameter evolution consumes explicit scan coordinates and typed peak or
+trajectory products. Raw arrays, trajectory containers, and payload dicts are
+not public inputs.
 
 ## License
 

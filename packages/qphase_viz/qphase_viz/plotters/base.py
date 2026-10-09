@@ -10,7 +10,7 @@ Public API
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from qphase.backend.base import ArrayBase
+from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.protocols import PluginBase
 
 
@@ -18,13 +18,15 @@ from qphase.core.protocols import PluginBase
 class PlotterProtocol(PluginBase, Protocol):
     """Protocol for visualization plotters."""
 
-    def plot(self, data: ArrayBase, output_dir: Path, format: str) -> list[Path]:
+    def plot(
+        self, data: DatasetResultProtocol, output_dir: Path, format: str
+    ) -> list[Path]:
         """Render plots based on data and internal configuration.
 
         Parameters
         ----------
-        data : ArrayBase
-            The simulation data (TrajectorySet or similar).
+        data : DatasetResultProtocol
+            A typed bundle exposing named Dataset products.
         output_dir : Path
             Directory to save the output file.
         format : str
