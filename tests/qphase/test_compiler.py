@@ -311,6 +311,106 @@ def test_compiler_selects_sde_task_profiles(tmp_path, sde_profile_plugins):
     assert set(analyze.plugin_config) == {"analyser"}
 
 
+def test_compiler_normalizes_analyser_instance_labels(tmp_path, sde_profile_plugins):
+    from qphase.core.job_runner import build_plugins
+    from qphase.core.registry import discovery
+    from qphase_sde.analyser.psd import PsdAnalyzer
+
+    discovery.discover_plugins()
+    project = ProjectContext.create(tmp_path / "project")
+    project.defaults_path.write_text(
+        "analyser:\n  psd:\n    convention: unitary\n",
+        encoding="utf-8",
+    )
+    compiled_workflow = WorkflowCompiler(project, SystemConfig()).compile(
+        _workflow(
+            _sde_job(
+                "sim",
+                {"t1": 1.0, "dt": 0.1},
+                backend={"dummy": {}},
+                integrator={"dummy": {}},
+                model={"dummy": {}},
+                analyser={
+                    "raw_psd": {
+                        "plugin": "psd",
+                        "config": {"kind": "complex", "modes": [0]},
+                    },
+                    "other_psd": {
+                        "plugin": "psd",
+                        "config": {"kind": "complex", "modes": [0]},
+                    },
+                },
+            )
+        )
+    )
+    compiled = compiled_workflow.job("sim")
+
+    expected = {
+        "plugin": "psd",
+        "config": {"kind": "complex", "modes": [0], "convention": "unitary"},
+    }
+    assert dict(compiled.plugin_config["analyser"]["raw_psd"]) == expected
+    assert dict(compiled.plugin_config["analyser"]["other_psd"]) == expected
+    assert dict(compiled.merged_config["analyser"]["raw_psd"]) == expected
+    restored = CompiledWorkflow.from_payload(compiled_workflow.to_payload()).job("sim")
+    assert dict(restored.plugin_config["analyser"]["raw_psd"]) == expected
+
+    instances = build_plugins(registry, dict(compiled.plugin_config))["analyser"]
+    assert set(instances) == {"raw_psd", "other_psd"}
+    assert all(isinstance(instance, PsdAnalyzer) for instance in instances.values())
+    assert compiled.product_graph is not None
+    assert {node.node_id for node in compiled.product_graph.nodes} == {
+        "analyser.raw_psd",
+        "analyser.other_psd",
+    }
+    assert {node.producer for node in compiled.product_graph.nodes} == {"analyser:psd"}
+
+
+def test_compiler_normalizes_analyser_shorthand(tmp_path, sde_profile_plugins):
+    project = ProjectContext.create(tmp_path / "project")
+    compiled = WorkflowCompiler(project, SystemConfig()).compile(
+        _workflow(
+            _sde_job(
+                "sim",
+                {"t1": 1.0, "dt": 0.1},
+                backend={"dummy": {}},
+                integrator={"dummy": {}},
+                model={"dummy": {}},
+                analyser={"dummy": {"param": 2.0}},
+            )
+        )
+    ).job("sim")
+
+    assert dict(compiled.plugin_config["analyser"]["dummy"]) == {
+        "plugin": "dummy",
+        "config": {"param": 2.0},
+    }
+
+
+def test_compiler_rejects_unknown_analyser_implementation(
+    tmp_path, sde_profile_plugins
+):
+    project = ProjectContext.create(tmp_path / "project")
+    with pytest.raises(QPhasePluginError, match="missing_implementation"):
+        WorkflowCompiler(project, SystemConfig()).compile(
+            _workflow(
+                _sde_job(
+                    "sim",
+                    {"t1": 1.0, "dt": 0.1},
+                    backend={"dummy": {}},
+                    integrator={"dummy": {}},
+                    model={"dummy": {}},
+                    analyser={
+                        "probe": {
+                            "plugin": "missing_implementation",
+                            "config": {},
+                        }
+                    },
+                )
+            )
+        )
+
+
 def test_compiler_sde_analyze_profile_forbids_model(tmp_path, sde_profile_plugins):
     """The analyze profile turns configured model/integrator into errors."""
     project = ProjectContext.create(tmp_path / "project")

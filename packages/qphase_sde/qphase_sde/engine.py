@@ -36,6 +36,7 @@ from qphase_sde.observer.base import (
 )
 from qphase_sde.planning import (
     SDEExecutionPlan,
+    _typed_batch_scope,
     _typed_scan_scope,
     build_execution_plan,
     resolve_time_grid,
@@ -148,6 +149,54 @@ def _tile_scope_sub_graph(graph: Any, tile_scope: frozenset[str]) -> Any:
         binding for binding in graph.external_inputs if binding.consumer in tile_scope
     ]
     return ProductGraph(nodes=nodes, edges=edges, external_inputs=external)
+
+
+def _batch_scope_sub_graph(graph: Any, batch_scope: frozenset[str]) -> Any:
+    """Build the executable per-batch graph over transient and frontier nodes."""
+    from qphase.data import ProductGraph
+
+    return ProductGraph(
+        nodes=[node for node in graph.nodes if node.node_id in batch_scope],
+        edges=[
+            edge
+            for edge in graph.edges
+            if edge.producer in batch_scope and edge.consumer in batch_scope
+        ],
+        external_inputs=[
+            binding
+            for binding in graph.external_inputs
+            if binding.consumer in batch_scope
+        ],
+    )
+
+
+def _post_batch_graph(
+    graph: Any,
+    transient: frozenset[str],
+    frontier: frozenset[str],
+) -> Any:
+    """Remove transient nodes and close completed reducer requirements."""
+    from qphase.data import ProductGraph
+
+    return ProductGraph(
+        nodes=[
+            node.model_copy(update={"requirements": []})
+            if node.node_id in frontier
+            else node
+            for node in graph.nodes
+            if node.node_id not in transient
+        ],
+        edges=[
+            edge
+            for edge in graph.edges
+            if edge.producer not in transient and edge.consumer not in frontier
+        ],
+        external_inputs=[
+            binding
+            for binding in graph.external_inputs
+            if binding.consumer not in transient and binding.consumer not in frontier
+        ],
+    )
 
 
 class _AdaptiveNoiseRNG:
@@ -998,22 +1047,15 @@ class Engine(EngineBase):
         node_ids = {
             node.node_id.removeprefix("analyser."): node.node_id for node in graph.nodes
         }
+        batch_local, reducer_frontier = _typed_batch_scope(
+            graph, analysers, validate=True
+        )
+        transient_nodes = batch_local - reducer_frontier
+        batch_graph = _batch_scope_sub_graph(graph, batch_local)
+        post_graph = _post_batch_graph(graph, transient_nodes, reducer_frontier)
         reducer_names = {
-            name
-            for name, analyser in analysers.items()
-            if analyser.reducer() is not None
+            node_id.removeprefix("analyser.") for node_id in reducer_frontier
         }
-        trajectory_roots = {
-            binding.consumer.removeprefix("analyser.")
-            for binding in graph.external_inputs
-            if binding.product == "trajectories"
-        }
-        missing_reducers = trajectory_roots - reducer_names
-        if missing_reducers:
-            raise RuntimeError(
-                "trajectory batching requires typed reducers for trajectory "
-                f"producers: {sorted(missing_reducers)}"
-            )
         reducer_sets = []
         for _ in range(point_count):
             reducers: dict[str, Any] = {}
@@ -1023,11 +1065,7 @@ class Engine(EngineBase):
                 assert reducer is not None
                 node = graph_nodes[node_ids[name]]
                 labels = [output.name for output in node.outputs]
-                if len(labels) != 1:
-                    raise RuntimeError(
-                        f"typed analyser {name!r} must declare one reducer output"
-                    )
-                if hasattr(reducer, "label"):
+                if len(labels) == 1 and hasattr(reducer, "label"):
                     reducer.label = labels[0]
                 reducers[name] = reducer
             reducer_sets.append(reducers)
@@ -1120,26 +1158,33 @@ class Engine(EngineBase):
                 meta={"scan_combine": "zipped"},
             )
             trajectory = source.products["trajectories"]
-            batch_products: dict[str, Mapping[str, Any]] = {}
-            for name in reducer_names:
-                node = graph_nodes[node_ids[name]]
-                products = analysers[name].execute(
-                    {"trajectories": trajectory},
-                    backend=self._required_backend(),
-                    label=node.outputs[0].name,
-                    metadata={"scan_shape": [point_count]},
-                    context=context,
-                )
-                declared = {output.name for output in node.outputs}
-                if set(products) != declared:
-                    raise RuntimeError(
-                        f"typed analyser {name!r} returned {sorted(products)}, "
-                        f"expected {sorted(declared)}"
+            from qphase.core import ProductGraphExecutor
+
+            def make_batch_runner(node_id: str) -> Any:
+                name = node_id.removeprefix("analyser.")
+
+                def runner(node: Any, inputs: Mapping[str, Any]) -> Mapping[str, Any]:
+                    del node
+                    return analysers[name].execute(
+                        inputs,
+                        backend=self._required_backend(),
+                        label=name,
+                        metadata={"scan_shape": [point_count]},
+                        context=context,
                     )
-                batch_products[name] = products
+
+                return runner
+
+            batch_outputs = ProductGraphExecutor(
+                batch_graph,
+                {
+                    node.node_id: make_batch_runner(node.node_id)
+                    for node in batch_graph.nodes
+                },
+            ).run({"input": {"trajectories": trajectory}}, context=context)
             for point_offset, reducers in enumerate(reducer_sets):
-                for owner, products in batch_products.items():
-                    reducer = reducers[owner]
+                for owner, reducer in reducers.items():
+                    products = batch_outputs[node_ids[owner]]
                     for product in products.values():
                         point_product = (
                             product.point_view(scan=point_offset)
@@ -1167,7 +1212,7 @@ class Engine(EngineBase):
                     observer_batches[name][point_offset].append(point_payload)
             if not result_meta:
                 result_meta.update(partial.meta)
-            del partial, source, batch_products
+            del partial, source, batch_outputs
             self._release_backend_pool()
 
         result_meta.update(
@@ -1243,7 +1288,7 @@ class Engine(EngineBase):
             source,
             context=context,
             completed_nodes=completed_nodes,
-            graph=graph,
+            graph=post_graph,
         )
         return analysed
 
@@ -2136,8 +2181,8 @@ class Engine(EngineBase):
             raise TrajectoryDivergenceError(
                 "SDE trajectory escaped the configured state bound at "
                 f"t={t:.9g}: max ||y||={max_norm:.9g}, limit={limit:.9g}. "
-                "No PSD was produced because the trajectory ensemble is not "
-                "stationary within the requested observation window."
+                "No downstream analysis was produced because the trajectory "
+                "ensemble is not stationary within the requested observation window."
             )
 
     def _handle_observer_actions(

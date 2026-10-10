@@ -196,9 +196,25 @@ def build_execution_plan(
     )
     backend_name = _backend_name(backend)
     trajectory_analysers = _trajectory_analysers(analysers)
+    batch_local: frozenset[str] = frozenset()
+    batch_frontier: frozenset[str] = frozenset()
+    if product_graph is not None:
+        batch_local, batch_frontier = _typed_batch_scope(
+            product_graph, analysers, validate=False
+        )
+    workspace_analysers = (
+        {
+            node_id.removeprefix("analyser."): analysers[
+                node_id.removeprefix("analyser.")
+            ]
+            for node_id in batch_local
+        }
+        if batch_local
+        else trajectory_analysers
+    )
     analyzer_device_workspace, analyzer_host_workspace = _analyzer_workspace_bytes(
         trajectory_per_point,
-        trajectory_analysers,
+        workspace_analysers,
         n_traj=n_traj,
         saved_samples=saved_samples,
         n_record_modes=n_record_modes,
@@ -216,17 +232,20 @@ def build_execution_plan(
     host_reserve = _reserve_bytes(host_budget)
     analysis_enabled = bool(analysers)
     should_keep = config.keep_traj is True or not analysis_enabled
-    incremental = bool(trajectory_analysers) and all(
-        (
+    if product_graph is not None:
+        incremental = bool(batch_local and batch_frontier)
+    else:
+        incremental = bool(trajectory_analysers) and all(
             (
-                callable(getattr(analyser, "reducer", None))
-                and analyser.reducer() is not None
+                (
+                    callable(getattr(analyser, "reducer", None))
+                    and analyser.reducer() is not None
+                )
+                or callable(getattr(analyser, "create_result_accumulator", None))
             )
-            or callable(getattr(analyser, "create_result_accumulator", None))
+            and _analyzer_capabilities(analyser).supports_trajectory_batching
+            for analyser in trajectory_analysers.values()
         )
-        and _analyzer_capabilities(analyser).supports_trajectory_batching
-        for analyser in trajectory_analysers.values()
-    )
     batching_mode = str(getattr(config, "trajectory_batching", "auto"))
     requested_batch = getattr(config, "trajectory_batch_size", None)
     # The logical RNG group size is numerical provenance: per-point streams
@@ -251,7 +270,16 @@ def build_execution_plan(
         saved_samples=saved_samples,
         n_record_modes=n_record_modes,
         real_itemsize=real_itemsize,
-        analysers=trajectory_analysers,
+        analysers=(
+            {
+                node_id.removeprefix("analyser."): analysers[
+                    node_id.removeprefix("analyser.")
+                ]
+                for node_id in batch_frontier
+            }
+            if batch_frontier
+            else trajectory_analysers
+        ),
     )
     if adaptive_active and batching_mode == "required":
         raise ValueError(
@@ -314,6 +342,8 @@ def build_execution_plan(
                 f"{logical_rng_group}; set a smaller rng_group_size."
             )
         trajectory_batch = logical_rng_group
+    if trajectory_batch < n_traj and product_graph is not None:
+        _typed_batch_scope(product_graph, analysers, validate=True)
     if trajectory_batch < n_traj and (not incremental or should_keep):
         raise SDEMemoryPlanningError(
             "trajectory batching requires keep_traj=false and every analyser "
@@ -744,8 +774,8 @@ def _analyzer_workspace_bytes(
 ) -> tuple[int, int]:
     """Estimate separate device and host analyser workspaces.
 
-    New analysers provide their own estimator. The PSD-specific fallback is
-    retained for lightweight test doubles and one-cycle external plugins.
+    New analysers provide their own estimator. A capability-based fallback is
+    retained for lightweight test doubles.
     """
     from qphase_sde.contracts.analyser import (
         AnalyserWorkspaceEstimate,
@@ -773,16 +803,6 @@ def _analyzer_workspace_bytes(
             device_total += max(0, int(estimate.device_bytes))
             host_total += max(0, int(estimate.host_bytes))
             continue
-        is_psd = (
-            str(name).lower() == "psd"
-            or str(getattr(analyser, "name", "")).lower() == "psd"
-        )
-        if not is_psd:
-            if backend_name == "cupy":
-                device_total += trajectory_per_point // 2
-            else:
-                host_total += trajectory_per_point // 2
-            continue
         estimator = getattr(analyser, "estimator", None)
         capability_fn = getattr(estimator, "capabilities", None)
         capabilities = capability_fn() if callable(capability_fn) else None
@@ -805,7 +825,11 @@ def _analyzer_workspace_bytes(
                 host_total += workspace
             continue
         # One complex FFT, one real power array, and a conservative cuFFT margin.
-        workspace = trajectory_per_point * 2
+        workspace = (
+            trajectory_per_point * 2
+            if estimator is not None
+            else trajectory_per_point // 2
+        )
         if backend_name == "cupy":
             device_total += workspace
         else:
@@ -859,6 +883,81 @@ def _typed_scan_scope(
     return frozenset(tile_scope), frozenset(all_nodes - tile_scope)
 
 
+def _typed_batch_scope(
+    graph: Any,
+    analysers: dict[str, Any],
+    *,
+    validate: bool,
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Return the transient batch subgraph and its reducer frontier."""
+    by_id = {node.node_id: node for node in graph.nodes}
+    predecessors: dict[str, set[str]] = {node_id: set() for node_id in by_id}
+    consumers: dict[tuple[str, str], set[str]] = {}
+    for edge in graph.edges:
+        predecessors[edge.consumer].add(edge.producer)
+        consumers.setdefault((edge.producer, edge.product), set()).add(edge.consumer)
+    trajectory_roots = {
+        binding.consumer
+        for binding in graph.external_inputs
+        if binding.source == "input" and binding.product == "trajectories"
+    }
+    external_by_node: dict[str, set[str]] = {node_id: set() for node_id in by_id}
+    for binding in graph.external_inputs:
+        external_by_node[binding.consumer].add(binding.product)
+
+    local: set[str] = set()
+    frontier: set[str] = set()
+    for node in graph.topological_order():
+        label = node.node_id.removeprefix("analyser.")
+        analyser = analysers.get(label)
+        if analyser is None or not _analyzer_capabilities(
+            analyser
+        ).supports_trajectory_batching:
+            continue
+        if external_by_node[node.node_id] - {"trajectories"}:
+            continue
+        if not predecessors[node.node_id] <= local:
+            continue
+        if predecessors[node.node_id] & frontier:
+            continue
+        if node.node_id not in trajectory_roots and not predecessors[node.node_id]:
+            continue
+        local.add(node.node_id)
+        if analyser.reducer() is not None:
+            frontier.add(node.node_id)
+
+    if not trajectory_roots or not trajectory_roots <= local:
+        return frozenset(), frozenset()
+
+    published = graph.terminal_outputs()
+    for node in graph.nodes:
+        published[node.node_id].update(node.publish_outputs)
+    violations: list[str] = []
+    for node_id in sorted(local - frontier):
+        node = by_id[node_id]
+        for output in node.outputs:
+            output_consumers = consumers.get((node_id, output.name), set())
+            if output.name in published[node_id]:
+                violations.append(f"{node_id}:{output.name} is published")
+            outside = output_consumers - local
+            if outside:
+                violations.append(
+                    f"{node_id}:{output.name} crosses the batch boundary to "
+                    f"{sorted(outside)}"
+                )
+            if not output_consumers:
+                violations.append(f"{node_id}:{output.name} is terminal")
+    if violations or not frontier:
+        if validate:
+            detail = violations or ["the batch-local graph has no reducer frontier"]
+            raise SDEMemoryPlanningError(
+                "trajectory batching cannot retain a non-reduced batch-local "
+                f"output: {'; '.join(detail)}"
+            )
+        return frozenset(), frozenset()
+    return frozenset(local), frozenset(frontier)
+
+
 def _trajectory_analysers(analysers: dict[str, Any]) -> dict[str, Any]:
     """Select graph-frontier analysers that consume trajectory products."""
     selected: dict[str, Any] = {}
@@ -889,24 +988,15 @@ def _accumulator_workspace_bytes(
     """Estimate fixed host/device arrays retained by incremental analysers."""
     if not analysers:
         return 0
-    if any(
-        str(name).lower() == "psd"
-        or str(getattr(analyser, "name", "")).lower() == "psd"
-        for name, analyser in analysers.items()
-    ):
-        # Axis, mean, M2, standard deviation, and temporary finalization margin.
-        return _checked_product(
-            saved_samples,
-            n_record_modes,
-            real_itemsize,
-            5,
-            label="PSD accumulator workspace",
-        )
+    factor = sum(
+        max(1, int(_analyzer_capabilities(analyser).reducer_workspace_factor))
+        for analyser in analysers.values()
+    )
     return _checked_product(
         saved_samples,
         n_record_modes,
         real_itemsize,
-        2,
+        factor,
         label="analyser accumulator workspace",
     )
 

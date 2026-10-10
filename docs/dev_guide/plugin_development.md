@@ -183,6 +183,40 @@ workspace. Do not advertise batching/streaming until the corresponding public
 accumulator/stream protocol is implemented; these declarations control memory
 planning, not only documentation.
 
+### Analyser Instance Labels
+
+The analyser namespace supports multiple instances of one registered
+implementation. The mapping key is the instance label used by ProductGraph node
+ids, progress stages, input bindings, publish declarations, and output labels;
+`plugin` is the registry implementation name:
+
+```yaml
+analyser:
+  raw_psd:
+    plugin: psd
+    config: {kind: complex, modes: [0, 1]}
+  diagnostic_psd:
+    plugin: psd
+    config: {kind: complex, modes: [2]}
+```
+
+The shorthand `analyser: {psd: {...}}` normalizes to label `psd`, plugin
+`psd`. Project defaults are resolved by implementation name before the instance
+config is applied. Compiled jobs and snapshots store only the normalized
+`{label: {plugin, config}}` form; runtime code never infers an implementation
+from a label.
+
+### Batch-Local ProductGraph Nodes
+
+`supports_trajectory_batching=True` permits a node to execute inside one
+physical trajectory batch. It does not require that node itself own a reducer.
+A non-reducing batch-local node is valid only when every output is transient,
+all consumers are batch-local, and no output is published. Reducer nodes form
+the batch frontier: their completed products re-enter the post-batch graph.
+Published, terminal, or cross-boundary outputs require a reducer and are
+rejected by planning otherwise. This lets one transform execute once per batch
+and feed multiple reducer consumers without retaining its output across batches.
+
 ### Scan-Aware Engines
 
 The scheduler passes scan and runtime services through `ExecutionContext`.

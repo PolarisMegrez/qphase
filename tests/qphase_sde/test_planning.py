@@ -5,7 +5,10 @@ import pytest
 import yaml
 from qphase.core.scan import ScanSpec
 from qphase_sde.analyser.trajectory_diagnostics import TrajectoryDiagnostics
-from qphase_sde.contracts.analyser import AnalyserExecutionCapabilities
+from qphase_sde.contracts.analyser import (
+    AnalyserExecutionCapabilities,
+    AnalyserWorkspaceEstimate,
+)
 from qphase_sde.engine import EngineConfig
 from qphase_sde.planning import SDEMemoryPlanningError, build_execution_plan
 from qphase_sde.spectral_estimator.base import SpectralEstimatorCapabilities
@@ -93,7 +96,7 @@ def test_planner_rejects_invalid_psd_bandwidth_before_allocation():
         config=SimpleNamespace(
             expected_freq_max=0.34,
             convention="symmetric",
-        )
+        ),
     )
 
     with pytest.raises(ValueError, match="save_stride <= 115"):
@@ -123,7 +126,10 @@ def test_planner_tiles_production_shape_from_resource_object():
         config=SimpleNamespace(
             expected_freq_max=0.34,
             convention="symmetric",
-        )
+        ),
+        workspace=lambda request: AnalyserWorkspaceEstimate(
+            device_bytes=2 * request.trajectory_bytes
+        ),
     )
     resources = SimpleNamespace(gpu_memory_fraction=0.75)
 
@@ -441,6 +447,9 @@ def test_planner_workspace_without_estimator_metadata_is_unchanged():
             name="psd",
             config=SimpleNamespace(expected_freq_max=None),
             create_result_accumulator=lambda: None,
+            workspace=lambda request: AnalyserWorkspaceEstimate(
+                host_bytes=2 * request.trajectory_bytes
+            ),
         )
     }
     config = EngineConfig(

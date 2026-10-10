@@ -302,7 +302,9 @@ def test_engine_state_norm_guard_rejects_escaped_chunk_trajectory():
         },
     )
 
-    with pytest.raises(TrajectoryDivergenceError, match="No PSD was produced"):
+    with pytest.raises(
+        TrajectoryDivergenceError, match="No downstream analysis was produced"
+    ):
         engine.run_sde(
             model=DummySDEModel(),
             ic=[[0.0]],

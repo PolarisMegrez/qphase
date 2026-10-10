@@ -295,6 +295,7 @@ class PsdAnalyzer(Analyzer):
             supports_trajectory_batching=capabilities.trajectory_batching,
             supports_time_streaming=capabilities.time_streaming,
             supports_scan_tiling=capabilities.trajectory_batching,
+            reducer_workspace_factor=5,
         )
 
     def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:

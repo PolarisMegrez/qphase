@@ -79,6 +79,7 @@ class AnalyserExecutionCapabilities:
     supports_scan_tiling: bool = False
     supports_masked_or_ragged: bool = False
     deterministic_merge: bool = True
+    reducer_workspace_factor: int = 2
 
 
 @dataclass(frozen=True)

@@ -40,8 +40,20 @@ def compile_product_graph(
     for name, raw in raw_analysers.items():
         if not isinstance(raw, Mapping):
             raise TypeError(f"analyser config {name!r} must be a mapping")
+        implementation = str(name)
+        instance_config = raw
+        if "plugin" in raw or "config" in raw:
+            if set(raw) != {"plugin", "config"}:
+                raise TypeError(
+                    f"analyser instance {name!r} must contain exactly "
+                    "'plugin' and 'config'"
+                )
+            implementation = str(raw["plugin"])
+            instance_config = raw["config"]
+            if not isinstance(instance_config, Mapping):
+                raise TypeError(f"analyser instance {name!r} config must be a mapping")
         instance = registry.create_plugin_instance(
-            "analyser", {"name": str(name), **dict(raw)}
+            "analyser", {"name": implementation, **dict(instance_config)}
         )
         if not callable(getattr(instance, "input_requirements", None)) or not callable(
             getattr(instance, "output_specs", None)
@@ -67,7 +79,7 @@ def compile_product_graph(
         nodes.append(
             ProductNode(
                 node_id=node_id,
-                producer=f"analyser:{name}",
+                producer=f"analyser:{implementation}",
                 requirements=list(instance.input_requirements()),
                 outputs=outputs,
                 publish_outputs=requested_publish,

@@ -13,6 +13,7 @@ from qphase.data import (
     AxisSchema,
     DataKind,
     ExternalInputBinding,
+    GraphEdge,
     ProductDeclaration,
     ProductGraph,
     ProductNode,
@@ -156,6 +157,86 @@ class MeanAnalyzer(Analyzer):
             }
 
         return map_trajectory_product(trajectory, compute, context=context)
+
+
+class IdentityBatchAnalyzer(Analyzer):
+    """Batch-local transform probe with no reducer."""
+
+    name = "identity_batch"
+
+    def __init__(self):
+        self.calls = 0
+
+    def input_requirements(self):
+        return [trajectory_requirement(value_domain=None)]
+
+    def output_specs(self, *, label):
+        return (
+            ProductDeclaration(
+                name=label,
+                kind=DataKind.TIME_SERIES,
+                quantity="field_amplitude",
+                fields=["alpha", "valid_length"],
+            ),
+        )
+
+    def execution_capabilities(self):
+        from qphase_sde.contracts.analyser import AnalyserExecutionCapabilities
+
+        return AnalyserExecutionCapabilities(supports_trajectory_batching=True)
+
+    def execute(self, inputs, *, backend, label, metadata=None, context=None):
+        del backend, metadata, context
+        self.calls += 1
+        return {label: inputs["trajectories"]}
+
+
+def _branched_batch_graph(*, publish_identity=False):
+    identity = IdentityBatchAnalyzer()
+    psd_a = PsdAnalyzer(kind="complex", modes=[0])
+    psd_b = PsdAnalyzer(kind="complex", modes=[0])
+    nodes = [
+        ProductNode(
+            node_id="analyser.identity",
+            producer="analyser:identity_batch",
+            requirements=identity.input_requirements(),
+            outputs=list(identity.output_specs(label="identity")),
+            publish_outputs=["identity"] if publish_identity else [],
+        ),
+        ProductNode(
+            node_id="analyser.psd_a",
+            producer="analyser:psd",
+            requirements=psd_a.input_requirements(),
+            outputs=list(psd_a.output_specs(label="psd_a")),
+        ),
+        ProductNode(
+            node_id="analyser.psd_b",
+            producer="analyser:psd",
+            requirements=psd_b.input_requirements(),
+            outputs=list(psd_b.output_specs(label="psd_b")),
+        ),
+    ]
+    graph = ProductGraph(
+        nodes=nodes,
+        edges=[
+            GraphEdge(
+                producer="analyser.identity",
+                product="identity",
+                consumer=node_id,
+                requirement="trajectories",
+            )
+            for node_id in ("analyser.psd_a", "analyser.psd_b")
+        ],
+        external_inputs=[
+            ExternalInputBinding(
+                consumer="analyser.identity",
+                requirement="trajectories",
+                source="input",
+                product="trajectories",
+            )
+        ],
+    )
+    return graph, identity, psd_a, psd_b
 
 
 def _mean_graph() -> ProductGraph:
@@ -1062,6 +1143,165 @@ def test_typed_graph_batches_all_statistical_reducers():
         assert int(product.handle("n_traj").materialize()) == 8
 
 
+def test_batch_local_transform_fans_out_once_per_batch():
+    graph, identity, psd_a, psd_b = _branched_batch_graph()
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.2,
+            dt=0.01,
+            n_traj=8,
+            trajectory_batching="required",
+            trajectory_batch_size=4,
+            rng_group_size=4,
+            seed=51,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": StochasticScannedModel(),
+            "analyser": {
+                "identity": identity,
+                "psd_a": psd_a,
+                "psd_b": psd_b,
+            },
+        },
+        product_graph=graph,
+    )
+
+    result = engine.run(
+        context=SimpleNamespace(
+            parameter_grid=None,
+            product_graph=graph,
+            progress=None,
+            cancellation=None,
+            metadata={},
+        )
+    )
+
+    assert identity.calls == 2
+    assert set(result.products) == {"psd_a", "psd_b"}
+    np.testing.assert_allclose(
+        result.products["psd_a"].handle("psd").materialize(),
+        result.products["psd_b"].handle("psd").materialize(),
+    )
+
+
+def test_batch_local_non_reducer_cannot_be_published():
+    from qphase_sde.planning import SDEMemoryPlanningError
+
+    graph, identity, psd_a, psd_b = _branched_batch_graph(publish_identity=True)
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.2,
+            dt=0.01,
+            n_traj=8,
+            trajectory_batching="required",
+            trajectory_batch_size=4,
+            rng_group_size=4,
+            seed=51,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": StochasticScannedModel(),
+            "analyser": {
+                "identity": identity,
+                "psd_a": psd_a,
+                "psd_b": psd_b,
+            },
+        },
+        product_graph=graph,
+    )
+
+    with pytest.raises(SDEMemoryPlanningError, match="identity.*published"):
+        engine.run(
+            context=SimpleNamespace(
+                parameter_grid=None,
+                product_graph=graph,
+                progress=None,
+                cancellation=None,
+                metadata={},
+            )
+        )
+
+
+def test_batch_local_non_reducer_cannot_cross_final_boundary():
+    from qphase_sde.planning import SDEMemoryPlanningError
+
+    identity = IdentityBatchAnalyzer()
+    final = MeanAnalyzer()
+    graph = ProductGraph(
+        nodes=[
+            ProductNode(
+                node_id="analyser.identity",
+                producer="analyser:identity_batch",
+                requirements=identity.input_requirements(),
+                outputs=list(identity.output_specs(label="identity")),
+            ),
+            ProductNode(
+                node_id="analyser.final",
+                producer="analyser:mean",
+                requirements=final.input_requirements(),
+                outputs=list(final.output_specs(label="final")),
+            ),
+        ],
+        edges=[
+            GraphEdge(
+                producer="analyser.identity",
+                product="identity",
+                consumer="analyser.final",
+                requirement="trajectories",
+            )
+        ],
+        external_inputs=[
+            ExternalInputBinding(
+                consumer="analyser.identity",
+                requirement="trajectories",
+                source="input",
+                product="trajectories",
+            )
+        ],
+    )
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.2,
+            dt=0.01,
+            n_traj=8,
+            trajectory_batching="required",
+            trajectory_batch_size=4,
+            rng_group_size=4,
+            seed=51,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": StochasticScannedModel(),
+            "analyser": {"identity": identity, "final": final},
+        },
+        product_graph=graph,
+    )
+
+    with pytest.raises(SDEMemoryPlanningError, match="identity.*boundary"):
+        engine.run(
+            context=SimpleNamespace(
+                parameter_grid=None,
+                product_graph=graph,
+                progress=None,
+                cancellation=None,
+                metadata={},
+            )
+        )
+
+
 def test_trajectory_batching_reduces_psd_before_running_peak_finder():
     from qphase.core.registry import discovery, registry
     from qphase_sde.graph import compile_product_graph
@@ -1346,6 +1586,58 @@ def test_no_grid_run_products_stay_non_scan():
     trajectories = result.products["trajectories"]
     assert trajectories.axis("scan").size == 1
     assert "dropped_products" not in result.metadata
+
+
+def test_two_instance_labels_of_same_analyser_run_independently():
+    graph = _graph(
+        {
+            "raw_psd": {
+                "plugin": "psd",
+                "config": {"kind": "complex", "modes": [0]},
+            },
+            "other_psd": {
+                "plugin": "psd",
+                "config": {"kind": "complex", "modes": [0]},
+            },
+        }
+    )
+    engine = Engine(
+        config=EngineConfig(
+            t0=0.0,
+            t1=0.08,
+            dt=0.01,
+            n_traj=8,
+            seed=67,
+            ic=[[1.0]],
+            keep_traj=False,
+        ),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": ScannedDummyModel(),
+            "analyser": {
+                "raw_psd": PsdAnalyzer(kind="complex", modes=[0]),
+                "other_psd": PsdAnalyzer(kind="complex", modes=[0]),
+            },
+        },
+        product_graph=graph,
+    )
+
+    result = engine.run(
+        context=SimpleNamespace(
+            parameter_grid=None,
+            product_graph=graph,
+            progress=None,
+            cancellation=None,
+            metadata={},
+        )
+    )
+
+    assert set(result.products) == {"raw_psd", "other_psd"}
+    np.testing.assert_allclose(
+        result.products["raw_psd"].handle("psd").materialize(),
+        result.products["other_psd"].handle("psd").materialize(),
+    )
 
 
 def test_engine_fails_when_analyser_execute_builds_no_product(monkeypatch):

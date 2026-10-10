@@ -22,6 +22,7 @@ from .config_loader import (
     merge_plugin_config_sections,
 )
 from .errors import ErrorCode, QPhaseConfigError, QPhasePluginError
+from .plugin_graph import merge_plugin_config
 from .project import ProjectContext
 from .protocols import EngineManifest
 from .registry import RegistryView, registry
@@ -413,6 +414,14 @@ class WorkflowCompiler:
             and namespace not in explicit
             and isinstance(config, Mapping)
         }
+        if "analyser" in selected:
+            selected["analyser"] = self._normalize_analyser_instances(
+                selected["analyser"], plugin_sections.get("analyser", {})
+            )
+            merged["analyser"] = deep_copy(selected["analyser"])
+            merged_plugins = merged.get("plugins")
+            if isinstance(merged_plugins, dict) and "analyser" in merged_plugins:
+                merged_plugins["analyser"] = deep_copy(selected["analyser"])
         if profile_id is not None:
             # Only job-explicit plugin config can trip a forbidden namespace;
             # a forbidden namespace injected solely by project defaults is
@@ -768,12 +777,93 @@ class WorkflowCompiler:
                         f"plugin config for {namespace}:{name} must be a mapping",
                         code=ErrorCode.CONFIG,
                     )
+                plugin_name = str(name)
+                plugin_values = values
+                if namespace == "analyser":
+                    plugin_name = str(values.get("plugin", ""))
+                    plugin_values = values.get("config", {})
+                    if not plugin_name or not isinstance(plugin_values, Mapping):
+                        raise QPhaseConfigError(
+                            f"normalized analyser instance {name!r} is invalid",
+                            code=ErrorCode.CONFIG,
+                        )
                 if namespace == "model":
                     self._reject_implicit_model_scan(str(name), values)
                 self.registry.validate_plugin_config(
                     namespace,
-                    {"name": str(name), **dict(values)},
+                    {"name": plugin_name, **dict(plugin_values)},
                 )
+
+    def _normalize_analyser_instances(
+        self,
+        configured: Any,
+        defaults: Any,
+    ) -> dict[str, dict[str, Any]]:
+        """Freeze analyser instance labels separately from implementations."""
+        if not isinstance(configured, Mapping):
+            raise QPhaseConfigError(
+                "plugin section 'analyser' must be a mapping",
+                code=ErrorCode.CONFIG,
+            )
+        default_map = defaults if isinstance(defaults, Mapping) else {}
+        normalized: dict[str, dict[str, Any]] = {}
+        for raw_label, raw in configured.items():
+            label = str(raw_label)
+            if not label or not isinstance(raw, Mapping):
+                raise QPhaseConfigError(
+                    f"analyser instance {label!r} must be a non-empty mapping",
+                    code=ErrorCode.CONFIG,
+                )
+            if "plugin" in raw or "config" in raw:
+                if set(raw) != {"plugin", "config"}:
+                    raise QPhaseConfigError(
+                        f"analyser instance {label!r} must contain exactly "
+                        "'plugin' and 'config'",
+                        code=ErrorCode.CONFIG,
+                    )
+                implementation = raw["plugin"]
+                override = raw["config"]
+                if not isinstance(implementation, str) or not implementation:
+                    raise QPhaseConfigError(
+                        f"analyser instance {label!r} has an invalid plugin name",
+                        code=ErrorCode.CONFIG,
+                    )
+                if not isinstance(override, Mapping):
+                    raise QPhaseConfigError(
+                        f"analyser instance {label!r} config must be a mapping",
+                        code=ErrorCode.CONFIG,
+                    )
+            else:
+                implementation = label
+                override = raw
+            inherited = default_map.get(implementation, {})
+            if not isinstance(inherited, Mapping) or (
+                "plugin" in inherited or "config" in inherited
+            ):
+                inherited = {}
+            try:
+                self.registry.get_plugin_class("analyser", implementation)
+                merged = merge_plugin_config(
+                    self.registry,
+                    "analyser",
+                    implementation,
+                    inherited,
+                    override,
+                )
+            except QPhaseConfigError:
+                raise
+            except Exception as exc:
+                raise QPhasePluginError(
+                    f"failed to resolve analyser instance {label!r} using "
+                    f"implementation {implementation!r}: {exc}",
+                    code=ErrorCode.PLUGIN_DISCOVERY,
+                    context={"label": label, "plugin": implementation},
+                ) from exc
+            normalized[label] = {
+                "plugin": implementation,
+                "config": merged,
+            }
+        return normalized
 
     def _reject_implicit_model_scan(
         self, plugin_name: str, plugin_config: Mapping[str, Any]

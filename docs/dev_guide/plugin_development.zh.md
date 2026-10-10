@@ -180,6 +180,36 @@ workspace 时，应使用 `AnalyserExecutionCapabilities` 覆盖
 `workspace()` 中给出主机/设备字节估算。在真正实现公开 accumulator/stream
 协议之前不得声明支持 batching/streaming；这些声明会直接参与内存规划，并非仅作文档。
 
+### Analyser 实例标签
+
+`analyser` namespace 支持同一注册 implementation 的多个实例。mapping key 是
+instance label，用于 ProductGraph node id、progress stage、input binding、publish
+声明和默认输出 label；`plugin` 是 registry implementation name：
+
+```yaml
+analyser:
+  raw_psd:
+    plugin: psd
+    config: {kind: complex, modes: [0, 1]}
+  diagnostic_psd:
+    plugin: psd
+    config: {kind: complex, modes: [2]}
+```
+
+简写 `analyser: {psd: {...}}` 会规范化为 label=`psd`、plugin=`psd`。
+Project defaults 先按 implementation name 解析，再应用 instance config。Compiled
+job 与 snapshot 只保存规范化的 `{label: {plugin, config}}`；runtime 不从 label
+重新推断 implementation。
+
+### Batch-local ProductGraph 节点
+
+`supports_trajectory_batching=True` 表示节点可以在一个物理 trajectory batch 内执行，
+不表示节点自身必须有 reducer。无 reducer 的 batch-local 节点只有在全部输出均为
+transient、全部 consumer 均属于 batch-local 子图且没有输出被发布时才合法。Reducer
+节点组成 batch frontier，其完成产品重新进入 post-batch graph。无 reducer 的 published、
+terminal 或跨 boundary 输出会在 planning 阶段被拒绝。这样一个 transform 每批只执行一次，
+即可共享给多个 reducer consumer，且不会跨 batch 保留输出。
+
 ### 支持 Scan 的 Engine
 
 scheduler 通过 `ExecutionContext` 传递 scan 与运行时服务。engine 负责数值执行

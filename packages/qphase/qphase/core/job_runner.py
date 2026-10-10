@@ -128,21 +128,31 @@ def build_plugins(registry: RegistryCenter, config: dict[str, Any]) -> dict[str,
         if not isinstance(config_data, dict):
             raise QPhasePluginError(f"Invalid plugin config for '{plugin_type}'")
         type_instances: dict[str, Any] = {}
-        for plugin_name, plugin_config in config_data.items():
+        for instance_label, plugin_config in config_data.items():
             if not isinstance(plugin_config, dict):
                 raise QPhasePluginError(
-                    f"Invalid plugin config for '{plugin_type}.{plugin_name}'"
+                    f"Invalid plugin config for '{plugin_type}.{instance_label}'"
                 )
+            plugin_name = str(instance_label)
             flat_config = dict(plugin_config)
+            if plugin_type == "analyser":
+                plugin_name = str(plugin_config.get("plugin", ""))
+                raw_config = plugin_config.get("config")
+                if not plugin_name or not isinstance(raw_config, dict):
+                    raise QPhasePluginError(
+                        f"Invalid normalized analyser instance {instance_label!r}"
+                    )
+                flat_config = dict(raw_config)
             flat_config["name"] = plugin_name
             try:
                 instance = registry.create_plugin_instance(plugin_type, flat_config)
             except Exception as exc:
                 raise QPhasePluginError(
-                    f"Failed to create plugin '{plugin_type}.{plugin_name}': {exc}"
+                    f"Failed to create plugin '{plugin_type}.{instance_label}' "
+                    f"using {plugin_name!r}: {exc}"
                 ) from exc
-            plugins[f"{plugin_type}.{plugin_name}"] = instance
-            type_instances[plugin_name] = instance
+            plugins[f"{plugin_type}.{instance_label}"] = instance
+            type_instances[str(instance_label)] = instance
         plugins[plugin_type] = (
             next(iter(type_instances.values()))
             if len(type_instances) == 1
