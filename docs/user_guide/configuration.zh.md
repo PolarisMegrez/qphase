@@ -84,6 +84,26 @@ Workflow 身份。
 项目范围数值默认值写入 `configs/defaults.yaml`。仅存在默认值不会激活可选插件；
 Workflow 必须显式选择对应命名空间。
 
+### 多 Analyser 实例
+
+`analyser` mapping 的 key 是 instance label。同一 implementation 出现多次时，
+使用显式 envelope：
+
+```yaml
+analyser:
+  raw_psd:
+    plugin: psd
+    config: {kind: complex, modes: [0, 1]}
+  diagnostic_psd:
+    plugin: psd
+    config: {kind: complex, modes: [2]}
+```
+
+简写 `analyser: {psd: {...}}` 表示 label=`psd`、implementation=`psd`。
+Project defaults 仍按 implementation name 配置；Workflow instance config 按 label
+配置，并覆盖 implementation defaults。Instance label 必须是非空字符串，不能包含
+`.`，也不能为 `input`。`input_bindings` 与 `publish_outputs` 使用 instance label。
+
 ## 参数扫描
 
 插件配置中的列表始终是字面值。扫描必须使用 `ScanSpec`：

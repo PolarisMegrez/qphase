@@ -199,7 +199,8 @@ analyser:
 简写 `analyser: {psd: {...}}` 会规范化为 label=`psd`、plugin=`psd`。
 Project defaults 先按 implementation name 解析，再应用 instance config。Compiled
 job 与 snapshot 只保存规范化的 `{label: {plugin, config}}`；runtime 不从 label
-重新推断 implementation。
+重新推断 implementation。Label 必须是非空字符串，不能包含 `.`，也不能使用保留的
+source name `input`。
 
 ### Batch-local ProductGraph 节点
 
@@ -209,6 +210,8 @@ transient、全部 consumer 均属于 batch-local 子图且没有输出被发布
 节点组成 batch frontier，其完成产品重新进入 post-batch graph。无 reducer 的 published、
 terminal 或跨 boundary 输出会在 planning 阶段被拒绝。这样一个 transform 每批只执行一次，
 即可共享给多个 reducer consumer，且不会跨 batch 保留输出。
+当前 reducer contract 只接受一个 Dataset 输出。Analyser `workspace()` 同时声明单次
+调用的 host/device bytes 与跨 batch 保留的 `reducer_bytes`；planner 会同时计入两者。
 
 ### 支持 Scan 的 Engine
 

@@ -294,6 +294,13 @@ class AllanVarianceAnalyzer(Analyzer):
     def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
         config = cast(AllanVarianceConfig, self.config)
         mode_bytes = request.trajectory_bytes // max(request.n_record_modes, 1)
+        reducer_bytes = (
+            request.n_traj
+            * (len(config.taus) if config.taus is not None else config.points)
+            * max(len(config.modes), 1)
+            * 8
+            * 8
+        )
         if request.backend_name == "cupy":
             chunk_rows = min(config.device_chunk_trajectories, request.n_traj)
             # The phase, second differences and cumsum output are float64 even
@@ -304,9 +311,14 @@ class AllanVarianceAnalyzer(Analyzer):
             # Only the per-trajectory tau tables are assembled on the host.
             host_bytes = request.n_traj * 256 * 4 * 8
             return AnalyserWorkspaceEstimate(
-                device_bytes=device_bytes, host_bytes=host_bytes
+                device_bytes=device_bytes,
+                host_bytes=host_bytes,
+                reducer_bytes=reducer_bytes,
             )
-        return AnalyserWorkspaceEstimate(host_bytes=5 * mode_bytes)
+        return AnalyserWorkspaceEstimate(
+            host_bytes=5 * mode_bytes,
+            reducer_bytes=reducer_bytes,
+        )
 
     def create_result_accumulator(self) -> AllanResultAccumulator:
         return AllanResultAccumulator()

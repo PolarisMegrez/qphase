@@ -131,24 +131,80 @@ def _tile_scope_sub_graph(graph: Any, tile_scope: frozenset[str]) -> Any:
     """Build the induced tile-phase sub-graph over the tile-scope nodes.
 
     Tile-scope is ancestor-closed, so every edge into a tile-scope consumer
-    stays internal and the remaining external bindings keep validating. All
-    outputs of the sub-graph nodes are published: the merged products must
-    re-enter the full graph as completed nodes in the final phase.
+    stays internal and the remaining external bindings keep validating.
+    Outputs crossing the tile boundary become terminal in this induced graph;
+    tile-internal transient outputs keep their original liveness.
     """
     from qphase.data import ProductGraph
 
-    nodes = [
-        node.model_copy(
-            update={"publish_outputs": [output.name for output in node.outputs]}
-        )
-        for node in graph.nodes
-        if node.node_id in tile_scope
-    ]
+    nodes = [node for node in graph.nodes if node.node_id in tile_scope]
     edges = [edge for edge in graph.edges if edge.consumer in tile_scope]
     external = [
         binding for binding in graph.external_inputs if binding.consumer in tile_scope
     ]
     return ProductGraph(nodes=nodes, edges=edges, external_inputs=external)
+
+
+def _tile_boundary_outputs(
+    graph: Any, tile_scope: frozenset[str]
+) -> dict[str, set[str]]:
+    """Return products that must cross the tile merge boundary."""
+    boundary = graph.terminal_outputs()
+    for node in graph.nodes:
+        boundary[node.node_id].update(node.publish_outputs)
+    for edge in graph.edges:
+        if edge.producer in tile_scope and edge.consumer not in tile_scope:
+            boundary[edge.producer].add(edge.product)
+    return {
+        node_id: names
+        for node_id, names in boundary.items()
+        if node_id in tile_scope and names
+    }
+
+
+def _post_tile_graph(
+    graph: Any,
+    tile_scope: frozenset[str],
+    boundary: Mapping[str, set[str]],
+) -> Any:
+    """Build the final graph with merged tile-boundary nodes completed."""
+    from qphase.data import ProductGraph
+
+    retained = set(boundary)
+    nodes = []
+    for node in graph.nodes:
+        if node.node_id not in tile_scope:
+            nodes.append(node)
+            continue
+        if node.node_id in retained:
+            names = boundary[node.node_id]
+            nodes.append(
+                node.model_copy(
+                    update={
+                        "requirements": [],
+                        "outputs": [
+                            output for output in node.outputs if output.name in names
+                        ],
+                        "publish_outputs": [
+                            name for name in node.publish_outputs if name in names
+                        ],
+                    }
+                )
+            )
+    return ProductGraph(
+        nodes=nodes,
+        edges=[
+            edge
+            for edge in graph.edges
+            if edge.producer in retained and edge.consumer not in tile_scope
+            or edge.producer not in tile_scope and edge.consumer not in tile_scope
+        ],
+        external_inputs=[
+            binding
+            for binding in graph.external_inputs
+            if binding.consumer not in tile_scope
+        ],
+    )
 
 
 def _batch_scope_sub_graph(graph: Any, batch_scope: frozenset[str]) -> Any:
@@ -973,13 +1029,12 @@ class Engine(EngineBase):
         executor then runs every final-scope node a single time with complete
         inputs and returns the graph's published terminal products.
         """
+        boundary = _tile_boundary_outputs(graph, tile_scope)
         completed_nodes = {
-            node.node_id: {
-                output.name: merged_products[output.name] for output in node.outputs
-            }
-            for node in graph.nodes
-            if node.node_id in tile_scope
+            node_id: {name: merged_products[name] for name in names}
+            for node_id, names in boundary.items()
         }
+        final_graph = _post_tile_graph(graph, tile_scope, boundary)
         final_source = SDEDataBundle(
             dict(merged_products),
             self._job_provenance(grid=grid),
@@ -988,7 +1043,10 @@ class Engine(EngineBase):
             meta={"scan_combine": grid.combine},
         )
         analysed = self._run_typed_analyze(
-            final_source, context=context, completed_nodes=completed_nodes
+            final_source,
+            context=context,
+            completed_nodes=completed_nodes,
+            graph=final_graph,
         )
         return analysed.products
 
@@ -1065,7 +1123,12 @@ class Engine(EngineBase):
                 assert reducer is not None
                 node = graph_nodes[node_ids[name]]
                 labels = [output.name for output in node.outputs]
-                if len(labels) == 1 and hasattr(reducer, "label"):
+                if len(labels) != 1:
+                    raise RuntimeError(
+                        f"typed reducer analyser {name!r} must declare exactly "
+                        "one output Dataset"
+                    )
+                if hasattr(reducer, "label"):
                     reducer.label = labels[0]
                 reducers[name] = reducer
             reducer_sets.append(reducers)

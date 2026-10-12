@@ -212,7 +212,11 @@ def build_execution_plan(
         if batch_local
         else trajectory_analysers
     )
-    analyzer_device_workspace, analyzer_host_workspace = _analyzer_workspace_bytes(
+    (
+        analyzer_device_workspace,
+        analyzer_host_workspace,
+        reducer_workspace,
+    ) = _analyzer_workspace_bytes(
         trajectory_per_point,
         workspace_analysers,
         n_traj=n_traj,
@@ -266,21 +270,6 @@ def build_execution_plan(
     per_trajectory_work = (
         trajectory_per_point + state_per_point + noise_per_point
     ) // n_traj
-    accumulator_workspace = _accumulator_workspace_bytes(
-        saved_samples=saved_samples,
-        n_record_modes=n_record_modes,
-        real_itemsize=real_itemsize,
-        analysers=(
-            {
-                node_id.removeprefix("analyser."): analysers[
-                    node_id.removeprefix("analyser.")
-                ]
-                for node_id in batch_frontier
-            }
-            if batch_frontier
-            else trajectory_analysers
-        ),
-    )
     if adaptive_active and batching_mode == "required":
         raise ValueError(
             "adaptive stepping is incompatible with "
@@ -312,18 +301,34 @@ def build_execution_plan(
             )
         trajectory_batch = min(n_traj, requested)
     elif budget is not None and incremental and not should_keep:
-        available_for_trajectories = max(0, budget - reserve - accumulator_workspace)
+        declared_workspace = (
+            analyzer_device_workspace
+            if backend_name == "cupy"
+            else analyzer_host_workspace
+        )
+        available_for_trajectories = max(
+            0, budget - reserve - reducer_workspace - declared_workspace
+        )
         trajectory_batch = min(
             n_traj,
             max(1, available_for_trajectories // max(1, per_trajectory_work)),
         )
-    if host_budget is not None and incremental and not should_keep:
-        host_per_trajectory = analyzer_host_workspace // n_traj
+    if (
+        requested_batch is None
+        and host_budget is not None
+        and incremental
+        and not should_keep
+    ):
+        host_per_trajectory = 0
         if backend_name != "cupy":
             host_per_trajectory += per_trajectory_work
         if host_per_trajectory > 0:
             host_available_for_batch = max(
-                0, host_budget - host_reserve - accumulator_workspace
+                0,
+                host_budget
+                - host_reserve
+                - reducer_workspace
+                - analyzer_host_workspace,
             )
             trajectory_batch = min(
                 trajectory_batch,
@@ -377,17 +382,28 @@ def build_execution_plan(
         and (scan_size > 1 or trajectory_batch_count > 1)
     )
 
+    batch_trajectory_bytes = max(
+        1, trajectory_per_point * trajectory_batch // n_traj
+    )
+    (
+        batch_device_workspace,
+        batch_host_workspace,
+        _,
+    ) = _analyzer_workspace_bytes(
+        batch_trajectory_bytes,
+        workspace_analysers,
+        n_traj=trajectory_batch,
+        saved_samples=saved_samples,
+        n_record_modes=n_record_modes,
+        real_itemsize=real_itemsize,
+        backend_name=backend_name,
+    )
+    retained_reducer_workspace = (
+        reducer_workspace if trajectory_batch_count > 1 else 0
+    )
     working_per_point = per_trajectory_work * trajectory_batch
-    analyzer_device_retained = (
-        0
-        if trajectory_batch_count > 1
-        else analyzer_device_workspace * trajectory_batch // n_traj
-    )
-    analyzer_host_retained = (
-        accumulator_workspace
-        if trajectory_batch_count > 1
-        else analyzer_host_workspace * trajectory_batch // n_traj
-    )
+    analyzer_device_retained = batch_device_workspace
+    analyzer_host_retained = batch_host_workspace + retained_reducer_workspace
     retained_analysis_workspace = (
         analyzer_device_retained if backend_name == "cupy" else analyzer_host_retained
     )
@@ -492,9 +508,9 @@ def build_execution_plan(
                 for node in tile_scope
                 if node.removeprefix("analyser.") not in trajectory_analysers
             )
-            per_point_product_bytes = accumulator_workspace * (1 + downstream_count)
+            per_point_product_bytes = reducer_workspace * (1 + downstream_count)
             merged_bytes = scan_size * per_point_product_bytes
-            final_device, final_host = _analyzer_workspace_bytes(
+            final_device, final_host, _ = _analyzer_workspace_bytes(
                 max(1, merged_bytes),
                 {name: analysers[name] for name in deferred_analysers},
                 n_traj=n_traj,
@@ -504,6 +520,16 @@ def build_execution_plan(
                 backend_name=backend_name,
             )
             deferred_host_bytes = merged_bytes + final_device + final_host
+    if (
+        backend_name != "cupy"
+        and host_budget is not None
+        and deferred_host_bytes
+    ):
+        available_for_tile = host_budget - fixed - deferred_host_bytes
+        reduced_tile_size = available_for_tile // max(1, working_per_point)
+        if 0 < reduced_tile_size < tile_size:
+            tile_size = int(reduced_tile_size)
+            tile_count = math.ceil(scan_size / tile_size)
     peak = fixed + working_per_point * tile_size
     if backend_name == "cupy":
         device_peak = peak
@@ -771,7 +797,7 @@ def _analyzer_workspace_bytes(
     n_record_modes: int,
     real_itemsize: int,
     backend_name: str,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     """Estimate separate device and host analyser workspaces.
 
     New analysers provide their own estimator. A capability-based fallback is
@@ -792,6 +818,7 @@ def _analyzer_workspace_bytes(
     )
     device_total = 0
     host_total = 0
+    reducer_total = 0
     for name, analyser in analysers.items():
         estimator_fn = getattr(analyser, "workspace", None)
         if callable(estimator_fn):
@@ -802,6 +829,10 @@ def _analyzer_workspace_bytes(
                 )
             device_total += max(0, int(estimate.device_bytes))
             host_total += max(0, int(estimate.host_bytes))
+            declared_reducer = max(0, int(estimate.reducer_bytes))
+            if declared_reducer == 0 and _has_reducer(analyser):
+                declared_reducer = trajectory_per_point
+            reducer_total += declared_reducer
             continue
         estimator = getattr(analyser, "estimator", None)
         capability_fn = getattr(estimator, "capabilities", None)
@@ -834,7 +865,9 @@ def _analyzer_workspace_bytes(
             device_total += workspace
         else:
             host_total += workspace
-    return device_total, host_total
+        if _has_reducer(analyser):
+            reducer_total += trajectory_per_point
+    return device_total, host_total, reducer_total
 
 
 def _analyzer_capabilities(analyser: Any) -> Any:
@@ -933,6 +966,12 @@ def _typed_batch_scope(
     for node in graph.nodes:
         published[node.node_id].update(node.publish_outputs)
     violations: list[str] = []
+    for node_id in sorted(frontier):
+        if len(by_id[node_id].outputs) != 1:
+            violations.append(
+                f"{node_id} has {len(by_id[node_id].outputs)} outputs; "
+                "the reducer contract accepts one Dataset"
+            )
     for node_id in sorted(local - frontier):
         node = by_id[node_id]
         for output in node.outputs:
@@ -978,27 +1017,11 @@ def _trajectory_analysers(analysers: dict[str, Any]) -> dict[str, Any]:
     return selected
 
 
-def _accumulator_workspace_bytes(
-    *,
-    saved_samples: int,
-    n_record_modes: int,
-    real_itemsize: int,
-    analysers: dict[str, Any],
-) -> int:
-    """Estimate fixed host/device arrays retained by incremental analysers."""
-    if not analysers:
-        return 0
-    factor = sum(
-        max(1, int(_analyzer_capabilities(analyser).reducer_workspace_factor))
-        for analyser in analysers.values()
-    )
-    return _checked_product(
-        saved_samples,
-        n_record_modes,
-        real_itemsize,
-        factor,
-        label="analyser accumulator workspace",
-    )
+def _has_reducer(analyser: Any) -> bool:
+    provider = getattr(analyser, "reducer", None)
+    return (
+        callable(provider) and provider() is not None
+    ) or callable(getattr(analyser, "create_result_accumulator", None))
 
 
 def _reserve_bytes(budget: int | None) -> int:

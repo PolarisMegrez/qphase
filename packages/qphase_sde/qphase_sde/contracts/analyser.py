@@ -79,7 +79,6 @@ class AnalyserExecutionCapabilities:
     supports_scan_tiling: bool = False
     supports_masked_or_ragged: bool = False
     deterministic_merge: bool = True
-    reducer_workspace_factor: int = 2
 
 
 @dataclass(frozen=True)
@@ -96,10 +95,11 @@ class AnalyserWorkspaceRequest:
 
 @dataclass(frozen=True)
 class AnalyserWorkspaceEstimate:
-    """Peak temporary memory attributed to one analyser invocation."""
+    """Invocation workspace plus retained reducer-state memory."""
 
     device_bytes: int = 0
     host_bytes: int = 0
+    reducer_bytes: int = 0
 
 
 @dataclass(frozen=True)

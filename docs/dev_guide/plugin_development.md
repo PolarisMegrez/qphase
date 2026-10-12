@@ -204,7 +204,8 @@ The shorthand `analyser: {psd: {...}}` normalizes to label `psd`, plugin
 `psd`. Project defaults are resolved by implementation name before the instance
 config is applied. Compiled jobs and snapshots store only the normalized
 `{label: {plugin, config}}` form; runtime code never infers an implementation
-from a label.
+from a label. Labels are non-empty strings, cannot contain `.`, and cannot be
+the reserved source name `input`.
 
 ### Batch-Local ProductGraph Nodes
 
@@ -216,6 +217,9 @@ the batch frontier: their completed products re-enter the post-batch graph.
 Published, terminal, or cross-boundary outputs require a reducer and are
 rejected by planning otherwise. This lets one transform execute once per batch
 and feed multiple reducer consumers without retaining its output across batches.
+The current reducer contract accepts exactly one Dataset output. Analyser
+`workspace()` estimates declare per-invocation host/device bytes and retained
+`reducer_bytes`; planning includes both during trajectory batching.
 
 ### Scan-Aware Engines
 

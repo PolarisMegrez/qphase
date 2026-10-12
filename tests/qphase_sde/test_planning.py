@@ -83,6 +83,183 @@ def _trajectory_graph(*names):
     return ProductGraph(nodes=nodes, external_inputs=bindings)
 
 
+class _DeclaredWorkspaceAnalyser:
+    def __init__(self, *, device_bytes=0, reducer_bytes=0, reducer=False):
+        self.device_bytes = device_bytes
+        self.reducer_bytes = reducer_bytes
+        self.has_reducer = reducer
+
+    def execution_capabilities(self):
+        return AnalyserExecutionCapabilities(supports_trajectory_batching=True)
+
+    def workspace(self, request):
+        del request
+        return AnalyserWorkspaceEstimate(
+            device_bytes=self.device_bytes,
+            reducer_bytes=self.reducer_bytes,
+        )
+
+    def reducer(self):
+        return object() if self.has_reducer else None
+
+
+def _batch_local_workspace_graph(reducer_names=("reducer",)):
+    from qphase.data import (
+        DataKind,
+        ExternalInputBinding,
+        GraphEdge,
+        ProductDeclaration,
+        ProductGraph,
+        ProductNode,
+        ProductRequirement,
+    )
+
+    transform = ProductNode(
+        node_id="analyser.transform",
+        producer="analyser:transform",
+        requirements=[
+            ProductRequirement(name="trajectories", kind=DataKind.TIME_SERIES)
+        ],
+        outputs=[ProductDeclaration(name="signal", kind=DataKind.TIME_SERIES)],
+    )
+    reducers = [
+        ProductNode(
+            node_id=f"analyser.{name}",
+            producer="analyser:reducer",
+            requirements=[
+                ProductRequirement(name="signal", kind=DataKind.TIME_SERIES)
+            ],
+            outputs=[ProductDeclaration(name=name, kind=DataKind.STATISTICS)],
+        )
+        for name in reducer_names
+    ]
+    return ProductGraph(
+        nodes=[transform, *reducers],
+        edges=[
+            GraphEdge(
+                producer="analyser.transform",
+                product="signal",
+                consumer=node.node_id,
+                requirement="signal",
+            )
+            for node in reducers
+        ],
+        external_inputs=[
+            ExternalInputBinding(
+                consumer="analyser.transform",
+                requirement="trajectories",
+                source="input",
+                product="trajectories",
+            )
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ("transform_bytes", "reducer_bytes"),
+    [
+        (10 * 1024**3, [0]),
+        (0, [10 * 1024**3]),
+        (400 * 1024**2, [400 * 1024**2, 400 * 1024**2]),
+    ],
+    ids=["oversized-transform", "oversized-reducer", "fan-out"],
+)
+def test_batch_local_declared_workspace_must_fit_budget(
+    transform_bytes, reducer_bytes
+):
+    names = tuple(f"reducer_{index}" for index in range(len(reducer_bytes)))
+    graph = _batch_local_workspace_graph(names)
+    analysers = {
+        "transform": _DeclaredWorkspaceAnalyser(device_bytes=transform_bytes),
+        **{
+            name: _DeclaredWorkspaceAnalyser(
+                device_bytes=value,
+                reducer_bytes=value,
+                reducer=True,
+            )
+            for name, value in zip(names, reducer_bytes, strict=True)
+        },
+    }
+    config = EngineConfig(
+        t0=0.0,
+        t1=1.0,
+        dt=0.01,
+        n_traj=8,
+        trajectory_batching="required",
+        trajectory_batch_size=4,
+        rng_group_size=4,
+        keep_traj=False,
+    )
+
+    with pytest.raises(SDEMemoryPlanningError, match="working-set budget"):
+        build_execution_plan(
+            config=config,
+            grid=None,
+            model=FakeModel(),
+            backend=FakeBackend(),
+            integrator=FakeIntegrator(),
+            analysers=analysers,
+            resources=SimpleNamespace(gpu_memory_fraction=0.75),
+            device_memory=(1024**3, 1024**3),
+            product_graph=graph,
+        )
+
+
+def test_batch_local_multi_output_reducer_is_rejected():
+    from qphase.data import DataKind, ProductDeclaration
+
+    graph = _batch_local_workspace_graph(("reducer",))
+    reducer_node = next(
+        node for node in graph.nodes if node.node_id == "analyser.reducer"
+    )
+    graph = graph.model_copy(
+        update={
+            "nodes": [
+                reducer_node.model_copy(
+                    update={
+                        "outputs": [
+                            ProductDeclaration(
+                                name="first", kind=DataKind.STATISTICS
+                            ),
+                            ProductDeclaration(
+                                name="second", kind=DataKind.STATISTICS
+                            ),
+                        ]
+                    }
+                )
+                if node.node_id == reducer_node.node_id
+                else node
+                for node in graph.nodes
+            ]
+        }
+    )
+    analysers = {
+        "transform": _DeclaredWorkspaceAnalyser(),
+        "reducer": _DeclaredWorkspaceAnalyser(reducer=True),
+    }
+
+    with pytest.raises(SDEMemoryPlanningError, match="one Dataset"):
+        build_execution_plan(
+            config=EngineConfig(
+                t0=0.0,
+                t1=1.0,
+                dt=0.01,
+                n_traj=8,
+                trajectory_batching="required",
+                trajectory_batch_size=4,
+                rng_group_size=4,
+                keep_traj=False,
+            ),
+            grid=None,
+            model=FakeModel(),
+            backend=FakeNumpyBackend(),
+            integrator=FakeIntegrator(),
+            analysers=analysers,
+            resources=None,
+            product_graph=graph,
+        )
+
+
 def test_planner_rejects_invalid_psd_bandwidth_before_allocation():
     config = EngineConfig(
         t0=0.0,
@@ -166,6 +343,14 @@ def test_planner_batches_trajectories_when_one_point_exceeds_host_budget():
         name="psd",
         config=SimpleNamespace(expected_freq_max=None),
         create_result_accumulator=lambda: None,
+        workspace=lambda request: AnalyserWorkspaceEstimate(
+            reducer_bytes=(
+                request.saved_samples
+                * request.n_record_modes
+                * request.real_itemsize
+                * 5
+            )
+        ),
     )
 
     plan = build_execution_plan(
@@ -525,6 +710,16 @@ class _FakeIncrementalAnalyser:
 
     def create_result_accumulator(self):
         return object()
+
+    def workspace(self, request):
+        return AnalyserWorkspaceEstimate(
+            reducer_bytes=(
+                request.saved_samples
+                * request.n_record_modes
+                * request.real_itemsize
+                * 5
+            )
+        )
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

@@ -17,7 +17,9 @@ from qphase.data import (
     ProductDeclaration,
     ProductGraph,
     ProductNode,
+    ProductRequirement,
     ProductSchema,
+    SpectralQuantity,
     StatisticsDataset,
     VariableSchema,
     concat_datasets,
@@ -183,12 +185,61 @@ class IdentityBatchAnalyzer(Analyzer):
     def execution_capabilities(self):
         from qphase_sde.contracts.analyser import AnalyserExecutionCapabilities
 
-        return AnalyserExecutionCapabilities(supports_trajectory_batching=True)
+        return AnalyserExecutionCapabilities(
+            supports_trajectory_batching=True,
+            supports_scan_tiling=True,
+        )
 
     def execute(self, inputs, *, backend, label, metadata=None, context=None):
         del backend, metadata, context
         self.calls += 1
         return {label: inputs["trajectories"]}
+
+
+class FinalSpectrumSummaryAnalyzer(Analyzer):
+    """Final-scope probe consuming a merged spectral scan."""
+
+    name = "final_spectrum_summary"
+
+    def input_requirements(self):
+        return [
+            ProductRequirement(
+                name="psd_a",
+                kind=DataKind.SPECTRAL,
+                quantity=SpectralQuantity.POWER_SPECTRAL_DENSITY.value,
+                required_fields=["psd"],
+            )
+        ]
+
+    def output_specs(self, *, label):
+        return (
+            ProductDeclaration(
+                name=label, kind=DataKind.STATISTICS, fields=["mean_power"]
+            ),
+        )
+
+    def execute(self, inputs, *, backend, label, metadata=None, context=None):
+        del backend, metadata, context
+        values = np.asarray(inputs["psd_a"].handle("psd").materialize())
+        schema = ProductSchema(
+            kind=DataKind.STATISTICS,
+            variables=[
+                VariableSchema(
+                    name="mean_power",
+                    dtype="<f8",
+                    value_domain="real",
+                    dims=(),
+                )
+            ],
+            attributes={"graph_ready": True},
+        )
+        return {
+            label: StatisticsDataset.from_arrays(
+                schema,
+                {"mean_power": np.asarray(float(np.mean(values)))},
+                owner="test.final_summary",
+            )
+        }
 
 
 def _branched_batch_graph(*, publish_identity=False):
@@ -237,6 +288,40 @@ def _branched_batch_graph(*, publish_identity=False):
         ],
     )
     return graph, identity, psd_a, psd_b
+
+
+def _partitioned_batch_graph():
+    graph, identity, psd_a, psd_b = _branched_batch_graph()
+    summary = FinalSpectrumSummaryAnalyzer()
+    nodes = [
+        *graph.nodes,
+        ProductNode(
+            node_id="analyser.summary",
+            producer="analyser:final_spectrum_summary",
+            requirements=summary.input_requirements(),
+            outputs=list(summary.output_specs(label="summary")),
+        ),
+    ]
+    edges = [
+        *graph.edges,
+        GraphEdge(
+            producer="analyser.psd_a",
+            product="psd_a",
+            consumer="analyser.summary",
+            requirement="psd_a",
+        ),
+    ]
+    return (
+        ProductGraph(
+            nodes=nodes,
+            edges=edges,
+            external_inputs=graph.external_inputs,
+        ),
+        identity,
+        psd_a,
+        psd_b,
+        summary,
+    )
 
 
 def _mean_graph() -> ProductGraph:
@@ -1302,6 +1387,88 @@ def test_batch_local_non_reducer_cannot_cross_final_boundary():
         )
 
 
+def test_scan_tiles_and_trajectory_batches_preserve_transient_graph_results():
+    grid = ScanSpec.model_validate(
+        {
+            "axes": {
+                "rate": {
+                    "target": "model.scanned_dummy.rate",
+                    "values": list(np.arange(32, dtype=float) + 1.0),
+                }
+            }
+        }
+    ).compile()
+
+    def run(*, batching, memory_limit_mib=None):
+        graph, identity, psd_a, psd_b, summary = _partitioned_batch_graph()
+        engine = Engine(
+            config=EngineConfig(
+                t0=0.0,
+                t1=1.0,
+                dt=0.01,
+                n_traj=128,
+                trajectory_batching=batching,
+                trajectory_batch_size=64 if batching == "required" else None,
+                rng_group_size=64,
+                seed=73,
+                ic=[[1.0]],
+                keep_traj=False,
+            ),
+            plugins={
+                "backend": NumpyBackend(),
+                "integrator": EulerMaruyama(),
+                "model": StochasticScannedModel(),
+                "analyser": {
+                    "identity": identity,
+                    "psd_a": psd_a,
+                    "psd_b": psd_b,
+                    "summary": summary,
+                },
+            },
+            product_graph=graph,
+        )
+        result = engine.run(
+            context=SimpleNamespace(
+                parameter_grid=grid,
+                product_graph=graph,
+                progress=None,
+                cancellation=None,
+                metadata={},
+                resources=SimpleNamespace(
+                    memory_limit_mib=memory_limit_mib,
+                    gpu_memory_fraction=None,
+                ),
+            )
+        )
+        return result, identity.calls
+
+    reference, reference_calls = run(batching="off")
+    partitioned, partitioned_calls = run(
+        batching="required", memory_limit_mib=4
+    )
+
+    plan = partitioned.metadata["execution_plan"]
+    assert plan["tile_count"] >= 2
+    assert plan["trajectory_batch_count"] == 2
+    assert reference_calls == 1
+    assert partitioned_calls == plan["tile_count"] * 2
+    assert set(partitioned.products) == {"psd_b", "summary"}
+    np.testing.assert_array_equal(
+        partitioned.products["psd_b"].coordinate("rate"),
+        np.arange(1.0, 33.0),
+    )
+    np.testing.assert_allclose(
+        partitioned.products["psd_b"].handle("psd").materialize(),
+        reference.products["psd_b"].handle("psd").materialize(),
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(
+        partitioned.products["summary"].handle("mean_power").materialize(),
+        reference.products["summary"].handle("mean_power").materialize(),
+        rtol=1e-12,
+    )
+
+
 def test_trajectory_batching_reduces_psd_before_running_peak_finder():
     from qphase.core.registry import discovery, registry
     from qphase_sde.graph import compile_product_graph
@@ -1839,8 +2006,8 @@ def test_typed_allan_chain_multi_tile_matches_single_tile_batched():
             ),
         )
 
-    single = run(4)
-    multi = run(2)
+    single = run(8)
+    multi = run(3)
 
     assert single.metadata["execution_plan"]["tile_count"] == 1
     multi_plan = multi.metadata["execution_plan"]
@@ -1876,8 +2043,8 @@ def test_typed_allan_chain_tiling_is_invariant_unbatched():
             ),
         )
 
-    wide = run(4)
-    narrow = run(3)
+    wide = run(5)
+    narrow = run(4)
 
     for result in (wide, narrow):
         plan = result.metadata["execution_plan"]

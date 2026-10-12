@@ -295,19 +295,26 @@ class PsdAnalyzer(Analyzer):
             supports_trajectory_batching=capabilities.trajectory_batching,
             supports_time_streaming=capabilities.time_streaming,
             supports_scan_tiling=capabilities.trajectory_batching,
-            reducer_workspace_factor=5,
         )
 
     def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
         """Estimate FFT or host-estimator workspace for one scan point."""
         capabilities = self.estimator.capabilities()
         trajectory_bytes = request.trajectory_bytes
+        reducer_bytes = (
+            request.saved_samples
+            * request.n_record_modes
+            * request.real_itemsize
+            * 5
+        )
         if not capabilities.backend_native:
             # Host estimators materialize the input and retain at least one
             # trajectory-spectrum sized temporary while the backend source is
             # still alive.
             host_bytes = 2 * trajectory_bytes
-            return AnalyserWorkspaceEstimate(host_bytes=host_bytes)
+            return AnalyserWorkspaceEstimate(
+                host_bytes=host_bytes, reducer_bytes=reducer_bytes
+            )
 
         chunk = getattr(
             getattr(self.estimator, "config", None),
@@ -322,8 +329,12 @@ class PsdAnalyzer(Analyzer):
         else:
             workspace = 2 * trajectory_bytes
         if request.backend_name == "cupy":
-            return AnalyserWorkspaceEstimate(device_bytes=workspace)
-        return AnalyserWorkspaceEstimate(host_bytes=workspace)
+            return AnalyserWorkspaceEstimate(
+                device_bytes=workspace, reducer_bytes=reducer_bytes
+            )
+        return AnalyserWorkspaceEstimate(
+            host_bytes=workspace, reducer_bytes=reducer_bytes
+        )
 
     def create_result_accumulator(self) -> "PsdResultAccumulator":
         """Create an exact cross-trajectory PSD statistics accumulator."""

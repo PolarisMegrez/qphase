@@ -411,6 +411,72 @@ def test_compiler_rejects_unknown_analyser_implementation(
         )
 
 
+@pytest.mark.parametrize("source", ["top_level", "plugins"])
+def test_analyser_label_does_not_merge_same_named_implementation_default(
+    tmp_path, sde_profile_plugins, source
+):
+    from qphase.core.registry import discovery
+
+    discovery.discover_plugins()
+    project = ProjectContext.create(tmp_path / "project")
+    project.defaults_path.write_text(
+        "analyser:\n  psd:\n    convention: unitary\n",
+        encoding="utf-8",
+    )
+    instance = {
+        "psd": {
+            "plugin": "allan_variance",
+            "config": {
+                "modes": [0],
+                "points": 5,
+                "min_windows": 2,
+                "min_independent_windows": 1,
+            },
+        }
+    }
+    sections = (
+        {"analyser": instance}
+        if source == "top_level"
+        else {"plugins": {"analyser": instance}}
+    )
+    compiled = WorkflowCompiler(project, SystemConfig()).compile(
+        _workflow(
+            _sde_job(
+                "sim",
+                {"t1": 1.0, "dt": 0.1},
+                backend={"dummy": {}},
+                integrator={"dummy": {}},
+                model={"dummy": {}},
+                **sections,
+            )
+        )
+    ).job("sim")
+
+    normalized = dict(compiled.plugin_config["analyser"]["psd"])
+    assert normalized["plugin"] == "allan_variance"
+    assert "convention" not in normalized["config"]
+
+
+@pytest.mark.parametrize("label", ["with.dot", "input", 7])
+def test_compiler_rejects_invalid_analyser_instance_label(
+    tmp_path, sde_profile_plugins, label
+):
+    project = ProjectContext.create(tmp_path / "project")
+    with pytest.raises(QPhaseConfigError, match="instance label|labels must"):
+        WorkflowCompiler(project, SystemConfig()).compile(
+            _workflow(
+                _sde_job(
+                    "sim",
+                    {"t1": 1.0, "dt": 0.1},
+                    backend={"dummy": {}},
+                    integrator={"dummy": {}},
+                    model={"dummy": {}},
+                    analyser={label: {"plugin": "dummy", "config": {}}},
+                )
+            )
+        )
+
+
 def test_compiler_sde_analyze_profile_forbids_model(tmp_path, sde_profile_plugins):
     """The analyze profile turns configured model/integrator into errors."""
     project = ProjectContext.create(tmp_path / "project")

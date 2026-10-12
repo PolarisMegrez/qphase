@@ -10,6 +10,24 @@ nav_order: 4
 
 Analyzers run after the SDE integration loop; their payloads become named products of the job's `SDEDataBundle`. They can also be invoked in `mode: analyze` for post-processing.
 
+The analyser key is an instance label. To run one implementation more than
+once, configure `{plugin, config}` explicitly:
+
+```yaml
+analyser:
+  raw_psd:
+    plugin: psd
+    config: {kind: complex, modes: [0, 1]}
+  mode_2_psd:
+    plugin: psd
+    config: {kind: complex, modes: [2]}
+```
+
+Project defaults are keyed by implementation (`psd`); instance config is keyed
+by label and overrides those defaults. Labels must be non-empty strings, cannot
+contain `.`, and cannot be `input`. Graph bindings, progress stages, publish
+declarations, and default product names use the label.
+
 ## `psd`
 
 Estimates the power spectral density (PSD) of selected modes.

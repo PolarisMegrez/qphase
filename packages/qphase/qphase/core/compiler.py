@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from .config import JobConfig, WorkflowSpec
 from .config_loader import (
     get_config_for_job,
+    load_project_defaults,
     merge_plugin_config_sections,
 )
 from .errors import ErrorCode, QPhaseConfigError, QPhasePluginError
@@ -35,7 +36,7 @@ from .tags import (
     validate_declared_tags,
     workflow_tag_assignment_id,
 )
-from .utils import deep_copy
+from .utils import deep_copy, deep_merge_dicts
 from .workflow import workflow_revision
 
 if TYPE_CHECKING:
@@ -375,6 +376,8 @@ class WorkflowCompiler:
             optional = set(getattr(manifest, "optional_plugins", set()))
         selected: dict[str, Any] = {}
         for namespace, config in plugin_sections.items():
+            if namespace == "analyser":
+                continue
             if namespace in explicit or namespace in required:
                 if namespace in explicit and isinstance(config, Mapping):
                     extra = job.model_extra or {}
@@ -389,6 +392,18 @@ class WorkflowCompiler:
                     }
                 else:
                     selected[namespace] = config
+
+        analyser_defaults = self._analyser_implementation_defaults()
+        if "analyser" in explicit:
+            configured_analysers = self._job_analyser_instances(job)
+        else:
+            configured_analysers = analyser_defaults
+        if configured_analysers and (
+            "analyser" in explicit or "analyser" in required
+        ):
+            selected["analyser"] = self._normalize_analyser_instances(
+                configured_analysers, analyser_defaults
+            )
 
         missing = sorted(
             namespace for namespace in required if not selected.get(namespace)
@@ -415,9 +430,6 @@ class WorkflowCompiler:
             and isinstance(config, Mapping)
         }
         if "analyser" in selected:
-            selected["analyser"] = self._normalize_analyser_instances(
-                selected["analyser"], plugin_sections.get("analyser", {})
-            )
             merged["analyser"] = deep_copy(selected["analyser"])
             merged_plugins = merged.get("plugins")
             if isinstance(merged_plugins, dict) and "analyser" in merged_plugins:
@@ -808,8 +820,19 @@ class WorkflowCompiler:
         default_map = defaults if isinstance(defaults, Mapping) else {}
         normalized: dict[str, dict[str, Any]] = {}
         for raw_label, raw in configured.items():
-            label = str(raw_label)
-            if not label or not isinstance(raw, Mapping):
+            if not isinstance(raw_label, str):
+                raise QPhaseConfigError(
+                    "analyser instance labels must be strings",
+                    code=ErrorCode.CONFIG,
+                )
+            label = raw_label
+            if not label or "." in label or label == "input":
+                raise QPhaseConfigError(
+                    f"analyser instance label {label!r} must be non-empty, "
+                    "must not contain '.', and must not be 'input'",
+                    code=ErrorCode.CONFIG,
+                )
+            if not isinstance(raw, Mapping):
                 raise QPhaseConfigError(
                     f"analyser instance {label!r} must be a non-empty mapping",
                     code=ErrorCode.CONFIG,
@@ -864,6 +887,28 @@ class WorkflowCompiler:
                 "config": merged,
             }
         return normalized
+
+    def _analyser_implementation_defaults(self) -> dict[str, Any]:
+        """Read analyser defaults keyed only by registry implementation name."""
+        defaults = load_project_defaults(self.project.defaults_path)
+        top_level = defaults.get("analyser", {})
+        plugins = defaults.get("plugins", {})
+        nested = plugins.get("analyser", {}) if isinstance(plugins, Mapping) else {}
+        return deep_merge_dicts(
+            dict(top_level) if isinstance(top_level, Mapping) else {},
+            dict(nested) if isinstance(nested, Mapping) else {},
+        )
+
+    @staticmethod
+    def _job_analyser_instances(job: JobConfig) -> dict[Any, Any]:
+        """Read Job analyser instances keyed by local instance label."""
+        extra = job.model_extra or {}
+        top_level = extra.get("analyser", {})
+        nested = job.plugins.get("analyser", {})
+        return deep_merge_dicts(
+            dict(top_level) if isinstance(top_level, Mapping) else {},
+            dict(nested) if isinstance(nested, Mapping) else {},
+        )
 
     def _reject_implicit_model_scan(
         self, plugin_name: str, plugin_config: Mapping[str, Any]

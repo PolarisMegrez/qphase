@@ -88,6 +88,27 @@ Project-wide numerical defaults belong in `configs/defaults.yaml`. Optional
 plugins are not activated merely because defaults exist; the Workflow must
 select the plugin namespace.
 
+### Multiple Analyser Instances
+
+An analyser mapping key is an instance label. Use the explicit envelope when
+one implementation appears more than once:
+
+```yaml
+analyser:
+  raw_psd:
+    plugin: psd
+    config: {kind: complex, modes: [0, 1]}
+  diagnostic_psd:
+    plugin: psd
+    config: {kind: complex, modes: [2]}
+```
+
+The shorthand `analyser: {psd: {...}}` means label `psd` using implementation
+`psd`. Project defaults remain keyed by implementation name, while Workflow
+instance config is keyed by label and overrides those defaults. Instance labels
+must be non-empty strings, cannot contain `.`, and cannot be `input`.
+`input_bindings` and `publish_outputs` refer to instance labels.
+
 ## Parameter Scans
 
 A plugin list is always a literal value. Scans must use `ScanSpec`:
