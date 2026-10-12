@@ -84,19 +84,36 @@ def _trajectory_graph(*names):
 
 
 class _DeclaredWorkspaceAnalyser:
-    def __init__(self, *, device_bytes=0, reducer_bytes=0, reducer=False):
+    def __init__(
+        self,
+        *,
+        device_bytes=0,
+        host_bytes=0,
+        retained_device_bytes=0,
+        retained_host_bytes=0,
+        reducer=False,
+        scan_tiling=False,
+    ):
         self.device_bytes = device_bytes
-        self.reducer_bytes = reducer_bytes
+        self.host_bytes = host_bytes
+        self.retained_device_bytes = retained_device_bytes
+        self.retained_host_bytes = retained_host_bytes
         self.has_reducer = reducer
+        self.scan_tiling = scan_tiling
 
     def execution_capabilities(self):
-        return AnalyserExecutionCapabilities(supports_trajectory_batching=True)
+        return AnalyserExecutionCapabilities(
+            supports_trajectory_batching=True,
+            supports_scan_tiling=self.scan_tiling,
+        )
 
     def workspace(self, request):
         del request
         return AnalyserWorkspaceEstimate(
             device_bytes=self.device_bytes,
-            reducer_bytes=self.reducer_bytes,
+            host_bytes=self.host_bytes,
+            retained_device_bytes=self.retained_device_bytes,
+            retained_host_bytes=self.retained_host_bytes,
         )
 
     def reducer(self):
@@ -156,7 +173,7 @@ def _batch_local_workspace_graph(reducer_names=("reducer",)):
 
 
 @pytest.mark.parametrize(
-    ("transform_bytes", "reducer_bytes"),
+    ("transform_bytes", "retained_bytes"),
     [
         (10 * 1024**3, [0]),
         (0, [10 * 1024**3]),
@@ -165,19 +182,19 @@ def _batch_local_workspace_graph(reducer_names=("reducer",)):
     ids=["oversized-transform", "oversized-reducer", "fan-out"],
 )
 def test_batch_local_declared_workspace_must_fit_budget(
-    transform_bytes, reducer_bytes
+    transform_bytes, retained_bytes
 ):
-    names = tuple(f"reducer_{index}" for index in range(len(reducer_bytes)))
+    names = tuple(f"reducer_{index}" for index in range(len(retained_bytes)))
     graph = _batch_local_workspace_graph(names)
     analysers = {
         "transform": _DeclaredWorkspaceAnalyser(device_bytes=transform_bytes),
         **{
             name: _DeclaredWorkspaceAnalyser(
                 device_bytes=value,
-                reducer_bytes=value,
+                retained_host_bytes=value,
                 reducer=True,
             )
-            for name, value in zip(names, reducer_bytes, strict=True)
+            for name, value in zip(names, retained_bytes, strict=True)
         },
     }
     config = EngineConfig(
@@ -203,6 +220,148 @@ def test_batch_local_declared_workspace_must_fit_budget(
             device_memory=(1024**3, 1024**3),
             product_graph=graph,
         )
+
+
+def test_multi_point_reducer_state_forces_scan_tiling_or_rejection():
+    graph = _batch_local_workspace_graph()
+    analysers = {
+        "transform": _DeclaredWorkspaceAnalyser(),
+        "reducer": _DeclaredWorkspaceAnalyser(
+            retained_host_bytes=100 * 1024**2,
+            reducer=True,
+        ),
+    }
+    config = EngineConfig(
+        t0=0.0,
+        t1=1.0,
+        dt=0.01,
+        n_traj=8,
+        trajectory_batching="required",
+        trajectory_batch_size=4,
+        rng_group_size=4,
+        keep_traj=False,
+    )
+
+    with pytest.raises(SDEMemoryPlanningError, match="scan tiling is required"):
+        build_execution_plan(
+            config=config,
+            grid=_grid(10),
+            model=FakeModel(),
+            backend=FakeNumpyBackend(),
+            integrator=FakeIntegrator(),
+            analysers=analysers,
+            resources=SimpleNamespace(memory_limit_mib=512),
+            product_graph=graph,
+        )
+
+
+def test_per_point_analyser_memory_scales_monotonically_with_tile_size():
+    graph = _batch_local_workspace_graph()
+    analysers = {
+        "transform": _DeclaredWorkspaceAnalyser(
+            device_bytes=40 * 1024**2,
+            scan_tiling=True,
+        ),
+        "reducer": _DeclaredWorkspaceAnalyser(
+            retained_device_bytes=10 * 1024**2,
+            reducer=True,
+            scan_tiling=True,
+        ),
+    }
+    config = EngineConfig(
+        t0=0.0,
+        t1=1.0,
+        dt=0.01,
+        n_traj=8,
+        trajectory_batching="required",
+        trajectory_batch_size=4,
+        rng_group_size=4,
+        keep_traj=False,
+    )
+
+    small = build_execution_plan(
+        config=config,
+        grid=_grid(10),
+        model=FakeModel(),
+        backend=FakeBackend(),
+        integrator=FakeIntegrator(),
+        analysers=analysers,
+        resources=SimpleNamespace(gpu_memory_fraction=0.75),
+        device_memory=(512 * 1024**2, 512 * 1024**2),
+        product_graph=graph,
+    )
+    large = build_execution_plan(
+        config=config,
+        grid=_grid(10),
+        model=FakeModel(),
+        backend=FakeBackend(),
+        integrator=FakeIntegrator(),
+        analysers=analysers,
+        resources=SimpleNamespace(gpu_memory_fraction=0.75),
+        device_memory=(1024**3, 1024**3),
+        product_graph=graph,
+    )
+
+    assert small.scan_tile_size < large.scan_tile_size == 10
+    assert small.memory.analyzer_device_workspace_bytes == (
+        50 * 1024**2 * small.scan_tile_size
+    )
+    assert large.memory.analyzer_device_workspace_bytes == 500 * 1024**2
+    assert small.memory.estimated_device_peak_bytes < (
+        large.memory.estimated_device_peak_bytes
+    )
+
+
+class _BatchScaledWorkspaceAnalyser(_DeclaredWorkspaceAnalyser):
+    def __init__(self, *, location):
+        super().__init__(reducer=True, scan_tiling=True)
+        self.location = location
+
+    def workspace(self, request):
+        scaled = request.n_traj * 2 * 1024**2
+        kwargs = {f"{self.location}_bytes": scaled}
+        return AnalyserWorkspaceEstimate(**kwargs)
+
+
+@pytest.mark.parametrize("location", ["device", "host"])
+def test_auto_batch_matches_largest_explicit_batch_for_each_memory_location(location):
+    graph = _trajectory_graph("reducer")
+    analyser = _BatchScaledWorkspaceAnalyser(location=location)
+    common = dict(
+        t0=0.0,
+        t1=1.0,
+        dt=0.01,
+        n_traj=256,
+        rng_group_size=64,
+        keep_traj=False,
+    )
+    resources = SimpleNamespace(
+        gpu_memory_fraction=0.75,
+        memory_limit_mib=192 if location == "host" else None,
+    )
+    kwargs = dict(
+        grid=None,
+        model=FakeModel(),
+        backend=FakeBackend(),
+        integrator=FakeIntegrator(),
+        analysers={"reducer": analyser},
+        resources=resources,
+        device_memory=(256 * 1024**2, 256 * 1024**2),
+        product_graph=graph,
+    )
+
+    automatic = build_execution_plan(config=EngineConfig(**common), **kwargs)
+    explicit = build_execution_plan(
+        config=EngineConfig(**common, trajectory_batch_size=64),
+        **kwargs,
+    )
+
+    assert automatic.trajectory_batch_size == 64
+    assert automatic.trajectory_batch_size == explicit.trajectory_batch_size
+    if location == "host":
+        assert automatic.memory.estimated_host_peak_bytes <= 192 * 1024**2
+    else:
+        assert automatic.memory.estimated_device_peak_bytes <= 192 * 1024**2
 
 
 def test_batch_local_multi_output_reducer_is_rejected():
@@ -344,7 +503,7 @@ def test_planner_batches_trajectories_when_one_point_exceeds_host_budget():
         config=SimpleNamespace(expected_freq_max=None),
         create_result_accumulator=lambda: None,
         workspace=lambda request: AnalyserWorkspaceEstimate(
-            reducer_bytes=(
+            retained_host_bytes=(
                 request.saved_samples
                 * request.n_record_modes
                 * request.real_itemsize
@@ -713,7 +872,7 @@ class _FakeIncrementalAnalyser:
 
     def workspace(self, request):
         return AnalyserWorkspaceEstimate(
-            reducer_bytes=(
+            retained_host_bytes=(
                 request.saved_samples
                 * request.n_record_modes
                 * request.real_itemsize

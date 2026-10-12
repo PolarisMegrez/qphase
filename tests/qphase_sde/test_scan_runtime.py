@@ -529,7 +529,7 @@ def test_sde_scan_rng_is_independent_of_tile_size():
 
     tile_unlimited, count_unlimited, strategy_unlimited, means_unlimited = run(None)
     tile_one, _, _, means_one = run(3)
-    tile_two, _, _, means_two = run(4)
+    tile_two, _, _, means_two = run(5)
 
     assert count_unlimited == 1
     assert strategy_unlimited == "logical_trajectory_group_seedsequence_v1"
@@ -923,7 +923,7 @@ def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
         run_result = run_engine.run(context=run_context)
         return run_result, _product_arrays(run_result.products["psd"]), events
 
-    result, wide_tile, wide_events = run(4)
+    result, wide_tile, wide_events = run(6)
     narrow_result, narrow_tile, narrow_events = run(2)
 
     assert result.shape == (16,)
@@ -2006,7 +2006,7 @@ def test_typed_allan_chain_multi_tile_matches_single_tile_batched():
             ),
         )
 
-    single = run(8)
+    single = run(12)
     multi = run(3)
 
     assert single.metadata["execution_plan"]["tile_count"] == 1
@@ -2130,7 +2130,7 @@ def test_typed_single_tile_plan_allows_table_terminal():
     """Single-tile plans over the same table terminal still pass planning."""
     graph, analysers = _peaks_chain_setup()
 
-    plan = _peaks_plan(graph, analysers, 4)
+    plan = _peaks_plan(graph, analysers, 6)
 
     assert plan.tile_count == 1
 

@@ -69,6 +69,16 @@ class SDEMemoryEstimate:
 
 
 @dataclass(frozen=True)
+class _AnalyserWorkspace:
+    """Per-scan-point analyser memory split by lifetime and location."""
+
+    device_bytes: int = 0
+    host_bytes: int = 0
+    retained_device_bytes: int = 0
+    retained_host_bytes: int = 0
+
+
+@dataclass(frozen=True)
 class SDEExecutionPlan:
     """An engine-owned plan compiled from one logical scan and resource object."""
 
@@ -212,20 +222,6 @@ def build_execution_plan(
         if batch_local
         else trajectory_analysers
     )
-    (
-        analyzer_device_workspace,
-        analyzer_host_workspace,
-        reducer_workspace,
-    ) = _analyzer_workspace_bytes(
-        trajectory_per_point,
-        workspace_analysers,
-        n_traj=n_traj,
-        saved_samples=saved_samples,
-        n_record_modes=n_record_modes,
-        real_itemsize=real_itemsize,
-        backend_name=backend_name,
-    )
-
     budget_kind, budget, available, total, fraction = _memory_budget(
         backend_name,
         resources,
@@ -234,6 +230,8 @@ def build_execution_plan(
     host_budget, host_available, host_total = _host_memory_budget(resources)
     reserve = _reserve_bytes(budget)
     host_reserve = _reserve_bytes(host_budget)
+    device_budget = budget if backend_name == "cupy" else None
+    device_reserve = reserve if backend_name == "cupy" else 0
     analysis_enabled = bool(analysers)
     should_keep = config.keep_traj is True or not analysis_enabled
     if product_graph is not None:
@@ -270,6 +268,48 @@ def build_execution_plan(
     per_trajectory_work = (
         trajectory_per_point + state_per_point + noise_per_point
     ) // n_traj
+    workspace_cache: dict[int, _AnalyserWorkspace] = {}
+
+    def workspace_for(batch_size: int) -> _AnalyserWorkspace:
+        cached = workspace_cache.get(batch_size)
+        if cached is not None:
+            return cached
+        estimate = _analyzer_workspace_bytes(
+            max(1, trajectory_per_point * batch_size // n_traj),
+            workspace_analysers,
+            n_traj=batch_size,
+            total_n_traj=n_traj,
+            saved_samples=saved_samples,
+            n_record_modes=n_record_modes,
+            real_itemsize=real_itemsize,
+            backend_name=backend_name,
+        )
+        workspace_cache[batch_size] = estimate
+        return estimate
+
+    def one_point_peaks(batch_size: int) -> tuple[int, int]:
+        estimate = workspace_for(batch_size)
+        is_batched = batch_size < n_traj
+        device_analyser = estimate.device_bytes + (
+            estimate.retained_device_bytes if is_batched else 0
+        )
+        host_analyser = estimate.host_bytes + (
+            estimate.retained_host_bytes if is_batched else 0
+        )
+        work = per_trajectory_work * batch_size
+        return (
+            device_reserve
+            + device_analyser
+            + (work if backend_name == "cupy" else 0),
+            host_reserve + host_analyser + (work if backend_name != "cupy" else 0),
+        )
+
+    def batch_fits(batch_size: int) -> bool:
+        device_required, host_required = one_point_peaks(batch_size)
+        return (device_budget is None or device_required <= device_budget) and (
+            host_budget is None or host_required <= host_budget
+        )
+
     if adaptive_active and batching_mode == "required":
         raise ValueError(
             "adaptive stepping is incompatible with "
@@ -300,39 +340,28 @@ def build_execution_plan(
                 "rng_group_size."
             )
         trajectory_batch = min(n_traj, requested)
-    elif budget is not None and incremental and not should_keep:
-        declared_workspace = (
-            analyzer_device_workspace
-            if backend_name == "cupy"
-            else analyzer_host_workspace
-        )
-        available_for_trajectories = max(
-            0, budget - reserve - reducer_workspace - declared_workspace
-        )
-        trajectory_batch = min(
-            n_traj,
-            max(1, available_for_trajectories // max(1, per_trajectory_work)),
-        )
-    if (
-        requested_batch is None
-        and host_budget is not None
+    elif (
+        batching_mode != "off"
         and incremental
         and not should_keep
+        and (budget is not None or host_budget is not None)
     ):
-        host_per_trajectory = 0
-        if backend_name != "cupy":
-            host_per_trajectory += per_trajectory_work
-        if host_per_trajectory > 0:
-            host_available_for_batch = max(
-                0,
-                host_budget
-                - host_reserve
-                - reducer_workspace
-                - analyzer_host_workspace,
+        candidates = [n_traj]
+        candidates.extend(
+            range(
+                ((n_traj - 1) // logical_rng_group) * logical_rng_group,
+                logical_rng_group - 1,
+                -logical_rng_group,
             )
-            trajectory_batch = min(
-                trajectory_batch,
-                max(1, host_available_for_batch // host_per_trajectory),
+        )
+        trajectory_batch = next(
+            (candidate for candidate in candidates if batch_fits(candidate)), 0
+        )
+        if trajectory_batch == 0:
+            raise SDEMemoryPlanningError(
+                "trajectory batching cannot fit one logical RNG group: the "
+                f"minimum candidate is {logical_rng_group} trajectories. Raise "
+                "the memory budget or set a smaller rng_group_size."
             )
     if batching_mode == "off":
         trajectory_batch = n_traj
@@ -382,71 +411,66 @@ def build_execution_plan(
         and (scan_size > 1 or trajectory_batch_count > 1)
     )
 
-    batch_trajectory_bytes = max(
-        1, trajectory_per_point * trajectory_batch // n_traj
+    batch_workspace = workspace_for(trajectory_batch)
+    retained_device_per_point = (
+        batch_workspace.retained_device_bytes if trajectory_batch_count > 1 else 0
     )
-    (
-        batch_device_workspace,
-        batch_host_workspace,
-        _,
-    ) = _analyzer_workspace_bytes(
-        batch_trajectory_bytes,
-        workspace_analysers,
-        n_traj=trajectory_batch,
-        saved_samples=saved_samples,
-        n_record_modes=n_record_modes,
-        real_itemsize=real_itemsize,
-        backend_name=backend_name,
-    )
-    retained_reducer_workspace = (
-        reducer_workspace if trajectory_batch_count > 1 else 0
+    retained_host_per_point = (
+        batch_workspace.retained_host_bytes if trajectory_batch_count > 1 else 0
     )
     working_per_point = per_trajectory_work * trajectory_batch
-    analyzer_device_retained = batch_device_workspace
-    analyzer_host_retained = batch_host_workspace + retained_reducer_workspace
-    retained_analysis_workspace = (
-        analyzer_device_retained if backend_name == "cupy" else analyzer_host_retained
+    analyzer_device_per_point = (
+        batch_workspace.device_bytes + retained_device_per_point
     )
-    fixed = reserve + retained_analysis_workspace
-    if trajectory_batch_count > 1:
-        if budget is not None and fixed + working_per_point > budget:
+    analyzer_host_per_point = batch_workspace.host_bytes + retained_host_per_point
+    device_per_point = analyzer_device_per_point + (
+        working_per_point if backend_name == "cupy" else 0
+    )
+    host_per_point = analyzer_host_per_point + (
+        working_per_point if backend_name != "cupy" else 0
+    )
+    can_tile = trajectory_batch_count > 1 or stream_analysis
+
+    device_capacity = _tile_capacity(
+        device_budget, device_reserve, device_per_point
+    )
+    host_capacity = _tile_capacity(host_budget, host_reserve, host_per_point)
+    capacity = min(scan_size, device_capacity, host_capacity)
+    if capacity < 1:
+        device_required, host_required = one_point_peaks(trajectory_batch)
+        if device_budget is not None and device_required > device_budget:
             raise SDEMemoryPlanningError(
                 _minimum_working_set_message(
-                    budget, fixed + working_per_point, backend_name
+                    device_budget, device_required, backend_name
                 )
             )
-        if budget is None:
-            tile_size = scan_size
-        else:
-            tile_size = max(
-                1,
-                min(
-                    scan_size,
-                    (budget - fixed) // max(1, working_per_point),
-                ),
-            )
-    elif budget is None:
-        tile_size = scan_size
-    elif stream_analysis:
-        if fixed + working_per_point > budget:
-            raise SDEMemoryPlanningError(
-                _minimum_working_set_message(
-                    budget, fixed + working_per_point, backend_name
-                )
-            )
-        tile_size = max(1, min(scan_size, (budget - fixed) // working_per_point))
+        assert host_budget is not None
+        raise SDEMemoryPlanningError(
+            _minimum_working_set_message(host_budget, host_required, "host")
+        )
+    if can_tile:
+        tile_size = capacity
     else:
-        required = fixed + working_per_point * scan_size
-        if required > budget:
+        tile_size = scan_size
+        required_device = device_reserve + device_per_point * scan_size
+        required_host = host_reserve + host_per_point * scan_size
+        device_exceeded = (
+            device_budget is not None and required_device > device_budget
+        )
+        host_exceeded = host_budget is not None and required_host > host_budget
+        if device_exceeded or host_exceeded:
+            required = required_device if device_exceeded else required_host
+            limiting_budget = device_budget if device_exceeded else host_budget
+            limiting_kind = budget_kind if device_exceeded else "host"
+            assert limiting_budget is not None
             raise SDEMemoryPlanningError(
                 "The SDE result requires materializing the complete scan trajectory "
-                f"({required / _MIB:.1f} MiB estimated) but the {budget_kind} "
-                f"budget is {budget / _MIB:.1f} MiB. Configure an analyser with "
+                f"({required / _MIB:.1f} MiB estimated) but the {limiting_kind} "
+                f"budget is {limiting_budget / _MIB:.1f} MiB. Configure an "
+                "analyser with "
                 "keep_traj=false so qphase_sde can process scan tiles, reduce the "
                 "trajectory size, or increase the resource limit."
             )
-        tile_size = scan_size
-
     tile_size = int(max(1, tile_size))
     tile_count = math.ceil(scan_size / tile_size)
     if adaptive_active and tile_count > 1:
@@ -457,6 +481,7 @@ def build_execution_plan(
             "disable adaptive stepping"
         )
     deferred_analysers: tuple[str, ...] = ()
+    deferred_device_bytes = 0
     deferred_host_bytes = 0
     if product_graph is not None and tile_size < scan_size:
         tile_scope, final_scope = _typed_scan_scope(product_graph, analysers)
@@ -508,39 +533,69 @@ def build_execution_plan(
                 for node in tile_scope
                 if node.removeprefix("analyser.") not in trajectory_analysers
             )
-            per_point_product_bytes = reducer_workspace * (1 + downstream_count)
+            per_point_product_bytes = (
+                batch_workspace.retained_device_bytes
+                + batch_workspace.retained_host_bytes
+            ) * (1 + downstream_count)
             merged_bytes = scan_size * per_point_product_bytes
-            final_device, final_host, _ = _analyzer_workspace_bytes(
+            final_workspace = _analyzer_workspace_bytes(
                 max(1, merged_bytes),
                 {name: analysers[name] for name in deferred_analysers},
                 n_traj=n_traj,
+                total_n_traj=n_traj,
                 saved_samples=saved_samples,
                 n_record_modes=n_record_modes,
                 real_itemsize=real_itemsize,
                 backend_name=backend_name,
             )
-            deferred_host_bytes = merged_bytes + final_device + final_host
-    if (
-        backend_name != "cupy"
-        and host_budget is not None
-        and deferred_host_bytes
-    ):
-        available_for_tile = host_budget - fixed - deferred_host_bytes
-        reduced_tile_size = available_for_tile // max(1, working_per_point)
-        if 0 < reduced_tile_size < tile_size:
-            tile_size = int(reduced_tile_size)
-            tile_count = math.ceil(scan_size / tile_size)
-    peak = fixed + working_per_point * tile_size
-    if backend_name == "cupy":
-        device_peak = peak
-        retained_host_trajectory = (
-            trajectory_per_point * scan_size if should_keep else 0
+            deferred_device_bytes = final_workspace.device_bytes
+            deferred_host_bytes = merged_bytes + final_workspace.host_bytes
+
+    retained_host_trajectory = (
+        trajectory_per_point * scan_size
+        if backend_name == "cupy" and should_keep
+        else 0
+    )
+    device_fixed = device_reserve + deferred_device_bytes
+    host_fixed = host_reserve + deferred_host_bytes + retained_host_trajectory
+    if can_tile:
+        adjusted_capacity = min(
+            scan_size,
+            _tile_capacity(device_budget, device_fixed, device_per_point),
+            _tile_capacity(host_budget, host_fixed, host_per_point),
         )
-        host_peak = host_reserve + analyzer_host_retained + retained_host_trajectory
-    else:
-        device_peak = 0
-        host_peak = peak
-    host_peak += deferred_host_bytes
+        if adjusted_capacity < 1:
+            if (
+                device_budget is not None
+                and device_fixed + device_per_point > device_budget
+            ):
+                raise SDEMemoryPlanningError(
+                    _minimum_working_set_message(
+                        device_budget,
+                        device_fixed + device_per_point,
+                        backend_name,
+                    )
+                )
+            assert host_budget is not None
+            raise SDEMemoryPlanningError(
+                _minimum_working_set_message(
+                    host_budget, host_fixed + host_per_point, "host"
+                )
+            )
+        tile_size = min(tile_size, adjusted_capacity)
+        tile_count = math.ceil(scan_size / tile_size)
+
+    device_peak = (
+        device_fixed + device_per_point * tile_size
+        if backend_name == "cupy"
+        else 0
+    )
+    host_peak = host_fixed + host_per_point * tile_size
+    peak = device_peak if backend_name == "cupy" else host_peak
+    if device_budget is not None and device_peak > device_budget:
+        raise SDEMemoryPlanningError(
+            _minimum_working_set_message(device_budget, device_peak, backend_name)
+        )
     if host_budget is not None and host_peak > host_budget:
         if deferred_analysers:
             raise SDEMemoryPlanningError(
@@ -564,9 +619,12 @@ def build_execution_plan(
         trajectory_bytes_per_point=trajectory_per_point,
         state_bytes_per_point=state_per_point,
         noise_workspace_bytes_per_point=noise_per_point,
-        analyzer_workspace_bytes=(analyzer_device_retained + analyzer_host_retained),
-        analyzer_device_workspace_bytes=analyzer_device_retained,
-        analyzer_host_workspace_bytes=analyzer_host_retained,
+        analyzer_workspace_bytes=(
+            analyzer_device_per_point + analyzer_host_per_point
+        )
+        * tile_size,
+        analyzer_device_workspace_bytes=analyzer_device_per_point * tile_size,
+        analyzer_host_workspace_bytes=analyzer_host_per_point * tile_size,
         reserve_bytes=reserve,
         host_reserve_bytes=host_reserve,
         full_scan_trajectory_bytes=trajectory_per_point * scan_size,
@@ -793,15 +851,17 @@ def _analyzer_workspace_bytes(
     analysers: dict[str, Any],
     *,
     n_traj: int,
+    total_n_traj: int,
     saved_samples: int,
     n_record_modes: int,
     real_itemsize: int,
     backend_name: str,
-) -> tuple[int, int, int]:
-    """Estimate separate device and host analyser workspaces.
+) -> _AnalyserWorkspace:
+    """Estimate per-point analyser memory by location and lifetime.
 
     New analysers provide their own estimator. A capability-based fallback is
-    retained for lightweight test doubles.
+    retained for lightweight test doubles, but retained reducer state must be
+    declared explicitly.
     """
     from qphase_sde.contracts.analyser import (
         AnalyserWorkspaceEstimate,
@@ -815,10 +875,12 @@ def _analyzer_workspace_bytes(
         n_record_modes=n_record_modes,
         real_itemsize=real_itemsize,
         backend_name=backend_name,
+        total_n_traj=total_n_traj,
     )
     device_total = 0
     host_total = 0
-    reducer_total = 0
+    retained_device_total = 0
+    retained_host_total = 0
     for name, analyser in analysers.items():
         estimator_fn = getattr(analyser, "workspace", None)
         if callable(estimator_fn):
@@ -829,10 +891,10 @@ def _analyzer_workspace_bytes(
                 )
             device_total += max(0, int(estimate.device_bytes))
             host_total += max(0, int(estimate.host_bytes))
-            declared_reducer = max(0, int(estimate.reducer_bytes))
-            if declared_reducer == 0 and _has_reducer(analyser):
-                declared_reducer = trajectory_per_point
-            reducer_total += declared_reducer
+            retained_device_total += max(
+                0, int(estimate.retained_device_bytes)
+            )
+            retained_host_total += max(0, int(estimate.retained_host_bytes))
             continue
         estimator = getattr(analyser, "estimator", None)
         capability_fn = getattr(estimator, "capabilities", None)
@@ -865,9 +927,12 @@ def _analyzer_workspace_bytes(
             device_total += workspace
         else:
             host_total += workspace
-        if _has_reducer(analyser):
-            reducer_total += trajectory_per_point
-    return device_total, host_total, reducer_total
+    return _AnalyserWorkspace(
+        device_bytes=device_total,
+        host_bytes=host_total,
+        retained_device_bytes=retained_device_total,
+        retained_host_bytes=retained_host_total,
+    )
 
 
 def _analyzer_capabilities(analyser: Any) -> Any:
@@ -1017,17 +1082,17 @@ def _trajectory_analysers(analysers: dict[str, Any]) -> dict[str, Any]:
     return selected
 
 
-def _has_reducer(analyser: Any) -> bool:
-    provider = getattr(analyser, "reducer", None)
-    return (
-        callable(provider) and provider() is not None
-    ) or callable(getattr(analyser, "create_result_accumulator", None))
-
-
 def _reserve_bytes(budget: int | None) -> int:
     if budget is None:
         return 0
     return max(_MIB, min(_MAX_RESERVE_BYTES, budget // 16))
+
+
+def _tile_capacity(budget: int | None, fixed: int, per_point: int) -> int:
+    """Return the number of scan points that fit one memory location."""
+    if budget is None or per_point == 0:
+        return (1 << 63) - 1
+    return max(0, (budget - fixed) // per_point)
 
 
 def _minimum_working_set_message(budget: int, required: int, backend_name: str) -> str:

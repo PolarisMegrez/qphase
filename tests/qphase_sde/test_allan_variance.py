@@ -227,11 +227,14 @@ def test_allan_workspace_is_host_resident_for_numpy_backend():
         n_record_modes=3,
         real_itemsize=8,
         backend_name="numpy",
+        total_n_traj=120,
     )
 
     estimate = analyzer.workspace(request)
     assert estimate.host_bytes == 5 * trajectory_bytes // 3
     assert estimate.device_bytes == 0
+    assert estimate.retained_host_bytes == 120 * analyzer.config.points * 3 * 8 * 8
+    assert estimate.retained_device_bytes == 0
 
 
 @pytest.mark.parametrize(

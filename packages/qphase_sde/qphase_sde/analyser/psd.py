@@ -301,7 +301,7 @@ class PsdAnalyzer(Analyzer):
         """Estimate FFT or host-estimator workspace for one scan point."""
         capabilities = self.estimator.capabilities()
         trajectory_bytes = request.trajectory_bytes
-        reducer_bytes = (
+        retained_host_bytes = (
             request.saved_samples
             * request.n_record_modes
             * request.real_itemsize
@@ -313,7 +313,8 @@ class PsdAnalyzer(Analyzer):
             # still alive.
             host_bytes = 2 * trajectory_bytes
             return AnalyserWorkspaceEstimate(
-                host_bytes=host_bytes, reducer_bytes=reducer_bytes
+                host_bytes=host_bytes,
+                retained_host_bytes=retained_host_bytes,
             )
 
         chunk = getattr(
@@ -330,10 +331,12 @@ class PsdAnalyzer(Analyzer):
             workspace = 2 * trajectory_bytes
         if request.backend_name == "cupy":
             return AnalyserWorkspaceEstimate(
-                device_bytes=workspace, reducer_bytes=reducer_bytes
+                device_bytes=workspace,
+                retained_host_bytes=retained_host_bytes,
             )
         return AnalyserWorkspaceEstimate(
-            host_bytes=workspace, reducer_bytes=reducer_bytes
+            host_bytes=workspace,
+            retained_host_bytes=retained_host_bytes,
         )
 
     def create_result_accumulator(self) -> "PsdResultAccumulator":

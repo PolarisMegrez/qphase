@@ -210,8 +210,11 @@ transient、全部 consumer 均属于 batch-local 子图且没有输出被发布
 节点组成 batch frontier，其完成产品重新进入 post-batch graph。无 reducer 的 published、
 terminal 或跨 boundary 输出会在 planning 阶段被拒绝。这样一个 transform 每批只执行一次，
 即可共享给多个 reducer consumer，且不会跨 batch 保留输出。
-当前 reducer contract 只接受一个 Dataset 输出。Analyser `workspace()` 同时声明单次
-调用的 host/device bytes 与跨 batch 保留的 `reducer_bytes`；planner 会同时计入两者。
+当前 reducer contract 只接受一个 Dataset 输出。Analyser `workspace()` 使用
+`host_bytes` / `device_bytes` 声明逐点调用及其输出内存，使用
+`retained_host_bytes` / `retained_device_bytes` 声明跨 trajectory batch 保留的状态；
+planner 会将两者按 scan tile 大小计入。`request.n_traj` 是候选物理 batch 大小，
+`request.total_n_traj` 是每个 scan point 的完整 ensemble 大小。
 
 ### 支持 Scan 的 Engine
 

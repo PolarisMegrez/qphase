@@ -91,15 +91,17 @@ class AnalyserWorkspaceRequest:
     n_record_modes: int
     real_itemsize: int
     backend_name: str
+    total_n_traj: int | None = None
 
 
 @dataclass(frozen=True)
 class AnalyserWorkspaceEstimate:
-    """Invocation workspace plus retained reducer-state memory."""
+    """Per-point invocation/output and cross-batch retained memory."""
 
     device_bytes: int = 0
     host_bytes: int = 0
-    reducer_bytes: int = 0
+    retained_device_bytes: int = 0
+    retained_host_bytes: int = 0
 
 
 @dataclass(frozen=True)
