@@ -23,12 +23,15 @@ Public API
 SDEQuantity
     SDE-specific quantity identifiers (extending core spectral quantities).
 FrequencyOrientation
-    Canonical orientation values.
+    Canonical phase-signed orientation values.
+SpectralProductOrientation
+    Orientation values allowed on spectral products: the phase-signed values
+    plus ``unsigned`` for one-sided spectra of real-valued signals.
 DEFAULT_FREQUENCY_ORIENTATION
     Default orientation for 2.x products.
 SDEMomentFamilySchema
     SDE-private, versioned moment family descriptor.
-SPECTRUM_PRODUCT, ALLAN_PRODUCT, MOMENT_FAMILY_PRODUCT
+SPECTRUM_PRODUCT, ALLAN_PRODUCT, MOMENT_FAMILY_PRODUCT, SAMPLED_OBSERVABLE_PRODUCT
     Open product schema templates referenced by the resource manifest.
 """
 
@@ -54,18 +57,32 @@ __all__ = [
     "ALLAN_PRODUCT",
     "DEFAULT_FREQUENCY_ORIENTATION",
     "MOMENT_FAMILY_PRODUCT",
+    "SAMPLED_OBSERVABLE_PRODUCT",
     "SPECTRUM_PRODUCT",
     "FrequencyOrientation",
     "SDEMomentFamilySchema",
     "SDEQuantity",
+    "SpectralProductOrientation",
     "SpectralQuantity",
 ]
 
 
-#: Canonical frequency orientation values.
+#: Canonical phase-signed frequency orientation values. These describe how a
+#: positive frequency relates to the time dependence of a *complex* field
+#: phasor; they are meaningless for spectra of real-valued signals.
 FrequencyOrientation = Literal["phase_decreasing", "phase_increasing"]
 
 DEFAULT_FREQUENCY_ORIENTATION: FrequencyOrientation = "phase_decreasing"
+
+#: Orientation values allowed on spectral *products*. One-sided spectra of
+#: real-valued sampled signals carry ``unsigned``: their frequency axis is
+#: non-negative by construction, a fact expressed by the ``one_sided``
+#: sidedness attribute and the coordinate values — never by a phase sign.
+#: Phase-specific consumers must keep using the phase-only
+#: :data:`FrequencyOrientation` helpers and reject ``unsigned`` explicitly.
+SpectralProductOrientation = Literal[
+    "phase_decreasing", "phase_increasing", "unsigned"
+]
 
 
 class SDEQuantity(str, Enum):
@@ -76,6 +93,7 @@ class SDEQuantity(str, Enum):
     """
 
     FIELD_AMPLITUDE = "field_amplitude"
+    SAMPLED_OBSERVABLE = "sampled_observable"
     INTENSITY = "intensity"
     PHASE = "phase"
     ALLAN_VARIANCE = "allan_variance"
@@ -169,12 +187,15 @@ SPECTRUM_PRODUCT = ProductSchema(
 
 #: Open schema of the Allan variance product. The sampling uncertainty counts
 #: over independent trajectories — the scan axis is a swept parameter and must
-#: never be treated as an ensemble of independent samples.
+#: never be treated as an ensemble of independent samples. ``tau`` is an
+#: averaging *time*, so its coordinate units are ``time`` (the concrete Allan
+#: products already record this; the open template previously misdeclared
+#: ``inverse_time``).
 ALLAN_PRODUCT = ProductSchema(
     kind=DataKind.STATISTICS,
     axes=[
         AxisSchema(name="scan", role=AxisRole.PARAMETER),
-        AxisSchema(name="tau", role=AxisRole.COORDINATE, units="inverse_time"),
+        AxisSchema(name="tau", role=AxisRole.COORDINATE, units="time"),
         AxisSchema(name="channel", role=AxisRole.COMPONENT),
     ],
     sampling_bases=[SamplingBasisSchema(name="trajectory")],
@@ -198,6 +219,58 @@ ALLAN_PRODUCT = ProductSchema(
         )
     ],
     attributes={"estimator": "non_overlapping_windows"},
+)
+
+#: Open schema of the sampled-observable time-series product: a real-valued
+#: readout ``y(t)`` derived from the complex field trajectories by a typed
+#: measurement (first implementation: Hermitian quadratic forms). The product
+#: mirrors the source trajectory grid — same scan coordinates, trajectory
+#: realization axis, time axis and per-trajectory ``valid_length`` — while the
+#: channel axis indexes declared observable channels, never physical modes.
+#:
+#: The ``value`` variable keeps the source field's floating dtype
+#: (``float32`` or ``float64``; the template declares the canonical wide one)
+#: and carries the per-instance declared physical units, closed when a
+#: transform instance is planned. Per-instance provenance — channel names,
+#: mode labels, requested/used matrices, centers, reference matrices,
+#: Hermitian residuals with their tolerance and the source product identity —
+#: is completed by the producing transform at assembly time; only the
+#: invariant attribute values are frozen here.
+SAMPLED_OBSERVABLE_PRODUCT = ProductSchema(
+    kind=DataKind.TIME_SERIES,
+    axes=[
+        AxisSchema(name="scan", role=AxisRole.PARAMETER),
+        AxisSchema(name="trajectory", role=AxisRole.REALIZATION),
+        AxisSchema(
+            name="time",
+            role=AxisRole.COORDINATE,
+            coordinate="regular",
+            units="time",
+        ),
+        AxisSchema(name="channel", role=AxisRole.COMPONENT),
+    ],
+    variables=[
+        VariableSchema(
+            name="value",
+            dtype="float64",
+            value_domain="real",
+            dims=("scan", "trajectory", "time", "channel"),
+            quantity=SDEQuantity.SAMPLED_OBSERVABLE.value,
+        ),
+        VariableSchema(
+            name="valid_length",
+            dtype="int64",
+            value_domain="real",
+            dims=("scan", "trajectory"),
+            quantity="valid_length",
+        ),
+    ],
+    attributes={
+        "measurement_kind": "hermitian_quadratic",
+        "representation": "c_number",
+        "channel_definition": "observable",
+        "independent_realizations": "trajectory",
+    },
 )
 
 #: Default SDE moment family descriptor, embedded into the product attributes.

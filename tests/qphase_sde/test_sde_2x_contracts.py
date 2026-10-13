@@ -129,6 +129,8 @@ def test_product_templates_are_open_and_typed():
     assert not quantities.SPECTRUM_PRODUCT.is_closed
     assert quantities.SPECTRUM_PRODUCT.kind.value == "spectral"
     assert bundle.TRAJECTORY_PRODUCT.kind.value == "time_series"
+    assert not quantities.SAMPLED_OBSERVABLE_PRODUCT.is_closed
+    assert quantities.SAMPLED_OBSERVABLE_PRODUCT.kind.value == "time_series"
     assert peaks.PEAK_PRODUCT.kind.value == "statistics"
     assert coherence.COHERENCE_FREQUENCY_PRODUCT.kind.value == "statistics"
 
@@ -601,3 +603,188 @@ def test_select_sde_task_profile_mapping():
         )
         == "analyze"
     )
+
+
+# ---------------------------------------------------------------------------
+# Wave 6B: sampled-observable schema and spectral orientation contracts
+# ---------------------------------------------------------------------------
+
+
+def test_sde_quantity_declares_sampled_observable():
+    assert quantities.SDEQuantity.SAMPLED_OBSERVABLE.value == "sampled_observable"
+
+
+def test_allan_template_tau_axis_is_a_time_coordinate():
+    """Tau is an averaging time; the template once misdeclared inverse_time."""
+    tau = quantities.ALLAN_PRODUCT.axis("tau")
+    assert tau.role is AxisRole.COORDINATE
+    assert tau.units == "time"
+
+
+def test_sampled_observable_product_template_is_frozen():
+    """The open sampled-observable template mirrors the trajectory grid."""
+    schema = quantities.SAMPLED_OBSERVABLE_PRODUCT
+    assert schema.kind.value == "time_series"
+    assert not schema.is_closed
+
+    axes = {axis.name: axis for axis in schema.axes}
+    assert list(axes) == ["scan", "trajectory", "time", "channel"]
+    assert axes["scan"].role is AxisRole.PARAMETER
+    assert axes["trajectory"].role is AxisRole.REALIZATION
+    assert axes["time"].role is AxisRole.COORDINATE
+    assert axes["time"].units == "time"
+    assert axes["time"].coordinate == "regular"
+    assert axes["channel"].role is AxisRole.COMPONENT
+
+    value = schema.variable("value")
+    assert value.dims == ("scan", "trajectory", "time", "channel")
+    assert value.value_domain == "real"
+    assert value.quantity == "sampled_observable"
+    # Units stay open: each transform instance declares them at close time.
+    assert value.units == ""
+    valid_length = schema.variable("valid_length")
+    assert valid_length.dims == ("scan", "trajectory")
+    assert valid_length.dtype == "<i8"
+
+    # Only invariant attribute values live in the open template; channel
+    # names, matrices and residuals close with the producing transform.
+    assert schema.attributes["measurement_kind"] == "hermitian_quadratic"
+    assert schema.attributes["representation"] == "c_number"
+    assert schema.attributes["channel_definition"] == "observable"
+    assert schema.attributes["independent_realizations"] == "trajectory"
+    # The trajectory axis is retained, not reduced: no sampling bases.
+    assert schema.sampling_bases == []
+
+    payload = json.loads(json.dumps(schema.model_dump(mode="json")))
+    assert ProductSchema.model_validate(payload) == schema
+
+
+def test_spectral_product_orientation_admits_unsigned():
+    """``unsigned`` is a spectral-product orientation, never a phase sign."""
+    import numpy as np
+    from qphase_sde.analyser.frequency_orientation import (
+        orient_spectrum,
+        orientation_metadata,
+        orientation_sign,
+        resolve_frequency_orientation,
+        resolve_spectral_orientation,
+    )
+
+    for value in ("phase_decreasing", "phase_increasing", "unsigned"):
+        assert resolve_spectral_orientation({"orientation": value}) == value
+    with pytest.raises(ValueError, match="does not record"):
+        resolve_spectral_orientation(None)
+    with pytest.raises(ValueError, match="Unsupported spectral orientation"):
+        resolve_spectral_orientation({"orientation": "bogus"})
+
+    # Phase-specific consumers keep the phase-only resolver: one-sided real
+    # spectra carry no phase sign and must be rejected, not defaulted.
+    with pytest.raises(ValueError, match="Unsupported frequency orientation"):
+        resolve_frequency_orientation({"orientation": "unsigned"})
+    for helper in (orientation_sign, orientation_metadata):
+        with pytest.raises(ValueError, match="unsigned"):
+            helper("unsigned")
+    with pytest.raises(ValueError, match="unsigned"):
+        orient_spectrum(np.array([0.0]), np.array([1.0]), orientation="unsigned")
+
+
+def _closed_observable_schema() -> ProductSchema:
+    """Close the open observable template for a concrete 2-point scan run."""
+    payload = quantities.SAMPLED_OBSERVABLE_PRODUCT.model_dump(mode="json")
+    sizes = {"scan": 2, "trajectory": 3, "time": 5, "channel": 2}
+    for axis in payload["axes"]:
+        axis["size"] = sizes[axis["name"]]
+        if axis["name"] == "time":
+            axis["start"] = 0.2
+            axis["step"] = 0.1
+    for variable in payload["variables"]:
+        if variable["name"] == "value":
+            variable["units"] = "occupation"
+    payload["attributes"]["channel_names"] = ["soft_coordinate", "quadrature"]
+    return ProductSchema.model_validate(payload)
+
+
+_OBSERVABLE_PROBE = """
+import json
+import sys
+
+from qphase.data import load_bundle
+
+bundle = load_bundle(sys.argv[1])
+product = bundle.products["observable"]
+schema = product.schema
+print(
+    json.dumps(
+        {
+            "kind": schema.kind.value,
+            "axes": {
+                axis.name: [axis.role.value, axis.size, axis.units]
+                for axis in schema.axes
+            },
+            "value_dims": list(schema.variable("value").dims),
+            "value_quantity": schema.variable("value").quantity,
+            "value_units": schema.variable("value").units,
+            "value_sum": float(product.handle("value").materialize().sum()),
+            "valid_length": product.handle("valid_length").materialize().tolist(),
+            "measurement_kind": schema.attributes["measurement_kind"],
+            "representation": schema.attributes["representation"],
+            "channel_definition": schema.attributes["channel_definition"],
+            "channel_names": schema.attributes["channel_names"],
+        }
+    )
+)
+"""
+
+
+@pytest.mark.parametrize(
+    "first_import",
+    ["import qphase.data", "import qphase_sde.contracts.quantities"],
+    ids=["qphase-data-first", "quantities-first"],
+)
+def test_sampled_observable_clean_process_roundtrip(tmp_path, first_import):
+    """A materialized observable product roundtrips through a clean process."""
+    import subprocess
+    import sys
+
+    import numpy as np
+    from qphase.data import TimeSeriesDataset, save_products
+
+    rng = np.random.default_rng(20261014)
+    schema = _closed_observable_schema()
+    value = rng.standard_normal((2, 3, 5, 2))
+    valid_length = np.full((2, 3), 5, dtype=np.int64)
+    dataset = TimeSeriesDataset.from_arrays(
+        schema, {"value": value, "valid_length": valid_length}, owner="test"
+    )
+    save_products(tmp_path, {"observable": dataset})
+
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        f"{first_import}  # noqa: F401\n" + _OBSERVABLE_PROBE, encoding="utf-8"
+    )
+    completed = subprocess.run(
+        [sys.executable, str(probe), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout.strip()) == {
+        "kind": "time_series",
+        "axes": {
+            "scan": ["parameter", 2, ""],
+            "trajectory": ["realization", 3, ""],
+            "time": ["coordinate", 5, "time"],
+            "channel": ["component", 2, ""],
+        },
+        "value_dims": ["scan", "trajectory", "time", "channel"],
+        "value_quantity": "sampled_observable",
+        "value_units": "occupation",
+        "value_sum": float(value.sum()),
+        "valid_length": valid_length.tolist(),
+        "measurement_kind": "hermitian_quadratic",
+        "representation": "c_number",
+        "channel_definition": "observable",
+        "channel_names": ["soft_coordinate", "quadrature"],
+    }

@@ -11,6 +11,7 @@ from pydantic import BeforeValidator
 from ..contracts.quantities import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
+    SpectralProductOrientation,
 )
 
 OrientationInput = Annotated[
@@ -44,6 +45,11 @@ def resolve_frequency_orientation(
 
     Every typed spectral product records its orientation at production time,
     so a missing key is a producer bug, not a legacy result to tolerate.
+
+    This resolver is phase-specific: one-sided spectra of real-valued signals
+    (``unsigned``) carry no phase sign and are rejected here. Spectral
+    consumers that also accept such products use
+    :func:`resolve_spectral_orientation` instead.
     """
     if metadata is None or "orientation" not in metadata:
         raise ValueError(
@@ -55,8 +61,40 @@ def resolve_frequency_orientation(
     return cast(FrequencyOrientation, orientation)
 
 
+def resolve_spectral_orientation(
+    metadata: Mapping[str, Any] | None,
+) -> SpectralProductOrientation:
+    """Resolve a spectral product's orientation, accepting ``unsigned``.
+
+    ``unsigned`` marks the one-sided spectrum of a real-valued signal whose
+    frequency axis is non-negative by construction. It is accepted here — at
+    the generic spectral-product boundary — but never by the phase-specific
+    :func:`resolve_frequency_orientation`, :func:`orientation_sign`,
+    :func:`orient_spectrum` or :func:`orientation_metadata` helpers.
+    """
+    if metadata is None or "orientation" not in metadata:
+        raise ValueError(
+            "upstream product metadata does not record a frequency orientation"
+        )
+    orientation = metadata["orientation"]
+    if orientation not in {"phase_decreasing", "phase_increasing", "unsigned"}:
+        raise ValueError(f"Unsupported spectral orientation: {orientation!r}")
+    return cast(SpectralProductOrientation, orientation)
+
+
+def _require_phase_orientation(orientation: str) -> None:
+    """Guard phase-signed helpers against implicit ``else`` interpretation."""
+    if orientation not in {"phase_decreasing", "phase_increasing"}:
+        raise ValueError(
+            f"phase-signed frequency helper does not support orientation "
+            f"{orientation!r}; one-sided real-signal spectra use 'unsigned' "
+            "and carry no phase sign"
+        )
+
+
 def orientation_sign(orientation: FrequencyOrientation) -> float:
     """Return the sign converting phase velocity to reported frequency."""
+    _require_phase_orientation(orientation)
     return -1.0 if orientation == "phase_decreasing" else 1.0
 
 
@@ -66,6 +104,7 @@ def orient_spectrum(
     orientation: FrequencyOrientation,
 ) -> tuple[np.ndarray, ...]:
     """Orient a raw forward-DFT spectrum and keep its axis increasing."""
+    _require_phase_orientation(orientation)
     axis_array = np.asarray(axis)
     if orientation == "phase_increasing":
         return (axis_array, *(np.asarray(values) for values in spectra))
@@ -80,6 +119,7 @@ def orient_spectrum(
 
 def orientation_metadata(orientation: FrequencyOrientation) -> dict[str, str]:
     """Describe the positive-frequency time dependence without domain assumptions."""
+    _require_phase_orientation(orientation)
     if orientation == "phase_decreasing":
         return {
             "orientation": orientation,
@@ -100,9 +140,11 @@ __all__ = [
     "FrequencyOrientation",
     "ORIENTATION_ALIASES",
     "OrientationInput",
+    "SpectralProductOrientation",
     "orientation_metadata",
     "orientation_schema_extra",
     "orientation_sign",
     "orient_spectrum",
     "resolve_frequency_orientation",
+    "resolve_spectral_orientation",
 ]

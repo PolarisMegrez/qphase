@@ -15,9 +15,13 @@ coordinates
     Canonical phase-space real-coordinate conventions.
 ops
     Backend-agnostic SDE operations (noise expansion and contraction).
+spectral
+    Frozen sampled-scalar spectral math (detrend, one-sided folding, axes
+    and canonical units).
 """
 
 __all__ = [
     "coordinates",
     "ops",
+    "spectral",
 ]

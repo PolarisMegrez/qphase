@@ -528,3 +528,40 @@ def test_allan_device_path_matches_host_with_masked_windows():
     valid = payload["mode_results"][0]["allan"]["valid_second_differences"]
     assert np.any(valid[0] < valid[1])
     assert np.any(valid[3] < valid[1])
+
+
+def test_raw_allan_product_fields_are_frozen():
+    """The phase-frequency Allan product keeps its stable concrete fields.
+
+    Wave 6B freezes the conditional product layouts: the raw-field Allan
+    product keeps its per-mode ``angular_frequency_variance`` tables and a
+    phase-signed orientation; only the future sampled-scalar variant carries
+    ``sampled_scalar_variance`` channel tables with ``measurement_model``
+    recorded.
+    """
+    from qphase_sde.analyser.allan_variance import (
+        _ALLAN_TABLE_LEAVES,
+        _PHASE_INCREMENT_LEAVES,
+    )
+
+    product, _ = _execute(_analyzer(), _phase_diffusion_trajectory())
+
+    expected = {"modes", "t0", "dt", "n_traj", "n_samples"}
+    expected |= {f"mode_results.2.allan.{leaf}" for leaf in _ALLAN_TABLE_LEAVES}
+    expected |= {
+        f"mode_results.2.phase_increment.{leaf}" for leaf in _PHASE_INCREMENT_LEAVES
+    }
+    assert {variable.name for variable in product.variables} == expected
+    target = "mode_results.2.allan.angular_frequency_variance"
+    assert product.variable(target).quantity == "allan_variance"
+    assert product.axis("tau").units == "time"
+    assert product.attributes["orientation"] == "phase_decreasing"
+    assert product.attributes["estimator"] == "non_overlapping_windows"
+
+
+def test_allan_config_orientation_rejects_unsigned():
+    """The phase-signed config orientation never accepts ``unsigned``."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        AllanVarianceConfig(modes=[0], orientation="unsigned")

@@ -105,6 +105,13 @@ MANIFEST = ResourcePackageManifest(
             "and realization semantics.",
         ),
         DataProductDeclaration(
+            name="sampled_observable",
+            kind="time_series",
+            schema_ref="qphase_sde.contracts.quantities:SAMPLED_OBSERVABLE_PRODUCT",
+            description="Real-valued sampled observable time series derived "
+            "from field trajectories by a typed measurement.",
+        ),
+        DataProductDeclaration(
             name="spectrum",
             kind="spectral",
             schema_ref="qphase_sde.contracts.quantities:SPECTRUM_PRODUCT",

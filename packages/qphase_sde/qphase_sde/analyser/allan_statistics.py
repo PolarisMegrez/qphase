@@ -1,4 +1,4 @@
-"""Shared angular-frequency Allan statistics."""
+"""Shared Allan statistics: angular-frequency (phase) and sampled-scalar."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import numpy as np
 __all__ = [
     "calculate_allan_variance",
     "calculate_allan_variance_device",
+    "calculate_sampled_scalar_allan",
     "summarize_trajectories",
 ]
 
@@ -45,19 +46,14 @@ def _duration_samples(value: float, dt: float) -> int:
     return samples
 
 
-def _resolve_averaging_samples(
-    n_time: int,
+def _averaging_samples_within(
+    max_m: int,
     dt: float,
     *,
     taus: list[float] | None,
     points: int,
-    min_windows: int,
-    min_independent_windows: int,
 ) -> np.ndarray:
-    """Return the integer lag grid shared by the host and device Allan paths."""
-    max_m_overlapping = (n_time - min_windows) // 2
-    max_m_independent = (n_time - 1) // (2 * min_independent_windows)
-    max_m = min(max_m_overlapping, max_m_independent)
+    """Resolve the integer lag grid allowed by a measurement's ``max_m``."""
     if max_m < 1:
         raise ValueError(
             "trajectory is too short for the requested Allan window constraints"
@@ -73,6 +69,47 @@ def _resolve_averaging_samples(
             "an Allan tau violates allan_min_windows or allan_min_independent_windows"
         )
     return averaging_samples
+
+
+def _resolve_averaging_samples(
+    n_time: int,
+    dt: float,
+    *,
+    taus: list[float] | None,
+    points: int,
+    min_windows: int,
+    min_independent_windows: int,
+) -> np.ndarray:
+    """Return the integer lag grid shared by the host and device Allan paths."""
+    max_m_overlapping = (n_time - min_windows) // 2
+    max_m_independent = (n_time - 1) // (2 * min_independent_windows)
+    return _averaging_samples_within(
+        min(max_m_overlapping, max_m_independent), dt, taus=taus, points=points
+    )
+
+
+def _resolve_scalar_averaging_samples(
+    n_time: int,
+    dt: float,
+    *,
+    taus: list[float] | None,
+    points: int,
+    min_windows: int,
+    min_independent_windows: int,
+) -> np.ndarray:
+    """Return the integer lag grid of the sampled-scalar Allan measurement.
+
+    The scalar measurement consumes ``n_time`` real samples directly. Its
+    overlapping variant averages ``n_time - 2*m + 1 >= min_windows`` pairs of
+    length-``m`` block means separated by ``m``; the non-overlapping primary
+    estimator averages ``floor(n_time/m) - 1 >= min_independent_windows``
+    consecutive disjoint-block pairs.
+    """
+    max_m_overlapping = (n_time + 1 - min_windows) // 2
+    max_m_independent = n_time // (min_independent_windows + 1)
+    return _averaging_samples_within(
+        min(max_m_overlapping, max_m_independent), dt, taus=taus, points=points
+    )
 
 
 def _assemble_result(
@@ -337,4 +374,162 @@ def calculate_allan_variance_device(
         nonoverlap_per_trajectory,
         nonoverlap_valid_counts,
         nominal_independent,
+    )
+
+
+def _assemble_scalar_result(
+    averaging_samples: np.ndarray,
+    dt: float,
+    n_time: int,
+    min_independent_windows: int,
+    per_trajectory: np.ndarray,
+    valid_window_pairs: np.ndarray,
+    nominal_windows: np.ndarray,
+    overlap_per_trajectory: np.ndarray,
+    overlap_valid_window_pairs: np.ndarray,
+) -> dict[str, object]:
+    """Assemble the sampled-scalar Allan payload from per-trajectory tables.
+
+    The non-overlapping estimator is the primary definition and carries the
+    unsuffixed leaves; the overlapping variant is suffixed with ``overlap_``.
+    """
+    mean, sem, sample_count = summarize_trajectories(per_trajectory)
+    overlap_mean, overlap_sem, overlap_sample_count = summarize_trajectories(
+        overlap_per_trajectory
+    )
+    tau = averaging_samples.astype(float) * dt
+    return {
+        "quantity": "allan_variance",
+        "variable": "sampled_scalar",
+        "measurement_model": "sampled_scalar",
+        "tau_unit": "seconds",
+        "tau": tau,
+        "sampled_scalar_variance": mean,
+        "sampled_scalar_variance_sem": sem,
+        "per_trajectory": per_trajectory,
+        "valid_window_pairs": valid_window_pairs,
+        "trajectory_sample_count": sample_count,
+        "nominal_windows_per_trajectory": nominal_windows,
+        "total_valid_window_pairs": np.sum(valid_window_pairs, axis=0, dtype=np.int64),
+        "overlap_sampled_scalar_variance": overlap_mean,
+        "overlap_sampled_scalar_variance_sem": overlap_sem,
+        "overlap_per_trajectory": overlap_per_trajectory,
+        "overlap_valid_window_pairs": overlap_valid_window_pairs,
+        "overlap_trajectory_sample_count": overlap_sample_count,
+        "overlap_total_valid_window_pairs": np.sum(
+            overlap_valid_window_pairs, axis=0, dtype=np.int64
+        ),
+        "observation_duration": float((n_time - 1) * dt),
+        "min_independent_windows": int(min_independent_windows),
+        "definition": "nonoverlapping_window_mean_difference",
+        "overlapping_definition": "overlapping_window_mean_difference",
+    }
+
+
+def calculate_sampled_scalar_allan(
+    series: np.ndarray,
+    dt: float,
+    *,
+    taus: list[float] | None,
+    points: int,
+    min_windows: int,
+    min_independent_windows: int,
+) -> dict[str, object]:
+    """Allan variance of a real-valued sampled scalar (frozen definitions).
+
+    The input is the real readout ``y_k`` itself: no phase unwrapping, no
+    division by ``dt``, no orientation sign and no amplitude floor apply.
+    Both estimators average the squared difference of length-``m`` block
+    means at averaging time ``tau = m * dt``:
+
+    - non-overlapping (primary): with ``W = floor(n_time / m)`` disjoint
+      block means ``y_bar_j = (1/m) * sum(y[jm : (j+1)m])``,
+
+      ``sigma^2(tau) = (1 / (2 * (W - 1))) * sum_j (y_bar_{j+1} - y_bar_j)^2``;
+
+    - overlapping: with stride-1 block means ``y_bar_j``,
+      ``j = 0 .. n_time - m``,
+
+      ``sigma^2(tau) = (1 / (2 * P)) * sum_j (y_bar_{j+m} - y_bar_j)^2``,
+
+      over ``P = n_time - 2*m + 1`` pairs separated by ``m``. For
+      ``y_k = (phi_{k+1} - phi_k) / dt`` this variant coincides with the
+      overlapping phase-second-difference Allan variance of ``phi``.
+
+    Window-pair validity follows the finiteness of the cumulative block sums:
+    because the sums accumulate, the first non-finite sample censors the
+    remainder of that trajectory, mirroring the truncation model expressed by
+    ``valid_length``. A trajectory with no valid pair at a given ``tau``
+    yields NaN there and is masked out of the ensemble summaries. This host
+    implementation accumulates block sums in float64 regardless of the input
+    dtype.
+    """
+    y = np.asarray(series)
+    if y.ndim != 2:
+        raise ValueError(
+            "sampled-scalar Allan expects a real (n_traj, n_time) array, got "
+            f"shape {y.shape}"
+        )
+    if np.issubdtype(y.dtype, np.complexfloating):
+        raise ValueError("sampled-scalar Allan requires a real-valued series")
+    if dt <= 0.0:
+        raise ValueError("sampled-scalar Allan sample spacing must be positive")
+    n_traj, n_time = y.shape
+    averaging_samples = _resolve_scalar_averaging_samples(
+        n_time,
+        dt,
+        taus=taus,
+        points=points,
+        min_windows=min_windows,
+        min_independent_windows=min_independent_windows,
+    )
+    # Block sums from a float64 cumulative sum: S[:, k] = sum(y[:, :k]).
+    cumsum = np.empty((n_traj, n_time + 1), dtype=np.float64)
+    cumsum[:, 0] = 0.0
+    np.cumsum(y, axis=1, dtype=np.float64, out=cumsum[:, 1:])
+
+    n_tau = int(averaging_samples.size)
+    per_trajectory = np.full((n_traj, n_tau), np.nan, dtype=float)
+    valid_window_pairs = np.zeros((n_traj, n_tau), dtype=np.int64)
+    nominal_windows = np.empty(n_tau, dtype=np.int64)
+    overlap_per_trajectory = np.full((n_traj, n_tau), np.nan, dtype=float)
+    overlap_valid_window_pairs = np.zeros((n_traj, n_tau), dtype=np.int64)
+
+    for column, m_value in enumerate(averaging_samples):
+        m = int(m_value)
+        # Non-overlapping primary: second differences of the block sums at
+        # block boundaries 0, m, ..., W*m give (y_bar_{j+1} - y_bar_j) * m.
+        window_count = n_time // m
+        boundaries = cumsum[:, : window_count * m + 1 : m]
+        second = boundaries[:, 2:] - 2.0 * boundaries[:, 1:-1] + boundaries[:, :-2]
+        valid = np.isfinite(second)
+        valid_window_pairs[:, column] = np.sum(valid, axis=1)
+        nominal_windows[column] = window_count
+        per_trajectory[:, column] = _masked_square_mean(second, valid, axis=1) / (
+            2.0 * m * m
+        )
+
+        # Overlapping variant: (y_bar_{j+m} - y_bar_j) * m from the block
+        # sums at j, j+m and j+2m over j = 0 .. n_time - 2m.
+        overlap_second = (
+            cumsum[:, 2 * m :]
+            - 2.0 * cumsum[:, m : n_time + 1 - m]
+            + cumsum[:, : n_time + 1 - 2 * m]
+        )
+        overlap_valid = np.isfinite(overlap_second)
+        overlap_valid_window_pairs[:, column] = np.sum(overlap_valid, axis=1)
+        overlap_per_trajectory[:, column] = _masked_square_mean(
+            overlap_second, overlap_valid, axis=1
+        ) / (2.0 * m * m)
+
+    return _assemble_scalar_result(
+        averaging_samples,
+        dt,
+        n_time,
+        min_independent_windows,
+        per_trajectory,
+        valid_window_pairs,
+        nominal_windows,
+        overlap_per_trajectory,
+        overlap_valid_window_pairs,
     )

@@ -500,3 +500,44 @@ def test_periodogram_fft_chunk_config_reaches_estimator():
     )
     assert analyzer.estimator.name == "periodogram"
     assert analyzer.estimator.config.fft_chunk_trajectories == 4
+
+
+def test_raw_psd_product_fields_are_frozen():
+    """The complex-field PSD product keeps its stable concrete fields.
+
+    Wave 6B freezes the conditional product layouts: the raw-field PSD
+    product keeps ``modes`` channel coordinates and a two-sided, phase-signed
+    axis; only the future sampled-scalar variant uses ``channel_names``
+    attributes and an unsigned one-sided axis.
+    """
+    data = TrajectorySet(
+        data=_make_sine_data(n_traj=4, n_time=128), t0=0.0, dt=0.1
+    )
+
+    product = _product(PsdAnalyzer(kind="complex", modes=[0]), data)
+
+    assert {variable.name for variable in product.variables} == {
+        "axis",
+        "psd",
+        "psd_std",
+        "psd_sem",
+        "modes",
+        "sample_dt",
+        "nyquist",
+        "uncertainty.n_independent",
+        "uncertainty.ddof",
+        "uncertainty.available",
+    }
+    assert product.variable("psd").quantity == "power_spectral_density"
+    assert product.axis("frequency").units == "inverse_time"
+    assert product.attributes["orientation"] == "phase_decreasing"
+    assert product.attributes["sidedness"] == "two_sided"
+    assert product.attributes["frequency_units"] == "inverse_time"
+
+
+def test_psd_config_orientation_rejects_unsigned():
+    """The phase-signed config orientation never accepts ``unsigned``."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        PsdAnalyzerConfig(kind="complex", modes=[0], orientation="unsigned")
