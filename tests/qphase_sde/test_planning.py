@@ -366,9 +366,11 @@ def test_auto_batch_matches_largest_explicit_batch_for_each_memory_location(loca
 
 
 def _production_reducer_case(name):
+    from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
     from qphase_sde.analyser.coherence_carrier import CoherenceCarrierAnalyzer
     from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyzer
     from qphase_sde.analyser.moment_statistics import MomentStatisticsAnalyzer
+    from qphase_sde.analyser.psd import PsdAnalyzer
     from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyzer
 
     modes = list(range(32 if name != "moment_statistics" else 64))
@@ -388,12 +390,19 @@ def _production_reducer_case(name):
     elif name == "coherence_matrix":
         analyser = CoherenceMatrixAnalyzer(modes=modes)
         n_traj = 2048
-    else:
+    elif name == "coherence_carrier":
         analyser = CoherenceCarrierAnalyzer(
             modes=modes,
             maximum_lag_points=256,
         )
         n_traj = 1024
+    elif name == "psd":
+        analyser = PsdAnalyzer(kind="complex", modes=[0])
+        n_traj = 128
+    else:
+        assert name == "allan_variance"
+        analyser = AllanVarianceAnalyzer(modes=[0], points=5)
+        n_traj = 128
     return analyser, n_traj
 
 
@@ -510,6 +519,88 @@ def test_finalize_peak_has_exact_single_tile_host_budget_boundary(name):
     )
     assert plan.scan_tile_size == 1
     assert plan.memory.estimated_host_peak_bytes <= high_limit * mib
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "psd",
+        "allan_variance",
+        "moment_statistics",
+        "quadratic_moments",
+        "coherence_matrix",
+        "coherence_carrier",
+    ],
+)
+def test_single_batch_plan_counts_production_retained_memory(name):
+    analyser, n_traj = _production_reducer_case(name)
+    config = EngineConfig(
+        t0=0.0,
+        t1=0.1,
+        dt=0.01,
+        n_traj=n_traj,
+        trajectory_batching="off",
+        keep_traj=False,
+    )
+    plan = build_execution_plan(
+        config=config,
+        grid=None,
+        model=FakeModel(),
+        backend=FakeBackend(),
+        integrator=FakeIntegrator(),
+        analysers={name: analyser},
+        resources=None,
+        device_memory=None,
+        product_graph=_trajectory_graph(name),
+    )
+    estimate = analyser.workspace(
+        AnalyserWorkspaceRequest(
+            trajectory_bytes=n_traj * plan.saved_samples * FakeModel.n_modes * 16,
+            n_traj=n_traj,
+            total_n_traj=n_traj,
+            saved_samples=plan.saved_samples,
+            n_record_modes=FakeModel.n_modes,
+            real_itemsize=8,
+            backend_name="cupy",
+        )
+    )
+
+    assert plan.trajectory_batch_count == 1
+    assert plan.memory.analyzer_host_workspace_bytes >= (
+        estimate.host_bytes + estimate.retained_host_bytes
+    )
+    assert plan.memory.analyzer_device_workspace_bytes >= (
+        estimate.device_bytes + estimate.retained_device_bytes
+    )
+
+
+def test_single_batch_quadratic_finalize_rejects_insufficient_host_budget():
+    name = "quadratic_moments"
+    analyser, n_traj = _production_reducer_case(name)
+    config = EngineConfig(
+        t0=0.0,
+        t1=0.1,
+        dt=0.01,
+        n_traj=n_traj,
+        trajectory_batching="off",
+        keep_traj=False,
+    )
+
+    with pytest.raises(SDEMemoryPlanningError, match="working-set budget"):
+        build_execution_plan(
+            config=config,
+            grid=None,
+            model=FakeModel(),
+            backend=FakeBackend(),
+            integrator=FakeIntegrator(),
+            analysers={name: analyser},
+            resources=SimpleNamespace(
+                gpu_memory_fraction=0.75,
+                memory_limit_mib=64,
+            ),
+            device_memory=(4 * 1024**3, 4 * 1024**3),
+            product_graph=_trajectory_graph(name),
+        )
 
 
 def test_batch_local_multi_output_reducer_is_rejected():

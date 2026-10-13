@@ -211,12 +211,13 @@ transient、全部 consumer 均属于 batch-local 子图且没有输出被发布
 terminal 或跨 boundary 输出会在 planning 阶段被拒绝。这样一个 transform 每批只执行一次，
 即可共享给多个 reducer consumer，且不会跨 batch 保留输出。
 当前 reducer contract 只接受一个 Dataset 输出。Analyser `workspace()` 使用
-`host_bytes` / `device_bytes` 声明逐点调用及其输出内存，使用
-`retained_host_bytes` / `retained_device_bytes` 声明跨 trajectory batch 保留的状态；
-planner 会将两者按 scan tile 大小计入。`request.n_traj` 是候选物理 batch 大小，
-`request.total_n_traj` 是每个 scan point 的完整 ensemble 大小。
-retained 估算必须覆盖全部 batch 完成前仍被持有的每份 payload，包括每批重复的固定
-metadata/数组和 finalize concatenate 的保守余量；同一组 host 数组不应再次计入 invocation 内存。
+`host_bytes` / `device_bytes` 声明逐点 invocation 内存；
+`retained_host_bytes` / `retained_device_bytes` 声明输出组装与 finalize 期间必须保留的内存，
+trajectory batching 启用时还包括跨 batch reducer state。planner 在单 batch 和多 batch 路径均计入
+retained 内存，并将其按 scan tile 大小计算。`request.n_traj` 是候选物理 batch 大小，
+`request.total_n_traj` 是每个 scan point 的完整 ensemble 大小。retained 估算必须覆盖 finalize 前仍被
+持有的每份 payload、每批重复的固定 metadata/数组和 concatenate 保守余量；同一组 host 数组不应再次
+计入 invocation 内存。
 
 ### 支持 Scan 的 Engine
 

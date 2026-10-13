@@ -218,14 +218,16 @@ Published, terminal, or cross-boundary outputs require a reducer and are
 rejected by planning otherwise. This lets one transform execute once per batch
 and feed multiple reducer consumers without retaining its output across batches.
 The current reducer contract accepts exactly one Dataset output. Analyser
-`workspace()` estimates declare per-point invocation/output memory as
-`host_bytes` / `device_bytes` and state retained across trajectory batches as
-`retained_host_bytes` / `retained_device_bytes`. The planner multiplies both by
+`workspace()` estimates declare per-point invocation memory as `host_bytes` /
+`device_bytes`. `retained_host_bytes` / `retained_device_bytes` cover memory that
+must remain available while assembling and finalizing the output, including
+cross-batch reducer state when trajectory batching is active. The planner counts
+retained memory for both single- and multi-batch execution and multiplies it by
 the scan tile size. `request.n_traj` is the candidate physical batch size while
-`request.total_n_traj` is the complete per-point ensemble size.
-Retained estimates must cover every payload held until all batches finish,
-including fixed metadata/arrays repeated per batch and conservative finalize
-concatenation space. Do not also count the same host arrays as invocation memory.
+`request.total_n_traj` is the complete per-point ensemble size. Retained
+estimates must cover every payload held through finalize, fixed metadata/arrays
+repeated per batch, and conservative concatenation space. Do not also count the
+same host arrays as invocation memory.
 
 ### Scan-Aware Engines
 

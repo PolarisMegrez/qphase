@@ -96,7 +96,7 @@ class AnalyserWorkspaceRequest:
 
 @dataclass(frozen=True)
 class AnalyserWorkspaceEstimate:
-    """Per-point invocation/output and cross-batch retained memory."""
+    """Per-point invocation and output assembly/finalize retained memory."""
 
     device_bytes: int = 0
     host_bytes: int = 0

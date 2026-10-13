@@ -289,13 +289,8 @@ def build_execution_plan(
 
     def one_point_peaks(batch_size: int) -> tuple[int, int]:
         estimate = workspace_for(batch_size)
-        is_batched = batch_size < n_traj
-        device_analyser = estimate.device_bytes + (
-            estimate.retained_device_bytes if is_batched else 0
-        )
-        host_analyser = estimate.host_bytes + (
-            estimate.retained_host_bytes if is_batched else 0
-        )
+        device_analyser = estimate.device_bytes + estimate.retained_device_bytes
+        host_analyser = estimate.host_bytes + estimate.retained_host_bytes
         work = per_trajectory_work * batch_size
         return (
             device_reserve
@@ -412,12 +407,8 @@ def build_execution_plan(
     )
 
     batch_workspace = workspace_for(trajectory_batch)
-    retained_device_per_point = (
-        batch_workspace.retained_device_bytes if trajectory_batch_count > 1 else 0
-    )
-    retained_host_per_point = (
-        batch_workspace.retained_host_bytes if trajectory_batch_count > 1 else 0
-    )
+    retained_device_per_point = batch_workspace.retained_device_bytes
+    retained_host_per_point = batch_workspace.retained_host_bytes
     working_per_point = per_trajectory_work * trajectory_batch
     analyzer_device_per_point = (
         batch_workspace.device_bytes + retained_device_per_point
