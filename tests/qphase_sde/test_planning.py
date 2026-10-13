@@ -8,6 +8,7 @@ from qphase_sde.analyser.trajectory_diagnostics import TrajectoryDiagnostics
 from qphase_sde.contracts.analyser import (
     AnalyserExecutionCapabilities,
     AnalyserWorkspaceEstimate,
+    AnalyserWorkspaceRequest,
 )
 from qphase_sde.engine import EngineConfig
 from qphase_sde.planning import SDEMemoryPlanningError, build_execution_plan
@@ -364,16 +365,7 @@ def test_auto_batch_matches_largest_explicit_batch_for_each_memory_location(loca
         assert automatic.memory.estimated_device_peak_bytes <= 192 * 1024**2
 
 
-@pytest.mark.parametrize(
-    ("name", "n_traj"),
-    [
-        ("moment_statistics", 2048),
-        ("quadratic_moments", 16384),
-        ("coherence_matrix", 2048),
-        ("coherence_carrier", 1024),
-    ],
-)
-def test_production_reducer_retained_host_state_limits_scan_tile(name, n_traj):
+def _production_reducer_case(name):
     from qphase_sde.analyser.coherence_carrier import CoherenceCarrierAnalyzer
     from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyzer
     from qphase_sde.analyser.moment_statistics import MomentStatisticsAnalyzer
@@ -382,6 +374,7 @@ def test_production_reducer_retained_host_state_limits_scan_tile(name, n_traj):
     modes = list(range(32 if name != "moment_statistics" else 64))
     if name == "moment_statistics":
         analyser = MomentStatisticsAnalyzer(modes=modes)
+        n_traj = 2048
     elif name == "quadratic_moments":
         matrix = [
             [1.0 if row == column else 0.0 for column in range(16)]
@@ -391,13 +384,30 @@ def test_production_reducer_retained_host_state_limits_scan_tile(name, n_traj):
             modes=list(range(16)),
             observables={f"q{index}": {"matrix": matrix} for index in range(64)},
         )
+        n_traj = 16384
     elif name == "coherence_matrix":
         analyser = CoherenceMatrixAnalyzer(modes=modes)
+        n_traj = 2048
     else:
         analyser = CoherenceCarrierAnalyzer(
             modes=modes,
             maximum_lag_points=256,
         )
+        n_traj = 1024
+    return analyser, n_traj
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "moment_statistics",
+        "quadratic_moments",
+        "coherence_matrix",
+        "coherence_carrier",
+    ],
+)
+def test_production_reducer_retained_host_state_limits_scan_tile(name):
+    analyser, n_traj = _production_reducer_case(name)
     config = EngineConfig(
         t0=0.0,
         t1=0.1,
@@ -428,6 +438,78 @@ def test_production_reducer_retained_host_state_limits_scan_tile(name, n_traj):
     assert plan.scan_tile_size < plan.scan_size
     assert plan.memory.analyzer_host_workspace_bytes > 0
     assert plan.memory.estimated_host_peak_bytes <= 512 * 1024**2
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["moment_statistics", "quadratic_moments", "coherence_matrix"],
+)
+def test_finalize_peak_has_exact_single_tile_host_budget_boundary(name):
+    analyser, n_traj = _production_reducer_case(name)
+    batch_size = 64
+    estimate = analyser.workspace(
+        AnalyserWorkspaceRequest(
+            trajectory_bytes=1,
+            n_traj=batch_size,
+            total_n_traj=n_traj,
+            saved_samples=11,
+            n_record_modes=FakeModel.n_modes,
+            real_itemsize=8,
+            backend_name="cupy",
+        )
+    )
+    declared_host_peak = estimate.host_bytes + estimate.retained_host_bytes
+    mib = 1024**2
+
+    def fits_one_point(limit_mib):
+        budget = limit_mib * mib
+        reserve = max(mib, min(256 * mib, budget // 16))
+        return reserve + declared_host_peak <= budget
+
+    high_limit = next(
+        limit for limit in range(1, 4097) if fits_one_point(limit)
+    )
+    low_limit = high_limit - 1
+    assert not fits_one_point(low_limit)
+    config = EngineConfig(
+        t0=0.0,
+        t1=0.1,
+        dt=0.01,
+        n_traj=n_traj,
+        trajectory_batching="required",
+        trajectory_batch_size=batch_size,
+        rng_group_size=batch_size,
+        keep_traj=False,
+    )
+    common = dict(
+        config=config,
+        grid=_grid(2),
+        model=FakeModel(),
+        backend=FakeBackend(),
+        integrator=FakeIntegrator(),
+        analysers={name: analyser},
+        device_memory=(4 * 1024**3, 4 * 1024**3),
+        product_graph=_trajectory_graph(name),
+    )
+
+    with pytest.raises(SDEMemoryPlanningError, match="working-set budget"):
+        build_execution_plan(
+            **common,
+            resources=SimpleNamespace(
+                gpu_memory_fraction=0.75,
+                memory_limit_mib=low_limit,
+            ),
+        )
+
+    plan = build_execution_plan(
+        **common,
+        resources=SimpleNamespace(
+            gpu_memory_fraction=0.75,
+            memory_limit_mib=high_limit,
+        ),
+    )
+    assert plan.scan_tile_size == 1
+    assert plan.memory.estimated_host_peak_bytes <= high_limit * mib
 
 
 def test_batch_local_multi_output_reducer_is_rejected():

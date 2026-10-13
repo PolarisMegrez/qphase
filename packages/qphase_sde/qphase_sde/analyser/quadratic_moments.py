@@ -217,7 +217,20 @@ class QuadraticMomentAnalyzer(Analyzer):
             + n_modes * 8
             + n_observables * 64
         )
-        retained_host_bytes = 2 * trajectory_payload + batch_count * fixed_payload
+        # Finalize holds payloads plus concatenate, then creates leave_raw,
+        # cumulant values, and full-shape subtraction/square temporaries. The
+        # extra construction-sized term covers the leave_raw expression peak.
+        payload_and_concatenate = 2 * trajectory_payload
+        leave_raw_and_construction = 2 * trajectory_payload
+        cumulant_values = trajectory_payload
+        variance_temporaries = 2 * trajectory_payload
+        retained_host_bytes = (
+            payload_and_concatenate
+            + leave_raw_and_construction
+            + cumulant_values
+            + variance_temporaries
+            + batch_count * fixed_payload
+        )
         if request.backend_name == "cupy":
             return AnalyserWorkspaceEstimate(
                 device_bytes=chunk_values + summaries + matrices + centers,

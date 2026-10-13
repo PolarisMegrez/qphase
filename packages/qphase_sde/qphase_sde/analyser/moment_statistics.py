@@ -144,17 +144,26 @@ class MomentStatisticsAnalyzer(Analyzer):
         )
         total_n_traj = request.total_n_traj or request.n_traj
         batch_count = math.ceil(total_n_traj / request.n_traj)
-        trajectory_payload = (
-            total_n_traj
-            * (n_modes + n_modes * n_modes)
-            * request.real_itemsize
+        occupation_payload = total_n_traj * n_modes * request.real_itemsize
+        product_payload = (
+            total_n_traj * n_modes * n_modes * request.real_itemsize
         )
+        trajectory_payload = occupation_payload + product_payload
         fixed_payload = (
             block_payload
             + 2 * config.time_blocks * 8
             + n_modes * 8
         )
-        retained_host_bytes = 2 * trajectory_payload + batch_count * fixed_payload
+        # Finalize holds the batch payloads and concatenated arrays together.
+        # The g2 jackknife then adds leave-one-out occupation/product arrays,
+        # product-shaped values, and conservative finite/arithmetic temporaries.
+        payload_and_concatenate = 2 * trajectory_payload
+        jackknife_workspace = occupation_payload + 5 * product_payload
+        retained_host_bytes = (
+            payload_and_concatenate
+            + jackknife_workspace
+            + batch_count * fixed_payload
+        )
         if request.backend_name == "cupy":
             return AnalyserWorkspaceEstimate(
                 device_bytes=backend_workspace + summaries,

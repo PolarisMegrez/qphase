@@ -210,18 +210,28 @@ class CoherenceMatrixAnalyzer(Analyzer):
         block_bytes = config.time_blocks * n_modes * n_modes * 2 * request.real_itemsize
         total_n_traj = request.total_n_traj or request.n_traj
         batch_count = math.ceil(total_n_traj / request.n_traj)
-        trajectory_payload = (
-            total_n_traj
-            * (n_modes * n_modes + n_modes)
-            * 2
-            * request.real_itemsize
+        matrix_payload = (
+            total_n_traj * n_modes * n_modes * 2 * request.real_itemsize
         )
+        amplitude_payload = (
+            total_n_traj * n_modes * 2 * request.real_itemsize
+        )
+        trajectory_payload = matrix_payload + amplitude_payload
         fixed_payload = (
             block_bytes
             + 2 * config.time_blocks * 8
             + n_modes * 8
         )
-        retained_host_bytes = 2 * trajectory_payload + batch_count * fixed_payload
+        # Finalize holds payloads plus concatenate. Matrix SEM retains a full
+        # delta array, while purity jackknife constructs and retains a full
+        # leave-one-out matrix; one more matrix-sized term covers construction.
+        payload_and_concatenate = 2 * trajectory_payload
+        finalize_matrix_workspace = 3 * matrix_payload
+        retained_host_bytes = (
+            payload_and_concatenate
+            + finalize_matrix_workspace
+            + batch_count * fixed_payload
+        )
         if request.backend_name == "cupy":
             return AnalyserWorkspaceEstimate(
                 device_bytes=chunk_bytes + 2 * matrix_bytes + amplitude_bytes,

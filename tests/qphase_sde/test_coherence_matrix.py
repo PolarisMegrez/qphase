@@ -188,8 +188,13 @@ def test_coherence_matrix_retained_workspace_covers_ensemble_and_batches():
             backend_name="numpy",
         )
     )
-    trajectory_payload = 100 * (3 * 3 + 3) * 2 * 8
+    matrix_payload = 100 * 3 * 3 * 2 * 8
+    amplitude_payload = 100 * 3 * 2 * 8
+    payload_and_concatenate = 2 * (matrix_payload + amplitude_payload)
+    finalize_matrix_workspace = 3 * matrix_payload
     fixed_payload = 5 * 3 * 3 * 2 * 8 + 2 * 5 * 8 + 3 * 8
 
-    assert estimate.retained_host_bytes == 2 * trajectory_payload + 4 * fixed_payload
+    assert estimate.retained_host_bytes == (
+        payload_and_concatenate + finalize_matrix_workspace + 4 * fixed_payload
+    )
     assert estimate.retained_device_bytes == 0

@@ -252,6 +252,10 @@ def test_quadratic_moments_retained_workspace_covers_ensemble_and_batches():
     )
     matrices = 2 * 3 * 3 * 2 * 8
     trajectory_payload = 100 * 2 * 4 * 8
+    payload_and_concatenate = 2 * trajectory_payload
+    leave_raw_and_construction = 2 * trajectory_payload
+    cumulant_values = trajectory_payload
+    variance_temporaries = 2 * trajectory_payload
     fixed_payload = (
         2 * matrices
         + 2 * 8
@@ -261,7 +265,13 @@ def test_quadratic_moments_retained_workspace_covers_ensemble_and_batches():
         + 2 * 64
     )
 
-    assert estimate.retained_host_bytes == 2 * trajectory_payload + 4 * fixed_payload
+    assert estimate.retained_host_bytes == (
+        payload_and_concatenate
+        + leave_raw_and_construction
+        + cumulant_values
+        + variance_temporaries
+        + 4 * fixed_payload
+    )
     assert estimate.retained_device_bytes == 0
 
 
