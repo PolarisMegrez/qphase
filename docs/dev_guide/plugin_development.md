@@ -223,6 +223,9 @@ The current reducer contract accepts exactly one Dataset output. Analyser
 `retained_host_bytes` / `retained_device_bytes`. The planner multiplies both by
 the scan tile size. `request.n_traj` is the candidate physical batch size while
 `request.total_n_traj` is the complete per-point ensemble size.
+Retained estimates must cover every payload held until all batches finish,
+including fixed metadata/arrays repeated per batch and conservative finalize
+concatenation space. Do not also count the same host arrays as invocation memory.
 
 ### Scan-Aware Engines
 

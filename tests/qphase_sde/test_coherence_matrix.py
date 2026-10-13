@@ -155,3 +155,41 @@ def test_coherence_matrix_workspace_is_bounded_by_time_chunk():
     assert short_estimate.device_bytes == long_estimate.device_bytes
     assert long_estimate.device_bytes < 46 * 1024**2
     assert long_estimate.host_bytes < 16 * 1024
+
+
+def test_coherence_matrix_invocation_workspace_tracks_physical_batch():
+    analyzer = _analyzer(modes=[0, 1, 2], time_chunk_samples=128)
+    common = dict(
+        trajectory_bytes=1,
+        saved_samples=512,
+        n_record_modes=3,
+        real_itemsize=8,
+        backend_name="cupy",
+        total_n_traj=128,
+    )
+
+    small = analyzer.workspace(AnalyserWorkspaceRequest(n_traj=32, **common))
+    large = analyzer.workspace(AnalyserWorkspaceRequest(n_traj=64, **common))
+
+    assert small.device_bytes * 2 == large.device_bytes
+    assert small.host_bytes == large.host_bytes == 0
+
+
+def test_coherence_matrix_retained_workspace_covers_ensemble_and_batches():
+    analyzer = _analyzer(modes=[0, 1, 2], time_blocks=5)
+    estimate = analyzer.workspace(
+        AnalyserWorkspaceRequest(
+            trajectory_bytes=1,
+            n_traj=32,
+            total_n_traj=100,
+            saved_samples=512,
+            n_record_modes=3,
+            real_itemsize=8,
+            backend_name="numpy",
+        )
+    )
+    trajectory_payload = 100 * (3 * 3 + 3) * 2 * 8
+    fixed_payload = 5 * 3 * 3 * 2 * 8 + 2 * 5 * 8 + 3 * 8
+
+    assert estimate.retained_host_bytes == 2 * trajectory_payload + 4 * fixed_payload
+    assert estimate.retained_device_bytes == 0

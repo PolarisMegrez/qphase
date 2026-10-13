@@ -10,6 +10,7 @@ from qphase_sde.analyser.coherence_carrier import (
     CoherenceCarrierConfig,
     estimate_coherence_carrier,
 )
+from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
 from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
@@ -170,6 +171,60 @@ def test_trajectory_batch_accumulator_recomputes_ratio_and_uncertainty():
     assert merged["frequency_sem"] == pytest.approx(complete["frequency_sem"])
     assert merged["n_traj"] == 5
     assert merged["uncertainty"]["independent_unit"] == "trajectory"
+
+
+def test_coherence_carrier_invocation_workspace_tracks_physical_batch():
+    analyzer = CoherenceCarrierAnalyzer(
+        CoherenceCarrierConfig(
+            modes=[0, 1],
+            channels={"balanced": [1.0, 1.0, 0.0]},
+            maximum_lag_points=10,
+            time_chunk_samples=128,
+        )
+    )
+    common = dict(
+        trajectory_bytes=1,
+        saved_samples=512,
+        n_record_modes=3,
+        real_itemsize=8,
+        backend_name="cupy",
+        total_n_traj=128,
+    )
+
+    small = analyzer.workspace(AnalyserWorkspaceRequest(n_traj=32, **common))
+    large = analyzer.workspace(AnalyserWorkspaceRequest(n_traj=64, **common))
+
+    measurement_matrices = 4 * 3 * 3 * 2 * 8
+    assert (small.device_bytes - measurement_matrices) * 2 == (
+        large.device_bytes - measurement_matrices
+    )
+    assert small.host_bytes == large.host_bytes == 0
+
+
+def test_coherence_carrier_retained_workspace_covers_ensemble_and_batches():
+    analyzer = CoherenceCarrierAnalyzer(
+        CoherenceCarrierConfig(
+            modes=[0, 1],
+            channels={"balanced": [1.0, 1.0, 0.0]},
+            maximum_lag_points=10,
+        )
+    )
+    estimate = analyzer.workspace(
+        AnalyserWorkspaceRequest(
+            trajectory_bytes=1,
+            n_traj=32,
+            total_n_traj=100,
+            saved_samples=512,
+            n_record_modes=3,
+            real_itemsize=8,
+            backend_name="numpy",
+        )
+    )
+    trajectory_payload = 100 * 4 * 11 * 2 * 8
+    fixed_payload = 4 * 3 * 3 * 2 * 8 + 3 * 8 + 4 * 128
+
+    assert estimate.retained_host_bytes == 2 * trajectory_payload + 4 * fixed_payload
+    assert estimate.retained_device_bytes == 0
 
 
 def test_config_rejects_under_determined_local_polynomial():

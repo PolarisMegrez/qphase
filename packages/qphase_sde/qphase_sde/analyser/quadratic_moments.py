@@ -187,6 +187,7 @@ class QuadraticMomentAnalyzer(Analyzer):
             request.n_traj * chunk * n_observables * request.real_itemsize * 3
         )
         matrices = n_observables * n_modes * n_modes * request.real_itemsize * 2
+        centers = n_observables * request.real_itemsize
         summaries = (
             request.n_traj
             * n_observables
@@ -194,20 +195,37 @@ class QuadraticMomentAnalyzer(Analyzer):
             * request.real_itemsize
             * 2
         )
-        blocks = (
+        block_payload = (
             config.time_blocks
             * n_observables
             * config.max_order
             * request.real_itemsize
         )
-        host_bytes = summaries + blocks + matrices
+        total_n_traj = request.total_n_traj or request.n_traj
+        batch_count = math.ceil(total_n_traj / request.n_traj)
+        trajectory_payload = (
+            total_n_traj
+            * n_observables
+            * config.max_order
+            * request.real_itemsize
+        )
+        fixed_payload = (
+            2 * matrices
+            + centers
+            + block_payload
+            + 2 * config.time_blocks * 8
+            + n_modes * 8
+            + n_observables * 64
+        )
+        retained_host_bytes = 2 * trajectory_payload + batch_count * fixed_payload
         if request.backend_name == "cupy":
             return AnalyserWorkspaceEstimate(
-                device_bytes=chunk_values + summaries + matrices,
-                host_bytes=host_bytes,
+                device_bytes=chunk_values + summaries + matrices + centers,
+                retained_host_bytes=retained_host_bytes,
             )
         return AnalyserWorkspaceEstimate(
-            host_bytes=chunk_values + 2 * summaries + blocks + matrices
+            host_bytes=chunk_values + summaries,
+            retained_host_bytes=retained_host_bytes,
         )
 
     def input_requirements(self) -> list[ProductRequirement]:

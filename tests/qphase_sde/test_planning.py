@@ -364,6 +364,72 @@ def test_auto_batch_matches_largest_explicit_batch_for_each_memory_location(loca
         assert automatic.memory.estimated_device_peak_bytes <= 192 * 1024**2
 
 
+@pytest.mark.parametrize(
+    ("name", "n_traj"),
+    [
+        ("moment_statistics", 2048),
+        ("quadratic_moments", 16384),
+        ("coherence_matrix", 2048),
+        ("coherence_carrier", 1024),
+    ],
+)
+def test_production_reducer_retained_host_state_limits_scan_tile(name, n_traj):
+    from qphase_sde.analyser.coherence_carrier import CoherenceCarrierAnalyzer
+    from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyzer
+    from qphase_sde.analyser.moment_statistics import MomentStatisticsAnalyzer
+    from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyzer
+
+    modes = list(range(32 if name != "moment_statistics" else 64))
+    if name == "moment_statistics":
+        analyser = MomentStatisticsAnalyzer(modes=modes)
+    elif name == "quadratic_moments":
+        matrix = [
+            [1.0 if row == column else 0.0 for column in range(16)]
+            for row in range(16)
+        ]
+        analyser = QuadraticMomentAnalyzer(
+            modes=list(range(16)),
+            observables={f"q{index}": {"matrix": matrix} for index in range(64)},
+        )
+    elif name == "coherence_matrix":
+        analyser = CoherenceMatrixAnalyzer(modes=modes)
+    else:
+        analyser = CoherenceCarrierAnalyzer(
+            modes=modes,
+            maximum_lag_points=256,
+        )
+    config = EngineConfig(
+        t0=0.0,
+        t1=0.1,
+        dt=0.01,
+        n_traj=n_traj,
+        trajectory_batching="required",
+        trajectory_batch_size=64,
+        rng_group_size=64,
+        keep_traj=False,
+    )
+
+    plan = build_execution_plan(
+        config=config,
+        grid=_grid(8),
+        model=FakeModel(),
+        backend=FakeBackend(),
+        integrator=FakeIntegrator(),
+        analysers={name: analyser},
+        resources=SimpleNamespace(
+            gpu_memory_fraction=0.75,
+            memory_limit_mib=512,
+        ),
+        device_memory=(4 * 1024**3, 4 * 1024**3),
+        product_graph=_trajectory_graph(name),
+    )
+
+    assert plan.trajectory_batch_count > 1
+    assert plan.scan_tile_size < plan.scan_size
+    assert plan.memory.analyzer_host_workspace_bytes > 0
+    assert plan.memory.estimated_host_peak_bytes <= 512 * 1024**2
+
+
 def test_batch_local_multi_output_reducer_is_rejected():
     from qphase.data import DataKind, ProductDeclaration
 

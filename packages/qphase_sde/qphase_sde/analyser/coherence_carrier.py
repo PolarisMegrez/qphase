@@ -559,18 +559,41 @@ class CoherenceCarrierAnalyzer(Analyzer):
         chunk_bytes = (
             2 * request.n_traj * chunk * request.n_record_modes * complex_itemsize
         )
-        retained_bytes = (
+        batch_correlations = (
             request.n_traj
             * n_measurements
             * (config.maximum_lag_points + 1)
             * complex_itemsize
         )
+        total_n_traj = request.total_n_traj or request.n_traj
+        batch_count = math.ceil(total_n_traj / request.n_traj)
+        trajectory_payload = (
+            total_n_traj
+            * n_measurements
+            * (config.maximum_lag_points + 1)
+            * complex_itemsize
+        )
+        measurement_matrices = (
+            n_measurements
+            * request.n_record_modes
+            * request.n_record_modes
+            * complex_itemsize
+        )
+        fixed_payload = (
+            measurement_matrices
+            + request.n_record_modes * 8
+            + n_measurements * 128
+        )
+        retained_host_bytes = 2 * trajectory_payload + batch_count * fixed_payload
         if request.backend_name == "cupy":
             return AnalyserWorkspaceEstimate(
-                device_bytes=chunk_bytes + retained_bytes,
-                host_bytes=retained_bytes,
+                device_bytes=chunk_bytes + batch_correlations + measurement_matrices,
+                retained_host_bytes=retained_host_bytes,
             )
-        return AnalyserWorkspaceEstimate(host_bytes=chunk_bytes + retained_bytes)
+        return AnalyserWorkspaceEstimate(
+            host_bytes=chunk_bytes,
+            retained_host_bytes=retained_host_bytes,
+        )
 
     def create_result_accumulator(self) -> CoherenceCarrierResultAccumulator:
         return CoherenceCarrierResultAccumulator(self)

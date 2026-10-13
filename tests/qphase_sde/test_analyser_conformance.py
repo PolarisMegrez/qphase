@@ -98,6 +98,36 @@ def test_psd_does_not_declare_inline_peaks():
     assert [spec.name for spec in default.output_specs(label="probe")] == ["probe"]
 
 
+def test_all_production_reducers_declare_retained_workspace():
+    expected = {
+        "allan_variance",
+        "coherence_carrier",
+        "coherence_matrix",
+        "moment_statistics",
+        "psd",
+        "quadratic_moments",
+    }
+    retained: dict[str, AnalyserWorkspaceEstimate] = {}
+    request = AnalyserWorkspaceRequest(
+        trajectory_bytes=2 * 128 * 16,
+        n_traj=2,
+        total_n_traj=8,
+        saved_samples=128,
+        n_record_modes=1,
+        real_itemsize=8,
+        backend_name="numpy",
+    )
+    for name in _analyser_names():
+        cls = registry.get_plugin_class("analyser", name)
+        instance = cls(**MINIMAL_CONFIGS.get(name, {}))
+        if instance.reducer() is not None:
+            retained[name] = instance.workspace(request)
+
+    assert set(retained) == expected
+    for estimate in retained.values():
+        assert estimate.retained_host_bytes + estimate.retained_device_bytes > 0
+
+
 def test_analyser_base_does_not_require_legacy_analyze_api():
     from qphase_sde.analyser.base import Analyzer
 

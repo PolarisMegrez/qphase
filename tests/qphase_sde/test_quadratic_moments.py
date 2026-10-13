@@ -201,6 +201,70 @@ def test_quadratic_moments_workspace_is_bounded_by_time_chunk():
     assert long_estimate.host_bytes < 32 * 1024
 
 
+def test_quadratic_moments_invocation_workspace_tracks_physical_batch():
+    analyzer = _analyzer(
+        modes=[0, 1, 2],
+        observables={
+            "one": {"matrix": np.eye(3).tolist()},
+            "two": {"matrix": np.diag([1.0, -1.0, 0.0]).tolist()},
+        },
+        time_chunk_samples=128,
+    )
+    common = dict(
+        trajectory_bytes=1,
+        saved_samples=512,
+        n_record_modes=3,
+        real_itemsize=8,
+        backend_name="cupy",
+        total_n_traj=128,
+    )
+
+    small = analyzer.workspace(AnalyserWorkspaceRequest(n_traj=32, **common))
+    large = analyzer.workspace(AnalyserWorkspaceRequest(n_traj=64, **common))
+
+    static_device = 2 * 3 * 3 * 2 * 8 + 2 * 8
+    assert (small.device_bytes - static_device) * 2 == (
+        large.device_bytes - static_device
+    )
+    assert small.host_bytes == large.host_bytes == 0
+
+
+def test_quadratic_moments_retained_workspace_covers_ensemble_and_batches():
+    analyzer = _analyzer(
+        modes=[0, 1, 2],
+        observables={
+            "one": {"matrix": np.eye(3).tolist()},
+            "two": {"matrix": np.diag([1.0, -1.0, 0.0]).tolist()},
+        },
+        max_order=4,
+        time_blocks=5,
+    )
+    estimate = analyzer.workspace(
+        AnalyserWorkspaceRequest(
+            trajectory_bytes=1,
+            n_traj=32,
+            total_n_traj=100,
+            saved_samples=512,
+            n_record_modes=3,
+            real_itemsize=8,
+            backend_name="numpy",
+        )
+    )
+    matrices = 2 * 3 * 3 * 2 * 8
+    trajectory_payload = 100 * 2 * 4 * 8
+    fixed_payload = (
+        2 * matrices
+        + 2 * 8
+        + 5 * 2 * 4 * 8
+        + 2 * 5 * 8
+        + 3 * 8
+        + 2 * 64
+    )
+
+    assert estimate.retained_host_bytes == 2 * trajectory_payload + 4 * fixed_payload
+    assert estimate.retained_device_bytes == 0
+
+
 def test_quadratic_moments_advertise_trajectory_batching():
     capabilities = _analyzer(
         observables={"occupation": {"matrix": [[1.0]]}}

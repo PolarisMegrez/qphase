@@ -215,6 +215,8 @@ terminal 或跨 boundary 输出会在 planning 阶段被拒绝。这样一个 tr
 `retained_host_bytes` / `retained_device_bytes` 声明跨 trajectory batch 保留的状态；
 planner 会将两者按 scan tile 大小计入。`request.n_traj` 是候选物理 batch 大小，
 `request.total_n_traj` 是每个 scan point 的完整 ensemble 大小。
+retained 估算必须覆盖全部 batch 完成前仍被持有的每份 payload，包括每批重复的固定
+metadata/数组和 finalize concatenate 的保守余量；同一组 host 数组不应再次计入 invocation 内存。
 
 ### 支持 Scan 的 Engine
 

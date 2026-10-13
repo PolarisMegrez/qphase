@@ -208,13 +208,29 @@ class CoherenceMatrixAnalyzer(Analyzer):
         matrix_bytes = request.n_traj * n_modes * n_modes * 2 * request.real_itemsize
         amplitude_bytes = request.n_traj * n_modes * 2 * request.real_itemsize
         block_bytes = config.time_blocks * n_modes * n_modes * 2 * request.real_itemsize
-        retained = 2 * matrix_bytes + amplitude_bytes + block_bytes
+        total_n_traj = request.total_n_traj or request.n_traj
+        batch_count = math.ceil(total_n_traj / request.n_traj)
+        trajectory_payload = (
+            total_n_traj
+            * (n_modes * n_modes + n_modes)
+            * 2
+            * request.real_itemsize
+        )
+        fixed_payload = (
+            block_bytes
+            + 2 * config.time_blocks * 8
+            + n_modes * 8
+        )
+        retained_host_bytes = 2 * trajectory_payload + batch_count * fixed_payload
         if request.backend_name == "cupy":
             return AnalyserWorkspaceEstimate(
-                device_bytes=chunk_bytes + retained,
-                host_bytes=matrix_bytes + block_bytes,
+                device_bytes=chunk_bytes + 2 * matrix_bytes + amplitude_bytes,
+                retained_host_bytes=retained_host_bytes,
             )
-        return AnalyserWorkspaceEstimate(host_bytes=chunk_bytes + retained)
+        return AnalyserWorkspaceEstimate(
+            host_bytes=chunk_bytes + 2 * matrix_bytes + amplitude_bytes,
+            retained_host_bytes=retained_host_bytes,
+        )
 
     def create_result_accumulator(self) -> CoherenceMatrixResultAccumulator:
         return CoherenceMatrixResultAccumulator(self)

@@ -139,17 +139,30 @@ class MomentStatisticsAnalyzer(Analyzer):
         summaries = (
             request.n_traj * (n_modes + n_modes * n_modes) * request.real_itemsize * 2
         )
-        blocks = (
+        block_payload = (
             config.time_blocks * (n_modes + n_modes * n_modes) * request.real_itemsize
         )
-        host_bytes = summaries + blocks
+        total_n_traj = request.total_n_traj or request.n_traj
+        batch_count = math.ceil(total_n_traj / request.n_traj)
+        trajectory_payload = (
+            total_n_traj
+            * (n_modes + n_modes * n_modes)
+            * request.real_itemsize
+        )
+        fixed_payload = (
+            block_payload
+            + 2 * config.time_blocks * 8
+            + n_modes * 8
+        )
+        retained_host_bytes = 2 * trajectory_payload + batch_count * fixed_payload
         if request.backend_name == "cupy":
             return AnalyserWorkspaceEstimate(
                 device_bytes=backend_workspace + summaries,
-                host_bytes=host_bytes,
+                retained_host_bytes=retained_host_bytes,
             )
         return AnalyserWorkspaceEstimate(
-            host_bytes=backend_workspace + 2 * summaries + blocks
+            host_bytes=backend_workspace + summaries,
+            retained_host_bytes=retained_host_bytes,
         )
 
     def input_requirements(self) -> list[ProductRequirement]:
