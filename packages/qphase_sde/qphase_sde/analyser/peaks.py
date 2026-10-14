@@ -17,7 +17,12 @@ from qphase.data import DataKind, Dataset, ProductDeclaration, ProductRequiremen
 
 from ..contracts.analyser import AnalyserExecutionCapabilities, WorkEstimate
 from ..peak_finder import materialize_candidate_product
-from .base import Analyzer, check_execution_cancelled, report_execution_progress
+from .base import (
+    Analyzer,
+    check_execution_cancelled,
+    report_execution_progress,
+    requirement_source,
+)
 
 __all__ = ["PeaksAnalyzer", "PeaksAnalyzerConfig"]
 
@@ -166,9 +171,7 @@ class PeaksAnalyzer(Analyzer):
                 label=label,
                 modes=selected_modes or [],
                 source_product=(
-                    str(metadata["source_product"])
-                    if metadata is not None and "source_product" in metadata
-                    else config.psd_key
+                    requirement_source(metadata, config.psd_key) or config.psd_key
                 ),
             )
         }

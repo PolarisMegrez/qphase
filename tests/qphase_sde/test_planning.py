@@ -1386,3 +1386,108 @@ def test_planner_allows_adaptive_single_batch_single_tile():
     assert plan.trajectory_batch_size == 8
     assert plan.trajectory_batch_count == 1
     assert plan.tile_count == 1
+
+
+def _observable_transform_graph():
+    """Real observable transform (batch-local) feeding a reducer frontier."""
+    from qphase.data import (
+        DataKind,
+        ExternalInputBinding,
+        GraphEdge,
+        ProductDeclaration,
+        ProductGraph,
+        ProductNode,
+        ProductRequirement,
+    )
+    from qphase_sde.analyser.observable_transform import ObservableTransformAnalyzer
+
+    matrix = [[1.0 if row == col else 0.0 for col in range(2)] for row in range(2)]
+    transform = ObservableTransformAnalyzer(
+        units="occupation",
+        observables={f"q{index}": {"matrix": matrix} for index in range(4)},
+    )
+    graph = ProductGraph(
+        nodes=[
+            ProductNode(
+                node_id="analyser.obs",
+                producer="analyser:observable_transform",
+                requirements=transform.input_requirements(),
+                outputs=list(transform.output_specs(label="obs")),
+            ),
+            ProductNode(
+                node_id="analyser.probe",
+                producer="analyser:probe",
+                requirements=[
+                    ProductRequirement(name="obs", kind=DataKind.TIME_SERIES)
+                ],
+                outputs=[ProductDeclaration(name="probe", kind=DataKind.STATISTICS)],
+            ),
+        ],
+        edges=[
+            GraphEdge(
+                producer="analyser.obs",
+                product="obs",
+                consumer="analyser.probe",
+                requirement="obs",
+            )
+        ],
+        external_inputs=[
+            ExternalInputBinding(
+                consumer="analyser.obs",
+                requirement="signal",
+                source="input",
+                product="trajectories",
+            )
+        ],
+    )
+    return transform, graph
+
+
+def test_observable_transform_batch_output_fits_only_when_batched():
+    """The transform retains nothing, so batching shrinks its peak below a
+    budget the full-ensemble output cannot fit.
+    """
+    transform, graph = _observable_transform_graph()
+    analysers = {
+        "obs": transform,
+        "probe": _DeclaredWorkspaceAnalyser(reducer=True),
+    }
+
+    def plan(batching, batch_size, limit_mib):
+        return build_execution_plan(
+            config=EngineConfig(
+                t0=0.0,
+                t1=10.0,
+                dt=0.01,
+                n_traj=256,
+                trajectory_batching=batching,
+                trajectory_batch_size=batch_size,
+                rng_group_size=1,
+                keep_traj=False,
+            ),
+            grid=None,
+            model=FakeModel(),
+            backend=FakeNumpyBackend(),
+            integrator=FakeIntegrator(),
+            analysers=analysers,
+            resources=SimpleNamespace(memory_limit_mib=limit_mib),
+            device_memory=None,
+            product_graph=graph,
+        )
+
+    def fits(batching, batch_size, limit_mib):
+        try:
+            plan(batching, batch_size, limit_mib)
+        except SDEMemoryPlanningError:
+            return False
+        return True
+
+    auto_limit = next(
+        limit for limit in range(1, 4097) if fits("auto", None, limit)
+    )
+    # At the smallest budget auto-batching can fit, the unbatched plan —
+    # whose peak includes the full-ensemble observable output — cannot.
+    assert not fits("off", None, auto_limit)
+    batched = plan("auto", None, auto_limit)
+    assert batched.trajectory_batch_count > 1
+    assert batched.trajectory_batch_size < 256

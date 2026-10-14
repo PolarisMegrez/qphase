@@ -118,6 +118,7 @@ class QuadraticMomentConfig(PluginConfigBase):
     hermitian_tolerance: float = Field(
         1e-10,
         ge=0.0,
+        allow_inf_nan=False,
         description="Relative tolerance for Hermitian matrix validation",
     )
 
@@ -301,7 +302,6 @@ class QuadraticMomentAnalyzer(Analyzer):
                     backend_matrices,
                     backend_centers,
                     backend=backend,
-                    tolerance=config.hermitian_tolerance,
                 )
                 power = observable
                 for order in range(config.max_order):

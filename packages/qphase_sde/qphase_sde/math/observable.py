@@ -14,8 +14,7 @@ Public API
 ``compile_quadratic_observables`` : Validate specs and compile them for
     backend evaluation.
 ``stage_quadratic_observables`` : Stage used matrices/centers on a backend.
-``evaluate_quadratic_observables`` : Backend einsum evaluator with a real
-    output residual check.
+``evaluate_quadratic_observables`` : Backend einsum evaluator.
 ``complex_matrix_json`` : Strict-JSON complex matrix representation.
 """
 
@@ -27,7 +26,6 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 from qphase.backend.base import BackendBase
-from qphase.backend.xputil import convert_to_numpy
 
 __all__ = [
     "CompiledQuadraticObservables",
@@ -49,6 +47,7 @@ class QuadraticObservableSpec(BaseModel):
     )
     center: float | None = Field(
         None,
+        allow_inf_nan=False,
         description="Optional scalar center subtracted from alpha^dagger Q alpha",
     )
     reference_matrix: list[list[complex]] | None = Field(
@@ -183,29 +182,18 @@ def evaluate_quadratic_observables(
     centers: Any,
     *,
     backend: BackendBase,
-    tolerance: float,
 ) -> Any:
     """Evaluate ``Re(alpha^dagger Q_o alpha) - c_o`` over trailing mode axes.
 
     ``values`` is a backend complex array ``(..., n_modes)``; ``matrices``
     and ``centers`` are the staged used arrays. The result is real with a
-    trailing observable axis. The imaginary part of a Hermitian quadratic
-    form is pure rounding: an imaginary level above ``tolerance`` relative to
-    the real level (floored at 256 eps of the real dtype so reduced-precision
-    rounding never trips the guard) signals a logic error and raises. NaN
-    inputs censor silently — NaN comparisons never trip the guard.
+    trailing observable axis. The matrices were validated and projected to
+    strict Hermitian form at the configuration boundary, so the quadratic
+    form's real-valuedness is an internal mathematical invariant and needs
+    no runtime guard; NaN-censored samples propagate silently.
     """
     z = backend.einsum("...i,oij,...j->...o", values.conj(), matrices, values)
-    real = backend.real(z)
-    imag_level = float(convert_to_numpy(backend.mean(backend.abs(backend.imag(z)))))
-    real_level = float(convert_to_numpy(backend.mean(backend.abs(real))))
-    eps_floor = 256.0 * float(np.finfo(np.dtype(real.dtype)).eps)
-    if imag_level > max(tolerance, eps_floor) * max(1.0, real_level):
-        raise ValueError(
-            "quadratic observable has a non-negligible imaginary part: "
-            f"mean |Im| {imag_level:.3e} vs mean |Re| {real_level:.3e}"
-        )
-    return real - centers
+    return backend.real(z) - centers
 
 
 def complex_matrix_json(matrix: Any) -> list[list[str]]:

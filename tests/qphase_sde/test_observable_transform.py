@@ -80,7 +80,7 @@ def _execute(config_kwargs, product, *, label="soft_observable"):
         {"signal": product},
         backend=BACKEND,
         label=label,
-        metadata={"source_product": "input.trajectories"},
+        metadata={"source_products": {"signal": "input.trajectories"}},
     )
     return analyzer, outputs[label]
 
@@ -218,6 +218,7 @@ def test_transform_product_schema_and_provenance():
     assert attributes["channel_names"] == ["soft"]
     assert attributes["mode_labels"] == [0, 1]
     assert attributes["source_product"] == "input.trajectories"
+    assert attributes["producer_analyser"] == "soft_observable"
     assert attributes["hermitian_tolerance"] == pytest.approx(1e-10)
 
     # Requested vs used: the skew is projected out and the residual recorded.
@@ -337,8 +338,190 @@ def test_transform_mirrors_products_without_scan_axis():
 
 
 # ---------------------------------------------------------------------------
-# validation gates
+# typed input validation (exact dims, roles, time axis, mode metadata)
 # ---------------------------------------------------------------------------
+
+
+def _base_axes():
+    return [
+        AxisSchema(name="scan", role=AxisRole.PARAMETER, size=2),
+        AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=2),
+        AxisSchema(
+            name="time",
+            role=AxisRole.COORDINATE,
+            size=8,
+            coordinate="regular",
+            start=0.0,
+            step=0.5,
+            units="time",
+        ),
+        AxisSchema(name="channel", role=AxisRole.COMPONENT, size=1),
+    ]
+
+
+def _signal_product(axes, alpha_dims, valid_dims, attributes=None):
+    rng = np.random.default_rng(20261110)
+    axis_by_name = {axis.name: axis for axis in axes}
+    alpha_shape = tuple(axis_by_name[name].size for name in alpha_dims)
+    valid_shape = tuple(axis_by_name[name].size for name in valid_dims)
+    alpha = rng.standard_normal(alpha_shape) + 1j * rng.standard_normal(alpha_shape)
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=axes,
+        variables=[
+            VariableSchema(
+                name="alpha",
+                dtype="<c16",
+                value_domain="complex",
+                dims=alpha_dims,
+                quantity=SDEQuantity.FIELD_AMPLITUDE.value,
+            ),
+            VariableSchema(
+                name="valid_length",
+                dtype="<i8",
+                value_domain="real",
+                dims=valid_dims,
+                quantity="valid_length",
+            ),
+        ],
+        attributes=attributes or {},
+    )
+    return TimeSeriesDataset.from_arrays(
+        schema,
+        {"alpha": alpha, "valid_length": np.full(valid_shape, 8, dtype=np.int64)},
+        owner="test",
+    )
+
+
+def test_transform_rejects_swapped_scan_trajectory_dims():
+    """Same-size axes: the swap must fail on dims, not on shape."""
+    product = _signal_product(
+        _base_axes(),
+        ("trajectory", "scan", "time", "channel"),
+        ("trajectory", "scan"),
+    )
+    with pytest.raises(TypeError, match="alpha dims"):
+        _execute(
+            {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
+            product,
+        )
+
+
+def test_transform_rejects_wrong_axis_role():
+    axes = _base_axes()
+    axes[0] = AxisSchema(name="scan", role=AxisRole.REALIZATION, size=2)
+    product = _signal_product(
+        axes,
+        ("scan", "trajectory", "time", "channel"),
+        ("scan", "trajectory"),
+    )
+    with pytest.raises(TypeError, match="role"):
+        _execute(
+            {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
+            product,
+        )
+
+
+def test_transform_rejects_non_canonical_time_axis():
+    axes = _base_axes()
+    axes[2] = AxisSchema(
+        name="time",
+        role=AxisRole.COORDINATE,
+        size=8,
+        coordinate="regular",
+        start=0.0,
+        step=0.5,
+        units="seconds",
+    )
+    product = _signal_product(
+        axes,
+        ("scan", "trajectory", "time", "channel"),
+        ("scan", "trajectory"),
+    )
+    with pytest.raises(TypeError, match="regular time axis"):
+        _execute(
+            {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
+            product,
+        )
+
+
+def test_transform_rejects_wrong_valid_length_dims():
+    product = _signal_product(
+        _base_axes(),
+        ("scan", "trajectory", "time", "channel"),
+        ("scan", "time"),
+    )
+    with pytest.raises(TypeError, match="valid_length dims"):
+        _execute(
+            {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
+            product,
+        )
+
+
+def test_transform_rejects_mode_metadata_mismatch():
+    product = _signal_product(
+        _base_axes(),
+        ("scan", "trajectory", "time", "channel"),
+        ("scan", "trajectory"),
+        attributes={"mode_indices": [0, 1]},
+    )
+    with pytest.raises(ValueError, match="channel axis size"):
+        _execute(
+            {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
+            product,
+        )
+
+
+def test_transform_rejects_duplicate_mode_metadata():
+    axes = _base_axes()
+    axes[3] = AxisSchema(name="channel", role=AxisRole.COMPONENT, size=2)
+    product = _signal_product(
+        axes,
+        ("scan", "trajectory", "time", "channel"),
+        ("scan", "trajectory"),
+        attributes={"mode_indices": [0, 0]},
+    )
+    with pytest.raises(ValueError, match="unique"):
+        _execute(
+            {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
+            product,
+        )
+
+
+def test_transform_config_rejects_non_finite_values():
+    with pytest.raises(ValidationError):
+        ObservableTransformConfig(
+            units="occupation",
+            observables={"n": {"matrix": [[1.0]], "center": float("nan")}},
+        )
+    with pytest.raises(ValidationError):
+        ObservableTransformConfig(
+            units="occupation",
+            observables={"n": {"matrix": [[1.0]], "center": float("inf")}},
+        )
+    with pytest.raises(ValidationError):
+        ObservableTransformConfig(
+            units="occupation",
+            observables={"n": {"matrix": [[1.0]]}},
+            hermitian_tolerance=float("inf"),
+        )
+    with pytest.raises(ValidationError):
+        ObservableTransformConfig(
+            units="occupation",
+            observables={"n": {"matrix": [[1.0]]}},
+            hermitian_tolerance=float("nan"),
+        )
+    # quadratic_moments shares the spec and the tolerance boundary.
+    with pytest.raises(ValidationError):
+        QuadraticMomentConfig(
+            observables={"n": {"matrix": [[1.0]], "center": float("nan")}}
+        )
+    with pytest.raises(ValidationError):
+        QuadraticMomentConfig(
+            observables={"n": {"matrix": [[1.0]]}},
+            hermitian_tolerance=float("inf"),
+        )
+
 
 
 def test_transform_hermitian_residual_gate():
@@ -431,6 +614,7 @@ def test_transform_graph_contract():
     assert requirement.quantity == SDEQuantity.FIELD_AMPLITUDE.value
     assert requirement.value_domain == "complex"
     assert requirement.required_fields == ["alpha", "valid_length"]
+    assert requirement.accepted_axes == ["scan", "trajectory", "time", "channel"]
 
     (spec,) = analyzer.output_specs(label="soft_observable")
     assert spec.name == "soft_observable"
@@ -439,7 +623,19 @@ def test_transform_graph_contract():
     assert spec.fields == ["value", "valid_length"]
 
 
-def test_transform_workspace_covers_output():
+def _workspace_request(n_traj, backend="numpy"):
+    return AnalyserWorkspaceRequest(
+        trajectory_bytes=n_traj * 1000 * 2 * 16,
+        n_traj=n_traj,
+        saved_samples=1000,
+        n_record_modes=2,
+        real_itemsize=8,
+        backend_name=backend,
+        total_n_traj=64,
+    )
+
+
+def test_transform_workspace_scales_with_batch_and_retains_nothing():
     analyzer = ObservableTransformAnalyzer(
         ObservableTransformConfig(
             units="occupation",
@@ -450,32 +646,28 @@ def test_transform_workspace_covers_output():
             },
         )
     )
-    request = AnalyserWorkspaceRequest(
-        trajectory_bytes=8 * 1000 * 2 * 16,
-        n_traj=8,
-        saved_samples=1000,
-        n_record_modes=2,
-        real_itemsize=8,
-        backend_name="numpy",
-        total_n_traj=64,
+    full = analyzer.workspace(_workspace_request(8))
+    half = analyzer.workspace(_workspace_request(4))
+    # No cross-batch retention: the transient output dies with its batch.
+    assert full.retained_host_bytes == 0
+    assert full.retained_device_bytes == 0
+    # Batch-dependent terms halve with the physical batch; total_n_traj is
+    # not consulted for retained output.
+    staged = 2 * (2 * 2 + 1) * 16  # observables x (matrix + center)
+    assert full.host_bytes - staged == 2 * (half.host_bytes - staged)
+    # The invocation peak covers the selected complex view, the staged
+    # matrices, the complex contraction and the final real output.
+    batch_samples = 8 * 1000
+    assert full.host_bytes == (
+        batch_samples * 2 * 16
+        + staged
+        + batch_samples * 2 * 16
+        + batch_samples * 2 * 8
     )
-    estimate = analyzer.workspace(request)
-    assert estimate.host_bytes >= 8 * 1000 * 2 * 8  # invocation output at least
-    assert estimate.retained_host_bytes == 64 * 1000 * 2 * 8
-    cupy_estimate = analyzer.workspace(
-        AnalyserWorkspaceRequest(
-            trajectory_bytes=8 * 1000 * 2 * 16,
-            n_traj=8,
-            saved_samples=1000,
-            n_record_modes=2,
-            real_itemsize=8,
-            backend_name="cupy",
-            total_n_traj=64,
-        )
-    )
-    assert cupy_estimate.device_bytes > 0
-    assert cupy_estimate.retained_device_bytes == 64 * 1000 * 2 * 8
-    assert cupy_estimate.host_bytes == 0
+    device = analyzer.workspace(_workspace_request(8, backend="cupy"))
+    assert device.device_bytes == full.host_bytes
+    assert device.host_bytes == 0
+    assert device.retained_device_bytes == 0
 
 
 # ---------------------------------------------------------------------------

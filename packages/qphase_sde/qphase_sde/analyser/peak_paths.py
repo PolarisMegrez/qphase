@@ -23,7 +23,7 @@ from qphase.data import (
 from ..contracts.analyser import AnalyserExecutionCapabilities, WorkEstimate
 from ..contracts.peaks import PEAK_PATH_PRODUCT, PeakPathResult
 from ..peak_tracker import materialize_path_product
-from .base import Analyzer
+from .base import Analyzer, requirement_source
 
 __all__ = ["PeakPathsAnalyzer", "PeakPathsAnalyzerConfig"]
 
@@ -114,9 +114,8 @@ class PeakPathsAnalyzer(Analyzer):
             )
         paths, candidate_count, _ = self._compute_paths(candidates)
         source_product = (
-            str(metadata["source_product"])
-            if isinstance(metadata, Mapping) and "source_product" in metadata
-            else config.candidates_key
+            requirement_source(metadata, config.candidates_key)
+            or config.candidates_key
         )
         return {
             label: materialize_path_product(

@@ -52,7 +52,12 @@ from ..math.observable import (
     evaluate_quadratic_observables,
     stage_quadratic_observables,
 )
-from .base import Analyzer, check_execution_cancelled, select_mode_columns
+from .base import (
+    Analyzer,
+    check_execution_cancelled,
+    requirement_source,
+    select_mode_columns,
+)
 
 __all__ = [
     "ObservableTransformAnalyzer",
@@ -85,6 +90,7 @@ class ObservableTransformConfig(PluginConfigBase):
     hermitian_tolerance: float = Field(
         1e-10,
         ge=0.0,
+        allow_inf_nan=False,
         description="Relative tolerance for Hermitian matrix validation",
     )
 
@@ -120,12 +126,14 @@ class ObservableTransformAnalyzer(Analyzer):
         )
 
     def workspace(self, request: AnalyserWorkspaceRequest) -> AnalyserWorkspaceEstimate:
-        """Estimate per-invocation and retained workspace of the transform.
+        """Estimate per-invocation workspace; the transform retains nothing.
 
-        The retained fields cover the whole per-point output series: with no
-        reducer there is no finalize stage, so the output product itself is
-        the largest object alive until the last batch-local consumer (or the
-        publisher) releases it.
+        With no reducer there is no cross-batch state: batch-local output is
+        released once the same batch's last consumer finishes, so only the
+        current physical batch (``request.n_traj``) counts. The invocation
+        peak covers the selected complex view, the staged matrices and
+        centers, the complex contraction ``z = alpha^dagger Q alpha`` and the
+        final real output.
         """
         config = cast(ObservableTransformConfig, self.config)
         n_observables = len(config.observables)
@@ -133,32 +141,16 @@ class ObservableTransformAnalyzer(Analyzer):
             len(config.modes) if config.modes is not None else request.n_record_modes
         )
         complex_itemsize = 2 * request.real_itemsize
-        selected = (
-            request.n_traj * request.saved_samples * n_modes * complex_itemsize
-        )
-        matrices = n_observables * n_modes * n_modes * complex_itemsize
-        output = (
-            request.n_traj
-            * request.saved_samples
-            * n_observables
-            * request.real_itemsize
-        )
-        total_n_traj = request.total_n_traj or request.n_traj
-        retained_output = (
-            total_n_traj
-            * request.saved_samples
-            * n_observables
-            * request.real_itemsize
+        batch_samples = request.n_traj * request.saved_samples
+        invocation = (
+            batch_samples * n_modes * complex_itemsize
+            + n_observables * (n_modes * n_modes + 1) * complex_itemsize
+            + batch_samples * n_observables * complex_itemsize
+            + batch_samples * n_observables * request.real_itemsize
         )
         if request.backend_name == "cupy":
-            return AnalyserWorkspaceEstimate(
-                device_bytes=selected + matrices + output,
-                retained_device_bytes=retained_output,
-            )
-        return AnalyserWorkspaceEstimate(
-            host_bytes=selected + matrices + output,
-            retained_host_bytes=retained_output,
-        )
+            return AnalyserWorkspaceEstimate(device_bytes=invocation)
+        return AnalyserWorkspaceEstimate(host_bytes=invocation)
 
     def input_requirements(self) -> list[ProductRequirement]:
         return [
@@ -168,6 +160,7 @@ class ObservableTransformAnalyzer(Analyzer):
                 quantity=SDEQuantity.FIELD_AMPLITUDE.value,
                 value_domain="complex",
                 required_fields=["alpha", "valid_length"],
+                accepted_axes=["scan", "trajectory", "time", "channel"],
             )
         ]
 
@@ -199,29 +192,83 @@ class ObservableTransformAnalyzer(Analyzer):
             raise TypeError(
                 "observable_transform signal must carry alpha and valid_length"
             )
+        axis_by_name = {axis.name: axis for axis in signal.axes}
+        has_scan = "scan" in axis_by_name
+        alpha_dims = ("scan", "trajectory", "time", "channel") if has_scan else (
+            "trajectory",
+            "time",
+            "channel",
+        )
+        valid_dims = ("scan", "trajectory") if has_scan else ("trajectory",)
+        alpha_variable = variables["alpha"]
+        if tuple(alpha_variable.dims) != alpha_dims:
+            raise TypeError(
+                f"observable_transform alpha dims must be {alpha_dims}, "
+                f"got {tuple(alpha_variable.dims)}"
+            )
+        valid_variable = variables["valid_length"]
+        if tuple(valid_variable.dims) != valid_dims:
+            raise TypeError(
+                f"observable_transform valid_length dims must be {valid_dims}, "
+                f"got {tuple(valid_variable.dims)}"
+            )
+        expected_roles = {
+            "scan": AxisRole.PARAMETER,
+            "trajectory": AxisRole.REALIZATION,
+            "time": AxisRole.COORDINATE,
+            "channel": AxisRole.COMPONENT,
+        }
+        for axis_name in alpha_dims:
+            axis = axis_by_name.get(axis_name)
+            if axis is None:
+                raise TypeError(
+                    f"observable_transform signal is missing the {axis_name} axis"
+                )
+            if axis.role is not expected_roles[axis_name]:
+                raise TypeError(
+                    f"observable_transform {axis_name} axis role must be "
+                    f"{expected_roles[axis_name].value}, got {axis.role.value}"
+                )
+        time_axis = axis_by_name["time"]
+        if time_axis.coordinate != "regular" or time_axis.units != "time":
+            raise TypeError(
+                "observable_transform requires the canonical regular time axis"
+            )
         alpha_handle = signal.handle("alpha")
         alpha = alpha_handle.materialize()
         if not np.issubdtype(alpha.dtype, np.complexfloating):
             raise ValueError("observable_transform expects a complex alpha variable")
-        axis_by_name = {axis.name: axis for axis in signal.axes}
-        if "time" not in axis_by_name:
-            raise TypeError("observable_transform signal is missing the time axis")
-        has_scan = "scan" in axis_by_name
-        if alpha.ndim != (4 if has_scan else 3):
-            shape = "(scan, trajectory, time, channel)" if has_scan else (
-                "(trajectory, time, channel)"
-            )
+        if alpha.ndim != len(alpha_dims):
             raise ValueError(
-                f"observable_transform alpha must have shape {shape}, "
+                f"observable_transform alpha must have shape {alpha_dims}, "
                 f"got {alpha.shape}"
             )
+        for position, axis_name in enumerate(alpha_dims):
+            if axis_by_name[axis_name].size != int(alpha.shape[position]):
+                raise ValueError(
+                    f"observable_transform {axis_name} axis size "
+                    f"{axis_by_name[axis_name].size} does not match alpha shape "
+                    f"{alpha.shape}"
+                )
         n_channel = int(alpha.shape[-1])
         raw_modes = signal.attributes.get("mode_indices")
-        recorded = (
-            tuple(int(mode) for mode in raw_modes)
-            if isinstance(raw_modes, list | tuple)
-            else tuple(range(n_channel))
-        )
+        if raw_modes is None:
+            recorded = tuple(range(n_channel))
+        elif isinstance(raw_modes, list | tuple) and all(
+            isinstance(mode, int | np.integer) for mode in raw_modes
+        ):
+            recorded = tuple(int(mode) for mode in raw_modes)
+            if len(set(recorded)) != len(recorded):
+                raise ValueError("observable_transform mode_indices must be unique")
+            if len(recorded) != n_channel:
+                raise ValueError(
+                    "observable_transform mode_indices must match the channel "
+                    f"axis size {n_channel}, got {len(recorded)}"
+                )
+        else:
+            raise TypeError(
+                "observable_transform mode_indices must be a list of integers"
+            )
         modes, columns = select_mode_columns(recorded, config.modes)
         compiled = compile_quadratic_observables(
             config.observables, len(modes), config.hermitian_tolerance
@@ -235,7 +282,6 @@ class ObservableTransformAnalyzer(Analyzer):
             staged_matrices,
             staged_centers,
             backend=backend,
-            tolerance=config.hermitian_tolerance,
         )
         check_execution_cancelled(context)
 
@@ -244,14 +290,7 @@ class ObservableTransformAnalyzer(Analyzer):
         if has_scan:
             axes.append(axis_by_name["scan"])
             dims_prefix = ("scan",)
-        trajectory_axis = axis_by_name.get("trajectory")
-        if trajectory_axis is None:
-            trajectory_axis = AxisSchema(
-                name="trajectory",
-                role=AxisRole.REALIZATION,
-                size=int(alpha.shape[-3]),
-            )
-        axes.append(trajectory_axis)
+        axes.append(axis_by_name["trajectory"])
         axes.append(axis_by_name["time"])
         axes.append(
             AxisSchema(
@@ -267,13 +306,11 @@ class ObservableTransformAnalyzer(Analyzer):
             units=config.units,
         )
         valid_variable = variables["valid_length"]
-        source_product = ""
-        if metadata is not None:
-            source_product = str(metadata.get("source_product", ""))
+        source_product = requirement_source(metadata, "signal") or ""
         attributes = dict(SAMPLED_OBSERVABLE_PRODUCT.attributes)
         attributes.update(
             {
-                "source_analyser": str(label),
+                "producer_analyser": str(label),
                 "channel_names": list(compiled.names),
                 "mode_labels": [int(mode) for mode in modes],
                 "matrices_requested": [
@@ -329,6 +366,9 @@ class ObservableTransformAnalyzer(Analyzer):
                     "valid_length": signal.handle("valid_length"),
                 }
             ),
-            provenance={"source_analyser": str(label)},
+            provenance={
+                "producer_analyser": str(label),
+                "source_product": source_product,
+            },
         )
         return {label: product}

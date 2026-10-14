@@ -112,6 +112,22 @@ def select_mode_columns(
     return modes, [mapping[mode] for mode in modes]
 
 
+def requirement_source(metadata: Any, requirement: str) -> str | None:
+    """Return the graph-resolved source identity of one input requirement.
+
+    The engine hands every typed analyser the per-requirement
+    ``source_products`` mapping resolved from the frozen ProductGraph;
+    ``None`` means the runtime supplied no provenance (direct unit calls).
+    """
+    if not isinstance(metadata, Mapping):
+        return None
+    sources = metadata.get("source_products")
+    if not isinstance(sources, Mapping):
+        return None
+    identity = sources.get(requirement)
+    return None if identity is None else str(identity)
+
+
 def trajectory_requirement(
     *, value_domain: Literal["real", "complex"] | None = "complex"
 ) -> ProductRequirement:

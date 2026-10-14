@@ -226,6 +226,24 @@ def _batch_scope_sub_graph(graph: Any, batch_scope: frozenset[str]) -> Any:
     )
 
 
+def _node_source_products(graph: Any, node_id: str) -> dict[str, str]:
+    """Resolve every requirement's source identity from the frozen graph.
+
+    External bindings record ``"<source>.<product>"`` (e.g.
+    ``input.trajectories``); internal edges carry the upstream product name.
+    The mapping is requirement-keyed and name-agnostic, so normal, batched
+    and tiled runners hand every typed analyser the same provenance.
+    """
+    sources: dict[str, str] = {}
+    for binding in graph.external_inputs:
+        if binding.consumer == node_id:
+            sources[binding.requirement] = f"{binding.source}.{binding.product}"
+    for edge in graph.edges:
+        if edge.consumer == node_id:
+            sources[edge.requirement] = edge.product
+    return sources
+
+
 def _post_batch_graph(
     graph: Any,
     transient: frozenset[str],
@@ -769,7 +787,7 @@ class Engine(EngineBase):
         }
 
         def make_runner(node_id: str, analyser: Any, name: str) -> Any:
-            incoming = [edge for edge in graph.edges if edge.consumer == node_id]
+            source_products = _node_source_products(graph, node_id)
             preserves_scan = bool(source.shape) and any(
                 binding.consumer == node_id and binding.product == "trajectories"
                 for binding in graph.external_inputs
@@ -778,8 +796,8 @@ class Engine(EngineBase):
             def runner(node: Any, inputs: Any) -> Any:
                 del node
                 node_metadata = dict(execution_metadata)
-                if incoming:
-                    node_metadata["source_product"] = incoming[0].product
+                if source_products:
+                    node_metadata["source_products"] = dict(source_products)
                 outputs = analyser.execute(
                     inputs,
                     backend=backend,
@@ -1225,14 +1243,18 @@ class Engine(EngineBase):
 
             def make_batch_runner(node_id: str) -> Any:
                 name = node_id.removeprefix("analyser.")
+                source_products = _node_source_products(batch_graph, node_id)
 
                 def runner(node: Any, inputs: Mapping[str, Any]) -> Mapping[str, Any]:
                     del node
+                    metadata: dict[str, Any] = {"scan_shape": [point_count]}
+                    if source_products:
+                        metadata["source_products"] = dict(source_products)
                     return analysers[name].execute(
                         inputs,
                         backend=self._required_backend(),
                         label=name,
-                        metadata={"scan_shape": [point_count]},
+                        metadata=metadata,
                         context=context,
                     )
 
