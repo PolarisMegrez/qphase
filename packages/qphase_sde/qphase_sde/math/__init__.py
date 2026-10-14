@@ -13,6 +13,8 @@ Public API
 ----------
 coordinates
     Canonical phase-space real-coordinate conventions.
+observable
+    Hermitian quadratic observable spec, validation and backend evaluation.
 ops
     Backend-agnostic SDE operations (noise expansion and contraction).
 spectral
@@ -22,6 +24,7 @@ spectral
 
 __all__ = [
     "coordinates",
+    "observable",
     "ops",
     "spectral",
 ]

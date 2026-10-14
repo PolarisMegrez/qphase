@@ -56,6 +56,10 @@ from .frequency_orientation import (
     resolve_frequency_orientation,
 )
 from .moment_statistics import MomentStatisticsAnalyzer, MomentStatisticsConfig
+from .observable_transform import (
+    ObservableTransformAnalyzer,
+    ObservableTransformConfig,
+)
 from .peak_paths import PeakPathsAnalyzer, PeakPathsAnalyzerConfig
 from .peaks import PeaksAnalyzer, PeaksAnalyzerConfig
 from .polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
@@ -102,6 +106,8 @@ __all__ = [
     "MomentStatisticsAnalyzer",
     "MomentStatisticsConfig",
     "NormalFormExpectation",
+    "ObservableTransformAnalyzer",
+    "ObservableTransformConfig",
     "PsdAnalyzer",
     "PsdAnalyzerConfig",
     "QuadraticMomentAnalyzer",

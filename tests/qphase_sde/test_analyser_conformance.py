@@ -30,6 +30,10 @@ MINIMAL_CONFIGS = {
     "peak_paths": {"scan_param": "x"},
     "coherence_frequency": {"scan_param": "x"},
     "quadratic_moments": {"observables": {"n": {"matrix": [[1.0]]}}},
+    "observable_transform": {
+        "observables": {"n": {"matrix": [[1.0]]}},
+        "units": "occupation",
+    },
 }
 
 

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any, ClassVar, Literal, cast
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from pydantic import Field, model_validator
 from qphase.backend.base import BackendBase
 from qphase.backend.xputil import convert_to_numpy
 from qphase.core.protocols import PluginConfigBase
@@ -27,6 +27,12 @@ from ..contracts.analyser import (
     AnalyserWorkspaceRequest,
 )
 from ..contracts.quantities import SDEMomentFamilySchema, SDEQuantity
+from ..math.observable import (
+    QuadraticObservableSpec,
+    compile_quadratic_observables,
+    evaluate_quadratic_observables,
+    stage_quadratic_observables,
+)
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
     Analyzer,
@@ -73,38 +79,6 @@ _QUADRATIC_MOMENT_FIELDS: tuple[str, ...] = (
     "uncertainty.n_independent",
     "uncertainty.time_blocks_are_independent",
 )
-
-
-class QuadraticObservableSpec(BaseModel):
-    """One real observable ``alpha^dagger Q alpha - center``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    matrix: list[list[complex]] = Field(
-        description="Hermitian matrix Q in the configured mode order",
-    )
-    center: float | None = Field(
-        None,
-        description="Optional scalar center subtracted from alpha^dagger Q alpha",
-    )
-    reference_matrix: list[list[complex]] | None = Field(
-        None,
-        description="Optional Hermitian R_ref defining center=Tr(Q R_ref)",
-    )
-
-    @model_validator(mode="after")
-    def validate_center(self) -> QuadraticObservableSpec:
-        if self.center is not None and self.reference_matrix is not None:
-            raise ValueError("center and reference_matrix are mutually exclusive")
-        return self
-
-    @field_serializer("matrix", "reference_matrix")
-    def serialize_complex_matrix(
-        self, value: list[list[complex]] | None
-    ) -> list[list[str]] | None:
-        if value is None:
-            return None
-        return [[str(entry) for entry in row] for row in value]
 
 
 class QuadraticMomentConfig(PluginConfigBase):
@@ -298,11 +272,16 @@ class QuadraticMomentAnalyzer(Analyzer):
         n_traj, n_samples, _ = map(int, values.shape)
         if n_traj < 1 or n_samples < 1:
             raise ValueError("quadratic_moments requires non-empty trajectories")
-        names, matrices, centers, references = _compile_observables(
+        compiled = compile_quadratic_observables(
             config.observables, len(modes), config.hermitian_tolerance
         )
-        backend_matrices = backend.asarray(matrices, dtype=values.dtype)
-        backend_centers = backend.asarray(centers, dtype=values.real.dtype)
+        names = list(compiled.names)
+        matrices = compiled.matrices_used
+        centers = compiled.centers
+        references = compiled.reference_matrices
+        backend_matrices, backend_centers = stage_quadratic_observables(
+            compiled, values, backend
+        )
         trajectory_sums = backend.zeros(
             (n_traj, len(names), config.max_order), dtype=values.real.dtype
         )
@@ -317,15 +296,13 @@ class QuadraticMomentAnalyzer(Analyzer):
             for chunk_start in range(start, stop, config.time_chunk_samples):
                 chunk_stop = min(stop, chunk_start + config.time_chunk_samples)
                 selected = values[:, chunk_start:chunk_stop, columns]
-                observable = backend.real(
-                    backend.einsum(
-                        "rti,oij,rtj->rto",
-                        selected.conj(),
-                        backend_matrices,
-                        selected,
-                    )
+                observable = evaluate_quadratic_observables(
+                    selected,
+                    backend_matrices,
+                    backend_centers,
+                    backend=backend,
+                    tolerance=config.hermitian_tolerance,
                 )
-                observable -= backend_centers[None, None, :]
                 power = observable
                 for order in range(config.max_order):
                     block_sums[:, :, order] += backend.einsum("rto->ro", power)
@@ -651,62 +628,6 @@ class QuadraticMomentResultAccumulator:
                 )
             ),
         )
-
-
-def _compile_observables(
-    specs: dict[str, QuadraticObservableSpec],
-    n_modes: int,
-    tolerance: float,
-) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray]:
-    names: list[str] = []
-    matrices: list[np.ndarray] = []
-    centers: list[float] = []
-    references: list[np.ndarray] = []
-    for name, spec in specs.items():
-        matrix = _validate_hermitian(
-            spec.matrix, n_modes, tolerance, f"observable {name!r} matrix"
-        )
-        if spec.reference_matrix is None:
-            reference = np.zeros_like(matrix)
-            center = 0.0 if spec.center is None else float(spec.center)
-        else:
-            reference = _validate_hermitian(
-                spec.reference_matrix,
-                n_modes,
-                tolerance,
-                f"observable {name!r} reference_matrix",
-            )
-            traced = np.trace(matrix @ reference)
-            if abs(float(np.imag(traced))) > tolerance * max(
-                1.0, abs(float(np.real(traced)))
-            ):
-                raise ValueError(f"observable {name!r} reference center is not real")
-            center = float(np.real(traced))
-        names.append(name)
-        matrices.append(matrix)
-        centers.append(center)
-        references.append(reference)
-    return (
-        names,
-        np.asarray(matrices),
-        np.asarray(centers),
-        np.asarray(references),
-    )
-
-
-def _validate_hermitian(
-    value: Any, n_modes: int, tolerance: float, label: str
-) -> np.ndarray:
-    matrix = np.asarray(value, dtype=complex)
-    if matrix.shape != (n_modes, n_modes):
-        raise ValueError(f"{label} must have shape ({n_modes}, {n_modes})")
-    if not np.all(np.isfinite(matrix)):
-        raise ValueError(f"{label} must contain finite values")
-    scale = max(float(np.linalg.norm(matrix)), 1.0)
-    residual = float(np.linalg.norm(matrix - matrix.conj().T)) / scale
-    if residual > tolerance:
-        raise ValueError(f"{label} is not Hermitian: relative residual {residual:.3e}")
-    return (matrix + matrix.conj().T) / 2.0
 
 
 def _raw_to_cumulants(raw: np.ndarray) -> np.ndarray:
