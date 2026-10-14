@@ -106,6 +106,33 @@ class ObservableTransformConfig(PluginConfigBase):
         return self
 
 
+def validate_mode_indices(raw_modes: Any, n_channel: int) -> tuple[int, ...]:
+    """Validate the ``mode_indices`` product attribute against the channel axis.
+
+    Returns the recorded mode per channel, defaulting to the identity
+    ordering when the attribute is absent. Modes must be unique non-negative
+    integers; booleans are rejected even though ``bool`` subclasses ``int``.
+    """
+    if raw_modes is None:
+        return tuple(range(n_channel))
+    if not isinstance(raw_modes, list | tuple) or not all(
+        isinstance(mode, int | np.integer) and not isinstance(mode, bool | np.bool_)
+        for mode in raw_modes
+    ):
+        raise TypeError("observable_transform mode_indices must be a list of integers")
+    recorded = tuple(int(mode) for mode in raw_modes)
+    if any(mode < 0 for mode in recorded):
+        raise ValueError("observable_transform mode_indices must be non-negative")
+    if len(set(recorded)) != len(recorded):
+        raise ValueError("observable_transform mode_indices must be unique")
+    if len(recorded) != n_channel:
+        raise ValueError(
+            "observable_transform mode_indices must match the channel "
+            f"axis size {n_channel}, got {len(recorded)}"
+        )
+    return recorded
+
+
 class ObservableTransformAnalyzer(Analyzer):
     """Map complex field trajectories to sampled-observable time series."""
 
@@ -212,6 +239,21 @@ class ObservableTransformAnalyzer(Analyzer):
                 f"observable_transform valid_length dims must be {valid_dims}, "
                 f"got {tuple(valid_variable.dims)}"
             )
+        if np.dtype(valid_variable.dtype) != np.dtype("int64"):
+            raise TypeError(
+                "observable_transform valid_length must have dtype int64, "
+                f"got {valid_variable.dtype}"
+            )
+        if valid_variable.value_domain != "real":
+            raise TypeError(
+                "observable_transform valid_length must be real-valued, "
+                f"got {valid_variable.value_domain}"
+            )
+        if valid_variable.quantity != "valid_length":
+            raise TypeError(
+                "observable_transform valid_length quantity must be "
+                f"'valid_length', got {valid_variable.quantity}"
+            )
         expected_roles = {
             "scan": AxisRole.PARAMETER,
             "trajectory": AxisRole.REALIZATION,
@@ -251,24 +293,9 @@ class ObservableTransformAnalyzer(Analyzer):
                     f"{alpha.shape}"
                 )
         n_channel = int(alpha.shape[-1])
-        raw_modes = signal.attributes.get("mode_indices")
-        if raw_modes is None:
-            recorded = tuple(range(n_channel))
-        elif isinstance(raw_modes, list | tuple) and all(
-            isinstance(mode, int | np.integer) for mode in raw_modes
-        ):
-            recorded = tuple(int(mode) for mode in raw_modes)
-            if len(set(recorded)) != len(recorded):
-                raise ValueError("observable_transform mode_indices must be unique")
-            if len(recorded) != n_channel:
-                raise ValueError(
-                    "observable_transform mode_indices must match the channel "
-                    f"axis size {n_channel}, got {len(recorded)}"
-                )
-        else:
-            raise TypeError(
-                "observable_transform mode_indices must be a list of integers"
-            )
+        recorded = validate_mode_indices(
+            signal.attributes.get("mode_indices"), n_channel
+        )
         modes, columns = select_mode_columns(recorded, config.modes)
         compiled = compile_quadratic_observables(
             config.observables, len(modes), config.hermitian_tolerance

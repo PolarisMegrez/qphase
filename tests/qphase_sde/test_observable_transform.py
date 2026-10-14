@@ -22,6 +22,7 @@ from qphase.data import (
 from qphase_sde.analyser.observable_transform import (
     ObservableTransformAnalyzer,
     ObservableTransformConfig,
+    validate_mode_indices,
 )
 from qphase_sde.analyser.quadratic_moments import (
     QuadraticMomentAnalyzer,
@@ -359,7 +360,16 @@ def _base_axes():
     ]
 
 
-def _signal_product(axes, alpha_dims, valid_dims, attributes=None):
+def _signal_product(
+    axes,
+    alpha_dims,
+    valid_dims,
+    attributes=None,
+    *,
+    valid_dtype="<i8",
+    valid_domain="real",
+    valid_quantity="valid_length",
+):
     rng = np.random.default_rng(20261110)
     axis_by_name = {axis.name: axis for axis in axes}
     alpha_shape = tuple(axis_by_name[name].size for name in alpha_dims)
@@ -378,17 +388,20 @@ def _signal_product(axes, alpha_dims, valid_dims, attributes=None):
             ),
             VariableSchema(
                 name="valid_length",
-                dtype="<i8",
-                value_domain="real",
+                dtype=valid_dtype,
+                value_domain=valid_domain,
                 dims=valid_dims,
-                quantity="valid_length",
+                quantity=valid_quantity,
             ),
         ],
         attributes=attributes or {},
     )
     return TimeSeriesDataset.from_arrays(
         schema,
-        {"alpha": alpha, "valid_length": np.full(valid_shape, 8, dtype=np.int64)},
+        {
+            "alpha": alpha,
+            "valid_length": np.full(valid_shape, 8, dtype=np.dtype(valid_dtype)),
+        },
         owner="test",
     )
 
@@ -458,6 +471,63 @@ def test_transform_rejects_wrong_valid_length_dims():
         )
 
 
+def test_transform_rejects_non_int64_valid_length():
+    product = _signal_product(
+        _base_axes(),
+        ("scan", "trajectory", "time", "channel"),
+        ("scan", "trajectory"),
+        valid_dtype="<f8",
+    )
+    with pytest.raises(TypeError, match="dtype int64"):
+        _execute(
+            {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
+            product,
+        )
+
+
+def test_transform_rejects_wrong_valid_length_quantity():
+    product = _signal_product(
+        _base_axes(),
+        ("scan", "trajectory", "time", "channel"),
+        ("scan", "trajectory"),
+        valid_quantity="wrong",
+    )
+    with pytest.raises(TypeError, match="quantity"):
+        _execute(
+            {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
+            product,
+        )
+
+
+def test_transform_rejects_complex_valid_length():
+    product = _signal_product(
+        _base_axes(),
+        ("scan", "trajectory", "time", "channel"),
+        ("scan", "trajectory"),
+        valid_dtype="<c16",
+        valid_domain="complex",
+    )
+    with pytest.raises(TypeError, match="dtype int64"):
+        _execute(
+            {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
+            product,
+        )
+
+
+def test_transform_valid_length_handle_reused_after_schema_checks():
+    product = _signal_product(
+        _base_axes(),
+        ("scan", "trajectory", "time", "channel"),
+        ("scan", "trajectory"),
+    )
+    _, out = _execute(
+        {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
+        product,
+    )
+    assert out.handle("valid_length") is product.handle("valid_length")
+    assert out.schema.variable("valid_length").dtype == "<i8"
+
+
 def test_transform_rejects_mode_metadata_mismatch():
     product = _signal_product(
         _base_axes(),
@@ -486,6 +556,48 @@ def test_transform_rejects_duplicate_mode_metadata():
             {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
             product,
         )
+
+
+def test_transform_rejects_negative_mode_metadata():
+    product = _signal_product(
+        _base_axes(),
+        ("scan", "trajectory", "time", "channel"),
+        ("scan", "trajectory"),
+        attributes={"mode_indices": [-1]},
+    )
+    with pytest.raises(ValueError, match="non-negative"):
+        _execute(
+            {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
+            product,
+        )
+
+
+@pytest.mark.parametrize("bad_mode", [True, 1.0])
+def test_transform_rejects_non_integer_mode_metadata(bad_mode):
+    product = _signal_product(
+        _base_axes(),
+        ("scan", "trajectory", "time", "channel"),
+        ("scan", "trajectory"),
+        attributes={"mode_indices": [bad_mode]},
+    )
+    with pytest.raises(TypeError, match="list of integers"):
+        _execute(
+            {"units": "occupation", "observables": {"n0": {"matrix": [[1.0]]}}},
+            product,
+        )
+
+
+def test_validate_mode_indices_rejects_numpy_bool():
+    # NumPy scalars cannot pass ProductSchema JSON-safe attribute validation,
+    # so the NumPy variants are exercised against the validator directly.
+    with pytest.raises(TypeError, match="list of integers"):
+        validate_mode_indices([np.bool_(True)], 1)
+
+
+def test_validate_mode_indices_accepts_numpy_integers():
+    recorded = validate_mode_indices([np.int64(0), np.int32(1)], 2)
+    assert recorded == (0, 1)
+    assert all(type(mode) is int for mode in recorded)
 
 
 def test_transform_config_rejects_non_finite_values():
