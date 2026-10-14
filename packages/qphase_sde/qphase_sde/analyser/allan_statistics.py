@@ -116,7 +116,7 @@ def _resolve_scalar_averaging_samples(
         dt,
         taus=taus,
         points=points,
-        constraint_names="allan_min_windows or allan_min_nonoverlap_pairs",
+        constraint_names="min_windows or min_nonoverlap_pairs",
     )
 
 
@@ -415,7 +415,7 @@ def _assemble_scalar_result(
         "quantity": "allan_variance",
         "variable": "sampled_scalar",
         "measurement_model": "sampled_scalar",
-        "tau_unit": "seconds",
+        "tau_unit": "time",
         "tau": tau,
         "sampled_scalar_variance": mean,
         "sampled_scalar_variance_sem": sem,

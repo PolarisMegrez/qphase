@@ -471,8 +471,12 @@ def test_scalar_allan_tau_grid_constraints():
     # Unaligned taus are rejected.
     with pytest.raises(ValueError, match="not aligned"):
         _scalar_allan(y, 0.3, taus=[1.0])
-    # A tau beyond the window constraints is rejected.
-    with pytest.raises(ValueError, match="min_windows|min_nonoverlap"):
+    # A tau beyond the window constraints is rejected with the actual scalar
+    # API parameter names (the phase path keeps its legacy error text).
+    with pytest.raises(
+        ValueError,
+        match="an Allan tau violates min_windows or min_nonoverlap_pairs",
+    ):
         _scalar_allan(y, 1.0, taus=[400.0], min_windows=8, min_nonoverlap_pairs=4)
     # The default logarithmic grid respects the same bounds: largest m keeps
     # at least min_windows overlapping pairs and min_nonoverlap_pairs+1
@@ -582,6 +586,9 @@ def test_scalar_allan_payload_is_frozen():
     assert result["quantity"] == "allan_variance"
     assert result["variable"] == "sampled_scalar"
     assert result["measurement_model"] == "sampled_scalar"
+    # SDE time may be normalized; the canonical token is ``time`` and the
+    # typed tau axis schema stays the unit source of truth once wired (6D).
+    assert result["tau_unit"] == "time"
     assert result["definition"] == "nonoverlapping_window_mean_difference"
     assert (
         result["overlapping_definition"] == "overlapping_window_mean_difference"
