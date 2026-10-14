@@ -104,7 +104,7 @@ TRAJECTORY_PRODUCT = ProductSchema(
             name="time",
             role=AxisRole.COORDINATE,
             coordinate="regular",
-            units="inverse_rate",
+            units="time",
         ),
         AxisSchema(name="channel", role=AxisRole.COMPONENT),
     ],

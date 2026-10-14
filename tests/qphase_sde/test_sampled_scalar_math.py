@@ -294,14 +294,14 @@ def test_periodogram_fold_recovers_sinusoid_frequency():
 # ---------------------------------------------------------------------------
 
 
-def _scalar_allan(y, dt, *, taus, min_windows=8, min_independent_windows=4):
+def _scalar_allan(y, dt, *, taus, min_windows=8, min_nonoverlap_pairs=4):
     return calculate_sampled_scalar_allan(
         y,
         dt,
         taus=taus,
         points=40,
         min_windows=min_windows,
-        min_independent_windows=min_independent_windows,
+        min_nonoverlap_pairs=min_nonoverlap_pairs,
     )
 
 
@@ -472,10 +472,10 @@ def test_scalar_allan_tau_grid_constraints():
     with pytest.raises(ValueError, match="not aligned"):
         _scalar_allan(y, 0.3, taus=[1.0])
     # A tau beyond the window constraints is rejected.
-    with pytest.raises(ValueError, match="min_windows|min_independent"):
-        _scalar_allan(y, 1.0, taus=[400.0], min_windows=8, min_independent_windows=4)
+    with pytest.raises(ValueError, match="min_windows|min_nonoverlap"):
+        _scalar_allan(y, 1.0, taus=[400.0], min_windows=8, min_nonoverlap_pairs=4)
     # The default logarithmic grid respects the same bounds: largest m keeps
-    # at least min_windows overlapping pairs and min_independent_windows+1
+    # at least min_windows overlapping pairs and min_nonoverlap_pairs+1
     # disjoint windows.
     result = calculate_sampled_scalar_allan(
         y,
@@ -483,7 +483,7 @@ def test_scalar_allan_tau_grid_constraints():
         taus=None,
         points=6,
         min_windows=8,
-        min_independent_windows=4,
+        min_nonoverlap_pairs=4,
     )
     n_time = 512
     m_max = int(result["tau"][-1])
@@ -522,7 +522,7 @@ def test_scalar_allan_rejects_non_real_or_misshaped_input():
             taus=[4.0],
             points=4,
             min_windows=2,
-            min_independent_windows=1,
+            min_nonoverlap_pairs=1,
         )
     with pytest.raises(ValueError, match="n_traj, n_time"):
         calculate_sampled_scalar_allan(
@@ -531,7 +531,7 @@ def test_scalar_allan_rejects_non_real_or_misshaped_input():
             taus=[4.0],
             points=4,
             min_windows=2,
-            min_independent_windows=1,
+            min_nonoverlap_pairs=1,
         )
     with pytest.raises(ValueError, match="positive"):
         calculate_sampled_scalar_allan(
@@ -540,7 +540,7 @@ def test_scalar_allan_rejects_non_real_or_misshaped_input():
             taus=[4.0],
             points=4,
             min_windows=2,
-            min_independent_windows=1,
+            min_nonoverlap_pairs=1,
         )
 
 
@@ -575,7 +575,7 @@ def test_scalar_allan_payload_is_frozen():
         "overlap_trajectory_sample_count",
         "overlap_total_valid_window_pairs",
         "observation_duration",
-        "min_independent_windows",
+        "min_nonoverlap_pairs",
         "definition",
         "overlapping_definition",
     }

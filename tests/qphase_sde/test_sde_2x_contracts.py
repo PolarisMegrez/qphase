@@ -788,3 +788,68 @@ def test_sampled_observable_clean_process_roundtrip(tmp_path, first_import):
         "channel_definition": "observable",
         "channel_names": ["soft_coordinate", "quadrature"],
     }
+
+
+_TRAJECTORY_UNITS_PROBE = """
+import json
+import sys
+
+from qphase.data import load_bundle
+
+schema = load_bundle(sys.argv[1]).products["trajectories"].schema
+time_axis = [axis for axis in schema.axes if axis.name == "time"][0]
+payload = {"units": time_axis.units, "start": time_axis.start, "step": time_axis.step}
+print(json.dumps(payload))
+"""
+
+
+def test_trajectory_and_observable_share_time_axis_units(tmp_path):
+    """Source trajectory and observable products share one time-axis unit.
+
+    The observable mirrors the source time grid, so both products declare
+    the single canonical ``time`` unit token — core has no unit aliases.
+    The concrete trajectory product is persisted and reloaded in a clean
+    process to prove the agreement survives the Artifact boundary.
+    """
+    import subprocess
+    import sys
+
+    import numpy as np
+    from qphase.data import save_products
+    from qphase_sde.result import _trajectory_product
+    from qphase_sde.state import TrajectorySet
+
+    trajectory_time = next(
+        axis for axis in bundle.TRAJECTORY_PRODUCT.axes if axis.name == "time"
+    )
+    observable_time = next(
+        axis
+        for axis in quantities.SAMPLED_OBSERVABLE_PRODUCT.axes
+        if axis.name == "time"
+    )
+    assert trajectory_time.units == observable_time.units == "time"
+
+    rng = np.random.default_rng(20261015)
+    values = rng.standard_normal((6, 5, 2)) + 1j * rng.standard_normal((6, 5, 2))
+    trajectory_dataset = _trajectory_product(
+        TrajectorySet(values, t0=0.2, dt=0.1),
+        scan_size=2,
+        n_traj_per_point=3,
+    )
+    save_products(tmp_path, {"trajectories": trajectory_dataset})
+
+    probe = tmp_path / "probe_units.py"
+    probe.write_text(_TRAJECTORY_UNITS_PROBE, encoding="utf-8")
+    completed = subprocess.run(
+        [sys.executable, str(probe), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout.strip()) == {
+        "units": "time",
+        "start": 0.2,
+        "step": 0.1,
+    }

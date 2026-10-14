@@ -485,7 +485,7 @@ def _trajectory_product(
                 coordinate="regular",
                 start=t0,
                 step=dt,
-                units="inverse_rate",
+                units="time",
             ),
             AxisSchema(name="channel", role=AxisRole.COMPONENT, size=n_channel),
         ],
