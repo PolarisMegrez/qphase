@@ -1,6 +1,6 @@
 """Local SDE model plugins used by this research workspace."""
 
-from .base import FPGenBackedSDEModel, ModelConfig, SDEModelPlugin
+from .base import ModelConfig, QPSGenBackedSDEModel, SDEModelPlugin
 from .collective_kerr_2mode import (
     CollectiveKerr2ModeConfig,
     CollectiveKerr2ModeModel,
@@ -28,7 +28,7 @@ __all__ = [
     "CollectiveVDP2ModeModel",
     "CrossKerr2ModeConfig",
     "CrossKerr2ModeModel",
-    "FPGenBackedSDEModel",
+    "QPSGenBackedSDEModel",
     "Kerr2ModeConfig",
     "Kerr2ModeModel",
     "Kerr3ModeConfig",

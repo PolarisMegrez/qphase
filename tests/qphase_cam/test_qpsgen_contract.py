@@ -1,13 +1,13 @@
-"""Executable contract between qphase_cam and fpgen's public API."""
+"""Executable contract between qphase_cam and qpsgen's public API."""
 
 from __future__ import annotations
 
 import inspect
 from collections import Counter
 
-import fpgen
 import numpy as np
-from qphase_cam.core.fpgen import FPGenDynamicsAdapter, validate_fpgen_runtime
+import qpsgen
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter, validate_qpsgen_runtime
 
 from models.vdp_2mode import VDP2ModeModel
 
@@ -28,10 +28,10 @@ def _parameter_names(callable_object) -> tuple[str, ...]:
     return tuple(inspect.signature(callable_object).parameters)
 
 
-def test_fpgen_public_api_versions_and_signatures():
-    validate_fpgen_runtime()
-    assert REQUIRED_EXPORTS <= set(fpgen.__all__)
-    assert _parameter_names(fpgen.CovarianceDynamics.search_linear_reductions) == (
+def test_qpsgen_public_api_versions_and_signatures():
+    validate_qpsgen_runtime()
+    assert REQUIRED_EXPORTS <= set(qpsgen.__all__)
+    assert _parameter_names(qpsgen.CovarianceDynamics.search_linear_reductions) == (
         "self",
         "retained_dimension",
         "retained_ids",
@@ -40,20 +40,20 @@ def test_fpgen_public_api_versions_and_signatures():
         "materialization_limit",
         "return_limit",
     )
-    assert _parameter_names(fpgen.CovarianceDynamics.linear_reduce) == (
+    assert _parameter_names(qpsgen.CovarianceDynamics.linear_reduce) == (
         "self",
         "candidate",
         "order_parameters",
     )
-    assert _parameter_names(fpgen.MomentDynamicsSpec.compile_numpy) == ("self",)
-    assert _parameter_names(fpgen.ReductionSearchResult.manifest) == ("self",)
-    assert _parameter_names(fpgen.LinearReductionPlan.materialize) == (
+    assert _parameter_names(qpsgen.MomentDynamicsSpec.compile_numpy) == ("self",)
+    assert _parameter_names(qpsgen.ReductionSearchResult.manifest) == ("self",)
+    assert _parameter_names(qpsgen.LinearReductionPlan.materialize) == (
         "self",
         "method",
     )
 
 
-def test_fpgen_adapter_numerical_and_reduction_contract():
+def test_qpsgen_adapter_numerical_and_reduction_contract():
     model = VDP2ModeModel(
         omega_a=0.1,
         omega_b=0.0,
@@ -62,7 +62,7 @@ def test_fpgen_adapter_numerical_and_reduction_contract():
         Gamma=0.0001,
         g=0.5,
     )
-    adapter = FPGenDynamicsAdapter.from_model(model)
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     assert not hasattr(adapter, "dynamics")
     assert adapter.state_ids == (
         "r_diag_0",

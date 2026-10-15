@@ -302,7 +302,7 @@ def enumerate_scalar_charts(adapter: Any) -> dict[str, Any]:
 
     Keeps all equation partitions, addressed by ``chart_id``; records the
     regularity factors, reduced degree and provenance of each chart, plus the
-    partitions fpgen rejected with their reasons.  Charts that cannot be
+    partitions qpsgen rejected with their reasons.  Charts that cannot be
     materialized (e.g. oversized elimination blocks) are recorded with a
     skip reason instead of being dropped silently.
     """
@@ -1945,9 +1945,9 @@ def run_case(case: MultiplicityCase, *, adapter: Any = None) -> dict[str, Any]:
     }
     try:
         if adapter is None:
-            from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+            from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 
-            adapter = FPGenDynamicsAdapter.from_model(load_model(case.model))
+            adapter = QPSGenDynamicsAdapter.from_model(load_model(case.model))
         names = set(adapter.parameter_names)
         missing = names - set(case.controls) - set(case.fixed_parameters)
         extra = (set(case.controls) | set(case.fixed_parameters)) - names
@@ -2308,9 +2308,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps({"ran": len(records)}, indent=1))
         return 0
     if args.command == "enumerate":
-        from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+        from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 
-        adapter = FPGenDynamicsAdapter.from_model(load_model(args.model))
+        adapter = QPSGenDynamicsAdapter.from_model(load_model(args.model))
         print(json.dumps(enumerate_scalar_charts(adapter), indent=1))
         return 0
     return 2

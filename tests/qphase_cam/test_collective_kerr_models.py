@@ -1,10 +1,10 @@
-"""fpgen-backed collective-reservoir Kerr model contracts."""
+"""qpsgen-backed collective-reservoir Kerr model contracts."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
-from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.model import CAMBogoliubovModel
 
 from models.collective_kerr_2mode import CollectiveKerr2ModeModel
@@ -49,28 +49,28 @@ from models.reservoir_kerr_3mode import ReservoirKerr3ModeModel
     ),
     ids=("collective", "collective_loss", "explicit_reservoir"),
 )
-def fpgen_model(request):
+def qpsgen_model(request):
     return request.param
 
 
-def test_numerical_fast_paths_are_compiled_from_fpgen(fpgen_model):
-    adapter = FPGenDynamicsAdapter.from_model(fpgen_model)
+def test_numerical_fast_paths_are_compiled_from_qpsgen(qpsgen_model):
+    adapter = QPSGenDynamicsAdapter.from_model(qpsgen_model)
     vector = np.arange(1, adapter.state_size + 1, dtype=float) / 10.0
 
     np.testing.assert_allclose(
-        fpgen_model.cam_residual_vector(vector, fpgen_model.params),
+        qpsgen_model.cam_residual_vector(vector, qpsgen_model.params),
         adapter.rhs(vector),
         atol=1e-13,
     )
     np.testing.assert_allclose(
-        fpgen_model.cam_jacobian_vector(vector, fpgen_model.params),
+        qpsgen_model.cam_jacobian_vector(vector, qpsgen_model.params),
         adapter.jacobian(vector),
         atol=1e-13,
     )
 
 
-def test_hamiltonian_and_diffusion_are_fpgen_outputs(fpgen_model):
-    adapter = FPGenDynamicsAdapter.from_model(fpgen_model)
+def test_hamiltonian_and_diffusion_are_qpsgen_outputs(qpsgen_model):
+    adapter = QPSGenDynamicsAdapter.from_model(qpsgen_model)
     vector = np.arange(1, adapter.state_size + 1, dtype=float) / 7.0
     state = adapter.state_matrix(vector)
     substitutions = dict(
@@ -85,29 +85,29 @@ def test_hamiltonian_and_diffusion_are_fpgen_outputs(fpgen_model):
         adapter.symbolic_hamiltonian.subs(substitutions), dtype=complex
     )
     expected_diffusion = np.asarray(
-        fpgen_model.cam_fpgen_dynamics().diffusion.subs(substitutions),
+        qpsgen_model.cam_qpsgen_dynamics().diffusion.subs(substitutions),
         dtype=complex,
     )
     np.testing.assert_allclose(
-        fpgen_model.cam_hamiltonian(state, fpgen_model.params),
+        qpsgen_model.cam_hamiltonian(state, qpsgen_model.params),
         expected_hamiltonian,
     )
     np.testing.assert_allclose(
-        fpgen_model.cam_diffusion(state, fpgen_model.params), expected_diffusion
+        qpsgen_model.cam_diffusion(state, qpsgen_model.params), expected_diffusion
     )
 
 
-def test_sde_factor_reconstructs_fpgen_normal_diffusion(fpgen_model):
-    rng = np.random.default_rng(100 + fpgen_model.n_modes)
-    state = rng.normal(size=(4, fpgen_model.n_modes)) + 1j * rng.normal(
-        size=(4, fpgen_model.n_modes)
+def test_sde_factor_reconstructs_qpsgen_normal_diffusion(qpsgen_model):
+    rng = np.random.default_rng(100 + qpsgen_model.n_modes)
+    state = rng.normal(size=(4, qpsgen_model.n_modes)) + 1j * rng.normal(
+        size=(4, qpsgen_model.n_modes)
     )
     density = np.einsum("...i,...j->...ij", state, state.conj())
-    factor = fpgen_model.diffusion(state, 0.0, fpgen_model.params)
+    factor = qpsgen_model.diffusion(state, 0.0, qpsgen_model.params)
 
     np.testing.assert_allclose(
         factor @ factor.conj().transpose(0, 2, 1),
-        fpgen_model.cam_diffusion(density, fpgen_model.params),
+        qpsgen_model.cam_diffusion(density, qpsgen_model.params),
         atol=1e-13,
     )
 
@@ -204,7 +204,7 @@ def test_collective_loss_model_accepts_real_coupling_sectors(g_ac, g_bc):
         kappa_bright=1.0,
         kappa_dark=0.02,
     )
-    adapter = FPGenDynamicsAdapter.from_model(model)
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     vector = np.arange(1, adapter.state_size + 1, dtype=float) / 10.0
 
     assert adapter.parameter_domains["g_ac"] == "real"

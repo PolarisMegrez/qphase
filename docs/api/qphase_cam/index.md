@@ -14,7 +14,7 @@
 `cam_solver.bifurcation` owns four subplugin slots:
 `bifurcation_target`, `bifurcation_strategy`, `bifurcation_discovery`, and
 `bifurcation_classifier`.
-Its first target is equilibrium multiplicity of order 2-4. It uses fpgen exact
+Its first target is equilibrium multiplicity of order 2-4. It uses qpsgen exact
 dynamics for scalar reduction or a full bordered-system fallback and returns a
 `CAMBifurcationResult`, not a fixed-capacity `CAMResult`. An outer parameter
 grid returns a ragged `CAMBifurcationScanResult`.
@@ -24,8 +24,8 @@ declare a strict Pydantic `config_schema`.
 
 ## External Symbolic Contract
 
-The workspace-only fpgen integration is isolated behind
-`FPGenDynamicsAdapter`. See the [fpgen integration contract](fpgen_contract.md)
+The workspace-only qpsgen integration is isolated behind
+`QPSGenDynamicsAdapter`. See the [qpsgen integration contract](qpsgen_contract.md)
 for the supported versions, numerical layouts, reduction API, and upgrade
 procedure.
 

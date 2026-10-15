@@ -9,7 +9,7 @@ import numpy as np
 from pydantic import Field
 
 from qphase_cam.core.coordinates import matrix_to_vector
-from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 
 from .base import CAMPostprocessor, CAMPostprocessorConfig
 
@@ -53,7 +53,7 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
 
     def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
         del backend
-        adapter = FPGenDynamicsAdapter.from_model(model)
+        adapter = QPSGenDynamicsAdapter.from_model(model)
         candidates = getattr(result, "candidates", result)
         closure = dict(candidates.meta.get("closure", adapter.closure_provenance()))
         rows: list[dict[str, Any]] = []
@@ -99,7 +99,7 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
         self,
         result: Any,
         model: Any,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         candidate_index: int,
         branch_index: int,
         closure: dict[str, Any],

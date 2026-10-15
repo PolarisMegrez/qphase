@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 from pydantic import Field
 
-from .base import FPGenBackedSDEModel, ModelConfig
+from .base import ModelConfig, QPSGenBackedSDEModel
 from .kernels.base import ModelKernelPlugin
 from .kernels.cayley_maruyama import CollectiveKerr2ModeCayleyCuPyKernel
 
@@ -25,14 +25,12 @@ class CollectiveKerr2ModeConfig(ModelConfig):
     kappa_dark: Any = Field(json_schema_extra={"scanable": True})
 
 
-class CollectiveKerr2ModeModel(FPGenBackedSDEModel):
+class CollectiveKerr2ModeModel(QPSGenBackedSDEModel):
     """Two Kerr modes coupled to bright gain/loss and weak dark loss channels."""
 
     name: ClassVar[str] = "collective_kerr_2mode"
     description: ClassVar[str] = "Collectively damped two-mode Kerr oscillator"
-    config_schema: ClassVar[type[CollectiveKerr2ModeConfig]] = (
-        CollectiveKerr2ModeConfig
-    )
+    config_schema: ClassVar[type[CollectiveKerr2ModeConfig]] = CollectiveKerr2ModeConfig
     mode_count: ClassVar[int] = 2
     steady_state_capacity: ClassVar[int] = 8
 
@@ -41,10 +39,10 @@ class CollectiveKerr2ModeModel(FPGenBackedSDEModel):
 
     @classmethod
     @lru_cache(maxsize=1)
-    def cam_fpgen_dynamics(cls) -> Any:
-        """Derive the authoritative Wigner CAM dynamics with fpgen."""
+    def cam_qpsgen_dynamics(cls) -> Any:
+        """Derive the authoritative Wigner CAM dynamics with qpsgen."""
         import sympy as sp
-        from fpgen import (
+        from qpsgen import (
             LindbladChannel,
             MasterEquation,
             boson_modes,

@@ -19,5 +19,5 @@ class BifurcationCapabilityError(CAMError):
     """Raised when a model cannot provide exact bifurcation dynamics."""
 
 
-class FPGenCompatibilityError(BifurcationCapabilityError):
-    """Raised when fpgen exposes an incompatible numerical contract."""
+class QPSGenCompatibilityError(BifurcationCapabilityError):
+    """Raised when qpsgen exposes an incompatible numerical contract."""

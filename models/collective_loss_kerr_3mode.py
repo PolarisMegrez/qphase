@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 from pydantic import Field
 from qphase.backend.xputil import get_xp
 
-from .base import FPGenBackedSDEModel, ModelConfig
+from .base import ModelConfig, QPSGenBackedSDEModel
 from .kernels.base import ModelKernelPlugin
 from .kernels.cayley_maruyama import CollectiveLossKerr3ModeCayleyCuPyKernel
 
@@ -29,7 +29,7 @@ class CollectiveLossKerr3ModeConfig(ModelConfig):
     kappa_dark: Any = Field(json_schema_extra={"scanable": True})
 
 
-class CollectiveLossKerr3ModeModel(FPGenBackedSDEModel):
+class CollectiveLossKerr3ModeModel(QPSGenBackedSDEModel):
     """Pumped Kerr mode coupled to collectively damped bright/dark modes."""
 
     name: ClassVar[str] = "collective_loss_kerr_3mode"
@@ -43,9 +43,7 @@ class CollectiveLossKerr3ModeModel(FPGenBackedSDEModel):
     def kernel_plugins(self) -> Iterable[ModelKernelPlugin]:
         return (CollectiveLossKerr3ModeCayleyCuPyKernel(self),)
 
-    def cam_bogoliubov_interaction(
-        self, state: Any, params: dict[str, Any]
-    ) -> Any:
+    def cam_bogoliubov_interaction(self, state: Any, params: dict[str, Any]) -> Any:
         """Return the gauge-fixed Kerr interaction block for Nambu linearization."""
         xp = get_xp(state)
         state = xp.asarray(state)
@@ -57,10 +55,10 @@ class CollectiveLossKerr3ModeModel(FPGenBackedSDEModel):
 
     @classmethod
     @lru_cache(maxsize=1)
-    def cam_fpgen_dynamics(cls) -> Any:
+    def cam_qpsgen_dynamics(cls) -> Any:
         """Derive Wigner CAM and Langevin dynamics from one master equation."""
         import sympy as sp
-        from fpgen import (
+        from qpsgen import (
             LindbladChannel,
             MasterEquation,
             boson_modes,

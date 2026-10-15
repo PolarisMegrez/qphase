@@ -404,28 +404,6 @@ wheels = [
 ]
 
 [[package]]
-name = "fpgen"
-source = { editable = "../fpgen" }
-dependencies = [
-    { name = "numpy" },
-    { name = "sympy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=1.24,<3" },
-    { name = "sympy", specifier = ">=1.12,<2" },
-]
-
-[package.metadata.requires-dev]
-notebook = [
-    { name = "ipykernel" },
-    { name = "nbclient" },
-    { name = "nbformat" },
-]
-test = [{ name = "pytest" }]
-
-[[package]]
 name = "fsspec"
 version = "2025.12.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1770,18 +1748,18 @@ name = "qphase-cam"
 version = "0.1.0"
 source = { editable = "packages/qphase_cam" }
 dependencies = [
-    { name = "fpgen" },
     { name = "numpy" },
     { name = "qphase" },
+    { name = "qpsgen" },
     { name = "scipy" },
     { name = "sympy" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "fpgen", editable = "../fpgen" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "qphase", editable = "packages/qphase" },
+    { name = "qpsgen", specifier = ">=0.5.1,<0.6" },
     { name = "scipy", specifier = ">=1.10" },
     { name = "sympy", specifier = ">=1.12" },
 ]
@@ -1935,6 +1913,19 @@ dev-cpu = [
     { name = "qphase-viz", editable = "packages/qphase_viz" },
     { name = "ruff", specifier = ">=0.14.10" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915" },
+]
+
+[[package]]
+name = "qpsgen"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "sympy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/18/66/2a7d3424b6bd45af45612bb532680e04ca6204188a77d7ac9112784d3279/qpsgen-0.5.1.tar.gz", hash = "sha256:c1955833dbe1cdb8e2b32723f62a8577ab87553a39765fe89f3e2eb4c27dbea7", size = 59387, upload-time = "2026-10-15T11:05:47.495Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b5/e3/2264146f4712dbf4058df43f1b7eb05394c7eeb5434cf2855074955aeb76/qpsgen-0.5.1-py3-none-any.whl", hash = "sha256:73a3550b533d231aea7d9743b4796570f619c557250d14c0304abbb768b6a762", size = 46263, upload-time = "2026-10-15T11:05:45.932Z" },
 ]
 
 [[package]]

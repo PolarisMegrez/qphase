@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 from pydantic import Field
 
-from .base import FPGenBackedSDEModel, ModelConfig
+from .base import ModelConfig, QPSGenBackedSDEModel
 from .kernels.base import ModelKernelPlugin
 from .kernels.cayley_maruyama import ReservoirKerr3ModeCayleyCuPyKernel
 
@@ -27,7 +27,7 @@ class ReservoirKerr3ModeConfig(ModelConfig):
     kappa_local: Any = Field(json_schema_extra={"scanable": True})
 
 
-class ReservoirKerr3ModeModel(FPGenBackedSDEModel):
+class ReservoirKerr3ModeModel(QPSGenBackedSDEModel):
     """Symmetric Kerr dimer coupled through a damped auxiliary mode."""
 
     name: ClassVar[str] = "reservoir_kerr_3mode"
@@ -41,10 +41,10 @@ class ReservoirKerr3ModeModel(FPGenBackedSDEModel):
 
     @classmethod
     @lru_cache(maxsize=1)
-    def cam_fpgen_dynamics(cls) -> Any:
-        """Derive the authoritative Wigner CAM dynamics with fpgen."""
+    def cam_qpsgen_dynamics(cls) -> Any:
+        """Derive the authoritative Wigner CAM dynamics with qpsgen."""
         import sympy as sp
-        from fpgen import (
+        from qpsgen import (
             LindbladChannel,
             MasterEquation,
             boson_modes,

@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 
 from pydantic import Field, model_validator
 
-from .base import FPGenBackedSDEModel, ModelConfig
+from .base import ModelConfig, QPSGenBackedSDEModel
 from .kernels.base import ModelKernelPlugin
 from .kernels.cayley_maruyama import CollectiveVDP2ModeCayleyCuPyKernel
 
@@ -58,7 +58,7 @@ class CollectiveVDP2ModeConfig(ModelConfig):
         return self
 
 
-class CollectiveVDP2ModeModel(FPGenBackedSDEModel):
+class CollectiveVDP2ModeModel(QPSGenBackedSDEModel):
     """VDP gain saturation coupled to collective bright and dark reservoirs."""
 
     name: ClassVar[str] = "collective_vdp_2mode"
@@ -78,10 +78,10 @@ class CollectiveVDP2ModeModel(FPGenBackedSDEModel):
 
     @classmethod
     @lru_cache(maxsize=1)
-    def cam_fpgen_dynamics(cls) -> Any:
-        """Derive the authoritative Wigner CAM dynamics with fpgen."""
+    def cam_qpsgen_dynamics(cls) -> Any:
+        """Derive the authoritative Wigner CAM dynamics with qpsgen."""
         import sympy as sp
-        from fpgen import (
+        from qpsgen import (
             LindbladChannel,
             MasterEquation,
             boson_modes,

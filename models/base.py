@@ -14,7 +14,7 @@ from qphase_sde.model import FunctionalSDEModel
 
 from .kernels.base import ModelKernelPlugin, ModelKernelRegistry
 
-__all__ = ["FPGenBackedSDEModel", "ModelConfig", "SDEModelPlugin"]
+__all__ = ["QPSGenBackedSDEModel", "ModelConfig", "SDEModelPlugin"]
 
 
 class ModelConfig(BaseModel):
@@ -174,9 +174,7 @@ class SDEModelPlugin(ABC):
 
 def _canonical_hermitian_vector(state: Any, xp: Any) -> Any:
     n_modes = int(state.shape[-1])
-    pairs = tuple(
-        (i, j) for i in range(n_modes) for j in range(i + 1, n_modes)
-    )
+    pairs = tuple((i, j) for i in range(n_modes) for j in range(i + 1, n_modes))
     values = [xp.real(state[..., index, index]) for index in range(n_modes)]
     values.extend(xp.real(state[..., i, j]) for i, j in pairs)
     values.extend(xp.imag(state[..., i, j]) for i, j in pairs)
@@ -192,9 +190,7 @@ def _positive_semidefinite_factor(covariance: Any, xp: Any) -> Any:
         diagonal = xp.real(covariance[..., column, column])
         if column:
             previous = factor[..., column, :column]
-            diagonal = diagonal - xp.sum(
-                previous * xp.conj(previous), axis=-1
-            ).real
+            diagonal = diagonal - xp.sum(previous * xp.conj(previous), axis=-1).real
         pivot = xp.sqrt(xp.clip(diagonal, 0.0, None))
         factor[..., column, column] = pivot
         usable = pivot > tolerance
@@ -203,18 +199,15 @@ def _positive_semidefinite_factor(covariance: Any, xp: Any) -> Any:
             residual = covariance[..., row, column]
             if column:
                 residual = residual - xp.sum(
-                    factor[..., row, :column]
-                    * xp.conj(factor[..., column, :column]),
+                    factor[..., row, :column] * xp.conj(factor[..., column, :column]),
                     axis=-1,
                 )
-            factor[..., row, column] = xp.where(
-                usable, residual / denominator, 0.0
-            )
+            factor[..., row, column] = xp.where(usable, residual / denominator, 0.0)
     return factor
 
 
-class _CompiledFPGenMatrix:
-    """Backend-aware scalar compilation of one fpgen symbolic matrix."""
+class _CompiledQPSGenMatrix:
+    """Backend-aware scalar compilation of one qpsgen symbolic matrix."""
 
     def __init__(self, expression: Any, arguments: tuple[Any, ...], modules: Any):
         import sympy as sp
@@ -247,34 +240,34 @@ class _CompiledFPGenMatrix:
         return stacked.reshape(batch_shape + self.shape)
 
 
-class FPGenBackedSDEModel(SDEModelPlugin):
-    """Model whose numerical equations are compiled from fpgen output."""
+class QPSGenBackedSDEModel(SDEModelPlugin):
+    """Model whose numerical equations are compiled from qpsgen output."""
 
     @classmethod
-    def cam_fpgen_dynamics(cls) -> Any:
-        """Return the authoritative fpgen second-moment dynamics."""
+    def cam_qpsgen_dynamics(cls) -> Any:
+        """Return the authoritative qpsgen second-moment dynamics."""
         raise NotImplementedError
 
     @classmethod
     @cache
-    def _fpgen_expression(cls, name: str) -> Any:
-        dynamics = cls.cam_fpgen_dynamics()
+    def _qpsgen_expression(cls, name: str) -> Any:
+        dynamics = cls.cam_qpsgen_dynamics()
         if name == "jacobian":
             return dynamics.jacobian()
         return getattr(dynamics, name)
 
     @classmethod
     @cache
-    def _fpgen_parameter_names(cls) -> tuple[str, ...]:
-        dynamics = cls.cam_fpgen_dynamics()
+    def _qpsgen_parameter_names(cls) -> tuple[str, ...]:
+        dynamics = cls.cam_qpsgen_dynamics()
         return tuple(item.symbol.name for item in dynamics.parameter_spec)
 
     @classmethod
     @cache
-    def _compiled_fpgen_matrix(
+    def _compiled_qpsgen_matrix(
         cls, name: str, backend_name: str
-    ) -> _CompiledFPGenMatrix:
-        dynamics = cls.cam_fpgen_dynamics()
+    ) -> _CompiledQPSGenMatrix:
+        dynamics = cls.cam_qpsgen_dynamics()
         if backend_name == "cupy":
             import cupy as modules
         else:
@@ -282,19 +275,17 @@ class FPGenBackedSDEModel(SDEModelPlugin):
         arguments = tuple(dynamics.coordinates) + tuple(
             item.symbol for item in dynamics.parameter_spec
         )
-        return _CompiledFPGenMatrix(
-            cls._fpgen_expression(name), arguments, modules
-        )
+        return _CompiledQPSGenMatrix(cls._qpsgen_expression(name), arguments, modules)
 
     @staticmethod
     def _backend_name(xp: Any) -> str:
         return "cupy" if xp.__name__.split(".", 1)[0] == "cupy" else "numpy"
 
-    def _evaluate_fpgen_matrix(
+    def _evaluate_qpsgen_matrix(
         self, name: str, state_vector: Any, params: dict[str, Any], xp: Any
     ) -> Any:
-        compiled = self._compiled_fpgen_matrix(name, self._backend_name(xp))
-        return compiled(state_vector, params, self._fpgen_parameter_names(), xp)
+        compiled = self._compiled_qpsgen_matrix(name, self._backend_name(xp))
+        return compiled(state_vector, params, self._qpsgen_parameter_names(), xp)
 
     def drift(self, y: Any, t: float, params: dict[str, Any]) -> Any:
         del t
@@ -319,41 +310,39 @@ class FPGenBackedSDEModel(SDEModelPlugin):
         xp = get_xp(state)
         state = xp.asarray(state)
         vector = _canonical_hermitian_vector(state, xp)
-        value = self._evaluate_fpgen_matrix("hamiltonian", vector, params, xp)
+        value = self._evaluate_qpsgen_matrix("hamiltonian", vector, params, xp)
         return xp.asarray(value, dtype=state.dtype)
 
     def cam_diffusion(self, state: Any, params: dict[str, Any]) -> Any:
         xp = get_xp(state)
         state = xp.asarray(state)
         vector = _canonical_hermitian_vector(state, xp)
-        value = self._evaluate_fpgen_matrix("diffusion", vector, params, xp)
+        value = self._evaluate_qpsgen_matrix("diffusion", vector, params, xp)
         return xp.asarray(value, dtype=state.dtype)
 
     def cam_residual_vector(self, vector: Any, params: dict[str, Any]) -> Any:
         xp = get_xp(vector)
         vector = xp.asarray(vector)
-        value = self._evaluate_fpgen_matrix("rhs", vector, params, xp)
+        value = self._evaluate_qpsgen_matrix("rhs", vector, params, xp)
         return xp.asarray(value[..., 0], dtype=vector.dtype)
 
     def cam_jacobian_vector(self, vector: Any, params: dict[str, Any]) -> Any:
         xp = get_xp(vector)
         vector = xp.asarray(vector)
-        value = self._evaluate_fpgen_matrix("jacobian", vector, params, xp)
+        value = self._evaluate_qpsgen_matrix("jacobian", vector, params, xp)
         return xp.asarray(value, dtype=vector.dtype)
 
     def cam_jacobian(self, state: Any, params: dict[str, Any]) -> Any:
         xp = get_xp(state)
         state = xp.asarray(state)
-        return self.cam_jacobian_vector(
-            _canonical_hermitian_vector(state, xp), params
-        )
+        return self.cam_jacobian_vector(_canonical_hermitian_vector(state, xp), params)
 
     @classmethod
     @lru_cache(maxsize=1)
     def cam_symbolic_matrices(cls) -> Any:
         from qphase_cam.model import CAMSymbolicSpec
 
-        dynamics = cls.cam_fpgen_dynamics()
+        dynamics = cls.cam_qpsgen_dynamics()
         spec = dynamics.to_model_spec(name=cls.name)
         return CAMSymbolicSpec(
             dynamics.hamiltonian,
@@ -361,5 +350,5 @@ class FPGenBackedSDEModel(SDEModelPlugin):
             dynamics.covariance,
             tuple(dynamics.coordinates),
             tuple(item.symbol for item in dynamics.parameter_spec),
-            version=f"fpgen:{spec.fingerprint}",
+            version=f"qpsgen:{spec.fingerprint}",
         )

@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 import numpy as np
 from pydantic import Field, model_validator
 
-from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 
 from .base import CAMPostprocessor, CAMPostprocessorConfig
 from .petermann import eigensystem_petermann
@@ -51,7 +51,7 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
 
     def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
         del backend
-        adapter = FPGenDynamicsAdapter.from_model(model)
+        adapter = QPSGenDynamicsAdapter.from_model(model)
         candidates = getattr(result, "candidates", result)
         branches = candidates.branches
         if branches is None or branches.size == 0:
@@ -185,7 +185,7 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
 
     def _newton(
         self,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         initial: np.ndarray,
         params: dict[str, Any],
         *,
@@ -295,7 +295,7 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
 
     @staticmethod
     def _rayleigh(
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         model: Any,
         state: np.ndarray,
         params: dict[str, Any],
@@ -309,7 +309,7 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
 
     def _rayleigh_visibility(
         self,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         model: Any,
         state: np.ndarray,
         params: dict[str, Any],
@@ -331,7 +331,7 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
 
     @staticmethod
     def _hamiltonian_petermann_max(
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         model: Any,
         state: np.ndarray,
         params: dict[str, Any],

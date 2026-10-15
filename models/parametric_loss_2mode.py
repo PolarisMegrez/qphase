@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 from pydantic import Field, model_validator
 from qphase.backend.xputil import get_xp
 
-from .base import FPGenBackedSDEModel, ModelConfig
+from .base import ModelConfig, QPSGenBackedSDEModel
 
 
 class ParametricLoss2ModeConfig(ModelConfig):
@@ -40,7 +40,7 @@ class ParametricLoss2ModeConfig(ModelConfig):
         return self
 
 
-class ParametricLoss2ModeModel(FPGenBackedSDEModel):
+class ParametricLoss2ModeModel(QPSGenBackedSDEModel):
     """Two-mode parametric oscillator saturated by two-photon dissipation."""
 
     name: ClassVar[str] = "parametric_loss_2mode"
@@ -53,10 +53,10 @@ class ParametricLoss2ModeModel(FPGenBackedSDEModel):
 
     @classmethod
     @lru_cache(maxsize=1)
-    def cam_fpgen_dynamics(cls) -> Any:
+    def cam_qpsgen_dynamics(cls) -> Any:
         """Derive augmented Wigner CAM dynamics from the master equation."""
         import sympy as sp
-        from fpgen import (
+        from qpsgen import (
             LindbladChannel,
             MasterEquation,
             boson_modes,
@@ -104,7 +104,7 @@ class ParametricLoss2ModeModel(FPGenBackedSDEModel):
 
     @staticmethod
     def _augmented_vector(state: Any, xp: Any) -> Any:
-        """Map fpgen's augmented state matrix back to its declared coordinates."""
+        """Map qpsgen's augmented state matrix back to its declared coordinates."""
         if state.shape[-2:] != (4, 4):
             raise ValueError("augmented CAM state must have shape (..., 4, 4)")
         return xp.stack(
@@ -164,14 +164,14 @@ class ParametricLoss2ModeModel(FPGenBackedSDEModel):
         xp = get_xp(state)
         state = xp.asarray(state)
         vector = self._augmented_vector(state, xp)
-        value = self._evaluate_fpgen_matrix("hamiltonian", vector, params, xp)
+        value = self._evaluate_qpsgen_matrix("hamiltonian", vector, params, xp)
         return xp.asarray(value, dtype=state.dtype)
 
     def cam_diffusion(self, state: Any, params: dict[str, Any]) -> Any:
         xp = get_xp(state)
         state = xp.asarray(state)
         vector = self._augmented_vector(state, xp)
-        value = self._evaluate_fpgen_matrix("diffusion", vector, params, xp)
+        value = self._evaluate_qpsgen_matrix("diffusion", vector, params, xp)
         return xp.asarray(value, dtype=state.dtype)
 
     def cam_jacobian(self, state: Any, params: dict[str, Any]) -> Any:

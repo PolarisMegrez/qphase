@@ -83,9 +83,7 @@ class PairHopping2ModeModel(SDEModelPlugin):
         matrix[..., 1, 1] = omega_b - 0.5j * gamma_b
         return matrix
 
-    def cam_bogoliubov_interaction(
-        self, state: Any, params: dict[str, Any]
-    ) -> Any:
+    def cam_bogoliubov_interaction(self, state: Any, params: dict[str, Any]) -> Any:
         xp = get_xp(state)
         state = xp.asarray(state)
         pair_coupling = self.parameter(params, "k", xp)
@@ -193,9 +191,9 @@ class PairHopping2ModeModel(SDEModelPlugin):
 
     @classmethod
     @lru_cache(maxsize=1)
-    def cam_fpgen_dynamics(cls) -> Any:
+    def cam_qpsgen_dynamics(cls) -> Any:
         import sympy as sp
-        from fpgen import (
+        from qpsgen import (
             LindbladChannel,
             MasterEquation,
             boson_modes,

@@ -53,7 +53,7 @@ value of the perturbation parameter, but must not overlap the adaptive
 | `deflation` | Yes | NumPy | Required | Repels Newton iterations from roots already found. Useful when ordinary multi-start repeatedly returns the same root. |
 | `batched_newton` | Yes, if multiple guesses are supplied | NumPy or CuPy | Required | High-throughput parameter scans with a prepared seed set. Its default single identity guess normally finds at most one state. |
 | `continuation` | One traced sheet | NumPy | Required | Follows one pseudo-arclength sheet through folds from a known initial state; it is not an automatic all-state search. |
-| `bifurcation` | Variable candidates | NumPy | Exact fpgen dynamics | Jointly searches states and control parameters for equilibrium roots of multiplicity 2-4. |
+| `bifurcation` | Variable candidates | NumPy | Exact qpsgen dynamics | Jointly searches states and control parameters for equilibrium roots of multiplicity 2-4. |
 
 `batched_newton`, `deflation`, and `continuation` require a model Jacobian.
 Ordinary root and Cholesky solves can run without one. Finite-difference
@@ -107,12 +107,12 @@ or augmented CAM state matrix. A model-specific experimental readout may
 cancel its leading matrix coefficient and is a separate postprocessing task.
 
 Float64 solves only discover candidates. Accepted candidates are refined from
-the exact fpgen expressions with mpmath, starting at `verification.initial_digits`
+the exact qpsgen expressions with mpmath, starting at `verification.initial_digits`
 and increasing up to `max_digits`. A `verified` candidate has passed the
 high-precision root conditions, complete CAM residual, regularity,
 non-degeneracy, and physicality checks. This is not interval certification and
 does not prove that no other candidates exist. Result metadata records search
-coverage and fpgen provenance. Coverage is reported separately as structural
+coverage and qpsgen provenance. Coverage is reported separately as structural
 reduction coverage, finite numerical-search coverage, physical-domain filtering,
 and treatment of singular reduction paths. These fields are an audit trail, not
 a completeness certificate. Models may implement `cam_bifurcation_scales()` to
@@ -451,7 +451,7 @@ Supplying `probe_epsilon` additionally labels the point as `noise_dominated` or
 `response_dominated`.
 
 This is a regime diagnostic, not a linewidth predictor. Its noise process
-inherits the fpgen moment closure. Every row records the representation, FPE
+inherits the qpsgen moment closure. Every row records the representation, FPE
 exactness, moment-closure policy, and noise semantics. Unsupported augmented,
 anomalous-noise, oscillatory-critical-mode, or non-additive signatures produce
 an explicit status and do not reject the bifurcation candidate. Results are

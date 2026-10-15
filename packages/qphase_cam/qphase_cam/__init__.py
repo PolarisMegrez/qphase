@@ -3,8 +3,8 @@
 from .bifurcation_result import CAMBifurcationResult, CAMBifurcationScanResult
 from .errors import (
     BifurcationCapabilityError,
-    FPGenCompatibilityError,
     JacobianUnavailableError,
+    QPSGenCompatibilityError,
     SolutionCapacityError,
 )
 from .model import CAMBifurcationModel, CAMModel, CAMSymbolicSpec, CAMVectorModel
@@ -19,7 +19,7 @@ __all__ = [
     "CAMResult",
     "CAMSymbolicSpec",
     "CAMVectorModel",
-    "FPGenCompatibilityError",
+    "QPSGenCompatibilityError",
     "JacobianUnavailableError",
     "SolutionCapacityError",
 ]

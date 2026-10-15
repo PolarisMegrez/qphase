@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 from qphase_cam.core.coordinates import matrix_to_vector, vector_to_matrix
-from qphase_cam.core.fpgen import FPGenDynamicsAdapter
 from qphase_cam.core.jacobian import SymbolicJacobian, central_difference_jacobian
 from qphase_cam.core.liouvillian import model_liouvillian, residual_vector
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 
 from models.kerr_3mode import Kerr3ModeModel
 from models.kerr_full_3mode import KerrFull3ModeModel
@@ -92,9 +92,9 @@ def test_zero_bc_coupling_reduces_to_kerr_3mode():
     )
 
 
-def test_fpgen_dynamics_match_model_fast_paths():
+def test_qpsgen_dynamics_match_model_fast_paths():
     model = KerrFull3ModeModel(**_params(0.35))
-    adapter = FPGenDynamicsAdapter.from_model(model)
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     vector = matrix_to_vector(_state())
 
     assert adapter.parameter_domains["g_bc"] == "nonnegative"

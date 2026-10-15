@@ -1,4 +1,4 @@
-"""Numerical evaluators for exact fpgen scalar reductions."""
+"""Numerical evaluators for exact qpsgen scalar reductions."""
 
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ class SeedGenerationStats:
 
 
 class FractionFreeScalarReduction:
-    """Compiled regular-branch equations from a materialized fpgen reduction."""
+    """Compiled regular-branch equations from a materialized qpsgen reduction."""
 
     method = "reduced_fraction_free"
     seed_source = "reduction_roots"

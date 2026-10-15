@@ -1,39 +1,39 @@
-# fpgen 集成契约
+# qpsgen 集成契约
 
-`qphase_cam` 使用 fpgen 提供符号动力学与精确约化。fpgen 保持为独立的本地项目；
-QPhase 不得把其源码复制到 `packages/`，也不得依赖 fpgen 的内部模块。
+`qphase_cam` 使用 qpsgen 提供符号动力学与精确约化。qpsgen 保持为独立发布的项目；
+QPhase 不得把其源码复制到 `packages/`，也不得依赖 qpsgen 的内部模块。
 
 ## 支持范围
 
-当前经过审查的契约为：fpgen `0.5.x`、model schema `2.0`、moment API
+当前经过审查的契约为：qpsgen `0.5.x`、model schema `2.0`、moment API
 `1.0`、reduction API `1.1`。支持的状态布局是
 `hermitian-declared-index-v1` 与
 `hermitian-normal-anomalous-declared-index-v2`。
 
-QPhase workspace 通过 `[tool.uv.sources]` 中的 editable 本地路径解析
-fpgen。`qphase_cam` 声明 `fpgen>=0.5,<0.6`；这两个 workspace-only 包目前均
-不发布到 PyPI。
+提交的 workspace 与发布后的 QPhase 包均从包索引解析其声明的
+`qpsgen>=0.5,<0.6` 依赖。同时开发两个仓库时，可以临时以 editable 模式安装
+qpsgen，但不得提交本地路径覆盖。
 
 ## 模型接口
 
-支持符号分岔分析的 CAM 模型实现 `cam_fpgen_dynamics()`，并返回公开类型
-`fpgen.CovarianceDynamics`。返回对象必须满足：
+支持符号分岔分析的 CAM 模型实现 `cam_qpsgen_dynamics()`，并返回公开类型
+`qpsgen.CovarianceDynamics`。返回对象必须满足：
 
 - 状态坐标采用 QPhase 规范 Hermitian 顺序：对角元、上三角实部、上三角虚部；
 - 状态索引连续，参数名称与 `model.params` 完全一致；
 - 提供 state matrix，并采用受支持的布局；
-- 频率参数声明为 `real`，受约束的物理参数显式声明 fpgen domain。
+- 频率参数声明为 `real`，受约束的物理参数显式声明 qpsgen domain。
 
-模型文件可以使用 `fpgen.__all__` 导出的名称构造动力学，但不得导入
-`fpgen.covariance`、`fpgen.numerical` 等内部模块。
+模型文件可以使用 `qpsgen.__all__` 导出的名称构造动力学，但不得导入
+`qpsgen.covariance`、`qpsgen.numerical` 等内部模块。
 
 ## Adapter 边界
 
-solver、postprocessor 与测试统一使用 `FPGenDynamicsAdapter`，原始
+solver、postprocessor 与测试统一使用 `QPSGenDynamicsAdapter`，原始
 `CovarianceDynamics` 对象为私有实现。Adapter 负责运行时与布局校验、参数顺序、
 NumPy 编译函数、精确方向导数、高精度调用、线性约化搜索、符号坐标以及 provenance。
 
-`qphase_cam.core.fpgen` 以外的代码不得访问 `_dynamics`。约化 plan 与
+`qphase_cam.core.qpsgen` 以外的代码不得访问 `_dynamics`。约化 plan 与
 materialized reduction 可以越过 adapter 边界，因为 `qphase_cam.core.reduction`
 需要读取其公开的数学字段。
 
@@ -57,14 +57,14 @@ fraction-free `materialize()`。每个候选提供稳定、可序列化的 `char
 
 ## 升级流程
 
-fpgen 公共 API 变化时，按以下顺序处理：
+qpsgen 公共 API 变化时，按以下顺序处理：
 
-1. 先更新 fpgen 包版本及相应 schema/API 版本常量。
-2. 针对该 fpgen revision 更新并运行
-   `tests/qphase_cam/test_fpgen_contract.py`；无法解释的失败会阻止接入。
-3. 运行 `uv run python tools/generate_fpgen_api_snapshot.py`，检查
-   `reports/fpgen_api_snapshot.md` 中的 revision、签名和字段变化。
-4. 先更新 `FPGenDynamicsAdapter`，再更新本契约文档；solver/postprocessor 仍只能
+1. 先更新 qpsgen 包版本及相应 schema/API 版本常量。
+2. 针对该 qpsgen revision 更新并运行
+   `tests/qphase_cam/test_qpsgen_contract.py`；无法解释的失败会阻止接入。
+3. 运行 `uv run python tools/generate_qpsgen_api_snapshot.py`，检查
+   `reports/qpsgen_api_snapshot.md` 中的 revision、签名和字段变化。
+4. 先更新 `QPSGenDynamicsAdapter`，再更新本契约文档；solver/postprocessor 仍只能
    使用 adapter。
 5. 运行 `uv run pytest tests/qphase_cam` 完成验收。
 

@@ -12,12 +12,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import sympy as sp
-from fpgen import (
-    LindbladChannel,
-    MasterEquation,
-    boson_modes,
-    derive_kramers_moyal,
-)
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.protocols import ResultProtocol
@@ -26,7 +20,7 @@ from qphase_cam.bifurcation_result import (
     CAMBifurcationResult,
     CAMBifurcationScanResult,
 )
-from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.core.reduction import (
     CondensedScalarReduction,
     ReductionDiagnostics,
@@ -68,6 +62,12 @@ from qphase_cam.solver.bifurcation_target import (
     EquilibriumMultiplicityConfig,
 )
 from qphase_cam.state import CAMBifurcationCandidate, CAMBifurcationOutput
+from qpsgen import (
+    LindbladChannel,
+    MasterEquation,
+    boson_modes,
+    derive_kramers_moyal,
+)
 
 from models.vdp_2mode import VDP2ModeModel
 
@@ -87,7 +87,7 @@ class TwoModeFoldModel:
 
     @classmethod
     @lru_cache(maxsize=1)
-    def cam_fpgen_dynamics(cls):
+    def cam_qpsgen_dynamics(cls):
         a, b = boson_modes("a", "b")
         gamma, nonlinear_gain, kappa = sp.symbols("gamma Gamma kappa", real=True)
         master = MasterEquation(
@@ -216,7 +216,7 @@ def test_fraction_free_solver_finds_known_physical_double_root():
     }
 
 
-def test_reduction_strategy_exposes_fpgen_work_budgets():
+def test_reduction_strategy_exposes_qpsgen_work_budgets():
     config = ReductionStrategyConfig(
         partition_limit=12,
         materialization_limit=4,
@@ -240,7 +240,7 @@ def test_reduction_search_reports_budget_limited_coverage():
 
 def test_reduction_structure_is_cached_between_fixed_parameter_cases():
     solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
-    adapter = FPGenDynamicsAdapter.from_model(TwoModeFoldModel())
+    adapter = QPSGenDynamicsAdapter.from_model(TwoModeFoldModel())
     first_reductions, first = solver._select_reductions(adapter)
     adapter.model.params = {**adapter.model.params, "kappa": 2.0}
     second_reductions, second = solver._select_reductions(adapter)
@@ -370,7 +370,7 @@ def test_pair_hopping_seed_scale_tracks_inverse_nonlinearity():
 
 def test_condensed_reduction_verifies_known_fold_at_high_precision():
     model = TwoModeFoldModel()
-    adapter = FPGenDynamicsAdapter.from_model(model)
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     plan = adapter.linear_reduction(
         candidate=adapter.search_linear_reductions(retained_dimension=1).candidates[0]
     )
@@ -635,7 +635,7 @@ def test_stochastic_validity_estimates_additive_cubic_crossover(monkeypatch, tmp
             return np.asarray([[1.0]])
 
     monkeypatch.setattr(
-        "qphase_cam.postprocessor.stochastic_validity.FPGenDynamicsAdapter.from_model",
+        "qphase_cam.postprocessor.stochastic_validity.QPSGenDynamicsAdapter.from_model",
         lambda model: Adapter(),
     )
     branches = CAMBifurcationBranchTable(
@@ -707,7 +707,7 @@ def test_stochastic_validity_accepts_empty_candidate_table(monkeypatch, tmp_path
         params = {"mu": 0.0}
 
     monkeypatch.setattr(
-        "qphase_cam.postprocessor.stochastic_validity.FPGenDynamicsAdapter.from_model",
+        "qphase_cam.postprocessor.stochastic_validity.QPSGenDynamicsAdapter.from_model",
         lambda model: Adapter(),
     )
     result = CAMBifurcationResult(
@@ -789,7 +789,7 @@ def test_stochastic_validity_accepts_empty_candidate_table(monkeypatch, tmp_path
 
 def _fold_condensed_reduction() -> CondensedScalarReduction:
     model = TwoModeFoldModel()
-    adapter = FPGenDynamicsAdapter.from_model(model)
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     plan = adapter.linear_reduction(
         candidate=adapter.search_linear_reductions(retained_dimension=1).candidates[0]
     )
@@ -1375,7 +1375,7 @@ def test_cases_csv_exposes_truncation_consumer_and_materialization_failures(
     output = solver.solve(model, NumpyBackend())
     result = Engine._pack_bifurcation(output, model)
     result.meta.update(output.metadata)
-    # inject the fpgen reduction-contract failure fields (new contract:
+    # inject the qpsgen reduction-contract failure fields (new contract:
     # materialization failures are reported with chart_id/error, outside
     # rejected_reason_counts)
     search = dict(result.meta["reduction_search"])

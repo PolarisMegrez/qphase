@@ -87,10 +87,10 @@ class KerrFull3ModeModel(Kerr3ModeModel):
 
     @classmethod
     @lru_cache(maxsize=1)
-    def cam_fpgen_dynamics(cls) -> Any:
+    def cam_qpsgen_dynamics(cls) -> Any:
         """Return exact factorized normal-moment dynamics for bifurcation work."""
         import sympy as sp
-        from fpgen import (
+        from qpsgen import (
             LindbladChannel,
             MasterEquation,
             boson_modes,

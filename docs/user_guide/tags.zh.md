@@ -150,7 +150,7 @@ qphase occurrence retention <session-id> <artifact-id> pinned [--job NAME]
 
 ```bash
 qphase session list --tag task:scan --tag-without task:wip \
-    --tag-any method:cam --tag-any method:fpgen \
+    --tag-any method:cam --tag-any method:qpsgen \
     --tag-descendant purpose:paper --tag-namespace model \
     --facet status=completed --range start_time=2026-08-01.. \
     --lifecycle active --retention evidence \

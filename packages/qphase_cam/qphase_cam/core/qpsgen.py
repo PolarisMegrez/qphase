@@ -1,4 +1,4 @@
-"""Validated bridge from fpgen symbolic dynamics to CAM numerical code."""
+"""Validated bridge from qpsgen symbolic dynamics to CAM numerical code."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from qphase_cam.errors import BifurcationCapabilityError, FPGenCompatibilityError
+from qphase_cam.errors import BifurcationCapabilityError, QPSGenCompatibilityError
 
-SUPPORTED_FPGEN_SERIES = (0, 5)
+SUPPORTED_QPSGEN_SERIES = (0, 5)
 SUPPORTED_MODEL_SCHEMAS = frozenset({"2.0"})
 SUPPORTED_MOMENT_API = "1.0"
 SUPPORTED_REDUCTION_API = "1.1"
@@ -22,7 +22,7 @@ SUPPORTED_STATE_LAYOUTS = frozenset(
 )
 
 
-class FPGenReductionSearchProtocol(Protocol):
+class QPSGenReductionSearchProtocol(Protocol):
     """Narrow reduction-search surface consumed by qphase_cam."""
 
     candidates: tuple[Any, ...]
@@ -31,7 +31,7 @@ class FPGenReductionSearchProtocol(Protocol):
     def manifest(self) -> dict[str, Any]: ...
 
 
-class FPGenLinearReductionProtocol(Protocol):
+class QPSGenLinearReductionProtocol(Protocol):
     """Narrow linear-reduction plan consumed by qphase_cam."""
 
     retained_symbols: tuple[Any, ...]
@@ -39,8 +39,8 @@ class FPGenLinearReductionProtocol(Protocol):
     def materialize(self, *, method: str = "fraction_free") -> Any: ...
 
 
-class FPGenCovarianceDynamicsProtocol(Protocol):
-    """Reviewed fpgen public surface hidden behind the CAM adapter."""
+class QPSGenCovarianceDynamicsProtocol(Protocol):
+    """Reviewed qpsgen public surface hidden behind the CAM adapter."""
 
     coordinates: tuple[Any, ...]
     parameter_spec: tuple[Any, ...]
@@ -61,11 +61,11 @@ class FPGenCovarianceDynamicsProtocol(Protocol):
 
     def search_linear_reductions(
         self, **kwargs: Any
-    ) -> FPGenReductionSearchProtocol: ...
+    ) -> QPSGenReductionSearchProtocol: ...
 
     def linear_reduce(
         self, *, candidate: Any = None, order_parameters: Any = None
-    ) -> FPGenLinearReductionProtocol: ...
+    ) -> QPSGenLinearReductionProtocol: ...
 
 
 def _version_series(value: str) -> tuple[int, int]:
@@ -73,34 +73,36 @@ def _version_series(value: str) -> tuple[int, int]:
         major, minor, *_ = value.split(".")
         return int(major), int(minor)
     except (TypeError, ValueError) as exc:
-        raise FPGenCompatibilityError(f"cannot parse fpgen version {value!r}") from exc
+        raise QPSGenCompatibilityError(
+            f"cannot parse qpsgen version {value!r}"
+        ) from exc
 
 
-def validate_fpgen_runtime() -> None:
-    """Reject fpgen releases outside the reviewed public API contract."""
-    import fpgen
+def validate_qpsgen_runtime() -> None:
+    """Reject qpsgen releases outside the reviewed public API contract."""
+    import qpsgen
 
-    if _version_series(fpgen.__version__) != SUPPORTED_FPGEN_SERIES:
-        raise FPGenCompatibilityError(
-            "qphase_cam requires the reviewed fpgen 0.5.x API; "
-            f"found {fpgen.__version__}"
+    if _version_series(qpsgen.__version__) != SUPPORTED_QPSGEN_SERIES:
+        raise QPSGenCompatibilityError(
+            "qphase_cam requires the reviewed qpsgen 0.5.x API; "
+            f"found {qpsgen.__version__}"
         )
-    if fpgen.MODEL_SCHEMA_VERSION not in SUPPORTED_MODEL_SCHEMAS:
-        raise FPGenCompatibilityError(
-            f"unsupported fpgen model schema {fpgen.MODEL_SCHEMA_VERSION!r}"
+    if qpsgen.MODEL_SCHEMA_VERSION not in SUPPORTED_MODEL_SCHEMAS:
+        raise QPSGenCompatibilityError(
+            f"unsupported qpsgen model schema {qpsgen.MODEL_SCHEMA_VERSION!r}"
         )
-    if fpgen.MOMENT_DYNAMICS_API_VERSION != SUPPORTED_MOMENT_API:
-        raise FPGenCompatibilityError(
-            f"unsupported fpgen moment API {fpgen.MOMENT_DYNAMICS_API_VERSION!r}"
+    if qpsgen.MOMENT_DYNAMICS_API_VERSION != SUPPORTED_MOMENT_API:
+        raise QPSGenCompatibilityError(
+            f"unsupported qpsgen moment API {qpsgen.MOMENT_DYNAMICS_API_VERSION!r}"
         )
-    if fpgen.REDUCTION_API_VERSION != SUPPORTED_REDUCTION_API:
-        raise FPGenCompatibilityError(
-            f"unsupported fpgen reduction API {fpgen.REDUCTION_API_VERSION!r}"
+    if qpsgen.REDUCTION_API_VERSION != SUPPORTED_REDUCTION_API:
+        raise QPSGenCompatibilityError(
+            f"unsupported qpsgen reduction API {qpsgen.REDUCTION_API_VERSION!r}"
         )
 
 
 def canonical_state_ids(n_modes: int) -> tuple[str, ...]:
-    """Return fpgen IDs in QPhase's canonical Hermitian coordinate order."""
+    """Return qpsgen IDs in QPhase's canonical Hermitian coordinate order."""
     diagonal = tuple(f"r_diag_{i}" for i in range(n_modes))
     pairs = tuple((i, j) for i in range(n_modes) for j in range(i + 1, n_modes))
     real = tuple(f"r_re_{i}_{j}" for i, j in pairs)
@@ -109,27 +111,27 @@ def canonical_state_ids(n_modes: int) -> tuple[str, ...]:
 
 
 @dataclass(frozen=True)
-class FPGenDynamicsAdapter:
-    """A checked fpgen dynamics object bound to one CAM model instance."""
+class QPSGenDynamicsAdapter:
+    """A checked qpsgen dynamics object bound to one CAM model instance."""
 
     model: Any
-    _dynamics: FPGenCovarianceDynamicsProtocol
+    _dynamics: QPSGenCovarianceDynamicsProtocol
 
     @classmethod
-    def from_model(cls, model: Any) -> FPGenDynamicsAdapter:
-        validate_fpgen_runtime()
-        from fpgen import CovarianceDynamics
+    def from_model(cls, model: Any) -> QPSGenDynamicsAdapter:
+        validate_qpsgen_runtime()
+        from qpsgen import CovarianceDynamics
 
-        provider = getattr(model, "cam_fpgen_dynamics", None)
+        provider = getattr(model, "cam_qpsgen_dynamics", None)
         if not callable(provider):
             raise BifurcationCapabilityError(
                 f"model {getattr(model, 'name', type(model).__name__)!r} does "
-                "not provide cam_fpgen_dynamics()"
+                "not provide cam_qpsgen_dynamics()"
             )
         dynamics = provider()
         if not isinstance(dynamics, CovarianceDynamics):
             raise BifurcationCapabilityError(
-                "cam_fpgen_dynamics() must return fpgen.CovarianceDynamics"
+                "cam_qpsgen_dynamics() must return qpsgen.CovarianceDynamics"
             )
         adapter = cls(model=model, _dynamics=dynamics)
         adapter._validate_contract()
@@ -171,10 +173,10 @@ class FPGenDynamicsAdapter:
             parameter_directions=parameter_directions,
         )
 
-    def search_linear_reductions(self, **kwargs: Any) -> FPGenReductionSearchProtocol:
+    def search_linear_reductions(self, **kwargs: Any) -> QPSGenReductionSearchProtocol:
         return self._dynamics.search_linear_reductions(**kwargs)
 
-    def linear_reduction(self, *, candidate: Any) -> FPGenLinearReductionProtocol:
+    def linear_reduction(self, *, candidate: Any) -> QPSGenLinearReductionProtocol:
         return self._dynamics.linear_reduce(candidate=candidate)
 
     def materialized_linear_reduction(self, *, candidate: Any) -> Any:
@@ -212,7 +214,7 @@ class FPGenDynamicsAdapter:
     def state_matrix_shape(self) -> tuple[int, int]:
         shape = self.spec.state_matrix_shape
         if shape is None:
-            raise FPGenCompatibilityError("fpgen model has no state matrix")
+            raise QPSGenCompatibilityError("qpsgen model has no state matrix")
         return shape
 
     @property
@@ -224,7 +226,7 @@ class FPGenDynamicsAdapter:
         missing = [name for name in self.parameter_names if name not in source]
         if missing:
             raise BifurcationCapabilityError(
-                f"missing fpgen parameters for {self.model.name}: {missing}"
+                f"missing qpsgen parameters for {self.model.name}: {missing}"
             )
         return np.asarray([source[name] for name in self.parameter_names], dtype=float)
 
@@ -294,7 +296,7 @@ class FPGenDynamicsAdapter:
             index = self.parameter_names.index(name)
         except ValueError as exc:
             raise BifurcationCapabilityError(
-                f"unknown fpgen parameter {name!r}"
+                f"unknown qpsgen parameter {name!r}"
             ) from exc
         direction = np.zeros(len(self.parameter_names), dtype=float)
         direction[index] = float(scale)
@@ -335,12 +337,12 @@ class FPGenDynamicsAdapter:
         )
 
     @cached_property
-    def derivative_evaluator(self) -> FPGenDerivativeEvaluator:
-        return FPGenDerivativeEvaluator(self)
+    def derivative_evaluator(self) -> QPSGenDerivativeEvaluator:
+        return QPSGenDerivativeEvaluator(self)
 
     def provenance(self) -> dict[str, Any]:
         return {
-            "fpgen_version": self._fpgen_version(),
+            "qpsgen_version": self._qpsgen_version(),
             "model_schema": self.spec.schema_version,
             "moment_api": SUPPORTED_MOMENT_API,
             "reduction_api": SUPPORTED_REDUCTION_API,
@@ -379,43 +381,45 @@ class FPGenDynamicsAdapter:
     def _validate_contract(self) -> None:
         actual = tuple(item.id for item in self.spec.state)
         if not self.spec.supports("state_matrix"):
-            raise FPGenCompatibilityError("fpgen model has no state-matrix capability")
+            raise QPSGenCompatibilityError(
+                "qpsgen model has no state-matrix capability"
+            )
         if self.state_layout not in SUPPORTED_STATE_LAYOUTS:
-            raise FPGenCompatibilityError(
-                f"unsupported fpgen state layout {self.state_layout!r}"
+            raise QPSGenCompatibilityError(
+                f"unsupported qpsgen state layout {self.state_layout!r}"
             )
         if tuple(item.index for item in self.spec.state) != tuple(range(len(actual))):
-            raise FPGenCompatibilityError(
+            raise QPSGenCompatibilityError(
                 f"model {self.model.name!r} has non-contiguous state indices"
             )
         if self.moment_layout == "normal":
             expected = canonical_state_ids(int(self.model.n_modes))
             if actual != expected:
-                raise FPGenCompatibilityError(
+                raise QPSGenCompatibilityError(
                     f"model {self.model.name!r} state layout mismatch: "
                     f"expected {expected}, found {actual}"
                 )
         parameter_names = tuple(item.name for item in self.spec.parameters)
         if len(set(parameter_names)) != len(parameter_names):
-            raise FPGenCompatibilityError("fpgen parameter names are not unique")
+            raise QPSGenCompatibilityError("qpsgen parameter names are not unique")
         model_names = set(self.model.params)
         if set(parameter_names) != model_names:
-            raise FPGenCompatibilityError(
-                f"model {self.model.name!r} parameter mismatch: fpgen has "
+            raise QPSGenCompatibilityError(
+                f"model {self.model.name!r} parameter mismatch: qpsgen has "
                 f"{sorted(parameter_names)}, model has {sorted(model_names)}"
             )
 
     @staticmethod
-    def _fpgen_version() -> str:
-        import fpgen
+    def _qpsgen_version() -> str:
+        import qpsgen
 
-        return str(fpgen.__version__)
+        return str(qpsgen.__version__)
 
 
-class FPGenDerivativeEvaluator:
-    """Compile exact fpgen directional contractions on demand."""
+class QPSGenDerivativeEvaluator:
+    """Compile exact qpsgen directional contractions on demand."""
 
-    def __init__(self, adapter: FPGenDynamicsAdapter) -> None:
+    def __init__(self, adapter: QPSGenDynamicsAdapter) -> None:
         self.adapter = adapter
         self._functions: dict[tuple[int, int, str], Any] = {}
 

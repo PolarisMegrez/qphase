@@ -1,11 +1,11 @@
-"""fpgen-backed collective-loss VDP model contracts."""
+"""qpsgen-backed collective-loss VDP model contracts."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 from pydantic import ValidationError
-from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 
 from models.collective_vdp_2mode import CollectiveVDP2ModeModel
 
@@ -23,8 +23,8 @@ def model() -> CollectiveVDP2ModeModel:
     )
 
 
-def test_fpgen_contract_and_regular_reduction(model):
-    adapter = FPGenDynamicsAdapter.from_model(model)
+def test_qpsgen_contract_and_regular_reduction(model):
+    adapter = QPSGenDynamicsAdapter.from_model(model)
 
     assert adapter.state_size == 4
     assert adapter.moment_layout == "normal"
@@ -43,8 +43,8 @@ def test_fpgen_contract_and_regular_reduction(model):
     assert {item.reduced_degree for item in search.candidates} == {4}
 
 
-def test_fast_paths_match_fpgen(model):
-    adapter = FPGenDynamicsAdapter.from_model(model)
+def test_fast_paths_match_qpsgen(model):
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     vector = np.asarray([1.3, 0.7, 0.2, -0.1])
 
     np.testing.assert_allclose(

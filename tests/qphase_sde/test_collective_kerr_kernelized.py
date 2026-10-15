@@ -1,4 +1,4 @@
-"""GPU contracts for the fpgen-generated collective Kerr kernels."""
+"""GPU contracts for the qpsgen-generated collective Kerr kernels."""
 
 from __future__ import annotations
 
@@ -87,9 +87,9 @@ def test_cayley_kernels_are_registered(model):
     assert model.supports_fused_chunk("cayley_maruyama", backend)
 
 
-def test_generated_source_records_fpgen_fingerprint(model):
+def test_generated_source_records_qpsgen_fingerprint(model):
     provider = tuple(model.kernel_plugins())[0]
-    fingerprint = model.cam_fpgen_dynamics().to_model_spec(name=model.name).fingerprint
+    fingerprint = model.cam_qpsgen_dynamics().to_model_spec(name=model.name).fingerprint
 
     assert fingerprint in provider._generated[0]
     assert fingerprint in provider._generated[1]
@@ -214,7 +214,7 @@ def _chunk_worker(model_name: str, queue) -> None:
     ),
 )
 @pytest.mark.parametrize("dtype_name", ("complex64", "complex128"))
-def test_fused_step_matches_fpgen_generic_path(model_name, dtype_name):
+def test_fused_step_matches_qpsgen_generic_path(model_name, dtype_name):
     context = multiprocessing.get_context("spawn")
     queue = context.Queue()
     process = context.Process(target=_step_worker, args=(model_name, dtype_name, queue))

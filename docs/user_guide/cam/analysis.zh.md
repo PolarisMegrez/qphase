@@ -49,7 +49,7 @@ axis 支持 `values`、`linspace` 与 `logspace`，并可选择 Cartesian 或 zi
 | `deflation` | 是 | NumPy | 必需 | 排斥已经找到的根；适合普通多初值搜索总是回到同一根的情况。 |
 | `batched_newton` | 提供多个初值时可以 | NumPy 或 CuPy | 必需 | 使用准备好的种子集合进行大规模参数扫描；默认只有单位阵初值，通常最多找到一个根。 |
 | `continuation` | 追踪一个 sheet | NumPy | 必需 | 从已知根开始进行伪弧长延拓并经过折叠；不负责自动寻找全部稳态。 |
-| `bifurcation` | 可变候选数 | NumPy | fpgen 精确动力学 | 联立搜索二至四重不动点，并分析相对于一个指定物理参数的状态 scaling。 |
+| `bifurcation` | 可变候选数 | NumPy | qpsgen 精确动力学 | 联立搜索二至四重不动点，并分析相对于一个指定物理参数的状态 scaling。 |
 
 模型还可以按照 CAM 规范坐标顺序实现 `cam_residual_vector` 和
 `cam_jacobian_vector`。这些可选回调用于避免 root 求解热点中的矩阵重建；未提供时，

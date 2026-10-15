@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import sympy as sp
-from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.core.reduction import CondensedScalarReduction
 
 from models.kerr_3mode import Kerr3ModeModel
@@ -20,7 +20,7 @@ def test_condensed_jets_match_explicit_vdp_reduced_dynamics():
         Gamma=0.0001,
         g=0.5,
     )
-    adapter = FPGenDynamicsAdapter.from_model(model)
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     candidate = adapter.search_linear_reductions(retained_dimension=1).candidates[0]
     plan = adapter.linear_reduction(candidate=candidate)
     materialized = plan.materialize()
@@ -76,7 +76,7 @@ def test_kerr_three_mode_condensed_reconstruction_solves_eliminated_block():
         g_ab=0.5,
         g_ac=0.3,
     )
-    adapter = FPGenDynamicsAdapter.from_model(model)
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     candidate = adapter.search_linear_reductions(retained_dimension=1).candidates[0]
     reduction = CondensedScalarReduction(
         adapter.linear_reduction(candidate=candidate),

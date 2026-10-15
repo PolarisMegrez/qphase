@@ -117,7 +117,7 @@ nav:
         - Output Formats: api/qphase_sde/output.md
     - CAM:
       - Overview: api/qphase_cam/index.md
-      - fpgen Contract: api/qphase_cam/fpgen_contract.md
+      - qpsgen Contract: api/qphase_cam/qpsgen_contract.md
   - Developer Guide:
     - Introduction: dev_guide/index.md
     - Architecture: dev_guide/architecture.md

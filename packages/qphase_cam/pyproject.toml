@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "qphase-cam"
 version = "0.1.0"
-description = "Workspace-only coherent-amplitude matrix engine for QPhase"
+description = "Coherent-amplitude matrix engine for QPhase"
 requires-python = ">=3.11"
 dependencies = [
-  "fpgen>=0.5.1,<0.6",
+  "qpsgen>=0.5.1,<0.6",
   "numpy>=1.24",
   "scipy>=1.10",
   "sympy>=1.12",

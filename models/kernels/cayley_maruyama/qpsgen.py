@@ -1,4 +1,4 @@
-"""fpgen-driven CuPy Cayley-Maruyama kernel generation."""
+"""qpsgen-driven CuPy Cayley-Maruyama kernel generation."""
 
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ from models.kernels.cupy_utils import (
     get_lru_buffer,
 )
 
-__all__ = ["FPGenCayleyCuPyKernel"]
+__all__ = ["QPSGenCayleyCuPyKernel"]
 
 _LAUNCH_REFERENCES: list[tuple[Any, ...]] = []
 
 _DEVICE_TEMPLATE = r"""
-// Model equations generated from fpgen fingerprint: $FINGERPRINT$
+// Model equations generated from qpsgen fingerprint: $FINGERPRINT$
 #define QP_N_MODES $N_MODES$
 
 static __device__ __forceinline__ $CT$ fg_make_$S$($T$ x, $T$ y) {
@@ -51,7 +51,7 @@ static __device__ __forceinline__ $T$ fg_abs2_$S$($CT$ value) {
     return value.x * value.x + value.y * value.y;
 }
 
-static __device__ __forceinline__ void advance_fpgen_$S$(
+static __device__ __forceinline__ void advance_qpsgen_$S$(
     $CT$* state,
     const $T$* noise,
     const $CT$* diffusion_factor,
@@ -143,28 +143,23 @@ $DRIFT_MATRIX$
 
 
 def _canonical_coordinate_code(n_modes: int, coordinate_count: int) -> str:
-    pairs = tuple(
-        (i, j) for i in range(n_modes) for j in range(i + 1, n_modes)
-    )
+    pairs = tuple((i, j) for i in range(n_modes) for j in range(i + 1, n_modes))
     lines = [
-        f"    $T$ c{mode} = fg_abs2_$S$(state[{mode}]);"
-        for mode in range(n_modes)
+        f"    $T$ c{mode} = fg_abs2_$S$(state[{mode}]);" for mode in range(n_modes)
     ]
     for offset, (i, j) in enumerate(pairs, start=n_modes):
         lines.append(
             f"    $T$ c{offset} = state[{i}].x * state[{j}].x "
             f"+ state[{i}].y * state[{j}].y;"
         )
-    for offset, (i, j) in enumerate(
-        pairs, start=n_modes + len(pairs)
-    ):
+    for offset, (i, j) in enumerate(pairs, start=n_modes + len(pairs)):
         lines.append(
             f"    $T$ c{offset} = state[{i}].y * state[{j}].x "
             f"- state[{i}].x * state[{j}].y;"
         )
     if len(lines) != coordinate_count:
         raise ValueError(
-            "fpgen coordinate count does not match the canonical Hermitian layout"
+            "qpsgen coordinate count does not match the canonical Hermitian layout"
         )
     return "\n".join(lines)
 
@@ -176,20 +171,20 @@ def _cuda_expression(expression: Any) -> str:
     return source.replace("M_SQRT2", "sqrt(($T$)2.0)")
 
 
-def _fpgen_device_source(model: Any) -> tuple[str, tuple[str, ...]]:
+def _qpsgen_device_source(model: Any) -> tuple[str, tuple[str, ...]]:
     import sympy as sp
 
-    dynamics = model.cam_fpgen_dynamics()
+    dynamics = model.cam_qpsgen_dynamics()
     n_modes = int(model.n_modes)
     hamiltonian = sp.Matrix(dynamics.hamiltonian)
     diffusion = sp.Matrix(dynamics.diffusion)
     if hamiltonian.shape != (n_modes, n_modes):
-        raise ValueError("fpgen Hamiltonian shape does not match the model")
+        raise ValueError("qpsgen Hamiltonian shape does not match the model")
     coordinate_symbols = tuple(dynamics.coordinates)
     coordinate_set = set(coordinate_symbols)
     if any(expression.free_symbols & coordinate_set for expression in diffusion):
         raise ValueError(
-            "fused fpgen Cayley chunks currently require state-independent diffusion"
+            "fused qpsgen Cayley chunks currently require state-independent diffusion"
         )
 
     parameter_names = tuple(item.symbol.name for item in dynamics.parameter_spec)
@@ -211,8 +206,7 @@ def _fpgen_device_source(model: Any) -> tuple[str, tuple[str, ...]]:
             real = _cuda_expression(sp.re(value))
             imag = _cuda_expression(sp.im(value))
             assignments.append(
-                "    drift_matrix"
-                f"[{row}][{column}] = fg_make_$S$(({real}), ({imag}));"
+                f"    drift_matrix[{row}][{column}] = fg_make_$S$(({real}), ({imag}));"
             )
 
     advance_parameters = "".join(
@@ -240,8 +234,9 @@ def _step_source(
     )
     parameter_values = "".join(f"        p{index}[i],\n" for index in range(n_params))
     return (
-        device_source
-        + r"""
+        (
+            device_source
+            + r"""
 extern "C" __global__
 void __$KERNEL_NAME$_func__(
     const $CT$* __restrict__ y,
@@ -260,7 +255,7 @@ $PARAMETER_DECLARATIONS$
         state[mode] = y[i * QP_N_MODES + mode];
         previous[mode] = state[mode];
     }
-    advance_fpgen_$S$(
+    advance_qpsgen_$S$(
         state,
         &dW[i * (2 * QP_N_MODES)],
         &diffusion_factor[i * QP_N_MODES * QP_N_MODES],
@@ -272,9 +267,11 @@ $PARAMETER_VALUES$
     }
 }
 """
-    ).replace("$KERNEL_NAME$", kernel_name).replace(
-        "$PARAMETER_DECLARATIONS$", parameter_declarations
-    ).replace("$PARAMETER_VALUES$", parameter_values)
+        )
+        .replace("$KERNEL_NAME$", kernel_name)
+        .replace("$PARAMETER_DECLARATIONS$", parameter_declarations)
+        .replace("$PARAMETER_VALUES$", parameter_values)
+    )
 
 
 def _chunk_source(
@@ -288,8 +285,9 @@ def _chunk_source(
     )
     parameter_values = "".join(f"            q{index},\n" for index in range(n_params))
     return (
-        device_source
-        + r"""
+        (
+            device_source
+            + r"""
 extern "C" __global__
 void __$KERNEL_NAME$_func__(
     const $CT$* __restrict__ y,
@@ -316,7 +314,7 @@ $PARAMETER_LOCALS$
     int save_cursor = 0;
     for (int step = 0; step < n_steps; ++step) {
         int noise_base = (step * n + i) * (2 * QP_N_MODES);
-        advance_fpgen_$S$(
+        advance_qpsgen_$S$(
             state,
             &dW[noise_base],
             &diffusion_factor[i * QP_N_MODES * QP_N_MODES],
@@ -336,10 +334,11 @@ $PARAMETER_VALUES$
     }
 }
 """
-    ).replace("$KERNEL_NAME$", kernel_name).replace(
-        "$PARAMETER_DECLARATIONS$", parameter_declarations
-    ).replace("$PARAMETER_LOCALS$", parameter_locals).replace(
-        "$PARAMETER_VALUES$", parameter_values
+        )
+        .replace("$KERNEL_NAME$", kernel_name)
+        .replace("$PARAMETER_DECLARATIONS$", parameter_declarations)
+        .replace("$PARAMETER_LOCALS$", parameter_locals)
+        .replace("$PARAMETER_VALUES$", parameter_values)
     )
 
 
@@ -353,8 +352,8 @@ def _typed_source(source: str, dtype: Any, operation: str) -> tuple[str, str]:
     return typed, "complex<double>"
 
 
-class FPGenCayleyCuPyKernel(ModelKernelPlugin):
-    """Generate fused Cayley kernels from one fpgen-backed model."""
+class QPSGenCayleyCuPyKernel(ModelKernelPlugin):
+    """Generate fused Cayley kernels from one qpsgen-backed model."""
 
     scheme = "cayley_maruyama"
     backend_name = "cupy"
@@ -370,18 +369,16 @@ class FPGenCayleyCuPyKernel(ModelKernelPlugin):
         self._chunk_buffer_keys: list[tuple[int, int, int, Any]] = []
         super().__init__()
         if int(model.n_modes) != self.mode_count:
-            raise ValueError("kernel mode count does not match its fpgen model")
+            raise ValueError("kernel mode count does not match its qpsgen model")
 
     @cached_property
     def _generated(self) -> tuple[str, str, tuple[str, ...]]:
-        device, parameter_names = _fpgen_device_source(self._model)
+        device, parameter_names = _qpsgen_device_source(self._model)
         step_name = f"{self.kernel_slug}_cayley_step"
         chunk_name = f"{self.kernel_slug}_cayley_chunk"
         return (
             _step_source(step_name, device, self.mode_count, len(parameter_names)),
-            _chunk_source(
-                chunk_name, device, self.mode_count, len(parameter_names)
-            ),
+            _chunk_source(chunk_name, device, self.mode_count, len(parameter_names)),
             parameter_names,
         )
 
@@ -393,9 +390,7 @@ class FPGenCayleyCuPyKernel(ModelKernelPlugin):
     def _parameter_arrays(
         self, params: dict[str, Any], n: int, dtype: Any
     ) -> list[Any]:
-        return [
-            broadcast_param(params[name], n, dtype) for name in self._generated[2]
-        ]
+        return [broadcast_param(params[name], n, dtype) for name in self._generated[2]]
 
     def _diffusion_factor(self, y: Any, params: dict[str, Any]) -> Any:
         import cupy as cp
@@ -404,7 +399,8 @@ class FPGenCayleyCuPyKernel(ModelKernelPlugin):
         expected = (int(y.shape[0]), self.mode_count, self.mode_count)
         if tuple(factor.shape) != expected:
             raise ValueError(
-                f"fpgen diffusion factor must have shape {expected}; got {factor.shape}"
+                "qpsgen diffusion factor must have shape "
+                f"{expected}; got {factor.shape}"
             )
         return factor
 
@@ -514,9 +510,7 @@ class FPGenCayleyCuPyKernel(ModelKernelPlugin):
             key,
             lambda: (
                 cp.empty_like(y),
-                cp.empty(
-                    (n, max(1, n_saves), n_record_modes), dtype=y.dtype
-                ),
+                cp.empty((n, max(1, n_saves), n_record_modes), dtype=y.dtype),
             ),
         )
         threads = 64
@@ -539,7 +533,5 @@ class FPGenCayleyCuPyKernel(ModelKernelPlugin):
                 saved_storage,
             ),
         )
-        self._retain_launch(
-            d_w, diffusion_factor, offsets, modes_device, *parameters
-        )
+        self._retain_launch(d_w, diffusion_factor, offsets, modes_device, *parameters)
         return final_state, saved_storage[:, :n_saves, :]

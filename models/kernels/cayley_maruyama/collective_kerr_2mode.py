@@ -1,12 +1,12 @@
-"""fpgen-generated Cayley-Maruyama kernel for the collective Kerr dimer."""
+"""qpsgen-generated Cayley-Maruyama kernel for the collective Kerr dimer."""
 
-from .fpgen import FPGenCayleyCuPyKernel
+from .qpsgen import QPSGenCayleyCuPyKernel
 
 __all__ = ["CollectiveKerr2ModeCayleyCuPyKernel"]
 
 
-class CollectiveKerr2ModeCayleyCuPyKernel(FPGenCayleyCuPyKernel):
-    """CuPy fused provider generated from the collective Kerr fpgen model."""
+class CollectiveKerr2ModeCayleyCuPyKernel(QPSGenCayleyCuPyKernel):
+    """CuPy fused provider generated from the collective Kerr qpsgen model."""
 
     kernel_slug = "collective_kerr_2mode"
     mode_count = 2

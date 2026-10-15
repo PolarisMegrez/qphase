@@ -14,7 +14,7 @@ from scipy.optimize import least_squares, root
 
 from qphase_cam.core.bordered import BorderedMultiplicitySystem
 from qphase_cam.core.coordinates import matrix_to_vector
-from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.core.reduction import (
     CondensedScalarReduction,
     FractionFreeScalarReduction,
@@ -217,7 +217,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     ) -> CAMBifurcationOutput:
         if str(backend.backend_name()).lower() != "numpy":
             raise ValueError("bifurcation solver currently requires numpy")
-        adapter = FPGenDynamicsAdapter.from_model(model)
+        adapter = QPSGenDynamicsAdapter.from_model(model)
         self._validate_controls(adapter)
         reporter = context.progress if context is not None else None
         if self.strategy.mode == "full":
@@ -402,7 +402,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             "singular_coverage": "not_covered_by_regular_reduction",
             "reduction_search": reduction_search,
             "compile_cache_hit": bool(reduction_search.get("compile_cache_hit", False)),
-            "fpgen": adapter.provenance(),
+            "qpsgen": adapter.provenance(),
             "closure": adapter.closure_provenance(),
             "state_scale_source": self._model_state_scales(adapter)[1],
             "perturbation_parameter": self.config.perturbation.parameter,
@@ -481,7 +481,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
 
     def _solve_full(
         self,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         *,
         data: Any | None,
         reporter: Any | None,
@@ -616,7 +616,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                 "refinement_start_count": len(seeds),
             },
             "singular_coverage": "local_bordered_search",
-            "fpgen": adapter.provenance(),
+            "qpsgen": adapter.provenance(),
             "closure": adapter.closure_provenance(),
             "state_scale_source": self._model_state_scales(adapter)[1],
             "perturbation_parameter": self.config.perturbation.parameter,
@@ -649,7 +649,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     def _upstream_seeds(
         self,
         system: BorderedMultiplicitySystem,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         data: Any | None,
         stats: SeedGenerationStats | None = None,
     ) -> list[np.ndarray]:
@@ -713,7 +713,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     def _discover_full_seeds(
         self,
         system: BorderedMultiplicitySystem,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         stats: SeedGenerationStats | None = None,
     ) -> list[np.ndarray]:
         axes = [
@@ -768,7 +768,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     def _full_candidate(
         self,
         system: BorderedMultiplicitySystem,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         value: np.ndarray,
         cost: float,
         optimizer_success: bool,
@@ -889,7 +889,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     def _full_bounds(
         self,
         system: BorderedMultiplicitySystem,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
     ) -> tuple[np.ndarray, np.ndarray]:
         n = system.n_state
         lower_state = np.full(n, -np.inf)
@@ -911,7 +911,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         return lower, upper
 
     def _full_scale(
-        self, system: BorderedMultiplicitySystem, adapter: FPGenDynamicsAdapter
+        self, system: BorderedMultiplicitySystem, adapter: QPSGenDynamicsAdapter
     ) -> np.ndarray:
         n = system.n_state
         state_scales, _ = self._model_state_scales(adapter)
@@ -926,7 +926,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             ]
         )
 
-    def _state_guesses(self, adapter: FPGenDynamicsAdapter) -> list[np.ndarray]:
+    def _state_guesses(self, adapter: QPSGenDynamicsAdapter) -> list[np.ndarray]:
         n_state = adapter.state_size
         state_scales, _ = self._model_state_scales(adapter)
         scale = float(np.max(state_scales))
@@ -943,7 +943,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             for name, value in controls.items()
         )
 
-    def _validate_controls(self, adapter: FPGenDynamicsAdapter) -> None:
+    def _validate_controls(self, adapter: QPSGenDynamicsAdapter) -> None:
         unknown = set(self.config.controls) - set(adapter.parameter_names)
         if unknown:
             raise ValueError(
@@ -997,7 +997,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                 )
 
     def _select_reductions(
-        self, adapter: FPGenDynamicsAdapter
+        self, adapter: QPSGenDynamicsAdapter
     ) -> tuple[
         tuple[FractionFreeScalarReduction | CondensedScalarReduction, ...],
         dict[str, Any],
@@ -1068,7 +1068,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         manifest = search.manifest()
         manifest["consumer_error_count"] = len(errors)
         manifest["consumer_errors"] = tuple(errors[:3])
-        # fpgen reduction contract: the manifest carries
+        # qpsgen reduction contract: the manifest carries
         # ``materialization_failure_count`` and the search result carries
         # ``materialization_failures`` (entries with ``chart_id`` and
         # ``error``); ``rejected_reason_counts`` never contains
@@ -1097,7 +1097,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     def _bind_reductions(
         self,
         reductions: tuple[FractionFreeScalarReduction | CondensedScalarReduction, ...],
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
     ) -> tuple[FractionFreeScalarReduction | CondensedScalarReduction, ...]:
         """Bind runtime parameters without mutating cached structure templates."""
         state_scales, _ = self._model_state_scales(adapter)
@@ -1114,7 +1114,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
 
     @staticmethod
     def _model_state_scales(
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
     ) -> tuple[np.ndarray, str]:
         provider = getattr(adapter.model, "cam_bifurcation_scales", None)
         if not callable(provider):
@@ -1135,7 +1135,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     def _refine(
         self,
         reduction: FractionFreeScalarReduction | CondensedScalarReduction,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         starts: list[np.ndarray],
         *,
         reporter: Any | None,
@@ -1236,7 +1236,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     def _candidate(
         self,
         reduction: FractionFreeScalarReduction | CondensedScalarReduction,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         value: np.ndarray,
         cost: float,
         optimizer_success: bool,
@@ -1446,7 +1446,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
 
     def _state_is_physical(
         self,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         vector: np.ndarray,
         params: dict[str, Any],
     ) -> bool:
@@ -1467,7 +1467,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     def _reduced_start_prefilter_reason(
         self,
         reduction: FractionFreeScalarReduction | CondensedScalarReduction,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         start: np.ndarray,
     ) -> str | None:
         """Return the physical-prefilter rejection reason, or None if physical."""
@@ -1490,7 +1490,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     def _reduced_start_is_physical(
         self,
         reduction: FractionFreeScalarReduction | CondensedScalarReduction,
-        adapter: FPGenDynamicsAdapter,
+        adapter: QPSGenDynamicsAdapter,
         start: np.ndarray,
     ) -> bool:
         return self._reduced_start_prefilter_reason(reduction, adapter, start) is None

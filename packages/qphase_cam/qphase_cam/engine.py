@@ -16,7 +16,7 @@ from qphase_cam.bifurcation_result import (
     CAMBifurcationResult,
     CAMBifurcationScanResult,
 )
-from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.errors import BifurcationCapabilityError, SolutionCapacityError
 from qphase_cam.result import CAMResult
 from qphase_cam.state import CAMBifurcationOutput, CAMSolution
@@ -246,7 +246,7 @@ class Engine(EngineBase):
     def _pack_bifurcation(output: Any, model: Any) -> CAMBifurcationResult:
         candidates = list(output.candidates)
         try:
-            adapter = FPGenDynamicsAdapter.from_model(model)
+            adapter = QPSGenDynamicsAdapter.from_model(model)
         except BifurcationCapabilityError:
             adapter = None
         n_state = adapter.state_size if adapter is not None else int(model.n_modes) ** 2

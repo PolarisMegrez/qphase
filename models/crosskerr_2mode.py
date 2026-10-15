@@ -94,9 +94,7 @@ class CrossKerr2ModeModel(SDEModelPlugin):
         matrix[..., 1, 1] = omega_b + chi * (r_aa - 0.5) - 1j * gamma_b / 2.0
         return matrix
 
-    def cam_bogoliubov_interaction(
-        self, state: Any, params: dict[str, Any]
-    ) -> Any:
+    def cam_bogoliubov_interaction(self, state: Any, params: dict[str, Any]) -> Any:
         xp = get_xp(state)
         state = xp.asarray(state)
         chi = self.parameter(params, "chi", xp)
@@ -188,10 +186,10 @@ class CrossKerr2ModeModel(SDEModelPlugin):
 
     @classmethod
     @lru_cache(maxsize=1)
-    def cam_fpgen_dynamics(cls) -> Any:
-        """Return the exact fpgen normal-moment dynamics."""
+    def cam_qpsgen_dynamics(cls) -> Any:
+        """Return the exact qpsgen normal-moment dynamics."""
         import sympy as sp
-        from fpgen import (
+        from qpsgen import (
             LindbladChannel,
             MasterEquation,
             boson_modes,

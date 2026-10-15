@@ -450,12 +450,12 @@ def _print_elapsed(label, started, record):
 
 
 def test_enumerate_scalar_charts_kerr():
-    from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+    from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 
     from models.kerr_2mode import Kerr2ModeModel
 
     params = {name: 1.0 for name in Kerr2ModeModel.config_schema.model_fields}
-    adapter = FPGenDynamicsAdapter.from_model(Kerr2ModeModel(**params))
+    adapter = QPSGenDynamicsAdapter.from_model(Kerr2ModeModel(**params))
     coverage = enumerate_scalar_charts(adapter)
     chart_ids = {chart["chart_id"] for chart in coverage["scalar_charts"]}
     # All equation partitions are kept and addressed by chart_id.

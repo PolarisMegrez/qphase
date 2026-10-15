@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from qphase_cam.core.coordinates import matrix_to_vector
-from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 
 from models.crosskerr_2mode import CrossKerr2ModeModel
 from models.kerr_2mode import Kerr2ModeModel
@@ -94,8 +94,8 @@ def test_declared_solution_capacities():
     assert PairHopping2ModeModel.steady_state_capacity == 5
 
 
-def test_fpgen_dynamics_match_cam_vector_fast_paths(model):
-    adapter = FPGenDynamicsAdapter.from_model(model)
+def test_qpsgen_dynamics_match_cam_vector_fast_paths(model):
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     rng = np.random.default_rng(100 + model.n_modes)
     raw = rng.normal(size=(model.n_modes, model.n_modes)) + 1j * rng.normal(
         size=(model.n_modes, model.n_modes)
@@ -128,7 +128,7 @@ def test_fpgen_dynamics_match_cam_vector_fast_paths(model):
         assert adapter.parameter_domains[name] == expected
 
 
-def test_pair_hopping_fpgen_contract():
+def test_pair_hopping_qpsgen_contract():
     model = PairHopping2ModeModel(
         omega_a=0.0,
         omega_b=0.0,
@@ -137,7 +137,7 @@ def test_pair_hopping_fpgen_contract():
         gamma_a=1.0,
         gamma_b=1.0,
     )
-    adapter = FPGenDynamicsAdapter.from_model(model)
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     assert adapter.state_matrix_shape == (2, 2)
     assert adapter.parameter_domains == {
         "omega_a": "real",
@@ -191,7 +191,7 @@ def test_pair_hopping_fpgen_contract():
     np.testing.assert_allclose(diffusion, np.diag([0.5, 0.5]))
 
 
-def test_fpgen_mixed_state_parameter_directional_matches_difference():
+def test_qpsgen_mixed_state_parameter_directional_matches_difference():
     model = VDP2ModeModel(
         omega_a=0.2,
         omega_b=-0.1,
@@ -200,7 +200,7 @@ def test_fpgen_mixed_state_parameter_directional_matches_difference():
         Gamma=0.01,
         g=0.5,
     )
-    adapter = FPGenDynamicsAdapter.from_model(model)
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     state = np.asarray([1.2, 0.8, 0.1, -0.2])
     state_direction = np.asarray([0.7, -0.3, 0.2, 0.4])
     parameter_direction = adapter.parameter_direction("Gamma")

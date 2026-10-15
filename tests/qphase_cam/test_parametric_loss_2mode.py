@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from qphase_cam.core.fpgen import FPGenDynamicsAdapter
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 
 from models.parametric_loss_2mode import ParametricLoss2ModeModel
 
@@ -22,8 +22,8 @@ def model() -> ParametricLoss2ModeModel:
     )
 
 
-def test_fpgen_selects_augmented_moment_layout(model):
-    adapter = FPGenDynamicsAdapter.from_model(model)
+def test_qpsgen_selects_augmented_moment_layout(model):
+    adapter = QPSGenDynamicsAdapter.from_model(model)
 
     assert adapter.moment_layout == "augmented"
     assert adapter.state_size == 10
@@ -42,8 +42,8 @@ def test_fpgen_selects_augmented_moment_layout(model):
     )
 
 
-def test_augmented_matrix_round_trip_matches_fpgen(model):
-    adapter = FPGenDynamicsAdapter.from_model(model)
+def test_augmented_matrix_round_trip_matches_qpsgen(model):
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     vector = np.arange(1, 11, dtype=float) / 13.0
     state = adapter.state_matrix(vector)
 
@@ -56,8 +56,8 @@ def test_augmented_matrix_round_trip_matches_fpgen(model):
     )
 
 
-def test_augmented_matrices_are_fpgen_outputs(model):
-    adapter = FPGenDynamicsAdapter.from_model(model)
+def test_augmented_matrices_are_qpsgen_outputs(model):
+    adapter = QPSGenDynamicsAdapter.from_model(model)
     vector = np.arange(1, 11, dtype=float) / 11.0
     state = adapter.state_matrix(vector)
     substitutions = dict(
@@ -72,7 +72,7 @@ def test_augmented_matrices_are_fpgen_outputs(model):
         adapter.symbolic_hamiltonian.subs(substitutions), dtype=complex
     )
     expected_d = np.asarray(
-        model.cam_fpgen_dynamics().diffusion.subs(substitutions), dtype=complex
+        model.cam_qpsgen_dynamics().diffusion.subs(substitutions), dtype=complex
     )
     np.testing.assert_allclose(model.cam_hamiltonian(state, model.params), expected_h)
     np.testing.assert_allclose(model.cam_diffusion(state, model.params), expected_d)
