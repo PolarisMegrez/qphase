@@ -26,8 +26,14 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def sde_profile_plugins():
     """Register the real SDE engine plus dummy plugins for its namespaces."""
+    from qphase.core.registry import discovery
     from qphase_sde.engine import Engine
 
+    # Discover first so engine.sde enters the registry through the normal
+    # entry-point path.  Discovery marks entry points as consumed, so the
+    # teardown must never remove "sde": a popped entry can never be
+    # rediscovered, which leaks broken state into later test modules.
+    discovery.discover_plugins()
     engine_table = registry._tables.setdefault("engine", {})
     previous_sde = engine_table.get("sde")
     registry.register("engine", "sde", Engine, overwrite=True)
@@ -36,9 +42,7 @@ def sde_profile_plugins():
     try:
         yield
     finally:
-        if previous_sde is None:
-            engine_table.pop("sde", None)
-        else:
+        if previous_sde is not None:
             engine_table["sde"] = previous_sde
         registry._tables.get("integrator", {}).pop("dummy", None)
         registry._tables.get("analyser", {}).pop("dummy", None)
