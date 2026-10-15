@@ -82,9 +82,12 @@ product provenance 属性。所有配置模型均为 `extra="forbid"`，被删�
    写出的 typed product 属性（及 provenance 条目）全局使用新键；读取
    `attributes["source_analyser"]` 的消费方必须改用 `producer_analyser`。
 4. **typed product 携带逐变量 units。** `assemble_typed_product` 新增 `variable_units`
-   参数。sampled-scalar PSD 的主变量 `psd` 带有 `<value-units>^2/inverse_time` 形式
-   units（源 observable 无量纲时为 `1/inverse_time`）；sampled-scalar Allan 方差变量
-   带有 `<value-units>^2`（无量纲为 `1`）。不确定度叶（`psd_std`/`psd_sem`、
-   `<key>_sem`）不声明 units——只有主变量带 units 标注。
+   参数，spectral analyser 在 product 边界为所有数值叶标注 units。sampled-scalar PSD
+   的 `psd`、`psd_std`、`psd_sem` 均带有 `<value-units>^2/inverse_time` 形式 units
+   （源 observable 无量纲时为 `1/inverse_time`）；sampled-scalar Allan 的方差、SEM
+   与逐轨迹叶带有 `<value-units>^2`（无量纲为 `1`）。phase 路径的方差叶声明
+   `inverse_time^2`，mean-frequency 叶声明 `inverse_time`。源 units 为 `"1"` 或 `""`
+   时统一归一为上述无量纲形式。PSD product 以顶层属性暴露 `convention`，复场 product
+   另暴露 `representation`。
 5. **`kind: modular` 已移除。** 复场模长的 PSD 改写为 `measurement.complex_field`
    内的 `representation: magnitude`。

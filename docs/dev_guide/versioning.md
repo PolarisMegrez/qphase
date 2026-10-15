@@ -101,11 +101,15 @@ are hard validation errors, and no dual-key compatibility is retained.
    the new key everywhere; consumers reading `attributes["source_analyser"]`
    must switch to `producer_analyser`.
 4. **Typed products carry per-variable units.** `assemble_typed_product`
-   gained a `variable_units` parameter. The sampled-scalar PSD primary `psd`
-   variable carries `<value-units>^2/inverse_time` (`1/inverse_time` when the
-   source observable is dimensionless); sampled-scalar Allan variance variables
-   carry `<value-units>^2` (`1` when dimensionless). Uncertainty leaves
-   (`psd_std`/`psd_sem`, `<key>_sem`) declare no units — only the primary
-   variables are annotated.
+   gained a `variable_units` parameter, and the spectral analysers annotate
+   every numeric leaf at the product boundary. The sampled-scalar PSD variables
+   `psd`, `psd_std` and `psd_sem` all carry `<value-units>^2/inverse_time`
+   (`1/inverse_time` when the source observable is dimensionless);
+   sampled-scalar Allan variance, SEM and per-trajectory leaves carry
+   `<value-units>^2` (`1` when dimensionless). Phase-path variance leaves
+   declare `inverse_time^2` and the mean-frequency leaves `inverse_time`.
+   Source units `"1"` and `""` both normalise to the documented dimensionless
+   form. Spectral PSD products expose `convention`, and complex-field products
+   additionally `representation`, as top-level attributes.
 5. **`kind: modular` removed.** The magnitude PSD of the complex field is
    `representation: magnitude` inside `measurement.complex_field`.

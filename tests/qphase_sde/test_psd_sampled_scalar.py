@@ -227,11 +227,17 @@ def test_scalar_psd_product_schema_is_frozen():
     assert psd.quantity == "power_spectral_density"
     assert psd.units == "occupation^2/inverse_time"
     assert psd.dims == ("frequency", "channel")
+    # Estimate, sample STD and SEM share the physical dimension of the PSD.
+    for uncertainty_variable in ("psd_std", "psd_sem"):
+        leaf = product.schema.variable(uncertainty_variable)
+        assert leaf is not None
+        assert leaf.units == "occupation^2/inverse_time"
     assert product.axis("frequency").units == "inverse_time"
     assert product.attributes["orientation"] == "unsigned"
     assert product.attributes["sidedness"] == "one_sided"
     assert product.attributes["frequency_units"] == "inverse_time"
     assert product.attributes["normalization"] == "density"
+    assert product.attributes["convention"] == "pragmatic"
     assert product.attributes["measurement_model"] == "sampled_scalar"
     assert product.attributes["channel_names"] == ["n0"]
     assert product.attributes["detrend"] == "none"
@@ -240,12 +246,14 @@ def test_scalar_psd_product_schema_is_frozen():
 
 def test_scalar_psd_dimensionless_units():
     values = np.zeros((2, 64, 1))
-    product = _execute(
-        _scalar_analyzer(), _observable_product(values, dt=0.1, units="")
-    )
-    psd = product.schema.variable("psd")
-    assert psd is not None
-    assert psd.units == "1/inverse_time"
+    for dimensionless in ("", "1"):
+        product = _execute(
+            _scalar_analyzer(), _observable_product(values, dt=0.1, units=dimensionless)
+        )
+        for name in ("psd", "psd_std", "psd_sem"):
+            variable = product.schema.variable(name)
+            assert variable is not None
+            assert variable.units == "1/inverse_time"
 
 
 def test_scalar_psd_valid_length_censors_padding():
@@ -293,9 +301,11 @@ def test_scalar_psd_accumulator_matches_single_pass():
             rtol=1e-12,
         )
     assert merged.attributes["channel_names"] == ["n0"]
-    merged_psd = merged.schema.variable("psd")
-    assert merged_psd is not None
-    assert merged_psd.units == "occupation^2/inverse_time"
+    assert merged.attributes["convention"] == "pragmatic"
+    for name in ("psd", "psd_std", "psd_sem"):
+        merged_variable = merged.schema.variable(name)
+        assert merged_variable is not None
+        assert merged_variable.units == "occupation^2/inverse_time"
 
 
 def test_scalar_psd_requires_signal_input():

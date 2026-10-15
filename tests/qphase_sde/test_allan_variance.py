@@ -584,6 +584,28 @@ def test_raw_allan_product_fields_are_frozen():
     assert {variable.name for variable in product.variables} == expected
     target = "mode_results.2.allan.angular_frequency_variance"
     assert product.variable(target).quantity == "allan_variance"
+    # Phase-frequency variance leaves declare inverse-time squared — target,
+    # SEM and per-trajectory estimates share the dimension — while the
+    # mean-frequency leaf declares inverse-time and count leaves stay
+    # dimensionless.
+    for leaf in (
+        "angular_frequency_variance",
+        "angular_frequency_variance_sem",
+        "nonoverlap_angular_frequency_variance",
+        "nonoverlap_angular_frequency_variance_sem",
+        "per_trajectory",
+        "nonoverlap_per_trajectory",
+    ):
+        variable = product.variable(f"mode_results.2.allan.{leaf}")
+        assert variable.units == "inverse_time^2"
+    mean_frequency = product.variable(
+        "mode_results.2.phase_increment.mean_angular_frequency_per_trajectory"
+    )
+    assert mean_frequency.units == "inverse_time"
+    count_variable = product.variable(
+        "mode_results.2.allan.total_independent_window_count"
+    )
+    assert not count_variable.units
     assert product.axis("tau").units == "time"
     assert product.attributes["orientation"] == "phase_decreasing"
     assert product.attributes["estimator"] == "non_overlapping_windows"

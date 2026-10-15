@@ -238,7 +238,7 @@ class PsdAnalyzer(Analyzer):
                     kind=DataKind.TIME_SERIES,
                     quantity=SDEQuantity.FIELD_AMPLITUDE.value,
                     value_domain="complex",
-                    required_fields=["alpha"],
+                    required_fields=["alpha", "valid_length"],
                 )
             ]
         return [
@@ -281,6 +281,7 @@ class PsdAnalyzer(Analyzer):
                     columns=list(sampled.columns),
                     representation=field.representation,
                     orientation=field.orientation,
+                    variable_units=sampled.variable_units,
                     backend=backend,
                 )
             else:
@@ -332,6 +333,7 @@ class PsdAnalyzer(Analyzer):
         columns: list[int],
         representation: Literal["complex", "magnitude"],
         orientation: FrequencyOrientation,
+        variable_units: str,
         backend: BackendBase,
     ) -> dict[str, Any]:
         config = cast(PsdAnalyzerConfig, self.config)
@@ -379,6 +381,9 @@ class PsdAnalyzer(Analyzer):
             "measurement_model": "complex_field",
             "representation": representation,
             "convention": convention,
+            "psd_units": sampled_scalar_psd_units(
+                variable_units, convention=convention
+            ),
             **orientation_metadata(orientation),
             "estimator": self.estimator.name,
             "sample_dt": dt,
@@ -505,12 +510,19 @@ class PsdAnalyzer(Analyzer):
         """Estimate FFT or host-estimator workspace for one scan point."""
         capabilities = self.estimator.capabilities()
         trajectory_bytes = request.trajectory_bytes
-        retained_host_bytes = (
-            request.saved_samples
-            * request.n_record_modes
-            * request.real_itemsize
-            * 5
+        config = cast(PsdAnalyzerConfig, self.config)
+        measurement = config.measurement
+        n_channels = (
+            len(measurement.complex_field.channels)
+            if measurement.complex_field is not None
+            else len(
+                cast(PsdSampledScalarMeasurement, measurement.sampled_scalar).channels
+            )
         )
+        # Retained output tables are assembled in float64 per selected
+        # channel; the observable channel count is independent of the
+        # physical record-mode count.
+        retained_host_bytes = request.saved_samples * n_channels * 8 * 5
         if not capabilities.backend_native:
             # Host estimators materialize the input and retain at least one
             # trajectory-spectrum sized temporary while the backend source is
@@ -773,6 +785,15 @@ def _build_psd_products(
         "psd_std": ("frequency", "channel"),
         "psd_sem": ("frequency", "channel"),
     }
+    # Estimate, sample STD and SEM share one physical dimension; the units
+    # string is derived once from the source variable units (``1`` and the
+    # empty string both normalize to the documented dimensionless form).
+    psd_units = _meta_scalar(leaves.payload_meta, "psd_units", "1/inverse_time")
+    variable_units = {
+        key: psd_units
+        for key in ("psd", "psd_std", "psd_sem")
+        if key in leaves.arrays
+    }
     if measurement_model == "sampled_scalar":
         declared_dims["channels"] = ("channel",)
         coordinates.append(
@@ -783,14 +804,12 @@ def _build_psd_products(
                 role="auxiliary" if leading else "dimension",
             )
         )
-        variable_units = {
-            "psd": _meta_scalar(leaves.payload_meta, "psd_units", "1/inverse_time")
-        }
         attributes: dict[str, Any] = {
             "frequency_units": "inverse_time",
             "orientation": "unsigned",
             "sidedness": "one_sided",
             "normalization": "density",
+            "convention": _meta_scalar(leaves.payload_meta, "convention", "symmetric"),
             "window": _estimator_window(analyser),
             "estimator": _meta_scalar(leaves.payload_meta, "estimator", "periodogram"),
             "measurement_model": "sampled_scalar",
@@ -808,7 +827,6 @@ def _build_psd_products(
                 role="auxiliary" if leading else "dimension",
             )
         )
-        variable_units = {}
         attributes = {
             "frequency_units": "inverse_time",
             "orientation": _meta_scalar(
@@ -816,6 +834,10 @@ def _build_psd_products(
             ),
             "sidedness": "two_sided",
             "normalization": "density",
+            "convention": _meta_scalar(leaves.payload_meta, "convention", "symmetric"),
+            "representation": _meta_scalar(
+                leaves.payload_meta, "representation", "complex"
+            ),
             "window": _estimator_window(analyser),
             "estimator": _meta_scalar(leaves.payload_meta, "estimator", "periodogram"),
             "measurement_model": "complex_field",
@@ -915,9 +937,6 @@ class PsdResultAccumulator:
             raise TypeError(
                 "PSD product does not declare a measurement_model attribute"
             )
-        payload_meta = product.attributes.get("payload_meta", {})
-        if not isinstance(payload_meta, Mapping):
-            payload_meta = {}
         payload: dict[str, Any] = {
             "axis": product.handle("axis").materialize(),
             "psd": product.handle("psd").materialize(),
@@ -928,6 +947,7 @@ class PsdResultAccumulator:
             "orientation": product.attributes["orientation"],
             "estimator": product.attributes["estimator"],
             "measurement_model": measurement_model,
+            "convention": product.attributes["convention"],
             "uncertainty": {"n_independent": count},
         }
         if measurement_model == "sampled_scalar":
@@ -941,11 +961,11 @@ class PsdResultAccumulator:
             payload["channel_names"] = channel_names
             payload["sidedness"] = product.attributes["sidedness"]
             payload["detrend"] = product.attributes["detrend"]
-            payload["convention"] = payload_meta.get("convention")
             psd_variable = product.schema.variable("psd")
             payload["psd_units"] = psd_variable.units if psd_variable else ""
         else:
             payload["modes"] = product.handle("modes").materialize()
+            payload["representation"] = product.attributes["representation"]
         self._consume_payload(payload)
 
     def merge(self, other: "PsdResultAccumulator") -> None:

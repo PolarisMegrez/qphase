@@ -529,9 +529,15 @@ def test_raw_psd_product_fields_are_frozen():
     }
     assert product.variable("psd").quantity == "power_spectral_density"
     assert product.axis("frequency").units == "inverse_time"
+    # The engine trajectory product declares no field units, so the estimate
+    # and its uncertainty leaves carry the dimensionless density form.
+    for name in ("psd", "psd_std", "psd_sem"):
+        assert product.variable(name).units == "1/inverse_time"
     assert product.attributes["orientation"] == "phase_decreasing"
     assert product.attributes["sidedness"] == "two_sided"
     assert product.attributes["frequency_units"] == "inverse_time"
+    assert product.attributes["convention"] == "symmetric"
+    assert product.attributes["representation"] == "complex"
 
 
 def test_psd_config_orientation_rejects_unsigned():
@@ -540,3 +546,98 @@ def test_psd_config_orientation_rejects_unsigned():
 
     with pytest.raises(ValidationError):
         PsdAnalyzerConfig(measurement=_field(orientation="unsigned"))
+
+
+def test_psd_field_units_follow_source_variable_units():
+    """A field with declared units propagates ``<units>^2/inverse_time``."""
+    from qphase.data import (
+        AxisRole,
+        AxisSchema,
+        DataKind,
+        ProductSchema,
+        TimeSeriesDataset,
+        VariableSchema,
+    )
+    from qphase_sde.contracts.quantities import SDEQuantity
+
+    values = _make_sine_data(n_traj=4, n_time=128)
+    n_traj, n_time, n_channel = values.shape
+    schema = ProductSchema(
+        kind=DataKind.TIME_SERIES,
+        axes=[
+            AxisSchema(name="trajectory", role=AxisRole.REALIZATION, size=n_traj),
+            AxisSchema(
+                name="time",
+                role=AxisRole.COORDINATE,
+                size=n_time,
+                coordinate="regular",
+                start=0.0,
+                step=0.1,
+                units="time",
+            ),
+            AxisSchema(name="channel", role=AxisRole.COMPONENT, size=n_channel),
+        ],
+        variables=[
+            VariableSchema(
+                name="alpha",
+                dtype="<c16",
+                value_domain="complex",
+                dims=("trajectory", "time", "channel"),
+                quantity=SDEQuantity.FIELD_AMPLITUDE.value,
+                units="sqrt(inverse_time)",
+            ),
+            VariableSchema(
+                name="valid_length",
+                dtype="<i8",
+                value_domain="real",
+                dims=("trajectory",),
+                quantity="valid_length",
+            ),
+        ],
+    )
+    product = TimeSeriesDataset.from_arrays(
+        schema,
+        {"alpha": values, "valid_length": np.full(n_traj, n_time, dtype=np.int64)},
+        owner="test",
+    )
+
+    analyzer = PsdAnalyzer(
+        measurement=_field(),
+        convention="unitary",
+        subplugins={"estimator": create_builtin_estimator("periodogram", {})},
+    )
+    result = analyzer.execute({"signal": product}, backend=BACKEND, label="psd")["psd"]
+    for name in ("psd", "psd_std", "psd_sem"):
+        assert result.variable(name).units == "sqrt(inverse_time)^2/inverse_time"
+    assert result.attributes["convention"] == "unitary"
+    assert result.attributes["representation"] == "complex"
+
+
+def test_psd_field_accumulator_roundtrip_preserves_units_and_convention():
+    """The reducer roundtrip keeps the declared units and spectral attributes."""
+    from qphase_sde.analyser.psd import PsdResultAccumulator
+
+    data = TrajectorySet(
+        data=_make_sine_data(n_traj=8, n_time=128), t0=0.0, dt=0.1
+    )
+    analyzer = PsdAnalyzer(measurement=_field(), convention="unitary")
+    single = _product(analyzer, data)
+
+    accumulator = PsdResultAccumulator(analyzer)
+    values = _make_sine_data(n_traj=8, n_time=128)
+    for batch_values in (values[:4], values[4:]):
+        batch = TrajectorySet(data=batch_values, t0=0.0, dt=0.1)
+        accumulator.consume_product(_product(analyzer, batch))
+    merged = accumulator.finalize_product("psd")
+    assert merged is not None
+    merged_product = merged["psd"]
+
+    for name in ("psd", "psd_std", "psd_sem"):
+        np.testing.assert_allclose(
+            np.asarray(merged_product.handle(name).materialize()),
+            np.asarray(single.handle(name).materialize()),
+            rtol=1e-12,
+        )
+        assert merged_product.variable(name).units == "1/inverse_time"
+    assert merged_product.attributes["convention"] == "unitary"
+    assert merged_product.attributes["representation"] == "complex"

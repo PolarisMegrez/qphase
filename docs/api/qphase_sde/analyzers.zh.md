@@ -91,10 +91,12 @@ trajectory product。`complex_field` 路径接受复场振幅 time-series produc
 `(scan?, trajectory, time, channel)`），含 float64 `value` 变量与 int64
 `valid_length` 截尾变量——通常是上游 observable transform 的输出。
 
-sampled-scalar product 中，主变量 `psd` 带有 `<value-units>^2/inverse_time` 形式的
-units（源 observable 无量纲时为 `1/inverse_time`），spectral 属性为
-`orientation: unsigned`、`sidedness: one_sided`。`psd_std`/`psd_sem` 不确定度叶不声明
-units；复场 product 的变量同样不声明 units。
+sampled-scalar product 中，`psd`、`psd_std`、`psd_sem` 三个变量均带有
+`<value-units>^2/inverse_time` 形式的 units（源 observable 无量纲时为
+`1/inverse_time`），spectral 属性为 `orientation: unsigned`、`sidedness: one_sided`。
+复场 product 的所有叶同样声明 units，由源 `alpha` 变量的 units 推导（`alpha` 无
+units 时为 `1/inverse_time`）。两条路径都以顶层属性暴露 `convention`；复场 product
+另暴露 `representation`。
 
 ### 频率轴
 
@@ -545,8 +547,9 @@ SEM、实际有效非重叠窗口数以及每条轨迹的名义窗口数。此�
 对于 `sampled_scalar` 测量，非重叠相邻块均值差分是主估计量（`sampled_scalar_variance`），
 重叠变体带 `overlap_` 前缀；相邻 pair 共享一个块均值，因此 `min_nonoverlap_pairs`
 统计的是名义而非独立的 pair 数。typed product 的每个方差变量带有
-`<value-units>^2` 形式的 units（源 observable 无量纲时为 `1`），而 `<key>_sem`
-不确定度叶不声明 units——与 PSD product 对齐，只有主变量带 units。product 属性记录
+`<value-units>^2` 形式的 units（源 observable 无量纲时为 `1`），`<key>_sem` 与
+逐轨迹叶声明相同 units。phase-frequency 路径的方差叶声明 `inverse_time^2`，
+mean-frequency 叶声明 `inverse_time`。product 属性记录
 `measurement_model`（`phase_frequency` 或 `sampled_scalar`）；带符号的 `orientation`
 属性只存在于 phase-frequency 路径。
 

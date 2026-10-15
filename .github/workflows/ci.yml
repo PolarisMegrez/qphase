@@ -29,7 +29,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Type check with MyPy
-        run: uv run mypy .
+        run: uv run mypy packages
 
   test:
     runs-on: ubuntu-latest

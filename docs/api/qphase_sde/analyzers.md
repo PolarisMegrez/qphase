@@ -98,12 +98,14 @@ the requirement accepts the complex field-amplitude time-series product (the
 `valid_length` censoring variable — typically the output of an upstream
 observable transform.
 
-In the sampled-scalar product the primary `psd` variable carries units
-`<value-units>^2/inverse_time` (`1/inverse_time` when the source observable is
-dimensionless), and the spectral attributes read `orientation: unsigned` and
-`sidedness: one_sided`. The `psd_std`/`psd_sem` uncertainty leaves carry no
-units declaration; the complex-field product declares no variable units
-either.
+In the sampled-scalar product the `psd`, `psd_std` and `psd_sem` variables all
+carry units `<value-units>^2/inverse_time` (`1/inverse_time` when the source
+observable is dimensionless), and the spectral attributes read
+`orientation: unsigned` and `sidedness: one_sided`. The complex-field product
+declares the same units on all three leaves, derived from the source `alpha`
+variable units (`1/inverse_time` when `alpha` carries none). Both paths expose
+`convention` as a top-level attribute; the complex-field product additionally
+exposes `representation`.
 
 ### Frequency axis
 
@@ -643,9 +645,10 @@ difference is the primary estimator (`sampled_scalar_variance`) and the
 overlapping variant carries the `overlap_` prefix; adjacent pairs share one
 block mean, so `min_nonoverlap_pairs` counts nominal, not independent, pairs.
 Each variance variable of the typed product carries units
-`<value-units>^2` (`1` when the source observable is dimensionless), while the
-`<key>_sem` uncertainty leaves declare no units — mirroring the PSD products,
-only the primary variables are unit-annotated. The product attributes record
+`<value-units>^2` (`1` when the source observable is dimensionless), and the
+`<key>_sem` and per-trajectory leaves declare the same units. On the
+phase-frequency path the variance leaves declare `inverse_time^2` and the
+mean-frequency leaves `inverse_time`. The product attributes record
 `measurement_model` (`phase_frequency` or `sampled_scalar`); a signed
 `orientation` attribute exists only on the phase-frequency path.
 

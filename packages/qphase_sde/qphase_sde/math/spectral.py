@@ -130,9 +130,11 @@ def sampled_scalar_psd_units(
     frequency-axis units identifier (angular vs. cyclic differs only by the
     numeric ``2*pi`` axis scaling), hence the canonical string is
     ``"<units>^2/inverse_time"`` — or ``"1/inverse_time"`` for a
-    dimensionless input. No general unit algebra is introduced.
+    dimensionless input. Both the empty string and the explicit
+    dimensionless marker ``"1"`` normalize to that same form. No general
+    unit algebra is introduced.
     """
     if convention not in _CONVENTIONS:
         raise ValueError(f"unsupported PSD convention: {convention!r}")
-    numerator = f"{variable_units}^2" if variable_units else "1"
+    numerator = "1" if variable_units in ("", "1") else f"{variable_units}^2"
     return f"{numerator}/inverse_time"

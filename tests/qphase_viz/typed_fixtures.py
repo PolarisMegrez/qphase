@@ -43,6 +43,7 @@ def trajectory_bundle(*, scan_values: tuple[float, ...] = ()) -> SDEDataBundle:
                 coordinate="regular",
                 start=0.0,
                 step=0.1,
+                units="time",
             ),
             AxisSchema(name="channel", role=AxisRole.COMPONENT, size=n_channel),
         ],

@@ -1461,12 +1461,6 @@ class Engine(EngineBase):
             return {}
         if isinstance(analysers, dict):
             return dict(analysers)
-        # A single-instance scheduler job stores the instance under
-        # ``analyser.<label>`` as well; recover the graph label from there so
-        # instance labels survive the single-instance shortcut.
-        for key, value in self.plugins.items():
-            if key.startswith("analyser.") and value is analysers:
-                return {key.removeprefix("analyser."): analysers}
         return {getattr(analysers, "name", "analyser"): analysers}
 
     def _normalised_observers(self) -> dict[str, Any]:

@@ -275,6 +275,17 @@ def test_scalar_allan_product_schema_is_frozen():
     assert variance.quantity == SDEQuantity.ALLAN_VARIANCE.value
     assert variance.units == "occupation^2"
     assert variance.dims == ("tau",)
+    # Target, SEM and per-trajectory estimates share the variance units.
+    for leaf_name in (
+        "sampled_scalar_variance_sem",
+        "per_trajectory",
+        "overlap_sampled_scalar_variance",
+        "overlap_sampled_scalar_variance_sem",
+        "overlap_per_trajectory",
+    ):
+        leaf = product.schema.variable(f"channel_results.0.allan.{leaf_name}")
+        assert leaf is not None
+        assert leaf.units == "occupation^2"
     per_trajectory = product.schema.variable(
         "channel_results.0.allan.per_trajectory"
     )
@@ -294,14 +305,19 @@ def test_scalar_allan_product_schema_is_frozen():
 
 def test_scalar_allan_dimensionless_units():
     values = np.zeros((4, 512, 1))
-    product = _execute(
-        _scalar_analyzer(), _observable_product(values, units="")
-    )
-    variance = product.schema.variable(
-        "channel_results.0.allan.sampled_scalar_variance"
-    )
-    assert variance is not None
-    assert variance.units == "1"
+    for dimensionless in ("", "1"):
+        product = _execute(
+            _scalar_analyzer(), _observable_product(values, units=dimensionless)
+        )
+        for leaf_name in (
+            "sampled_scalar_variance",
+            "sampled_scalar_variance_sem",
+            "per_trajectory",
+            "overlap_sampled_scalar_variance",
+        ):
+            variable = product.schema.variable(f"channel_results.0.allan.{leaf_name}")
+            assert variable is not None
+            assert variable.units == "1"
 
 
 def test_scalar_allan_constant_series_vanishes():
@@ -364,6 +380,16 @@ def test_scalar_allan_accumulator_matches_single_pass():
         )
     assert float(merged.handle("n_traj").materialize()) == 16
     assert merged.attributes["channel_names"] == ["n0"]
+    merged_variance = merged.schema.variable(
+        "channel_results.0.allan.sampled_scalar_variance"
+    )
+    assert merged_variance is not None
+    assert merged_variance.units == "occupation^2"
+    merged_sem = merged.schema.variable(
+        "channel_results.0.allan.sampled_scalar_variance_sem"
+    )
+    assert merged_sem is not None
+    assert merged_sem.units == "occupation^2"
 
 
 def test_scalar_allan_requires_signal_input():

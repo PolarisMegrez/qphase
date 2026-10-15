@@ -277,11 +277,15 @@ def test_restored_products_carry_units_channels_and_provenance(fixture_runs):
     assert scalar_psd.attributes["measurement_model"] == "sampled_scalar"
     assert scalar_psd.attributes["orientation"] == "unsigned"
     assert scalar_psd.attributes["sidedness"] == "one_sided"
+    assert scalar_psd.attributes["convention"] == "symmetric"
     assert scalar_psd.attributes["channel_names"] == ["n0", "q_fixed"]
     assert scalar_psd.attributes["producer_analyser"] == "scalar_psd"
     assert "source_analyser" not in scalar_psd.attributes
-    sem = scalar_psd.schema.variable("psd_sem")
-    assert sem is not None and not sem.units
+    # Estimate, sample STD and SEM share the physical dimension of the PSD.
+    for uncertainty_variable in ("psd_std", "psd_sem"):
+        leaf = scalar_psd.schema.variable(uncertainty_variable)
+        assert leaf is not None
+        assert leaf.units == "occupation^2/inverse_time"
 
     scalar_allan = products["scalar_allan"].materialize()
     variance = scalar_allan.schema.variable(
@@ -295,6 +299,17 @@ def test_restored_products_carry_units_channels_and_provenance(fixture_runs):
     assert scalar_allan.attributes["channel_names"] == ["n0", "q_fixed"]
     assert scalar_allan.attributes["producer_analyser"] == "scalar_allan"
     assert "orientation" not in scalar_allan.attributes
+    # Target, SEM and per-trajectory estimates share the variance units.
+    for leaf_name in (
+        "sampled_scalar_variance_sem",
+        "per_trajectory",
+        "overlap_sampled_scalar_variance",
+        "overlap_sampled_scalar_variance_sem",
+        "overlap_per_trajectory",
+    ):
+        leaf = scalar_allan.schema.variable(f"channel_results.0.allan.{leaf_name}")
+        assert leaf is not None
+        assert leaf.units == "occupation^2"
     per_trajectory = scalar_allan.schema.variable(
         "channel_results.0.allan.per_trajectory"
     )
@@ -308,11 +323,37 @@ def test_restored_products_carry_units_channels_and_provenance(fixture_runs):
         "phase_decreasing",
     )
     assert phase_allan.attributes["producer_analyser"] == "phase_allan"
+    phase_variance = phase_allan.schema.variable(
+        "mode_results.0.allan.angular_frequency_variance"
+    )
+    assert phase_variance is not None
+    assert phase_variance.units == "inverse_time^2"
+    for leaf_name in (
+        "mode_results.0.allan.angular_frequency_variance_sem",
+        "mode_results.0.allan.nonoverlap_angular_frequency_variance",
+        "mode_results.0.allan.per_trajectory",
+    ):
+        leaf = phase_allan.schema.variable(leaf_name)
+        assert leaf is not None
+        assert leaf.units == "inverse_time^2"
+    mean_frequency = phase_allan.schema.variable(
+        "mode_results.0.phase_increment.mean_angular_frequency_per_trajectory"
+    )
+    assert mean_frequency is not None
+    assert mean_frequency.units == "inverse_time"
 
     raw_psd = products["raw_psd"].materialize()
     assert raw_psd.attributes["measurement_model"] == "complex_field"
     assert raw_psd.attributes["producer_analyser"] == "raw_psd"
+    assert raw_psd.attributes["convention"] == "symmetric"
+    assert raw_psd.attributes["representation"] == "complex"
     assert raw_psd.schema.variable("modes") is not None
+    # The engine trajectory product declares no field units, so the raw PSD
+    # estimate and its uncertainty leaves carry the dimensionless form.
+    for variable_name in ("psd", "psd_std", "psd_sem"):
+        leaf = raw_psd.schema.variable(variable_name)
+        assert leaf is not None
+        assert leaf.units == "1/inverse_time"
 
 
 def test_debug_observable_matches_direct_numpy(fixture_runs):
@@ -576,8 +617,20 @@ def test_cupy_end_to_end_and_analyser_parity():
     allan_cp = scalar_allan.execute(
         {"signal": observable_product("cuda")}, backend=cp_be, label="allan"
     )["allan"]
-    np.testing.assert_allclose(
-        host(allan_np, "channel_results.0.allan.sampled_scalar_variance"),
-        host(allan_cp, "channel_results.0.allan.sampled_scalar_variance"),
-        rtol=1e-6,
-    )
+    # Product-level parity: every numeric leaf of every channel must match.
+    assert {v.name for v in allan_cp.variables} == {v.name for v in allan_np.variables}
+    assert {v.name for v in allan_np.variables} >= {
+        "channel_results.0.allan.sampled_scalar_variance",
+        "channel_results.1.allan.sampled_scalar_variance",
+    }
+    for variable in allan_np.variables:
+        np_leaf = host(allan_np, variable.name)
+        if np_leaf.dtype.kind not in "fiu":
+            continue  # string metadata leaves (e.g. channels)
+        np.testing.assert_allclose(
+            np_leaf,
+            host(allan_cp, variable.name),
+            rtol=1e-6,
+            equal_nan=True,
+            err_msg=variable.name,
+        )

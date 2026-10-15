@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -153,11 +154,16 @@ def build_plugins(registry: RegistryCenter, config: dict[str, Any]) -> dict[str,
                 ) from exc
             plugins[f"{plugin_type}.{instance_label}"] = instance
             type_instances[str(instance_label)] = instance
-        plugins[plugin_type] = (
-            next(iter(type_instances.values()))
-            if len(type_instances) == 1
-            else type_instances
-        )
+        if plugin_type == "analyser":
+            # Analyser instance labels are graph node identities; keep the
+            # label -> instance mapping even for a single instance.
+            plugins[plugin_type] = type_instances
+        else:
+            plugins[plugin_type] = (
+                next(iter(type_instances.values()))
+                if len(type_instances) == 1
+                else type_instances
+            )
     return plugins
 
 
@@ -428,11 +434,18 @@ def _run_job_inner(
     dtype = getattr(backend_config, "float_dtype", None)
     checkpoint_config = effective_system.scan_runtime.checkpoint
     if checkpoint_config.enabled:
-        plugin_ids = {
-            name: plugin_fingerprint(instance)
-            for name, instance in plugins.items()
-            if "." not in name
-        }
+        plugin_ids: dict[str, Any] = {}
+        for name, instance in plugins.items():
+            if "." in name:
+                continue
+            if isinstance(instance, Mapping):
+                # Multi-instance namespaces (e.g. analyser) keep a label ->
+                # instance mapping; fingerprint each instance under its
+                # dotted key instead of degrading to ``builtins:dict``.
+                for label, sub_instance in instance.items():
+                    plugin_ids[f"{name}.{label}"] = plugin_fingerprint(sub_instance)
+            else:
+                plugin_ids[name] = plugin_fingerprint(instance)
         fingerprint = execution_fingerprint(
             job.model_dump(by_alias=True),
             plugins=plugin_ids,

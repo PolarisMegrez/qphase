@@ -246,7 +246,7 @@ class AllanVarianceAnalyzer(Analyzer):
                     kind=DataKind.TIME_SERIES,
                     quantity=SDEQuantity.FIELD_AMPLITUDE.value,
                     value_domain="complex",
-                    required_fields=["alpha"],
+                    required_fields=["alpha", "valid_length"],
                 )
             ]
         return [
@@ -469,6 +469,17 @@ class AllanVarianceAnalyzer(Analyzer):
         return WorkEstimate(unit="tau", total=None)
 
     def execution_capabilities(self) -> AnalyserExecutionCapabilities:
+        config = cast(AllanVarianceConfig, self.config)
+        if config.measurement.sampled_scalar is not None:
+            # The scalar estimator copies each selected channel to the host
+            # and runs the NumPy cumsum kernel there; a device-native variant
+            # is deliberately not claimed (Phase 9).
+            return AnalyserExecutionCapabilities(
+                preferred_location="host",
+                supports_trajectory_batching=True,
+                supports_time_streaming=False,
+                supports_scan_tiling=True,
+            )
         return AnalyserExecutionCapabilities(
             preferred_location="backend",
             supports_trajectory_batching=True,
@@ -488,14 +499,29 @@ class AllanVarianceAnalyzer(Analyzer):
                 ).channels
             )
         )
-        mode_bytes = request.trajectory_bytes // max(request.n_record_modes, 1)
+        n_tau = len(config.taus) if config.taus is not None else config.points
         retained_host_bytes = (
             (request.total_n_traj or request.n_traj)
-            * (len(config.taus) if config.taus is not None else config.points)
+            * n_tau
             * max(n_channels, 1)
             * 8
             * 8
         )
+        if measurement.sampled_scalar is not None:
+            # Host estimator workspace per invocation: one full host copy of
+            # the selected channel in the source dtype, the float64
+            # cumulative sum, the worst-case m=1 difference temporaries
+            # (non-overlap and overlap) and their boolean masks.
+            host_bytes = (
+                request.n_traj
+                * request.saved_samples
+                * (request.real_itemsize + 3 * 8 + 2)
+            )
+            return AnalyserWorkspaceEstimate(
+                host_bytes=host_bytes,
+                retained_host_bytes=retained_host_bytes,
+            )
+        mode_bytes = request.trajectory_bytes // max(request.n_record_modes, 1)
         if request.backend_name == "cupy":
             chunk_rows = min(config.device_chunk_trajectories, request.n_traj)
             # The phase, second differences and cumsum output are float64 even
@@ -580,6 +606,45 @@ _VARIANCE_LEAF_GLOBS = (
     "channel_results.*.allan.overlap_sampled_scalar_variance",
 )
 
+#: Leaves sharing the variance units of their estimator family: the target,
+#: its SEM and the per-trajectory estimates have one physical dimension.
+#: Count and window leaves stay dimensionless (no units declared).
+_PHASE_VARIANCE_UNIT_GLOBS = (
+    "mode_results.*.allan.angular_frequency_variance",
+    "mode_results.*.allan.angular_frequency_variance_sem",
+    "mode_results.*.allan.nonoverlap_angular_frequency_variance",
+    "mode_results.*.allan.nonoverlap_angular_frequency_variance_sem",
+    "mode_results.*.allan.per_trajectory",
+    "mode_results.*.allan.nonoverlap_per_trajectory",
+)
+_PHASE_FREQUENCY_UNIT_GLOBS = (
+    "mode_results.*.phase_increment.mean_angular_frequency_per_trajectory",
+)
+_SCALAR_VARIANCE_UNIT_GLOBS = (
+    "channel_results.*.allan.sampled_scalar_variance",
+    "channel_results.*.allan.sampled_scalar_variance_sem",
+    "channel_results.*.allan.overlap_sampled_scalar_variance",
+    "channel_results.*.allan.overlap_sampled_scalar_variance_sem",
+    "channel_results.*.allan.per_trajectory",
+    "channel_results.*.allan.overlap_per_trajectory",
+)
+
+#: Units of the phase-frequency Allan variance: squared angular frequency.
+_PHASE_VARIANCE_UNITS = "inverse_time^2"
+#: Units of the per-trajectory mean angular frequency leaves.
+_PHASE_FREQUENCY_UNITS = "inverse_time"
+
+
+def _leaf_units(
+    arrays: Mapping[str, np.ndarray], globs: tuple[str, ...], units: str
+) -> dict[str, str]:
+    """Assign one units string to every concrete leaf matching the globs."""
+    return {
+        key: units
+        for key in arrays
+        if any(fnmatchcase(key, pattern) for pattern in globs)
+    }
+
 
 def _variance_leaf_keys(arrays: Mapping[str, np.ndarray]) -> list[str]:
     """Enumerate the concrete Allan variance leaf keys of one stacked payload."""
@@ -648,6 +713,14 @@ def _build_allan_products(
         if len(orientations) != 1:
             raise ValueError("Allan scan points use different frequency orientations")
         orientation = orientations.pop()
+        variable_units = {
+            **_leaf_units(
+                leaves.arrays, _PHASE_VARIANCE_UNIT_GLOBS, _PHASE_VARIANCE_UNITS
+            ),
+            **_leaf_units(
+                leaves.arrays, _PHASE_FREQUENCY_UNIT_GLOBS, _PHASE_FREQUENCY_UNITS
+            ),
+        }
         tau_glob = "mode_results.*.allan.tau"
         attributes: dict[str, Any] = {
             "estimator": "non_overlapping_windows",
@@ -666,8 +739,10 @@ def _build_allan_products(
             raise ValueError(
                 "sampled-scalar Allan payload must record its value_units"
             )
-        variance_units = f"{value_units}^2" if value_units else "1"
-        variable_units = {key: variance_units for key in variance_keys}
+        variance_units = "1" if value_units in ("", "1") else f"{value_units}^2"
+        variable_units = _leaf_units(
+            leaves.arrays, _SCALAR_VARIANCE_UNIT_GLOBS, variance_units
+        )
         tau_glob = "channel_results.*.allan.tau"
         attributes = {
             "estimator": "nonoverlapping_window_mean_difference",
