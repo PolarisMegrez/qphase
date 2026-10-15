@@ -95,11 +95,13 @@ jobs:
       g_bc: 2.0
   analyser:
     psd:
-      modes: [0, 1, 2]
-      kind: complex
       convention: symmetric
       expected_freq_max: 11.0
       estimator: {periodogram: {fft_chunk_trajectories: 16}}
+      measurement:
+        complex_field:
+          channels: [0, 1, 2]
+          representation: complex
     coherence_matrix:
       modes: [0, 1, 2]
       time_blocks: 32
@@ -109,6 +111,9 @@ jobs:
       time_blocks: 32
       time_chunk_samples: 65536
 
+  input_bindings:
+    psd:
+      signal: input.trajectories
 - name: kerr_full_3mode_kf3f_004_fig1bc_a5000_21_ridge
   input:
     from: kerr_full_3mode_kf3f_004_fig1bc_a5000_21_sim

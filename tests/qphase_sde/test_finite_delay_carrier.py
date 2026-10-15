@@ -51,7 +51,9 @@ def test_finite_delay_carrier_analyzer_exports_scan_rows(tmp_path: Path):
         )
     )
 
-    psd_analyzer = PsdAnalyzer(modes=[0], kind="complex")
+    psd_analyzer = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    )
     products = _build_psd_products(
         payloads, scan_size=2, label="psd", analyser=psd_analyzer
     )
@@ -81,7 +83,9 @@ def test_finite_delay_carrier_analyzer_evaluates_multiple_readouts():
             np.exp(-0.5 * ((axis - 0.7) / 0.08) ** 2),
         ]
     )
-    psd_analyzer = PsdAnalyzer(modes=[0, 1], kind="complex")
+    psd_analyzer = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0, 1], "representation": "complex"}}
+    )
     products = _build_psd_products(
         {
             "axis": axis,
@@ -139,7 +143,9 @@ def _typed_psd_product(scan_values: list[float]):
                 "uncertainty": {"n_independent": 4},
             }
         )
-    analyzer = PsdAnalyzer(modes=[0], kind="complex")
+    analyzer = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    )
     products = _build_psd_products(
         payload, scan_size=len(scan_values), label="psd", analyser=analyzer
     )

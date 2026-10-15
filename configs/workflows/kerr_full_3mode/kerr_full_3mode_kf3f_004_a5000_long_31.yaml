@@ -39,7 +39,7 @@ jobs:
         - 0.5025118864315096
         - 0.5031622776601684
         - 0.503981071705535
-        - 0.5050118723362727
+        - 0.5050118723362726
         - 0.506309573444802
         - 0.5079432823472428
         - 0.51
@@ -104,18 +104,22 @@ jobs:
       debounce_checks: 2
   analyser:
     psd:
-      modes: [0, 1, 2]
-      kind: complex
       convention: symmetric
       expected_freq_max: 9.0
       estimator: {periodogram: {fft_chunk_trajectories: 16}}
+      measurement:
+        complex_field:
+          channels: [0, 1, 2]
+          representation: complex
     allan_variance:
-      modes: [0, 1, 2]
       points: 80
       min_windows: 8
-      min_independent_windows: 4
       transfer_chunk_samples: 65536
       device_chunk_trajectories: 16
+      measurement:
+        phase_frequency:
+          channels: [0, 1, 2]
+          min_independent_windows: 4
     coherence_matrix:
       modes: [0, 1, 2]
       time_blocks: 32
@@ -125,6 +129,11 @@ jobs:
       time_blocks: 32
       time_chunk_samples: 65536
 
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 - name: kerr_full_3mode_kf3f_004_a5000_long_31_ridge
   input:
     from: kerr_full_3mode_kf3f_004_a5000_long_31_sim

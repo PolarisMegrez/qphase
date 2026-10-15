@@ -67,11 +67,16 @@ jobs:
       debounce_checks: 2
   analyser:
     psd:
-      modes: [0, 1, 2]
-      kind: complex
       convention: symmetric
       expected_freq_max: 1.0
       estimator: {periodogram: {fft_chunk_trajectories: 4}}
+      measurement:
+        complex_field:
+          channels: [0, 1, 2]
+          representation: complex
+  input_bindings:
+    psd:
+      signal: input.trajectories
 
 - name: collective_loss_kerr_3mode_ridge_psd_26_ridge
   input:

@@ -274,7 +274,11 @@ def _typed_psd_product(scan_values: list[float], *, points: int = 401):
                 "uncertainty": {"n_independent": 4},
             }
         )
-    analyzer = PsdAnalyzer(modes=[0], kind="complex")
+    analyzer = PsdAnalyzer(
+        measurement={
+            "complex_field": {"channels": [0], "representation": "complex"}
+        }
+    )
     products = _build_psd_products(
         payload[0] if len(payload) == 1 else payload,
         scan_size=len(scan_values),

@@ -22,25 +22,25 @@ jobs:
       omega_c:
         target: model.collective_loss_kerr_3mode.omega_c
         values:
-        - 1.0977468284070492
-        - 1.0980057538188434
-        - 1.0983317215995093
+        - 1.0977468284070493
+        - 1.0980057538188435
+        - 1.0983317215995092
         - 1.0987420907210428
-        - 1.0992587148385588
+        - 1.0992587148385589
         - 1.0999091060672177
-        - 1.1007279001125588
+        - 1.1007279001125587
         - 1.1017587007436813
         - 1.103056401851041
         - 1.1046901107548415
         - 1.1067468284070492
-        - 1.1093360825249906
+        - 1.1093360825249905
         - 1.112595760331051
-        - 1.1166994517210168
+        - 1.1166994517210167
         - 1.1218656927187343
         - 1.128369605008733
         - 1.1365575454630776
-        - 1.1468655517705567
-        - 1.1598425628238475
+        - 1.1468655517705566
+        - 1.1598425628238476
         - 1.1761796515052136
         - 1.1967468284070493
   engine:
@@ -77,18 +77,27 @@ jobs:
       kappa_dark: 0.1775148709287836
   analyser:
     psd:
-      modes: [0]
-      kind: complex
       convention: symmetric
       expected_freq_max: 1.0
       estimator: {periodogram: {fft_chunk_trajectories: 16}}
+      measurement:
+        complex_field:
+          channels: [0]
+          representation: complex
     allan_variance:
-      modes: [0]
       points: 80
       min_windows: 8
-      min_independent_windows: 4
       transfer_chunk_samples: 65536
 
+      measurement:
+        phase_frequency:
+          channels: [0]
+          min_independent_windows: 4
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 - name: collective_loss_kerr_3mode_refined_dark_h200_long_21_carrier
   input:
     from: collective_loss_kerr_3mode_refined_dark_h200_long_21_sim

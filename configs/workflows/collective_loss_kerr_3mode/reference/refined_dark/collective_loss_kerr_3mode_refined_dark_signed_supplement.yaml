@@ -75,17 +75,21 @@ jobs:
       debounce_checks: 2
   analyser:
     psd:
-      modes: [0, 1, 2]
-      kind: complex
       convention: symmetric
       expected_freq_max: 1.0
       estimator: {periodogram: {fft_chunk_trajectories: 2}}
+      measurement:
+        complex_field:
+          channels: [0, 1, 2]
+          representation: complex
     allan_variance:
-      modes: [0]
       points: 64
       min_windows: 8
-      min_independent_windows: 2
       transfer_chunk_samples: 8192
+      measurement:
+        phase_frequency:
+          channels: [0]
+          min_independent_windows: 2
     coherence_carrier:
       modes: [0, 1, 2]
       include_trace: true
@@ -117,6 +121,11 @@ jobs:
           - ["254.94178386143267-120.80683144993054j", "75.44393675445318+0j", "-104.20641734422274+68.65799856074392j"]
           - ["-465.20232780782095-65.62961109251518j", "-104.20641734422274-68.65799856074392j", "208.34435794178174+0j"]
 
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 - name: collective_loss_kerr_3mode_refined_dark_signed_supplement_fit
   input:
     from: collective_loss_kerr_3mode_refined_dark_signed_supplement_sim
@@ -227,5 +236,5 @@ jobs:
         scipy:
           smooth_window: 5
           distance: 5
-          noise_threshold: null
-          prominence: null
+          noise_threshold:
+          prominence:

@@ -17,7 +17,7 @@ jobs:
         - 1.1067468284070492
         - 1.1167468284070492
         - 1.1367468284070492
-        - 1.1767468284070492
+        - 1.1767468284070493
   engine:
     sde:
       t0: 100.0
@@ -51,11 +51,15 @@ jobs:
       kappa_dark: 0.1775148709287836
   analyser:
     allan_variance:
-      modes: [0]
       points: 40
       min_windows: 4
-      min_independent_windows: 4
-
+      measurement:
+        phase_frequency:
+          channels: [0]
+          min_independent_windows: 4
+  input_bindings:
+    allan_variance:
+      signal: input.trajectories
 - name: cpu_smoke_clk3_allan_scaling_allan
   input:
     from: cpu_smoke_clk3_allan_scaling_sim

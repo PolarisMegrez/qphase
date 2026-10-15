@@ -17,10 +17,17 @@ once, configure `{plugin, config}` explicitly:
 analyser:
   raw_psd:
     plugin: psd
-    config: {kind: complex, modes: [0, 1]}
+    config:
+      measurement:
+        complex_field: {channels: [0, 1], representation: complex}
   mode_2_psd:
     plugin: psd
-    config: {kind: complex, modes: [2]}
+    config:
+      measurement:
+        complex_field: {channels: [2], representation: complex}
+input_bindings:
+  raw_psd: {signal: input.trajectories}
+  mode_2_psd: {signal: input.trajectories}
 ```
 
 Project defaults are keyed by implementation (`psd`); instance config is keyed
@@ -30,16 +37,22 @@ declarations, and default product names use the label.
 
 ## `psd`
 
-Estimates the power spectral density (PSD) of selected modes.
+Estimates the power spectral density (PSD) of selected channels. The required
+`measurement` key selects exactly one measurement variant: `complex_field`
+for the recorded complex field (selected by physical mode index), or
+`sampled_scalar` for a real sampled-observable product (selected by channel
+name).
 
 ### Configuration
 
 ```yaml
 analyser:
   psd:
-    modes: [0]
-    kind: complex
-    orientation: phase_decreasing
+    measurement:
+      complex_field:
+        channels: [0]
+        representation: complex
+        orientation: phase_decreasing
     expected_freq_max: 0.34
     estimator:
       periodogram:
@@ -48,13 +61,14 @@ analyser:
     scan_param: omega_a
     finder:
       scipy: {}
+input_bindings:
+  psd: {signal: input.trajectories}
 ```
 
 | Key | Type | Description |
 | :-- | :-- | :-- |
-| `modes` | `list[int]` | Mode indices to analyze. |
-| `kind` | `str` | `complex` for the complex field or `modular` for its magnitude. |
-| `orientation` | `str` | Positive-frequency orientation. `phase_decreasing` maps `exp(-i*omega*t)` to `+omega`; `phase_increasing` preserves the forward-FFT axis. |
+| `measurement.complex_field` | variant | Complex-field PSD. `channels` lists the physical mode indices; `representation` is `complex` for the field itself or `magnitude` for `|alpha|`; the optional `orientation` sets the positive-frequency convention (`phase_decreasing` maps `exp(-i*omega*t)` to `+omega`; `phase_increasing` preserves the forward-FFT axis). |
+| `measurement.sampled_scalar` | variant | One-sided PSD of a real sampled-observable product. `channels` lists observable channel names; `detrend` is `none` (default) or `constant`. This variant is `extra="forbid"` and has no `orientation` key — signed frequency orientation belongs to the complex-field path only. |
 | `expected_freq_max` | `float \| None` | Optional largest expected frequency magnitude in output-axis units. Analysis fails when it reaches the Nyquist limit. |
 | `estimator` | child selection | Exactly one of `periodogram`, `welch`, or `multitaper`. |
 
@@ -71,10 +85,32 @@ estimator is a child plugin of `analyser.psd`, so it is discoverable with
 `qphase list --parent analyser.psd` and queryable with
 `qphase config schema analyser.psd/estimator.welch`.
 
+### Input requirement and typed product
+
+The analyser declares one typed input requirement named `signal`; a simulation
+job binds it explicitly to the retained trajectory product with
+`input_bindings: {<label>: {signal: input.trajectories}}`. For `complex_field`
+the requirement accepts the complex field-amplitude time-series product (the
+`alpha` variable); the legacy `kind: modular` form is expressed as
+`representation: magnitude`. For `sampled_scalar` it requires a real
+`sampled_observable` time-series product with dims
+`(scan?, trajectory, time, channel)`, a float64 `value` variable and an int64
+`valid_length` censoring variable — typically the output of an upstream
+observable transform.
+
+In the sampled-scalar product the primary `psd` variable carries units
+`<value-units>^2/inverse_time` (`1/inverse_time` when the source observable is
+dimensionless), and the spectral attributes read `orientation: unsigned` and
+`sidedness: one_sided`. The `psd_std`/`psd_sem` uncertainty leaves carry no
+units declaration; the complex-field product declares no variable units
+either.
+
 ### Frequency axis
 
-The estimator first uses the standard NumPy/CuPy forward DFT. The reported
-frequency grid then applies the selected orientation:
+The estimator first uses the standard NumPy/CuPy forward DFT. For the
+`complex_field` measurement the reported frequency grid then applies the
+selected orientation (sampled-scalar spectra are one-sided and unsigned, so no
+sign convention applies there):
 
 ```text
 omega_fft = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
@@ -561,14 +597,32 @@ this analyser supports trajectory batching and can be used with
 ```yaml
 analyser:
   allan_variance:
-    modes: [0]
-    orientation: phase_decreasing
+    measurement:
+      phase_frequency:
+        channels: [0]
+        orientation: phase_decreasing
+        amplitude_floor: 0.0
+        min_independent_windows: 4
     points: 40
     min_windows: 8
-    min_independent_windows: 4
     transfer_chunk_samples: 8192
     device_chunk_trajectories: 16
+input_bindings:
+  allan_variance: {signal: input.trajectories}
 ```
+
+The required `measurement` key selects exactly one variant:
+
+| Key | Type | Description |
+| :-- | :-- | :-- |
+| `measurement.phase_frequency` | variant | Angular-frequency Allan of the complex field, selected by physical mode index in `channels`. All phase-path knobs live inside the variant: `orientation`, `amplitude_floor`, `min_independent_windows`. |
+| `measurement.sampled_scalar` | variant | Allan variance of a real sampled-observable product, selected by observable channel name in `channels`; `min_nonoverlap_pairs` gates the non-overlapping block-mean estimate. This variant is `extra="forbid"` and has no `orientation` or `amplitude_floor` keys. |
+
+`taus`, `points`, `min_windows`, `transfer_chunk_samples` and
+`device_chunk_trajectories` remain top-level keys shared by both variants.
+Like `psd`, the typed input requirement is named `signal` and is bound with
+`input_bindings` (`input.trajectories` for the complex field, or an upstream
+sampled-observable product for `sampled_scalar`).
 
 `orientation` controls the reported per-trajectory mean angular frequency.
 The Allan variance itself is unchanged because it is built from squared phase
@@ -583,6 +637,17 @@ window counts, and the nominal windows per trajectory. "Independent" here
 means that the time blocks do not overlap; colored dynamics may still correlate
 adjacent blocks. Trajectory bootstrap is therefore preferred over treating all
 blocks as exchangeable samples.
+
+For the `sampled_scalar` measurement the non-overlapping adjacent block-mean
+difference is the primary estimator (`sampled_scalar_variance`) and the
+overlapping variant carries the `overlap_` prefix; adjacent pairs share one
+block mean, so `min_nonoverlap_pairs` counts nominal, not independent, pairs.
+Each variance variable of the typed product carries units
+`<value-units>^2` (`1` when the source observable is dimensionless), while the
+`<key>_sem` uncertainty leaves declare no units — mirroring the PSD products,
+only the primary variables are unit-annotated. The product attributes record
+`measurement_model` (`phase_frequency` or `sampled_scalar`); a signed
+`orientation` attribute exists only on the phase-frequency path.
 
 On CuPy backends the analysis is device-native: trajectories are processed in
 chunks of `device_chunk_trajectories` rows, and only the per-trajectory tau

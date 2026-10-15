@@ -55,18 +55,22 @@ jobs:
       debounce_checks: 2
   analyser:
     psd:
-      modes: [0, 1, 2]
-      kind: complex
       convention: symmetric
       expected_freq_max: 10.0
       estimator: {periodogram: {fft_chunk_trajectories: 2}}
+      measurement:
+        complex_field:
+          channels: [0, 1, 2]
+          representation: complex
     allan_variance:
-      modes: [0, 1, 2]
       points: 48
       min_windows: 8
-      min_independent_windows: 4
       transfer_chunk_samples: 8192
       device_chunk_trajectories: 4
+      measurement:
+        phase_frequency:
+          channels: [0, 1, 2]
+          min_independent_windows: 4
     coherence_matrix:
       modes: [0, 1, 2]
       time_blocks: 8
@@ -75,3 +79,8 @@ jobs:
       modes: [0, 1, 2]
       time_blocks: 8
       time_chunk_samples: 8192
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories

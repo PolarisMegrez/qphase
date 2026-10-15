@@ -40,8 +40,10 @@ jobs:
       g: 0.5
   analyser:
     psd:
-      modes: [0, 1]
-      kind: complex
+      measurement:
+        complex_field:
+          channels: [0, 1]
+          representation: complex
     dist:
       modes: [0, 1]
       bins: 20
@@ -51,6 +53,9 @@ jobs:
       bins: 20
       density: true
 
+  input_bindings:
+    psd:
+      signal: input.trajectories
 - name: vdp_2mode_fit_mode0
   input:
     from: vdp_2mode_sim
@@ -81,8 +86,8 @@ jobs:
         scipy:
           smooth_window: 5
           distance: 5
-          noise_threshold: null
-          prominence: null
+          noise_threshold:
+          prominence:
 
 - name: vdp_2mode_fit_mode1
   input:

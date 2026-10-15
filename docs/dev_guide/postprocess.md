@@ -39,8 +39,11 @@ Postprocessing is not a separate core command or a separate resource package. It
       g: 0.1
   analyser:
     psd:
-      modes: [0]
-      kind: complex
+      measurement:
+        complex_field: {channels: [0], representation: complex}
+  input_bindings:
+    psd:
+      signal: input.trajectories
 
 - name: fit
   input:

@@ -77,7 +77,9 @@ def _spectrum_bundle() -> SDEDataBundle:
                 "uncertainty": {"n_independent": 4},
             }
         )
-    analyzer = PsdAnalyzer(modes=[0], kind="complex")
+    analyzer = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    )
     products = _build_psd_products(
         payload, scan_size=2, label="psd", analyser=analyzer
     )

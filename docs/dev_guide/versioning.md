@@ -49,3 +49,63 @@ major by compatibility impact, not by matching the package version numerically.
 Migration tools are explicit commands or maintenance utilities. Artifact
 loading never silently rewrites data, and ordinary plugin discovery never
 imports an old-major compatibility layer.
+
+## Wave 6D breaking changes (qphase_sde 2.0)
+
+The Wave 6D migration reworked the PSD/Allan measurement configuration, the
+typed-input requirement name, and the product provenance attribute of
+`qphase_sde`. All configuration models are `extra="forbid"`, so removed keys
+are hard validation errors, and no dual-key compatibility is retained.
+
+1. **PSD/Allan `measurement` union.** `PsdAnalyzerConfig` and
+   `AllanVarianceConfig` dropped the top-level `kind`/`modes` keys in favour of
+   a strictly discriminated `measurement` union. PSD takes
+   `measurement: {complex_field: {channels, representation, orientation?}}` or
+   `measurement: {sampled_scalar: {channels, ...}}`; Allan takes
+   `measurement: {phase_frequency: {channels, orientation, amplitude_floor, min_independent_windows}}`
+   or `measurement: {sampled_scalar: {channels, min_nonoverlap_pairs}}`. All
+   phase-only knobs (`orientation`, `amplitude_floor`,
+   `min_independent_windows`) moved into the `phase_frequency` variant; the
+   `sampled_scalar` variants are `extra="forbid"` and reject `orientation`.
+
+   ```yaml
+   # before
+   analyser:
+     psd: {modes: [0], kind: complex, orientation: phase_decreasing}
+     allan_variance: {modes: [0], min_independent_windows: 4}
+
+   # after
+   analyser:
+     psd:
+       measurement:
+         complex_field:
+           channels: [0]
+           representation: complex
+           orientation: phase_decreasing
+     allan_variance:
+       measurement:
+         phase_frequency:
+           channels: [0]
+           min_independent_windows: 4
+   input_bindings:
+     psd: {signal: input.trajectories}
+     allan_variance: {signal: input.trajectories}
+   ```
+
+2. **Requirement `trajectories` renamed to `signal`.** The typed input
+   requirement of both analysers is now named `signal`, so a workflow must bind
+   it explicitly:
+   `input_bindings: {<analyser_label>: {signal: input.trajectories}}`.
+3. **`source_analyser` renamed to `producer_analyser`.** The typed-product
+   attribute (and provenance entry) written by `assemble_typed_product` uses
+   the new key everywhere; consumers reading `attributes["source_analyser"]`
+   must switch to `producer_analyser`.
+4. **Typed products carry per-variable units.** `assemble_typed_product`
+   gained a `variable_units` parameter. The sampled-scalar PSD primary `psd`
+   variable carries `<value-units>^2/inverse_time` (`1/inverse_time` when the
+   source observable is dimensionless); sampled-scalar Allan variance variables
+   carry `<value-units>^2` (`1` when dimensionless). Uncertainty leaves
+   (`psd_std`/`psd_sem`, `<key>_sem`) declare no units — only the primary
+   variables are annotated.
+5. **`kind: modular` removed.** The magnitude PSD of the complex field is
+   `representation: magnitude` inside `measurement.complex_field`.

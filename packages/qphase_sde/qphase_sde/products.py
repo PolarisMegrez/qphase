@@ -374,6 +374,7 @@ def assemble_typed_product(
     declared_dims: Mapping[str, tuple[str, ...]] | None = None,
     axis_specs: Mapping[str, TypedAxisSpec] | None = None,
     quantities: Mapping[str, str] | None = None,
+    variable_units: Mapping[str, str] | None = None,
     constraints: Mapping[str, VariableConstraints] | None = None,
     uncertainties: Sequence[UncertaintySchema] = (),
     sampling_bases: Sequence[SamplingBasisSchema] = (),
@@ -399,6 +400,7 @@ def assemble_typed_product(
     declared_dims = declared_dims or {}
     axis_specs = axis_specs or {}
     quantities = quantities or {}
+    variable_units = variable_units or {}
     constraints = constraints or {}
 
     arrays = dict(leaves.arrays)
@@ -484,6 +486,7 @@ def assemble_typed_product(
                 value_domain="complex" if dtype.kind == "c" else "real",
                 dims=(*leading, *declared),
                 quantity=quantities.get(key, ""),
+                units=variable_units.get(key, ""),
                 constraints=constraints.get(key, VariableConstraints()),
             )
         )
@@ -515,7 +518,7 @@ def assemble_typed_product(
         uncertainties=list(uncertainties),
         coordinates=coordinate_specs,
         attributes={
-            "source_analyser": str(name),
+            "producer_analyser": str(name),
             "dropped_keys": leaves.dropped,
             "payload_meta": leaves.payload_meta,
             "per_point_meta": leaves.per_point_meta,
@@ -527,7 +530,7 @@ def assemble_typed_product(
         schema,
         clean_arrays,
         owner=owner,
-        provenance={"source_analyser": str(name)},
+        provenance={"producer_analyser": str(name)},
     )
 
 

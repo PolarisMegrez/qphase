@@ -32,9 +32,10 @@ def _phase_diffusion_trajectory(n_traj: int = 9) -> TrajectorySet:
 def _analyzer() -> AllanVarianceAnalyzer:
     return AllanVarianceAnalyzer(
         AllanVarianceConfig(
-            modes=[2],
+            measurement={
+                "phase_frequency": {"channels": [2], "min_independent_windows": 4}
+            },
             taus=[1.0, 2.0, 4.0],
-            min_independent_windows=4,
         )
     )
 
@@ -60,7 +61,7 @@ def _product_payload(product):
 def _execute(analyzer, trajectory: TrajectorySet, backend=None):
     product = analyzer.execute(
         {
-            "trajectories": _trajectory_product(
+            "signal": _trajectory_product(
                 trajectory, scan_size=None, n_traj_per_point=None
             )
         },
@@ -100,17 +101,26 @@ def test_allan_frequency_uses_configured_phase_orientation():
 
     _, phase_decreasing = _execute(
         AllanVarianceAnalyzer(
-            AllanVarianceConfig(modes=[0], points=4, min_independent_windows=2)
+            AllanVarianceConfig(
+                measurement={
+                    "phase_frequency": {"channels": [0], "min_independent_windows": 2}
+                },
+                points=4,
+            )
         ),
         trajectory,
     )
     _, legacy = _execute(
         AllanVarianceAnalyzer(
             AllanVarianceConfig(
-                modes=[0],
+                measurement={
+                    "phase_frequency": {
+                        "channels": [0],
+                        "min_independent_windows": 2,
+                        "orientation": "phase_increasing",
+                    }
+                },
                 points=4,
-                min_independent_windows=2,
-                orientation="phase_increasing",
             )
         ),
         trajectory,
@@ -210,14 +220,21 @@ def test_allan_config_rejects_empty_taus():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        AllanVarianceConfig(modes=[0], taus=[])
+        AllanVarianceConfig(
+            measurement={"phase_frequency": {"channels": [0]}}, taus=[]
+        )
     with pytest.raises(ValidationError):
-        AllanVarianceConfig(modes=[0], taus=[0.0])
+        AllanVarianceConfig(
+            measurement={"phase_frequency": {"channels": [0]}}, taus=[0.0]
+        )
 
 
 def test_allan_workspace_is_host_resident_for_numpy_backend():
     analyzer = AllanVarianceAnalyzer(
-        AllanVarianceConfig(modes=[0, 1, 2], transfer_chunk_samples=8192)
+        AllanVarianceConfig(
+            measurement={"phase_frequency": {"channels": [0, 1, 2]}},
+            transfer_chunk_samples=8192,
+        )
     )
     trajectory_bytes = 60 * 1_000_001 * 3 * 16
     request = AnalyserWorkspaceRequest(
@@ -245,7 +262,10 @@ def test_allan_workspace_is_trajectory_chunked_on_device(
     real_itemsize, bytes_per_sample
 ):
     analyzer = AllanVarianceAnalyzer(
-        AllanVarianceConfig(modes=[0, 1, 2], device_chunk_trajectories=16)
+        AllanVarianceConfig(
+            measurement={"phase_frequency": {"channels": [0, 1, 2]}},
+            device_chunk_trajectories=16,
+        )
     )
     request = AnalyserWorkspaceRequest(
         trajectory_bytes=60 * 1_000_001 * 3 * 16,
@@ -273,9 +293,10 @@ def test_allan_device_transfer_is_time_chunked():
     )
     analyzer = AllanVarianceAnalyzer(
         AllanVarianceConfig(
-            modes=[2],
+            measurement={
+                "phase_frequency": {"channels": [2], "min_independent_windows": 4}
+            },
             taus=[1.0, 2.0],
-            min_independent_windows=4,
             transfer_chunk_samples=127,
         )
     )
@@ -418,10 +439,14 @@ def test_allan_device_path_matches_host_complex64_long_record():
     trajectory = TrajectorySet(values, t0=0.0, dt=dt, meta={"mode_indices": [0]})
     analyzer = AllanVarianceAnalyzer(
         AllanVarianceConfig(
-            modes=[0],
+            measurement={
+                "phase_frequency": {
+                    "channels": [0],
+                    "min_independent_windows": 2,
+                    "amplitude_floor": 0.5,
+                }
+            },
             taus=[0.5, 1.0, 4.0, 16.0, 64.0],
-            min_independent_windows=2,
-            amplitude_floor=0.5,
             device_chunk_trajectories=3,
         )
     )
@@ -469,9 +494,10 @@ def test_allan_device_path_matches_host():
     # Odd chunking exercises the trailing partial chunk.
     analyzer = AllanVarianceAnalyzer(
         AllanVarianceConfig(
-            modes=[2],
+            measurement={
+                "phase_frequency": {"channels": [2], "min_independent_windows": 4}
+            },
             taus=[1.0, 2.0, 4.0],
-            min_independent_windows=4,
             device_chunk_trajectories=4,
         )
     )
@@ -509,10 +535,14 @@ def test_allan_device_path_matches_host_with_masked_windows():
     trajectory = TrajectorySet(values, t0=0.0, dt=0.1, meta={"mode_indices": [0]})
     analyzer = AllanVarianceAnalyzer(
         AllanVarianceConfig(
-            modes=[0],
+            measurement={
+                "phase_frequency": {
+                    "channels": [0],
+                    "min_independent_windows": 2,
+                    "amplitude_floor": 0.5,
+                }
+            },
             taus=[0.5, 1.0, 2.0, 4.0],
-            min_independent_windows=2,
-            amplitude_floor=0.5,
             device_chunk_trajectories=3,
         )
     )
@@ -533,11 +563,11 @@ def test_allan_device_path_matches_host_with_masked_windows():
 def test_raw_allan_product_fields_are_frozen():
     """The phase-frequency Allan product keeps its stable concrete fields.
 
-    Wave 6B freezes the conditional product layouts: the raw-field Allan
-    product keeps its per-mode ``angular_frequency_variance`` tables and a
-    phase-signed orientation; only the future sampled-scalar variant carries
-    ``sampled_scalar_variance`` channel tables with ``measurement_model``
-    recorded.
+    Wave 6B freezes the conditional product layouts: the phase-frequency
+    Allan product keeps its per-mode ``angular_frequency_variance`` tables and
+    a phase-signed orientation; only the sampled-scalar variant carries
+    ``sampled_scalar_variance`` channel tables. Both record their
+    ``measurement_model`` attribute.
     """
     from qphase_sde.analyser.allan_variance import (
         _ALLAN_TABLE_LEAVES,
@@ -557,6 +587,7 @@ def test_raw_allan_product_fields_are_frozen():
     assert product.axis("tau").units == "time"
     assert product.attributes["orientation"] == "phase_decreasing"
     assert product.attributes["estimator"] == "non_overlapping_windows"
+    assert product.attributes["measurement_model"] == "phase_frequency"
 
 
 def test_allan_config_orientation_rejects_unsigned():
@@ -564,4 +595,8 @@ def test_allan_config_orientation_rejects_unsigned():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        AllanVarianceConfig(modes=[0], orientation="unsigned")
+        AllanVarianceConfig(
+            measurement={
+                "phase_frequency": {"channels": [0], "orientation": "unsigned"}
+            }
+        )

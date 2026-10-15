@@ -55,18 +55,22 @@ jobs:
       debounce_checks: 2
   analyser: &analysers
     psd:
-      modes: [0, 1, 2]
-      kind: complex
       convention: symmetric
       expected_freq_max: 5.0
       estimator: {periodogram: {fft_chunk_trajectories: 16}}
+      measurement:
+        complex_field:
+          channels: [0, 1, 2]
+          representation: complex
     allan_variance:
-      modes: [0, 1, 2]
       points: 64
       min_windows: 8
-      min_independent_windows: 4
       transfer_chunk_samples: 16384
       device_chunk_trajectories: 16
+      measurement:
+        phase_frequency:
+          channels: [0, 1, 2]
+          min_independent_windows: 4
     coherence_matrix:
       modes: [0, 1, 2]
       time_blocks: 16
@@ -76,6 +80,11 @@ jobs:
       time_blocks: 16
       time_chunk_samples: 16384
 
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 - name: kerr_full_3mode_kf3f_001_bench_batch64
   save: true
   engine:
@@ -99,6 +108,11 @@ jobs:
   model: *model
   observer: *observer
   analyser: *analysers
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 
 - name: kerr_full_3mode_kf3f_001_bench_batch128
   save: true
@@ -123,3 +137,8 @@ jobs:
   model: *model
   observer: *observer
   analyser: *analysers
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories

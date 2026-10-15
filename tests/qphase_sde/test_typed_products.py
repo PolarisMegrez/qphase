@@ -145,6 +145,12 @@ class _ProductBuilderAnalyzer(_MeanAnalyzer):
         }
 
 
+def _psd_analyzer() -> PsdAnalyzer:
+    return PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    )
+
+
 def _grid():
     return ScanSpec.model_validate(
         {
@@ -187,7 +193,7 @@ def _run(model, analysers, *, scan=False, t1=0.2, n_traj=8, keep_traj=False, gri
             consumer=node.node_id,
             requirement=requirement.name,
             source="input",
-            product=requirement.name,
+            product="trajectories",
         )
         for node in nodes
         for requirement in node.requirements
@@ -242,7 +248,7 @@ def _singleton_grid():
 
 
 def test_psd_product_is_graph_ready_spectral():
-    bundle = _run(_OneModeModel(), {"psd": PsdAnalyzer(kind="complex", modes=[0])})
+    bundle = _run(_OneModeModel(), {"psd": _psd_analyzer()})
 
     product = bundle.products["psd"]
     assert isinstance(product, SpectralDataset)
@@ -284,7 +290,7 @@ def test_psd_product_is_graph_ready_spectral():
 def test_psd_scan_product_stacks_over_scan_axis():
     bundle = _run(
         _OneModeModel(),
-        {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+        {"psd": _psd_analyzer()},
         scan=True,
     )
 
@@ -307,7 +313,7 @@ def test_psd_scan_product_stacks_over_scan_axis():
 
 
 def test_psd_does_not_build_inline_peak_products():
-    bundle = _run(_OneModeModel(), {"psd": PsdAnalyzer(kind="complex", modes=[0])})
+    bundle = _run(_OneModeModel(), {"psd": _psd_analyzer()})
     spectrum = bundle.products["psd"]
     products = bundle.products
     assert set(products) == {"psd"}
@@ -315,7 +321,7 @@ def test_psd_does_not_build_inline_peak_products():
 
 
 def test_typed_reducer_merge_and_checkpoint_are_portable():
-    analyser = PsdAnalyzer(kind="complex", modes=[0])
+    analyser = _psd_analyzer()
 
     def product(offset: float):
         from qphase_sde.result import _trajectory_product
@@ -328,7 +334,7 @@ def test_typed_reducer_merge_and_checkpoint_are_portable():
             n_traj_per_point=None,
         )
         return analyser.execute(
-            {"trajectories": trajectory}, backend=NumpyBackend(), label="psd"
+            {"signal": trajectory}, backend=NumpyBackend(), label="psd"
         )["psd"]
 
     reducer = analyser.reducer()
@@ -355,7 +361,11 @@ def test_allan_product_is_graph_ready_statistics():
         _OneModeModel(),
         {
             "allan_variance": AllanVarianceAnalyzer(
-                modes=[0], points=5, min_windows=2, min_independent_windows=1
+                measurement={
+                    "phase_frequency": {"channels": [0], "min_independent_windows": 1}
+                },
+                points=5,
+                min_windows=2,
             )
         },
         t1=0.4,

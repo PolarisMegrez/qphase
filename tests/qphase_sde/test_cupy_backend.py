@@ -53,7 +53,7 @@ def _graph_for(label, analyzer):
                 consumer=node.node_id,
                 requirement=requirement.name,
                 source="input",
-                product=requirement.name,
+                product="trajectories",
             )
             for requirement in node.requirements
         ],
@@ -177,7 +177,12 @@ def test_cupy_vs_numpy_psd_periodogram():
     )
 
     analyzer = PsdAnalyzer(
-        config=PsdAnalyzerConfig(modes=[0], kind="complex", convention="symmetric")
+        config=PsdAnalyzerConfig(
+            measurement={
+                "complex_field": {"channels": [0], "representation": "complex"}
+            },
+            convention="symmetric",
+        )
     )
 
     from qphase_sde.result import _trajectory_product
@@ -192,12 +197,12 @@ def test_cupy_vs_numpy_psd_periodogram():
         scan_size=None,
         n_traj_per_point=None,
     )
-    product_np = analyzer.execute(
-        {"trajectories": np_input}, backend=np_be, label="psd"
-    )["psd"]
-    product_cp = analyzer.execute(
-        {"trajectories": cp_input}, backend=cp_be, label="psd"
-    )["psd"]
+    product_np = analyzer.execute({"signal": np_input}, backend=np_be, label="psd")[
+        "psd"
+    ]
+    product_cp = analyzer.execute({"signal": cp_input}, backend=cp_be, label="psd")[
+        "psd"
+    ]
     axis_np = product_np.handle("axis").materialize()
     axis_cp = product_cp.handle("axis").materialize()
     P_np = product_np.handle("psd").materialize()
@@ -245,8 +250,20 @@ def test_cupy_typed_scan_and_trajectory_batching_roundtrip(tmp_path):
 
     discovery.discover_plugins()
     graph = compile_product_graph(
-        plugin_config={"analyser": {"psd": {"modes": [0], "kind": "complex"}}},
+        plugin_config={
+            "analyser": {
+                "psd": {
+                    "measurement": {
+                        "complex_field": {
+                            "channels": [0],
+                            "representation": "complex",
+                        }
+                    }
+                }
+            }
+        },
         registry=registry,
+        input_bindings={"psd": {"signal": "input.trajectories"}},
     )
     assert graph is not None
     grid = ScanSpec.model_validate(
@@ -276,7 +293,16 @@ def test_cupy_typed_scan_and_trajectory_batching_roundtrip(tmp_path):
             "backend": CuPyBackend(),
             "model": model(),
             "integrator": EulerMaruyama(),
-            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            "analyser": {
+                "psd": PsdAnalyzer(
+                    measurement={
+                        "complex_field": {
+                            "channels": [0],
+                            "representation": "complex",
+                        }
+                    }
+                )
+            },
         },
         product_graph=graph,
     )
@@ -419,7 +445,13 @@ def test_cupy_vdp_end_to_end_smoke():
         g=0.5,
     ).to_diffusive_sde_model()
 
-    analyzer = PsdAnalyzer(config=PsdAnalyzerConfig(modes=[0], kind="complex"))
+    analyzer = PsdAnalyzer(
+        config=PsdAnalyzerConfig(
+            measurement={
+                "complex_field": {"channels": [0], "representation": "complex"}
+            }
+        )
+    )
     engine = Engine(
         config=EngineConfig(
             t0=0.0,
@@ -500,8 +532,13 @@ jobs:
         g: 0.5
     analyser:
       psd:
-        modes: [0]
-        kind: complex
+        measurement:
+          complex_field:
+            channels: [0]
+            representation: complex
+    input_bindings:
+      psd:
+        signal: input.trajectories
 """
     )
 

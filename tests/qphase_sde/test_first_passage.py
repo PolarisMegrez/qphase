@@ -542,7 +542,10 @@ def test_cupy_matches_numpy_hits():
 
 def test_trajectory_batching_merges_observer_payloads():
     # Dyadic increments keep every check value exact in binary floating point.
-    ic = [[0.0625 * index] for index in range(8)]
+    # Complex initial states keep the trajectory product complex-valued, which
+    # the complex-field PSD measurement requires; the imaginary part stays
+    # exactly zero, so the observer checks are unchanged.
+    ic = [[0.0625 * index + 0.0j] for index in range(8)]
 
     def run(**config):
         config.setdefault("dt", 0.125)
@@ -553,16 +556,32 @@ def test_trajectory_batching_merges_observer_payloads():
             ic=ic,
             **config,
         )
-        engine.plugins["analyser"] = {"psd": PsdAnalyzer(kind="complex", modes=[0])}
+        engine.plugins["analyser"] = {
+            "psd": PsdAnalyzer(
+                measurement={
+                    "complex_field": {"channels": [0], "representation": "complex"}
+                }
+            )
+        }
         from qphase.core.registry import discovery, registry
         from qphase_sde.graph import compile_product_graph
 
         discovery.discover_plugins()
         engine._product_graph = compile_product_graph(
             plugin_config={
-                "analyser": {"psd": {"kind": "complex", "modes": [0]}}
+                "analyser": {
+                    "psd": {
+                        "measurement": {
+                            "complex_field": {
+                                "channels": [0],
+                                "representation": "complex",
+                            }
+                        }
+                    }
+                }
             },
             registry=registry,
+            input_bindings={"psd": {"signal": "input.trajectories"}},
         )
         return engine.run()
 
@@ -636,8 +655,17 @@ def test_typed_batched_scan_preserves_per_point_observer_payloads():
     ).compile()
     discovery.discover_plugins()
     graph = compile_product_graph(
-        plugin_config={"analyser": {"psd": {"modes": [0], "kind": "complex"}}},
+        plugin_config={
+            "analyser": {
+                "psd": {
+                    "measurement": {
+                        "complex_field": {"channels": [0], "representation": "complex"}
+                    }
+                }
+            }
+        },
         registry=registry,
+        input_bindings={"psd": {"signal": "input.trajectories"}},
     )
     assert graph is not None
     observer = FirstPassageObserver(
@@ -656,14 +684,20 @@ def test_typed_batched_scan_preserves_per_point_observer_payloads():
             trajectory_batch_size=2,
             rng_group_size=2,
             seed=7,
-            ic=[[1.0]],
+            ic=[[1.0 + 0.0j]],
             keep_traj=False,
         ),
         plugins={
             "backend": NumpyBackend(),
             "integrator": EulerMaruyama(),
             "model": DecayScanModel(),
-            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            "analyser": {
+                "psd": PsdAnalyzer(
+                    measurement={
+                        "complex_field": {"channels": [0], "representation": "complex"}
+                    }
+                )
+            },
             "observer": {"first_passage": observer},
         },
         product_graph=graph,
@@ -694,8 +728,17 @@ def test_typed_single_point_batch_preserves_observer_metadata():
 
     discovery.discover_plugins()
     graph = compile_product_graph(
-        plugin_config={"analyser": {"psd": {"modes": [0], "kind": "complex"}}},
+        plugin_config={
+            "analyser": {
+                "psd": {
+                    "measurement": {
+                        "complex_field": {"channels": [0], "representation": "complex"}
+                    }
+                }
+            }
+        },
         registry=registry,
+        input_bindings={"psd": {"signal": "input.trajectories"}},
     )
     assert graph is not None
     engine = Engine(
@@ -708,14 +751,20 @@ def test_typed_single_point_batch_preserves_observer_metadata():
             trajectory_batch_size=4,
             rng_group_size=4,
             seed=7,
-            ic=[[0.0]],
+            ic=[[0.0 + 0.0j]],
             keep_traj=False,
         ),
         plugins={
             "backend": NumpyBackend(),
             "integrator": EulerMaruyama(),
             "model": LinearGrowthModel(),
-            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            "analyser": {
+                "psd": PsdAnalyzer(
+                    measurement={
+                        "complex_field": {"channels": [0], "representation": "complex"}
+                    }
+                )
+            },
             "observer": {"first_passage": _observer(check_interval_steps=1)},
         },
         product_graph=graph,

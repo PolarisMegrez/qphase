@@ -382,7 +382,6 @@ def _psd_payload(epsilon: float, *, with_uncertainty: bool = False) -> dict:
         "modes": [0],
         "sample_dt": 1.0,
         "nyquist": np.pi,
-        "kind": "complex",
         "convention": "symmetric",
         "orientation": "phase_increasing",
     }
@@ -398,7 +397,9 @@ def _psd_payload(epsilon: float, *, with_uncertainty: bool = False) -> dict:
 
 
 def _make_scan_product(*, with_uncertainty: bool = False):
-    analyzer = PsdAnalyzer(kind="complex", modes=[0])
+    analyzer = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    )
     products = _build_psd_products(
         [
             _psd_payload(value, with_uncertainty=with_uncertainty)
@@ -416,7 +417,9 @@ def _make_scan_product(*, with_uncertainty: bool = False):
 
 def _make_run_dir(tmp_path: Path, *, with_uncertainty: bool = False) -> Path:
     run_dir = tmp_path / "run"
-    analyzer = PsdAnalyzer(kind="complex", modes=[0])
+    analyzer = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    )
     for index, epsilon in enumerate([0.1, 0.2], start=1):
         job_dir = run_dir / f"job_{index:03d}"
         job_dir.mkdir(parents=True)

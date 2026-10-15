@@ -34,9 +34,9 @@ def test_analyzers_use_physical_mode_mapping():
     trajectory = _trajectory()
     product = _trajectory_product(trajectory, scan_size=None, n_traj_per_point=None)
 
-    psd = PsdAnalyzer(kind="complex", modes=[3]).execute(
-        {"trajectories": product}, backend=BACKEND, label="psd"
-    )["psd"]
+    psd = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [3], "representation": "complex"}}
+    ).execute({"signal": product}, backend=BACKEND, label="psd")["psd"]
     dist = DistAnalyzer(modes=[3], bins=16).execute(
         {"trajectories": product}, backend=BACKEND, label="dist"
     )["dist"]

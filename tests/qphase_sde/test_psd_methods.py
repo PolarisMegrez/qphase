@@ -36,9 +36,17 @@ def _analyzer(method="periodogram", *, estimator_config=None, **kwargs):
     )
 
 
+def _field(channels=(0,), *, orientation=None, representation="complex"):
+    """Complex-field measurement config dict for the given physical modes."""
+    spec = {"channels": list(channels), "representation": representation}
+    if orientation is not None:
+        spec["orientation"] = orientation
+    return {"complex_field": spec}
+
+
 def _product(analyzer, data, backend=BACKEND):
     trajectory = _trajectory_product(data, scan_size=None, n_traj_per_point=None)
-    return analyzer.execute({"trajectories": trajectory}, backend=backend, label="psd")[
+    return analyzer.execute({"signal": trajectory}, backend=backend, label="psd")[
         "psd"
     ]
 
@@ -93,8 +101,7 @@ def test_psd_method_peak_location(method):
     analyzer = _analyzer(
         method,
         estimator_config={"nperseg": 256} if method == "welch" else {},
-        kind="complex",
-        modes=[0],
+        measurement=_field(),
         convention="symmetric",
     )
     payload = _payload(analyzer, data)
@@ -125,8 +132,7 @@ def test_psd_method_unitary_convention(method):
     analyzer = _analyzer(
         method,
         estimator_config={"nperseg": 128} if method == "welch" else {},
-        kind="complex",
-        modes=[0],
+        measurement=_field(),
         convention="unitary",
     )
     axis = _payload(analyzer, data)["axis"]
@@ -147,8 +153,7 @@ def test_psd_default_maps_decreasing_phase_to_positive_frequency(method):
         _analyzer(
             method,
             estimator_config=kwargs,
-            kind="complex",
-            modes=[0],
+            measurement=_field(),
             convention="symmetric",
         ),
         data,
@@ -169,10 +174,8 @@ def test_psd_phase_increasing_preserves_forward_fft_axis():
 
     payload = _payload(
         PsdAnalyzer(
-            kind="complex",
-            modes=[0],
+            measurement=_field(orientation="phase_increasing"),
             convention="symmetric",
-            orientation="phase_increasing",
         ),
         data,
     )
@@ -198,14 +201,19 @@ def test_frequency_orientation_resolver_rejects_missing_metadata():
     [("fft", "phase_increasing"), ("physical", "phase_decreasing")],
 )
 def test_psd_orientation_aliases_serialize_canonically(configured, canonical):
-    config = PsdAnalyzerConfig(kind="complex", modes=[0], orientation=configured)
+    config = PsdAnalyzerConfig(measurement=_field(orientation=configured))
 
-    assert config.orientation == canonical
-    assert config.model_dump()["orientation"] == canonical
+    field = config.measurement.complex_field
+    assert field is not None
+    assert field.orientation == canonical
+    assert config.model_dump()["measurement"]["complex_field"]["orientation"] == canonical
 
 
 def test_psd_orientation_aliases_are_discoverable_in_schema():
-    orientation = PsdAnalyzerConfig.model_json_schema()["properties"]["orientation"]
+    schema = PsdAnalyzerConfig.model_json_schema()
+    orientation = schema["$defs"]["PsdComplexFieldMeasurement"]["properties"][
+        "orientation"
+    ]
 
     assert orientation["value_aliases"] == {
         "fft": "phase_increasing",
@@ -225,8 +233,7 @@ def test_welch_nperseg_default_reduces_variance():
     analyzer = _analyzer(
         "welch",
         estimator_config={"nperseg": 256, "noverlap": 128},
-        kind="complex",
-        modes=[0],
+        measurement=_field(),
         convention="symmetric",
     )
     axis = _payload(analyzer, data)["axis"]
@@ -246,8 +253,7 @@ def test_multitaper_k_tapers_default():
     analyzer = _analyzer(
         "multitaper",
         estimator_config={"nw": 2.5},
-        kind="complex",
-        modes=[0],
+        measurement=_field(),
         convention="symmetric",
     )
     payload = _payload(analyzer, data)
@@ -268,10 +274,8 @@ def test_periodogram_reports_cross_trajectory_standard_error():
 
     payload = _payload(
         PsdAnalyzer(
-            kind="complex",
-            modes=[0],
+            measurement=_field(orientation="phase_increasing"),
             convention="pragmatic",
-            orientation="phase_increasing",
         ),
         data,
     )
@@ -304,8 +308,7 @@ def test_psd_methods_report_sem_for_each_mode(method):
         _analyzer(
             method,
             estimator_config={"nperseg": 64} if method == "welch" else {},
-            kind="complex",
-            modes=[0],
+            measurement=_field(),
         ),
         data,
     )
@@ -323,7 +326,7 @@ def test_single_trajectory_marks_psd_uncertainty_unavailable():
         t0=0.0,
         dt=0.1,
     )
-    payload = _payload(PsdAnalyzer(kind="complex", modes=[0]), data)
+    payload = _payload(PsdAnalyzer(measurement=_field()), data)
 
     assert np.all(np.isnan(payload["psd_std"]))
     assert np.all(np.isnan(payload["psd_sem"]))
@@ -337,8 +340,7 @@ def test_psd_accumulator_matches_full_trajectory_analysis(method):
     analyzer = _analyzer(
         method,
         estimator_config={"nperseg": 64} if method == "welch" else {},
-        kind="complex",
-        modes=[0],
+        measurement=_field(),
     )
     full_product = _product(analyzer, TrajectorySet(values, t0=0.0, dt=0.1))
     reducer = analyzer.reducer()
@@ -369,8 +371,7 @@ def test_expected_freq_max_guards_against_aliasing():
     values = _make_sine_data(n_traj=2, n_time=128)
     undersampled = TrajectorySet(data=values, t0=0.0, dt=50.0)
     analyzer = PsdAnalyzer(
-        kind="complex",
-        modes=[0],
+        measurement=_field(),
         convention="symmetric",
         expected_freq_max=0.34,
     )
@@ -390,8 +391,7 @@ def test_psd_method_invalid():
 
     with pytest.raises(ValidationError, match="method"):
         PsdAnalyzer(
-            kind="complex",
-            modes=[0],
+            measurement=_field(),
             method="not_a_method",
         )
 
@@ -412,8 +412,7 @@ def test_psd_estimator_subplugins_are_discoverable_and_constructed():
         "analyser",
         {
             "name": "psd",
-            "kind": "complex",
-            "modes": [0],
+            "measurement": {"complex_field": {"channels": [0], "representation": "complex"}},
             "estimator": {"welch": {"nperseg": 64}},
         },
     )
@@ -433,8 +432,9 @@ def test_psd_legacy_method_is_rejected_by_plugin_resolver():
             "analyser",
             {
                 "name": "psd",
-                "kind": "complex",
-                "modes": [0],
+                "measurement": {
+                    "complex_field": {"channels": [0], "representation": "complex"}
+                },
                 "method": "multitaper",
                 "nw": 3.5,
             },
@@ -493,8 +493,7 @@ def test_periodogram_fft_chunk_config_reaches_estimator():
         "analyser",
         {
             "name": "psd",
-            "kind": "complex",
-            "modes": [0],
+            "measurement": {"complex_field": {"channels": [0], "representation": "complex"}},
             "estimator": {"periodogram": {"fft_chunk_trajectories": 4}},
         },
     )
@@ -514,7 +513,7 @@ def test_raw_psd_product_fields_are_frozen():
         data=_make_sine_data(n_traj=4, n_time=128), t0=0.0, dt=0.1
     )
 
-    product = _product(PsdAnalyzer(kind="complex", modes=[0]), data)
+    product = _product(PsdAnalyzer(measurement=_field()), data)
 
     assert {variable.name for variable in product.variables} == {
         "axis",
@@ -540,4 +539,4 @@ def test_psd_config_orientation_rejects_unsigned():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        PsdAnalyzerConfig(kind="complex", modes=[0], orientation="unsigned")
+        PsdAnalyzerConfig(measurement=_field(orientation="unsigned"))

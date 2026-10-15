@@ -24,9 +24,10 @@ jobs:
 
   analyser:
     psd:
-      modes: [0]
-      kind: complex
-
+      measurement:
+        complex_field:
+          channels: [0]
+          representation: complex
   backend:
     numpy:
       float_dtype: float64
@@ -43,6 +44,9 @@ jobs:
       gamma_b: 1.8728
       g: 0.5
 
+  input_bindings:
+    psd:
+      signal: input.trajectories
 - name: cpu_smoke_kerr_2mode_peaks
   input: {from: cpu_smoke_kerr_2mode, mode: dataset}
   save: true
@@ -56,5 +60,5 @@ jobs:
         scipy:
           smooth_window: 5
           distance: 5
-          noise_threshold: null
-          prominence: null
+          noise_threshold:
+          prominence:

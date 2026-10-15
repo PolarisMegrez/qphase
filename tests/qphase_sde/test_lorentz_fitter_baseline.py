@@ -141,7 +141,9 @@ def _scan_product():
                 "orientation": "phase_decreasing",
             }
         )
-    analyzer = PsdAnalyzer(modes=[0], kind="complex")
+    analyzer = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    )
     products = _build_psd_products(
         payloads, scan_size=2, label="psd", analyser=analyzer
     )
@@ -229,7 +231,9 @@ def _typed_psd_product(scan_values: list[float]):
                 "uncertainty": {"n_independent": 4},
             }
         )
-    analyzer = PsdAnalyzer(modes=[0], kind="complex")
+    analyzer = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    )
     products = _build_psd_products(
         payload, scan_size=len(scan_values), label="psd", analyser=analyzer
     )

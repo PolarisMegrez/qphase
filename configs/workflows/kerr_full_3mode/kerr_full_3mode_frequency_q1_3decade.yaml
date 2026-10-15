@@ -22,13 +22,13 @@ jobs:
         target: model.kerr_full_3mode.omega_b
         values:
         - 2.0001
-        - 2.0001778279410038
+        - 2.0001778279410036
         - 2.000316227766017
         - 2.00056234132519
         - 2.001
         - 2.001778279410039
         - 2.0031622776601683
-        - 2.0056234132519035
+        - 2.0056234132519033
         - 2.01
         - 2.017782794100389
         - 2.031622776601684
@@ -80,18 +80,22 @@ jobs:
       debounce_checks: 2
   analyser:
     psd:
-      modes: [0, 1, 2]
-      kind: complex
       convention: symmetric
       expected_freq_max: 6.0
       estimator: {periodogram: {fft_chunk_trajectories: 4}}
+      measurement:
+        complex_field:
+          channels: [0, 1, 2]
+          representation: complex
     allan_variance:
-      modes: [0, 1, 2]
       points: 64
       min_windows: 8
-      min_independent_windows: 4
       transfer_chunk_samples: 16384
       device_chunk_trajectories: 4
+      measurement:
+        phase_frequency:
+          channels: [0, 1, 2]
+          min_independent_windows: 4
     coherence_matrix:
       modes: [0, 1, 2]
       time_blocks: 16
@@ -101,6 +105,11 @@ jobs:
       time_blocks: 16
       time_chunk_samples: 16384
 
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 - name: kerr_full_3mode_q1_kf3f_032_ridge
   input: {from: kerr_full_3mode_q1_kf3f_032_sim, mode: dataset}
   save: true

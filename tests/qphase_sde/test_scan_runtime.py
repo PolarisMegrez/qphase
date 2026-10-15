@@ -44,6 +44,24 @@ from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 from qphase_sde.peak_finder import ScipyPeakFinder
 from qphase_sde.result import SDEDataBundle, _trajectory_product
 
+#: Shared complex-field measurement declaration of the psd call sites.
+_PSD_MEASUREMENT = {"complex_field": {"channels": [0], "representation": "complex"}}
+_PSD_CONFIG = {"measurement": _PSD_MEASUREMENT}
+#: Shared phase-frequency measurement declaration of the allan call sites.
+_ALLAN_MEASUREMENT = {
+    "phase_frequency": {"channels": [0], "min_independent_windows": 1}
+}
+
+
+def _psd_analyzer() -> PsdAnalyzer:
+    return PsdAnalyzer(measurement=_PSD_MEASUREMENT)
+
+
+def _allan_analyzer() -> AllanVarianceAnalyzer:
+    return AllanVarianceAnalyzer(
+        measurement=_ALLAN_MEASUREMENT, points=5, min_windows=2
+    )
+
 
 def test_typed_scan_refuses_ragged_table_concatenation():
     schema = ProductSchema(
@@ -244,8 +262,8 @@ class FinalSpectrumSummaryAnalyzer(Analyzer):
 
 def _branched_batch_graph(*, publish_identity=False):
     identity = IdentityBatchAnalyzer()
-    psd_a = PsdAnalyzer(kind="complex", modes=[0])
-    psd_b = PsdAnalyzer(kind="complex", modes=[0])
+    psd_a = _psd_analyzer()
+    psd_b = _psd_analyzer()
     nodes = [
         ProductNode(
             node_id="analyser.identity",
@@ -274,7 +292,7 @@ def _branched_batch_graph(*, publish_identity=False):
                 producer="analyser.identity",
                 product="identity",
                 consumer=node_id,
-                requirement="trajectories",
+                requirement="signal",
             )
             for node_id in ("analyser.psd_a", "analyser.psd_b")
         ],
@@ -346,13 +364,18 @@ def _mean_graph() -> ProductGraph:
     )
 
 
-def _graph(analyser_config):
+def _graph(analyser_config, *, signal_bindings=()):
     from qphase.core.registry import discovery, registry
     from qphase_sde.graph import compile_product_graph
 
     discovery.discover_plugins()
     graph = compile_product_graph(
-        plugin_config={"analyser": analyser_config}, registry=registry
+        plugin_config={"analyser": analyser_config},
+        registry=registry,
+        input_bindings={
+            label: {"signal": "input.trajectories"} for label in signal_bindings
+        }
+        or None,
     )
     assert graph is not None
     return graph
@@ -596,16 +619,16 @@ def test_trajectory_batch_size_does_not_change_psd_random_streams():
                 trajectory_batch_size=batch_size,
                 rng_group_size=rng_group_size,
                 seed=23,
-                ic=[[1.0]],
+                ic=[[1.0 + 0.0j]],
                 keep_traj=False,
             ),
             plugins={
                 "backend": NumpyBackend(),
                 "integrator": EulerMaruyama(),
                 "model": model,
-                "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+                "analyser": {"psd": _psd_analyzer()},
             },
-            product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
+            product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
         )
         result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
         psd = _product_arrays(result.products["psd"])
@@ -651,16 +674,16 @@ def test_off_auto_and_required_batching_share_random_streams():
                 trajectory_batching=batching,
                 trajectory_batch_size=batch_size,
                 seed=31,
-                ic=[[1.0]],
+                ic=[[1.0 + 0.0j]],
                 keep_traj=False,
             ),
             plugins={
                 "backend": NumpyBackend(),
                 "integrator": EulerMaruyama(),
                 "model": model,
-                "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+                "analyser": {"psd": _psd_analyzer()},
             },
-            product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
+            product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
         )
         result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
         return _product_arrays(result.products["psd"]), result.metadata[
@@ -693,16 +716,16 @@ def test_tail_rng_group_keeps_batching_invariance():
                 trajectory_batching=batching,
                 trajectory_batch_size=batch_size,
                 seed=37,
-                ic=[[1.0]],
+                ic=[[1.0 + 0.0j]],
                 keep_traj=False,
             ),
             plugins={
                 "backend": NumpyBackend(),
                 "integrator": EulerMaruyama(),
                 "model": model,
-                "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+                "analyser": {"psd": _psd_analyzer()},
             },
-            product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
+            product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
         )
         result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
         return _product_arrays(result.products["psd"]), result.metadata[
@@ -737,16 +760,16 @@ def test_required_batching_falls_back_to_full_group_plus_tail():
                 trajectory_batching=batching,
                 trajectory_batch_size=batch_size,
                 seed=47,
-                ic=[[1.0]],
+                ic=[[1.0 + 0.0j]],
                 keep_traj=False,
             ),
             plugins={
                 "backend": NumpyBackend(),
                 "integrator": EulerMaruyama(),
                 "model": model,
-                "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+                "analyser": {"psd": _psd_analyzer()},
             },
-            product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
+            product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
         )
         result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
         return _product_arrays(result.products["psd"]), result.metadata[
@@ -777,16 +800,16 @@ def test_scan_fused_and_batched_paths_share_point_streams():
                 trajectory_batching=batching,
                 trajectory_batch_size=batch_size,
                 seed=43,
-                ic=[[1.0]],
+                ic=[[1.0 + 0.0j]],
                 keep_traj=False,
             ),
             plugins={
                 "backend": NumpyBackend(),
                 "integrator": EulerMaruyama(),
                 "model": model,
-                "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+                "analyser": {"psd": _psd_analyzer()},
             },
-            product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
+            product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
         )
         result = engine.run(
             context=SimpleNamespace(
@@ -823,16 +846,16 @@ def test_scan_runs_trajectory_batches_inside_each_parameter_point():
             trajectory_batching="required",
             trajectory_batch_size=64,
             seed=29,
-            ic=[[1.0]],
+            ic=[[1.0 + 0.0j]],
             keep_traj=False,
         ),
         plugins={
             "backend": NumpyBackend(),
             "integrator": EulerMaruyama(),
             "model": model,
-            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            "analyser": {"psd": _psd_analyzer()},
         },
-        product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
+        product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
     )
 
     result = engine.run(
@@ -861,8 +884,9 @@ def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
 
     discovery.discover_plugins()
     graph = compile_product_graph(
-        plugin_config={"analyser": {"psd": {"modes": [0], "kind": "complex"}}},
+        plugin_config={"analyser": {"psd": _PSD_CONFIG}},
         registry=registry,
+        input_bindings={"psd": {"signal": "input.trajectories"}},
     )
     assert graph is not None
     model = StochasticScannedModel()
@@ -875,14 +899,14 @@ def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
             trajectory_batching="required",
             trajectory_batch_size=64,
             seed=41,
-            ic=[[1.0]],
+            ic=[[1.0 + 0.0j]],
             keep_traj=False,
         ),
         plugins={
             "backend": NumpyBackend(),
             "integrator": EulerMaruyama(),
             "model": model,
-            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            "analyser": {"psd": _psd_analyzer()},
         },
         product_graph=graph,
     )
@@ -896,7 +920,7 @@ def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
                 "backend": NumpyBackend(),
                 "integrator": EulerMaruyama(),
                 "model": StochasticScannedModel(),
-                "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+                "analyser": {"psd": _psd_analyzer()},
             },
             product_graph=graph,
         )
@@ -993,24 +1017,17 @@ def test_allan_variance_runs_through_engine_trajectory_batches():
             "backend": NumpyBackend(),
             "integrator": EulerMaruyama(),
             "model": model,
-            "analyser": {
-                "allan_variance": AllanVarianceAnalyzer(
-                    modes=[0],
-                    points=5,
-                    min_windows=2,
-                    min_independent_windows=1,
-                )
-            },
+            "analyser": {"allan_variance": _allan_analyzer()},
         },
         product_graph=_graph(
             {
                 "allan_variance": {
-                    "modes": [0],
+                    "measurement": _ALLAN_MEASUREMENT,
                     "points": 5,
                     "min_windows": 2,
-                    "min_independent_windows": 1,
                 }
-            }
+            },
+            signal_bindings=("allan_variance",),
         ),
     )
 
@@ -1240,7 +1257,7 @@ def test_batch_local_transform_fans_out_once_per_batch():
             trajectory_batch_size=4,
             rng_group_size=4,
             seed=51,
-            ic=[[1.0]],
+            ic=[[1.0 + 0.0j]],
             keep_traj=False,
         ),
         plugins={
@@ -1288,7 +1305,7 @@ def test_batch_local_non_reducer_cannot_be_published():
             trajectory_batch_size=4,
             rng_group_size=4,
             seed=51,
-            ic=[[1.0]],
+            ic=[[1.0 + 0.0j]],
             keep_traj=False,
         ),
         plugins={
@@ -1363,7 +1380,7 @@ def test_batch_local_non_reducer_cannot_cross_final_boundary():
             trajectory_batch_size=4,
             rng_group_size=4,
             seed=51,
-            ic=[[1.0]],
+            ic=[[1.0 + 0.0j]],
             keep_traj=False,
         ),
         plugins={
@@ -1411,7 +1428,7 @@ def test_scan_tiles_and_trajectory_batches_preserve_transient_graph_results():
                 trajectory_batch_size=64 if batching == "required" else None,
                 rng_group_size=64,
                 seed=73,
-                ic=[[1.0]],
+                ic=[[1.0 + 0.0j]],
                 keep_traj=False,
             ),
             plugins={
@@ -1474,14 +1491,18 @@ def test_trajectory_batching_reduces_psd_before_running_peak_finder():
     from qphase_sde.graph import compile_product_graph
 
     config = {
-        "psd": {"modes": [0], "kind": "complex"},
+        "psd": _PSD_CONFIG,
         "peaks": {
             "scan_param": "scan",
             "finder": {"scipy": {"noise_threshold": None}},
         },
     }
     discovery.discover_plugins()
-    graph = compile_product_graph(plugin_config={"analyser": config}, registry=registry)
+    graph = compile_product_graph(
+        plugin_config={"analyser": config},
+        registry=registry,
+        input_bindings={"psd": {"signal": "input.trajectories"}},
+    )
     assert graph is not None
     engine = Engine(
         config=EngineConfig(
@@ -1493,7 +1514,7 @@ def test_trajectory_batching_reduces_psd_before_running_peak_finder():
             trajectory_batch_size=4,
             rng_group_size=4,
             seed=53,
-            ic=[[1.0]],
+            ic=[[1.0 + 0.0j]],
             keep_traj=False,
         ),
         plugins={
@@ -1501,7 +1522,7 @@ def test_trajectory_batching_reduces_psd_before_running_peak_finder():
             "integrator": EulerMaruyama(),
             "model": StochasticScannedModel(),
             "analyser": {
-                "psd": PsdAnalyzer(kind="complex", modes=[0]),
+                "psd": _psd_analyzer(),
                 "peaks": PeaksAnalyzer(
                     PeaksAnalyzerConfig(scan_param="scan"),
                     subplugins={
@@ -1532,14 +1553,18 @@ def test_scanned_trajectory_batching_runs_peak_finder_after_reduction():
     from qphase_sde.graph import compile_product_graph
 
     config = {
-        "psd": {"modes": [0], "kind": "complex"},
+        "psd": _PSD_CONFIG,
         "peaks": {
             "scan_param": "rate",
             "finder": {"scipy": {"noise_threshold": None}},
         },
     }
     discovery.discover_plugins()
-    graph = compile_product_graph(plugin_config={"analyser": config}, registry=registry)
+    graph = compile_product_graph(
+        plugin_config={"analyser": config},
+        registry=registry,
+        input_bindings={"psd": {"signal": "input.trajectories"}},
+    )
     assert graph is not None
     engine = Engine(
         config=EngineConfig(
@@ -1551,7 +1576,7 @@ def test_scanned_trajectory_batching_runs_peak_finder_after_reduction():
             trajectory_batch_size=4,
             rng_group_size=4,
             seed=59,
-            ic=[[1.0]],
+            ic=[[1.0 + 0.0j]],
             keep_traj=False,
         ),
         plugins={
@@ -1559,7 +1584,7 @@ def test_scanned_trajectory_batching_runs_peak_finder_after_reduction():
             "integrator": EulerMaruyama(),
             "model": StochasticScannedModel(),
             "analyser": {
-                "psd": PsdAnalyzer(kind="complex", modes=[0]),
+                "psd": _psd_analyzer(),
                 "peaks": PeaksAnalyzer(
                     PeaksAnalyzerConfig(scan_param="rate"),
                     subplugins={
@@ -1600,16 +1625,16 @@ def test_sde_progress_uses_stable_trajectory_step_units():
             trajectory_batching="required",
             trajectory_batch_size=64,
             seed=31,
-            ic=[[1.0]],
+            ic=[[1.0 + 0.0j]],
             keep_traj=False,
         ),
         plugins={
             "backend": NumpyBackend(),
             "integrator": EulerMaruyama(),
             "model": model,
-            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            "analyser": {"psd": _psd_analyzer()},
         },
-        product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
+        product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
     )
 
     engine.run(
@@ -1649,7 +1674,7 @@ def _psd_engine(**config_overrides):
             dt=0.01,
             n_traj=128,
             seed=23,
-            ic=[[1.0]],
+            ic=[[1.0 + 0.0j]],
             keep_traj=config_overrides.pop("keep_traj", False),
             **config_overrides,
         ),
@@ -1657,9 +1682,9 @@ def _psd_engine(**config_overrides):
             "backend": NumpyBackend(),
             "integrator": EulerMaruyama(),
             "model": ScannedDummyModel(),
-            "analyser": {"psd": PsdAnalyzer(kind="complex", modes=[0])},
+            "analyser": {"psd": _psd_analyzer()},
         },
-        product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
+        product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
     )
     return engine
 
@@ -1760,13 +1785,14 @@ def test_two_instance_labels_of_same_analyser_run_independently():
         {
             "raw_psd": {
                 "plugin": "psd",
-                "config": {"kind": "complex", "modes": [0]},
+                "config": _PSD_CONFIG,
             },
             "other_psd": {
                 "plugin": "psd",
-                "config": {"kind": "complex", "modes": [0]},
+                "config": _PSD_CONFIG,
             },
-        }
+        },
+        signal_bindings=("raw_psd", "other_psd"),
     )
     engine = Engine(
         config=EngineConfig(
@@ -1775,7 +1801,7 @@ def test_two_instance_labels_of_same_analyser_run_independently():
             dt=0.01,
             n_traj=8,
             seed=67,
-            ic=[[1.0]],
+            ic=[[1.0 + 0.0j]],
             keep_traj=False,
         ),
         plugins={
@@ -1783,8 +1809,8 @@ def test_two_instance_labels_of_same_analyser_run_independently():
             "integrator": EulerMaruyama(),
             "model": ScannedDummyModel(),
             "analyser": {
-                "raw_psd": PsdAnalyzer(kind="complex", modes=[0]),
-                "other_psd": PsdAnalyzer(kind="complex", modes=[0]),
+                "raw_psd": _psd_analyzer(),
+                "other_psd": _psd_analyzer(),
             },
         },
         product_graph=graph,
@@ -1809,7 +1835,7 @@ def test_two_instance_labels_of_same_analyser_run_independently():
 
 def test_engine_fails_when_analyser_execute_builds_no_product(monkeypatch):
     """A registered analyser whose typed execution returns nothing fails."""
-    analyser = PsdAnalyzer(kind="complex", modes=[0])
+    analyser = _psd_analyzer()
     monkeypatch.setattr(
         analyser,
         "execute",
@@ -1822,7 +1848,7 @@ def test_engine_fails_when_analyser_execute_builds_no_product(monkeypatch):
             dt=0.01,
             n_traj=16,
             seed=23,
-            ic=[[1.0]],
+            ic=[[1.0 + 0.0j]],
             keep_traj=False,
         ),
         plugins={
@@ -1831,7 +1857,7 @@ def test_engine_fails_when_analyser_execute_builds_no_product(monkeypatch):
             "model": ScannedDummyModel(),
             "analyser": {"psd": analyser},
         },
-        product_graph=_graph({"psd": {"modes": [0], "kind": "complex"}}),
+        product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
     )
 
     with pytest.raises(ValueError, match="returned products"):
@@ -1866,10 +1892,9 @@ def _allan_chain_setup(publish_allan=False, **engine_overrides):
 
     analyser_config = {
         "allan_variance": {
-            "modes": [0],
+            "measurement": _ALLAN_MEASUREMENT,
             "points": 5,
             "min_windows": 2,
-            "min_independent_windows": 1,
         },
         "allan_scaling": dict(_ALLAN_SCALING_CONFIG),
     }
@@ -1880,12 +1905,11 @@ def _allan_chain_setup(publish_allan=False, **engine_overrides):
         publish_outputs=(
             {"allan_variance": ["allan_variance"]} if publish_allan else None
         ),
+        input_bindings={"allan_variance": {"signal": "input.trajectories"}},
     )
     assert graph is not None
     analysers = {
-        "allan_variance": AllanVarianceAnalyzer(
-            modes=[0], points=5, min_windows=2, min_independent_windows=1
-        ),
+        "allan_variance": _allan_analyzer(),
         "allan_scaling": AllanScalingAnalyzer(
             AllanScalingAnalyzer.config_schema(**_ALLAN_SCALING_CONFIG)
         ),
@@ -2064,7 +2088,7 @@ def _peaks_chain_setup():
     from qphase_sde.graph import compile_product_graph
 
     analyser_config = {
-        "psd": {"modes": [0], "kind": "complex"},
+        "psd": _PSD_CONFIG,
         "peaks": {
             "scan_param": "rate",
             "finder": {"scipy": {"noise_threshold": None}},
@@ -2072,11 +2096,13 @@ def _peaks_chain_setup():
     }
     discovery.discover_plugins()
     graph = compile_product_graph(
-        plugin_config={"analyser": analyser_config}, registry=registry
+        plugin_config={"analyser": analyser_config},
+        registry=registry,
+        input_bindings={"psd": {"signal": "input.trajectories"}},
     )
     assert graph is not None
     analysers = {
-        "psd": PsdAnalyzer(kind="complex", modes=[0]),
+        "psd": _psd_analyzer(),
         "peaks": PeaksAnalyzer(
             PeaksAnalyzerConfig(scan_param="rate"),
             subplugins={"finder": ScipyPeakFinder(noise_threshold=None)},

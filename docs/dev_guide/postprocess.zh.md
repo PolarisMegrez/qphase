@@ -38,8 +38,11 @@ description: 后处理架构
       g: 0.1
   analyser:
     psd:
-      modes: [0]
-      kind: complex
+      measurement:
+        complex_field: {channels: [0], representation: complex}
+  input_bindings:
+    psd:
+      signal: input.trajectories
 
 - name: fit
   input:

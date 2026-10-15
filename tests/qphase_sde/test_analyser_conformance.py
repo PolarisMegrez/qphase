@@ -16,11 +16,15 @@ from qphase_sde.contracts.reducer import ReducerProtocol
 # Minimal constructor kwargs per analyser; analysers absent from this mapping
 # construct with defaults.
 MINIMAL_CONFIGS = {
-    "psd": {"kind": "complex", "modes": [0]},
+    "psd": {
+        "measurement": {
+            "complex_field": {"channels": [0], "representation": "complex"}
+        }
+    },
     "dist": {"modes": [0]},
     "pdist": {"modes": [0]},
     "trajectory_diagnostics": {"modes": [0]},
-    "allan_variance": {"modes": [0]},
+    "allan_variance": {"measurement": {"phase_frequency": {"channels": [0]}}},
     "allan_scaling": {"scan_param": "x", "critical_value": 1.0},
     "band_limited_carrier": {"scan_param": "x"},
     "finite_delay_carrier": {"scan_param": "x"},
@@ -98,7 +102,9 @@ def test_registered_analyser_satisfies_contract(name):
 def test_psd_does_not_declare_inline_peaks():
     from qphase_sde.analyser.psd import PsdAnalyzer
 
-    default = PsdAnalyzer(kind="complex", modes=[0])
+    default = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    )
     assert [spec.name for spec in default.output_specs(label="probe")] == ["probe"]
 
 

@@ -30,7 +30,13 @@ from .allan_scaling import (
     AllanScalingConfig,
     NormalFormExpectation,
 )
-from .allan_variance import AllanVarianceAnalyzer, AllanVarianceConfig
+from .allan_variance import (
+    AllanMeasurement,
+    AllanPhaseFrequencyMeasurement,
+    AllanSampledScalarMeasurement,
+    AllanVarianceAnalyzer,
+    AllanVarianceConfig,
+)
 from .band_limited_carrier import (
     BandLimitedCarrierAnalyzer,
     BandLimitedCarrierConfig,
@@ -63,7 +69,13 @@ from .observable_transform import (
 from .peak_paths import PeakPathsAnalyzer, PeakPathsAnalyzerConfig
 from .peaks import PeaksAnalyzer, PeaksAnalyzerConfig
 from .polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
-from .psd import PsdAnalyzer, PsdAnalyzerConfig
+from .psd import (
+    PsdAnalyzer,
+    PsdAnalyzerConfig,
+    PsdComplexFieldMeasurement,
+    PsdMeasurement,
+    PsdSampledScalarMeasurement,
+)
 from .quadratic_moments import (
     QuadraticMomentAnalyzer,
     QuadraticMomentConfig,
@@ -90,6 +102,9 @@ __all__ = [
     "AnalyserExecutionCapabilities",
     "AnalyserWorkspaceEstimate",
     "AnalyserWorkspaceRequest",
+    "AllanMeasurement",
+    "AllanPhaseFrequencyMeasurement",
+    "AllanSampledScalarMeasurement",
     "AllanVarianceAnalyzer",
     "AllanVarianceConfig",
     "AllanScalingAnalyzer",
@@ -110,6 +125,9 @@ __all__ = [
     "ObservableTransformConfig",
     "PsdAnalyzer",
     "PsdAnalyzerConfig",
+    "PsdComplexFieldMeasurement",
+    "PsdMeasurement",
+    "PsdSampledScalarMeasurement",
     "QuadraticMomentAnalyzer",
     "QuadraticMomentConfig",
     "QuadraticObservableSpec",

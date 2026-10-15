@@ -54,11 +54,16 @@ jobs:
 
   analyser:
     psd:
-      modes: [0]
-      kind: complex
       expected_freq_max: 1.0
 
 
+      measurement:
+        complex_field:
+          channels: [0]
+          representation: complex
+  input_bindings:
+    psd:
+      signal: input.trajectories
 - name: kerr_2mode_cayley_fit
   input:
     from: kerr_2mode_cayley_sim
@@ -91,5 +96,5 @@ jobs:
         scipy:
           smooth_window: 5
           distance: 5
-          noise_threshold: null
-          prominence: null
+          noise_threshold:
+          prominence:

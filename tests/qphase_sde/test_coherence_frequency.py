@@ -28,9 +28,9 @@ def _typed_psd_product(scan_values: list[float]):
     product = _trajectory_product(
         trajectory, scan_size=len(scan_values), n_traj_per_point=4
     )
-    psd = PsdAnalyzer(modes=[0], kind="complex").execute(
-        {"trajectories": product}, backend=NumpyBackend(), label="psd"
-    )["psd"]
+    psd = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    ).execute({"signal": product}, backend=NumpyBackend(), label="psd")["psd"]
     return add_scan_parameter_coordinates(
         psd, {"epsilon": np.asarray(scan_values, dtype=float)}
     )

@@ -97,17 +97,25 @@ one implementation appears more than once:
 analyser:
   raw_psd:
     plugin: psd
-    config: {kind: complex, modes: [0, 1]}
+    config:
+      measurement:
+        complex_field: {channels: [0, 1], representation: complex}
   diagnostic_psd:
     plugin: psd
-    config: {kind: complex, modes: [2]}
+    config:
+      measurement:
+        complex_field: {channels: [2], representation: complex}
 ```
 
 The shorthand `analyser: {psd: {...}}` means label `psd` using implementation
 `psd`. Project defaults remain keyed by implementation name, while Workflow
 instance config is keyed by label and overrides those defaults. Instance labels
 must be non-empty strings, cannot contain `.`, and cannot be `input`.
-`input_bindings` and `publish_outputs` refer to instance labels.
+`input_bindings` and `publish_outputs` refer to instance labels. The `psd` and
+`allan_variance` analysers declare a typed input requirement named `signal`, so
+a simulation job pins it to the retained trajectories with
+`input_bindings: {raw_psd: {signal: input.trajectories}}` (see
+[SDE analyzers](../api/qphase_sde/analyzers.md)).
 
 ## Parameter Scans
 

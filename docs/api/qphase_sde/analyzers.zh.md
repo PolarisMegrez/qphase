@@ -17,10 +17,17 @@ nav_order: 4
 analyser:
   raw_psd:
     plugin: psd
-    config: {kind: complex, modes: [0, 1]}
+    config:
+      measurement:
+        complex_field: {channels: [0, 1], representation: complex}
   mode_2_psd:
     plugin: psd
-    config: {kind: complex, modes: [2]}
+    config:
+      measurement:
+        complex_field: {channels: [2], representation: complex}
+input_bindings:
+  raw_psd: {signal: input.trajectories}
+  mode_2_psd: {signal: input.trajectories}
 ```
 
 Project defaults 按 implementation（如 `psd`）配置；instance config 按 label 配置，
@@ -29,16 +36,20 @@ Project defaults 按 implementation（如 `psd`）配置；instance config 按 l
 
 ## `psd`
 
-估算所选模式的功率谱密度（PSD）。
+估算所选通道的功率谱密度（PSD）。必填的 `measurement` 键恰好选择一个测量变体：
+`complex_field` 表示记录的复场（按物理模式索引选择），`sampled_scalar` 表示实数
+sampled-observable product（按 observable channel 名称选择）。
 
 ### 配置
 
 ```yaml
 analyser:
   psd:
-    modes: [0]
-    kind: complex
-    orientation: phase_decreasing
+    measurement:
+      complex_field:
+        channels: [0]
+        representation: complex
+        orientation: phase_decreasing
     expected_freq_max: 0.34
     estimator:
       periodogram:
@@ -47,13 +58,14 @@ analyser:
     scan_param: omega_a
     finder:
       scipy: {}
+input_bindings:
+  psd: {signal: input.trajectories}
 ```
 
 | 键 | 类型 | 说明 |
 | :-- | :-- | :-- |
-| `modes` | `list[int]` | 要分析的模式索引。 |
-| `kind` | `str` | `complex` 表示复场，`modular` 表示其模长。 |
-| `orientation` | `str` | 正频率方向。`phase_decreasing` 将 `exp(-i*omega*t)` 映射到 `+omega`；`phase_increasing` 保留前向 FFT 频率轴。 |
+| `measurement.complex_field` | 变体 | 复场 PSD。`channels` 列出物理模式索引；`representation` 取 `complex`（复场本身）或 `magnitude`（`|alpha|`）；可选 `orientation` 设定正频率约定（`phase_decreasing` 将 `exp(-i*omega*t)` 映射到 `+omega`；`phase_increasing` 保留前向 FFT 频率轴）。 |
+| `measurement.sampled_scalar` | 变体 | 实数 sampled-observable product 的单边 PSD。`channels` 列出 observable channel 名称；`detrend` 取 `none`（默认）或 `constant`。该变体为 `extra="forbid"`，不接受 `orientation` 键——带符号的频率方向只属于复场路径。 |
 | `expected_freq_max` | `float \| None` | 输出频率轴单位下预期的最大频率幅值；达到 Nyquist 上限时分析直接失败。 |
 | `estimator` | 子插件选择 | 必须且只能选择 `periodogram`、`welch`、`multitaper` 之一。 |
 
@@ -69,9 +81,25 @@ Estimator 对比：
 子插件，可通过 `qphase list --parent analyser.psd` 发现，并通过
 `qphase config schema analyser.psd/estimator.welch` 查询 schema。
 
+### 输入 requirement 与 typed product
+
+该分析器声明一个名为 `signal` 的 typed 输入 requirement；模拟 job 需要用
+`input_bindings: {<label>: {signal: input.trajectories}}` 将其显式绑定到保留的
+trajectory product。`complex_field` 路径接受复场振幅 time-series product（`alpha`
+变量）；旧的 `kind: modular` 写法由 `representation: magnitude` 表达。`sampled_scalar`
+路径要求实数 `sampled_observable` time-series product（dims 为
+`(scan?, trajectory, time, channel)`），含 float64 `value` 变量与 int64
+`valid_length` 截尾变量——通常是上游 observable transform 的输出。
+
+sampled-scalar product 中，主变量 `psd` 带有 `<value-units>^2/inverse_time` 形式的
+units（源 observable 无量纲时为 `1/inverse_time`），spectral 属性为
+`orientation: unsigned`、`sidedness: one_sided`。`psd_std`/`psd_sem` 不确定度叶不声明
+units；复场 product 的变量同样不声明 units。
+
 ### 频率轴
 
-Estimator 首先执行 NumPy/CuPy 标准前向 DFT，随后按配置重排输出频率轴：
+Estimator 首先执行 NumPy/CuPy 标准前向 DFT。对于 `complex_field` 测量，报告的频率轴
+随后按所选 orientation 重排（sampled-scalar 谱为单边且无符号，不涉及符号约定）：
 
 ```text
 omega_fft = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
@@ -480,14 +508,31 @@ analyser:
 ```yaml
 analyser:
   allan_variance:
-    modes: [0]
-    orientation: phase_decreasing
+    measurement:
+      phase_frequency:
+        channels: [0]
+        orientation: phase_decreasing
+        amplitude_floor: 0.0
+        min_independent_windows: 4
     points: 40
     min_windows: 8
-    min_independent_windows: 4
     transfer_chunk_samples: 8192
     device_chunk_trajectories: 16
+input_bindings:
+  allan_variance: {signal: input.trajectories}
 ```
+
+必填的 `measurement` 键恰好选择一个变体：
+
+| 键 | 类型 | 说明 |
+| :-- | :-- | :-- |
+| `measurement.phase_frequency` | 变体 | 复场的角频率 Allan 统计，`channels` 按物理模式索引选择。相位路径的全部旋钮都位于该变体内：`orientation`、`amplitude_floor`、`min_independent_windows`。 |
+| `measurement.sampled_scalar` | 变体 | 实数 sampled-observable product 的 Allan 方差，`channels` 按 observable channel 名称选择；`min_nonoverlap_pairs` 约束非重叠块均值估计。该变体为 `extra="forbid"`，不接受 `orientation` 或 `amplitude_floor` 键。 |
+
+`taus`、`points`、`min_windows`、`transfer_chunk_samples` 与 `device_chunk_trajectories`
+仍是两个变体共用的顶层键。与 `psd` 相同，typed 输入 requirement 名为 `signal`，
+通过 `input_bindings` 绑定（复场路径用 `input.trajectories`，`sampled_scalar` 路径用
+上游 sampled-observable product）。
 
 `orientation` 控制逐轨迹平均角频率的符号。Allan 方差本身不随该配置改变。
 `allan_scaling` 会将方向信息传递到逐点结果、汇总与导出，并拒绝混合方向的 scan。
@@ -496,6 +541,14 @@ analyser:
 SEM、实际有效非重叠窗口数以及每条轨迹的名义窗口数。此处“独立”只表示时间块不重叠；
 有色动力学仍可能使相邻块相关。因此，不应把所有块当作可交换样本，指数不确定度优先
 使用逐轨迹 bootstrap。
+
+对于 `sampled_scalar` 测量，非重叠相邻块均值差分是主估计量（`sampled_scalar_variance`），
+重叠变体带 `overlap_` 前缀；相邻 pair 共享一个块均值，因此 `min_nonoverlap_pairs`
+统计的是名义而非独立的 pair 数。typed product 的每个方差变量带有
+`<value-units>^2` 形式的 units（源 observable 无量纲时为 `1`），而 `<key>_sem`
+不确定度叶不声明 units——与 PSD product 对齐，只有主变量带 units。product 属性记录
+`measurement_model`（`phase_frequency` 或 `sampled_scalar`）；带符号的 `orientation`
+属性只存在于 phase-frequency 路径。
 
 使用 CuPy 后端时，分析在设备端原生执行：轨迹按 `device_chunk_trajectories`
 行分块处理，仅逐轨迹 tau 表与最终统计量传回主机。无论输入精度如何，相位都在

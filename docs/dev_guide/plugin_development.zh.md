@@ -190,10 +190,14 @@ instance label，用于 ProductGraph node id、progress stage、input binding、
 analyser:
   raw_psd:
     plugin: psd
-    config: {kind: complex, modes: [0, 1]}
+    config:
+      measurement:
+        complex_field: {channels: [0, 1], representation: complex}
   diagnostic_psd:
     plugin: psd
-    config: {kind: complex, modes: [2]}
+    config:
+      measurement:
+        complex_field: {channels: [2], representation: complex}
 ```
 
 简写 `analyser: {psd: {...}}` 会规范化为 label=`psd`、plugin=`psd`。

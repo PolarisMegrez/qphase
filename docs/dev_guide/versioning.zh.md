@@ -35,3 +35,56 @@ patch 在公共契约层双向兼容：不得增加必填 schema 字段、改变
 
 迁移工具只能通过显式命令或维护工具运行。Artifact loader 不静默重写数据，普通插件发现也不导入旧 major
 兼容层。
+
+## Wave 6D 破坏性变更（qphase_sde 2.0）
+
+Wave 6D 迁移重构了 `qphase_sde` 的 PSD/Allan 测量配置、typed 输入 requirement 名称与
+product provenance 属性。所有配置模型均为 `extra="forbid"`，被删除的键会直接触发校验错误，
+且不保留双键兼容。
+
+1. **PSD/Allan `measurement` union。** `PsdAnalyzerConfig` 与 `AllanVarianceConfig`
+   删除了顶层 `kind`/`modes` 键，改为严格判别的 `measurement` union。PSD 取
+   `measurement: {complex_field: {channels, representation, orientation?}}` 或
+   `measurement: {sampled_scalar: {channels, ...}}`；Allan 取
+   `measurement: {phase_frequency: {channels, orientation, amplitude_floor, min_independent_windows}}`
+   或 `measurement: {sampled_scalar: {channels, min_nonoverlap_pairs}}`。相位路径的全部旋钮
+   （`orientation`、`amplitude_floor`、`min_independent_windows`）移入 `phase_frequency`
+   变体；`sampled_scalar` 变体为 `extra="forbid"`，不接受 `orientation`。
+
+   ```yaml
+   # 迁移前
+   analyser:
+     psd: {modes: [0], kind: complex, orientation: phase_decreasing}
+     allan_variance: {modes: [0], min_independent_windows: 4}
+
+   # 迁移后
+   analyser:
+     psd:
+       measurement:
+         complex_field:
+           channels: [0]
+           representation: complex
+           orientation: phase_decreasing
+     allan_variance:
+       measurement:
+         phase_frequency:
+           channels: [0]
+           min_independent_windows: 4
+   input_bindings:
+     psd: {signal: input.trajectories}
+     allan_variance: {signal: input.trajectories}
+   ```
+
+2. **requirement 由 `trajectories` 更名为 `signal`。** 两个分析器的 typed 输入
+   requirement 现名为 `signal`，workflow 必须显式绑定：
+   `input_bindings: {<analyser_label>: {signal: input.trajectories}}`。
+3. **`source_analyser` 更名为 `producer_analyser`。** `assemble_typed_product`
+   写出的 typed product 属性（及 provenance 条目）全局使用新键；读取
+   `attributes["source_analyser"]` 的消费方必须改用 `producer_analyser`。
+4. **typed product 携带逐变量 units。** `assemble_typed_product` 新增 `variable_units`
+   参数。sampled-scalar PSD 的主变量 `psd` 带有 `<value-units>^2/inverse_time` 形式
+   units（源 observable 无量纲时为 `1/inverse_time`）；sampled-scalar Allan 方差变量
+   带有 `<value-units>^2`（无量纲为 `1`）。不确定度叶（`psd_std`/`psd_sem`、
+   `<key>_sem`）不声明 units——只有主变量带 units 标注。
+5. **`kind: modular` 已移除。** 复场模长的 PSD 改写为 `measurement.complex_field`
+   内的 `representation: magnitude`。

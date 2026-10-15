@@ -93,16 +93,23 @@ Workflow 必须显式选择对应命名空间。
 analyser:
   raw_psd:
     plugin: psd
-    config: {kind: complex, modes: [0, 1]}
+    config:
+      measurement:
+        complex_field: {channels: [0, 1], representation: complex}
   diagnostic_psd:
     plugin: psd
-    config: {kind: complex, modes: [2]}
+    config:
+      measurement:
+        complex_field: {channels: [2], representation: complex}
 ```
 
 简写 `analyser: {psd: {...}}` 表示 label=`psd`、implementation=`psd`。
 Project defaults 仍按 implementation name 配置；Workflow instance config 按 label
 配置，并覆盖 implementation defaults。Instance label 必须是非空字符串，不能包含
 `.`，也不能为 `input`。`input_bindings` 与 `publish_outputs` 使用 instance label。
+`psd` 与 `allan_variance` 分析器声明名为 `signal` 的 typed 输入 requirement，
+因此模拟 job 需要用 `input_bindings: {raw_psd: {signal: input.trajectories}}`
+将其绑定到保留的 trajectory（见 [SDE 分析器](../api/qphase_sde/analyzers.md)）。
 
 ## 参数扫描
 

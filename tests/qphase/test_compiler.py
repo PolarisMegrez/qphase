@@ -333,11 +333,25 @@ def test_compiler_normalizes_analyser_instance_labels(tmp_path, sde_profile_plug
                 analyser={
                     "raw_psd": {
                         "plugin": "psd",
-                        "config": {"kind": "complex", "modes": [0]},
+                        "config": {
+                            "measurement": {
+                                "complex_field": {
+                                    "channels": [0],
+                                    "representation": "complex",
+                                }
+                            }
+                        },
                     },
                     "other_psd": {
                         "plugin": "psd",
-                        "config": {"kind": "complex", "modes": [0]},
+                        "config": {
+                            "measurement": {
+                                "complex_field": {
+                                    "channels": [0],
+                                    "representation": "complex",
+                                }
+                            }
+                        },
                     },
                 },
             )
@@ -347,7 +361,12 @@ def test_compiler_normalizes_analyser_instance_labels(tmp_path, sde_profile_plug
 
     expected = {
         "plugin": "psd",
-        "config": {"kind": "complex", "modes": [0], "convention": "unitary"},
+        "config": {
+            "measurement": {
+                "complex_field": {"channels": [0], "representation": "complex"}
+            },
+            "convention": "unitary",
+        },
     }
     assert dict(compiled.plugin_config["analyser"]["raw_psd"]) == expected
     assert dict(compiled.plugin_config["analyser"]["other_psd"]) == expected
@@ -427,10 +446,14 @@ def test_analyser_label_does_not_merge_same_named_implementation_default(
         "psd": {
             "plugin": "allan_variance",
             "config": {
-                "modes": [0],
+                "measurement": {
+                    "phase_frequency": {
+                        "channels": [0],
+                        "min_independent_windows": 1,
+                    }
+                },
                 "points": 5,
                 "min_windows": 2,
-                "min_independent_windows": 1,
             },
         }
     }

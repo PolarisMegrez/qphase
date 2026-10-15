@@ -87,18 +87,27 @@ jobs:
       kappa_dark: 0.1775148709287836
   analyser:
     psd:
-      modes: [0]
-      kind: complex
       convention: symmetric
       expected_freq_max: 1.0
       estimator: {periodogram: {fft_chunk_trajectories: 16}}
+      measurement:
+        complex_field:
+          channels: [0]
+          representation: complex
     allan_variance:
-      modes: [0]
       points: 80
       min_windows: 8
-      min_independent_windows: 4
       transfer_chunk_samples: 65536
 
+      measurement:
+        phase_frequency:
+          channels: [0]
+          min_independent_windows: 4
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 - name: collective_loss_kerr_3mode_refined_dark_h200_long_31_carrier
   input:
     from: collective_loss_kerr_3mode_refined_dark_h200_long_31_sim

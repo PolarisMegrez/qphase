@@ -194,10 +194,14 @@ ids, progress stages, input bindings, publish declarations, and output labels;
 analyser:
   raw_psd:
     plugin: psd
-    config: {kind: complex, modes: [0, 1]}
+    config:
+      measurement:
+        complex_field: {channels: [0, 1], representation: complex}
   diagnostic_psd:
     plugin: psd
-    config: {kind: complex, modes: [2]}
+    config:
+      measurement:
+        complex_field: {channels: [2], representation: complex}
 ```
 
 The shorthand `analyser: {psd: {...}}` normalizes to label `psd`, plugin

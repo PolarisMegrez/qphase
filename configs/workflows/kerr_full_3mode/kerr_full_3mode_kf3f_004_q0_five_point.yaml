@@ -17,8 +17,7 @@ jobs:
       checkpoint: {enabled: true, interval_chunks: 1, keep_on_success: false}
       resources: {gpu_memory_fraction: 0.85}
   engine:
-    sde:
-      &sde_base
+    sde: &sde_base
       t0: 20000.0
       t1: 100000.0
       dt: 0.01
@@ -56,25 +55,29 @@ jobs:
     first_passage:
       rule: matrix_projection
       left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-      threshold: 14850.215907967368
+      threshold: 14850.215907967367
       direction: below
       action: record
       check_interval_steps: 1024
       debounce_checks: 2
   analyser: &analysers
     psd:
-      modes: [0, 1, 2]
-      kind: complex
       convention: symmetric
       expected_freq_max: 3.0
       estimator: {periodogram: {fft_chunk_trajectories: 8}}
+      measurement:
+        complex_field:
+          channels: [0, 1, 2]
+          representation: complex
     allan_variance:
-      modes: [0, 1, 2]
       points: 56
       min_windows: 8
-      min_independent_windows: 4
       transfer_chunk_samples: 16384
       device_chunk_trajectories: 8
+      measurement:
+        phase_frequency:
+          channels: [0, 1, 2]
+          min_independent_windows: 4
     coherence_matrix:
       modes: [0, 1, 2]
       time_blocks: 16
@@ -84,6 +87,11 @@ jobs:
       time_blocks: 16
       time_chunk_samples: 16384
 
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 - name: kerr_full_3mode_kf3f_004_q0_e1em3_sim
   save: true
   system: *system
@@ -111,6 +119,11 @@ jobs:
       check_interval_steps: 1024
       debounce_checks: 2
   analyser: *analysers
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 
 - name: kerr_full_3mode_kf3f_004_q0_e1em2_sim
   save: true
@@ -139,6 +152,11 @@ jobs:
       check_interval_steps: 1024
       debounce_checks: 2
   analyser: *analysers
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 
 - name: kerr_full_3mode_kf3f_004_q0_e3em2_sim
   save: true
@@ -167,6 +185,11 @@ jobs:
       check_interval_steps: 1024
       debounce_checks: 2
   analyser: *analysers
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 
 - name: kerr_full_3mode_kf3f_004_q0_e1em1_sim
   save: true
@@ -195,3 +218,8 @@ jobs:
       check_interval_steps: 1024
       debounce_checks: 2
   analyser: *analysers
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories

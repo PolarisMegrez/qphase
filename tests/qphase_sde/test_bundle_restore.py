@@ -85,8 +85,12 @@ def _scan_bundle():
     source = engine.run(
         context=SimpleNamespace(parameter_grid=_grid(), progress=None)
     )
-    psd = PsdAnalyzer(kind="complex", modes=[0]).execute(
-        source.products, backend=NumpyBackend(), label="psd"
+    psd = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    ).execute(
+        {"signal": source.products["trajectories"]},
+        backend=NumpyBackend(),
+        label="psd",
     )
     psd["psd"] = add_scan_parameter_coordinates(
         psd["psd"], {"rate": np.asarray(source.axes["rate"], dtype=float)}
@@ -242,12 +246,16 @@ def test_restored_scan_bundle_feeds_downstream_analysers(tmp_path):
     views = list(iter_dataset_views(restored))
     assert len(views) == 2
     allan = AllanVarianceAnalyzer(
-        modes=[0], points=5, min_windows=2, min_independent_windows=1
+        measurement={"phase_frequency": {"channels": [0], "min_independent_windows": 1}},
+        points=5,
+        min_windows=2,
     )
     for _label, view in views:
         assert isinstance(view, SDEDataBundle)
         product = allan.execute(
-            view.products, backend=backend, label="allan_variance"
+            {"signal": view.products["trajectories"]},
+            backend=backend,
+            label="allan_variance",
         )["allan_variance"]
         assert any(
             variable.name.startswith("mode_results.")

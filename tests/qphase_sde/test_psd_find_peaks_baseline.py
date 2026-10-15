@@ -43,10 +43,14 @@ def _tone_fixture() -> TrajectorySet:
 
 
 def _spectrum_product():
-    analyzer = PsdAnalyzer(modes=[0, 1], kind="complex")
+    analyzer = PsdAnalyzer(
+        measurement={
+            "complex_field": {"channels": [0, 1], "representation": "complex"}
+        }
+    )
     return analyzer.execute(
         {
-            "trajectories": _trajectory_product(
+            "signal": _trajectory_product(
                 _tone_fixture(), scan_size=None, n_traj_per_point=None
             )
         },

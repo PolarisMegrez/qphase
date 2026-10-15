@@ -121,8 +121,10 @@ def peak_scan_bundle() -> SDEDataBundle:
 
 def spectrum_bundle() -> SDEDataBundle:
     base = trajectory_bundle()
-    spectrum = PsdAnalyzer(kind="complex", modes=[0, 1]).execute(
-        {"trajectories": base.products["trajectories"]},
+    spectrum = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0, 1], "representation": "complex"}}
+    ).execute(
+        {"signal": base.products["trajectories"]},
         backend=NumpyBackend(),
         label="psd",
     )["psd"]
@@ -136,8 +138,10 @@ def spectrum_bundle() -> SDEDataBundle:
 def spectrum_scan_bundle() -> SDEDataBundle:
     scan = (0.1, 0.2, 0.3)
     base = trajectory_bundle(scan_values=scan)
-    spectrum = PsdAnalyzer(kind="complex", modes=[0, 1]).execute(
-        {"trajectories": base.products["trajectories"]},
+    spectrum = PsdAnalyzer(
+        measurement={"complex_field": {"channels": [0, 1], "representation": "complex"}}
+    ).execute(
+        {"signal": base.products["trajectories"]},
         backend=NumpyBackend(),
         label="psd",
     )["psd"]

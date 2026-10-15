@@ -36,7 +36,7 @@ jobs:
     kerr_full_3mode:
       omega_a: 0.0
       omega_b: -4.0
-      omega_c: -1.9996018928294465
+      omega_c: -1.9996018928294466
       chi: 0.0002
       gamma_a: 0.2313732629253484
       gamma_b: 2.3693276625631956
@@ -55,18 +55,22 @@ jobs:
       debounce_checks: 2
   analyser: &q0_analysers
     psd:
-      modes: [0, 1, 2]
-      kind: complex
       convention: symmetric
       expected_freq_max: 10.0
       estimator: {periodogram: {fft_chunk_trajectories: 2}}
+      measurement:
+        complex_field:
+          channels: [0, 1, 2]
+          representation: complex
     allan_variance:
-      modes: [0, 1, 2]
       points: 48
       min_windows: 8
-      min_independent_windows: 4
       transfer_chunk_samples: 8192
       device_chunk_trajectories: 4
+      measurement:
+        phase_frequency:
+          channels: [0, 1, 2]
+          min_independent_windows: 4
     coherence_matrix:
       modes: [0, 1, 2]
       time_blocks: 8
@@ -76,6 +80,11 @@ jobs:
       time_blocks: 8
       time_chunk_samples: 8192
 
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 - name: kerr_full_3mode_q0b_kf3f_019_outer
   save: true
   engine:
@@ -106,7 +115,7 @@ jobs:
     kerr_full_3mode:
       omega_a: 0.0
       omega_b: -4.0
-      omega_c: -1.9841510680753888
+      omega_c: -1.9841510680753889
       chi: 0.0002
       gamma_a: 0.2313732629253484
       gamma_b: 2.3693276625631956
@@ -124,6 +133,11 @@ jobs:
       check_interval_steps: 1024
       debounce_checks: 2
   analyser: *q0_analysers
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories
 
 - name: kerr_full_3mode_q0b_kf3f_036_crossover
   save: true
@@ -155,7 +169,7 @@ jobs:
     kerr_full_3mode:
       omega_a: 0.0
       omega_b: 3.5102705096311446
-      omega_c: 3.9974881135684904
+      omega_c: 3.9974881135684903
       chi: 0.002
       gamma_a: 0.2
       gamma_b: 0.2351369124000918
@@ -167,9 +181,14 @@ jobs:
     first_passage:
       rule: matrix_projection
       left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-      threshold: 28306.003569398915
+      threshold: 28306.003569398916
       direction: below
       action: record
       check_interval_steps: 1024
       debounce_checks: 2
   analyser: *q0_analysers
+  input_bindings:
+    psd:
+      signal: input.trajectories
+    allan_variance:
+      signal: input.trajectories

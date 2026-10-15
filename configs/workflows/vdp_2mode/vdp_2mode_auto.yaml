@@ -35,9 +35,13 @@ jobs:
       g: 0.5
   analyser:
     psd:
-      modes: [0]
-      kind: complex
-
+      measurement:
+        complex_field:
+          channels: [0]
+          representation: complex
+  input_bindings:
+    psd:
+      signal: input.trajectories
 - name: vdp_2mode_auto_fit
   input:
     from: vdp_2mode_auto_sim
@@ -69,5 +73,5 @@ jobs:
         scipy:
           smooth_window: 5
           distance: 5
-          noise_threshold: null
-          prominence: null
+          noise_threshold:
+          prominence:

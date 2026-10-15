@@ -59,15 +59,20 @@ jobs:
       debounce_checks: 2
   analyser: &analyser
     allan_variance:
-      modes: [0]
       points: 40
       min_windows: 8
-      min_independent_windows: 4
+      measurement:
+        phase_frequency:
+          channels: [0]
+          min_independent_windows: 4
     coherence_matrix:
       modes: [0, 1, 2]
       time_blocks: 8
       min_block_samples: 128
 
+  input_bindings:
+    allan_variance:
+      signal: input.trajectories
 - name: collective_loss_kerr_3mode_acn_bcn_figure1_dt005_sim
   save: true
   scan: *scan
@@ -81,6 +86,9 @@ jobs:
   model: *model
   observer: *observer
   analyser: *analyser
+  input_bindings:
+    allan_variance:
+      signal: input.trajectories
 
 - name: collective_loss_kerr_3mode_acn_bcn_figure1_dt006_sim
   save: true
@@ -96,6 +104,9 @@ jobs:
   model: *model
   observer: *observer
   analyser: *analyser
+  input_bindings:
+    allan_variance:
+      signal: input.trajectories
 
 - name: collective_loss_kerr_3mode_acn_bcn_figure1_dt008_sim
   save: true
@@ -110,3 +121,6 @@ jobs:
   model: *model
   observer: *observer
   analyser: *analyser
+  input_bindings:
+    allan_variance:
+      signal: input.trajectories

@@ -12,11 +12,7 @@ jobs:
     axes:
       gamma_a:
         target: model.kerr_3mode.gamma_a
-        values: [1.00000000e-05, 1.25892541e-05, 1.58489319e-05, 1.99526231e-05, 2.51188643e-05,
-            3.16227766e-05, 3.98107171e-05, 5.01187234e-05, 6.30957344e-05, 7.94328235e-05,
-            1.00000000e-04, 1.25892541e-04, 1.58489319e-04, 1.99526231e-04, 2.51188643e-04,
-            3.16227766e-04, 3.98107171e-04, 5.01187234e-04, 6.30957344e-04, 7.94328235e-04,
-            1.00000000e-03]
+        values: [1.00000000e-05, 1.25892541e-05, 1.58489319e-05, 1.99526231e-05, 2.51188643e-05, 3.16227766e-05, 3.98107171e-05, 5.01187234e-05, 6.30957344e-05, 7.94328235e-05, 1.00000000e-04, 1.25892541e-04, 1.58489319e-04, 1.99526231e-04, 2.51188643e-04, 3.16227766e-04, 3.98107171e-04, 5.01187234e-04, 6.30957344e-04, 7.94328235e-04, 1.00000000e-03]
 
   engine:
     sde:
@@ -37,8 +33,10 @@ jobs:
 
   analyser:
     psd:
-      modes: [0]
-      kind: complex
+      measurement:
+        complex_field:
+          channels: [0]
+          representation: complex
     pdist:
       modes: [0]
       bins: "auto"
@@ -65,6 +63,9 @@ jobs:
       gamma_b: 0.1
       gamma_c: 0.1
 
+  input_bindings:
+    psd:
+      signal: input.trajectories
 - name: kerr_3mode_peaks
   input: {from: kerr_3mode, mode: dataset}
   save: true
@@ -78,5 +79,5 @@ jobs:
         scipy:
           smooth_window: 5
           distance: 5
-          noise_threshold: null
-          prominence: null
+          noise_threshold:
+          prominence:

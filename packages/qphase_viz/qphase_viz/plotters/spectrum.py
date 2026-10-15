@@ -99,8 +99,12 @@ class PowerSpectrumPlotter(PlotterProtocol):
             )
             require_single_scan_point(data, trajectory)
             analyzer_config = PsdAnalyzerConfig(
-                kind="complex",
-                modes=channels,
+                measurement={
+                    "complex_field": {
+                        "channels": channels,
+                        "representation": "complex",
+                    }
+                },
                 convention="symmetric",
             )
             analyzer = PsdAnalyzer(
@@ -113,7 +117,7 @@ class PowerSpectrumPlotter(PlotterProtocol):
             )
 
             product = analyzer.execute(
-                {"trajectories": trajectory},
+                {"signal": trajectory},
                 backend=NumpyBackend(),
                 label="psd",
             )["psd"]

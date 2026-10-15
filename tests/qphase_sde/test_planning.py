@@ -397,11 +397,17 @@ def _production_reducer_case(name):
         )
         n_traj = 1024
     elif name == "psd":
-        analyser = PsdAnalyzer(kind="complex", modes=[0])
+        analyser = PsdAnalyzer(
+            measurement={
+                "complex_field": {"channels": [0], "representation": "complex"}
+            }
+        )
         n_traj = 128
     else:
         assert name == "allan_variance"
-        analyser = AllanVarianceAnalyzer(modes=[0], points=5)
+        analyser = AllanVarianceAnalyzer(
+            measurement={"phase_frequency": {"channels": [0]}}, points=5
+        )
         n_traj = 128
     return analyser, n_traj
 

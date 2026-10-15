@@ -41,6 +41,7 @@ def _result(
         "t0": 0.0,
         "dt": 1.0,
         "orientation": "phase_increasing",
+        "measurement_model": "phase_frequency",
         "n_traj": trajectories,
         "n_samples": 100000,
         "mode_results": {
