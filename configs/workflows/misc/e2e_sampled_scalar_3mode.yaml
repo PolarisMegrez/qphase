@@ -1,0 +1,161 @@
+# Wave 6E acceptance fixture: small 3-mode production-model workflow.
+#
+# One job produces raw all-mode PSD + phase Allan alongside fixed-Q
+# sampled-scalar PSD/Allan fed by a transient observable transform; a tiny
+# debug job re-runs the same science config with the observable product
+# explicitly published. Not a production configuration.
+schema: qphase.workflow/2
+id: e2e_sampled_scalar_3mode
+title: Wave 6E sampled-scalar end-to-end fixture
+collection: tests
+tags:
+- model:kerr_3mode
+jobs:
+- name: e2e_main
+  save: true
+
+  scan:
+    axes:
+      gamma_a:
+        target: model.kerr_3mode.gamma_a
+        values: [1.0e-5, 2.0e-5, 4.0e-5]
+
+  engine:
+    sde:
+      t0: 0.0
+      t1: 25.6
+      dt: 0.05
+      n_traj: 16
+      seed: 20261214
+      ic:
+      - ["1.0+0.0j", "0.5+0.0j", "0.25+0.0j"]
+      adaptive: false
+      save_stride: 1
+      keep_traj: false
+
+  analyser:
+    raw_psd:
+      plugin: psd
+      config:
+        measurement:
+          complex_field:
+            channels: [0, 1, 2]
+            representation: complex
+    phase_allan:
+      plugin: allan_variance
+      config:
+        measurement:
+          phase_frequency:
+            channels: [0, 1, 2]
+            min_independent_windows: 1
+        points: 8
+        min_windows: 2
+    obs:
+      plugin: observable_transform
+      config:
+        units: occupation
+        observables:
+          n0:
+            matrix: [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+          q_fixed:
+            matrix: [[0.5, 0.0, 0.0], [0.0, 0.25, 0.0], [0.0, 0.0, 0.25]]
+    scalar_psd:
+      plugin: psd
+      config:
+        measurement:
+          sampled_scalar:
+            channels: [n0, q_fixed]
+            detrend: constant
+    scalar_allan:
+      plugin: allan_variance
+      config:
+        measurement:
+          sampled_scalar:
+            channels: [n0, q_fixed]
+            min_nonoverlap_pairs: 2
+        points: 8
+        min_windows: 2
+
+  backend:
+    numpy: {}
+
+  integrator:
+    srk:
+      method: heun
+
+  model:
+    kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 0.0
+      g_ab: 0.02
+      g_ac: 0.02
+      chi: 0.00005
+      gamma_a: 1.0e-5
+      gamma_b: 0.1
+      gamma_c: 0.1
+
+  input_bindings:
+    raw_psd:
+      signal: input.trajectories
+    phase_allan:
+      signal: input.trajectories
+    obs:
+      signal: input.trajectories
+    scalar_psd:
+      signal: obs.obs
+    scalar_allan:
+      signal: obs.obs
+
+- name: e2e_debug_publish
+  save: true
+
+  engine:
+    sde:
+      t0: 0.0
+      t1: 3.2
+      dt: 0.05
+      n_traj: 8
+      seed: 20261214
+      ic:
+      - ["1.0+0.0j", "0.5+0.0j", "0.25+0.0j"]
+      adaptive: false
+      save_stride: 1
+      keep_traj: false
+
+  analyser:
+    obs:
+      plugin: observable_transform
+      config:
+        units: occupation
+        observables:
+          n0:
+            matrix: [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+          q_fixed:
+            matrix: [[0.5, 0.0, 0.0], [0.0, 0.25, 0.0], [0.0, 0.0, 0.25]]
+
+  backend:
+    numpy: {}
+
+  integrator:
+    srk:
+      method: heun
+
+  model:
+    kerr_3mode:
+      omega_a: 0.0
+      omega_b: 0.0
+      omega_c: 0.0
+      g_ab: 0.02
+      g_ac: 0.02
+      chi: 0.00005
+      gamma_a: 1.0e-5
+      gamma_b: 0.1
+      gamma_c: 0.1
+
+  input_bindings:
+    obs:
+      signal: input.trajectories
+
+  publish_outputs:
+    obs: [obs]
