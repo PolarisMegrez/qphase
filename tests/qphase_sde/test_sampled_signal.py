@@ -552,6 +552,7 @@ def test_scan_axis_role_is_enforced():
         read_sampled_signal(product, variable="alpha", channels=[0])
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy is not installed")
 def test_device_valid_length_is_checked_on_the_host():
     import cupy

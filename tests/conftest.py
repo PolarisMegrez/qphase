@@ -17,11 +17,27 @@ from qphase.core.system_config import load_system_config
 _LAYER_MARKERS = ("unit", "integration", "e2e", "gpu", "slow")
 
 
+def _cuda_available() -> bool:
+    """Return whether CuPy can access at least one CUDA device."""
+    try:
+        import cupy as cp
+
+        return cp.cuda.runtime.getDeviceCount() > 0
+    except Exception:
+        return False
+
+
 def pytest_collection_modifyitems(items):
     """Assign the ``unit`` marker to tests without an explicit layer marker."""
+    gpu_available = (
+        _cuda_available() if any("gpu" in item.keywords for item in items) else True
+    )
+    skip_gpu = pytest.mark.skip(reason="CUDA runtime/device not available")
     for item in items:
         if not any(marker in item.keywords for marker in _LAYER_MARKERS):
             item.add_marker(pytest.mark.unit)
+        if "gpu" in item.keywords and not gpu_available:
+            item.add_marker(skip_gpu)
 
 
 @pytest.fixture(scope="session", autouse=True)

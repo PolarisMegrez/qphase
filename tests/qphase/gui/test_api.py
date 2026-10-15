@@ -62,7 +62,9 @@ def test_gui_api_exposes_current_project(temp_workspace):
     payload = response.json()
     assert payload["schema"] == "qphase.project/2"
     assert payload["root"] == str(temp_workspace)
-    assert payload["paths"]["workflows"].endswith("configs\\workflows")
+    assert payload["paths"]["workflows"] == str(
+        temp_workspace / "configs" / "workflows"
+    )
 
 
 def test_gui_api_serves_web_console():

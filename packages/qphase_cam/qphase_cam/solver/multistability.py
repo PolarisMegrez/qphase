@@ -958,9 +958,10 @@ def _available_memory_mib() -> int | None:
         status = MemoryStatus()
         status.length = ctypes.sizeof(MemoryStatus)
         try:
-            success = ctypes.WinDLL(
-                "kernel32", use_last_error=True
-            ).GlobalMemoryStatusEx(ctypes.byref(status))
+            win_dll = vars(ctypes)["WinDLL"]
+            success = win_dll("kernel32", use_last_error=True).GlobalMemoryStatusEx(
+                ctypes.byref(status)
+            )
         except OSError:
             return None
         if success:

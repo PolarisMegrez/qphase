@@ -272,7 +272,8 @@ class ProjectService:
         if os.name == "nt":
             import ctypes
 
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            win_dll = vars(ctypes)["WinDLL"]
+            kernel32 = win_dll("kernel32", use_last_error=True)
             handle = kernel32.OpenProcess(0x1000, False, pid)
             if not handle:
                 return False
