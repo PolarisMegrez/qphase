@@ -1,0 +1,91 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_kf3f_004_far_nep_psd_demo
+title: Kerr Full 3Mode kf3f-004 Far-from-NEP PSD Demo (beamer frame 1)
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- candidate:kf3f-004
+- purpose:slides/frame1-psd
+
+# Purpose: reference + 3 perturbed carrier PSDs operated FAR from the cusp
+# (epsilon = omega_b - 0.5 ~ 0.10-0.12), demonstrating regular dispersive
+# response: equal steps in omega_b give equal carrier shifts.
+#
+# Local analysis on the existing long31 data (peak positions vs omega_b,
+# quadratic fit on omega_b in [0.53, 0.60], extrapolation):
+#   omega_b   0.6000   0.6050   0.6100   0.6150   (0.6300)
+#   peak      0.1714   ~0.165   ~0.158   ~0.152   (~0.141)
+#   shift     --       0.0068   0.0137   0.0200   (0.0309)
+#   ratio     --       1        2.0      2.9      (2.27 per 0.61-step)
+# Equal small steps 0.605/0.610/0.615 therefore look proportional; a coarse
+# pair like 0.61/0.63 would visibly miss proportionality (residual Puiseux
+# curvature) and is NOT recommended for this figure.
+# Adjacent peaks are separated by ~0.9 FWHM (FWHM ~ 7-9e-3 here).
+#
+# Integration parameters (relative to publication_long31_a5000):
+#   t0 50000 -> 5000   (no critical slowing down: tau_c = O(1))
+#   T  5e5   -> 2e5    (resolution 3.1e-5 ~ FWHM/200; T=2e4 would already
+#                       suffice at ~20 bins/FWHM, 2e5 is conservative)
+#   all other SDE settings unchanged (dt=0.01, save_stride=32, n_traj=512).
+#
+# Risk note: omega_b > 0.6 lies beyond the validated publication scan
+# (<= 0.6). Run a CAM continuation first to confirm the stable branch
+# persists; expected risk is low.
+
+jobs:
+- name: kerr_full_3mode_kf3f_004_far_nep_psd_demo_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint: {enabled: true, interval_chunks: 1, keep_on_success: false}
+      resources: {gpu_memory_fraction: 0.85}
+  scan:
+    axes:
+      omega_b:
+        target: model.kerr_full_3mode.omega_b
+        values: [0.6, 0.605, 0.61, 0.615]
+  engine:
+    sde:
+      t0: 5000.0
+      t1: 205000.0
+      dt: 0.01
+      n_traj: 512
+      seed: 202610181
+      ic:
+      - - "-58.62254827844075+6.6459278995768605j"
+        - "85.42230014787226-32.32977534832201j"
+        - "133.6966822675078+0.0j"
+      adaptive: false
+      save_stride: 32
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 256
+      max_state_norm: 600.0
+      state_check_interval_steps: 2048
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  analyser:
+    psd:
+      modes: [0, 1, 2]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 9.0
+      estimator: {periodogram: {fft_chunk_trajectories: 16}}

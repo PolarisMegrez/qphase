@@ -1,0 +1,72 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_beamer_frequency_histogram
+title: Kerr Full 3Mode Beamer Finite-Window Frequency Histogram
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- candidate:kf3f-004
+- purpose:slides/frame1-frequency-histogram
+
+jobs:
+- name: kerr_full_3mode_beamer_frequency_histogram_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint: {enabled: true, interval_chunks: 1, keep_on_success: false}
+      resources: {gpu_memory_fraction: 0.85}
+  scan:
+    axes:
+      omega_b:
+        target: model.kerr_full_3mode.omega_b
+        values: [0.800, 0.805]
+  engine:
+    sde:
+      t0: 1000.0
+      t1: 2000.0
+      dt: 0.01
+      n_traj: 40960
+      seed: 202610182
+      ic:
+      - - "-58.62254827844075+6.6459278995768605j"
+        - "85.42230014787226-32.32977534832201j"
+        - "133.6966822675078+0.0j"
+      adaptive: false
+      save_stride: 16
+      record_modes: [2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 256
+      max_state_norm: 600.0
+      state_check_interval_steps: 2048
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.8
+      gamma_c: 1.0
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  analyser:
+    allan_variance:
+      points: 24
+      min_windows: 4
+      transfer_chunk_samples: 32768
+      device_chunk_trajectories: 16
+      measurement:
+        phase_frequency:
+          channels: [2]
+          min_independent_windows: 2
+  input_bindings:
+    allan_variance:
+      signal: input.trajectories

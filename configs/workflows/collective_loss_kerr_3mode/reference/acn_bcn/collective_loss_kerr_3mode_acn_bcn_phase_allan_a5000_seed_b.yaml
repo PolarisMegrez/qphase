@@ -1,0 +1,137 @@
+schema: qphase.workflow/2
+id: collective_loss_kerr_3mode_acn_bcn_phase_allan_a5000_seed_b
+title: Collective-Loss Kerr Trimer ACN-BCN Phase/Allan A5000 Seed B
+collection: collective_loss_kerr_3mode
+tags:
+- model:collective_loss_kerr_3mode
+- candidate:acn-bcn
+- purpose:validation/phase-allan
+
+jobs:
+- &phase_allan_sim
+  name: collective_loss_kerr_3mode_acn_bcn_phase_allan_seed_b_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint: {enabled: true, interval_chunks: 1, keep_on_success: false}
+      resources: {gpu_memory_fraction: 0.85}
+  scan: &phase_allan_scan
+    axes:
+      omega_c:
+        target: model.collective_loss_kerr_3mode.omega_c
+        # Negative branch: epsilon = omega_c - omega_c* = -0.005 ... -0.5.
+        values:
+        - -1.4253550107777118
+        - -1.4266496378366826
+        - -1.4282794767400175
+        - -1.4303313223525562
+        - -1.4329144429352598
+        - -1.4361663990785538
+        - -1.4402603693053868
+        - -1.4454143724590756
+        - -1.4519028780017216
+        - -1.460071422513926
+        - -1.4703550107777119
+        - -1.4833012813674202
+        - -1.4995996704007675
+        - -1.5201181265261559
+        - -1.5459493323531908
+        - -1.5784688937861309
+        - -1.6194085960544606
+        - -1.6709486275913479
+        - -1.7358336830178085
+        - -1.8175191281398526
+        - -1.9203550107777119
+  engine:
+    sde: &phase_allan_sde
+      t0: 100000.0
+      t1: 4100000.0
+      dt: 0.05
+      n_traj: 128
+      seed: 202610032
+      ic:
+      - - "23.60218740187223+2.890434325457881e-15j"
+        - "-3.363739683033011-0.3938218310277979j"
+        - "-1.611490803459231+0.8754396750099066j"
+      adaptive: false
+      save_stride: 80
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 64
+      max_state_norm: 119.57177631836001
+      state_check_interval_steps: 2048
+  backend: &phase_allan_backend
+    cupy: {float_dtype: float64, device: cuda}
+  integrator: &phase_allan_integrator
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
+  model: &phase_allan_model
+    collective_loss_kerr_3mode:
+      omega_a: 0.0
+      omega_b: 3.1215805501915015
+      omega_c: -1.4203550107777119
+      chi: 5.837569923409236e-05
+      g_ab: 0.4369267192725563
+      g_ac: -0.10576211228805123
+      g_bc: -0.021076429998524326
+      pump_a: 0.022386488186053245
+      kappa_bright: 1.0
+      kappa_dark: 2.5057901369710232e-05
+  observer: &phase_allan_observer
+    first_passage:
+      rule: state_norm
+      threshold: 80.0
+      direction: above
+      action: record
+      check_interval_steps: 2048
+      debounce_checks: 2
+  analyser: &phase_allan_analysers
+    allan_variance:
+      modes: [0]
+      points: 80
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 65536
+      device_chunk_trajectories: 16
+    coherence_matrix:
+      modes: [0, 1, 2]
+      time_blocks: 32
+      time_chunk_samples: 65536
+    moment_statistics:
+      modes: [0, 1, 2]
+      time_blocks: 32
+      time_chunk_samples: 65536
+
+- &phase_allan_fit
+  name: collective_loss_kerr_3mode_acn_bcn_phase_allan_seed_b_fit
+  input:
+    from: collective_loss_kerr_3mode_acn_bcn_phase_allan_seed_b_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    allan_scaling: &phase_allan_fit_config
+      scan_param: omega_c
+      critical_value: -1.4203550107777119
+      side: negative
+      mode: 0
+      window_selection: latest
+      white_slope_min: -1.2
+      white_slope_max: -0.8
+      min_local_r2: 0.9
+      min_tau_decades: 0.25
+      min_averaging_samples: 16
+      max_relative_sem: 0.35
+      min_independent_windows: 16
+      min_scaling_points: 5
+      target_scaling_decades: 1.0
+      max_scaling_reduced_chi2: 20.0
+      bootstrap_samples: 2000
+      bootstrap_seed: 202610032
+      fit_frequency: true
+      min_frequency_rss_improvement: 0.05
+      normal_form: {n: 3, k: 1, m: 0, observable_order: 1}

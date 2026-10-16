@@ -1,0 +1,79 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_kf3f_004_fig1_trajectory_gpu
+title: Kerr Full 3Mode kf3f-004 Fig. 1 Full Trajectory
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- candidate:kf3f-004
+- purpose:paper/fig1-cam-map
+
+jobs:
+- name: kerr_full_3mode_kf3f_004_fig1_trajectory_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 128
+      shard_target_mib: 64
+      checkpoint: {enabled: true, interval_chunks: 32, keep_on_success: false}
+      resources: {gpu_memory_fraction: 0.85}
+  engine:
+    sde:
+      # At epsilon=1e-3, CAM gives |lambda_c|=2.6356e-3 and hence a
+      # relaxation time of 379.4. The 1e4 warm-up spans 26.4 such times.
+      t0: 10000.0
+      # Retain 2e4 time units after warm-up: 52.7 critical relaxation times
+      # and about 2090 carrier periods (T_carrier approximately 9.57).
+      t1: 30000.0
+      dt: 0.01
+      # Four independent records make the stationary cloud robust to an
+      # atypical realization while keeping the raw artifact compact.
+      n_traj: 4
+      seed: 2026091201
+      # Noise-free self-consistent eigenstate at epsilon=1e-3. The overall
+      # phase gauge sets mode c real at the integration origin. Its frequency
+      # is 0.6522162721660892 (period 9.633591762916872), so the deterministic
+      # reference is alpha_det(t)=ic*exp(-i*frequency*t).
+      ic:
+      - - "-55.89834780133929+6.251367570360221j"
+        - "73.85274473873937-29.82818488374563j"
+        - "123.3411279899536+0.0j"
+      adaptive: false
+      # sample_dt=0.05 retains about 191 points per carrier period, enough
+      # for a smooth one-period trace and well-placed direction arrows.
+      save_stride: 5
+      record_modes: [0, 1, 2]
+      keep_traj: true
+      # Retained trajectories cannot be trajectory-batched. The resulting
+      # complex128 trajectory payload is only about 73 MiB.
+      trajectory_batching: off
+      max_state_norm: 600.0
+      state_check_interval_steps: 2048
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      # epsilon = omega_b - omega_b,c = 0.501 - 0.5 = 1e-3.
+      omega_b: 0.501
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      # Half the epsilon=1e-3 CAM trace. This is a diagnostic only and does
+      # not truncate a trajectory if an excursion is recorded.
+      threshold: 12478.35097113622
+      direction: below
+      action: record
+      check_interval_steps: 2048
+      debounce_checks: 2

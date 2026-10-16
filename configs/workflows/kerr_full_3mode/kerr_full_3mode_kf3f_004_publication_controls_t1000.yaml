@@ -1,0 +1,141 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_kf3f_004_publication_controls_t1000
+title: Kerr Full 3Mode kf3f-004 Publication Controls T1000
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- candidate:kf3f-004
+- purpose:paper/publication-controls
+
+jobs:
+- &control_sim
+  name: kerr_full_3mode_kf3f_004_publication_controls_t1000_dt_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint: {enabled: true, interval_chunks: 1, keep_on_success: false}
+      resources: {gpu_memory_fraction: 0.80}
+  scan: &control_scan
+    axes:
+      omega_b:
+        target: model.kerr_full_3mode.omega_b
+        # epsilon = omega_b - 0.5. The middle point lies just outside the
+        # eta_2=0.2 crossover near epsilon=1.67e-3.
+        values: [0.5001, 0.5005, 0.502, 0.51, 0.6]
+  engine:
+    sde: &control_sde
+      t0: 50000.0
+      t1: 180000.0
+      dt: 0.01
+      n_traj: 64
+      seed: 202609711
+      ic:
+      - - "-58.62254827844075+6.6459278995768605j"
+        - "85.42230014787226-32.32977534832201j"
+        - "133.6966822675078+0.0j"
+      adaptive: false
+      # Keep the physical sampling interval equal to 0.32 in both jobs.
+      save_stride: 32
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 16
+      rng_group_size: 16
+      max_state_norm: 600.0
+      state_check_interval_steps: 2048
+  backend: &control_backend
+    cupy: {float_dtype: float64, device: cuda}
+  integrator: &control_integrator
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
+  model: &control_model
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer: &control_observer
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      threshold: 4568.620255100055
+      direction: below
+      action: record
+      check_interval_steps: 2048
+      debounce_checks: 2
+  analyser: &control_analysers
+    psd:
+      modes: [0, 1, 2]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 9.0
+      estimator: {periodogram: {fft_chunk_trajectories: 8}}
+    allan_variance:
+      modes: [0, 1, 2]
+      points: 64
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 32768
+      device_chunk_trajectories: 8
+    coherence_matrix:
+      modes: [0, 1, 2]
+      time_blocks: 20
+      time_chunk_samples: 32768
+    moment_statistics:
+      modes: [0, 1, 2]
+      time_blocks: 20
+      time_chunk_samples: 32768
+
+- <<: *control_sim
+  name: kerr_full_3mode_kf3f_004_publication_controls_t1000_half_dt_sim
+  engine:
+    sde:
+      <<: *control_sde
+      dt: 0.005
+      seed: 202609712
+      save_stride: 64
+
+- &control_carrier
+  name: kerr_full_3mode_kf3f_004_publication_controls_t1000_dt_carrier
+  input:
+    from: kerr_full_3mode_kf3f_004_publication_controls_t1000_dt_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier: &control_carrier_config
+      scan_param: omega_b
+      readout: 2
+      freq_min: -0.5
+      freq_max: 1.5
+      maximum_lag: 2048.0
+      minimum_lag_span: 16.0
+      tracking_enabled: true
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_b
+          readouts: [2]
+          freq_min: -0.5
+          freq_max: 1.5
+          minimum_prominence_fraction: 0.01
+          tracking_path_count: 3
+          tracking_max_cost_delta: 2.0
+
+- <<: *control_carrier
+  name: kerr_full_3mode_kf3f_004_publication_controls_t1000_half_dt_carrier
+  input:
+    from: kerr_full_3mode_kf3f_004_publication_controls_t1000_half_dt_sim
+    mode: dataset
+  analyser:
+    band_limited_carrier:
+      <<: *control_carrier_config

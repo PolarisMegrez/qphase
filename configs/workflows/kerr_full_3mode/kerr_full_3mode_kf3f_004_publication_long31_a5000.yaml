@@ -1,0 +1,168 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_kf3f_004_publication_long31_a5000
+title: Kerr Full 3Mode kf3f-004 Publication Long 31 A5000
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- candidate:kf3f-004
+- purpose:paper/publication-long-sde
+
+jobs:
+- &long_sim
+  name: kerr_full_3mode_kf3f_004_publication_long31_a5000_seed_a_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint: {enabled: true, interval_chunks: 1, keep_on_success: false}
+      resources: {gpu_memory_fraction: 0.85}
+  scan: &long_scan
+    axes:
+      omega_b:
+        target: model.kerr_full_3mode.omega_b
+        # epsilon = omega_b - 0.5, 31 logarithmic points from 1e-4 to 1e-1.
+        values:
+        - 0.5001
+        - 0.50012589254117945
+        - 0.5001584893192461
+        - 0.5001995262314969
+        - 0.500251188643151
+        - 0.5003162277660168
+        - 0.5003981071705536
+        - 0.5005011872336272
+        - 0.5006309573444802
+        - 0.5007943282347243
+        - 0.501
+        - 0.5012589254117942
+        - 0.5015848931924611
+        - 0.5019952623149688
+        - 0.5025118864315096
+        - 0.5031622776601684
+        - 0.503981071705535
+        - 0.5050118723362727
+        - 0.506309573444802
+        - 0.5079432823472428
+        - 0.51
+        - 0.5125892541179417
+        - 0.5158489319246111
+        - 0.5199526231496888
+        - 0.5251188643150958
+        - 0.5316227766016838
+        - 0.5398107170553498
+        - 0.5501187233627273
+        - 0.5630957344480194
+        - 0.5794328234724282
+        - 0.6
+  engine:
+    sde: &long_sde
+      t0: 50000.0
+      t1: 550000.0
+      dt: 0.01
+      n_traj: 512
+      seed: 202609721
+      ic:
+      - - "-58.62254827844075+6.6459278995768605j"
+        - "85.42230014787226-32.32977534832201j"
+        - "133.6966822675078+0.0j"
+      adaptive: false
+      # sample_dt=0.32 gives angular Nyquist 9.817.
+      save_stride: 32
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      trajectory_batching: required
+      trajectory_batch_size: 256
+      max_state_norm: 600.0
+      state_check_interval_steps: 2048
+  backend: &long_backend
+    cupy: {float_dtype: float64, device: cuda}
+  integrator: &long_integrator
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
+  model: &long_model
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer: &long_observer
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      threshold: 4568.620255100055
+      direction: below
+      action: record
+      check_interval_steps: 2048
+      debounce_checks: 2
+  analyser: &long_analysers
+    psd:
+      modes: [0, 1, 2]
+      kind: complex
+      convention: symmetric
+      expected_freq_max: 9.0
+      estimator: {periodogram: {fft_chunk_trajectories: 16}}
+    allan_variance:
+      modes: [0, 1, 2]
+      points: 80
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 65536
+      device_chunk_trajectories: 16
+    coherence_matrix:
+      modes: [0, 1, 2]
+      time_blocks: 32
+      time_chunk_samples: 65536
+    moment_statistics:
+      modes: [0, 1, 2]
+      time_blocks: 32
+      time_chunk_samples: 65536
+
+- <<: *long_sim
+  name: kerr_full_3mode_kf3f_004_publication_long31_a5000_seed_b_sim
+  engine:
+    sde:
+      <<: *long_sde
+      seed: 202609722
+
+- &long_carrier
+  name: kerr_full_3mode_kf3f_004_publication_long31_a5000_seed_a_carrier
+  input:
+    from: kerr_full_3mode_kf3f_004_publication_long31_a5000_seed_a_sim
+    mode: dataset
+  save: true
+  engine:
+    sde: {mode: analyze}
+  analyser:
+    band_limited_carrier: &long_carrier_config
+      scan_param: omega_b
+      readout: 2
+      freq_min: -0.5
+      freq_max: 1.5
+      maximum_lag: 2048.0
+      minimum_lag_span: 16.0
+      tracking_enabled: true
+      center:
+        maximum_neighbor_fraction: 0.45
+        spectral_ridge:
+          scan_param: omega_b
+          readouts: [2]
+          freq_min: -0.5
+          freq_max: 1.5
+          minimum_prominence_fraction: 0.01
+          tracking_path_count: 3
+          tracking_max_cost_delta: 2.0
+
+- <<: *long_carrier
+  name: kerr_full_3mode_kf3f_004_publication_long31_a5000_seed_b_carrier
+  input:
+    from: kerr_full_3mode_kf3f_004_publication_long31_a5000_seed_b_sim
+    mode: dataset
+  analyser:
+    band_limited_carrier:
+      <<: *long_carrier_config

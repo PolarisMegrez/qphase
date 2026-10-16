@@ -1,0 +1,140 @@
+schema: qphase.workflow/2
+id: kerr_full_3mode_kf3f_004_publication_response_stencil_a5000_seed_e
+title: Kerr Full 3Mode kf3f-004 Response Stencil A5000 Seed E
+collection: kerr_full_3mode
+tags:
+- model:kerr_full_3mode
+- candidate:kf3f-004
+- purpose:paper/publication-response-stencil
+
+jobs:
+- name: kerr_full_3mode_kf3f_004_publication_response_stencil_a5000_seed_e_sim
+  save: true
+  system:
+    scan_runtime:
+      storage_layout: auto
+      auto_shard_threshold_mib: 512
+      shard_target_mib: 256
+      checkpoint: {enabled: true, interval_chunks: 1, keep_on_success: false}
+      resources: {gpu_memory_fraction: 0.85}
+  scan:
+    axes:
+      omega_b:
+        target: model.kerr_full_3mode.omega_b
+        # Ordered pairs epsilon_j*(1-0.1), epsilon_j*(1+0.1).
+        values:
+        - 0.50009000000000003
+        - 0.50011000000000005
+        - 0.50011330328706149
+        - 0.50013848179529741
+        - 0.50014264038732148
+        - 0.50017433825117075
+        - 0.50017957360834719
+        - 0.50021947885464657
+        - 0.50022606977883588
+        - 0.5002763075074661
+        - 0.50028460498941518
+        - 0.50034785054261854
+        - 0.50035829645349816
+        - 0.50043791788760883
+        - 0.50045106851026455
+        - 0.50055130595699004
+        - 0.50056786161003219
+        - 0.50069405307892823
+        - 0.5007148954112518
+        - 0.5008737610581967
+        - 0.50090000000000001
+        - 0.50109999999999999
+        - 0.50113303287061473
+        - 0.50138481795297363
+        - 0.50142640387321502
+        - 0.50174338251170725
+        - 0.50179573608347194
+        - 0.50219478854646582
+        - 0.50226069778835858
+        - 0.50276307507466056
+        - 0.50284604989415149
+        - 0.50347850542618522
+        - 0.50358296453498153
+        - 0.50437917887608852
+        - 0.50451068510264541
+        - 0.5055130595699
+        - 0.50567861610032172
+        - 0.50694053078928214
+        - 0.50714895411251859
+        - 0.50873761058196709
+        - 0.50900000000000001
+        - 0.51100000000000001
+        - 0.51133032870614747
+        - 0.51384817952973583
+        - 0.51426403873214999
+        - 0.51743382511707225
+        - 0.51795736083471988
+        - 0.52194788546465765
+        - 0.52260697788358623
+        - 0.52763075074660537
+        - 0.52846049894151537
+        - 0.53478505426185219
+        - 0.53582964534981481
+        - 0.54379178876088474
+        - 0.54510685102645451
+        - 0.55513059569900003
+        - 0.55678616100321743
+        - 0.56940530789282129
+        - 0.57148954112518546
+        - 0.58737610581967103
+        - 0.58999999999999997
+        - 0.60999999999999999
+  engine:
+    sde:
+      t0: 50000.0
+      t1: 550000.0
+      dt: 0.01
+      n_traj: 128
+      seed: 202609735
+      ic:
+      - - "-58.62254827844075+6.6459278995768605j"
+        - "85.42230014787226-32.32977534832201j"
+        - "133.6966822675078+0.0j"
+      adaptive: false
+      save_stride: 32
+      record_modes: [0, 1, 2]
+      keep_traj: false
+      # Keep all 128 trajectories together so the planner can tile two scan points.
+      trajectory_batching: off
+      max_state_norm: 600.0
+      state_check_interval_steps: 2048
+  backend:
+    cupy: {float_dtype: float64, device: cuda}
+  integrator:
+    cayley_maruyama: {fused: required, chunk_steps: 2048, max_modes: 16}
+  model:
+    kerr_full_3mode:
+      omega_a: 0.0
+      omega_b: 0.5
+      omega_c: -0.5
+      chi: 0.001
+      gamma_a: 3.0
+      gamma_b: 0.7993197086840077
+      gamma_c: 0.9572027428720037
+      g_ab: 4.0
+      g_ac: 0.1
+      g_bc: 2.0
+  observer:
+    first_passage:
+      rule: matrix_projection
+      left_vector: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      threshold: 4000.0
+      direction: below
+      action: record
+      check_interval_steps: 2048
+      debounce_checks: 2
+  # Accumulated phase frequency and full-mode Allan products are sufficient here.
+  analyser:
+    allan_variance:
+      modes: [0, 1, 2]
+      points: 80
+      min_windows: 8
+      min_independent_windows: 4
+      transfer_chunk_samples: 65536
+      device_chunk_trajectories: 8
