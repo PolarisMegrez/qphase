@@ -162,7 +162,14 @@ def test_vdp_2mode_smoke_cli_plan(vdp_workflow_path, vdp_cli_project, tmp_path):
 
 
 def test_vdp_2mode_smoke_cli_run(vdp_workflow_path, vdp_cli_project, tmp_path):
-    """CLI run executes the full pipeline and reports all jobs successful."""
+    """CLI run executes the full pipeline and reports all jobs successful.
+
+    The CLI owns its own project and session directory, so this cannot share
+    the scheduler run above: the subject here is the CLI entry point itself
+    (argument handling, session creation, JSON report).  Numeric assertions on
+    the fitted products live in ``test_vdp_2mode_smoke_workflow_scheduler``;
+    this test only asserts that the CLI produced a complete, loadable session.
+    """
     _discover_plugins()
     config_path = _write_system_config(tmp_path)
     _clear_system_config_cache()
@@ -175,11 +182,16 @@ def test_vdp_2mode_smoke_cli_run(vdp_workflow_path, vdp_cli_project, tmp_path):
     assert report["completed"] == 4
     assert report["failed"] == 0
     session = Path(report["session_dir"])
+    for job_name in (
+        "vdp_2mode_sim",
+        "vdp_2mode_fit_mode0",
+        "vdp_2mode_fit_mode1",
+        "vdp_2mode_peaks",
+    ):
+        assert (session / job_name / "artifact_manifest.json").exists(), job_name
+    # The CLI run's products load through the public API.
     sim_products = load_products(session / "vdp_2mode_sim")
     assert {"psd", "dist", "pdist"} <= set(sim_products), sorted(sim_products)
     for mode in (0, 1):
-        fit_dir = session / f"vdp_2mode_fit_mode{mode}"
-        fit_products = load_products(fit_dir)
+        fit_products = load_products(session / f"vdp_2mode_fit_mode{mode}")
         assert "lorentz_fitter" in fit_products, sorted(fit_products)
-        rows = fit_products["lorentz_fitter"].attributes["payload_meta"]["fit_rows"]
-        assert len(rows) == 3, "Expected one fit row per scan value"
