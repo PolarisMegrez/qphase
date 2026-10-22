@@ -182,6 +182,13 @@ hints, progress rendering, and logging. It contains no Workflow, plugin, or
 Project paths. `qphase config show --system` displays the resolved policy;
 `qphase config show` displays Project plugin defaults.
 
+Layers 2–4 are machine-local: a key that a later release removed from the
+schema is ignored there with a warning that names it, so a stale
+`~/.qphase/config.yaml` never makes the tool unusable. The packaged defaults
+and an explicitly passed `config_path` stay strict, and unknown keys *inside*
+a known section are always an error. `qphase config reset --system` rewrites
+the user file without the retired keys.
+
 ```yaml
 auto_save_results: true
 reporting:

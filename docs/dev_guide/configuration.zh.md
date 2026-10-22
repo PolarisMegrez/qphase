@@ -37,4 +37,13 @@ Workflow 禁止未知字段。Job 的 `extra="allow"` 只用于动态插件命�
 
 `SystemConfigStore` 合并包默认值、站点策略、稀疏用户覆盖、环境指定和显式策略。
 读取不创建文件，写入只保存相对包/站点默认值发生变化的字段。Project 路径属于 schema
-错误。测试或客户端若需要不同 Session 根目录，必须创建或注入不同 `ProjectContext`。
+错误。
+
+容错是有意不对称的。机器本地层——站点策略（`/etc/qphase/config.yaml`、
+`%PROGRAMDATA%`）、稀疏用户覆盖（`~/.qphase/config.yaml`）与
+`QPHASE_SYSTEM_CONFIG`——由旧版本写在开发者机器上、且不在版本控制中，因此其中已废弃的
+**顶层键**会被丢弃并给出包含键名的 warning（同时提示 `qphase config reset --system`
+可重写用户文件）；打包默认值、显式传入的 `config_path` 以及所有**嵌套小节**仍然严格，
+未知键一律报错。
+
+测试或客户端若需要不同 Session 根目录，必须创建或注入不同 `ProjectContext`。

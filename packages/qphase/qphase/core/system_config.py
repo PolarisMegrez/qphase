@@ -1,13 +1,15 @@
 """qphase: System Configuration Models
 ---------------------------------------------------------
-Defines the Pydantic models for system-level configuration (``system.yaml``). This
-includes machine policy, reporting behavior, and parameter scan defaults. Project
-paths are intentionally owned by ``qphase.toml`` instead.
+Defines the Pydantic models for machine-level configuration.  The packaged
+defaults live in ``qphase/core/system.yaml``; machine-local overrides come from
+the site policy, ``~/.qphase/config.yaml`` and ``QPHASE_SYSTEM_CONFIG``.  This
+includes machine policy, reporting behavior, and parameter scan defaults.
+Project paths are intentionally owned by ``qphase.toml`` instead.
 
 Public API
 ----------
 SystemConfig
-    Root configuration model with paths, auto-save, and scan runtime services.
+    Root configuration model with auto-save and scan runtime services.
 """
 
 import importlib.resources as ilr
@@ -135,8 +137,10 @@ class SystemConfig(BaseModel):
     """System-wide configuration parameters.
 
     These parameters control the global behavior of the QPhase system
-    and should only be modified by experts. They are loaded from system.yaml
-    and should NOT be included in per-run snapshots.
+    and should only be modified by experts. They are loaded from the packaged
+    defaults plus machine-local overrides (site policy, ``~/.qphase/config.yaml``
+    and ``QPHASE_SYSTEM_CONFIG``) and should NOT be included in per-run
+    snapshots.
 
     Attributes
     ----------
@@ -159,7 +163,11 @@ class SystemConfig(BaseModel):
     scan_runtime: ScanRuntimeConfig = Field(default_factory=ScanRuntimeConfig)
     reporting: ReportingConfig = Field(default_factory=ReportingConfig)
 
-    model_config = ConfigDict(frozen=False, extra="forbid")
+    # Only the top level tolerates retired keys: the store drops them from
+    # machine-local layers with a warning before validation.  Nested models
+    # stay closed, so a typo inside a known section is still an error, and an
+    # explicitly named policy file is checked strictly by the store.
+    model_config = ConfigDict(frozen=False, extra="ignore")
 
 
 class SystemConfigStore:
@@ -188,7 +196,9 @@ class SystemConfigStore:
         payload = self._load_package_defaults()
         site_path = self._resolved_site_path()
         if site_path is not None and site_path.exists():
-            payload = deep_merge_dicts(payload, self._load_mapping(site_path))
+            payload = deep_merge_dicts(
+                payload, self._load_tolerant_mapping(site_path, layer="site")
+            )
         return self._validate(payload)
 
     def load(
@@ -197,7 +207,14 @@ class SystemConfigStore:
         force_reload: bool = False,
         config_path: str | Path | None = None,
     ) -> SystemConfig:
-        """Resolve defaults, sparse user policy, environment, and explicit input."""
+        """Resolve defaults, sparse user policy, environment, and explicit input.
+
+        Machine-local layers (site, user, ``QPHASE_SYSTEM_CONFIG``) tolerate
+        retired top-level keys: they are dropped with a warning, so a stale
+        user file written by an older release cannot make the tool unusable.
+        An explicitly named ``config_path`` is project-level intent and stays
+        strict, as do nested keys in every layer.
+        """
         sources = self._source_signature(config_path)
         if (
             self._cache is not None
@@ -208,16 +225,67 @@ class SystemConfigStore:
             return self._cache
 
         payload = self.default_config().model_dump()
-        for path in self._override_paths(config_path):
-            if path.exists():
-                payload = deep_merge_dicts(payload, self._load_mapping(path))
-            elif path == (Path(config_path) if config_path is not None else None):
-                raise QPhaseConfigError(f"System config file not found: {path}")
+        user_path = self._resolved_user_path()
+        if user_path.exists():
+            payload = deep_merge_dicts(
+                payload, self._load_tolerant_mapping(user_path, layer="user")
+            )
+        env_path = self.environ.get("QPHASE_SYSTEM_CONFIG")
+        if env_path:
+            env_file = Path(env_path)
+            if env_file.exists():
+                payload = deep_merge_dicts(
+                    payload,
+                    self._load_tolerant_mapping(env_file, layer="environment"),
+                )
+        if config_path is not None:
+            explicit_path = Path(config_path)
+            if not explicit_path.exists():
+                raise QPhaseConfigError(
+                    f"System config file not found: {explicit_path}"
+                )
+            explicit_payload = self._load_mapping(explicit_path)
+            self._require_known_top_level_keys(explicit_payload, explicit_path)
+            payload = deep_merge_dicts(payload, explicit_payload)
         result = self._validate(payload)
         if config_path is None:
             self._cache = result
             self._cache_sources = sources
         return result
+
+    def _load_tolerant_mapping(self, path: Path, *, layer: str) -> dict[str, Any]:
+        """Load a machine-local policy layer, ignoring retired top-level keys.
+
+        Site and user layers live on the developer machine and are not under
+        version control, so a top-level key that a later release removed must
+        not break the whole tool. Only unknown top-level keys are dropped;
+        everything else — including unknown keys inside a known section — is
+        validated exactly as before.
+        """
+        payload = self._load_mapping(path)
+        retired = sorted(set(payload) - set(SystemConfig.model_fields))
+        if not retired:
+            return payload
+        logger.warning(
+            "Ignoring unsupported %s system-config keys %s from %s; they are no "
+            "longer part of the schema. Run 'qphase config reset --system' to "
+            "rewrite the user override without them.",
+            layer,
+            ", ".join(retired),
+            path,
+        )
+        return {key: value for key, value in payload.items() if key not in retired}
+
+    def _require_known_top_level_keys(
+        self, payload: Mapping[str, Any], path: Path
+    ) -> None:
+        """Reject unknown top-level keys in an explicitly named policy file."""
+        unknown = sorted(set(payload) - set(SystemConfig.model_fields))
+        if unknown:
+            raise QPhaseConfigError(
+                "Invalid system configuration: Extra inputs are not permitted "
+                f"in {path}: {unknown}"
+            )
 
     def save_user(self, config: SystemConfig) -> Path:
         """Persist only values differing from package and site defaults."""
@@ -331,6 +399,11 @@ def load_system_config(
     3. ~/.qphase/config.yaml (User-specific)
     4. QPHASE_SYSTEM_CONFIG environment variable
     5. Explicitly provided config_path
+
+    Layers 2-4 are machine-local: a retired top-level key in them is ignored
+    with a warning instead of failing the load.  Layer 5 is project-level
+    intent and stays strict, and unknown keys inside a known section are
+    always an error.
 
     Parameters
     ----------
