@@ -246,7 +246,9 @@ def test_restored_scan_bundle_feeds_downstream_analysers(tmp_path):
     views = list(iter_dataset_views(restored))
     assert len(views) == 2
     allan = AllanVarianceAnalyzer(
-        measurement={"phase_frequency": {"channels": [0], "min_independent_windows": 1}},
+        measurement={
+            "phase_frequency": {"channels": [0], "min_independent_windows": 1}
+        },
         points=5,
         min_windows=2,
     )

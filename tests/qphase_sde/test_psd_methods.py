@@ -206,7 +206,9 @@ def test_psd_orientation_aliases_serialize_canonically(configured, canonical):
     field = config.measurement.complex_field
     assert field is not None
     assert field.orientation == canonical
-    assert config.model_dump()["measurement"]["complex_field"]["orientation"] == canonical
+    assert (
+        config.model_dump()["measurement"]["complex_field"]["orientation"] == canonical
+    )
 
 
 def test_psd_orientation_aliases_are_discoverable_in_schema():
@@ -412,7 +414,9 @@ def test_psd_estimator_subplugins_are_discoverable_and_constructed():
         "analyser",
         {
             "name": "psd",
-            "measurement": {"complex_field": {"channels": [0], "representation": "complex"}},
+            "measurement": {
+                "complex_field": {"channels": [0], "representation": "complex"}
+            },
             "estimator": {"welch": {"nperseg": 64}},
         },
     )
@@ -493,7 +497,9 @@ def test_periodogram_fft_chunk_config_reaches_estimator():
         "analyser",
         {
             "name": "psd",
-            "measurement": {"complex_field": {"channels": [0], "representation": "complex"}},
+            "measurement": {
+                "complex_field": {"channels": [0], "representation": "complex"}
+            },
             "estimator": {"periodogram": {"fft_chunk_trajectories": 4}},
         },
     )

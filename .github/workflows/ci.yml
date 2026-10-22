@@ -9,6 +9,7 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -29,14 +30,16 @@ jobs:
         run: uv run ruff check .
 
       - name: Type check with MyPy
-        run: uv run mypy packages
+        run: uv run mypy packages tests
 
   test:
+    # Fast gate: unit tests only, on every supported interpreter.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - uses: actions/checkout@v4
@@ -51,13 +54,34 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      - name: Run tests (fast gate)
-        run: uv run pytest -m "not slow"
+      - name: Run unit tests
+        run: uv run pytest -m "unit and not gpu"
+
+  integration:
+    # Cross-component suite on one interpreter; slow cases stay in `slow`.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run integration tests
+        run: uv run pytest -m "integration and not gpu and not slow"
 
   e2e:
-    # Full suite including slow end-to-end tests; informational only.
+    # CLI / workflow end-to-end suite; blocking on pushes to the main branches.
     runs-on: ubuntu-latest
-    continue-on-error: true
+    timeout-minutes: 30
     if: github.event_name == 'push'
 
     steps:
@@ -73,5 +97,48 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      - name: Run full test suite
-        run: uv run pytest
+      - name: Run end-to-end tests
+        run: uv run pytest -m "e2e and not gpu"
+
+  slow:
+    # Long-running regression sweep: pushes only, never on pull requests.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run slow tests
+        run: uv run pytest -m "slow and not gpu"
+
+  dev-cpu:
+    # Guard the "cupy is not installed" branch: CPU-only dependency set.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install CPU-only dependencies
+        run: uv sync --no-dev --group dev-cpu
+
+      - name: Run tests without GPU packages
+        run: uv run pytest -m "not gpu"

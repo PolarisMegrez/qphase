@@ -50,7 +50,6 @@ exclude = [
 	".mypy_cache",
 	".pytest_cache",
 	".tox",
-	"tests"
 ]
 
 [tool.ruff.lint]
