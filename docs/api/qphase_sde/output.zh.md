@@ -49,55 +49,52 @@ point = bundle.point_view((0,))   # bundle 的单扫描点视图
 
 ## Lorentz 拟合输出
 
-`lorentz_fitter` 根据 `export` 选项写入最多三种 artifacts：
-
-*   `fit_results.csv` — 每个扫描点一行，列说明参见 [分析器](./analyzers.zh.md)。
-*   `psd_merged.csv` — 合并 PSD 以及不确定度传播使用的 `<scan_value>_sem` 列。
-*   `fit_results.npz` / `fit_results.pkl` — 相同数据的替代格式。
+`lorentz_fitter` 持久化一个 typed statistics product（以 analyser label 命名），其字段
+保存每个扫描点一行的拟合结果——列说明参见 [分析器](./analyzers.zh.md)——以及与参考
+频率轴对齐的合并 PSD 与 PSD SEM 曲线。不再写旁路文件；用
+`qphase.data.load_products(job_dir)` 加载。
 
 ## 带限载频输出
 
-当名称包含在 `export` 中时，`band_limited_carrier` 写出三张可审计表：
+`band_limited_carrier` 持久化三个可审计的 typed product（`carrier`、
+`carrier.candidates`、`carrier.platforms`）：
 
-*   `carrier_results.csv`：局部可辨识状态以及独立的 scan-tracked 载频；数据不足以
-    支持唯一平台时，局部或 tracked 频率允许为 `NaN`。
-*   `carrier_candidates.csv`：全部带宽/延迟拟合，包括相位残差、频率漂移、衰减率、
+*   `carrier`：局部可辨识状态以及独立的 scan-tracked 载频；数据不足以支持唯一平台时，
+    局部或 tracked 频率允许为 `NaN`。
+*   `carrier.candidates`：全部带宽/延迟拟合，包括相位残差、频率漂移、衰减率、
     延迟边界和拒绝原因。
-*   `carrier_platforms.csv`：scan tracking 之前保留的全部频率平台，包括支持度和评分。
+*   `carrier.platforms`：scan tracking 之前保留的全部频率平台，包括支持度和评分。
 
-其中 diagnostic uncertainty 是条件于估计模型的敏感度，不是 trajectory SEM；输出
+其中 diagnostic uncertainty 是条件于估计模型的敏感度，不是 trajectory SEM；product
 metadata 会明确记录该边界。
 
-ridge-conditioned 模式下，三张表还会保存 `ridge_candidate_index`、
+ridge-conditioned 模式下，三个 product 还会保存 `ridge_candidate_index`、
 `ridge_retention_tier`、ridge 中心不确定度、最近 ridge 带宽上限、
 `ridge_carrier_correction` 与 `ridge_conditioned_uncertainty_upper`；每个扫描点允许有
 多行结果。
 
-`finite_delay_carrier` 写出 `finite_delay_carrier.csv`，每个扫描点、读出和探测器速率
-一行，包含读出名称与类型、direct detector carrier、SDE 零延迟极限、有限延迟修正、
+`finite_delay_carrier` 持久化一个 typed `carrier` product，每个扫描点、读出和探测器
+速率一行，包含读出名称与类型、direct detector carrier、SDE 零延迟极限、有限延迟修正、
 相干权重和数值延迟范围。
 
-`spectral_ridge` 写出 `spectral_ridge.csv`（每个扫描点和读出一条选中谱脊）以及
-`spectral_ridge_candidates.csv`（完整多尺度候选集）。选中表包含峰位、局部与尺度
-不确定度、曲率诊断、PSD SEM 峰位置信区间、相对峰高平台边界、竞争谱脊歧义边界、
-路径候选编号与状态。统计置信区间与候选选择歧义分别保存。
-候选行还包含 `retained_for_association`、`retention_tier`、
-`tracking_path_ranks` 与 `tracking_best_cost_delta`。
+`spectral_ridge` 持久化两个 typed product：`ridge`（每个扫描点和读出一条选中谱脊）与
+`ridge.candidates`（完整多尺度候选集）。选中行包含峰位、局部与尺度不确定度、曲率诊断、
+PSD SEM 峰位置信区间、相对峰高平台边界、竞争谱脊歧义边界、路径候选编号与状态。
+候选行还包含 `retained_for_association`、`retention_tier`、`tracking_path_ranks` 与
+`tracking_best_cost_delta`。
 
 ## Allan 输出
 
 `allan_variance` 载荷保留在逻辑 SDE dataset 内，包含重叠与非重叠 Allan 方差、逐轨迹
 估计、SEM 和有效窗口计数；当 `keep_traj: false` 时不包含原始复轨迹。下游
-`allan_scaling` analyser 写出：
+`allan_scaling` analyser 持久化一个 typed product，含两部分：
 
-*   `allan_points.csv`：每个微扰点一行，包含检测到的白 FM tau 范围、
-    `tau * sigma_A^2`、SEM、有效非重叠窗口数、平均角频率及门控状态。
-*   `allan_scaling.json`：选定的共同 tau/epsilon 窗口、纯幂律 Allan 拟合、频移响应拟合、
+*   `rows`：每个微扰点一行，包含检测到的白 FM tau 范围、`tau * sigma_A^2`、SEM、
+    有效非重叠窗口数、平均角频率及门控状态。
+*   `summary`：选定的共同 tau/epsilon 窗口、纯幂律 Allan 拟合、频移响应拟合、
     bootstrap 区间、正规形预期及明确的门控失败原因。
 
-## 分布输出
-
-*   `dist_merged.npz` — scan dataset 的可选 distribution 合并导出。
-*   `pdist_merged.pkl` — scan dataset 的可选 polar-distribution 合并导出。
+distribution 与 polar-distribution 结果分别是各自 analyser 的 typed product；
+`lorentz_fitter` 不再把它们合并成 NPZ/PKL 导出。
 
 运行目录布局详情参见 [用户指南：输出](../../user_guide/output.zh.md)。

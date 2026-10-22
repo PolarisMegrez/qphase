@@ -130,7 +130,7 @@ QPhase 默认采用 `phase_decreasing`。对于
 
 ### 输出载荷
 
-分析器导出：
+分析器保存：
 
 *   `axis` — 频率或角频率轴。
 *   `psd` — 每个请求模式的 PSD 均值。
@@ -140,8 +140,9 @@ QPhase 默认采用 `phase_decreasing`。对于
 *   `orientation`、`positive_frequency_time_dependence` 与 `spectrum_kernel`
     — 明确记录频率符号定义的元数据。
 
-`lorentz_fitter` 会把相同元数据传递到结果，并在 `fit_results.csv` 中增加
-`orientation` 列；若输入混用了两种方向，则明确拒绝，而非静默拟合不兼容的频率轴。
+`lorentz_fitter` 会把相同元数据传递到结果，并在其 typed product 的每条拟合行中
+增加 `orientation` 字段；若输入混用了两种方向，则明确拒绝，而非静默拟合不兼容的
+频率轴。
 
 对于 Welch 和 multitaper，先在每条轨迹内部平均 segment 或 taper，再跨轨迹
 计算不确定度，因此不会把相关 segment 当成独立样本。只有一条轨迹时，
@@ -238,8 +239,8 @@ Lorentz 线型，该宽度等于 HWHM。随后生成嵌套余弦边缘通带并�
 
 局部状态包括 `ok`、`ambiguous_multiband` 和 `no_bandwidth_plateau`；候选层还会
 记录 `nonlinear_phase` 等具体拒绝原因。只有唯一局部平台时才填写 `frequency`。
-`carrier_candidates.csv` 保存全部带宽/延迟估计，`carrier_platforms.csv` 保存所有
-竞争平台。
+`carrier.candidates` product 保存全部带宽/延迟估计，`carrier.platforms` product
+保存所有竞争平台。
 
 启用 `tracking_enabled` 后，analyser 还会按扫描轴顺序，利用局部平台质量和
 divided-difference 曲率跟踪连续谱组分，输出 `tracked_frequency`、
@@ -342,9 +343,9 @@ analyser:
 coherence carrier；矩闭合失效时，该极限一般不等于 CAM Rayleigh 商。
 
 对应 CAM postprocessor 使用相同速率和全部闭合 CAM pole residue，其零延迟极限
-严格等于 generalized Rayleigh quotient。`finite_delay_carrier.csv` 保存探测器速率、
-载频、读出名称与类型、瞬时极限、有限延迟修正、相干权重和数值延迟范围。仅凭系综
-平均 PSD 无法得到正式 sampling uncertainty。
+严格等于 generalized Rayleigh quotient。`finite_delay_carrier` 的 typed product
+逐行保存探测器速率、载频、读出名称与类型、瞬时极限、有限延迟修正、相干权重和
+数值延迟范围。仅凭系综平均 PSD 无法得到正式 sampling uncertainty。
 
 ## `coherence_matrix`
 
@@ -537,7 +538,7 @@ input_bindings:
 上游 sampled-observable product）。
 
 `orientation` 控制逐轨迹平均角频率的符号。Allan 方差本身不随该配置改变。
-`allan_scaling` 会将方向信息传递到逐点结果、汇总与导出，并拒绝混合方向的 scan。
+`allan_scaling` 会将方向信息传递到逐点结果、汇总与产品元数据，并拒绝混合方向的 scan。
 
 每个 tau 同时输出既有的重叠估计和非重叠相位二阶差分估计，包括逐轨迹结果、跨轨迹
 SEM、实际有效非重叠窗口数以及每条轨迹的名义窗口数。此处“独立”只表示时间块不重叠；
@@ -582,9 +583,9 @@ analyser:
 对于正规形 `epsilon**k * x**m + x**n = 0`，预期频移指数为
 `observable_order * k / (n - m)`；在临界投影噪声保持规则白噪声时，预期 Allan 强度指数为
 `2 * (n - observable_order) * k / (n - m)`。最终 `status: ok` 同时要求 epsilon
-跨度充分、Allan 幂律拟合合格、频移非线性可辨认，且指数符合配置的正规形。插件输出
-`allan_points.csv` 和
-`allan_scaling.json`。旧 `trajectory_diagnostics` 结果仍可读取，但其独立窗口数会明确标记
+跨度充分、Allan 幂律拟合合格、频移非线性可辨认，且指数符合配置的正规形。插件把
+`rows` 与 `summary` 持久化为一个 typed `allan_scaling` product。旧
+`trajectory_diagnostics` 结果仍可读取，但其独立窗口数会明确标记
 为估算值，而不是实测非重叠计数。
 
 ## `lorentz_fitter`
@@ -606,9 +607,6 @@ analyser:
     clip_by_std: true
     clip_sigma: 10.0
     min_r2: 0.5
-    export:
-      - fit_results.csv
-      - psd_merged.csv
 ```
 
 | 键 | 类型 | 说明 |
@@ -623,9 +621,8 @@ analyser:
 | `min_r2` | `float` | 可接受的最小 `R^2`。 |
 | `min_peak_height` | `float \| None` | 最小拟合峰高。 |
 | `max_linewidth` | `float \| None` | 最大可接受 FWHM 线宽。 |
-| `export` | `list[str]` | 要写入的 artifacts。默认为 `fit_results.csv`。 |
 
-### 输出字段（`fit_results.csv`）
+### 输出字段（拟合行）
 
 | 列 | 含义 |
 | :-- | :-- |

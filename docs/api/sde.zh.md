@@ -197,8 +197,8 @@ nav_order: 2
 ```
 
 `lorentz_fitter` 分析器读取逻辑 SDE scan dataset，对每个扫描值拟合一条
-Lorentz 曲线，并将 `fit_results.csv` 和 `psd_merged.csv` 写入该 job 的 run
-目录。Dataset view 与通用导出工具位于 core。
+Lorentz 曲线，并把拟合行与合并后的 PSD 曲线持久化为一个 typed product 写入该 job
+的 run 目录。Dataset view 与通用内存聚合位于 core。
 ### 自适应带限载频
 
 `analyser.band_limited_carrier` 是 `mode: analyze` 下的 PSD 后处理插件。它在不假设

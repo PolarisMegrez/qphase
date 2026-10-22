@@ -25,7 +25,7 @@ runs/YYYY/MM/<session-id>/
   fit/
     config_snapshot.json
     artifact_manifest.json
-    fit_results.csv
+    00_<product>.npz
 ```
 
 A parameter scan remains one Job and one logical dataset. It never creates one
@@ -83,9 +83,9 @@ raw trajectories are discarded after analysis. See the
 
 Postprocessing is represented as downstream Jobs in the same Workflow. For
 example, `analyser.lorentz_fitter` consumes a saved or in-memory PSD dataset in
-`engine.sde.mode: analyze` and may produce `fit_results.csv` and
-`psd_merged.csv`. These files are Artifacts of the downstream Job rather than
-independent runs.
+`engine.sde.mode: analyze` and persists its fit rows and merged PSD traces as a
+typed product. That product is an Artifact of the downstream Job rather than an
+independent run.
 
 ```yaml
 schema: qphase.workflow/2

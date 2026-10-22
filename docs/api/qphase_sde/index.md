@@ -29,4 +29,4 @@ This section documents `qphase_sde`-specific behavior. For the core framework
 *   [Models](./models.md) — built-in models and the `SDEModel` protocol.
 *   [Analyzers](./analyzers.md) — PSD, distribution, and Lorentzian-fitting
     analyzers.
-*   [Output Schemas](./output.md) — the Artifact v4 layout, `.csv` exports, and merged tables.
+*   [Output Schemas](./output.md) — the Artifact v4 layout and the typed products each analyser persists.
