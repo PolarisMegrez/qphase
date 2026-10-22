@@ -33,20 +33,12 @@ from qphase_sde.contracts.quantities import SDEQuantity
 from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
+from tests.conftest import cuda_available
+
 BACKEND = NumpyBackend()
 
 T0 = 0.2
 DT = 0.1
-
-
-def _cupy_available() -> bool:
-    try:
-        import cupy
-
-        cupy.cuda.Device().use()
-    except Exception:
-        return False
-    return True
 
 
 def _field(rng, shape, *, modes=None, scan_size=None, n_traj_per_point=None):
@@ -864,7 +856,7 @@ def test_transform_product_clean_process_roundtrip(tmp_path):
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CuPy not available")
 def test_transform_cupy_matches_numpy():
     """Device execution keeps value on device and matches the host result."""
     import cupy as cp

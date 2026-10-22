@@ -9,7 +9,7 @@ from qphase_sde.integrator.cayley_maruyama import CayleyMaruyama
 
 from models.pair_hopping_2mode import PairHopping2ModeModel
 
-pytestmark = pytest.mark.gpu
+pytestmark = pytest.mark.integration
 
 
 def _cupy_available() -> bool:
@@ -34,6 +34,7 @@ def model() -> PairHopping2ModeModel:
     )
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
 def test_fused_step_matches_generic(model):
     import cupy as cp
@@ -53,6 +54,7 @@ def test_fused_step_matches_generic(model):
     cp.testing.assert_allclose(fused, generic, rtol=2e-12, atol=2e-12)
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
 def test_fused_chunk_matches_repeated_steps(model):
     import cupy as cp
@@ -95,6 +97,7 @@ def test_fused_chunk_matches_repeated_steps(model):
     )
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
 def test_fused_chunk_is_stable_after_single_step_launch(model):
     """A preceding step launch must not corrupt chunk inputs or outputs."""

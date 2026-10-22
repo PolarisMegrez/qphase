@@ -18,17 +18,9 @@ from qphase_sde.observer import (
 )
 from qphase_sde.planning import build_execution_plan
 
+from tests.conftest import cuda_available
+
 pytestmark = pytest.mark.integration
-
-
-def _cupy_available() -> bool:
-    try:
-        import cupy as cp
-
-        cp.cuda.runtime.getDevice()
-        return True
-    except Exception:
-        return False
 
 
 class LinearGrowthModel:
@@ -499,7 +491,8 @@ def test_fail_job_raises_with_trajectory_ids_and_times():
     assert details["first_hit_times"] == pytest.approx([0.6, 0.6])
 
 
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.gpu
+@pytest.mark.skipif(not cuda_available(), reason="CuPy not available")
 def test_cupy_matches_numpy_hits():
     from qphase.backend.cupy_backend import CuPyBackend
 

@@ -44,6 +44,8 @@ from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 from qphase_sde.peak_finder import ScipyPeakFinder
 from qphase_sde.result import SDEDataBundle, _trajectory_product
 
+pytestmark = pytest.mark.integration
+
 #: Shared complex-field measurement declaration of the psd call sites.
 _PSD_MEASUREMENT = {"complex_field": {"channels": [0], "representation": "complex"}}
 _PSD_CONFIG = {"measurement": _PSD_MEASUREMENT}

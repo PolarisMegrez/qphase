@@ -26,18 +26,12 @@ from qphase.data.resolver import default_artifact_resolver
 from qphase_sde.analyser.sampled_signal import read_sampled_signal
 from qphase_sde.contracts.quantities import SDEQuantity
 
+from tests.conftest import cuda_available
+
 N_TRAJ = 3
 N_TIME = 10
 T0 = 1.5
 DT = 0.5
-
-
-def _cupy_available() -> bool:
-    try:
-        import cupy  # noqa: F401
-    except Exception:
-        return False
-    return True
 
 
 def _axes(n_channel: int = 2, scan: int | None = None) -> list[AxisSchema]:
@@ -553,7 +547,7 @@ def test_scan_axis_role_is_enforced():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy is not installed")
+@pytest.mark.skipif(not cuda_available(), reason="CuPy is not installed")
 def test_device_valid_length_is_checked_on_the_host():
     import cupy
 

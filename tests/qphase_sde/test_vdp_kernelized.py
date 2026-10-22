@@ -8,7 +8,7 @@ from qphase.backend.cupy_backend import CuPyBackend
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.integrator.cayley_maruyama import CayleyMaruyama
 
-pytestmark = pytest.mark.gpu
+pytestmark = pytest.mark.integration
 
 
 # Runtime CuPy availability check.
@@ -63,6 +63,7 @@ def test_cayley_generic_vdp_step(model):
     assert np.all(np.isfinite(dy))
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
 def test_kernelized_terms_match_python(model):
     """CuPy kernelized drift/diffusion matches the Python implementation."""
@@ -85,6 +86,7 @@ def test_kernelized_terms_match_python(model):
     cp.testing.assert_allclose(L_k, L_py, rtol=1e-5, atol=1e-6)
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
 def test_kernelized_vectorized_params(model):
     """Kernel handles per-trajectory arrays of scanned parameters."""
@@ -109,6 +111,7 @@ def test_kernelized_vectorized_params(model):
     assert L.shape == (n, 2, 2)
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
 def test_cayley_fused_step_matches_generic(model):
     """The VDP Cayley RawKernel matches the generic batched solve."""
@@ -129,6 +132,7 @@ def test_cayley_fused_step_matches_generic(model):
     cp.testing.assert_allclose(fused, generic, rtol=2e-5, atol=2e-6)
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
 def test_cayley_chunk_matches_repeated_fused_steps(model):
     """A fused chunk matches repeated single-step kernels for fixed noise."""
