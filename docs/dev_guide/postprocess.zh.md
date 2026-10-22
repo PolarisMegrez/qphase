@@ -8,9 +8,10 @@ description: 后处理架构
 
 ## 设计原则
 
-- **Core** (`qphase`) 在 `qphase.core.aggregation` 中提供通用的聚合与导出工具。
+- **Core** (`qphase`) 在 `qphase.core.aggregation` 中提供通用的内存聚合容器，
+  并提供 typed product 持久化层。
 - **`qphase_sde`** 提供 SDE 专属的跨 job analyser：`lorentz_fitter` 处理 PSD 峰，
-  `allan_scaling` 处理白 FM 窗口和微扰幂律。
+  `allan_scaling` 处理白 FM 窗口和微扰幂律；其结果以 typed product 形式持久化。
 - **`qphase postprocess` CLI 命令已被移除**，请改用 `qphase run <workflow.yaml>`。
 
 ## 工作流示例
@@ -61,24 +62,21 @@ scheduler 会：
 
 1. 编译 `sim` scan，并由 SDE engine 将其作为一个逻辑 dataset 执行。
 2. 将完整 dataset 一次传给 `fit` job。
-3. 在 `analyze` 模式下运行 `analyser.lorentz_fitter`，在 `fit` job 的 run 目录中生成 `fit_results.csv` 和 `psd_merged.csv`。
+3. 在 `analyze` 模式下运行 `analyser.lorentz_fitter`，其 typed product 会持久化到 `fit` job 的 run 目录。
 
 ## 输出文件
 
-| 文件 | 生成者 | 内容 |
-| :--- | :--- | :--- |
-| `fit_results.csv` | `lorentz_fitter` | 每个扫描值一行，包含拟合参数及由协方差得到的标准差。 |
-| `psd_merged.csv` | `lorentz_fitter` | 频率轴加上每个扫描值对应的 PSD 与可选 PSD SEM 列。 |
-| `dist_merged.npz` | `lorentz_fitter`（可选） | 聚合后的 distribution payload。 |
-| `pdist_merged.pkl` | `lorentz_fitter`（可选） | 聚合后的极坐标 distribution payload。 |
-| `allan_points.csv` | `allan_scaling` | 逐点白 FM 窗口、Allan 强度、不确定度、频率与门控。 |
-| `allan_scaling.json` | `allan_scaling` | 共同 tau/epsilon 窗口、bootstrap 幂律拟合与正规形检验。 |
+analyser 不再写 CSV/NPZ/PKL 旁路文件：所有结果都以一个 typed product 的形式持久化到 job 目录的 artifact manifest 中。
+可用 `qphase.data.load_products(job_dir)` 加载。
 
-NPZ/PKL bundle 会通过 `qphase.core.aggregation` 写入 `__schema_version__` 和 `__created_by__` 元数据。
+| Product | 生成者 | 内容 |
+| :--- | :--- | :--- |
+| `lorentz_fitter` | `lorentz_fitter` | 每个扫描值一行，包含拟合参数、由协方差得到的标准差，以及合并后的 PSD/SEM 曲线。 |
+| `allan_scaling` | `allan_scaling` | 逐点白 FM 窗口、Allan 强度、不确定度、频率与门控，以及共同 tau/epsilon 窗口与 bootstrap 幂律拟合。 |
 
 ## 边界
 
 - 单个 result 内的分析（单 job PSD、寻峰、distribution）属于 `analyser` 插件。
-- Dataset view、通用聚合和带 schema version 的导出属于 core。
+- Dataset view、内存聚合容器与 typed product 持久化属于 core。
 - SDE 专属的曲线拟合与 payload 提取属于 `lorentz_fitter`、`allan_scaling` 等下游
   `qphase_sde` analyser 插件。
