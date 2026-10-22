@@ -492,7 +492,7 @@ def test_fail_job_raises_with_trajectory_ids_and_times():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not cuda_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_cupy_matches_numpy_hits():
     from qphase.backend.cupy_backend import CuPyBackend
 

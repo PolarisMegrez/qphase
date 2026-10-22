@@ -8,20 +8,12 @@ from qphase.backend.cupy_backend import CuPyBackend
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.integrator.cayley_maruyama import CayleyMaruyama
 
+from tests.conftest import cuda_available
+
 pytestmark = pytest.mark.integration
 
 
 # Runtime CuPy availability check.
-def _cupy_available() -> bool:
-    try:
-        import cupy as cp
-
-        cp.cuda.runtime.getDevice()
-        return True
-    except Exception:
-        return False
-
-
 @pytest.fixture
 def model():
     from models.vdp_2mode import VDP2ModeConfig, VDP2ModeModel
@@ -64,7 +56,7 @@ def test_cayley_generic_vdp_step(model):
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_kernelized_terms_match_python(model):
     """CuPy kernelized drift/diffusion matches the Python implementation."""
     import cupy as cp
@@ -87,7 +79,7 @@ def test_kernelized_terms_match_python(model):
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_kernelized_vectorized_params(model):
     """Kernel handles per-trajectory arrays of scanned parameters."""
     import cupy as cp
@@ -112,7 +104,7 @@ def test_kernelized_vectorized_params(model):
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_cayley_fused_step_matches_generic(model):
     """The VDP Cayley RawKernel matches the generic batched solve."""
     import cupy as cp
@@ -133,7 +125,7 @@ def test_cayley_fused_step_matches_generic(model):
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_cayley_chunk_matches_repeated_fused_steps(model):
     """A fused chunk matches repeated single-step kernels for fixed noise."""
     import cupy as cp

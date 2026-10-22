@@ -547,7 +547,7 @@ def test_scan_axis_role_is_enforced():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not cuda_available(), reason="CuPy is not installed")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_device_valid_length_is_checked_on_the_host():
     import cupy
 

@@ -11,18 +11,9 @@ import pytest
 from models.collective_kerr_2mode import CollectiveKerr2ModeModel
 from models.collective_loss_kerr_3mode import CollectiveLossKerr3ModeModel
 from models.reservoir_kerr_3mode import ReservoirKerr3ModeModel
+from tests.conftest import cuda_available
 
 pytestmark = pytest.mark.integration
-
-
-def _cupy_available() -> bool:
-    try:
-        import cupy as cp
-
-        cp.cuda.runtime.getDevice()
-        return True
-    except Exception:
-        return False
 
 
 def _make_model(model_name: str):
@@ -205,7 +196,7 @@ def _chunk_worker(model_name: str, queue) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.slow
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 @pytest.mark.parametrize(
     "model_name",
     (
@@ -233,7 +224,7 @@ def test_fused_step_matches_qpsgen_generic_path(model_name, dtype_name):
 
 @pytest.mark.gpu
 @pytest.mark.slow
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 @pytest.mark.parametrize(
     "model_name",
     (

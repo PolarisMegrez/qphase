@@ -8,18 +8,9 @@ from qphase.backend.cupy_backend import CuPyBackend
 from qphase_sde.integrator.cayley_maruyama import CayleyMaruyama
 
 from models.pair_hopping_2mode import PairHopping2ModeModel
+from tests.conftest import cuda_available
 
 pytestmark = pytest.mark.integration
-
-
-def _cupy_available() -> bool:
-    try:
-        import cupy as cp
-
-        cp.cuda.runtime.getDevice()
-        return True
-    except Exception:
-        return False
 
 
 @pytest.fixture
@@ -35,7 +26,7 @@ def model() -> PairHopping2ModeModel:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_fused_step_matches_generic(model):
     import cupy as cp
 
@@ -55,7 +46,7 @@ def test_fused_step_matches_generic(model):
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_fused_chunk_matches_repeated_steps(model):
     import cupy as cp
 
@@ -98,7 +89,7 @@ def test_fused_chunk_matches_repeated_steps(model):
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_fused_chunk_is_stable_after_single_step_launch(model):
     """A preceding step launch must not corrupt chunk inputs or outputs."""
     import cupy as cp

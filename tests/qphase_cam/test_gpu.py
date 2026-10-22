@@ -5,20 +5,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from tests.conftest import cuda_available
+
 pytestmark = [pytest.mark.gpu, pytest.mark.integration]
 
 
-def _cupy_available() -> bool:
-    try:
-        import cupy as cp
-
-        value = cp.asarray([1.0])
-        return bool(cp.asnumpy(value)[0] == 1.0)
-    except Exception:
-        return False
-
-
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy/CUDA is unavailable")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 @pytest.mark.parametrize("model_name", ["vdp_2mode", "kerr_3mode"])
 def test_batched_newton_numpy_cupy_agree(model_name):
     from qphase.backend.cupy_backend import CuPyBackend

@@ -856,7 +856,7 @@ def test_transform_product_clean_process_roundtrip(tmp_path):
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not cuda_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_transform_cupy_matches_numpy():
     """Device execution keeps value on device and matches the host result."""
     import cupy as cp

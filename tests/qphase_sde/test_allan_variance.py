@@ -372,7 +372,7 @@ def _assert_mode_results_equal(
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not cuda_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_allan_device_path_matches_host_complex64_long_record():
     """complex64 long records must accumulate phase in float64 on device.
 
@@ -463,7 +463,7 @@ def test_allan_device_path_matches_host_complex64_long_record():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not cuda_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_allan_device_path_matches_host():
     import cupy as cp
     from qphase.backend.cupy_backend import CuPyBackend
@@ -495,7 +495,7 @@ def test_allan_device_path_matches_host():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not cuda_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_allan_device_path_matches_host_with_masked_windows():
     import cupy as cp
     from qphase.backend.cupy_backend import CuPyBackend

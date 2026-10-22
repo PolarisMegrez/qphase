@@ -100,7 +100,7 @@ def test_fold_preserves_total_power_for_hermitian_spectrum():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not cuda_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_fold_one_sided_is_backend_duck_typed():
     """The fold must not force a host copy of device-resident powers."""
     import cupy as cp
