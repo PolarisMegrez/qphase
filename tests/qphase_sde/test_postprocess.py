@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import csv
-import pickle
 from pathlib import Path
 
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
-from qphase.core.aggregation import QPHASE_BUNDLE_SCHEMA_VERSION
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.errors import QPhaseError
 from qphase.core.registry import discovery
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
+from qphase.data import load_products
 from qphase_sde.analyser.lorentz_fitter import (
     LorentzFitter,
     LorentzFitterConfig,
@@ -230,41 +228,39 @@ def test_lorentz_fitter_config_clip_by_std(tmp_path):
         assert row["status"] in {"ok", "low_quality"}
 
 
-def test_lorentz_fitter_analyze_directory(tmp_path):
+def test_lorentz_fitter_analyze_directory():
     """LorentzFitter can process a run directory directly."""
     psd = _make_scan_product()
-    output_dir = tmp_path / "exports"
 
     analyzer = LorentzFitter(
         LorentzFitterConfig(
             scan_param="epsilon",
             mode=0,
-            output_dir=str(output_dir),
         )
     )
     product = analyzer.execute(
         {"psd": psd}, backend=NumpyBackend(), label="fit"
     )["fit"]
-    rows = product.attributes["payload_meta"]["fit_rows"]
+    out = product.attributes["payload_meta"]
+    rows = out["fit_rows"]
     assert len(rows) == 2
-    assert (output_dir / "fit_results.csv").exists()
-    assert (output_dir / "psd_merged.csv").exists()
     assert all(
         row["uncertainty_source"] == "residual_covariance"
         for row in rows
     )
+    # The merged PSD view that used to reach disk as CSV is the payload itself.
+    assert sorted(out["psd_columns"]) == ["0.1", "0.2"]
+    assert np.asarray(out["axis"]).shape == np.asarray(out["psd_columns"]["0.1"]).shape
 
 
-def test_lorentz_fitter_transfers_psd_sem_to_csv(tmp_path):
+def test_lorentz_fitter_transfers_psd_sem_to_uncertainty():
     """Aggregated PSD SEM propagates to fit uncertainty and remains auditable."""
     psd = _make_scan_product(with_uncertainty=True)
-    output_dir = tmp_path / "weighted_exports"
     analyzer = LorentzFitter(
         LorentzFitterConfig(
             scan_param="epsilon",
             mode=0,
             uncertainty="required",
-            output_dir=str(output_dir),
         )
     )
 
@@ -272,7 +268,8 @@ def test_lorentz_fitter_transfers_psd_sem_to_csv(tmp_path):
         {"psd": psd}, backend=NumpyBackend(), label="fit"
     )["fit"]
 
-    for row in product.attributes["payload_meta"]["fit_rows"]:
+    out = product.attributes["payload_meta"]
+    for row in out["fit_rows"]:
         assert row["uncertainty_source"] == "psd_sem_sandwich"
         assert float(row["center_std"]) > 0.0
         assert float(row["linewidth_std"]) > 0.0
@@ -280,22 +277,15 @@ def test_lorentz_fitter_transfers_psd_sem_to_csv(tmp_path):
         assert float(row["base_std"]) > 0.0
         assert float(row["peak_intensity_std"]) > 0.0
 
-    with (output_dir / "fit_results.csv").open(newline="", encoding="utf-8") as handle:
-        headers = csv.DictReader(handle).fieldnames
-    assert headers is not None
-    assert {
-        "center_std",
-        "linewidth_std",
-        "amplitude_std",
-        "base_std",
-        "peak_intensity_std",
-        "uncertainty_source",
-    }.issubset(headers)
-
-    with (output_dir / "psd_merged.csv").open(newline="", encoding="utf-8") as handle:
-        headers = next(csv.reader(handle))
-    assert "0.1_sem" in headers
-    assert "0.2_sem" in headers
+    # Every per-scan SEM trace the CSV used to carry stays in the payload,
+    # aligned with the reference axis.
+    assert sorted(out["psd_sem_columns"]) == ["0.1", "0.2"]
+    axis = np.asarray(out["axis"])
+    for scan_key in ("0.1", "0.2"):
+        sem = np.asarray(out["psd_sem_columns"][scan_key])
+        assert sem.shape == axis.shape
+        assert np.all(np.isfinite(sem))
+        assert np.all(sem > 0.0)
 
 
 def test_lorentz_fitter_can_require_psd_uncertainty(tmp_path):
@@ -337,34 +327,16 @@ def test_external_artifact_routes_to_analyze_product_graph(tmp_path, temp_projec
 
     assert len(results) == 1
     assert results[0].success is True
-    assert (results[0].job_dir / "fit_results.csv").exists()
-    assert (results[0].job_dir / "psd_merged.csv").exists()
-
-
-def test_export_dist_schema_version(tmp_path):
-    """dist_merged.npz and pdist_merged.pkl must carry a core schema version."""
-    from qphase.core.aggregation import write_npz_bundle, write_pkl_bundle
-
-    output_dir = tmp_path / "exports"
-    output_dir.mkdir()
-
-    dist_rows = [{"epsilon": 0.1, "job_name": "j1", "histogram": np.ones(5)}]
-    pdist_rows = [{"epsilon": 0.1, "job_name": "j1", "histogram": np.ones(5)}]
-
-    dist_path = write_npz_bundle(
-        output_dir / "dist_merged.npz",
-        dist_list=np.array(dist_rows, dtype=object),
-        scan_params=np.array([row["epsilon"] for row in dist_rows], dtype=object),
-    )
-    pdist_path = write_pkl_bundle(output_dir / "pdist_merged.pkl", pdist_rows)
-
-    dist_data = np.load(dist_path, allow_pickle=True)
-    assert dist_data["__schema_version__"] == QPHASE_BUNDLE_SCHEMA_VERSION
-
-    with pdist_path.open("rb") as handle:
-        pdist_bundle = pickle.load(handle)
-    assert pdist_bundle["__schema_version__"] == QPHASE_BUNDLE_SCHEMA_VERSION
-    assert len(pdist_bundle["rows"]) == len(pdist_rows)
+    products = load_products(results[0].job_dir)
+    assert "lorentz_fitter" in products, sorted(products)
+    fit = products["lorentz_fitter"]
+    centers = np.asarray(fit.handle("center").materialize())
+    r2 = np.asarray(fit.handle("R2").materialize())
+    assert centers.shape == r2.shape
+    assert centers.size == 1, "expected one fit row for the restored point"
+    assert np.all(np.isfinite(centers))
+    assert np.all(r2 > 0.0)
+    assert np.all(fit.handle("row_valid").materialize())
 
 
 def _psd_payload(epsilon: float, *, with_uncertainty: bool = False) -> dict:

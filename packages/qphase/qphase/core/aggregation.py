@@ -1,37 +1,24 @@
 """qphase: Generic result aggregation utilities
 ---------------------------------------------------------
-Core helpers for collecting, sorting, and exporting results that come from
-multiple upstream Jobs or from a result directory. Resource packages can use
-these utilities to implement their own cross-job workflows without duplicating
-generic serialization logic.
+Core helpers for collecting and sorting results that come from multiple
+upstream Jobs or from a result directory. Resource packages use these
+utilities to implement their own cross-job workflows.
 
 Public API
 ----------
 AggregateResult
     Container that wraps multiple ``ResultProtocol`` objects.
-write_table_csv
-    Write a list of dict rows to a CSV file.
-write_columns_csv
-    Write a frequency/axis column plus named value columns to CSV.
-write_npz_bundle
-    Write an NPZ bundle with schema/version metadata.
-write_pkl_bundle
-    Write a pickle bundle with schema/version metadata.
+DirectoryInputResult
+    Wrapper that passes an existing result directory as input data.
 """
 
 from __future__ import annotations
 
-import csv
-import pickle
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from qphase.core.errors import QPhaseError
-
 from .protocols import ResultProtocol
-
-QPHASE_BUNDLE_SCHEMA_VERSION = "1.0"
 
 
 @dataclass
@@ -68,11 +55,12 @@ class AggregateResult(ResultProtocol):
     def save(self, path: str | Path) -> None:
         """Save is not implemented for aggregated views.
 
-        Resource packages should use the export helpers in this module to
-        materialize aggregated data.
+        Resource packages materialize aggregated data as typed products
+        through their own analysers/exporters.
         """
         raise NotImplementedError(
-            "AggregateResult cannot be saved directly; use the export helpers."
+            "AggregateResult cannot be saved directly; persist the aggregated "
+            "data as typed products instead."
         )
 
     def items(self):
@@ -132,163 +120,6 @@ class DirectoryInputResult(ResultProtocol):
     def save(self, path: str | Path) -> None:
         """Directory input is read-only."""
         raise NotImplementedError("DirectoryInputResult is read-only")
-
-
-def write_table_csv(
-    rows: list[dict[str, Any]],
-    path: str | Path,
-    fieldnames: list[str] | None = None,
-) -> Path:
-    """Write a list of dict rows to a CSV file.
-
-    Parameters
-    ----------
-    rows : list[dict[str, Any]]
-        Rows to write.
-    path : str | Path
-        Output file path.
-    fieldnames : list[str] | None, optional
-        Explicit CSV header. If ``None``, keys from the first row are used.
-
-    Returns
-    -------
-    Path
-        The written file path.
-
-    """
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    if not rows and fieldnames is None:
-        raise QPhaseError("Cannot write empty CSV without explicit fieldnames")
-
-    header = fieldnames if fieldnames is not None else list(rows[0].keys())
-    with out.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=header, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
-    return out
-
-
-def write_columns_csv(
-    axis: Any,
-    columns: dict[str, Any],
-    path: str | Path,
-) -> Path:
-    """Write an axis column plus named value columns to CSV.
-
-    Parameters
-    ----------
-    axis : array-like
-        Common axis values (e.g. frequency).
-    columns : dict[str, array-like]
-        Mapping from column label to values aligned with ``axis``.
-    path : str | Path
-        Output file path.
-
-    Returns
-    -------
-    Path
-        The written file path.
-
-    """
-    import numpy as np
-
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    labels = list(columns.keys())
-    axis_arr = np.asarray(axis)
-    col_arrays = {label: np.asarray(columns[label]) for label in labels}
-
-    if axis_arr.ndim != 1:
-        raise QPhaseError("write_columns_csv expects a 1-D axis")
-    for label, arr in col_arrays.items():
-        if arr.shape[0] != axis_arr.shape[0]:
-            raise QPhaseError(
-                f"Column '{label}' length {arr.shape[0]} does not match "
-                f"axis length {axis_arr.shape[0]}"
-            )
-
-    with out.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["axis", *labels])
-        for i, value in enumerate(axis_arr):
-            writer.writerow([value, *(col_arrays[label][i] for label in labels)])
-    return out
-
-
-def _bundle_meta() -> dict[str, str]:
-    """Return standard bundle metadata fields."""
-    from datetime import UTC, datetime
-
-    return {
-        "__schema_version__": QPHASE_BUNDLE_SCHEMA_VERSION,
-        "__created_by__": "qphase",
-        "__created_at__": datetime.now(UTC).isoformat(),
-    }
-
-
-def write_npz_bundle(path: str | Path, **arrays_and_meta: Any) -> Path:
-    """Write a compressed NPZ bundle with schema/version metadata.
-
-    Schema fields are injected automatically unless explicitly provided.
-
-    Parameters
-    ----------
-    path : str | Path
-        Output file path.
-    **arrays_and_meta : Any
-        Arrays or metadata to store in the bundle.
-
-    Returns
-    -------
-    Path
-        The written file path.
-
-    """
-    import numpy as np
-
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    kwargs = dict(arrays_and_meta)
-    for key, value in _bundle_meta().items():
-        kwargs.setdefault(key, value)
-
-    # Convert dict/list metadata to object arrays so np.savez can store them.
-    for key, value in list(kwargs.items()):
-        if isinstance(value, dict | list):
-            kwargs[key] = np.array(value, dtype=object)
-
-    np.savez_compressed(out, **kwargs)
-    return out
-
-
-def write_pkl_bundle(path: str | Path, rows: list[Any]) -> Path:
-    """Write a pickle bundle with schema/version metadata.
-
-    Parameters
-    ----------
-    path : str | Path
-        Output file path.
-    rows : list[Any]
-        Serializable rows/objects to store under the ``rows`` key.
-
-    Returns
-    -------
-    Path
-        The written file path.
-
-    """
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    bundle: dict[str, Any] = {"rows": rows}
-    bundle.update(_bundle_meta())
-
-    with out.open("wb") as handle:
-        pickle.dump(bundle, handle)
-    return out
 
 
 def _sort_key(value: Any) -> tuple[int, Any]:
