@@ -27,9 +27,6 @@ dependencies = [
     "qphase>=2.0.0,<3.0"
 ]
 
-[project.optional-dependencies]
-sde = ["qphase-sde>=2.0.0.dev0,<3.0"]
-
 [project.entry-points.qphase]
 "engine.viz" = "qphase_viz.engine:VizEngine"
 "visualizer.phase_plane" = "qphase_viz.plotters.phase:PhasePlanePlotter"

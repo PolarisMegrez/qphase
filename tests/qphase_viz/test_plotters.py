@@ -5,13 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from qphase_sde.result import SDEDataBundle
 from qphase_viz.plotters.evolution import TimeSeriesPlotter
 from qphase_viz.plotters.parameter import ParameterEvolutionPlotter
 from qphase_viz.plotters.phase import PhasePlanePlotter
 from qphase_viz.plotters.spectrum import PowerSpectrumPlotter
+from qphase_viz.typed_input import ProductNotFoundError
 
 from tests.qphase_viz.typed_fixtures import (
+    VizTestBundle,
     peak_scan_bundle,
     restored,
     spectrum_bundle,
@@ -44,36 +45,29 @@ def test_phase_plane_plotter_renders_typed_bundle(tmp_path):
     _assert_files_generated(files, tmp_path)
 
 
-def test_power_spectrum_uses_existing_typed_psd(tmp_path, monkeypatch):
-    bundle = spectrum_bundle()
-    import qphase_sde.analyser.psd
-
-    monkeypatch.setattr(
-        qphase_sde.analyser.psd.PsdAnalyzer,
-        "execute",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("recomputed")),
-    )
+def test_power_spectrum_plots_typed_psd(tmp_path):
+    source = spectrum_bundle()
+    # The PSD product alone must be enough: no trajectories are required.
+    bundle = VizTestBundle({"psd": source.products["psd"]})
     files = PowerSpectrumPlotter(
         plots=[{"channels": [0], "scale": "log"}]
     ).plot(bundle, tmp_path, "png")
     _assert_files_generated(files, tmp_path)
 
 
-def test_power_spectrum_computes_from_typed_trajectory(tmp_path):
-    files = PowerSpectrumPlotter(
-        plots=[{"channels": [0], "scale": "log"}]
-    ).plot(trajectory_bundle(), tmp_path, "png")
-    _assert_files_generated(files, tmp_path)
+def test_power_spectrum_requires_typed_psd(tmp_path):
+    assert "psd" not in trajectory_bundle().products
+    plotter = PowerSpectrumPlotter(plots=[{"channels": [0], "scale": "log"}])
+    with pytest.raises(
+        ProductNotFoundError, match="needs a persisted PSD product.*psd analyser"
+    ):
+        plotter.plot(trajectory_bundle(), tmp_path, "png")
 
 
 def test_power_spectrum_rejects_ambiguous_typed_psd(tmp_path):
     source = spectrum_bundle()
     products = source.products
-    ambiguous = SDEDataBundle(
-        {**products, "other_psd": products["psd"]},
-        source.provenance,
-        n_traj_per_point=source.n_traj_per_point,
-    )
+    ambiguous = VizTestBundle({**products, "other_psd": products["psd"]})
     plotter = PowerSpectrumPlotter(plots=[{"channels": [0], "scale": "log"}])
     with pytest.raises(ValueError, match="exactly one match"):
         plotter.plot(ambiguous, tmp_path, "png")
@@ -87,7 +81,7 @@ def test_parameter_evolution_uses_typed_peak_product(tmp_path):
 
 
 def test_time_phase_and_spectrum_render_restored_bundle(tmp_path):
-    bundle = restored(trajectory_bundle(), tmp_path / "artifact")
+    bundle = restored(spectrum_bundle(), tmp_path / "artifact")
     files = TimeSeriesPlotter(
         plots=[{"channels": [0], "transform": "abs"}]
     ).plot(bundle, tmp_path, "png")
@@ -137,29 +131,45 @@ def test_non_scan_plotters_reject_multi_point_scan(
 
 
 @pytest.mark.parametrize(
-    "plotter",
+    ("plotter", "bundle_factory"),
     [
-        TimeSeriesPlotter(plots=[{"channels": [0]}]),
-        PhasePlanePlotter(plots=[{"channel_x": 0}]),
-        PowerSpectrumPlotter(plots=[{"channels": [0]}]),
+        (
+            TimeSeriesPlotter(plots=[{"channels": [0]}]),
+            lambda: trajectory_bundle(scan_values=(0.1,)),
+        ),
+        (
+            PhasePlanePlotter(plots=[{"channel_x": 0}]),
+            lambda: trajectory_bundle(scan_values=(0.1,)),
+        ),
+        (
+            PowerSpectrumPlotter(plots=[{"channels": [0]}]),
+            spectrum_bundle,
+        ),
     ],
 )
-def test_non_scan_plotters_accept_singleton_scan(tmp_path, plotter):
-    files = plotter.plot(
-        trajectory_bundle(scan_values=(0.1,)), tmp_path, "png"
-    )
+def test_non_scan_plotters_accept_singleton_scan(tmp_path, plotter, bundle_factory):
+    files = plotter.plot(bundle_factory(), tmp_path, "png")
     _assert_files_generated(files, tmp_path)
 
 
 @pytest.mark.parametrize(
-    "plotter",
+    ("plotter", "bundle_factory"),
     [
-        TimeSeriesPlotter(plots=[{"channels": [0]}]),
-        PhasePlanePlotter(plots=[{"channel_x": 0}]),
-        PowerSpectrumPlotter(plots=[{"channels": [0]}]),
+        (
+            TimeSeriesPlotter(plots=[{"channels": [0]}]),
+            lambda: trajectory_bundle(scan_values=(0.1, 0.2, 0.3)),
+        ),
+        (
+            PhasePlanePlotter(plots=[{"channel_x": 0}]),
+            lambda: trajectory_bundle(scan_values=(0.1, 0.2, 0.3)),
+        ),
+        (
+            PowerSpectrumPlotter(plots=[{"channels": [0]}]),
+            spectrum_scan_bundle,
+        ),
     ],
 )
-def test_non_scan_plotters_accept_point_view(tmp_path, plotter):
-    bundle = trajectory_bundle(scan_values=(0.1, 0.2, 0.3)).point_view((1,))
+def test_non_scan_plotters_accept_point_view(tmp_path, plotter, bundle_factory):
+    bundle = bundle_factory().point_view((1,))
     files = plotter.plot(bundle, tmp_path, "png")
     _assert_files_generated(files, tmp_path)

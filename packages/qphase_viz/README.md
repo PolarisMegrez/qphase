@@ -12,7 +12,7 @@ stable bundle role, data kind, quantity, and required fields.
     - **Abs-Abs Plane**: Analyze amplitude correlations.
     - **Marginal Distributions**: Project dynamics onto axes.
 - **Spectral Analysis**:
-    - **Power Spectral Density (PSD)**: Compute spectra with windowing.
+    - **Power Spectral Density (PSD)**: Plot typed PSD products.
     - **Log/Linear Scaling**: Flexible axis options.
 - **Time Series**:
     - **Trajectory Evolution**: Plot stochastic paths and averages.
@@ -57,8 +57,10 @@ result = engine.run(bundle)  # bundle implements DatasetResultProtocol
 ```
 
 Time-series and phase-plane plotters require a typed field-amplitude
-time-series product. The spectrum plotter uses an existing PSD product when
-available and otherwise computes it from that typed trajectory product.
+time-series product. The spectrum plotter requires an existing typed PSD
+product: it never recomputes a spectrum from raw trajectories, so run a PSD
+analysis (for example the `psd` analyser) first and feed its typed output to
+the viz engine.
 Parameter evolution consumes explicit scan coordinates and typed peak or
 trajectory products. Raw arrays, trajectory containers, and payload dicts are
 not public inputs.
