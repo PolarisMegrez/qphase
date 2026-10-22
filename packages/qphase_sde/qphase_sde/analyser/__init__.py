@@ -12,8 +12,10 @@ schema packages are fully initialized.
 
 Registry integration
 --------------------
-On import, register available analysis routines into the central registry
-under the ``analysis`` namespace for scheduler-driven discovery and dispatch.
+Analyser plugins are discovered by the core registry through the
+``analyser.<name>`` entry points declared in the ``qphase`` entry-point group
+of this package's ``pyproject.toml``. Importing this package performs no
+registration itself.
 
 Public API
 ----------

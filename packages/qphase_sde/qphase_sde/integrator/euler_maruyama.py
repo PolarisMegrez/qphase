@@ -59,7 +59,7 @@ class EulerMaruyama(Integrator):
     Examples
     --------
     >>> # 典型用法：直接 import 并实例化
-    >>> from qphase_sde.integrators.euler_maruyama import EulerMaruyama
+    >>> from qphase_sde.integrator.euler_maruyama import EulerMaruyama
     >>> integrator = EulerMaruyama()
     >>> # integrator.step(y, t, dt, model, dW, backend)
 
