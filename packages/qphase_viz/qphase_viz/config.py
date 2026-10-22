@@ -109,14 +109,7 @@ class PowerSpectrumSpec(BasePlotterConfig):
     channels: list[int] = Field(
         default_factory=lambda: [0], description="Channels to analyze"
     )
-    window: Literal["hann", "hamming", "blackman"] | None = Field(
-        "hann", description="Window function"
-    )
     scale: Literal["linear", "log", "dB"] = Field("log", description="Y-axis scale")
-    detrend: bool = Field(True, description="Detrend data before FFT")
-    nperseg: int | None = Field(
-        None, description="Length of each segment for Welch's method"
-    )
     # Peak annotation
     annotate_peaks: bool = Field(False, description="Annotate peaks on plot")
 
@@ -144,10 +137,6 @@ class ParameterEvolutionSpec(BasePlotterConfig):
         "psd_peak_freq", description="Metric to plot"
     )
     channel: int = Field(0, description="Channel to analyze")
-
-    # PSD specific (if metric involves PSD)
-    psd_window: str | None = None
-    psd_detrend: bool = True
 
     # Curve fitting configuration
     fit_type: Literal[None, "power", "linear"] = Field(
