@@ -31,8 +31,7 @@ def vdp_auto_workflow_path():
         / "vdp_2mode"
         / "vdp_2mode_auto.yaml"
     )
-    if not path.exists():
-        pytest.skip("vdp_2mode_auto.yaml config not found")
+    assert path.exists(), f"vdp_2mode_auto.yaml fixture is missing: {path}"
     return path
 
 

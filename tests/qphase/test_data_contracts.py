@@ -562,7 +562,8 @@ def test_artifact_ref_is_minimal_and_typed():
             artifact_id="a",
             product_name="psd",
             product_schema=schema,
-            storage_adapter="qphase_sde.serialization.npz:load",
+            # Adapter ids are 'name/version' registry keys, not dotted paths.
+            storage_adapter="fixture.fictional_adapter:load",
         )
     with pytest.raises(ValidationError, match="extra"):
         ArtifactRef(
@@ -1111,7 +1112,9 @@ def test_task_profile_roundtrip_and_resolver_validation():
                 declaration=ProductDeclaration(name="peaks", kind=DataKind.STATISTICS),
             )
         ],
-        resolver="qphase_sde.config:resolve_analyze_profile",
+        # SDE profiles declare no resolver; a real test-owned callable keeps
+        # this round-trip fixture pointing at an existing symbol.
+        resolver="tests.plugins.profiled_plugins:resolve_base_profile",
     )
     payload = json.loads(json.dumps(profile.model_dump(mode="json")))
     assert EngineTaskProfile.model_validate(payload) == profile

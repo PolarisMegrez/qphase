@@ -37,8 +37,7 @@ def vdp_auto_workflow_path():
         / "vdp_2mode"
         / "vdp_2mode_auto.yaml"
     )
-    if not path.exists():
-        pytest.skip("Automated VDP workflow config not found")
+    assert path.exists(), f"VDP auto workflow config is missing: {path}"
     return path
 
 

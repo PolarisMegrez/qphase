@@ -27,8 +27,7 @@ def cpu_workflow_path():
         / "misc"
         / "cpu_smoke_kerr_2mode_fit.yaml"
     )
-    if not path.exists():
-        pytest.skip("CPU smoke workflow config not found")
+    assert path.exists(), f"CPU smoke workflow config is missing: {path}"
     return path
 
 
@@ -42,8 +41,7 @@ def cpu_job_path():
         / "misc"
         / "cpu_smoke_kerr_2mode.yaml"
     )
-    if not path.exists():
-        pytest.skip("CPU smoke job config not found")
+    assert path.exists(), f"CPU smoke job config is missing: {path}"
     return path
 
 

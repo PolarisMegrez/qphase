@@ -44,8 +44,7 @@ def vdp_workflow_path():
         / "vdp_2mode"
         / "vdp_2mode_smoke.yaml"
     )
-    if not path.exists():
-        pytest.skip("VDP smoke workflow config not found")
+    assert path.exists(), f"VDP smoke workflow config is missing: {path}"
     return path
 
 
