@@ -14,6 +14,8 @@ from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
 from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
+from .conftest import product_payload
+
 
 def _oscillator_trajectories(
     frequencies: list[float],
@@ -38,31 +40,13 @@ def _oscillator_trajectories(
     )
 
 
-def _product_payload(product):
-    payload = {}
-    values = list(product.attributes.get("payload_meta", {}).items()) + [
-        (variable.name, product.handle(variable.name).materialize())
-        for variable in product.variables
-    ]
-    for name, value in values:
-        if np.asarray(value).ndim == 0:
-            value = np.asarray(value).item()
-        target = payload
-        parts = name.split(".")
-        for part in parts[:-1]:
-            key = int(part) if part.isdigit() else part
-            target = target.setdefault(key, {})
-        target[parts[-1]] = value
-    return payload
-
-
 def _execute(analyzer, trajectories: TrajectorySet, backend=None):
     product = analyzer.execute(
         {"trajectories": _typed_trajectories(trajectories)},
         backend=backend or NumpyBackend(),
         label="carrier",
     )["carrier"]
-    return product, _product_payload(product)
+    return product, product_payload(product)
 
 
 def test_short_delay_carrier_recovers_phase_orientation():
@@ -165,7 +149,7 @@ def test_trajectory_batch_accumulator_recomputes_ratio_and_uncertainty():
 
     products = accumulator.finalize_product("carrier")
     assert products is not None
-    merged = _product_payload(products["carrier"])
+    merged = product_payload(products["carrier"])
 
     assert merged["frequency"] == pytest.approx(complete["frequency"])
     assert merged["frequency_sem"] == pytest.approx(complete["frequency_sem"])

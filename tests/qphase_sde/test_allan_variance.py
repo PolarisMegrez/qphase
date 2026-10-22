@@ -9,13 +9,9 @@ from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
 from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
+from tests.conftest import cuda_available
 
-def _cupy_available() -> bool:
-    try:
-        import cupy  # noqa: F401
-    except Exception:
-        return False
-    return True
+from .conftest import product_payload
 
 
 def _phase_diffusion_trajectory(n_traj: int = 9) -> TrajectorySet:
@@ -40,24 +36,6 @@ def _analyzer() -> AllanVarianceAnalyzer:
     )
 
 
-def _product_payload(product):
-    payload = {}
-    values = list(product.attributes.get("payload_meta", {}).items()) + [
-        (variable.name, product.handle(variable.name).materialize())
-        for variable in product.variables
-    ]
-    for name, value in values:
-        if np.asarray(value).ndim == 0:
-            value = np.asarray(value).item()
-        target = payload
-        parts = name.split(".")
-        for part in parts[:-1]:
-            key = int(part) if part.isdigit() else part
-            target = target.setdefault(key, {})
-        target[parts[-1]] = value
-    return payload
-
-
 def _execute(analyzer, trajectory: TrajectorySet, backend=None):
     product = analyzer.execute(
         {
@@ -68,7 +46,7 @@ def _execute(analyzer, trajectory: TrajectorySet, backend=None):
         backend=backend or NumpyBackend(),
         label="allan_variance",
     )["allan_variance"]
-    return product, _product_payload(product)
+    return product, product_payload(product)
 
 
 def test_allan_variance_reports_nonoverlap_counts_and_frequency():
@@ -155,7 +133,7 @@ def test_allan_accumulator_matches_full_trajectory_analysis():
         accumulator.consume_product(partial)
     products = accumulator.finalize_product("allan_variance")
     assert products is not None
-    merged = _product_payload(products["allan_variance"])
+    merged = product_payload(products["allan_variance"])
 
     assert merged["n_traj"] == 9
     full_mode = full["mode_results"][2]
@@ -394,7 +372,7 @@ def _assert_mode_results_equal(
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CuPy not available")
 def test_allan_device_path_matches_host_complex64_long_record():
     """complex64 long records must accumulate phase in float64 on device.
 
@@ -485,7 +463,7 @@ def test_allan_device_path_matches_host_complex64_long_record():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CuPy not available")
 def test_allan_device_path_matches_host():
     import cupy as cp
     from qphase.backend.cupy_backend import CuPyBackend
@@ -517,7 +495,7 @@ def test_allan_device_path_matches_host():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.skipif(not cuda_available(), reason="CuPy not available")
 def test_allan_device_path_matches_host_with_masked_windows():
     import cupy as cp
     from qphase.backend.cupy_backend import CuPyBackend
