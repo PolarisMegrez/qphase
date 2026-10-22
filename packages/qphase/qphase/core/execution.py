@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import importlib.metadata
 import json
@@ -9,6 +10,7 @@ import os
 import pickle
 import sys
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -337,13 +339,32 @@ def execution_fingerprint(
     }
 
 
+@functools.lru_cache(maxsize=1)
+def _packages_distributions() -> Mapping[str, list[str]]:
+    """Return the installed top-level-module → distributions map, once.
+
+    ``importlib.metadata.packages_distributions()`` walks the file list of
+    every installed distribution, which costs seconds on some platforms and
+    was paid once per plugin fingerprint.  The installed package set is taken
+    as constant for the lifetime of the process; call ``cache_clear()`` to
+    force a rescan (tests do this around monkeypatched metadata).
+    """
+    return importlib.metadata.packages_distributions()
+
+
 def plugin_fingerprint(instance: Any) -> dict[str, str | None]:
-    """Describe an installed or workspace plugin for checkpoint validation."""
+    """Describe an installed or workspace plugin for checkpoint validation.
+
+    The distribution scan behind :func:`_packages_distributions` is cached for
+    the lifetime of the process (the installed package set is treated as
+    constant while the process runs); the fingerprint itself is rebuilt on
+    every call so callers never share a mutable dict.
+    """
     plugin_type = type(instance)
     module_name = plugin_type.__module__
     distribution_version = None
     top_level = module_name.partition(".")[0]
-    for distribution in importlib.metadata.packages_distributions().get(top_level, []):
+    for distribution in _packages_distributions().get(top_level, []):
         try:
             distribution_version = importlib.metadata.version(distribution)
             break

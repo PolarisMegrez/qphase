@@ -663,7 +663,6 @@ def _run_psd_stream_case(
     return _product_arrays(result.products["psd"]), result.metadata["execution_plan"]
 
 
-@pytest.mark.slow
 def test_trajectory_batch_size_does_not_change_psd_random_streams():
     batch_64, plan_64 = _run_psd_stream_case(
         n_traj=256, seed=23, batching="required", batch_size=64
@@ -817,7 +816,6 @@ def test_scan_runs_trajectory_batches_inside_each_parameter_point():
     assert model.params == {"rate": 1.0}
 
 
-@pytest.mark.slow
 def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
     from qphase.core.registry import discovery, registry
     from qphase_sde.graph import compile_product_graph
@@ -1325,7 +1323,6 @@ def test_batch_local_non_reducer_cannot_cross_final_boundary():
         )
 
 
-@pytest.mark.slow
 def test_scan_tiles_and_trajectory_batches_preserve_transient_graph_results():
     grid = ScanSpec.model_validate(
         {
@@ -1924,7 +1921,6 @@ def _assert_products_equal(reference, candidate):
                 np.testing.assert_array_equal(actual, expected, err_msg=name)
 
 
-@pytest.mark.slow
 def test_typed_allan_chain_multi_tile_matches_single_tile_batched():
     """Tile/final split: a pointwise -> cross-scan chain is tiling-invariant.
 
@@ -1964,7 +1960,6 @@ def test_typed_allan_chain_multi_tile_matches_single_tile_batched():
     _assert_products_equal(single, multi)
 
 
-@pytest.mark.slow
 def test_typed_allan_chain_tiling_is_invariant_unbatched():
     """The non-batched tiled branch defers cross-scan analysers identically.
 
