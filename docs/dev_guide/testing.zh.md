@@ -58,8 +58,12 @@ pytest                                                # 全量
 | `integration` | `-m "integration and not gpu and not slow"` | 3.13 | 45 分钟 |
 | `e2e` | `-m "e2e and not gpu"`（仅 push，阻塞） | 3.13 | 30 分钟 |
 | `slow` | `-m "slow and not gpu"`（仅 push） | 3.13 | 60 分钟 |
-| `dev-cpu` | `-m "not gpu"`，使用 `dev-cpu` 依赖组（不装 CuPy） | 3.13 | 30 分钟 |
 | `lint` | `ruff check .` 与 `mypy packages` | 3.13 | 15 分钟 |
 
-`dev-cpu` job 的作用是覆盖"未安装 CuPy"这一分支：它安装纯 CPU 依赖组并在没有
-GPU 包的环境下跑测试，使所有 `gpu` 用例经由设备探测被跳过，而不是经由 import 失败。
+所有 job 都安装纯 CPU 依赖组（`uv sync --no-dev --group dev-cpu`）：它带 pytest、
+ruff、mypy 与 CLI/GUI/资源包，但不含 CuPy。这样整个解释器矩阵在没有 CuPy wheel 的
+版本上也能安装，并且套件始终走"未安装 CuPy"的分支——所有 `gpu` 用例经由设备探测被跳过，
+而不是经由 import 失败。
+
+`mypy` 目前只检查 `packages`。tests 由 `ruff` 检查静态问题，但尚未纳入类型检查：
+`mypy packages tests` 仍报 74 个已登记的存量错误，因此测试侧类型闸门暂挂。

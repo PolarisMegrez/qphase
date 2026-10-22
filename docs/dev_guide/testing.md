@@ -61,10 +61,15 @@ pytest                                                # the whole tree
 | `integration` | `-m "integration and not gpu and not slow"` | 3.13 | 45 min |
 | `e2e` | `-m "e2e and not gpu"` (push only, blocking) | 3.13 | 30 min |
 | `slow` | `-m "slow and not gpu"` (push only) | 3.13 | 60 min |
-| `dev-cpu` | `-m "not gpu"` with the `dev-cpu` group (no CuPy) | 3.13 | 30 min |
 | `lint` | `ruff check .` and `mypy packages` | 3.13 | 15 min |
 
-The `dev-cpu` job exists to exercise the "CuPy is not installed" branch: it
-installs the CPU-only dependency group and runs the suite without the GPU
-packages, so that every `gpu` case is skipped through the device probe rather
-than through an import error.
+Every job installs the CPU-only dependency group
+(`uv sync --no-dev --group dev-cpu`), which carries pytest, ruff, mypy and the
+CLI/GUI/resource packages but no CuPy. That keeps the whole matrix installable
+on interpreters without a CuPy wheel — and it means the suite always runs the
+"CuPy is not installed" branch, so every `gpu` case skips through the device
+probe rather than through an import error.
+
+`mypy` currently type-checks `packages` only. Tests are linted by `ruff` but
+not type-checked: `mypy packages tests` still reports a registered backlog of
+74 errors, so the test-side type gate is suspended.
