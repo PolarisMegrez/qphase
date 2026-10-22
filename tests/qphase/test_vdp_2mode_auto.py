@@ -14,7 +14,6 @@ the peak position, peak height (``amplitude`` / ``peak_intensity``), linewidth
 
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +22,7 @@ from qphase.core.registry import discovery
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
 from qphase.core.workflow import load_workflow
+from qphase.data import load_products
 
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 
@@ -62,18 +62,20 @@ def test_vdp_2mode_auto_peak_fit(vdp_auto_workflow_path, temp_project):
     assert all(r.success for r in results), f"Job failed: {results}"
 
     fit_result = next(r for r in results if r.job_name == "vdp_2mode_auto_fit")
-    fit_csv = fit_result.job_dir / "fit_results.csv"
-    assert fit_csv.exists(), "fit_results.csv was not produced"
+    fit_products = load_products(fit_result.job_dir)
+    assert "lorentz_fitter" in fit_products, sorted(fit_products)
+    fit = fit_products["lorentz_fitter"]
 
-    with fit_csv.open(newline="") as handle:
-        rows = list(csv.DictReader(handle))
+    rows = fit.attributes["payload_meta"]["fit_rows"]
     assert len(rows) == 1, "Expected a single fit row for the fixed omega_a"
 
     row = rows[0]
     assert row["status"] == "ok", row
-    center = float(row["center"])
-    linewidth = float(row["linewidth"])
-    r2 = float(row["R2"])
+    center = float(np.asarray(fit.handle("center").materialize())[0])
+    linewidth = float(np.asarray(fit.handle("linewidth").materialize())[0])
+    r2 = float(np.asarray(fit.handle("R2").materialize())[0])
+    amplitude = float(np.asarray(fit.handle("amplitude").materialize())[0])
+    peak_intensity = float(np.asarray(fit.handle("peak_intensity").materialize())[0])
 
     # Reference values from previous long-run characterizations.
     # With t1=1000 the frequency grid is coarser, so the linewidth is allowed
@@ -90,6 +92,7 @@ def test_vdp_2mode_auto_peak_fit(vdp_auto_workflow_path, temp_project):
     )
     assert r2 > 0.5, f"R2 {r2} is unexpectedly low"
 
-    # The CSV should expose both the total peak height and the height above baseline.
-    assert float(row["amplitude"]) > 0.0
-    assert float(row["peak_intensity"]) > 0.0
+    # The fit row should expose both the total peak height and the height above
+    # baseline.
+    assert amplitude > 0.0
+    assert peak_intensity > 0.0

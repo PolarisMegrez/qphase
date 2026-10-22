@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
 import numpy as np
 from pydantic import BaseModel, Field, model_validator
 from qphase.backend.base import BackendBase
-from qphase.core.aggregation import write_table_csv
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase
 from qphase.data import (
@@ -106,10 +103,6 @@ class AllanScalingConfig(PluginConfigBase):
     normal_form: NormalFormExpectation | None = Field(None)
     exponent_relative_tolerance: float = Field(0.1, gt=0.0)
     exponent_sigma_tolerance: float = Field(2.0, gt=0.0)
-    export: list[str] = Field(
-        default_factory=lambda: ["allan_points.csv", "allan_scaling.json"]
-    )
-    output_dir: str | None = Field(None)
 
     @model_validator(mode="after")
     def validate_ranges(self) -> AllanScalingConfig:
@@ -592,16 +585,6 @@ def _fit_frequency(
     }
 
 
-def _json_default(value: Any) -> Any:
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    if isinstance(value, np.generic):
-        return value.item()
-    if isinstance(value, Path):
-        return str(value)
-    raise TypeError(f"cannot serialize {type(value).__name__}")
-
-
 def _exponent_matches(
     observed: float | None,
     expected: float,
@@ -942,28 +925,4 @@ class AllanScalingAnalyzer(Analyzer):
             "normal_form": normal_form,
             **orientation_metadata(points[0].orientation),
         }
-        written = self._export(config, rows, summary)
-        return {"rows": rows, "summary": summary, "written": written}
-
-    def _export(
-        self,
-        config: AllanScalingConfig,
-        rows: list[dict[str, Any]],
-        summary: dict[str, Any],
-    ) -> dict[str, str]:
-        output_dir = getattr(self, "output_dir", None) or config.output_dir
-        if output_dir is None or not config.export:
-            return {}
-        root = Path(output_dir)
-        root.mkdir(parents=True, exist_ok=True)
-        written: dict[str, str] = {}
-        if "allan_points.csv" in config.export:
-            path = write_table_csv(rows, root / "allan_points.csv")
-            written["allan_points"] = str(path)
-        if "allan_scaling.json" in config.export:
-            path = root / "allan_scaling.json"
-            path.write_text(
-                json.dumps(summary, indent=2, default=_json_default), encoding="utf-8"
-            )
-            written["allan_scaling"] = str(path)
-        return written
+        return {"rows": rows, "summary": summary}

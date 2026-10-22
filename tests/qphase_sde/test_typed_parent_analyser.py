@@ -324,12 +324,12 @@ def test_cross_result_analysers_execute_from_typed_psd():
     analysers = [
         SpectralRidgeAnalyzer(SpectralRidgeConfig(scan_param="epsilon", readouts=[0])),
         BandLimitedCarrierAnalyzer(
-            BandLimitedCarrierConfig(scan_param="epsilon", readout=0, export=[])
+            BandLimitedCarrierConfig(scan_param="epsilon", readout=0)
         ),
         FiniteDelayCarrierAnalyzer(
-            FiniteDelayCarrierConfig(scan_param="epsilon", readout=0, export=[])
+            FiniteDelayCarrierConfig(scan_param="epsilon", readout=0)
         ),
-        LorentzFitter(LorentzFitterConfig(scan_param="epsilon", mode=0, export=[])),
+        LorentzFitter(LorentzFitterConfig(scan_param="epsilon", mode=0)),
     ]
     for analyser in analysers:
         products = analyser.execute(

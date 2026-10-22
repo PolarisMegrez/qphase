@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
@@ -107,7 +105,7 @@ def test_scale_space_ridge_recovers_smooth_peak():
     assert estimate.plateau_lower < estimate.frequency < estimate.plateau_upper
 
 
-def test_spectral_ridge_analyzer_handles_multiple_readouts(tmp_path: Path):
+def test_spectral_ridge_analyzer_handles_multiple_readouts():
     axis = np.linspace(-2.0, 2.0, 4001)
     spectra = []
     for shift in (0.0, 0.1):
@@ -123,7 +121,6 @@ def test_spectral_ridge_analyzer_handles_multiple_readouts(tmp_path: Path):
             scan_param="epsilon",
             readouts=[0, 1],
             smoothing_scale_bins=[2.0, 4.0, 8.0],
-            output_dir=str(tmp_path),
         )
     )
 
@@ -133,6 +130,7 @@ def test_spectral_ridge_analyzer_handles_multiple_readouts(tmp_path: Path):
         label="ridge",
     )
     payload = products["ridge"].attributes["payload_meta"]
+    candidates = products["ridge.candidates"].attributes["payload_meta"]
 
     assert len(payload["ridge_rows"]) == 4
     mode_0 = [
@@ -142,8 +140,13 @@ def test_spectral_ridge_analyzer_handles_multiple_readouts(tmp_path: Path):
         [row["frequency"] for row in mode_0], [-0.4, -0.3], atol=2e-3
     )
     assert all(row["status"] == "ok" for row in payload["ridge_rows"])
-    assert (tmp_path / "spectral_ridge.csv").exists()
-    assert (tmp_path / "spectral_ridge_candidates.csv").exists()
+    # The per-candidate audit that used to reach disk as CSV stays in the
+    # typed candidate product.
+    assert len(candidates["candidate_rows"]) >= len(payload["ridge_rows"])
+    assert all(
+        "retention_tier" in row for row in candidates["candidate_rows"]
+    )
+    assert any(row["selected"] for row in candidates["candidate_rows"])
 
 
 def test_spectral_ridge_builds_typed_rows():

@@ -8,7 +8,6 @@ Lorentzian peak parameters unchanged for a narrow low-frequency line.
 
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 import numpy as np
@@ -75,17 +74,16 @@ def test_save_stride_preserves_peak(vdp_auto_workflow_path, temp_project, save_s
     assert np.isclose(saved_dt, 0.1 * save_stride, rtol=1e-12)
 
     # The fitted peak should be stable across strides.
-    fit_csv = fit_result.job_dir / "fit_results.csv"
-    assert fit_csv.exists()
-    with fit_csv.open(newline="") as handle:
-        rows = list(csv.DictReader(handle))
+    fit_products = load_products(fit_result.job_dir)
+    assert "lorentz_fitter" in fit_products, sorted(fit_products)
+    fit_product = fit_products["lorentz_fitter"]
+    rows = fit_product.attributes["payload_meta"]["fit_rows"]
     assert len(rows) == 1
-    row = rows[0]
-    assert row["status"] == "ok", row
+    assert rows[0]["status"] == "ok", rows[0]
 
-    center = float(row["center"])
-    linewidth = float(row["linewidth"])
-    r2 = float(row["R2"])
+    center = float(np.asarray(fit_product.handle("center").materialize())[0])
+    linewidth = float(np.asarray(fit_product.handle("linewidth").materialize())[0])
+    r2 = float(np.asarray(fit_product.handle("R2").materialize())[0])
 
     # The default phase_decreasing convention maps exp(-i*omega*t) to +omega.
     expected_center = 0.08574307

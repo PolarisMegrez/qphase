@@ -153,14 +153,12 @@ def _scan_product():
     )
 
 
-def test_lorentz_fitter_analyzer_scan_rows_baseline(tmp_path):
+def test_lorentz_fitter_analyzer_scan_rows_baseline():
     fitter = LorentzFitter(
         config=LorentzFitterConfig(
             scan_param="epsilon",
             mode=0,
             uncertainty="auto",
-            export=["fit_results.csv", "psd_merged.csv"],
-            output_dir=str(tmp_path),
         )
     )
 
@@ -206,12 +204,12 @@ def test_lorentz_fitter_analyzer_scan_rows_baseline(tmp_path):
 
     assert sorted(out["psd_columns"]) == ["0.1", "0.2"]
     assert sorted(out["psd_sem_columns"]) == ["0.1", "0.2"]
-    assert sorted(out["written"]) == [
-        "fit_results",
-        "psd_merged",
-    ]
-    assert (tmp_path / "fit_results.csv").exists()
-    assert (tmp_path / "psd_merged.csv").exists()
+    # The merged PSD view that used to reach disk as CSV stays in the payload:
+    # every per-scan trace and its SEM share the reference frequency axis.
+    axis = np.asarray(out["axis"])
+    for scan_key in ("0.1", "0.2"):
+        assert np.asarray(out["psd_columns"][scan_key]).shape == axis.shape
+        assert np.asarray(out["psd_sem_columns"][scan_key]).shape == axis.shape
 
 
 def _typed_psd_product(scan_values: list[float]):
@@ -292,7 +290,7 @@ def test_lorentz_fitter_execute_aborts_mid_loop_on_cancellation():
 
     psd = _typed_psd_product([0.0, 1.0, 2.0, 3.0, 4.0])
     analyzer = LorentzFitter(
-        LorentzFitterConfig(scan_param="epsilon", mode=0, export=[])
+        LorentzFitterConfig(scan_param="epsilon", mode=0)
     )
     context = SimpleNamespace(
         cancellation=_FakeCancellation(abort_after=2), progress=None
@@ -313,7 +311,7 @@ def test_lorentz_fitter_execute_reports_spectrum_progress():
 
     psd = _typed_psd_product([0.0, 1.0, 2.0])
     analyzer = LorentzFitter(
-        LorentzFitterConfig(scan_param="epsilon", mode=0, export=[])
+        LorentzFitterConfig(scan_param="epsilon", mode=0)
     )
     progress = _FakeProgress()
     context = SimpleNamespace(cancellation=None, progress=progress)

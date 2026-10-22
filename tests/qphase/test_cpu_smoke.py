@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 from qphase.core.registry import discovery
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
 from qphase.core.workflow import load_workflow
+from qphase.data import load_products
 from qphase.main import app
 from typer.testing import CliRunner
 
@@ -68,8 +70,13 @@ def test_cpu_smoke_run_and_postprocess(cpu_workflow_path, temp_project):
     fit_result = next(r for r in results if r.job_name == "cpu_smoke_kerr_2mode_fit")
     sim_result = next(r for r in results if r.job_name == "cpu_smoke_kerr_2mode")
     assert (sim_result.job_dir / "artifact_manifest.json").exists()
-    assert (fit_result.job_dir / "fit_results.csv").exists()
-    assert (fit_result.job_dir / "psd_merged.csv").exists()
+    fit_products = load_products(fit_result.job_dir)
+    assert "lorentz_fitter" in fit_products, sorted(fit_products)
+    fitted_centers = np.asarray(
+        fit_products["lorentz_fitter"].handle("center").materialize()
+    )
+    assert fitted_centers.size == 3, "expected one fit row per scan value"
+    assert np.all(np.isfinite(fitted_centers))
     peaks_result = next(
         r for r in results if r.job_name == "cpu_smoke_kerr_2mode_peaks"
     )

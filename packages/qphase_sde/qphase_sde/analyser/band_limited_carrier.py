@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, fields
-from pathlib import Path
+from dataclasses import asdict, dataclass
 from typing import Any, ClassVar, Literal, cast
 
 import numpy as np
 from pydantic import Field, field_validator, model_validator
 from qphase.backend.base import BackendBase
-from qphase.core.aggregation import write_table_csv
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase
 from qphase.data import (
@@ -239,14 +237,6 @@ class BandLimitedCarrierConfig(PluginConfigBase):
         ge=0.0,
         description="Maximum total-cost gap treated as a competing scan path",
     )
-    export: list[str] = Field(
-        default_factory=lambda: [
-            "carrier_results.csv",
-            "carrier_candidates.csv",
-            "carrier_platforms.csv",
-        ]
-    )
-    output_dir: str | None = Field(None, description="Usually injected by the engine")
 
     @field_validator("bandwidth_multipliers")
     @classmethod
@@ -1408,8 +1398,6 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                         if config.freq_max is not None
                         else requested.freq_max
                     ),
-                    "export": [],
-                    "output_dir": None,
                 }
             )
             ridge_payload, _ = SpectralRidgeAnalyzer(ridge_config)._compute_payload(
@@ -1605,64 +1593,6 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                 int(row["platform_index"]),
             )
         )
-        output_dir = getattr(self, "output_dir", None) or config.output_dir
-        written: dict[str, str] = {}
-        if output_dir is not None:
-            destination = Path(output_dir)
-            destination.mkdir(parents=True, exist_ok=True)
-            ridge_fieldnames = (
-                [
-                    "ridge_candidate_index",
-                    "ridge_order",
-                    "ridge_center",
-                    "ridge_center_std",
-                    "ridge_confidence_lower",
-                    "ridge_confidence_upper",
-                    "ridge_retention_tier",
-                    "ridge_tracking_path_ranks",
-                    "ridge_neighbor_distance",
-                    "ridge_bandwidth_max",
-                    "ridge_carrier_correction",
-                    "ridge_conditioned_uncertainty_upper",
-                    "ridge_platform_selection",
-                ]
-                if config.center is not None
-                else []
-            )
-            candidate_fieldnames = [
-                "job_name",
-                config.scan_param,
-                "readout",
-                *ridge_fieldnames,
-                *(field.name for field in fields(BandLimitedCarrierCandidate)),
-            ]
-            platform_fieldnames = [
-                "job_name",
-                config.scan_param,
-                "readout",
-                *ridge_fieldnames,
-                "platform_index",
-                *(field.name for field in fields(BandLimitedCarrierPlatform)),
-            ]
-            if "carrier_results.csv" in config.export:
-                path = write_table_csv(rows, destination / "carrier_results.csv")
-                written["carrier_results"] = str(path)
-            # Candidate/platform audits are written even when empty so a
-            # requested export never vanishes silently.
-            if "carrier_candidates.csv" in config.export:
-                path = write_table_csv(
-                    candidate_rows,
-                    destination / "carrier_candidates.csv",
-                    fieldnames=candidate_fieldnames,
-                )
-                written["carrier_candidates"] = str(path)
-            if "carrier_platforms.csv" in config.export:
-                path = write_table_csv(
-                    platform_rows,
-                    destination / "carrier_platforms.csv",
-                    fieldnames=platform_fieldnames,
-                )
-                written["carrier_platforms"] = str(path)
         # Empty scans use this analyser's declared frequency-axis convention.
         metadata = orientation_metadata(
             reference_orientation or DEFAULT_FREQUENCY_ORIENTATION
@@ -1672,7 +1602,6 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                 "carrier_rows": rows,
                 "candidate_rows": candidate_rows,
                 "platform_rows": platform_rows,
-                "written": written,
                 **metadata,
             },
             {

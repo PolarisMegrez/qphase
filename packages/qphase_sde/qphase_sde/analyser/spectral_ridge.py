@@ -5,13 +5,11 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
 import numpy as np
 from pydantic import Field, field_validator, model_validator
 from qphase.backend.base import BackendBase
-from qphase.core.aggregation import write_table_csv
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase
 from qphase.data import (
@@ -233,13 +231,6 @@ class SpectralRidgeConfig(PluginConfigBase):
         True,
         description="Retain high candidates belonging to accepted data-only paths",
     )
-    export: list[str] = Field(
-        default_factory=lambda: [
-            "spectral_ridge.csv",
-            "spectral_ridge_candidates.csv",
-        ]
-    )
-    output_dir: str | None = Field(None, description="Usually injected by the engine")
 
     @field_validator("readouts")
     @classmethod
@@ -1165,19 +1156,6 @@ class SpectralRidgeAnalyzer(Analyzer):
                         }
                     )
 
-        written: dict[str, str] = {}
-        output_dir = getattr(self, "output_dir", None) or config.output_dir
-        if output_dir is not None:
-            destination = Path(output_dir)
-            if "spectral_ridge.csv" in config.export:
-                output_path = write_table_csv(rows, destination / "spectral_ridge.csv")
-                written["spectral_ridge"] = str(output_path)
-            if "spectral_ridge_candidates.csv" in config.export:
-                output_path = write_table_csv(
-                    candidate_rows,
-                    destination / "spectral_ridge_candidates.csv",
-                )
-                written["spectral_ridge_candidates"] = str(output_path)
         # Empty scans use this analyser's declared frequency-axis convention.
         metadata = orientation_metadata(
             reference_orientation or DEFAULT_FREQUENCY_ORIENTATION
@@ -1186,7 +1164,6 @@ class SpectralRidgeAnalyzer(Analyzer):
             {
                 "ridge_rows": rows,
                 "candidate_rows": candidate_rows,
-                "written": written,
                 **metadata,
             },
             {

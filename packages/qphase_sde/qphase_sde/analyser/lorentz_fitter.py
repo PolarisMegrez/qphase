@@ -18,12 +18,6 @@ from typing import Any, ClassVar, Literal, cast
 import numpy as np
 from pydantic import Field
 from qphase.backend.base import BackendBase
-from qphase.core.aggregation import (
-    write_columns_csv,
-    write_npz_bundle,
-    write_pkl_bundle,
-    write_table_csv,
-)
 from qphase.core.errors import QPhaseError
 from qphase.core.protocols import PluginConfigBase
 from qphase.data import (
@@ -93,16 +87,6 @@ class LorentzFitterConfig(PluginConfigBase):
             "(default 10.0 corresponds to ~5 raw-FWHM for a squared Lorentzian, "
             "since std = linewidth/2)"
         ),
-    )
-    export_dist: bool = Field(
-        False, description="Also collect and export dist/pdist payloads"
-    )
-    export: list[str] = Field(
-        default_factory=lambda: ["fit_results.csv", "psd_merged.csv"],
-        description="List of output files to write",
-    )
-    output_dir: str | None = Field(
-        None, description="Output directory; usually injected by the engine"
     )
 
 
@@ -484,32 +468,6 @@ def _extract_mode_column(
     return np.asarray(matrix[:, mode_index], dtype=float).reshape(-1)
 
 
-def _collect_distribution(
-    loaded: SpectralPoint,
-    key: str,
-    mode: int,
-    scan_param: str,
-    scan_value: Any,
-    rows: list[dict[str, Any]],
-) -> None:
-    product = loaded.products.get(key)
-    if product is None:
-        return
-    prefix = f"distributions.{mode}."
-    row: dict[str, Any] = {
-        variable.name.removeprefix(prefix): np.asarray(
-            product.handle(variable.name).materialize()
-        )
-        for variable in product.variables
-        if variable.name.startswith(prefix)
-    }
-    if not row:
-        return
-    row[scan_param] = scan_value
-    row["job_name"] = loaded.job_name
-    rows.append(row)
-
-
 def _build_lorentz_products(
     payload: Any,
     *,
@@ -604,15 +562,6 @@ class LorentzFitter(Analyzer):
                 required_fields=required,
             )
         ]
-        if config.export_dist:
-            requirements += [
-                ProductRequirement(
-                    name="dist", kind=DataKind.STATISTICS, optional=True
-                ),
-                ProductRequirement(
-                    name="pdist", kind=DataKind.STATISTICS, optional=True
-                ),
-            ]
         return requirements
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
@@ -644,7 +593,7 @@ class LorentzFitter(Analyzer):
         *,
         context: Any | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Fit Lorentzians to aggregated PSD data and export merged outputs.
+        """Fit Lorentzians to aggregated PSD data.
 
         Parameters
         ----------
@@ -659,7 +608,7 @@ class LorentzFitter(Analyzer):
         Returns
         -------
         tuple[dict[str, Any], dict[str, Any]]
-            Fit rows and export metadata.
+            Fit rows and run metadata.
 
         """
         del backend  # not used; we operate on already-computed PSD arrays
@@ -674,8 +623,6 @@ class LorentzFitter(Analyzer):
         fit_rows: list[dict[str, Any]] = []
         psd_columns: dict[str, np.ndarray] = {}
         psd_sem_columns: dict[str, np.ndarray] = {}
-        dist_rows: list[dict[str, Any]] = []
-        pdist_rows: list[dict[str, Any]] = []
         reference_axis: np.ndarray | None = None
         reference_orientation: FrequencyOrientation | None = None
 
@@ -749,23 +696,6 @@ class LorentzFitter(Analyzer):
             if psd_sigma is not None:
                 psd_sem_columns[str(scan_value)] = psd_sigma
 
-            if config.export_dist:
-                _collect_distribution(
-                    loaded,
-                    "dist",
-                    config.mode,
-                    config.scan_param,
-                    scan_value,
-                    dist_rows,
-                )
-                _collect_distribution(
-                    loaded,
-                    "pdist",
-                    config.mode,
-                    config.scan_param,
-                    scan_value,
-                    pdist_rows,
-                )
             report_execution_progress(
                 context,
                 completed=point_index,
@@ -780,62 +710,6 @@ class LorentzFitter(Analyzer):
         psd_sem_columns = dict(
             sorted(psd_sem_columns.items(), key=lambda item: _sort_key(item[0]))
         )
-        merged_psd_columns: dict[str, np.ndarray] = {}
-        for label, values in psd_columns.items():
-            merged_psd_columns[label] = values
-            if label in psd_sem_columns:
-                merged_psd_columns[f"{label}_sem"] = psd_sem_columns[label]
-
-        output_dir = self._resolve_output_dir(config)
-        written: dict[str, Path] = {}
-        if output_dir is not None and config.export:
-            out = Path(output_dir)
-            out.mkdir(parents=True, exist_ok=True)
-
-            if "fit_results.csv" in config.export:
-                fieldnames = [
-                    "job_name",
-                    config.scan_param,
-                    "orientation",
-                    "center",
-                    "center_std",
-                    "linewidth",
-                    "linewidth_std",
-                    "base",
-                    "base_std",
-                    "amplitude",
-                    "amplitude_std",
-                    "peak_intensity",
-                    "peak_intensity_std",
-                    "R2",
-                    "reduced_chi2",
-                    "uncertainty_source",
-                    "status",
-                    "error",
-                    "warning",
-                ]
-                written["fit_results"] = write_table_csv(
-                    fit_rows, out / "fit_results.csv", fieldnames=fieldnames
-                )
-
-            if "psd_merged.csv" in config.export and reference_axis is not None:
-                written["psd_merged"] = write_columns_csv(
-                    reference_axis, merged_psd_columns, out / "psd_merged.csv"
-                )
-
-            if config.export_dist and dist_rows:
-                written["dist_merged"] = write_npz_bundle(
-                    out / "dist_merged.npz",
-                    dist_list=np.array(dist_rows, dtype=object),
-                    scan_params=np.array(
-                        [row[config.scan_param] for row in dist_rows], dtype=object
-                    ),
-                )
-
-            if config.export_dist and pdist_rows:
-                written["pdist_merged"] = write_pkl_bundle(
-                    out / "pdist_merged.pkl", pdist_rows
-                )
 
         return (
             {
@@ -846,7 +720,6 @@ class LorentzFitter(Analyzer):
                 **orientation_metadata(
                     reference_orientation or DEFAULT_FREQUENCY_ORIENTATION
                 ),
-                "written": {k: str(v) for k, v in written.items()},
             },
             {
                 "scan_param": config.scan_param,
@@ -857,12 +730,3 @@ class LorentzFitter(Analyzer):
                 ),
             },
         )
-
-    def _resolve_output_dir(self, config: LorentzFitterConfig) -> Path | None:
-        """Return the output directory, preferring the engine-injected value."""
-        injected = getattr(self, "output_dir", None)
-        if injected is not None:
-            return Path(injected)
-        if config.output_dir is not None:
-            return Path(config.output_dir)
-        return None

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -90,7 +89,7 @@ def _execute(analyzer, inputs):
     return _product_payload(product)
 
 
-def _config(tmp_path) -> AllanScalingConfig:
+def _config() -> AllanScalingConfig:
     return AllanScalingConfig(
         scan_param="omega_c",
         critical_value=1.0,
@@ -102,14 +101,13 @@ def _config(tmp_path) -> AllanScalingConfig:
         bootstrap_samples=200,
         bootstrap_seed=7,
         normal_form=NormalFormExpectation(n=3, k=1, m=0),
-        output_dir=str(tmp_path),
     )
 
 
-def test_allan_scaling_recovers_white_fm_normal_form(tmp_path):
+def test_allan_scaling_recovers_white_fm_normal_form():
     epsilon = np.geomspace(1e-3, 1e-1, 9)
     result = _execute(
-        AllanScalingAnalyzer(_config(tmp_path)),
+        AllanScalingAnalyzer(_config()),
         {"allan_variance": _typed_allan_input(epsilon)},
     )
     summary = result["summary"]
@@ -127,15 +125,18 @@ def test_allan_scaling_recovers_white_fm_normal_form(tmp_path):
         row["orientation"] == "phase_increasing" for row in result["rows"]
     )
     assert all(row["accepted"] for row in result["rows"])
-    assert (tmp_path / "allan_points.csv").exists()
-    with (tmp_path / "allan_scaling.json").open(encoding="utf-8") as handle:
-        assert json.load(handle)["status"] == "ok"
+    assert len(result["rows"]) == epsilon.size
+    assert all(row["tau_decades"] > 0.0 for row in result["rows"])
+    assert all(
+        np.isfinite(row["allan_slope"]) for row in result["rows"] if row["accepted"]
+    )
+    assert summary["selected_points"] == epsilon.size
 
 
-def test_allan_scaling_rejects_colored_fm_even_with_scan_power_law(tmp_path):
+def test_allan_scaling_rejects_colored_fm_even_with_scan_power_law():
     epsilon = np.geomspace(1e-3, 1e-1, 9)
     result = _execute(
-        AllanScalingAnalyzer(_config(tmp_path)),
+        AllanScalingAnalyzer(_config()),
         {
             "allan_variance": _typed_allan_input(
                 epsilon, allan_tau_slope=-0.4
@@ -174,12 +175,12 @@ def _scan_bundle(epsilon: np.ndarray, trajectories: int = 24):
     )
 
 
-def test_allan_scaling_consumes_v4_scan_bundle(tmp_path):
+def test_allan_scaling_consumes_v4_scan_bundle():
     """Regression: an in-memory upstream SDEDataBundle must yield its points."""
     epsilon = np.geomspace(1e-3, 1e-1, 9)
     bundle = _scan_bundle(epsilon)
 
-    result = _execute(AllanScalingAnalyzer(_config(tmp_path)), bundle.products)
+    result = _execute(AllanScalingAnalyzer(_config()), bundle.products)
     summary = result["summary"]
 
     assert summary["status"] == "ok"
@@ -189,9 +190,9 @@ def test_allan_scaling_consumes_v4_scan_bundle(tmp_path):
     assert len(result["rows"]) == epsilon.size
 
 
-def test_allan_scaling_execute_consumes_typed_product_mapping(tmp_path):
+def test_allan_scaling_execute_consumes_typed_product_mapping():
     epsilon = np.geomspace(1e-3, 1e-1, 9)
-    analyzer = AllanScalingAnalyzer(_config(tmp_path))
+    analyzer = AllanScalingAnalyzer(_config())
     products = _build_allan_products(
         [_result(float(value)) for value in epsilon],
         scan_size=epsilon.size,
@@ -221,14 +222,14 @@ def test_allan_scaling_consumes_restored_v4_artifact(tmp_path):
     store.save_result(_scan_bundle(epsilon), "sim")
     restored = load_result("sim", job_dir)
 
-    out_dir = tmp_path / "analysis"
-    result = _execute(AllanScalingAnalyzer(_config(out_dir)), restored.products)
+    result = _execute(AllanScalingAnalyzer(_config()), restored.products)
     summary = result["summary"]
 
     assert summary["status"] == "ok"
     assert summary["accepted_points"] == epsilon.size
     assert summary["noise_fit"]["exponent"] == pytest.approx(4.0 / 3.0)
-    assert (out_dir / "allan_points.csv").exists()
+    assert len(result["rows"]) == epsilon.size
+    assert all(row["accepted"] for row in result["rows"])
 
 
 class _LoopAbortError(Exception):
@@ -300,9 +301,9 @@ def _typed_allan_input(
     return add_scan_parameter_coordinates(typed, {"omega_c": 1.0 + epsilon})
 
 
-def test_allan_scaling_execute_aborts_mid_loop_on_cancellation(tmp_path):
+def test_allan_scaling_execute_aborts_mid_loop_on_cancellation():
     epsilon = np.geomspace(1e-3, 1e-1, 9)
-    analyzer = AllanScalingAnalyzer(_config(tmp_path))
+    analyzer = AllanScalingAnalyzer(_config())
     context = SimpleNamespace(
         cancellation=_FakeCancellation(abort_after=1), progress=None
     )
@@ -317,12 +318,12 @@ def test_allan_scaling_execute_aborts_mid_loop_on_cancellation(tmp_path):
     assert context.cancellation.calls < epsilon.size
 
 
-def test_allan_scaling_execute_aborts_inside_bootstrap_loop(tmp_path):
+def test_allan_scaling_execute_aborts_inside_bootstrap_loop():
     # Pre-bootstrap polling costs 9 (collect) + 9 (windows) + 1 (candidate run)
     # + 15 (trial fits) = 34 polls; bootstrap_samples=200 then dominates, so an
     # abort after 100 polls lands well inside the bootstrap resampling loop.
     epsilon = np.geomspace(1e-3, 1e-1, 9)
-    analyzer = AllanScalingAnalyzer(_config(tmp_path))
+    analyzer = AllanScalingAnalyzer(_config())
     context = SimpleNamespace(
         cancellation=_FakeCancellation(abort_after=100), progress=None
     )
@@ -336,9 +337,9 @@ def test_allan_scaling_execute_aborts_inside_bootstrap_loop(tmp_path):
         )
 
 
-def test_allan_scaling_execute_reports_tau_progress(tmp_path):
+def test_allan_scaling_execute_reports_tau_progress():
     epsilon = np.geomspace(1e-3, 1e-1, 9)
-    analyzer = AllanScalingAnalyzer(_config(tmp_path))
+    analyzer = AllanScalingAnalyzer(_config())
     progress = _FakeProgress()
     context = SimpleNamespace(cancellation=None, progress=progress)
 
