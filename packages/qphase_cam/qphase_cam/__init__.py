@@ -7,7 +7,13 @@ from .errors import (
     QPSGenCompatibilityError,
     SolutionCapacityError,
 )
-from .model import CAMBifurcationModel, CAMModel, CAMSymbolicSpec, CAMVectorModel
+from .model import (
+    CAMBifurcationModel,
+    CAMBogoliubovModel,
+    CAMModel,
+    CAMSymbolicSpec,
+    CAMVectorModel,
+)
 from .result import CAMResult
 
 __all__ = [
@@ -15,6 +21,7 @@ __all__ = [
     "CAMBifurcationModel",
     "CAMBifurcationResult",
     "CAMBifurcationScanResult",
+    "CAMBogoliubovModel",
     "CAMModel",
     "CAMResult",
     "CAMSymbolicSpec",
