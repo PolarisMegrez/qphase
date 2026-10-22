@@ -514,6 +514,13 @@ def test_sde_engine_analyzes_resource_limited_scan_tiles():
 
 
 def test_sde_scan_rng_is_independent_of_tile_size():
+    # 2200 trajectories is the smallest ensemble that preserves both facts of
+    # this test at the MiB granularity of ``memory_limit_mib``: 34 full RNG
+    # groups of 64 plus a 24-trajectory tail (multi-group and tail coverage),
+    # and a per-point working set large enough that 2 MiB still yields
+    # scan_tile_size 1 while 3 MiB yields 2 on the 4-point grid below.
+    # Streams are compared for equality, so the ensemble size changes nothing
+    # but the runtime.
     def run(memory_limit_mib):
         model = StochasticScannedModel()
         engine = Engine(
@@ -521,7 +528,7 @@ def test_sde_scan_rng_is_independent_of_tile_size():
                 t0=0.0,
                 t1=0.1,
                 dt=0.01,
-                n_traj=5000,
+                n_traj=2200,
                 seed=19,
                 ic=[[1.0]],
                 keep_traj=False,
@@ -553,8 +560,8 @@ def test_sde_scan_rng_is_independent_of_tile_size():
         )
 
     tile_unlimited, count_unlimited, strategy_unlimited, means_unlimited = run(None)
-    tile_one, _, _, means_one = run(3)
-    tile_two, _, _, means_two = run(5)
+    tile_one, _, _, means_one = run(2)
+    tile_two, _, _, means_two = run(3)
 
     assert count_unlimited == 1
     assert strategy_unlimited == "logical_trajectory_group_seedsequence_v1"
@@ -608,36 +615,62 @@ def test_scan_bundle_saves_finite_shards(tmp_path):
     assert loaded.point_view((3,)).metadata["scan_point"]["rate"] == 4.0
 
 
-def test_trajectory_batch_size_does_not_change_psd_random_streams():
-    def run(batch_size, rng_group_size=64):
-        model = StochasticScannedModel()
-        engine = Engine(
-            config=EngineConfig(
-                t0=0.0,
-                t1=0.08,
-                dt=0.01,
-                n_traj=256,
-                trajectory_batching="required",
-                trajectory_batch_size=batch_size,
-                rng_group_size=rng_group_size,
-                seed=23,
-                ic=[[1.0 + 0.0j]],
-                keep_traj=False,
-            ),
-            plugins={
-                "backend": NumpyBackend(),
-                "integrator": EulerMaruyama(),
-                "model": model,
-                "analyser": {"psd": _psd_analyzer()},
-            },
-            product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
-        )
-        result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
-        psd = _product_arrays(result.products["psd"])
-        return psd, result.metadata["execution_plan"]
+def _run_psd_stream_case(
+    *,
+    n_traj: int,
+    seed: int,
+    batching: str = "off",
+    batch_size: int | None = None,
+    rng_group_size: int | None = None,
+    parameter_grid=None,
+):
+    """Run one shared-stream PSD case and return (products, execution_plan).
 
-    batch_64, plan_64 = run(64)
-    batch_128, plan_128 = run(128)
+    The batching/RNG cases of this module differ only in these knobs; the
+    engine, model, analyser and graph wiring stay identical, so the shared
+    stream comparison is the only variable under test.
+    """
+    config_kwargs: dict = {
+        "t0": 0.0,
+        "t1": 0.08,
+        "dt": 0.01,
+        "n_traj": n_traj,
+        "trajectory_batching": batching,
+        "trajectory_batch_size": batch_size,
+        "seed": seed,
+        "ic": [[1.0 + 0.0j]],
+        "keep_traj": False,
+    }
+    if rng_group_size is not None:
+        config_kwargs["rng_group_size"] = rng_group_size
+    engine = Engine(
+        config=EngineConfig(**config_kwargs),
+        plugins={
+            "backend": NumpyBackend(),
+            "integrator": EulerMaruyama(),
+            "model": StochasticScannedModel(),
+            "analyser": {"psd": _psd_analyzer()},
+        },
+        product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
+    )
+    result = engine.run(
+        context=SimpleNamespace(
+            parameter_grid=parameter_grid,
+            progress=None,
+            cancellation=None,
+        )
+    )
+    return _product_arrays(result.products["psd"]), result.metadata["execution_plan"]
+
+
+@pytest.mark.slow
+def test_trajectory_batch_size_does_not_change_psd_random_streams():
+    batch_64, plan_64 = _run_psd_stream_case(
+        n_traj=256, seed=23, batching="required", batch_size=64
+    )
+    batch_128, plan_128 = _run_psd_stream_case(
+        n_traj=256, seed=23, batching="required", batch_size=128
+    )
 
     assert plan_64["trajectory_batch_count"] == 4
     assert plan_128["trajectory_batch_count"] == 2
@@ -648,15 +681,25 @@ def test_trajectory_batch_size_does_not_change_psd_random_streams():
     # with the default group of 64 a batch of 32 is a config error, not a
     # silently different random stream.
     with pytest.raises(ValueError, match="rng_group_size"):
-        run(32)
+        _run_psd_stream_case(
+            n_traj=256, seed=23, batching="required", batch_size=32
+        )
 
     # With a smaller provenance group, batches 16/32/64 all reproduce the
     # same per-point streams; aggregation-order float noise stays far below
     # the solver tolerance.
-    ref_psd, ref_plan = run(64, rng_group_size=16)
+    ref_psd, ref_plan = _run_psd_stream_case(
+        n_traj=256, seed=23, batching="required", batch_size=64, rng_group_size=16
+    )
     assert ref_plan["logical_rng_group_size"] == 16
     for batch_size in (16, 32):
-        small_psd, small_plan = run(batch_size, rng_group_size=16)
+        small_psd, small_plan = _run_psd_stream_case(
+            n_traj=256,
+            seed=23,
+            batching="required",
+            batch_size=batch_size,
+            rng_group_size=16,
+        )
         assert small_plan["trajectory_batch_size"] == batch_size
         np.testing.assert_allclose(small_psd["psd"], ref_psd["psd"], rtol=1e-12)
         np.testing.assert_allclose(small_psd["psd_std"], ref_psd["psd_std"], rtol=1e-12)
@@ -664,37 +707,11 @@ def test_trajectory_batch_size_does_not_change_psd_random_streams():
 
 def test_off_auto_and_required_batching_share_random_streams():
     """Every batching mode derives streams per (seed, point, logical group)."""
-
-    def run(batching, batch_size=None):
-        model = StochasticScannedModel()
-        engine = Engine(
-            config=EngineConfig(
-                t0=0.0,
-                t1=0.08,
-                dt=0.01,
-                n_traj=256,
-                trajectory_batching=batching,
-                trajectory_batch_size=batch_size,
-                seed=31,
-                ic=[[1.0 + 0.0j]],
-                keep_traj=False,
-            ),
-            plugins={
-                "backend": NumpyBackend(),
-                "integrator": EulerMaruyama(),
-                "model": model,
-                "analyser": {"psd": _psd_analyzer()},
-            },
-            product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
-        )
-        result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
-        return _product_arrays(result.products["psd"]), result.metadata[
-            "execution_plan"
-        ]
-
-    off_psd, off_plan = run("off")
-    auto_psd, auto_plan = run("auto")
-    batched_psd, batched_plan = run("required", 64)
+    off_psd, off_plan = _run_psd_stream_case(n_traj=256, seed=31, batching="off")
+    auto_psd, auto_plan = _run_psd_stream_case(n_traj=256, seed=31, batching="auto")
+    batched_psd, batched_plan = _run_psd_stream_case(
+        n_traj=256, seed=31, batching="required", batch_size=64
+    )
 
     assert off_plan["trajectory_batch_count"] == 1
     assert auto_plan["trajectory_batch_count"] == 1
@@ -706,37 +723,13 @@ def test_off_auto_and_required_batching_share_random_streams():
 
 def test_tail_rng_group_keeps_batching_invariance():
     """A short tail group (n_traj % group != 0) stays batching-invariant."""
-
-    def run(batching, batch_size=None):
-        model = StochasticScannedModel()
-        engine = Engine(
-            config=EngineConfig(
-                t0=0.0,
-                t1=0.08,
-                dt=0.01,
-                n_traj=250,
-                trajectory_batching=batching,
-                trajectory_batch_size=batch_size,
-                seed=37,
-                ic=[[1.0 + 0.0j]],
-                keep_traj=False,
-            ),
-            plugins={
-                "backend": NumpyBackend(),
-                "integrator": EulerMaruyama(),
-                "model": model,
-                "analyser": {"psd": _psd_analyzer()},
-            },
-            product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
-        )
-        result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
-        return _product_arrays(result.products["psd"]), result.metadata[
-            "execution_plan"
-        ]
-
-    ref_psd, ref_plan = run("off")
-    batched_64, plan_64 = run("required", 64)
-    batched_128, plan_128 = run("required", 128)
+    ref_psd, ref_plan = _run_psd_stream_case(n_traj=250, seed=37, batching="off")
+    batched_64, plan_64 = _run_psd_stream_case(
+        n_traj=250, seed=37, batching="required", batch_size=64
+    )
+    batched_128, plan_128 = _run_psd_stream_case(
+        n_traj=250, seed=37, batching="required", batch_size=128
+    )
 
     assert ref_plan["trajectory_batch_count"] == 1
     assert plan_64["trajectory_batch_count"] == 4
@@ -750,36 +743,10 @@ def test_required_batching_falls_back_to_full_group_plus_tail():
     """n_traj=65 with required batching and no explicit batch resolves to one
     full RNG group plus a tail batch, reproducing the non-batched streams.
     """
-
-    def run(batching, batch_size=None):
-        model = StochasticScannedModel()
-        engine = Engine(
-            config=EngineConfig(
-                t0=0.0,
-                t1=0.08,
-                dt=0.01,
-                n_traj=65,
-                trajectory_batching=batching,
-                trajectory_batch_size=batch_size,
-                seed=47,
-                ic=[[1.0 + 0.0j]],
-                keep_traj=False,
-            ),
-            plugins={
-                "backend": NumpyBackend(),
-                "integrator": EulerMaruyama(),
-                "model": model,
-                "analyser": {"psd": _psd_analyzer()},
-            },
-            product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
-        )
-        result = engine.run(context=SimpleNamespace(parameter_grid=None, progress=None))
-        return _product_arrays(result.products["psd"]), result.metadata[
-            "execution_plan"
-        ]
-
-    ref_psd, ref_plan = run("off")
-    batched_psd, batched_plan = run("required")
+    ref_psd, ref_plan = _run_psd_stream_case(n_traj=65, seed=47, batching="off")
+    batched_psd, batched_plan = _run_psd_stream_case(
+        n_traj=65, seed=47, batching="required"
+    )
 
     assert ref_plan["trajectory_batch_count"] == 1
     assert batched_plan["trajectory_batch_size"] == 64
@@ -790,42 +757,12 @@ def test_required_batching_falls_back_to_full_group_plus_tail():
 
 def test_scan_fused_and_batched_paths_share_point_streams():
     """Fused whole-scan and per-point batched runs draw identical streams."""
-
-    def run(batching, batch_size=None):
-        model = StochasticScannedModel()
-        engine = Engine(
-            config=EngineConfig(
-                t0=0.0,
-                t1=0.08,
-                dt=0.01,
-                n_traj=250,
-                trajectory_batching=batching,
-                trajectory_batch_size=batch_size,
-                seed=43,
-                ic=[[1.0 + 0.0j]],
-                keep_traj=False,
-            ),
-            plugins={
-                "backend": NumpyBackend(),
-                "integrator": EulerMaruyama(),
-                "model": model,
-                "analyser": {"psd": _psd_analyzer()},
-            },
-            product_graph=_graph({"psd": _PSD_CONFIG}, signal_bindings=("psd",)),
-        )
-        result = engine.run(
-            context=SimpleNamespace(
-                parameter_grid=_grid(),
-                progress=None,
-                cancellation=None,
-            )
-        )
-        return _product_arrays(result.products["psd"]), result.metadata[
-            "execution_plan"
-        ]
-
-    fused_psd, fused_plan = run("off")
-    batched_psd, batched_plan = run("required", 128)
+    fused_psd, fused_plan = _run_psd_stream_case(
+        n_traj=250, seed=43, batching="off", parameter_grid=_grid()
+    )
+    batched_psd, batched_plan = _run_psd_stream_case(
+        n_traj=250, seed=43, batching="required", batch_size=128, parameter_grid=_grid()
+    )
 
     # The fused run covers per-point tail groups (64, 64, 64, 58) in the
     # middle of the fused ensemble; the batched run covers them in the final
@@ -880,6 +817,7 @@ def test_scan_runs_trajectory_batches_inside_each_parameter_point():
     assert model.params == {"rate": 1.0}
 
 
+@pytest.mark.slow
 def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
     from qphase.core.registry import discovery, registry
     from qphase_sde.graph import compile_product_graph
@@ -1001,110 +939,107 @@ def test_typed_dense_scan_supports_tiles_and_trajectory_batches(tmp_path):
     subprocess.run([sys.executable, "-c", probe], check=True)
 
 
-def test_allan_variance_runs_through_engine_trajectory_batches():
-    model = StochasticScannedModel()
-    engine = Engine(
-        config=EngineConfig(
-            t0=0.0,
-            t1=0.8,
-            dt=0.01,
-            n_traj=128,
-            trajectory_batching="required",
-            trajectory_batch_size=64,
-            seed=37,
-            ic=[["1.0+0.0j"]],
-            keep_traj=False,
-        ),
-        plugins={
-            "backend": NumpyBackend(),
-            "integrator": EulerMaruyama(),
-            "model": model,
-            "analyser": {"allan_variance": _allan_analyzer()},
-        },
-        product_graph=_graph(
-            {
-                "allan_variance": {
-                    "measurement": _ALLAN_MEASUREMENT,
-                    "points": 5,
-                    "min_windows": 2,
-                }
-            },
-            signal_bindings=("allan_variance",),
-        ),
-    )
-
-    result = engine.run(
-        context=SimpleNamespace(
-            parameter_grid=None,
-            progress=None,
-            cancellation=None,
-        )
-    )
-
-    payload = _product_arrays(result.products["allan_variance"])
-    assert "trajectories" not in result.products
-    assert payload["n_traj"] == 128
-    # The bridge flattens the nested "mode_results" mapping into dotted
-    # variables; the merged per-trajectory Allan rows number n_traj.
+def _check_allan_batch_payload(payload):
+    """Assert the merged per-trajectory Allan rows number n_traj."""
     assert payload["mode_results.0.allan.per_trajectory"].shape[0] == 128
-    assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
 
 
-def test_coherence_matrix_runs_through_engine_trajectory_batches():
-    model = StochasticScannedModel()
-    engine = Engine(
-        config=EngineConfig(
-            t0=0.0,
-            t1=0.8,
-            dt=0.01,
-            n_traj=128,
-            trajectory_batching="required",
-            trajectory_batch_size=64,
-            seed=41,
-            ic=[["1.0+0.0j"]],
-            keep_traj=False,
-        ),
-        plugins={
-            "backend": NumpyBackend(),
-            "integrator": EulerMaruyama(),
-            "model": model,
-            "analyser": {
-                "coherence_matrix": CoherenceMatrixAnalyzer(
-                    modes=[0],
-                    time_blocks=2,
-                    min_block_samples=2,
-                )
-            },
-        },
-        product_graph=_graph(
-            {
-                "coherence_matrix": {
-                    "modes": [0],
-                    "time_blocks": 2,
-                    "min_block_samples": 2,
-                }
-            }
-        ),
-    )
-
-    result = engine.run(
-        context=SimpleNamespace(
-            parameter_grid=None,
-            progress=None,
-            cancellation=None,
-        )
-    )
-
-    payload = _product_arrays(result.products["coherence_matrix"])
-    assert "trajectories" not in result.products
-    assert payload["n_traj"] == 128
+def _check_coherence_matrix_batch_payload(payload):
     assert payload["per_trajectory_matrix"].shape == (128, 1, 1)
     assert payload["purity"] == 1.0
-    assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
 
 
-def test_quadratic_moments_run_through_engine_trajectory_batches():
-    model = StochasticScannedModel()
+def _check_quadratic_moments_batch_payload(payload):
+    assert payload["per_trajectory_raw_moments"].shape == (128, 1, 4)
+
+
+#: One reducer per batch-invariance case: the analyser set, its graph config,
+#: the seed and the reducer-specific payload assertion.  Everything else
+#: (EngineConfig, model, backend, integrator, batching) is shared.
+_BATCHED_REDUCER_CASES = [
+    pytest.param(
+        37,
+        lambda: {
+            "allan_variance": _allan_analyzer(),
+        },
+        {
+            "allan_variance": {
+                "measurement": _ALLAN_MEASUREMENT,
+                "points": 5,
+                "min_windows": 2,
+            }
+        },
+        ("allan_variance",),
+        "allan_variance",
+        _check_allan_batch_payload,
+        id="allan_variance",
+    ),
+    pytest.param(
+        41,
+        lambda: {
+            "coherence_matrix": CoherenceMatrixAnalyzer(
+                modes=[0],
+                time_blocks=2,
+                min_block_samples=2,
+            )
+        },
+        {
+            "coherence_matrix": {
+                "modes": [0],
+                "time_blocks": 2,
+                "min_block_samples": 2,
+            }
+        },
+        (),
+        "coherence_matrix",
+        _check_coherence_matrix_batch_payload,
+        id="coherence_matrix",
+    ),
+    pytest.param(
+        43,
+        lambda: {
+            "quadratic_moments": QuadraticMomentAnalyzer(
+                observables={"occupation": {"matrix": [[1.0]], "center": 0.25}},
+                time_blocks=2,
+                min_block_samples=2,
+            )
+        },
+        {
+            "quadratic_moments": {
+                "observables": {
+                    "occupation": {"matrix": [[1.0]], "center": 0.25}
+                },
+                "time_blocks": 2,
+                "min_block_samples": 2,
+            }
+        },
+        (),
+        "quadratic_moments",
+        _check_quadratic_moments_batch_payload,
+        id="quadratic_moments",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    (
+        "seed",
+        "analysers",
+        "analyser_config",
+        "signal_bindings",
+        "product",
+        "check_payload",
+    ),
+    _BATCHED_REDUCER_CASES,
+)
+def test_statistical_reducers_run_through_engine_trajectory_batches(
+    seed,
+    analysers,
+    analyser_config,
+    signal_bindings,
+    product,
+    check_payload,
+):
     engine = Engine(
         config=EngineConfig(
             t0=0.0,
@@ -1113,33 +1048,17 @@ def test_quadratic_moments_run_through_engine_trajectory_batches():
             n_traj=128,
             trajectory_batching="required",
             trajectory_batch_size=64,
-            seed=43,
+            seed=seed,
             ic=[["1.0+0.0j"]],
             keep_traj=False,
         ),
         plugins={
             "backend": NumpyBackend(),
             "integrator": EulerMaruyama(),
-            "model": model,
-            "analyser": {
-                "quadratic_moments": QuadraticMomentAnalyzer(
-                    observables={"occupation": {"matrix": [[1.0]], "center": 0.25}},
-                    time_blocks=2,
-                    min_block_samples=2,
-                )
-            },
+            "model": StochasticScannedModel(),
+            "analyser": analysers(),
         },
-        product_graph=_graph(
-            {
-                "quadratic_moments": {
-                    "observables": {
-                        "occupation": {"matrix": [[1.0]], "center": 0.25}
-                    },
-                    "time_blocks": 2,
-                    "min_block_samples": 2,
-                }
-            }
-        ),
+        product_graph=_graph(analyser_config, signal_bindings=signal_bindings),
     )
 
     result = engine.run(
@@ -1150,11 +1069,11 @@ def test_quadratic_moments_run_through_engine_trajectory_batches():
         )
     )
 
-    payload = _product_arrays(result.products["quadratic_moments"])
+    payload = _product_arrays(result.products[product])
     assert "trajectories" not in result.products
     assert payload["n_traj"] == 128
-    assert payload["per_trajectory_raw_moments"].shape == (128, 1, 4)
     assert result.metadata["execution_plan"]["trajectory_batch_count"] == 2
+    check_payload(payload)
 
 
 def test_typed_graph_batches_all_statistical_reducers():
@@ -1406,6 +1325,7 @@ def test_batch_local_non_reducer_cannot_cross_final_boundary():
         )
 
 
+@pytest.mark.slow
 def test_scan_tiles_and_trajectory_batches_preserve_transient_graph_results():
     grid = ScanSpec.model_validate(
         {
@@ -2004,6 +1924,7 @@ def _assert_products_equal(reference, candidate):
                 np.testing.assert_array_equal(actual, expected, err_msg=name)
 
 
+@pytest.mark.slow
 def test_typed_allan_chain_multi_tile_matches_single_tile_batched():
     """Tile/final split: a pointwise -> cross-scan chain is tiling-invariant.
 
@@ -2043,6 +1964,7 @@ def test_typed_allan_chain_multi_tile_matches_single_tile_batched():
     _assert_products_equal(single, multi)
 
 
+@pytest.mark.slow
 def test_typed_allan_chain_tiling_is_invariant_unbatched():
     """The non-batched tiled branch defers cross-scan analysers identically.
 
@@ -2142,11 +2064,17 @@ def _peaks_plan(graph, analysers, memory_limit_mib):
     )
 
 
-def test_typed_multi_tile_plan_rejects_table_terminal():
+@pytest.fixture(scope="module")
+def peaks_chain():
+    """Compiled psd -> peaks graph plus matching instances (table terminal)."""
+    return _peaks_chain_setup()
+
+
+def test_typed_multi_tile_plan_rejects_table_terminal(peaks_chain):
     """A multi-tile plan over a ragged/table terminal fails at PLAN time."""
     from qphase_sde.planning import SDEMemoryPlanningError
 
-    graph, analysers = _peaks_chain_setup()
+    graph, analysers = peaks_chain
 
     with pytest.raises(
         SDEMemoryPlanningError, match=r"'peaks'.*domain-specific reducer"
@@ -2154,20 +2082,20 @@ def test_typed_multi_tile_plan_rejects_table_terminal():
         _peaks_plan(graph, analysers, 2)
 
 
-def test_typed_single_tile_plan_allows_table_terminal():
+def test_typed_single_tile_plan_allows_table_terminal(peaks_chain):
     """Single-tile plans over the same table terminal still pass planning."""
-    graph, analysers = _peaks_chain_setup()
+    graph, analysers = peaks_chain
 
     plan = _peaks_plan(graph, analysers, 6)
 
     assert plan.tile_count == 1
 
 
-def test_typed_multi_tile_scan_rejects_table_terminal_at_plan_time():
+def test_typed_multi_tile_scan_rejects_table_terminal_at_plan_time(peaks_chain):
     """The engine surfaces the table-terminal rejection before simulating."""
     from qphase_sde.planning import SDEMemoryPlanningError
 
-    graph, analysers = _peaks_chain_setup()
+    graph, analysers = peaks_chain
     engine = Engine(
         config=EngineConfig(
             t0=0.0,
