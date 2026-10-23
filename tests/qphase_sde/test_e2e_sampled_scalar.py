@@ -476,6 +476,7 @@ def test_shared_transform_executes_once_per_batch():
     assert set(result.products) == _MAIN_TERMINAL_PRODUCTS
 
 
+@pytest.mark.gpu
 def test_cupy_end_to_end_and_analyser_parity():
     """CuPy: the full graph runs on the GPU backend, and the scalar
     PSD/Allan estimators match NumPy within float64 tolerance on identical

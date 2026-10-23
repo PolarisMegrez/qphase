@@ -40,6 +40,7 @@ def test_torch_backend_batched_solve():
     assert actual.dtype == torch.complex128
 
 
+@pytest.mark.gpu
 def test_cupy_backend_batched_solve():
     cp = pytest.importorskip("cupy")
     try:

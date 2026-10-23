@@ -78,7 +78,7 @@ not type-checked: `mypy packages tests` still reports a registered backlog of
 
 `.github/workflows/gpu.yml` is the only workflow that actually executes `gpu`
 cases; it targets a self-hosted CUDA runner rather than a GitHub-hosted one.
-`-m gpu` currently collects 47 parametrized cases across 12 files.
+`-m gpu` currently collects 49 parametrized cases across 13 files.
 
 - Runner: a self-hosted runner registered with the labels `self-hosted` and
   `gpu`, on a machine with the NVIDIA driver. CuPy 14+ ships the required CUDA

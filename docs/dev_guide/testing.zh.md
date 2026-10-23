@@ -71,7 +71,7 @@ ruff、mypy 与 CLI/GUI/资源包，但不含 CuPy。这样整个解释器矩阵
 ## GPU CI lane
 
 `.github/workflows/gpu.yml` 是唯一真正执行 `gpu` 用例的 workflow，它跑在自建的 CUDA
-runner 上而不是 GitHub 托管 runner 上。`-m gpu` 当前在 12 个文件里收集到 47 个参数化用例。
+runner 上而不是 GitHub 托管 runner 上。`-m gpu` 当前在 13 个文件里收集到 49 个参数化用例。
 
 - Runner：注册一台带 `self-hosted` 与 `gpu` 标签的 self-hosted runner，机器装好 NVIDIA
   驱动即可。CuPy 14 起所需的 CUDA 组件以 PyPI wheel 形式提供
