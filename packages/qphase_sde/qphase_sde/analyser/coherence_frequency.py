@@ -21,7 +21,6 @@ from qphase.data import (
     StatisticsDataset,
 )
 
-from ..coherence_frequency.base import CoherenceFrequencyProtocol
 from ..contracts.analyser import AnalyserExecutionCapabilities, WorkEstimate
 from ..contracts.coherence import (
     COHERENCE_FREQUENCY_PRODUCT,
@@ -31,6 +30,7 @@ from ..contracts.quantities import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
 )
+from ..estimators.coherence_frequency.base import CoherenceFrequencyProtocol
 from .base import Analyser, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     orientation_metadata,
@@ -212,7 +212,7 @@ class CoherenceFrequencyAnalyser(Analyser):
             "estimator": SubpluginSlot(
                 namespace="coherence_frequency",
                 default="band_limited",
-                protocol="qphase_sde.coherence_frequency.base:CoherenceFrequencyProtocol",
+                protocol="qphase_sde.estimators.coherence_frequency.base:CoherenceFrequencyProtocol",
                 description="Coherence-frequency estimator child",
             )
         }

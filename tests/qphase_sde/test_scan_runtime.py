@@ -40,8 +40,8 @@ from qphase_sde.analyser.psd import PsdAnalyser
 from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyser
 from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.engine import Engine, EngineConfig
+from qphase_sde.estimators.peak_finder import ScipyPeakFinder
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
-from qphase_sde.peak_finder import ScipyPeakFinder
 from qphase_sde.result import SDEDataBundle, trajectory_product
 
 pytestmark = pytest.mark.integration

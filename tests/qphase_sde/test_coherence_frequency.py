@@ -10,7 +10,7 @@ from qphase_sde.analyser.coherence_frequency import (
     CoherenceFrequencyAnalyserConfig,
 )
 from qphase_sde.analyser.psd import PsdAnalyser
-from qphase_sde.coherence_frequency import BandLimitedCoherenceFrequency
+from qphase_sde.estimators.coherence_frequency import BandLimitedCoherenceFrequency
 
 
 def _typed_psd_product(scan_values: list[float]):

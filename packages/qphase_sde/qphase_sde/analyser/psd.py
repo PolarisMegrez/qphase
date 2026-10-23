@@ -66,6 +66,13 @@ from ..contracts.quantities import (
     FrequencyOrientation,
     SDEQuantity,
 )
+from ..estimators.spectral_estimator import (
+    PsdEstimate as _PsdEstimate,
+)
+from ..estimators.spectral_estimator import (
+    SpectralEstimator,
+    create_builtin_estimator,
+)
 from ..numerics.spectral import (
     detrend_series,
     fold_one_sided_powers,
@@ -76,13 +83,6 @@ from ..products import (
     TypedAxisSpec,
     assemble_typed_product,
     stack_payload_leaves,
-)
-from ..spectral_estimator import (
-    PsdEstimate as _PsdEstimate,
-)
-from ..spectral_estimator import (
-    SpectralEstimator,
-    create_builtin_estimator,
 )
 from .base import (
     Analyser,
@@ -212,7 +212,7 @@ class PsdAnalyser(Analyser):
             "estimator": SubpluginSlot(
                 namespace="spectral_estimator",
                 default="periodogram",
-                protocol="qphase_sde.spectral_estimator.base:SpectralEstimator",
+                protocol="qphase_sde.estimators.spectral_estimator.base:SpectralEstimator",
                 description="Algorithm used to estimate the PSD",
             )
         }

@@ -30,22 +30,22 @@
     },
     {
       "namespace": "spectral_estimator",
-      "protocol": "qphase_sde.spectral_estimator.base:SpectralEstimatorProtocol",
+      "protocol": "qphase_sde.estimators.spectral_estimator.base:SpectralEstimatorProtocol",
       "description": "Replaceable spectral estimators (periodogram, Welch, multitaper)."
     },
     {
       "namespace": "peak_finder",
-      "protocol": "qphase_sde.peak_finder.base:PeakFinderProtocol",
+      "protocol": "qphase_sde.estimators.peak_finder.base:PeakFinderProtocol",
       "description": "Peak-candidate finders returning unified PeakCandidate results."
     },
     {
       "namespace": "peak_tracker",
-      "protocol": "qphase_sde.peak_tracker.base:PeakTrackerProtocol",
+      "protocol": "qphase_sde.estimators.peak_tracker.base:PeakTrackerProtocol",
       "description": "Scan-axis peak-path trackers (e.g. topk_huber)."
     },
     {
       "namespace": "coherence_frequency",
-      "protocol": "qphase_sde.coherence_frequency.base:CoherenceFrequencyProtocol",
+      "protocol": "qphase_sde.estimators.coherence_frequency.base:CoherenceFrequencyProtocol",
       "description": "Coherence-frequency estimators (short-delay, band-limited, finite-delay, pole model)."
     }
   ],

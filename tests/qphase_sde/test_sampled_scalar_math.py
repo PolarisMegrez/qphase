@@ -23,16 +23,16 @@ from qphase_sde.analyser.allan_statistics import (
     calculate_allan_variance,
     calculate_sampled_scalar_allan,
 )
+from qphase_sde.estimators.spectral_estimator.builtin import (
+    PeriodogramEstimator,
+    PeriodogramEstimatorConfig,
+)
 from qphase_sde.numerics.spectral import (
     detrend_series,
     fold_one_sided_powers,
     one_sided_bin_count,
     one_sided_frequency_axis,
     sampled_scalar_psd_units,
-)
-from qphase_sde.spectral_estimator.builtin import (
-    PeriodogramEstimator,
-    PeriodogramEstimatorConfig,
 )
 
 from tests.conftest import cuda_available

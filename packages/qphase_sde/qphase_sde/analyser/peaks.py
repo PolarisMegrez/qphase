@@ -16,7 +16,7 @@ from qphase.core.protocols import (
 from qphase.data import DataKind, Dataset, ProductDeclaration, ProductRequirement
 
 from ..contracts.analyser import AnalyserExecutionCapabilities, WorkEstimate
-from ..peak_finder import materialize_candidate_product
+from ..estimators.peak_finder import materialize_candidate_product
 from .base import (
     Analyser,
     check_execution_cancelled,
@@ -55,7 +55,7 @@ class PeaksAnalyser(Analyser):
             "finder": SubpluginSlot(
                 namespace="peak_finder",
                 default="scipy",
-                protocol="qphase_sde.peak_finder.base:TypedPeakFinder",
+                protocol="qphase_sde.estimators.peak_finder.base:TypedPeakFinder",
                 description="Peak candidate finder child",
             )
         }

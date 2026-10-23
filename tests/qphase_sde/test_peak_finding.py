@@ -6,7 +6,7 @@ import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.peaks import PeaksAnalyser, PeaksAnalyserConfig
 from qphase_sde.analyser.psd import PsdAnalyser, _build_psd_products
-from qphase_sde.peak_finder import (
+from qphase_sde.estimators.peak_finder import (
     PeakInfo,
     RationalPeakFinder,
     RationalPeakFinderConfig,
@@ -227,7 +227,10 @@ def test_peak_paths_analyser_publishes_typed_path_product():
         PeakPathsAnalyser,
         PeakPathsAnalyserConfig,
     )
-    from qphase_sde.peak_tracker import RidgePeakTracker, RidgePeakTrackerConfig
+    from qphase_sde.estimators.peak_tracker import (
+        RidgePeakTracker,
+        RidgePeakTrackerConfig,
+    )
     peak_analyzer = PeaksAnalyser(
         PeaksAnalyserConfig(scan_param="epsilon"),
         subplugins={"finder": ScipyPeakFinder()},

@@ -26,7 +26,7 @@ from pydantic import ConfigDict
 from qphase.core.protocols import PluginConfigBase
 from qphase.data import Dataset, ProductSchema, StatisticsDataset
 
-from ..contracts.peaks import PEAK_PATH_PRODUCT, PeakPathResult, validate_path_table
+from ...contracts.peaks import PEAK_PATH_PRODUCT, PeakPathResult, validate_path_table
 
 __all__ = [
     "BasePeakTrackerConfig",

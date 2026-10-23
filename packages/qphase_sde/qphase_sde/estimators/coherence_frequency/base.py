@@ -23,7 +23,7 @@ from typing import Any, ClassVar
 from pydantic import ConfigDict
 from qphase.core.protocols import PluginConfigBase
 
-from ..contracts.coherence import CoherenceFrequencyEstimate
+from ...contracts.coherence import CoherenceFrequencyEstimate
 
 __all__ = [
     "BaseCoherenceFrequencyConfig",

@@ -9,7 +9,7 @@ from typing import ClassVar, cast
 import numpy as np
 from pydantic import Field
 
-from ..contracts.peaks import PeakPathResult, PeakStatus
+from ...contracts.peaks import PeakPathResult, PeakStatus
 from .base import BasePeakTrackerConfig, PeakTrackerProtocol
 
 __all__ = ["RidgePeakTracker", "RidgePeakTrackerConfig"]

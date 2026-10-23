@@ -46,12 +46,12 @@ from qphase_sde.analyser.spectral_ridge import (
     SpectralRidgeAnalyser,
     SpectralRidgeConfig,
 )
-from qphase_sde.coherence_frequency import BandLimitedCoherenceFrequency
 from qphase_sde.contracts.coherence import CoherenceFrequencyEstimate
 from qphase_sde.engine import Engine, EngineConfig
+from qphase_sde.estimators.coherence_frequency import BandLimitedCoherenceFrequency
+from qphase_sde.estimators.peak_finder import ScipyPeakFinder
+from qphase_sde.estimators.peak_tracker import RidgePeakTracker
 from qphase_sde.graph import compile_product_graph
-from qphase_sde.peak_finder import ScipyPeakFinder
-from qphase_sde.peak_tracker import RidgePeakTracker
 from qphase_sde.products import add_scan_parameter_coordinates
 from qphase_sde.result import SDEDataBundle, SDEProvenance
 
@@ -150,7 +150,7 @@ def test_coherence_frequency_parent_publishes_typed_product(tmp_path):
 
 def test_peak_paths_parent_consumes_peak_product():
     source = _spectrum_bundle()
-    from qphase_sde.peak_finder import ScipyPeakFinder
+    from qphase_sde.estimators.peak_finder import ScipyPeakFinder
 
     peak_analyzer = PeaksAnalyser(
         PeaksAnalyserConfig(scan_param="epsilon"),
@@ -225,7 +225,7 @@ def test_analyze_graph_connects_peak_candidates_to_paths():
 
 def test_coherence_frequency_parent_resolves_child_through_registry():
     from qphase.core.registry import registry
-    from qphase_sde.coherence_frequency import BandLimitedCoherenceFrequency
+    from qphase_sde.estimators.coherence_frequency import BandLimitedCoherenceFrequency
 
     class RegistryChild(BandLimitedCoherenceFrequency):
         name = "registry_test"

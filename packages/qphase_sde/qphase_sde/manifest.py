@@ -73,25 +73,25 @@ MANIFEST = ResourcePackageManifest(
         ),
         PluginClassDeclaration(
             namespace="spectral_estimator",
-            protocol="qphase_sde.spectral_estimator.base:SpectralEstimator",
+            protocol="qphase_sde.estimators.spectral_estimator.base:SpectralEstimator",
             description="Replaceable spectral estimators (periodogram, Welch, "
             "multitaper).",
         ),
         PluginClassDeclaration(
             namespace="peak_finder",
-            protocol="qphase_sde.peak_finder.base:TypedPeakFinder",
+            protocol="qphase_sde.estimators.peak_finder.base:TypedPeakFinder",
             description="Peak finders returning the grouped typed candidate "
             "table used by PSD and peak-path analysis.",
         ),
         PluginClassDeclaration(
             namespace="peak_tracker",
-            protocol="qphase_sde.peak_tracker.base:PeakTrackerProtocol",
+            protocol="qphase_sde.estimators.peak_tracker.base:PeakTrackerProtocol",
             description="Scan-axis peak-path trackers linking candidate rows "
             "into paths.",
         ),
         PluginClassDeclaration(
             namespace="coherence_frequency",
-            protocol=("qphase_sde.coherence_frequency.base:CoherenceFrequencyProtocol"),
+            protocol=("qphase_sde.estimators.coherence_frequency.base:CoherenceFrequencyProtocol"),
             description="Coherence-frequency estimators (short-delay, "
             "band-limited, finite-delay).",
         ),

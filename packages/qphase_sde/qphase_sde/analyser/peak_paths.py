@@ -22,7 +22,7 @@ from qphase.data import (
 
 from ..contracts.analyser import AnalyserExecutionCapabilities, WorkEstimate
 from ..contracts.peaks import PEAK_PATH_PRODUCT, PeakPathResult
-from ..peak_tracker import materialize_path_product
+from ..estimators.peak_tracker import materialize_path_product
 from .base import Analyser, requirement_source
 
 __all__ = ["PeakPathsAnalyser", "PeakPathsAnalyserConfig"]
@@ -62,7 +62,7 @@ class PeakPathsAnalyser(Analyser):
             "tracker": SubpluginSlot(
                 namespace="peak_tracker",
                 default="ridge",
-                protocol="qphase_sde.peak_tracker.base:PeakTrackerProtocol",
+                protocol="qphase_sde.estimators.peak_tracker.base:PeakTrackerProtocol",
                 description="Peak path tracker child",
             )
         }

@@ -17,7 +17,7 @@ import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.peaks import PeaksAnalyser, PeaksAnalyserConfig
 from qphase_sde.analyser.psd import PsdAnalyser
-from qphase_sde.peak_finder import ScipyPeakFinder, ScipyPeakFinderConfig
+from qphase_sde.estimators.peak_finder import ScipyPeakFinder, ScipyPeakFinderConfig
 from qphase_sde.result import trajectory_product
 from qphase_sde.state import TrajectorySet
 

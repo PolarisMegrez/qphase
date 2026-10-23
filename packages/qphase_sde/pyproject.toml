@@ -66,18 +66,18 @@ dependencies = [
 # Observer plugin
 "observer.first_passage" = "qphase_sde.observer.first_passage:FirstPassageObserver"
 # PSD estimator subplugins
-"spectral_estimator.periodogram" = "qphase_sde.spectral_estimator:PeriodogramEstimator"
-"spectral_estimator.welch" = "qphase_sde.spectral_estimator:WelchEstimator"
-"spectral_estimator.multitaper" = "qphase_sde.spectral_estimator:MultitaperEstimator"
+"spectral_estimator.periodogram" = "qphase_sde.estimators.spectral_estimator:PeriodogramEstimator"
+"spectral_estimator.welch" = "qphase_sde.estimators.spectral_estimator:WelchEstimator"
+"spectral_estimator.multitaper" = "qphase_sde.estimators.spectral_estimator:MultitaperEstimator"
 # Peak Finder plugins
-"peak_finder.scipy" = "qphase_sde.peak_finder.scipy:ScipyPeakFinder"
-"peak_finder.rational" = "qphase_sde.peak_finder.rational:RationalPeakFinder"
+"peak_finder.scipy" = "qphase_sde.estimators.peak_finder.scipy:ScipyPeakFinder"
+"peak_finder.rational" = "qphase_sde.estimators.peak_finder.rational:RationalPeakFinder"
 # Peak tracker plugins
-"peak_tracker.ridge" = "qphase_sde.peak_tracker.ridge:RidgePeakTracker"
+"peak_tracker.ridge" = "qphase_sde.estimators.peak_tracker.ridge:RidgePeakTracker"
 # Coherence-frequency child plugins
-"coherence_frequency.short_delay" = "qphase_sde.coherence_frequency.short_delay:ShortDelayCoherenceFrequency"
-"coherence_frequency.band_limited" = "qphase_sde.coherence_frequency.band_limited:BandLimitedCoherenceFrequency"
-"coherence_frequency.finite_delay" = "qphase_sde.coherence_frequency.finite_delay:FiniteDelayCoherenceFrequency"
+"coherence_frequency.short_delay" = "qphase_sde.estimators.coherence_frequency.short_delay:ShortDelayCoherenceFrequency"
+"coherence_frequency.band_limited" = "qphase_sde.estimators.coherence_frequency.band_limited:BandLimitedCoherenceFrequency"
+"coherence_frequency.finite_delay" = "qphase_sde.estimators.coherence_frequency.finite_delay:FiniteDelayCoherenceFrequency"
 
 [tool.setuptools.packages.find]
 where = ["."]

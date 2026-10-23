@@ -156,7 +156,7 @@ def test_analyser_output_inherits_source_scan_identity(tmp_path):
         scan_shape=(2, 2),
         meta={"scan_combine": "cartesian"},
     )
-    from qphase_sde.peak_finder import ScipyPeakFinder
+    from qphase_sde.estimators.peak_finder import ScipyPeakFinder
 
     analyzer = PeaksAnalyser(
         PeaksAnalyserConfig(scan_param="x"),

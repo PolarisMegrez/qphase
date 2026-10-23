@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from qphase.core.protocols import PluginConfigBase
 from qphase.data import Dataset, ProductSchema, StatisticsDataset
 
-from ..contracts.peaks import (
+from ...contracts.peaks import (
     PEAK_PRODUCT,
     CandidateTablePayload,
     validate_candidate_table,

@@ -11,8 +11,8 @@ from qphase_sde.contracts.analyser import (
     AnalyserWorkspaceRequest,
 )
 from qphase_sde.engine import EngineConfig
+from qphase_sde.estimators.spectral_estimator.base import SpectralEstimatorCapabilities
 from qphase_sde.planning import SDEMemoryPlanningError, build_execution_plan
-from qphase_sde.spectral_estimator.base import SpectralEstimatorCapabilities
 
 
 class FakeBackend:

@@ -8,11 +8,11 @@ from typing import Any, ClassVar, cast
 import numpy as np
 from pydantic import Field
 
-from ..contracts.coherence import (
+from ...contracts.coherence import (
     CoherenceFrequencyEstimate,
     CoherenceFrequencyStatus,
 )
-from ..numerics.band_limited import estimate_band_limited_carrier
+from ...numerics.band_limited import estimate_band_limited_carrier
 from .base import BaseCoherenceFrequencyConfig, CoherenceFrequencyProtocol
 
 __all__ = ["BandLimitedCoherenceFrequency", "BandLimitedCoherenceFrequencyConfig"]

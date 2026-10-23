@@ -176,8 +176,8 @@ def test_manifest_declared_targets_resolve():
 
 def test_ridge_peak_tracker_is_registered_and_tracks_candidates():
     from qphase_sde.contracts.peaks import PeakStatus
-    from qphase_sde.peak_tracker import materialize_path_product
-    from qphase_sde.peak_tracker.ridge import RidgePeakTracker
+    from qphase_sde.estimators.peak_tracker import materialize_path_product
+    from qphase_sde.estimators.peak_tracker.ridge import RidgePeakTracker
 
     tracker = RidgePeakTracker(frequency_scale=0.5, path_count=2)
     paths = tracker.track(
@@ -214,7 +214,7 @@ def test_ridge_peak_tracker_is_registered_and_tracks_candidates():
 
 
 def test_ridge_peak_tracker_uses_global_huber_path_cost():
-    from qphase_sde.peak_tracker.ridge import RidgePeakTracker
+    from qphase_sde.estimators.peak_tracker.ridge import RidgePeakTracker
 
     tracker = RidgePeakTracker(
         frequency_scale=1.0, continuity_weight=10.0, path_count=1
@@ -237,7 +237,7 @@ def test_ridge_peak_tracker_uses_global_huber_path_cost():
 
 def test_ridge_peak_tracker_keeps_runner_up_before_output_truncation():
     from qphase_sde.contracts.peaks import PeakStatus
-    from qphase_sde.peak_tracker.ridge import RidgePeakTracker
+    from qphase_sde.estimators.peak_tracker.ridge import RidgePeakTracker
 
     paths = RidgePeakTracker(path_count=1).track(
         np.asarray([0, 2, 3], dtype=np.int64),
@@ -256,7 +256,7 @@ def test_ridge_peak_tracker_keeps_runner_up_before_output_truncation():
 
 def test_ridge_peak_tracker_keeps_runner_up_when_paths_merge_at_terminal():
     from qphase_sde.contracts.peaks import PeakStatus
-    from qphase_sde.peak_tracker.ridge import RidgePeakTracker
+    from qphase_sde.estimators.peak_tracker.ridge import RidgePeakTracker
 
     paths = RidgePeakTracker(
         path_count=1,
@@ -279,7 +279,7 @@ def test_ridge_peak_tracker_keeps_runner_up_when_paths_merge_at_terminal():
 
 
 def test_coherence_frequency_children_return_common_estimate_rows():
-    from qphase_sde.coherence_frequency import (
+    from qphase_sde.estimators.coherence_frequency import (
         BandLimitedCoherenceFrequency,
         FiniteDelayCoherenceFrequency,
         ShortDelayCoherenceFrequency,
