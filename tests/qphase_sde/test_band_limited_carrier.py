@@ -18,7 +18,10 @@ from qphase_sde.analyser.band_limited_carrier import (
     BandLimitedCarrierConfig,
     RidgeConditionedCenterConfig,
 )
-from qphase_sde.analyser.spectral_ridge import SpectralRidgeConfig
+from qphase_sde.analyser.spectral_ridge import (
+    SpectralRidgeAnalyzer,
+    SpectralRidgeConfig,
+)
 from qphase_sde.numerics.band_limited import (
     BandLimitedCarrierCandidate,
     BandLimitedCarrierEstimate,
@@ -291,6 +294,11 @@ def test_analyzer_outputs_each_retained_ridge_candidate():
         minimum_prominence_fraction=0.01,
         tracking_path_count=2,
     )
+    psd = _spectral_product(axis, spectra, [0.0, 1.0, 2.0], [0])
+    ridge_label = "carrier.__ridge"
+    ridge_products = SpectralRidgeAnalyzer(ridge_config).execute(
+        {"psd": psd}, backend=NumpyBackend(), label=ridge_label
+    )
     analyzer = BandLimitedCarrierAnalyzer(
         BandLimitedCarrierConfig(
             scan_param="epsilon",
@@ -298,12 +306,16 @@ def test_analyzer_outputs_each_retained_ridge_candidate():
             freq_min=-1.2,
             freq_max=1.2,
             maximum_lag=80.0,
-            center=RidgeConditionedCenterConfig(spectral_ridge=ridge_config),
+            center=RidgeConditionedCenterConfig(ridge_label=ridge_label),
         )
     )
 
     products = analyzer.execute(
-        {"psd": _spectral_product(axis, spectra, [0.0, 1.0, 2.0], [0])},
+        {
+            "psd": psd,
+            f"{ridge_label}.candidates": ridge_products[f"{ridge_label}.candidates"],
+            ridge_label: ridge_products[ridge_label],
+        },
         backend=NumpyBackend(),
         label="carrier",
     )

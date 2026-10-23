@@ -43,7 +43,6 @@ from .frequency_orientation import (
 )
 from .spectral_input import SpectralPoint, SpectralScanInput, spectral_scan_input
 from .spectral_ridge import (
-    SpectralRidgeAnalyzer,
     SpectralRidgeConfig,
 )
 
@@ -131,15 +130,38 @@ def _carrier_platform_fields(scan_param: str) -> list[str]:
 
 
 class RidgeConditionedCenterConfig(PluginConfigBase):
-    """Use retained spectral ridges as coarse carrier centers."""
+    """Use retained spectral ridges as coarse carrier centers.
 
-    spectral_ridge: SpectralRidgeConfig
+    A workflow authors the ridge configuration inline as ``spectral_ridge``;
+    the analyser-config expander promotes it into a sibling ``spectral_ridge``
+    analyser and replaces it here with that analyser's ``ridge_label``. The
+    carrier then consumes the typed ridge products from the product graph
+    instead of running a ridge analysis of its own.
+    """
+
+    spectral_ridge: SpectralRidgeConfig | None = Field(
+        None, description="Inline spectral-ridge configuration (authored form)"
+    )
+    ridge_label: str | None = Field(
+        None,
+        description="Label of the expanded spectral_ridge analyser whose "
+        "products this carrier consumes",
+    )
     maximum_neighbor_fraction: float = Field(
         0.45,
         gt=0.0,
         le=0.5,
         description="Maximum half-band relative to the nearest retained ridge",
     )
+
+    @model_validator(mode="after")
+    def validate_ridge_source(self) -> RidgeConditionedCenterConfig:
+        if (self.spectral_ridge is None) == (self.ridge_label is None):
+            raise ValueError(
+                "ridge-conditioned center needs exactly one of spectral_ridge "
+                "(authored inline) or ridge_label (compiled sibling analyser)"
+            )
+        return self
 
 
 class BandLimitedCarrierConfig(PluginConfigBase):
@@ -278,6 +300,43 @@ def _extract_readout(
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     spectrum, _, _ = loaded.readout(readout)
     return loaded.axis, spectrum, dict(loaded.attributes)
+
+
+def _ridge_candidate_rows(
+    inputs: Mapping[str, Dataset], config: BandLimitedCarrierConfig
+) -> list[dict[str, Any]] | None:
+    """Materialize the ridge candidate rows the carrier consumes.
+
+    Numeric columns come from the typed variables (exact floats, including
+    NaN); the string columns (``measurement_name``, ``retention_tier``,
+    ``tracking_path_ranks``) are not typed variables and come from the
+    product's ``payload_meta`` rows instead.
+    """
+    ridge_label = None if config.center is None else config.center.ridge_label
+    if ridge_label is None:
+        return None
+    product = inputs.get(f"{ridge_label}.candidates")
+    if product is None:
+        raise QPhaseError(
+            "band_limited_carrier requires the typed spectral-ridge candidate "
+            f"product {ridge_label + '.candidates'!r}; the analyser-config "
+            "expander promotes center.spectral_ridge into a sibling analyser"
+        )
+    rows = [
+        dict(row)
+        for row in product.attributes.get("payload_meta", {}).get(
+            "candidate_rows", []
+        )
+    ]
+    for variable in product.variables:
+        values = np.asarray(product.handle(variable.name).materialize()).reshape(-1)
+        for index, value in enumerate(values):
+            if index >= len(rows):
+                break
+            rows[index][variable.name] = (
+                value.item() if hasattr(value, "item") else value
+            )
+    return rows
 
 
 def _sort_key(value: Any) -> tuple[int, Any]:
@@ -426,7 +485,13 @@ class BandLimitedCarrierAnalyzer(Analyzer):
             scan_param=config.scan_param,
             metadata=metadata,
         )
-        payload, _ = self._compute_payload(typed, backend, context=context)
+        ridge_rows = _ridge_candidate_rows(inputs, config)
+        payload, _ = self._compute_payload(
+            typed,
+            backend,
+            ridge_rows=ridge_rows,
+            context=context,
+        )
         products = _build_band_limited_carrier_products(
             payload,
             scan_size=None,
@@ -450,7 +515,7 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         required = ["axis", "psd"]
         if isinstance(config.readout, int):
             required.append("modes")
-        return [
+        requirements = [
             ProductRequirement(
                 name=config.psd_key,
                 kind=DataKind.SPECTRAL,
@@ -458,6 +523,28 @@ class BandLimitedCarrierAnalyzer(Analyzer):
                 required_fields=required,
             )
         ]
+        ridge_label = None if config.center is None else config.center.ridge_label
+        if ridge_label is not None:
+            requirements.append(
+                ProductRequirement(
+                    name=f"{ridge_label}.candidates",
+                    kind=DataKind.STATISTICS,
+                    required_fields=[
+                        "candidate_index",
+                        "retained_for_association",
+                        "frequency_std",
+                        "confidence_lower",
+                        "confidence_upper",
+                    ],
+                )
+            )
+            # The ridge node's selected-ridge product is consumed too: every
+            # output of a graph node must have a consumer, otherwise the
+            # executor publishes it as a terminal product. Its data is unused.
+            requirements.append(
+                ProductRequirement(name=ridge_label, kind=DataKind.STATISTICS)
+            )
+        return requirements
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         config = cast(BandLimitedCarrierConfig, self.config)
@@ -484,6 +571,7 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         data: SpectralScanInput,
         backend: BackendBase,
         *,
+        ridge_rows: list[dict[str, Any]] | None = None,
         context: Any | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         config = cast(BandLimitedCarrierConfig, self.config)
@@ -495,33 +583,15 @@ class BandLimitedCarrierAnalyzer(Analyzer):
         ridge_by_scan: dict[float, list[dict[str, Any]]] = {}
         all_ridges_by_scan: dict[float, list[dict[str, Any]]] = {}
         if center_config is not None:
-            requested = center_config.spectral_ridge
-            ridge_config = requested.model_copy(
-                update={
-                    "scan_param": config.scan_param,
-                    "psd_key": config.psd_key,
-                    "readouts": [config.readout],
-                    "freq_min": (
-                        config.freq_min
-                        if config.freq_min is not None
-                        else requested.freq_min
-                    ),
-                    "freq_max": (
-                        config.freq_max
-                        if config.freq_max is not None
-                        else requested.freq_max
-                    ),
-                }
-            )
-            ridge_payload, _ = SpectralRidgeAnalyzer(ridge_config)._compute_payload(
-                data,
-                backend,
-                context=context,
-            )
+            if ridge_rows is None:
+                raise QPhaseError(
+                    "ridge-conditioned carrier center requires the typed "
+                    "spectral-ridge candidate product"
+                )
             measurement_name = (
                 "trace" if config.readout == "trace" else f"mode_{config.readout}"
             )
-            for ridge_row in ridge_payload["candidate_rows"]:
+            for ridge_row in ridge_rows:
                 if ridge_row["measurement_name"] != measurement_name:
                     continue
                 scan_key = float(ridge_row[config.scan_param])
