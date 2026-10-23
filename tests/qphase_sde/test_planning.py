@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 from qphase.core.scan import ScanSpec
-from qphase_sde.analyser.trajectory_diagnostics import TrajectoryDiagnostics
+from qphase_sde.analyser.trajectory_diagnostic import TrajectoryDiagnostics
 from qphase_sde.contracts.analyser import (
     AnalyserExecutionCapabilities,
     AnalyserWorkspaceEstimate,

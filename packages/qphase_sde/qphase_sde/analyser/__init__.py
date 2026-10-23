@@ -82,7 +82,7 @@ from .quadratic_moments import (
     QuadraticObservableSpec,
 )
 from .spectral_ridge import SpectralRidgeAnalyser, SpectralRidgeConfig
-from .trajectory_diagnostics import (
+from .trajectory_diagnostic import (
     TrajectoryDiagnostics,
     TrajectoryDiagnosticsConfig,
 )

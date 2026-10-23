@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 from qphase.backend.numpy_backend import NumpyBackend
-from qphase_sde.analyser.trajectory_diagnostic import TrajectoryDiagnosticContext
-from qphase_sde.analyser.trajectory_diagnostics import (
+from qphase_sde.analyser.trajectory_diagnostic import (
+    TrajectoryDiagnosticContext,
     TrajectoryDiagnostics,
     TrajectoryDiagnosticsConfig,
 )
