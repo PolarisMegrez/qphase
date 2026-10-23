@@ -1,137 +1,54 @@
-"""Resource-aware execution planning for logical SDE scans."""
+"""Assemble an :class:`~..plans.SDEExecutionPlan` for one SDE run.
+
+``build_execution_plan`` combines the resolved time grid, the analyser
+requirements and the memory budget into tiles, trajectory batches and the
+deferred-analyser frontier; the scope helpers classify a compiled product
+graph for tile-phase and batch-phase execution.
+"""
 
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass
 from typing import Any
 
 from qphase.data import DataKind
 
-from .contracts.quantities import SDEQuantity
-
-__all__ = [
-    "SDEExecutionPlan",
-    "SDEMemoryEstimate",
-    "SDEMemoryPlanningError",
-    "SDETimeGrid",
-    "build_execution_plan",
-    "resolve_time_grid",
-    "typed_batch_scope",
-    "typed_scan_scope",
-]
-
-
-_MIB = 1024**2
-_DEFAULT_DEVICE_FRACTION = 0.75
-_MAX_RESERVE_BYTES = 256 * _MIB
-
-
-class SDEMemoryPlanningError(RuntimeError):
-    """Raised when no valid SDE execution plan fits the supplied resources."""
-
-
-@dataclass(frozen=True)
-class SDETimeGrid:
-    """Resolved integration and observation intervals for one SDE run."""
-
-    integration_t0: float
-    observation_t0: float
-    integration_t1: float
-    dt: float
-    total_steps: int
-    warmup_steps: int
-    observation_steps: int
-
-    def saved_samples(self, save_stride: int) -> int:
-        """Return samples retained from the observation window, including t0."""
-        return self.observation_steps // int(save_stride) + 1
+from ..contracts.quantities import SDEQuantity
+from .memory import (
+    _MIB,
+    _analyzer_capabilities,
+    _analyzer_workspace_bytes,
+    _backend_name,
+    _checked_product,
+    _host_memory_budget,
+    _memory_budget,
+    _minimum_working_set_message,
+    _real_dtype,
+    _reserve_bytes,
+    _tile_capacity,
+    _validate_analyser_sampling,
+)
+from .plans import (
+    SDEExecutionPlan,
+    SDEMemoryEstimate,
+    SDEMemoryPlanningError,
+    _AnalyserWorkspace,
+    resolve_time_grid,
+)
 
 
-@dataclass(frozen=True)
-class SDEMemoryEstimate:
-    """Conservative peak-memory components for one scan tile."""
-
-    trajectory_bytes_per_point: int
-    state_bytes_per_point: int
-    noise_workspace_bytes_per_point: int
-    analyzer_workspace_bytes: int
-    analyzer_device_workspace_bytes: int
-    analyzer_host_workspace_bytes: int
-    reserve_bytes: int
-    host_reserve_bytes: int
-    full_scan_trajectory_bytes: int
-    estimated_peak_bytes: int
-    estimated_device_peak_bytes: int
-    estimated_host_peak_bytes: int
-
-    def to_dict(self) -> dict[str, int]:
-        """Return JSON-compatible estimate metadata."""
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class _AnalyserWorkspace:
-    """Per-scan-point analyser memory split by lifetime and location."""
-
-    device_bytes: int = 0
-    host_bytes: int = 0
-    retained_device_bytes: int = 0
-    retained_host_bytes: int = 0
-
-
-@dataclass(frozen=True)
-class SDEExecutionPlan:
-    """An engine-owned plan compiled from one logical scan and resource object."""
-
-    scan_size: int
-    scan_shape: tuple[int, ...]
-    n_traj_per_point: int
-    trajectory_batch_size: int
-    trajectory_batch_count: int
-    logical_rng_group_size: int
-    steps: int
-    warmup_steps: int
-    observation_steps: int
-    saved_samples: int
-    scan_tile_size: int
-    tile_count: int
-    chunk_steps: int
-    real_dtype: str
-    budget_kind: str
-    budget_bytes: int | None
-    available_device_bytes: int | None
-    device_total_bytes: int | None
-    host_budget_bytes: int | None
-    available_host_bytes: int | None
-    host_total_bytes: int | None
-    gpu_memory_fraction: float | None
-    stream_analysis: bool
-    rng_strategy: str
-    memory: SDEMemoryEstimate
-    observer_check_interval_steps: int | None = None
-    effective_chunk_steps: int | None = None
-    deferred_analysers: tuple[str, ...] = ()
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return JSON-compatible plan metadata.
-
-        The observer-derived fields are omitted when not applicable so plans
-        without observers keep their previous shape; ``deferred_analysers``
-        is likewise omitted when no analyser is deferred to post-merge
-        execution.
-        """
-        payload = asdict(self)
-        payload["scan_shape"] = list(self.scan_shape)
-        payload["deferred_analysers"] = list(self.deferred_analysers)
-        if self.observer_check_interval_steps is None:
-            payload.pop("observer_check_interval_steps")
-        if self.effective_chunk_steps is None:
-            payload.pop("effective_chunk_steps")
-        if not self.deferred_analysers:
-            payload.pop("deferred_analysers")
-        return payload
-
+def _observer_check_interval(observers: dict[str, Any] | None) -> int | None:
+    """Smallest configured observer cadence, or None without observers."""
+    intervals = []
+    for observer in (observers or {}).values():
+        interval = getattr(observer, "check_interval_steps", None)
+        if interval is None:
+            interval = getattr(
+                getattr(observer, "config", None), "check_interval_steps", None
+            )
+        if interval is not None:
+            intervals.append(int(interval))
+    return min(intervals) if intervals else None
 
 def build_execution_plan(
     *,
@@ -661,290 +578,6 @@ def build_execution_plan(
         deferred_analysers=deferred_analysers,
     )
 
-
-def _observer_check_interval(observers: dict[str, Any] | None) -> int | None:
-    """Smallest configured observer cadence, or None without observers."""
-    intervals = []
-    for observer in (observers or {}).values():
-        interval = getattr(observer, "check_interval_steps", None)
-        if interval is None:
-            interval = getattr(
-                getattr(observer, "config", None), "check_interval_steps", None
-            )
-        if interval is not None:
-            intervals.append(int(interval))
-    return min(intervals) if intervals else None
-
-
-def resolve_time_grid(*, t0: float, t1: float, dt: float) -> SDETimeGrid:
-    """Resolve ``[0, t0)`` warm-up and ``[t0, t1]`` observation intervals."""
-    dt = float(dt)
-    observation_t0 = float(t0)
-    integration_t1 = float(t1)
-    if dt <= 0.0:
-        raise ValueError("dt must be positive")
-    if observation_t0 < 0.0:
-        raise ValueError("t0 must be non-negative")
-    if integration_t1 <= observation_t0:
-        raise ValueError("t1 must be greater than t0")
-
-    total_steps = _aligned_step_count(integration_t1, dt, "t1")
-    warmup_steps = _aligned_step_count(observation_t0, dt, "t0")
-    observation_steps = total_steps - warmup_steps
-    if observation_steps < 1:
-        raise ValueError("the configured observation interval contains no steps")
-    return SDETimeGrid(
-        integration_t0=0.0,
-        observation_t0=observation_t0,
-        integration_t1=integration_t1,
-        dt=dt,
-        total_steps=total_steps,
-        warmup_steps=warmup_steps,
-        observation_steps=observation_steps,
-    )
-
-
-def _aligned_step_count(value: float, dt: float, name: str) -> int:
-    raw = value / dt
-    rounded = round(raw)
-    if not math.isclose(raw, rounded, rel_tol=1e-10, abs_tol=1e-9):
-        raise ValueError(
-            f"{name}={value:.12g} must be an integer multiple of dt={dt:.12g}"
-        )
-    return int(rounded)
-
-
-def _validate_analyser_sampling(config: Any, analysers: dict[str, Any]) -> None:
-    for name, analyser in analysers.items():
-        analyser_config = getattr(analyser, "config", None)
-        expected = getattr(analyser_config, "expected_freq_max", None)
-        if expected is None:
-            continue
-        override_dt = getattr(analyser_config, "dt", None)
-        sample_dt = (
-            float(override_dt)
-            if override_dt is not None
-            else float(config.dt) * int(config.save_stride)
-        )
-        convention = getattr(analyser_config, "convention", "symmetric")
-        nyquist = (
-            math.pi / sample_dt
-            if convention in {"symmetric", "unitary"}
-            else 0.5 / sample_dt
-        )
-        if float(expected) >= nyquist:
-            factor = math.pi if convention in {"symmetric", "unitary"} else 0.5
-            if override_dt is None:
-                maximum_stride = max(
-                    0,
-                    math.ceil(factor / (float(config.dt) * float(expected))) - 1,
-                )
-                remedy = f"use save_stride <= {maximum_stride}"
-            else:
-                remedy = "reduce the analyser dt override"
-            raise ValueError(
-                f"analyser {name!r} expected_freq_max={float(expected):.6g} "
-                f"reaches or exceeds the Nyquist limit {nyquist:.6g} for "
-                f"sample dt={sample_dt:.6g}; {remedy}"
-            )
-
-
-def _memory_budget(
-    backend_name: str,
-    resources: Any | None,
-    *,
-    device_memory: tuple[int, int] | None,
-) -> tuple[str, int | None, int | None, int | None, float | None]:
-    if backend_name == "cupy":
-        fraction = getattr(resources, "gpu_memory_fraction", None)
-        fraction = _DEFAULT_DEVICE_FRACTION if fraction is None else float(fraction)
-        memory = device_memory if device_memory is not None else _cupy_memory_info()
-        if memory is None:
-            return "gpu", None, None, None, fraction
-        free, total = (int(memory[0]), int(memory[1]))
-        budget = min(free, int(total * fraction))
-        return "gpu", budget, free, total, fraction
-
-    limit_mib = getattr(resources, "memory_limit_mib", None)
-    hardware = getattr(resources, "hardware", None)
-    available_mib = getattr(hardware, "available_memory_mib", None)
-    total_mib = getattr(hardware, "total_memory_mib", None)
-    available_bytes = None if available_mib is None else int(available_mib) * _MIB
-    total_bytes = None if total_mib is None else int(total_mib) * _MIB
-    if limit_mib is not None:
-        configured = int(limit_mib) * _MIB
-        budget = (
-            configured
-            if available_bytes is None
-            else min(configured, int(available_bytes * _DEFAULT_DEVICE_FRACTION))
-        )
-        return "host", budget, available_bytes, total_bytes, None
-    if available_bytes is None:
-        return "host", None, None, total_bytes, None
-    return (
-        "host",
-        int(available_bytes * _DEFAULT_DEVICE_FRACTION),
-        available_bytes,
-        total_bytes,
-        None,
-    )
-
-
-def _host_memory_budget(
-    resources: Any | None,
-) -> tuple[int | None, int | None, int | None]:
-    """Return the host budget even when the active backend is a GPU."""
-    limit_mib = getattr(resources, "memory_limit_mib", None)
-    hardware = getattr(resources, "hardware", None)
-    available_mib = getattr(hardware, "available_memory_mib", None)
-    total_mib = getattr(hardware, "total_memory_mib", None)
-    available = None if available_mib is None else int(available_mib) * _MIB
-    total = None if total_mib is None else int(total_mib) * _MIB
-    if limit_mib is not None:
-        configured = int(limit_mib) * _MIB
-        budget = (
-            configured
-            if available is None
-            else min(configured, int(available * _DEFAULT_DEVICE_FRACTION))
-        )
-        return budget, available, total
-    if available is None:
-        return None, None, total
-    return int(available * _DEFAULT_DEVICE_FRACTION), available, total
-
-
-def _cupy_memory_info() -> tuple[int, int] | None:
-    try:
-        import cupy as cp
-
-        free, total = cp.cuda.runtime.memGetInfo()
-        return int(free), int(total)
-    except Exception:
-        return None
-
-
-def _real_dtype(backend: Any) -> tuple[str, int]:
-    value = str(getattr(getattr(backend, "config", None), "float_dtype", "float64"))
-    if value in {"float16", "half"}:
-        return "float16", 2
-    if value in {"float32", "single"}:
-        return "float32", 4
-    return "float64", 8
-
-
-def _backend_name(backend: Any) -> str:
-    try:
-        return str(backend.backend_name()).lower()
-    except Exception:
-        return type(backend).__name__.lower()
-
-
-def _analyzer_workspace_bytes(
-    trajectory_per_point: int,
-    analysers: dict[str, Any],
-    *,
-    n_traj: int,
-    total_n_traj: int,
-    saved_samples: int,
-    n_record_modes: int,
-    real_itemsize: int,
-    backend_name: str,
-) -> _AnalyserWorkspace:
-    """Estimate per-point analyser memory by location and lifetime.
-
-    New analysers provide their own estimator. A capability-based fallback is
-    retained for lightweight test doubles, but retained reducer state must be
-    declared explicitly.
-    """
-    from qphase_sde.contracts.analyser import (
-        AnalyserWorkspaceEstimate,
-        AnalyserWorkspaceRequest,
-    )
-
-    request = AnalyserWorkspaceRequest(
-        trajectory_bytes=trajectory_per_point,
-        n_traj=n_traj,
-        saved_samples=saved_samples,
-        n_record_modes=n_record_modes,
-        real_itemsize=real_itemsize,
-        backend_name=backend_name,
-        total_n_traj=total_n_traj,
-    )
-    device_total = 0
-    host_total = 0
-    retained_device_total = 0
-    retained_host_total = 0
-    for name, analyser in analysers.items():
-        estimator_fn = getattr(analyser, "workspace", None)
-        if callable(estimator_fn):
-            estimate = estimator_fn(request)
-            if not isinstance(estimate, AnalyserWorkspaceEstimate):
-                raise TypeError(
-                    f"analyser {name!r} returned an invalid workspace estimate"
-                )
-            device_total += max(0, int(estimate.device_bytes))
-            host_total += max(0, int(estimate.host_bytes))
-            retained_device_total += max(
-                0, int(estimate.retained_device_bytes)
-            )
-            retained_host_total += max(0, int(estimate.retained_host_bytes))
-            continue
-        estimator = getattr(analyser, "estimator", None)
-        capability_fn = getattr(estimator, "capabilities", None)
-        capabilities = capability_fn() if callable(capability_fn) else None
-        if (
-            capabilities is not None
-            and not getattr(capabilities, "backend_native", True)
-            and backend_name == "cupy"
-        ):
-            host_total += 2 * trajectory_per_point
-            continue
-        chunk = getattr(
-            getattr(estimator, "config", None), "fft_chunk_trajectories", None
-        )
-        if chunk is not None and 0 < int(chunk) < n_traj:
-            # Chunked trajectory FFT: workspace scales with the chunk size.
-            workspace = max(1, 2 * trajectory_per_point * int(chunk) // n_traj)
-            if backend_name == "cupy":
-                device_total += workspace
-            else:
-                host_total += workspace
-            continue
-        # One complex FFT, one real power array, and a conservative cuFFT margin.
-        workspace = (
-            trajectory_per_point * 2
-            if estimator is not None
-            else trajectory_per_point // 2
-        )
-        if backend_name == "cupy":
-            device_total += workspace
-        else:
-            host_total += workspace
-    return _AnalyserWorkspace(
-        device_bytes=device_total,
-        host_bytes=host_total,
-        retained_device_bytes=retained_device_total,
-        retained_host_bytes=retained_host_total,
-    )
-
-
-def _analyzer_capabilities(analyser: Any) -> Any:
-    """Return a conservative capability object for old analyser instances."""
-    from qphase_sde.contracts.analyser import AnalyserExecutionCapabilities
-
-    provider = getattr(analyser, "execution_capabilities", None)
-    if callable(provider):
-        capabilities = provider()
-        if isinstance(capabilities, AnalyserExecutionCapabilities):
-            return capabilities
-        raise TypeError("analyser execution_capabilities() returned an invalid value")
-    return AnalyserExecutionCapabilities(
-        supports_trajectory_batching=callable(
-            getattr(analyser, "create_result_accumulator", None)
-        )
-    )
-
-
 def typed_scan_scope(
     graph: Any, analysers: dict[str, Any]
 ) -> tuple[frozenset[str], frozenset[str]]:
@@ -972,7 +605,6 @@ def typed_scan_scope(
             tile_scope.add(node.node_id)
     all_nodes = {node.node_id for node in graph.nodes}
     return frozenset(tile_scope), frozenset(all_nodes - tile_scope)
-
 
 def typed_batch_scope(
     graph: Any,
@@ -1054,7 +686,6 @@ def typed_batch_scope(
         return frozenset(), frozenset()
     return frozenset(local), frozenset(frontier)
 
-
 def _trajectory_analysers(analysers: dict[str, Any]) -> dict[str, Any]:
     """Select graph-frontier analysers that consume trajectory products."""
     selected: dict[str, Any] = {}
@@ -1073,36 +704,3 @@ def _trajectory_analysers(analysers: dict[str, Any]) -> dict[str, Any]:
         ):
             selected[name] = analyser
     return selected
-
-
-def _reserve_bytes(budget: int | None) -> int:
-    if budget is None:
-        return 0
-    return max(_MIB, min(_MAX_RESERVE_BYTES, budget // 16))
-
-
-def _tile_capacity(budget: int | None, fixed: int, per_point: int) -> int:
-    """Return the number of scan points that fit one memory location."""
-    if budget is None or per_point == 0:
-        return (1 << 63) - 1
-    return max(0, (budget - fixed) // per_point)
-
-
-def _minimum_working_set_message(budget: int, required: int, backend_name: str) -> str:
-    return (
-        "A single scan point does not fit the available SDE working-set budget: "
-        f"{required / _MIB:.1f} MiB estimated versus {budget / _MIB:.1f} MiB "
-        f"for backend {backend_name!r}. Reduce n_traj/time samples, use a smaller "
-        "dtype, or add trajectory-level reduction support."
-    )
-
-
-def _checked_product(*values: int, label: str) -> int:
-    result = 1
-    for value in values:
-        if int(value) < 0:
-            raise ValueError(f"{label} dimensions must be non-negative")
-        result *= int(value)
-        if result > (1 << 63) - 1:
-            raise OverflowError(f"{label} size exceeds a signed 64-bit byte count")
-    return result
