@@ -63,24 +63,6 @@ class State(ArrayBase):
             y = y[:, modes]
         return State(data=y, t=self.t, meta=self.meta.copy())
 
-    # Alias for backward compatibility if needed, but prefer .data
-    @property
-    def y(self):
-        return self.data
-
-    @y.setter
-    def y(self, value):
-        self.data = value
-
-    # Alias attrs to meta for backward compatibility
-    @property
-    def attrs(self):
-        return self.meta
-
-    @attrs.setter
-    def attrs(self, value):
-        self.meta = value
-
 
 @dataclass
 class TrajectorySet(ArrayBase):
