@@ -504,8 +504,8 @@ def _build_coherence_matrix_products(
 class CoherenceMatrixResultAccumulator:
     """Merge independent trajectory batches and recompute nonlinear metrics."""
 
-    def __init__(self, analyzer: CoherenceMatrixAnalyser) -> None:
-        self.analyzer = analyzer
+    def __init__(self, analyser: CoherenceMatrixAnalyser) -> None:
+        self.analyser = analyser
         self.payloads: list[dict[str, Any]] = []
 
     def _append_payload(self, payload: dict[str, Any]) -> None:
@@ -576,7 +576,7 @@ class CoherenceMatrixResultAccumulator:
             np.asarray(item["time_blocks"]["matrix"]) * count
             for item, count in zip(self.payloads, counts, strict=True)
         ) / float(total)
-        return self.analyzer._summarize(
+        return self.analyser._summarize(
             per_trajectory=np.concatenate(
                 [np.asarray(item["per_trajectory_matrix"]) for item in self.payloads],
                 axis=0,

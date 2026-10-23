@@ -1,6 +1,6 @@
 """qphase_sde: Analyser Base Class
 ---------------------------------------------------------
-Base class for all analyzers in the qphase_sde package, plus the shared
+Base class for all analysers in the qphase_sde package, plus the shared
 analyser helpers (physical-to-recorded mode-column mapping).
 
 The analyser declaration types (execution capabilities, workspace
@@ -16,7 +16,7 @@ returns typed Datasets without any intermediate legacy container.
 
 Public API
 ----------
-``Analyser`` : Base class for analyzers.
+``Analyser`` : Base class for analysers.
 ``resolve_mode_columns`` : Map physical mode indices to stored columns.
 ``trajectory_requirement`` : Requirement on the engine trajectory product.
 """
@@ -210,9 +210,9 @@ def map_trajectory_product(
 
 
 class Analyser(PluginBase, ABC):
-    """Base class for analyzers.
+    """Base class for analysers.
 
-    All analyzers must inherit from this class and implement the abstract
+    All analysers must inherit from this class and implement the abstract
     :meth:`execute` typed entry. Together with
     the subclass-declared ``input_requirements``/``output_specs`` and the
     ``execution_capabilities``/``workspace``/``work_estimate``/``reducer``
@@ -224,7 +224,7 @@ class Analyser(PluginBase, ABC):
     config_schema: ClassVar[type[PluginConfigBase]]
 
     def __init__(self, config: PluginConfigBase | None = None, **kwargs):
-        """Initialize the analyzer.
+        """Initialize the analyser.
 
         Parameters
         ----------
@@ -238,7 +238,7 @@ class Analyser(PluginBase, ABC):
             if hasattr(self, "config_schema"):
                 self.config = self.config_schema(**kwargs)
             else:
-                # Fallback for analyzers without specific config
+                # Fallback for analysers without specific config
                 # This should ideally not happen if protocols are strictly followed
                 pass
         else:

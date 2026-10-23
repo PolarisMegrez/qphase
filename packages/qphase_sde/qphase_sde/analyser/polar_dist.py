@@ -5,8 +5,8 @@ Includes peak finding and width estimation for the distribution.
 
 Public API
 ----------
-``PolarDistAnalyser`` : Polar Distribution analyzer.
-``PolarDistAnalyserConfig`` : Configuration for Polar Dist analyzer.
+``PolarDistAnalyser`` : Polar Distribution analyser.
+``PolarDistAnalyserConfig`` : Configuration for Polar Dist analyser.
 """
 
 from collections.abc import Mapping

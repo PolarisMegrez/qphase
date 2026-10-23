@@ -19,10 +19,10 @@ registration itself.
 
 Public API
 ----------
-``PsdAnalyser`` : Power spectral density analyzer.
-``PsdAnalyserConfig`` : Configuration for PSD analyzer.
-``DistAnalyser`` : Distribution analyzer.
-``DistAnalyserConfig`` : Configuration for Distribution analyzer.
+``PsdAnalyser`` : Power spectral density analyser.
+``PsdAnalyserConfig`` : Configuration for PSD analyser.
+``DistAnalyser`` : Distribution analyser.
+``DistAnalyserConfig`` : Configuration for Distribution analyser.
 """
 
 from typing import TYPE_CHECKING, Any

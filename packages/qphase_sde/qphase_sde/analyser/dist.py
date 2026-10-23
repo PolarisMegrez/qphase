@@ -4,8 +4,8 @@ Compute phase space distribution (histogram) from multi-trajectory time series.
 
 Public API
 ----------
-``DistAnalyser`` : Distribution analyzer.
-``DistAnalyserConfig`` : Configuration for Distribution analyzer.
+``DistAnalyser`` : Distribution analyser.
+``DistAnalyserConfig`` : Configuration for Distribution analyser.
 """
 
 from collections.abc import Mapping

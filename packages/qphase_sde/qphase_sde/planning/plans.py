@@ -33,6 +33,9 @@ class SDEMemoryEstimate:
     trajectory_bytes_per_point: int
     state_bytes_per_point: int
     noise_workspace_bytes_per_point: int
+    #: Field names keep the ``analyzer`` spelling: ``to_dict()`` reaches
+    #: persisted execution-plan payloads, so renaming them would be a schema
+    #: change rather than a spelling fix.
     analyzer_workspace_bytes: int
     analyzer_device_workspace_bytes: int
     analyzer_host_workspace_bytes: int

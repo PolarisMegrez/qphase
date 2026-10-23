@@ -524,8 +524,8 @@ def _build_quadratic_moments_products(
 class QuadraticMomentResultAccumulator:
     """Merge trajectory batches and recompute nonlinear cumulants."""
 
-    def __init__(self, analyzer: QuadraticMomentAnalyser) -> None:
-        self.analyzer = analyzer
+    def __init__(self, analyser: QuadraticMomentAnalyser) -> None:
+        self.analyser = analyser
         self.payloads: list[dict[str, Any]] = []
 
     def _consume_payload(self, payload: dict[str, Any]) -> None:
@@ -604,7 +604,7 @@ class QuadraticMomentResultAccumulator:
             np.asarray(item["time_blocks"]["raw_moments"]) * count
             for item, count in zip(self.payloads, counts, strict=True)
         ) / float(total)
-        return self.analyzer._summarize(
+        return self.analyser._summarize(
             per_trajectory_raw_moments=np.concatenate(
                 [
                     np.asarray(item["per_trajectory_raw_moments"])

@@ -20,13 +20,13 @@ class TypedProductReducer(ReducerProtocol):
     is the analyser's declared typed Dataset mapping.
     """
 
-    def __init__(self, analyzer: Any, *, label: str) -> None:
-        self.analyzer = analyzer
+    def __init__(self, analyser: Any, *, label: str) -> None:
+        self.analyser = analyser
         self.label = label
 
     def prepare(self, schema: Any, context: Any) -> Any:
         del schema, context
-        return self.analyzer.create_result_accumulator()
+        return self.analyser.create_result_accumulator()
 
     def consume(self, view: Dataset, state: Any, reporter: Any) -> Any:
         del reporter
@@ -49,6 +49,6 @@ class TypedProductReducer(ReducerProtocol):
         return state.checkpoint()
 
     def restore(self, checkpoint: dict[str, Any]) -> Any:
-        state = self.analyzer.create_result_accumulator()
+        state = self.analyser.create_result_accumulator()
         state.restore(checkpoint)
         return state

@@ -484,8 +484,8 @@ def _build_moment_statistics_products(
 class MomentStatisticsResultAccumulator:
     """Merge independent trajectory batches and recompute nonlinear ratios."""
 
-    def __init__(self, analyzer: MomentStatisticsAnalyser) -> None:
-        self.analyzer = analyzer
+    def __init__(self, analyser: MomentStatisticsAnalyser) -> None:
+        self.analyser = analyser
         self.payloads: list[dict[str, Any]] = []
 
     def _consume_payload(self, payload: dict[str, Any]) -> None:
@@ -563,7 +563,7 @@ class MomentStatisticsResultAccumulator:
             np.asarray(item["time_blocks"]["occupation_product"]) * count
             for item, count in zip(self.payloads, counts, strict=True)
         ) / float(total)
-        return self.analyzer._summarize(
+        return self.analyser._summarize(
             per_trajectory=np.concatenate(
                 [
                     np.asarray(item["per_trajectory_occupation"])

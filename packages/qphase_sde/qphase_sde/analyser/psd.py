@@ -21,8 +21,8 @@ Behavior
 
 Public API
 ----------
-``PsdAnalyser`` : Power spectral density analyzer.
-``PsdAnalyserConfig`` : Configuration for PSD analyzer.
+``PsdAnalyser`` : Power spectral density analyser.
+``PsdAnalyserConfig`` : Configuration for PSD analyser.
 
 Notes
 -----
@@ -874,9 +874,9 @@ def _build_psd_products(
 class PsdResultAccumulator:
     """Merge PSD batch results without retaining trajectory spectra."""
 
-    def __init__(self, analyzer: PsdAnalyser) -> None:
-        self.analyzer = analyzer
-        config = cast(PsdAnalyserConfig, analyzer.config)
+    def __init__(self, analyser: PsdAnalyser) -> None:
+        self.analyser = analyser
+        config = cast(PsdAnalyserConfig, analyser.config)
         self.measurement_model = (
             "complex_field"
             if config.measurement.complex_field is not None
@@ -978,7 +978,7 @@ class PsdResultAccumulator:
             self._finalized_payload(),
             scan_size=None,
             label=label,
-            analyser=self.analyzer,
+            analyser=self.analyser,
         )
 
     def checkpoint(self) -> dict[str, Any]:

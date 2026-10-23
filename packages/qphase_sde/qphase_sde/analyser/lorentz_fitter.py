@@ -1,11 +1,11 @@
-"""qphase_sde: Lorentzian Fitter (cross-job analyzer)
+"""qphase_sde: Lorentzian Fitter (cross-job analyser)
 ---------------------------------------------------------
 Analyser plugin that operates on typed spectral scan inputs to perform
 cross-job Lorentzian fitting, PSD merging, and distribution collection.
 
 Public API
 ----------
-``LorentzFitter`` : Cross-job PSD analyzer / Lorentzian fitter.
+``LorentzFitter`` : Cross-job PSD analyser / Lorentzian fitter.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ __all__ = ["LorentzFitter", "LorentzFitterConfig"]
 
 
 class LorentzFitterConfig(PluginConfigBase):
-    """Configuration for the Lorentzian cross-job analyzer."""
+    """Configuration for the Lorentzian cross-job analyser."""
 
     scan_param: str = Field(..., description="Parameter to use as the scan axis")
     psd_key: str = Field("psd", description="Analysis key containing the PSD payload")
@@ -510,7 +510,7 @@ def _build_lorentz_products(
 
 
 class LorentzFitter(Analyser):
-    """Cross-job analyzer that fits Lorentzians to aggregated PSD data."""
+    """Cross-job analyser that fits Lorentzians to aggregated PSD data."""
 
     name: ClassVar[str] = "lorentz_fitter"
     description: ClassVar[str] = (

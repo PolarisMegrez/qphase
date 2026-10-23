@@ -853,8 +853,8 @@ def _build_coherence_carrier_products(
 class CoherenceCarrierResultAccumulator:
     """Merge trajectory batches before estimating the correlation ratio."""
 
-    def __init__(self, analyzer: CoherenceCarrierAnalyser) -> None:
-        self.analyzer = analyzer
+    def __init__(self, analyser: CoherenceCarrierAnalyser) -> None:
+        self.analyser = analyser
         self.payloads: list[dict[str, Any]] = []
 
     def _append_payload(self, payload: dict[str, Any]) -> None:
@@ -928,7 +928,7 @@ class CoherenceCarrierResultAccumulator:
         if not self.payloads:
             raise RuntimeError("cannot finalize an empty coherence-carrier accumulator")
         first = self.payloads[0]
-        return self.analyzer._summarize(
+        return self.analyser._summarize(
             per_trajectory=np.concatenate(
                 [
                     np.asarray(item["per_trajectory_correlation"])
