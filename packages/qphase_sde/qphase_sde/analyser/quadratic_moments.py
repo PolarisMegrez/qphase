@@ -27,7 +27,7 @@ from ..contracts.analyser import (
     AnalyserWorkspaceRequest,
 )
 from ..contracts.quantities import SDEMomentFamilySchema, SDEQuantity
-from ..math.observable import (
+from ..numerics.observable import (
     QuadraticObservableSpec,
     compile_quadratic_observables,
     evaluate_quadratic_observables,

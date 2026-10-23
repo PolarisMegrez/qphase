@@ -66,7 +66,7 @@ from ..contracts.quantities import (
     FrequencyOrientation,
     SDEQuantity,
 )
-from ..math.spectral import (
+from ..numerics.spectral import (
     detrend_series,
     fold_one_sided_powers,
     one_sided_frequency_axis,

@@ -114,7 +114,7 @@ def test_cupy_backend_construction_does_not_replace_global_allocator():
 
 def test_cupy_contract_noise_matches_numpy():
     """SDE noise contraction on cupy matches numpy reference."""
-    from qphase_sde.math import ops
+    from qphase_sde.numerics import ops
 
     np_be = NumpyBackend()
     cp_be = CuPyBackend()

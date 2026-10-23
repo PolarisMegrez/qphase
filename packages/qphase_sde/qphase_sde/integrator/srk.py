@@ -18,8 +18,8 @@ from pydantic import BaseModel, Field
 from qphase.backend.base import BackendBase
 
 from qphase_sde.integrator.base import Integrator, draw_standard_normal
-from qphase_sde.math import ops
 from qphase_sde.model import NoiseSpec, SDEModel
+from qphase_sde.numerics import ops
 
 
 class GenericSRKConfig(BaseModel):

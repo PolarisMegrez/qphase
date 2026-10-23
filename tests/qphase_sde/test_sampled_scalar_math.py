@@ -23,7 +23,7 @@ from qphase_sde.analyser.allan_statistics import (
     calculate_allan_variance,
     calculate_sampled_scalar_allan,
 )
-from qphase_sde.math.spectral import (
+from qphase_sde.numerics.spectral import (
     detrend_series,
     fold_one_sided_powers,
     one_sided_bin_count,

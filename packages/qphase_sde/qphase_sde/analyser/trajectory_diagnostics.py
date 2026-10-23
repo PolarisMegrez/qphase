@@ -43,7 +43,7 @@ from ..contracts.quantities import (
     FrequencyOrientation,
     orientation_sign,
 )
-from ..math.coordinates import (
+from ..numerics.coordinates import (
     CANONICAL_COORDINATE_LAYOUT,
     R_CONVENTION,
     canonical_r_coordinates,
@@ -89,7 +89,7 @@ _BLOCK_SPECTRUM_MIN_SAMPLES = 8
 _BLOCK_SPECTRUM_MIN_BLOCKS = 2
 
 # Canonical R = alpha alpha^dagger coordinates (real, length n_modes**2) are
-# shared with the observer subpackage via ``qphase_sde.math.coordinates``.
+# shared with the observer subpackage via ``qphase_sde.numerics.coordinates``.
 
 # Fewer blocks than this cannot support a meaningful covariance across blocks.
 _STATIONARITY_MIN_BLOCKS = 4

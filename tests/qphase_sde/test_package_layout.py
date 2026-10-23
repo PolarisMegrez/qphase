@@ -1,11 +1,11 @@
 """Import-boundary and layout tests for the qphase_sde 2.0 package skeleton.
 
 Freezes the standard resource-package root layout: the execution helpers live
-under ``runtime/``, the backend-neutral numerics under ``math/``, and the old
-root modules (``batch``/``buffers``/``scan``/``ops``/``coordinates``/``utils``)
-are gone without aliases. The manifest is a pure declaration: importing it must
-never pull the engine, concrete plugins or CuPy, and ``contracts`` must never
-depend on ``runtime``.
+under ``runtime/``, the backend-neutral numerics under ``numerics/``, and the
+old root modules (``batch``/``buffers``/``scan``/``ops``/``coordinates``/
+``utils``) plus the retired ``math/`` package are gone without aliases. The
+manifest is a pure declaration: importing it must never pull the engine,
+concrete plugins or CuPy, and ``contracts`` must never depend on ``runtime``.
 """
 
 import ast
@@ -25,8 +25,17 @@ SDE_ROOT = SDE_PACKAGE_ROOT / "qphase_sde"
 CONTRACTS_DIR = SDE_ROOT / "contracts"
 
 REMOVED_ROOT_MODULES = ("batch", "buffers", "scan", "ops", "coordinates", "utils")
+REMOVED_PACKAGES = ("math",)
 RUNTIME_MODULES = ("buffers", "scan")
-MATH_MODULES = ("ops", "coordinates")
+NUMERICS_MODULES = (
+    "band_limited",
+    "coordinates",
+    "finite_delay",
+    "observable",
+    "ops",
+    "short_delay",
+    "spectral",
+)
 
 #: Entry-point namespaces reserved by the core registry, not plugin classes.
 _RESERVED_NAMESPACES = frozenset({"engine", "resource"})
@@ -38,14 +47,18 @@ def test_old_root_modules_are_gone():
         assert importlib.util.find_spec(f"qphase_sde.{name}") is None, (
             f"qphase_sde.{name} must be deleted, not aliased"
         )
+    for name in REMOVED_PACKAGES:
+        assert importlib.util.find_spec(f"qphase_sde.{name}") is None, (
+            f"qphase_sde.{name}/ must be merged into numerics/, not aliased"
+        )
 
 
-def test_runtime_and_math_modules_import_cleanly():
+def test_runtime_and_numerics_modules_import_cleanly():
     """The migrated modules import from their canonical 2.0 locations."""
     for name in RUNTIME_MODULES:
         importlib.import_module(f"qphase_sde.runtime.{name}")
-    for name in MATH_MODULES:
-        importlib.import_module(f"qphase_sde.math.{name}")
+    for name in NUMERICS_MODULES:
+        importlib.import_module(f"qphase_sde.numerics.{name}")
 
 
 def test_manifest_import_is_declaration_only():

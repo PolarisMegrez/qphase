@@ -8,8 +8,8 @@ from qphase.backend.base import BackendBase
 from qphase.core.protocols import PluginConfigBase
 
 from qphase_sde.integrator.base import ChunkStepResult, Integrator
-from qphase_sde.math import ops
 from qphase_sde.model import SDEModel
+from qphase_sde.numerics import ops
 
 __all__ = ["CayleyMaruyama", "CayleyMaruyamaConfig"]
 

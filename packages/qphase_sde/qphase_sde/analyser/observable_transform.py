@@ -3,7 +3,7 @@
 Typed ``observable_transform`` analyser: maps complex field trajectories to
 real sampled-observable time series ``y_o(t) = Re[alpha^dagger Q_o alpha] -
 c_o`` using the shared Hermitian quadratic mathematics of
-``qphase_sde.math.observable`` (the same evaluator ``quadratic_moments``
+``qphase_sde.numerics.observable`` (the same evaluator ``quadratic_moments``
 uses). The output closes the open ``SAMPLED_OBSERVABLE_PRODUCT`` template:
 it mirrors the source scan/trajectory/time axes and ``valid_length`` while
 the channel axis indexes the declared observable channels.
@@ -45,7 +45,7 @@ from ..contracts.analyser import (
     AnalyserWorkspaceRequest,
 )
 from ..contracts.quantities import SAMPLED_OBSERVABLE_PRODUCT, SDEQuantity
-from ..math.observable import (
+from ..numerics.observable import (
     QuadraticObservableSpec,
     compile_quadratic_observables,
     complex_matrix_json,
