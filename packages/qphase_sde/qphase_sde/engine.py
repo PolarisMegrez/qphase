@@ -481,6 +481,7 @@ class Engine(EngineBase):
         task_profiles="qphase_sde.contracts.tasks:SDE_TASK_PROFILES",
         profile_selector="qphase_sde.contracts.tasks:select_sde_task_profile",
         product_graph_builder="qphase_sde.graph:compile_product_graph",
+        analyser_config_expander="qphase_sde.analyser_config:expand_analyser_config",
     )
 
     def __init__(
