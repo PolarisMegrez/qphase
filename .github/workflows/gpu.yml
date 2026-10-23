@@ -1,22 +1,19 @@
 # GPU lane — runs the gpu-marked tests on a self-hosted CUDA runner.
 #
-# ⚠️  KEEP THIS DISPATCH-ONLY UNTIL THE RUNNER EXISTS.
-#     The CPU workflows (ci.yml) install the dev-cpu group on GitHub-hosted
-#     runners, which have no GPU, so every gpu-marked case skips there.  This
-#     workflow instead targets `[self-hosted, gpu]`.  While no such runner is
-#     registered, a push-triggered job does not fail fast: GitHub queues it
-#     looking for a matching runner and only gives up after roughly 24 hours.
-#     Once the runner is registered and a manual dispatch run passes, add the
-#     push trigger back:
+# The CPU workflows (ci.yml) install the dev-cpu group on GitHub-hosted
+# runners, which have no GPU, so every gpu-marked case skips there.  This
+# workflow instead targets `[self-hosted, gpu]`.
 #
-#         push:
-#           branches: ["main", "stable"]
-#
-#     to the `on:` block below.
+# ⚠️  If the runner is ever decommissioned, drop the push trigger below and
+#     go back to dispatch-only: with no matching runner registered, a
+#     push-triggered job does not fail fast — GitHub queues it for roughly
+#     24 hours, which pollutes the check status of every push.
 name: GPU
 
 on:
   workflow_dispatch:
+  push:
+    branches: ["main", "stable"]
 
 jobs:
   gpu:
