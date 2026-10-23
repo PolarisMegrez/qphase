@@ -1,7 +1,7 @@
 """Golden-value baselines for the standalone PSD peak analyser (Wave 5B equivalence).
 
 Migration row: PSD inline peak finding -> ``analyser.peaks`` +
-``peak_finder.scipy``. The spectrum remains produced by ``PsdAnalyzer`` and
+``peak_finder.scipy``. The spectrum remains produced by ``PsdAnalyser`` and
 these tests pin the numerical output of the standalone finder on that spectrum.
 Tolerance policy: peak ``indices`` are exact integers. ``frequencies`` and
 ``values`` involve pocketfft + savgol (deterministic per environment, but
@@ -15,8 +15,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
-from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
-from qphase_sde.analyser.psd import PsdAnalyzer
+from qphase_sde.analyser.peaks import PeaksAnalyser, PeaksAnalyserConfig
+from qphase_sde.analyser.psd import PsdAnalyser
 from qphase_sde.peak_finder import ScipyPeakFinder, ScipyPeakFinderConfig
 from qphase_sde.result import trajectory_product
 from qphase_sde.state import TrajectorySet
@@ -43,7 +43,7 @@ def _tone_fixture() -> TrajectorySet:
 
 
 def _spectrum_product():
-    analyzer = PsdAnalyzer(
+    analyzer = PsdAnalyser(
         measurement={
             "complex_field": {"channels": [0, 1], "representation": "complex"}
         }
@@ -334,8 +334,8 @@ def test_psd_find_peaks_true_payload_baseline():
 
 def test_standalone_peak_analyser_uses_baseline_spectrum():
     spectrum = _spectrum_product()
-    analyzer = PeaksAnalyzer(
-        PeaksAnalyzerConfig(
+    analyzer = PeaksAnalyser(
+        PeaksAnalyserConfig(
             scan_param="unused",
         ),
         subplugins={

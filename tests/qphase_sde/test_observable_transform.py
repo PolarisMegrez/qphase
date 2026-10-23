@@ -20,12 +20,12 @@ from qphase.data import (
     VariableSchema,
 )
 from qphase_sde.analyser.observable_transform import (
-    ObservableTransformAnalyzer,
+    ObservableTransformAnalyser,
     ObservableTransformConfig,
     validate_mode_indices,
 )
 from qphase_sde.analyser.quadratic_moments import (
-    QuadraticMomentAnalyzer,
+    QuadraticMomentAnalyser,
     QuadraticMomentConfig,
 )
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
@@ -68,7 +68,7 @@ def _json_matrix(entries):
 
 
 def _execute(config_kwargs, product, *, label="soft_observable"):
-    analyzer = ObservableTransformAnalyzer(ObservableTransformConfig(**config_kwargs))
+    analyzer = ObservableTransformAnalyser(ObservableTransformConfig(**config_kwargs))
     outputs = analyzer.execute(
         {"signal": product},
         backend=BACKEND,
@@ -127,7 +127,7 @@ def test_transform_matches_quadratic_moments():
         {"units": "quadrature", "observables": observables},
         trajectory_product(trajectory, scan_size=None, n_traj_per_point=None),
     )
-    moments_product = QuadraticMomentAnalyzer(
+    moments_product = QuadraticMomentAnalyser(
         QuadraticMomentConfig(
             observables=observables, max_order=2, time_blocks=2, min_block_samples=2
         )
@@ -701,7 +701,7 @@ def test_transform_compile_gates():
 
 
 def test_transform_graph_contract():
-    analyzer = ObservableTransformAnalyzer(
+    analyzer = ObservableTransformAnalyser(
         ObservableTransformConfig(
             units="occupation", observables={"n0": {"matrix": [[1.0]]}}
         )
@@ -740,7 +740,7 @@ def _workspace_request(n_traj, backend="numpy"):
 
 
 def test_transform_workspace_scales_with_batch_and_retains_nothing():
-    analyzer = ObservableTransformAnalyzer(
+    analyzer = ObservableTransformAnalyser(
         ObservableTransformConfig(
             units="occupation",
             modes=[0, 1],
@@ -882,7 +882,7 @@ def test_transform_cupy_matches_numpy():
         },
     }
     _, host_out = _execute(config, host_product)
-    analyzer = ObservableTransformAnalyzer(ObservableTransformConfig(**config))
+    analyzer = ObservableTransformAnalyser(ObservableTransformConfig(**config))
     device_out = analyzer.execute(
         {"signal": device_product}, backend=CuPyBackend(), label="soft_observable"
     )["soft_observable"]

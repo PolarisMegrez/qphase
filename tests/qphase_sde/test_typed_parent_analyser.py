@@ -23,27 +23,27 @@ from qphase.data import (
     VariableSchema,
 )
 from qphase_sde.analyser.band_limited_carrier import (
-    BandLimitedCarrierAnalyzer,
+    BandLimitedCarrierAnalyser,
     BandLimitedCarrierConfig,
 )
 from qphase_sde.analyser.coherence_frequency import (
-    CoherenceFrequencyAnalyzer,
-    CoherenceFrequencyAnalyzerConfig,
+    CoherenceFrequencyAnalyser,
+    CoherenceFrequencyAnalyserConfig,
     _materialize_estimates,
 )
 from qphase_sde.analyser.finite_delay_carrier import (
-    FiniteDelayCarrierAnalyzer,
+    FiniteDelayCarrierAnalyser,
     FiniteDelayCarrierConfig,
 )
 from qphase_sde.analyser.lorentz_fitter import LorentzFitter, LorentzFitterConfig
 from qphase_sde.analyser.peak_paths import (
-    PeakPathsAnalyzer,
-    PeakPathsAnalyzerConfig,
+    PeakPathsAnalyser,
+    PeakPathsAnalyserConfig,
 )
-from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
-from qphase_sde.analyser.psd import PsdAnalyzer, _build_psd_products
+from qphase_sde.analyser.peaks import PeaksAnalyser, PeaksAnalyserConfig
+from qphase_sde.analyser.psd import PsdAnalyser, _build_psd_products
 from qphase_sde.analyser.spectral_ridge import (
-    SpectralRidgeAnalyzer,
+    SpectralRidgeAnalyser,
     SpectralRidgeConfig,
 )
 from qphase_sde.coherence_frequency import BandLimitedCoherenceFrequency
@@ -77,7 +77,7 @@ def _spectrum_bundle() -> SDEDataBundle:
                 "uncertainty": {"n_independent": 4},
             }
         )
-    analyzer = PsdAnalyzer(
+    analyzer = PsdAnalyser(
         measurement={"complex_field": {"channels": [0], "representation": "complex"}}
     )
     products = _build_psd_products(
@@ -94,8 +94,8 @@ def _spectrum_bundle() -> SDEDataBundle:
 
 def test_coherence_frequency_parent_publishes_typed_product(tmp_path):
     source = _spectrum_bundle()
-    analyzer = CoherenceFrequencyAnalyzer(
-        CoherenceFrequencyAnalyzerConfig(
+    analyzer = CoherenceFrequencyAnalyser(
+        CoherenceFrequencyAnalyserConfig(
             scan_param="epsilon",
             input_key="psd",
             estimator={
@@ -152,8 +152,8 @@ def test_peak_paths_parent_consumes_peak_product():
     source = _spectrum_bundle()
     from qphase_sde.peak_finder import ScipyPeakFinder
 
-    peak_analyzer = PeaksAnalyzer(
-        PeaksAnalyzerConfig(scan_param="epsilon"),
+    peak_analyzer = PeaksAnalyser(
+        PeaksAnalyserConfig(scan_param="epsilon"),
         subplugins={"finder": ScipyPeakFinder()},
     )
     peak_products = peak_analyzer.execute(
@@ -168,8 +168,8 @@ def test_peak_paths_parent_consumes_peak_product():
         scan_axes=source.axes,
         scan_shape=source.shape,
     )
-    analyzer = PeakPathsAnalyzer(
-        PeakPathsAnalyzerConfig(scan_param="epsilon"),
+    analyzer = PeakPathsAnalyser(
+        PeakPathsAnalyserConfig(scan_param="epsilon"),
         subplugins={"tracker": RidgePeakTracker()},
     )
 
@@ -196,12 +196,12 @@ def test_peak_paths_parent_consumes_peak_product():
 
 def test_analyze_graph_connects_peak_candidates_to_paths():
     source = _spectrum_bundle()
-    peaks = PeaksAnalyzer(
-        PeaksAnalyzerConfig(scan_param="epsilon"),
+    peaks = PeaksAnalyser(
+        PeaksAnalyserConfig(scan_param="epsilon"),
         subplugins={"finder": ScipyPeakFinder()},
     )
-    paths = PeakPathsAnalyzer(
-        PeakPathsAnalyzerConfig(scan_param="epsilon"),
+    paths = PeakPathsAnalyser(
+        PeakPathsAnalyserConfig(scan_param="epsilon"),
         subplugins={"tracker": RidgePeakTracker()},
     )
 
@@ -234,8 +234,8 @@ def test_coherence_frequency_parent_resolves_child_through_registry():
         "coherence_frequency", "registry_test", RegistryChild, overwrite=True
     )
     source = _spectrum_bundle()
-    analyzer = CoherenceFrequencyAnalyzer(
-        CoherenceFrequencyAnalyzerConfig(
+    analyzer = CoherenceFrequencyAnalyser(
+        CoherenceFrequencyAnalyserConfig(
             scan_param="epsilon",
             input_key="psd",
             estimator={"registry_test": {"freq_min": -2.0, "freq_max": 0.2}},
@@ -286,8 +286,8 @@ def test_coherence_frequency_plugin_graph_injects_selected_estimator():
 
 def test_coherence_frequency_preserves_input_mode_identity():
     source = _spectrum_bundle()
-    analyzer = CoherenceFrequencyAnalyzer(
-        CoherenceFrequencyAnalyzerConfig(
+    analyzer = CoherenceFrequencyAnalyser(
+        CoherenceFrequencyAnalyserConfig(
             scan_param="epsilon",
             input_key="psd",
             estimator={"band_limited": {}},
@@ -322,11 +322,11 @@ def test_cross_result_analysers_execute_from_typed_psd():
     )
 
     analysers = [
-        SpectralRidgeAnalyzer(SpectralRidgeConfig(scan_param="epsilon", readouts=[0])),
-        BandLimitedCarrierAnalyzer(
+        SpectralRidgeAnalyser(SpectralRidgeConfig(scan_param="epsilon", readouts=[0])),
+        BandLimitedCarrierAnalyser(
             BandLimitedCarrierConfig(scan_param="epsilon", readout=0)
         ),
-        FiniteDelayCarrierAnalyzer(
+        FiniteDelayCarrierAnalyser(
             FiniteDelayCarrierConfig(scan_param="epsilon", readout=0)
         ),
         LorentzFitter(LorentzFitterConfig(scan_param="epsilon", mode=0)),

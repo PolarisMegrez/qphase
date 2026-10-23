@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.quadratic_moments import (
-    QuadraticMomentAnalyzer,
+    QuadraticMomentAnalyser,
     QuadraticMomentConfig,
 )
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
@@ -13,7 +13,7 @@ from .conftest import product_payload
 
 
 def _analyzer(**kwargs):
-    return QuadraticMomentAnalyzer(QuadraticMomentConfig(**kwargs))
+    return QuadraticMomentAnalyser(QuadraticMomentConfig(**kwargs))
 
 
 def _payload(analyzer, trajectory: TrajectorySet):

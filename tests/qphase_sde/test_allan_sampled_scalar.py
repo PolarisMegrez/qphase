@@ -26,7 +26,7 @@ from qphase.data import (
 from qphase.data.graph import requirement_matches
 from qphase_sde.analyser.allan_variance import (
     AllanResultAccumulator,
-    AllanVarianceAnalyzer,
+    AllanVarianceAnalyser,
     AllanVarianceConfig,
 )
 from qphase_sde.contracts.quantities import SDEQuantity
@@ -145,8 +145,8 @@ def _field_product(field: np.ndarray):
     )
 
 
-def _scalar_analyzer(channels=("n0",)) -> AllanVarianceAnalyzer:
-    return AllanVarianceAnalyzer(
+def _scalar_analyzer(channels=("n0",)) -> AllanVarianceAnalyser:
+    return AllanVarianceAnalyser(
         measurement={
             "sampled_scalar": {"channels": list(channels), "min_nonoverlap_pairs": 4}
         },
@@ -155,8 +155,8 @@ def _scalar_analyzer(channels=("n0",)) -> AllanVarianceAnalyzer:
     )
 
 
-def _phase_analyzer() -> AllanVarianceAnalyzer:
-    return AllanVarianceAnalyzer(
+def _phase_analyzer() -> AllanVarianceAnalyser:
+    return AllanVarianceAnalyser(
         measurement={
             "phase_frequency": {"channels": [0], "min_independent_windows": 4}
         },
@@ -165,7 +165,7 @@ def _phase_analyzer() -> AllanVarianceAnalyzer:
     )
 
 
-def _execute(analyzer: AllanVarianceAnalyzer, product: TimeSeriesDataset):
+def _execute(analyzer: AllanVarianceAnalyser, product: TimeSeriesDataset):
     return analyzer.execute({"signal": product}, backend=BACKEND, label="allan")[
         "allan"
     ]

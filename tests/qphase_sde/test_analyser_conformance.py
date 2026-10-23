@@ -100,9 +100,9 @@ def test_registered_analyser_satisfies_contract(name):
 
 
 def test_psd_does_not_declare_inline_peaks():
-    from qphase_sde.analyser.psd import PsdAnalyzer
+    from qphase_sde.analyser.psd import PsdAnalyser
 
-    default = PsdAnalyzer(
+    default = PsdAnalyser(
         measurement={"complex_field": {"channels": [0], "representation": "complex"}}
     )
     assert [spec.name for spec in default.output_specs(label="probe")] == ["probe"]
@@ -139,9 +139,9 @@ def test_all_production_reducers_declare_retained_workspace():
 
 
 def test_analyser_base_does_not_require_legacy_analyze_api():
-    from qphase_sde.analyser.base import Analyzer
+    from qphase_sde.analyser.base import Analyser
 
-    class TypedOnlyAnalyzer(Analyzer):
+    class TypedOnlyAnalyser(Analyser):
         def execute(
             self,
             inputs,
@@ -154,5 +154,5 @@ def test_analyser_base_does_not_require_legacy_analyze_api():
             del backend, label, metadata, context
             return inputs
 
-    analyser = TypedOnlyAnalyzer()
+    analyser = TypedOnlyAnalyser()
     assert not hasattr(analyser, "analyze")

@@ -30,14 +30,14 @@ from ..contracts.analyser import (
 )
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
-    Analyzer,
+    Analyser,
     map_trajectory_product,
     select_mode_columns,
     trajectory_arrays,
     trajectory_requirement,
 )
 
-__all__ = ["CoherenceMatrixAnalyzer", "CoherenceMatrixConfig"]
+__all__ = ["CoherenceMatrixAnalyser", "CoherenceMatrixConfig"]
 
 
 class CoherenceMatrixConfig(PluginConfigBase):
@@ -83,7 +83,7 @@ class CoherenceMatrixConfig(PluginConfigBase):
         return self
 
 
-class CoherenceMatrixAnalyzer(Analyzer):
+class CoherenceMatrixAnalyser(Analyser):
     """Estimate ``R_ij = <alpha_i alpha_j*>`` without retaining trajectories."""
 
     name: ClassVar[str] = "coherence_matrix"
@@ -504,7 +504,7 @@ def _build_coherence_matrix_products(
 class CoherenceMatrixResultAccumulator:
     """Merge independent trajectory batches and recompute nonlinear metrics."""
 
-    def __init__(self, analyzer: CoherenceMatrixAnalyzer) -> None:
+    def __init__(self, analyzer: CoherenceMatrixAnalyser) -> None:
         self.analyzer = analyzer
         self.payloads: list[dict[str, Any]] = []
 

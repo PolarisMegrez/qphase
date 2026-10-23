@@ -31,16 +31,16 @@ from ..contracts.quantities import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
 )
-from .base import Analyzer, check_execution_cancelled, report_execution_progress
+from .base import Analyser, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     orientation_metadata,
     resolve_frequency_orientation,
 )
 
-__all__ = ["CoherenceFrequencyAnalyzer", "CoherenceFrequencyAnalyzerConfig"]
+__all__ = ["CoherenceFrequencyAnalyser", "CoherenceFrequencyAnalyserConfig"]
 
 
-class CoherenceFrequencyAnalyzerConfig(PluginConfigBase):
+class CoherenceFrequencyAnalyserConfig(PluginConfigBase):
     """Configuration for the typed coherence-frequency parent."""
 
     model_config = ConfigDict(extra="forbid")
@@ -62,7 +62,7 @@ class CoherenceFrequencyAnalyzerConfig(PluginConfigBase):
 
 
 def _make_child(
-    config: CoherenceFrequencyAnalyzerConfig,
+    config: CoherenceFrequencyAnalyserConfig,
     injected: CoherenceFrequencyProtocol | None,
 ) -> CoherenceFrequencyProtocol:
     del config
@@ -93,7 +93,7 @@ def _spectral_channel(array: np.ndarray, channel: int) -> np.ndarray:
 
 def _estimate_input(
     product: Dataset,
-    config: CoherenceFrequencyAnalyzerConfig,
+    config: CoherenceFrequencyAnalyserConfig,
     estimator_name: str | None = None,
 ) -> Mapping[str, Any]:
     child = estimator_name or config.estimator_name
@@ -198,13 +198,13 @@ def _materialize_estimates(
     )
 
 
-class CoherenceFrequencyAnalyzer(Analyzer):
+class CoherenceFrequencyAnalyser(Analyser):
     """Run one coherence-frequency child against a typed input product."""
 
     name: ClassVar[str] = "coherence_frequency"
     description: ClassVar[str] = "Typed coherence-frequency parent analyser"
-    config_schema: ClassVar[type[CoherenceFrequencyAnalyzerConfig]] = (
-        CoherenceFrequencyAnalyzerConfig
+    config_schema: ClassVar[type[CoherenceFrequencyAnalyserConfig]] = (
+        CoherenceFrequencyAnalyserConfig
     )
     preserves_input_scan: ClassVar[bool] = True
     manifest: ClassVar[PluginManifest] = PluginManifest(
@@ -220,7 +220,7 @@ class CoherenceFrequencyAnalyzer(Analyzer):
 
     def __init__(
         self,
-        config: CoherenceFrequencyAnalyzerConfig | None = None,
+        config: CoherenceFrequencyAnalyserConfig | None = None,
         *,
         subplugins: Mapping[str, Any] | None = None,
         **kwargs: Any,
@@ -232,11 +232,11 @@ class CoherenceFrequencyAnalyzer(Analyzer):
         """Return the resolved child name, including graph-injected children."""
         if self._estimator is not None:
             return str(self._estimator.name)
-        config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
+        config = cast(CoherenceFrequencyAnalyserConfig, self.config)
         return config.estimator_name
 
     def input_requirements(self) -> list[ProductRequirement]:
-        config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
+        config = cast(CoherenceFrequencyAnalyserConfig, self.config)
         estimator_name = self._selected_estimator_name()
         fields = (
             ["per_trajectory_correlation", "dt"]
@@ -264,7 +264,7 @@ class CoherenceFrequencyAnalyzer(Analyzer):
     ) -> Mapping[str, Dataset]:
         """Execute directly on typed input products."""
         del backend, metadata
-        config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
+        config = cast(CoherenceFrequencyAnalyserConfig, self.config)
         source = inputs[config.input_key]
         estimates = self._compute_estimates(source, context=context)
         orientation = resolve_frequency_orientation(source.attributes)
@@ -295,7 +295,7 @@ class CoherenceFrequencyAnalyzer(Analyzer):
         *,
         context: Any | None = None,
     ) -> list[CoherenceFrequencyEstimate]:
-        config = cast(CoherenceFrequencyAnalyzerConfig, self.config)
+        config = cast(CoherenceFrequencyAnalyserConfig, self.config)
         scan_axis = (
             product.axis("scan")
             if "scan" in {axis.name for axis in product.axes}

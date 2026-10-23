@@ -1,6 +1,6 @@
 """Golden-value baselines for the ``dist`` analyser (Wave 5B equivalence).
 
-The current ``DistAnalyzer`` numeric outputs are not pinned by any existing
+The current ``DistAnalyser`` numeric outputs are not pinned by any existing
 test (only the CuPy-vs-NumPy cross-backend equality is, and it requires a
 GPU). These tests capture the present CPU NumPy outputs on fixed-seed
 fixtures so the Wave 5B typed-producer rewrite can be checked for exact
@@ -15,14 +15,14 @@ from __future__ import annotations
 
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
-from qphase_sde.analyser.dist import DistAnalyzer, DistAnalyzerConfig
+from qphase_sde.analyser.dist import DistAnalyser, DistAnalyserConfig
 from qphase_sde.result import trajectory_product
 from qphase_sde.state import TrajectorySet
 
 RTOL = 1e-10
 
 
-def _execute(analyzer: DistAnalyzer, trajectory: TrajectorySet) -> dict:
+def _execute(analyzer: DistAnalyser, trajectory: TrajectorySet) -> dict:
     product = analyzer.execute(
         {
             "trajectories": trajectory_product(
@@ -76,7 +76,7 @@ def _complex_fixture() -> TrajectorySet:
 
 def test_dist_2d_complex_histogram_baseline():
     out = _execute(
-        DistAnalyzer(config=DistAnalyzerConfig(modes=[0, 1], bins=8, density=True)),
+        DistAnalyser(config=DistAnalyserConfig(modes=[0, 1], bins=8, density=True)),
         _complex_fixture(),
     )
 
@@ -337,7 +337,7 @@ def test_dist_1d_real_histogram_baseline():
     )
 
     out = _execute(
-        DistAnalyzer(config=DistAnalyzerConfig(modes=[0], bins=6, density=False)),
+        DistAnalyser(config=DistAnalyserConfig(modes=[0], bins=6, density=False)),
         ts,
     )
 
@@ -366,8 +366,8 @@ def test_dist_1d_real_histogram_baseline():
 
 def test_dist_explicit_range_baseline():
     out = _execute(
-        DistAnalyzer(
-            config=DistAnalyzerConfig(
+        DistAnalyser(
+            config=DistAnalyserConfig(
                 modes=[0, 1], bins=6, density=True, range=[[-1.5, 1.5], [-1.0, 2.0]]
             )
         ),

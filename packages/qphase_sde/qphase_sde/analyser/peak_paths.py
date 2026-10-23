@@ -23,12 +23,12 @@ from qphase.data import (
 from ..contracts.analyser import AnalyserExecutionCapabilities, WorkEstimate
 from ..contracts.peaks import PEAK_PATH_PRODUCT, PeakPathResult
 from ..peak_tracker import materialize_path_product
-from .base import Analyzer, requirement_source
+from .base import Analyser, requirement_source
 
-__all__ = ["PeakPathsAnalyzer", "PeakPathsAnalyzerConfig"]
+__all__ = ["PeakPathsAnalyser", "PeakPathsAnalyserConfig"]
 
 
-class PeakPathsAnalyzerConfig(PluginConfigBase):
+class PeakPathsAnalyserConfig(PluginConfigBase):
     """Configuration for the typed peak-path parent analyser."""
 
     model_config = ConfigDict(extra="forbid")
@@ -41,7 +41,7 @@ class PeakPathsAnalyzerConfig(PluginConfigBase):
     )
 
 
-def _make_tracker(config: PeakPathsAnalyzerConfig, injected: Any | None) -> Any:
+def _make_tracker(config: PeakPathsAnalyserConfig, injected: Any | None) -> Any:
     if injected is not None:
         return injected
     raise RuntimeError(
@@ -50,12 +50,12 @@ def _make_tracker(config: PeakPathsAnalyzerConfig, injected: Any | None) -> Any:
     )
 
 
-class PeakPathsAnalyzer(Analyzer):
+class PeakPathsAnalyser(Analyser):
     """Link typed peak candidates into scan-axis paths."""
 
     name: ClassVar[str] = "peak_paths"
     description: ClassVar[str] = "Typed scan-axis peak-path analyser"
-    config_schema: ClassVar[type[PeakPathsAnalyzerConfig]] = PeakPathsAnalyzerConfig
+    config_schema: ClassVar[type[PeakPathsAnalyserConfig]] = PeakPathsAnalyserConfig
     preserves_input_scan: ClassVar[bool] = False
     manifest: ClassVar[PluginManifest] = PluginManifest(
         subplugins={
@@ -70,7 +70,7 @@ class PeakPathsAnalyzer(Analyzer):
 
     def __init__(
         self,
-        config: PeakPathsAnalyzerConfig | None = None,
+        config: PeakPathsAnalyserConfig | None = None,
         *,
         subplugins: Mapping[str, Any] | None = None,
         **kwargs: Any,
@@ -79,7 +79,7 @@ class PeakPathsAnalyzer(Analyzer):
         self._tracker = None if subplugins is None else subplugins.get("tracker")
 
     def input_requirements(self) -> list[ProductRequirement]:
-        config = cast(PeakPathsAnalyzerConfig, self.config)
+        config = cast(PeakPathsAnalyserConfig, self.config)
         return [
             ProductRequirement(
                 name=config.candidates_key,
@@ -106,7 +106,7 @@ class PeakPathsAnalyzer(Analyzer):
     ) -> Mapping[str, Dataset]:
         """Execute directly on a typed candidate product mapping."""
         del backend
-        config = cast(PeakPathsAnalyzerConfig, self.config)
+        config = cast(PeakPathsAnalyserConfig, self.config)
         candidates = inputs.get(config.candidates_key)
         if candidates is None:
             raise ValueError(
@@ -129,7 +129,7 @@ class PeakPathsAnalyzer(Analyzer):
     def _compute_paths(
         self, candidates: Dataset
     ) -> tuple[list[PeakPathResult], int, int]:
-        config = cast(PeakPathsAnalyzerConfig, self.config)
+        config = cast(PeakPathsAnalyserConfig, self.config)
         required = (
             "candidate_offsets",
             "group_scan_index",

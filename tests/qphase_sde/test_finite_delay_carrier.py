@@ -2,11 +2,11 @@ import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.finite_delay_carrier import (
-    FiniteDelayCarrierAnalyzer,
+    FiniteDelayCarrierAnalyser,
     FiniteDelayCarrierConfig,
     finite_delay_carrier_from_spectrum,
 )
-from qphase_sde.analyser.psd import PsdAnalyzer, _build_psd_products
+from qphase_sde.analyser.psd import PsdAnalyser, _build_psd_products
 from qphase_sde.products import add_scan_parameter_coordinates
 
 
@@ -41,14 +41,14 @@ def test_finite_delay_carrier_analyzer_reports_scan_rows():
                 "orientation": "phase_decreasing",
             }
         )
-    analyzer = FiniteDelayCarrierAnalyzer(
+    analyzer = FiniteDelayCarrierAnalyser(
         FiniteDelayCarrierConfig(
             scan_param="epsilon",
             detector_rates=[0.1, 1.0],
         )
     )
 
-    psd_analyzer = PsdAnalyzer(
+    psd_analyzer = PsdAnalyser(
         measurement={"complex_field": {"channels": [0], "representation": "complex"}}
     )
     products = _build_psd_products(
@@ -80,7 +80,7 @@ def test_finite_delay_carrier_analyzer_evaluates_multiple_readouts():
             np.exp(-0.5 * ((axis - 0.7) / 0.08) ** 2),
         ]
     )
-    psd_analyzer = PsdAnalyzer(
+    psd_analyzer = PsdAnalyser(
         measurement={"complex_field": {"channels": [0, 1], "representation": "complex"}}
     )
     products = _build_psd_products(
@@ -94,7 +94,7 @@ def test_finite_delay_carrier_analyzer_evaluates_multiple_readouts():
         label="psd",
         analyser=psd_analyzer,
     )
-    analyzer = FiniteDelayCarrierAnalyzer(
+    analyzer = FiniteDelayCarrierAnalyser(
         FiniteDelayCarrierConfig(
             scan_param="epsilon",
             readouts=[0, 1],
@@ -140,7 +140,7 @@ def _typed_psd_product(scan_values: list[float]):
                 "uncertainty": {"n_independent": 4},
             }
         )
-    analyzer = PsdAnalyzer(
+    analyzer = PsdAnalyser(
         measurement={"complex_field": {"channels": [0], "representation": "complex"}}
     )
     products = _build_psd_products(
@@ -200,7 +200,7 @@ def test_finite_delay_carrier_execute_aborts_mid_loop_on_cancellation():
     from types import SimpleNamespace
 
     psd = _typed_psd_product([0.0, 1.0, 2.0, 3.0, 4.0])
-    analyzer = FiniteDelayCarrierAnalyzer(
+    analyzer = FiniteDelayCarrierAnalyser(
         FiniteDelayCarrierConfig(scan_param="epsilon", readout=0)
     )
     context = SimpleNamespace(
@@ -221,7 +221,7 @@ def test_finite_delay_carrier_execute_reports_spectrum_progress():
     from types import SimpleNamespace
 
     psd = _typed_psd_product([0.0, 1.0, 2.0])
-    analyzer = FiniteDelayCarrierAnalyzer(
+    analyzer = FiniteDelayCarrierAnalyser(
         FiniteDelayCarrierConfig(scan_param="epsilon", readout=0)
     )
     progress = _FakeProgress()

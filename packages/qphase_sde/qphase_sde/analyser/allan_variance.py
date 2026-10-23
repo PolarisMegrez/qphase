@@ -44,7 +44,7 @@ from .allan_statistics import (
     summarize_trajectories,
 )
 from .base import (
-    Analyzer,
+    Analyser,
     map_trajectory_product,
 )
 from .frequency_orientation import (
@@ -59,7 +59,7 @@ __all__ = [
     "AllanMeasurement",
     "AllanPhaseFrequencyMeasurement",
     "AllanSampledScalarMeasurement",
-    "AllanVarianceAnalyzer",
+    "AllanVarianceAnalyser",
     "AllanVarianceConfig",
 ]
 
@@ -230,7 +230,7 @@ _SCALAR_ALLAN_TABLE_LEAVES = (
 )
 
 
-class AllanVarianceAnalyzer(Analyzer):
+class AllanVarianceAnalyser(Analyser):
     """Compute compact Allan statistics without retaining complex trajectories."""
 
     name: ClassVar[str] = "allan_variance"

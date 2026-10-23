@@ -17,9 +17,9 @@ from qphase.core.scan import ScanSpec
 from qphase.data import ArtifactCorruptError, BundleDescriptor, DataKind
 from qphase.data.resolver import default_artifact_resolver
 from qphase.data.store import ArtifactManifest
-from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
+from qphase_sde.analyser.allan_variance import AllanVarianceAnalyser
 from qphase_sde.analyser.lorentz_fitter import LorentzFitter
-from qphase_sde.analyser.psd import PsdAnalyzer
+from qphase_sde.analyser.psd import PsdAnalyser
 from qphase_sde.contracts.bundle import (
     SDE_BUNDLE_ADAPTER_ID,
     SDE_BUNDLE_TYPE_ID,
@@ -85,7 +85,7 @@ def _scan_bundle():
     source = engine.run(
         context=SimpleNamespace(parameter_grid=_grid(), progress=None)
     )
-    psd = PsdAnalyzer(
+    psd = PsdAnalyser(
         measurement={"complex_field": {"channels": [0], "representation": "complex"}}
     ).execute(
         {"signal": source.products["trajectories"]},
@@ -245,7 +245,7 @@ def test_restored_scan_bundle_feeds_downstream_analysers(tmp_path):
     # Map mode: per-point views feed trajectory-level analysers (Allan).
     views = list(iter_dataset_views(restored))
     assert len(views) == 2
-    allan = AllanVarianceAnalyzer(
+    allan = AllanVarianceAnalyser(
         measurement={
             "phase_frequency": {"channels": [0], "min_independent_windows": 1}
         },

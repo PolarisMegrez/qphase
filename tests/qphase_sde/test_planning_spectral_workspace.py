@@ -12,8 +12,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
-from qphase_sde.analyser.psd import PsdAnalyzer
+from qphase_sde.analyser.allan_variance import AllanVarianceAnalyser
+from qphase_sde.analyser.psd import PsdAnalyser
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
 from qphase_sde.engine import EngineConfig
 from qphase_sde.planning import build_execution_plan
@@ -61,8 +61,8 @@ def _request(
     )
 
 
-def _scalar_allan(n_channels: int = 1) -> AllanVarianceAnalyzer:
-    return AllanVarianceAnalyzer(
+def _scalar_allan(n_channels: int = 1) -> AllanVarianceAnalyser:
+    return AllanVarianceAnalyser(
         measurement={
             "sampled_scalar": {
                 "channels": [f"n{index}" for index in range(n_channels)]
@@ -72,14 +72,14 @@ def _scalar_allan(n_channels: int = 1) -> AllanVarianceAnalyzer:
     )
 
 
-def _phase_allan() -> AllanVarianceAnalyzer:
-    return AllanVarianceAnalyzer(
+def _phase_allan() -> AllanVarianceAnalyser:
+    return AllanVarianceAnalyser(
         measurement={"phase_frequency": {"channels": [0]}}, points=8
     )
 
 
-def _scalar_psd(n_channels: int) -> PsdAnalyzer:
-    return PsdAnalyzer(
+def _scalar_psd(n_channels: int) -> PsdAnalyser:
+    return PsdAnalyser(
         measurement={
             "sampled_scalar": {
                 "channels": [f"n{index}" for index in range(n_channels)],
@@ -89,8 +89,8 @@ def _scalar_psd(n_channels: int) -> PsdAnalyzer:
     )
 
 
-def _field_psd(modes: list[int]) -> PsdAnalyzer:
-    return PsdAnalyzer(
+def _field_psd(modes: list[int]) -> PsdAnalyser:
+    return PsdAnalyser(
         measurement={
             "complex_field": {"channels": modes, "representation": "complex"}
         }

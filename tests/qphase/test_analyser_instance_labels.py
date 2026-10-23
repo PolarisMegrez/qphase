@@ -117,7 +117,7 @@ def test_build_plugins_keeps_single_analyser_instance_label(
     from qphase.core.compiler import WorkflowCompiler
     from qphase.core.project import ProjectContext
     from qphase.core.registry import discovery
-    from qphase_sde.analyser.psd import PsdAnalyzer
+    from qphase_sde.analyser.psd import PsdAnalyser
 
     discovery.discover_plugins()
     project = ProjectContext.create(tmp_path / "project")
@@ -156,7 +156,7 @@ def test_build_plugins_keeps_single_analyser_instance_label(
     analysers = plugins["analyser"]
     assert isinstance(analysers, dict)
     assert set(analysers) == {"raw_psd"}
-    assert isinstance(analysers["raw_psd"], PsdAnalyzer)
+    assert isinstance(analysers["raw_psd"], PsdAnalyser)
     assert plugins["analyser.raw_psd"] is analysers["raw_psd"]
 
 

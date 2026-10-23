@@ -24,7 +24,7 @@ from qphase_sde.analyser.lorentz_fitter import (
     LorentzFitterConfig,
     fit_lorentzian,
 )
-from qphase_sde.analyser.psd import PsdAnalyzer, _build_psd_products
+from qphase_sde.analyser.psd import PsdAnalyser, _build_psd_products
 from qphase_sde.products import add_scan_parameter_coordinates
 
 RTOL = 1e-8
@@ -141,7 +141,7 @@ def _scan_product():
                 "orientation": "phase_decreasing",
             }
         )
-    analyzer = PsdAnalyzer(
+    analyzer = PsdAnalyser(
         measurement={"complex_field": {"channels": [0], "representation": "complex"}}
     )
     products = _build_psd_products(
@@ -229,7 +229,7 @@ def _typed_psd_product(scan_values: list[float]):
                 "uncertainty": {"n_independent": 4},
             }
         )
-    analyzer = PsdAnalyzer(
+    analyzer = PsdAnalyser(
         measurement={"complex_field": {"channels": [0], "representation": "complex"}}
     )
     products = _build_psd_products(

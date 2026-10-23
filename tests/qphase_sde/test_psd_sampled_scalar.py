@@ -28,8 +28,8 @@ from qphase_sde.analyser.frequency_orientation import (
     resolve_spectral_orientation,
 )
 from qphase_sde.analyser.psd import (
-    PsdAnalyzer,
-    PsdAnalyzerConfig,
+    PsdAnalyser,
+    PsdAnalyserConfig,
     PsdResultAccumulator,
 )
 from qphase_sde.contracts.quantities import SDEQuantity
@@ -102,8 +102,8 @@ def _observable_product(
 
 def _scalar_analyzer(
     channels=("n0",), *, convention="pragmatic", detrend="none"
-) -> PsdAnalyzer:
-    return PsdAnalyzer(
+) -> PsdAnalyser:
+    return PsdAnalyser(
         measurement={
             "sampled_scalar": {
                 "channels": list(channels),
@@ -114,7 +114,7 @@ def _scalar_analyzer(
     )
 
 
-def _execute(analyzer: PsdAnalyzer, product: TimeSeriesDataset):
+def _execute(analyzer: PsdAnalyser, product: TimeSeriesDataset):
     return analyzer.execute({"signal": product}, backend=BACKEND, label="psd")["psd"]
 
 
@@ -390,7 +390,7 @@ def test_unsigned_orientation_is_rejected_by_phase_consumers():
 def test_scalar_measurement_rejects_orientation_key():
     """The sampled-scalar config never accepts a phase orientation knob."""
     with pytest.raises(ValidationError):
-        PsdAnalyzerConfig(
+        PsdAnalyserConfig(
             measurement={
                 "sampled_scalar": {"channels": ["n0"], "orientation": "unsigned"}
             }
@@ -399,11 +399,11 @@ def test_scalar_measurement_rejects_orientation_key():
 
 def test_measurement_union_requires_exactly_one_variant():
     with pytest.raises(ValidationError):
-        PsdAnalyzerConfig(
+        PsdAnalyserConfig(
             measurement={
                 "complex_field": {"channels": [0], "representation": "complex"},
                 "sampled_scalar": {"channels": ["n0"]},
             }
         )
     with pytest.raises(ValidationError):
-        PsdAnalyzerConfig(measurement={})
+        PsdAnalyserConfig(measurement={})

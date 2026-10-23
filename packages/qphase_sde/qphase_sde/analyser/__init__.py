@@ -19,16 +19,16 @@ registration itself.
 
 Public API
 ----------
-``PsdAnalyzer`` : Power spectral density analyzer.
-``PsdAnalyzerConfig`` : Configuration for PSD analyzer.
-``DistAnalyzer`` : Distribution analyzer.
-``DistAnalyzerConfig`` : Configuration for Distribution analyzer.
+``PsdAnalyser`` : Power spectral density analyzer.
+``PsdAnalyserConfig`` : Configuration for PSD analyzer.
+``DistAnalyser`` : Distribution analyzer.
+``DistAnalyserConfig`` : Configuration for Distribution analyzer.
 """
 
 from typing import TYPE_CHECKING, Any
 
 from .allan_scaling import (
-    AllanScalingAnalyzer,
+    AllanScalingAnalyser,
     AllanScalingConfig,
     NormalFormExpectation,
 )
@@ -36,24 +36,24 @@ from .allan_variance import (
     AllanMeasurement,
     AllanPhaseFrequencyMeasurement,
     AllanSampledScalarMeasurement,
-    AllanVarianceAnalyzer,
+    AllanVarianceAnalyser,
     AllanVarianceConfig,
 )
 from .band_limited_carrier import (
-    BandLimitedCarrierAnalyzer,
+    BandLimitedCarrierAnalyser,
     BandLimitedCarrierConfig,
     RidgeConditionedCenterConfig,
 )
-from .base import Analyzer
-from .coherence_carrier import CoherenceCarrierAnalyzer, CoherenceCarrierConfig
+from .base import Analyser
+from .coherence_carrier import CoherenceCarrierAnalyser, CoherenceCarrierConfig
 from .coherence_frequency import (
-    CoherenceFrequencyAnalyzer,
-    CoherenceFrequencyAnalyzerConfig,
+    CoherenceFrequencyAnalyser,
+    CoherenceFrequencyAnalyserConfig,
 )
-from .coherence_matrix import CoherenceMatrixAnalyzer, CoherenceMatrixConfig
-from .dist import DistAnalyzer, DistAnalyzerConfig
+from .coherence_matrix import CoherenceMatrixAnalyser, CoherenceMatrixConfig
+from .dist import DistAnalyser, DistAnalyserConfig
 from .finite_delay_carrier import (
-    FiniteDelayCarrierAnalyzer,
+    FiniteDelayCarrierAnalyser,
     FiniteDelayCarrierConfig,
 )
 from .frequency_orientation import (
@@ -61,27 +61,27 @@ from .frequency_orientation import (
     OrientationInput,
     resolve_frequency_orientation,
 )
-from .moment_statistics import MomentStatisticsAnalyzer, MomentStatisticsConfig
+from .moment_statistics import MomentStatisticsAnalyser, MomentStatisticsConfig
 from .observable_transform import (
-    ObservableTransformAnalyzer,
+    ObservableTransformAnalyser,
     ObservableTransformConfig,
 )
-from .peak_paths import PeakPathsAnalyzer, PeakPathsAnalyzerConfig
-from .peaks import PeaksAnalyzer, PeaksAnalyzerConfig
-from .polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
+from .peak_paths import PeakPathsAnalyser, PeakPathsAnalyserConfig
+from .peaks import PeaksAnalyser, PeaksAnalyserConfig
+from .polar_dist import PolarDistAnalyser, PolarDistAnalyserConfig
 from .psd import (
-    PsdAnalyzer,
-    PsdAnalyzerConfig,
+    PsdAnalyser,
+    PsdAnalyserConfig,
     PsdComplexFieldMeasurement,
     PsdMeasurement,
     PsdSampledScalarMeasurement,
 )
 from .quadratic_moments import (
-    QuadraticMomentAnalyzer,
+    QuadraticMomentAnalyser,
     QuadraticMomentConfig,
     QuadraticObservableSpec,
 )
-from .spectral_ridge import SpectralRidgeAnalyzer, SpectralRidgeConfig
+from .spectral_ridge import SpectralRidgeAnalyser, SpectralRidgeConfig
 from .trajectory_diagnostics import (
     TrajectoryDiagnostics,
     TrajectoryDiagnosticsConfig,
@@ -96,7 +96,7 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
-    "Analyzer",
+    "Analyser",
     "AnalyserDeclarationContract",
     "AnalyserExecutionContract",
     "AnalyserExecutionCapabilities",
@@ -105,46 +105,46 @@ __all__ = [
     "AllanMeasurement",
     "AllanPhaseFrequencyMeasurement",
     "AllanSampledScalarMeasurement",
-    "AllanVarianceAnalyzer",
+    "AllanVarianceAnalyser",
     "AllanVarianceConfig",
-    "AllanScalingAnalyzer",
+    "AllanScalingAnalyser",
     "AllanScalingConfig",
-    "BandLimitedCarrierAnalyzer",
+    "BandLimitedCarrierAnalyser",
     "BandLimitedCarrierConfig",
     "RidgeConditionedCenterConfig",
-    "CoherenceMatrixAnalyzer",
+    "CoherenceMatrixAnalyser",
     "CoherenceMatrixConfig",
-    "CoherenceCarrierAnalyzer",
+    "CoherenceCarrierAnalyser",
     "CoherenceCarrierConfig",
-    "CoherenceFrequencyAnalyzer",
-    "CoherenceFrequencyAnalyzerConfig",
-    "MomentStatisticsAnalyzer",
+    "CoherenceFrequencyAnalyser",
+    "CoherenceFrequencyAnalyserConfig",
+    "MomentStatisticsAnalyser",
     "MomentStatisticsConfig",
     "NormalFormExpectation",
-    "ObservableTransformAnalyzer",
+    "ObservableTransformAnalyser",
     "ObservableTransformConfig",
-    "PsdAnalyzer",
-    "PsdAnalyzerConfig",
+    "PsdAnalyser",
+    "PsdAnalyserConfig",
     "PsdComplexFieldMeasurement",
     "PsdMeasurement",
     "PsdSampledScalarMeasurement",
-    "QuadraticMomentAnalyzer",
+    "QuadraticMomentAnalyser",
     "QuadraticMomentConfig",
     "QuadraticObservableSpec",
-    "SpectralRidgeAnalyzer",
+    "SpectralRidgeAnalyser",
     "SpectralRidgeConfig",
-    "DistAnalyzer",
-    "DistAnalyzerConfig",
+    "DistAnalyser",
+    "DistAnalyserConfig",
     "ORIENTATION_ALIASES",
     "OrientationInput",
-    "FiniteDelayCarrierAnalyzer",
+    "FiniteDelayCarrierAnalyser",
     "FiniteDelayCarrierConfig",
-    "PolarDistAnalyzer",
-    "PolarDistAnalyzerConfig",
-    "PeaksAnalyzer",
-    "PeaksAnalyzerConfig",
-    "PeakPathsAnalyzer",
-    "PeakPathsAnalyzerConfig",
+    "PolarDistAnalyser",
+    "PolarDistAnalyserConfig",
+    "PeaksAnalyser",
+    "PeaksAnalyserConfig",
+    "PeakPathsAnalyser",
+    "PeakPathsAnalyserConfig",
     "TrajectoryDiagnostics",
     "TrajectoryDiagnosticsConfig",
     "resolve_frequency_orientation",

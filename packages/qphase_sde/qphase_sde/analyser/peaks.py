@@ -18,16 +18,16 @@ from qphase.data import DataKind, Dataset, ProductDeclaration, ProductRequiremen
 from ..contracts.analyser import AnalyserExecutionCapabilities, WorkEstimate
 from ..peak_finder import materialize_candidate_product
 from .base import (
-    Analyzer,
+    Analyser,
     check_execution_cancelled,
     report_execution_progress,
     requirement_source,
 )
 
-__all__ = ["PeaksAnalyzer", "PeaksAnalyzerConfig"]
+__all__ = ["PeaksAnalyser", "PeaksAnalyserConfig"]
 
 
-class PeaksAnalyzerConfig(PluginConfigBase):
+class PeaksAnalyserConfig(PluginConfigBase):
     """Configuration for the standalone PSD peak analyser."""
 
     model_config = ConfigDict(extra="forbid")
@@ -43,12 +43,12 @@ class PeaksAnalyzerConfig(PluginConfigBase):
     )
 
 
-class PeaksAnalyzer(Analyzer):
+class PeaksAnalyser(Analyser):
     """Run a typed peak finder independently of PSD estimation."""
 
     name: ClassVar[str] = "peaks"
     description: ClassVar[str] = "Grouped peak candidates from a spectral product"
-    config_schema: ClassVar[type[PeaksAnalyzerConfig]] = PeaksAnalyzerConfig
+    config_schema: ClassVar[type[PeaksAnalyserConfig]] = PeaksAnalyserConfig
     preserves_input_scan: ClassVar[bool] = True
     manifest: ClassVar[PluginManifest] = PluginManifest(
         subplugins={
@@ -63,7 +63,7 @@ class PeaksAnalyzer(Analyzer):
 
     def __init__(
         self,
-        config: PeaksAnalyzerConfig | None = None,
+        config: PeaksAnalyserConfig | None = None,
         *,
         subplugins: Mapping[str, Any] | None = None,
         **kwargs: Any,
@@ -80,7 +80,7 @@ class PeaksAnalyzer(Analyzer):
         return self._finder
 
     def input_requirements(self) -> list[ProductRequirement]:
-        config = cast(PeaksAnalyzerConfig, self.config)
+        config = cast(PeaksAnalyserConfig, self.config)
         return [
             ProductRequirement(
                 name=config.psd_key,
@@ -118,7 +118,7 @@ class PeaksAnalyzer(Analyzer):
     ) -> Mapping[str, Dataset]:
         """Find candidates directly from the typed spectral Dataset."""
         del backend
-        config = cast(PeaksAnalyzerConfig, self.config)
+        config = cast(PeaksAnalyserConfig, self.config)
         finder = self._resolve_finder()
         product = inputs.get(config.psd_key)
         if product is None:

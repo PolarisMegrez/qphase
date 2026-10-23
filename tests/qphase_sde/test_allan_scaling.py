@@ -10,7 +10,7 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.artifacts import ArtifactStore
 from qphase.core.result_loader import load_result
 from qphase_sde.analyser.allan_scaling import (
-    AllanScalingAnalyzer,
+    AllanScalingAnalyser,
     AllanScalingConfig,
     NormalFormExpectation,
 )
@@ -91,7 +91,7 @@ def _config() -> AllanScalingConfig:
 def test_allan_scaling_recovers_white_fm_normal_form():
     epsilon = np.geomspace(1e-3, 1e-1, 9)
     result = _execute(
-        AllanScalingAnalyzer(_config()),
+        AllanScalingAnalyser(_config()),
         {"allan_variance": _typed_allan_input(epsilon)},
     )
     summary = result["summary"]
@@ -120,7 +120,7 @@ def test_allan_scaling_recovers_white_fm_normal_form():
 def test_allan_scaling_rejects_colored_fm_even_with_scan_power_law():
     epsilon = np.geomspace(1e-3, 1e-1, 9)
     result = _execute(
-        AllanScalingAnalyzer(_config()),
+        AllanScalingAnalyser(_config()),
         {
             "allan_variance": _typed_allan_input(
                 epsilon, allan_tau_slope=-0.4
@@ -164,7 +164,7 @@ def test_allan_scaling_consumes_v4_scan_bundle():
     epsilon = np.geomspace(1e-3, 1e-1, 9)
     bundle = _scan_bundle(epsilon)
 
-    result = _execute(AllanScalingAnalyzer(_config()), bundle.products)
+    result = _execute(AllanScalingAnalyser(_config()), bundle.products)
     summary = result["summary"]
 
     assert summary["status"] == "ok"
@@ -176,7 +176,7 @@ def test_allan_scaling_consumes_v4_scan_bundle():
 
 def test_allan_scaling_execute_consumes_typed_product_mapping():
     epsilon = np.geomspace(1e-3, 1e-1, 9)
-    analyzer = AllanScalingAnalyzer(_config())
+    analyzer = AllanScalingAnalyser(_config())
     products = _build_allan_products(
         [_result(float(value)) for value in epsilon],
         scan_size=epsilon.size,
@@ -206,7 +206,7 @@ def test_allan_scaling_consumes_restored_v4_artifact(tmp_path):
     store.save_result(_scan_bundle(epsilon), "sim")
     restored = load_result("sim", job_dir)
 
-    result = _execute(AllanScalingAnalyzer(_config()), restored.products)
+    result = _execute(AllanScalingAnalyser(_config()), restored.products)
     summary = result["summary"]
 
     assert summary["status"] == "ok"
@@ -287,7 +287,7 @@ def _typed_allan_input(
 
 def test_allan_scaling_execute_aborts_mid_loop_on_cancellation():
     epsilon = np.geomspace(1e-3, 1e-1, 9)
-    analyzer = AllanScalingAnalyzer(_config())
+    analyzer = AllanScalingAnalyser(_config())
     context = SimpleNamespace(
         cancellation=_FakeCancellation(abort_after=1), progress=None
     )
@@ -307,7 +307,7 @@ def test_allan_scaling_execute_aborts_inside_bootstrap_loop():
     # + 15 (trial fits) = 34 polls; bootstrap_samples=200 then dominates, so an
     # abort after 100 polls lands well inside the bootstrap resampling loop.
     epsilon = np.geomspace(1e-3, 1e-1, 9)
-    analyzer = AllanScalingAnalyzer(_config())
+    analyzer = AllanScalingAnalyser(_config())
     context = SimpleNamespace(
         cancellation=_FakeCancellation(abort_after=100), progress=None
     )
@@ -323,7 +323,7 @@ def test_allan_scaling_execute_aborts_inside_bootstrap_loop():
 
 def test_allan_scaling_execute_reports_tau_progress():
     epsilon = np.geomspace(1e-3, 1e-1, 9)
-    analyzer = AllanScalingAnalyzer(_config())
+    analyzer = AllanScalingAnalyser(_config())
     progress = _FakeProgress()
     context = SimpleNamespace(cancellation=None, progress=progress)
 

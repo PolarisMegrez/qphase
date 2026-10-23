@@ -366,38 +366,38 @@ def test_auto_batch_matches_largest_explicit_batch_for_each_memory_location(loca
 
 
 def _production_reducer_case(name):
-    from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
-    from qphase_sde.analyser.coherence_carrier import CoherenceCarrierAnalyzer
-    from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyzer
-    from qphase_sde.analyser.moment_statistics import MomentStatisticsAnalyzer
-    from qphase_sde.analyser.psd import PsdAnalyzer
-    from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyzer
+    from qphase_sde.analyser.allan_variance import AllanVarianceAnalyser
+    from qphase_sde.analyser.coherence_carrier import CoherenceCarrierAnalyser
+    from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyser
+    from qphase_sde.analyser.moment_statistics import MomentStatisticsAnalyser
+    from qphase_sde.analyser.psd import PsdAnalyser
+    from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyser
 
     modes = list(range(32 if name != "moment_statistics" else 64))
     if name == "moment_statistics":
-        analyser = MomentStatisticsAnalyzer(modes=modes)
+        analyser = MomentStatisticsAnalyser(modes=modes)
         n_traj = 2048
     elif name == "quadratic_moments":
         matrix = [
             [1.0 if row == column else 0.0 for column in range(16)]
             for row in range(16)
         ]
-        analyser = QuadraticMomentAnalyzer(
+        analyser = QuadraticMomentAnalyser(
             modes=list(range(16)),
             observables={f"q{index}": {"matrix": matrix} for index in range(64)},
         )
         n_traj = 16384
     elif name == "coherence_matrix":
-        analyser = CoherenceMatrixAnalyzer(modes=modes)
+        analyser = CoherenceMatrixAnalyser(modes=modes)
         n_traj = 2048
     elif name == "coherence_carrier":
-        analyser = CoherenceCarrierAnalyzer(
+        analyser = CoherenceCarrierAnalyser(
             modes=modes,
             maximum_lag_points=256,
         )
         n_traj = 1024
     elif name == "psd":
-        analyser = PsdAnalyzer(
+        analyser = PsdAnalyser(
             measurement={
                 "complex_field": {"channels": [0], "representation": "complex"}
             }
@@ -405,7 +405,7 @@ def _production_reducer_case(name):
         n_traj = 128
     else:
         assert name == "allan_variance"
-        analyser = AllanVarianceAnalyzer(
+        analyser = AllanVarianceAnalyser(
             measurement={"phase_frequency": {"channels": [0]}}, points=5
         )
         n_traj = 128
@@ -1405,10 +1405,10 @@ def _observable_transform_graph():
         ProductNode,
         ProductRequirement,
     )
-    from qphase_sde.analyser.observable_transform import ObservableTransformAnalyzer
+    from qphase_sde.analyser.observable_transform import ObservableTransformAnalyser
 
     matrix = [[1.0 if row == col else 0.0 for col in range(2)] for row in range(2)]
-    transform = ObservableTransformAnalyzer(
+    transform = ObservableTransformAnalyser(
         units="occupation",
         observables={f"q{index}": {"matrix": matrix} for index in range(4)},
     )

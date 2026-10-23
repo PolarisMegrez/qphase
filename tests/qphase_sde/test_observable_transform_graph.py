@@ -26,8 +26,8 @@ from qphase.data import (
     StatisticsDataset,
     VariableSchema,
 )
-from qphase_sde.analyser.base import Analyzer, requirement_source
-from qphase_sde.analyser.observable_transform import ObservableTransformAnalyzer
+from qphase_sde.analyser.base import Analyser, requirement_source
+from qphase_sde.analyser.observable_transform import ObservableTransformAnalyser
 from qphase_sde.contracts.analyser import AnalyserExecutionCapabilities
 from qphase_sde.contracts.quantities import SDEQuantity
 from qphase_sde.engine import Engine, EngineConfig
@@ -127,7 +127,7 @@ def _compiled_graph(publish_outputs=None):
 def test_normal_graph_source_provenance_from_frozen_graph():
     """Normal execution records the real external binding, not an injection."""
     graph = _compiled_graph(publish_outputs={"obs": ["obs"]})
-    transform = ObservableTransformAnalyzer(
+    transform = ObservableTransformAnalyser(
         units="occupation", observables={"n": {"matrix": [[1.0]]}}
     )
     result = _run(_engine(transform, graph=graph), graph)
@@ -142,7 +142,7 @@ def test_normal_graph_source_provenance_from_frozen_graph():
     assert np.all(np.isfinite(value))
 
 
-class _CountingTransform(ObservableTransformAnalyzer):
+class _CountingTransform(ObservableTransformAnalyser):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.calls = 0
@@ -201,7 +201,7 @@ class _ScalarProbeAccumulator:
         self.payloads = [np.asarray(payload) for payload in checkpoint["payloads"]]
 
 
-class _ScalarProbe(Analyzer):
+class _ScalarProbe(Analyser):
     """Test-only reducer frontier consuming sampled-observable series."""
 
     name = "scalar_probe"
@@ -334,7 +334,7 @@ def test_batched_graph_transform_runs_once_per_batch_and_stays_transient():
     reduced = result.products["probe"].handle("trajectory_mean").materialize()
     # Reference: the same seed without batching, transform output published
     # through the compiled-graph path (transform-only node set).
-    reference_transform = ObservableTransformAnalyzer(
+    reference_transform = ObservableTransformAnalyser(
         units="occupation", observables={"n": {"matrix": [[1.0]]}}
     )
     reference_graph = _compiled_graph(publish_outputs={"obs": ["obs"]})

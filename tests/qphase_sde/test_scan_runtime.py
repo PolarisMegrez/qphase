@@ -25,19 +25,19 @@ from qphase.data import (
     concat_datasets,
     load_bundle,
 )
-from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
+from qphase_sde.analyser.allan_variance import AllanVarianceAnalyser
 from qphase_sde.analyser.base import (
-    Analyzer,
+    Analyser,
     map_trajectory_product,
     trajectory_arrays,
     trajectory_requirement,
 )
-from qphase_sde.analyser.coherence_carrier import CoherenceCarrierAnalyzer
-from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyzer
-from qphase_sde.analyser.moment_statistics import MomentStatisticsAnalyzer
-from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
-from qphase_sde.analyser.psd import PsdAnalyzer
-from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyzer
+from qphase_sde.analyser.coherence_carrier import CoherenceCarrierAnalyser
+from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyser
+from qphase_sde.analyser.moment_statistics import MomentStatisticsAnalyser
+from qphase_sde.analyser.peaks import PeaksAnalyser, PeaksAnalyserConfig
+from qphase_sde.analyser.psd import PsdAnalyser
+from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyser
 from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
@@ -55,12 +55,12 @@ _ALLAN_MEASUREMENT = {
 }
 
 
-def _psd_analyzer() -> PsdAnalyzer:
-    return PsdAnalyzer(measurement=_PSD_MEASUREMENT)
+def _psd_analyzer() -> PsdAnalyser:
+    return PsdAnalyser(measurement=_PSD_MEASUREMENT)
 
 
-def _allan_analyzer() -> AllanVarianceAnalyzer:
-    return AllanVarianceAnalyzer(
+def _allan_analyzer() -> AllanVarianceAnalyser:
+    return AllanVarianceAnalyser(
         measurement=_ALLAN_MEASUREMENT, points=5, min_windows=2
     )
 
@@ -136,7 +136,7 @@ class ScannedDummyModel:
         return np.zeros(y.shape + (1,))
 
 
-class MeanAnalyzer(Analyzer):
+class MeanAnalyser(Analyser):
     name = "mean"
     config = SimpleNamespace(expected_freq_max=None)
 
@@ -181,7 +181,7 @@ class MeanAnalyzer(Analyzer):
         return map_trajectory_product(trajectory, compute, context=context)
 
 
-class IdentityBatchAnalyzer(Analyzer):
+class IdentityBatchAnalyser(Analyser):
     """Batch-local transform probe with no reducer."""
 
     name = "identity_batch"
@@ -216,7 +216,7 @@ class IdentityBatchAnalyzer(Analyzer):
         return {label: inputs["trajectories"]}
 
 
-class FinalSpectrumSummaryAnalyzer(Analyzer):
+class FinalSpectrumSummaryAnalyser(Analyser):
     """Final-scope probe consuming a merged spectral scan."""
 
     name = "final_spectrum_summary"
@@ -263,7 +263,7 @@ class FinalSpectrumSummaryAnalyzer(Analyzer):
 
 
 def _branched_batch_graph(*, publish_identity=False):
-    identity = IdentityBatchAnalyzer()
+    identity = IdentityBatchAnalyser()
     psd_a = _psd_analyzer()
     psd_b = _psd_analyzer()
     nodes = [
@@ -312,7 +312,7 @@ def _branched_batch_graph(*, publish_identity=False):
 
 def _partitioned_batch_graph():
     graph, identity, psd_a, psd_b = _branched_batch_graph()
-    summary = FinalSpectrumSummaryAnalyzer()
+    summary = FinalSpectrumSummaryAnalyser()
     nodes = [
         *graph.nodes,
         ProductNode(
@@ -351,7 +351,7 @@ def _mean_graph() -> ProductGraph:
                 node_id="analyser.mean",
                 producer="analyser:mean",
                 requirements=[trajectory_requirement(value_domain=None)],
-                outputs=list(MeanAnalyzer().output_specs(label="mean")),
+                outputs=list(MeanAnalyser().output_specs(label="mean")),
                 publish_outputs=["mean"],
             )
         ],
@@ -485,7 +485,7 @@ def test_sde_engine_analyzes_resource_limited_scan_tiles():
             "backend": NumpyBackend(),
             "integrator": EulerMaruyama(),
             "model": model,
-            "analyser": {"mean": MeanAnalyzer()},
+            "analyser": {"mean": MeanAnalyser()},
         },
         product_graph=_mean_graph(),
     )
@@ -537,7 +537,7 @@ def test_sde_scan_rng_is_independent_of_tile_size():
                 "backend": NumpyBackend(),
                 "integrator": EulerMaruyama(),
                 "model": model,
-                "analyser": {"mean": MeanAnalyzer()},
+                "analyser": {"mean": MeanAnalyser()},
             },
             product_graph=_mean_graph(),
         )
@@ -975,7 +975,7 @@ _BATCHED_REDUCER_CASES = [
     pytest.param(
         41,
         lambda: {
-            "coherence_matrix": CoherenceMatrixAnalyzer(
+            "coherence_matrix": CoherenceMatrixAnalyser(
                 modes=[0],
                 time_blocks=2,
                 min_block_samples=2,
@@ -996,7 +996,7 @@ _BATCHED_REDUCER_CASES = [
     pytest.param(
         43,
         lambda: {
-            "quadratic_moments": QuadraticMomentAnalyzer(
+            "quadratic_moments": QuadraticMomentAnalyser(
                 observables={"occupation": {"matrix": [[1.0]], "center": 0.25}},
                 time_blocks=2,
                 min_block_samples=2,
@@ -1108,19 +1108,19 @@ def test_typed_graph_batches_all_statistical_reducers():
     )
     assert graph is not None
     analysers = {
-        "coherence_matrix": CoherenceMatrixAnalyzer(
+        "coherence_matrix": CoherenceMatrixAnalyser(
             modes=[0], time_blocks=2, min_block_samples=2
         ),
-        "coherence_carrier": CoherenceCarrierAnalyzer(
+        "coherence_carrier": CoherenceCarrierAnalyser(
             modes=[0],
             include_trace=False,
             minimum_lag_points=3,
             maximum_lag_points=4,
         ),
-        "moment_statistics": MomentStatisticsAnalyzer(
+        "moment_statistics": MomentStatisticsAnalyser(
             modes=[0], time_blocks=2, min_block_samples=2
         ),
-        "quadratic_moments": QuadraticMomentAnalyzer(
+        "quadratic_moments": QuadraticMomentAnalyser(
             observables={"occupation": {"matrix": [[1.0]]}},
             modes=[0],
             time_blocks=2,
@@ -1255,8 +1255,8 @@ def test_batch_local_non_reducer_cannot_be_published():
 def test_batch_local_non_reducer_cannot_cross_final_boundary():
     from qphase_sde.planning import SDEMemoryPlanningError
 
-    identity = IdentityBatchAnalyzer()
-    final = MeanAnalyzer()
+    identity = IdentityBatchAnalyser()
+    final = MeanAnalyser()
     graph = ProductGraph(
         nodes=[
             ProductNode(
@@ -1442,8 +1442,8 @@ def test_trajectory_batching_reduces_psd_before_running_peak_finder():
             "model": StochasticScannedModel(),
             "analyser": {
                 "psd": _psd_analyzer(),
-                "peaks": PeaksAnalyzer(
-                    PeaksAnalyzerConfig(scan_param="scan"),
+                "peaks": PeaksAnalyser(
+                    PeaksAnalyserConfig(scan_param="scan"),
                     subplugins={
                         "finder": ScipyPeakFinder(noise_threshold=None),
                     },
@@ -1504,8 +1504,8 @@ def test_scanned_trajectory_batching_runs_peak_finder_after_reduction():
             "model": StochasticScannedModel(),
             "analyser": {
                 "psd": _psd_analyzer(),
-                "peaks": PeaksAnalyzer(
-                    PeaksAnalyzerConfig(scan_param="rate"),
+                "peaks": PeaksAnalyser(
+                    PeaksAnalyserConfig(scan_param="rate"),
                     subplugins={
                         "finder": ScipyPeakFinder(noise_threshold=None),
                     },
@@ -1806,7 +1806,7 @@ _ALLAN_SCALING_CONFIG = {
 def _allan_chain_setup(publish_allan=False, **engine_overrides):
     """Compiled allan_variance -> allan_scaling graph plus matching instances."""
     from qphase.core.registry import discovery, registry
-    from qphase_sde.analyser.allan_scaling import AllanScalingAnalyzer
+    from qphase_sde.analyser.allan_scaling import AllanScalingAnalyser
     from qphase_sde.graph import compile_product_graph
 
     analyser_config = {
@@ -1829,8 +1829,8 @@ def _allan_chain_setup(publish_allan=False, **engine_overrides):
     assert graph is not None
     analysers = {
         "allan_variance": _allan_analyzer(),
-        "allan_scaling": AllanScalingAnalyzer(
-            AllanScalingAnalyzer.config_schema(**_ALLAN_SCALING_CONFIG)
+        "allan_scaling": AllanScalingAnalyser(
+            AllanScalingAnalyser.config_schema(**_ALLAN_SCALING_CONFIG)
         ),
     }
     config = EngineConfig(
@@ -2022,8 +2022,8 @@ def _peaks_chain_setup():
     assert graph is not None
     analysers = {
         "psd": _psd_analyzer(),
-        "peaks": PeaksAnalyzer(
-            PeaksAnalyzerConfig(scan_param="rate"),
+        "peaks": PeaksAnalyser(
+            PeaksAnalyserConfig(scan_param="rate"),
             subplugins={"finder": ScipyPeakFinder(noise_threshold=None)},
         ),
     }

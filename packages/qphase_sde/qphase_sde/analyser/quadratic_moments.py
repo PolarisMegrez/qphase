@@ -35,7 +35,7 @@ from ..math.observable import (
 )
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
-    Analyzer,
+    Analyser,
     map_trajectory_product,
     select_mode_columns,
     trajectory_arrays,
@@ -43,7 +43,7 @@ from .base import (
 )
 
 __all__ = [
-    "QuadraticMomentAnalyzer",
+    "QuadraticMomentAnalyser",
     "QuadraticMomentConfig",
     "QuadraticObservableSpec",
 ]
@@ -134,7 +134,7 @@ class QuadraticMomentConfig(PluginConfigBase):
         return self
 
 
-class QuadraticMomentAnalyzer(Analyzer):
+class QuadraticMomentAnalyser(Analyser):
     """Estimate moments of ``alpha^dagger Q alpha`` without retaining trajectories."""
 
     name: ClassVar[str] = "quadratic_moments"
@@ -524,7 +524,7 @@ def _build_quadratic_moments_products(
 class QuadraticMomentResultAccumulator:
     """Merge trajectory batches and recompute nonlinear cumulants."""
 
-    def __init__(self, analyzer: QuadraticMomentAnalyzer) -> None:
+    def __init__(self, analyzer: QuadraticMomentAnalyser) -> None:
         self.analyzer = analyzer
         self.payloads: list[dict[str, Any]] = []
 

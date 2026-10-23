@@ -37,7 +37,7 @@ from ..contracts.quantities import (
 )
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
-    Analyzer,
+    Analyser,
     check_execution_cancelled,
     map_trajectory_product,
     report_execution_progress,
@@ -51,7 +51,7 @@ from .frequency_orientation import (
 )
 
 __all__ = [
-    "CoherenceCarrierAnalyzer",
+    "CoherenceCarrierAnalyser",
     "CoherenceCarrierConfig",
     "CoherenceCarrierEstimate",
     "estimate_coherence_carrier",
@@ -418,7 +418,7 @@ def _measurement_matrices_for_recorded(
     return names, kinds, recorded, np.asarray(matrices)
 
 
-class CoherenceCarrierAnalyzer(Analyzer):
+class CoherenceCarrierAnalyser(Analyser):
     """Estimate an experimentally readable, Rayleigh-matched carrier."""
 
     name: ClassVar[str] = "coherence_carrier"
@@ -853,7 +853,7 @@ def _build_coherence_carrier_products(
 class CoherenceCarrierResultAccumulator:
     """Merge trajectory batches before estimating the correlation ratio."""
 
-    def __init__(self, analyzer: CoherenceCarrierAnalyzer) -> None:
+    def __init__(self, analyzer: CoherenceCarrierAnalyser) -> None:
         self.analyzer = analyzer
         self.payloads: list[dict[str, Any]] = []
 

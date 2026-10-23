@@ -26,9 +26,9 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.project import ProjectContext
 from qphase.core.scan import ScanSpec
 from qphase.data import load_products
-from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
-from qphase_sde.analyser.observable_transform import ObservableTransformAnalyzer
-from qphase_sde.analyser.psd import PsdAnalyzer
+from qphase_sde.analyser.allan_variance import AllanVarianceAnalyser
+from qphase_sde.analyser.observable_transform import ObservableTransformAnalyser
+from qphase_sde.analyser.psd import PsdAnalyser
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.srk import GenericSRK
 
@@ -197,12 +197,12 @@ def _analyser_bindings():
 
 def _main_analysers(transform=None):
     return {
-        "raw_psd": PsdAnalyzer(
+        "raw_psd": PsdAnalyser(
             measurement={
                 "complex_field": {"channels": [0, 1, 2], "representation": "complex"}
             }
         ),
-        "phase_allan": AllanVarianceAnalyzer(
+        "phase_allan": AllanVarianceAnalyser(
             measurement={
                 "phase_frequency": {"channels": [0, 1, 2], "min_independent_windows": 1}
             },
@@ -210,7 +210,7 @@ def _main_analysers(transform=None):
             min_windows=2,
         ),
         "obs": transform
-        or ObservableTransformAnalyzer(
+        or ObservableTransformAnalyser(
             units="occupation",
             observables={
                 "n0": {"matrix": [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]},
@@ -219,12 +219,12 @@ def _main_analysers(transform=None):
                 },
             },
         ),
-        "scalar_psd": PsdAnalyzer(
+        "scalar_psd": PsdAnalyser(
             measurement={
                 "sampled_scalar": {"channels": ["n0", "q_fixed"], "detrend": "constant"}
             }
         ),
-        "scalar_allan": AllanVarianceAnalyzer(
+        "scalar_allan": AllanVarianceAnalyser(
             measurement={
                 "sampled_scalar": {
                     "channels": ["n0", "q_fixed"],
@@ -398,7 +398,7 @@ def test_debug_observable_matches_direct_numpy(fixture_runs):
     np.testing.assert_allclose(value[:, :, 1], q_fixed, rtol=1e-9, atol=1e-12)
 
 
-class _CountingTransform(ObservableTransformAnalyzer):
+class _CountingTransform(ObservableTransformAnalyser):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.calls = 0
@@ -593,7 +593,7 @@ def test_cupy_end_to_end_and_analyser_parity():
 
     np_be = NumpyBackend()
     cp_be = CuPyBackend()
-    scalar_psd = PsdAnalyzer(
+    scalar_psd = PsdAnalyser(
         measurement={
             "sampled_scalar": {"channels": ["n0", "q_fixed"], "detrend": "constant"}
         }
@@ -613,7 +613,7 @@ def test_cupy_end_to_end_and_analyser_parity():
             atol=1e-30,
         )
 
-    scalar_allan = AllanVarianceAnalyzer(
+    scalar_allan = AllanVarianceAnalyser(
         measurement={
             "sampled_scalar": {"channels": ["n0", "q_fixed"], "min_nonoverlap_pairs": 2}
         },

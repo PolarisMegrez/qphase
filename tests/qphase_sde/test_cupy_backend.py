@@ -30,7 +30,7 @@ if not _CUPY_AVAILABLE:
     pytest.skip("No CUDA device available", allow_module_level=True)
 
 from qphase.backend.cupy_backend import CuPyBackend  # noqa: E402
-from qphase_sde.analyser.psd import PsdAnalyzer  # noqa: E402
+from qphase_sde.analyser.psd import PsdAnalyser  # noqa: E402
 from qphase_sde.engine import Engine, EngineConfig  # noqa: E402
 from qphase_sde.graph import compile_product_graph  # noqa: E402
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama  # noqa: E402
@@ -163,7 +163,7 @@ def test_cupy_engine_honours_explicit_trajectory_retention():
 
 def test_cupy_vs_numpy_psd_periodogram():
     """CuPy periodogram matches numpy periodogram for simple signal."""
-    from qphase_sde.analyser.psd import PsdAnalyzer, PsdAnalyzerConfig
+    from qphase_sde.analyser.psd import PsdAnalyser, PsdAnalyserConfig
 
     np_be = NumpyBackend()
     cp_be = CuPyBackend()
@@ -176,8 +176,8 @@ def test_cupy_vs_numpy_psd_periodogram():
         + 0.1j * np.random.randn(n_traj, n_time)
     )
 
-    analyzer = PsdAnalyzer(
-        config=PsdAnalyzerConfig(
+    analyzer = PsdAnalyser(
+        config=PsdAnalyserConfig(
             measurement={
                 "complex_field": {"channels": [0], "representation": "complex"}
             },
@@ -294,7 +294,7 @@ def test_cupy_typed_scan_and_trajectory_batching_roundtrip(tmp_path):
             "model": model(),
             "integrator": EulerMaruyama(),
             "analyser": {
-                "psd": PsdAnalyzer(
+                "psd": PsdAnalyser(
                     measurement={
                         "complex_field": {
                             "channels": [0],
@@ -337,7 +337,7 @@ def test_cupy_typed_scan_and_trajectory_batching_roundtrip(tmp_path):
 
 def test_cupy_dist_matches_numpy():
     """CuPy dist analyzer matches numpy reference."""
-    from qphase_sde.analyser.dist import DistAnalyzer, DistAnalyzerConfig
+    from qphase_sde.analyser.dist import DistAnalyser, DistAnalyserConfig
     from qphase_sde.result import trajectory_product
 
     np_be = NumpyBackend()
@@ -346,8 +346,8 @@ def test_cupy_dist_matches_numpy():
     n_traj, n_time = 4, 256
     data = np.random.randn(n_traj, n_time, 2) + 1j * np.random.randn(n_traj, n_time, 2)
 
-    dist_np = DistAnalyzer(
-        config=DistAnalyzerConfig(modes=[0], bins=20, density=True)
+    dist_np = DistAnalyser(
+        config=DistAnalyserConfig(modes=[0], bins=20, density=True)
     ).execute(
         {
             "trajectories": trajectory_product(
@@ -360,8 +360,8 @@ def test_cupy_dist_matches_numpy():
         label="dist",
     )["dist"]
     data_cp = cp_be.asarray(data)
-    dist_cp = DistAnalyzer(
-        config=DistAnalyzerConfig(modes=[0], bins=20, density=True)
+    dist_cp = DistAnalyser(
+        config=DistAnalyserConfig(modes=[0], bins=20, density=True)
     ).execute(
         {
             "trajectories": trajectory_product(
@@ -384,8 +384,8 @@ def test_cupy_dist_matches_numpy():
 def test_cupy_polar_dist_matches_numpy():
     """CuPy polar_dist analyzer matches numpy reference."""
     from qphase_sde.analyser.polar_dist import (
-        PolarDistAnalyzer,
-        PolarDistAnalyzerConfig,
+        PolarDistAnalyser,
+        PolarDistAnalyserConfig,
     )
     from qphase_sde.result import trajectory_product
 
@@ -395,8 +395,8 @@ def test_cupy_polar_dist_matches_numpy():
     n_traj, n_time = 4, 256
     data = np.random.randn(n_traj, n_time, 2) + 1j * np.random.randn(n_traj, n_time, 2)
 
-    pdist_np = PolarDistAnalyzer(
-        config=PolarDistAnalyzerConfig(modes=[0], bins=20, density=True)
+    pdist_np = PolarDistAnalyser(
+        config=PolarDistAnalyserConfig(modes=[0], bins=20, density=True)
     ).execute(
         {
             "trajectories": trajectory_product(
@@ -408,8 +408,8 @@ def test_cupy_polar_dist_matches_numpy():
         backend=np_be,
         label="polar_dist",
     )["polar_dist"]
-    pdist_cp = PolarDistAnalyzer(
-        config=PolarDistAnalyzerConfig(modes=[0], bins=20, density=True)
+    pdist_cp = PolarDistAnalyser(
+        config=PolarDistAnalyserConfig(modes=[0], bins=20, density=True)
     ).execute(
         {
             "trajectories": trajectory_product(
@@ -431,7 +431,7 @@ def test_cupy_polar_dist_matches_numpy():
 
 def test_cupy_vdp_end_to_end_smoke():
     """End-to-end smoke test of the VDP model on CuPy with PSD analysis."""
-    from qphase_sde.analyser.psd import PsdAnalyzer, PsdAnalyzerConfig
+    from qphase_sde.analyser.psd import PsdAnalyser, PsdAnalyserConfig
 
     from models.vdp_2mode import VDP2ModeModel
 
@@ -445,8 +445,8 @@ def test_cupy_vdp_end_to_end_smoke():
         g=0.5,
     ).to_diffusive_sde_model()
 
-    analyzer = PsdAnalyzer(
-        config=PsdAnalyzerConfig(
+    analyzer = PsdAnalyser(
+        config=PsdAnalyserConfig(
             measurement={
                 "complex_field": {"channels": [0], "representation": "complex"}
             }

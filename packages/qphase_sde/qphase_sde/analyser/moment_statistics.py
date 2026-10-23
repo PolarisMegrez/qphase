@@ -29,14 +29,14 @@ from ..contracts.analyser import (
 from ..contracts.quantities import SDEMomentFamilySchema, SDEQuantity
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
-    Analyzer,
+    Analyser,
     map_trajectory_product,
     select_mode_columns,
     trajectory_arrays,
     trajectory_requirement,
 )
 
-__all__ = ["MomentStatisticsAnalyzer", "MomentStatisticsConfig"]
+__all__ = ["MomentStatisticsAnalyser", "MomentStatisticsConfig"]
 
 _MOMENT_STATISTICS_FIELDS: tuple[str, ...] = (
     "modes",
@@ -110,7 +110,7 @@ class MomentStatisticsConfig(PluginConfigBase):
         return self
 
 
-class MomentStatisticsAnalyzer(Analyzer):
+class MomentStatisticsAnalyser(Analyser):
     """Estimate occupation products without materializing full intensity data."""
 
     name: ClassVar[str] = "moment_statistics"
@@ -484,7 +484,7 @@ def _build_moment_statistics_products(
 class MomentStatisticsResultAccumulator:
     """Merge independent trajectory batches and recompute nonlinear ratios."""
 
-    def __init__(self, analyzer: MomentStatisticsAnalyzer) -> None:
+    def __init__(self, analyzer: MomentStatisticsAnalyser) -> None:
         self.analyzer = analyzer
         self.payloads: list[dict[str, Any]] = []
 

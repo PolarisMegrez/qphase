@@ -31,7 +31,7 @@ from ..numerics.finite_delay import finite_delay_carrier_from_spectrum
 from ..products import (
     assemble_row_table_product,
 )
-from .base import Analyzer, check_execution_cancelled, report_execution_progress
+from .base import Analyser, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     orientation_metadata,
     resolve_frequency_orientation,
@@ -39,7 +39,7 @@ from .frequency_orientation import (
 from .spectral_input import SpectralPoint, SpectralScanInput, spectral_scan_input
 
 __all__ = [
-    "FiniteDelayCarrierAnalyzer",
+    "FiniteDelayCarrierAnalyser",
     "FiniteDelayCarrierConfig",
     "finite_delay_carrier_from_spectrum",
 ]
@@ -148,7 +148,7 @@ def _build_finite_delay_carrier_products(
     return {label: product}
 
 
-class FiniteDelayCarrierAnalyzer(Analyzer):
+class FiniteDelayCarrierAnalyser(Analyser):
     """Compute detector-weighted carriers from logical PSD scan datasets."""
 
     name: ClassVar[str] = "finite_delay_carrier"

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.coherence_carrier import (
-    CoherenceCarrierAnalyzer,
+    CoherenceCarrierAnalyser,
     CoherenceCarrierConfig,
     estimate_coherence_carrier,
 )
@@ -94,7 +94,7 @@ def test_trace_carrier_equals_cam_rayleigh_quotient():
     frequencies = [0.2, 0.8]
     populations = [3, 2]
     trajectories = _oscillator_trajectories(frequencies, populations)
-    analyzer = CoherenceCarrierAnalyzer(
+    analyzer = CoherenceCarrierAnalyser(
         CoherenceCarrierConfig(
             modes=[0, 1],
             include_trace=True,
@@ -114,7 +114,7 @@ def test_trace_carrier_equals_cam_rayleigh_quotient():
 
 def test_coherent_channel_uses_same_weight_matrix_as_cam():
     trajectories = _oscillator_trajectories([0.15, 0.65], [4, 4])
-    analyzer = CoherenceCarrierAnalyzer(
+    analyzer = CoherenceCarrierAnalyser(
         CoherenceCarrierConfig(
             include_trace=False,
             channels={"balanced": [1.0 + 0.0j, 1.0j]},
@@ -134,7 +134,7 @@ def test_coherent_channel_uses_same_weight_matrix_as_cam():
 
 def test_trajectory_batch_accumulator_recomputes_ratio_and_uncertainty():
     trajectories = _oscillator_trajectories([0.2, 0.8], [3, 2])
-    analyzer = CoherenceCarrierAnalyzer(CoherenceCarrierConfig(maximum_lag_points=8))
+    analyzer = CoherenceCarrierAnalyser(CoherenceCarrierConfig(maximum_lag_points=8))
     backend = NumpyBackend()
     _, complete = _execute(analyzer, trajectories, backend)
     accumulator = analyzer.create_result_accumulator()
@@ -158,7 +158,7 @@ def test_trajectory_batch_accumulator_recomputes_ratio_and_uncertainty():
 
 
 def test_coherence_carrier_invocation_workspace_tracks_physical_batch():
-    analyzer = CoherenceCarrierAnalyzer(
+    analyzer = CoherenceCarrierAnalyser(
         CoherenceCarrierConfig(
             modes=[0, 1],
             channels={"balanced": [1.0, 1.0, 0.0]},
@@ -186,7 +186,7 @@ def test_coherence_carrier_invocation_workspace_tracks_physical_batch():
 
 
 def test_coherence_carrier_retained_workspace_covers_ensemble_and_batches():
-    analyzer = CoherenceCarrierAnalyzer(
+    analyzer = CoherenceCarrierAnalyser(
         CoherenceCarrierConfig(
             modes=[0, 1],
             channels={"balanced": [1.0, 1.0, 0.0]},
@@ -271,7 +271,7 @@ def test_coherence_carrier_execute_aborts_mid_lag_loop_on_cancellation():
     from types import SimpleNamespace
 
     trajectories = _oscillator_trajectories([0.2, 0.8], [3, 2])
-    analyzer = CoherenceCarrierAnalyzer(
+    analyzer = CoherenceCarrierAnalyser(
         CoherenceCarrierConfig(modes=[0, 1], maximum_lag_points=24)
     )
     context = SimpleNamespace(
@@ -294,7 +294,7 @@ def test_coherence_carrier_execute_reports_sample_progress():
     from types import SimpleNamespace
 
     trajectories = _oscillator_trajectories([0.2, 0.8], [3, 2])
-    analyzer = CoherenceCarrierAnalyzer(
+    analyzer = CoherenceCarrierAnalyser(
         CoherenceCarrierConfig(modes=[0, 1], maximum_lag_points=8)
     )
     progress = _FakeProgress()

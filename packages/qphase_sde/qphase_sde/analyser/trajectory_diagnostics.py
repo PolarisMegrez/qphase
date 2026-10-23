@@ -52,7 +52,7 @@ from ..math.coordinates import (
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .allan_statistics import calculate_allan_variance
 from .base import (
-    Analyzer,
+    Analyser,
     map_trajectory_product,
     select_mode_columns,
     trajectory_arrays,
@@ -330,7 +330,7 @@ def _build_trajectory_diagnostics_products(
     return None if product is None else {label: product}
 
 
-class TrajectoryDiagnostics(Analyzer):
+class TrajectoryDiagnostics(Analyser):
     """Analyze saved complex trajectories without assuming a spectral line shape."""
 
     name: ClassVar[str] = "trajectory_diagnostics"

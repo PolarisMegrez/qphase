@@ -97,7 +97,7 @@ def test_bundle_satisfies_all_protocols():
 def test_analyser_output_inherits_source_scan_identity(tmp_path):
     """A scan-free analyze job preserves the upstream dataset scan."""
     from qphase.core.registry import discovery, registry
-    from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
+    from qphase_sde.analyser.peaks import PeaksAnalyser, PeaksAnalyserConfig
     from qphase_sde.engine import Engine, EngineConfig
     from qphase_sde.graph import compile_product_graph
 
@@ -158,8 +158,8 @@ def test_analyser_output_inherits_source_scan_identity(tmp_path):
     )
     from qphase_sde.peak_finder import ScipyPeakFinder
 
-    analyzer = PeaksAnalyzer(
-        PeaksAnalyzerConfig(scan_param="x"),
+    analyzer = PeaksAnalyser(
+        PeaksAnalyserConfig(scan_param="x"),
         subplugins={"finder": ScipyPeakFinder()},
     )
     discovery.discover_plugins()

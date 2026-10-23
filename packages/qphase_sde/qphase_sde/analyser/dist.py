@@ -1,11 +1,11 @@
-"""qphase_sde: Distribution Analyzer
+"""qphase_sde: Distribution Analyser
 ---------------------------------------------------------
 Compute phase space distribution (histogram) from multi-trajectory time series.
 
 Public API
 ----------
-``DistAnalyzer`` : Distribution analyzer.
-``DistAnalyzerConfig`` : Configuration for Distribution analyzer.
+``DistAnalyser`` : Distribution analyzer.
+``DistAnalyserConfig`` : Configuration for Distribution analyzer.
 """
 
 from collections.abc import Mapping
@@ -30,7 +30,7 @@ from ..products import (
     stack_payload_leaves,
 )
 from .base import (
-    Analyzer,
+    Analyser,
     map_trajectory_product,
     select_mode_columns,
     trajectory_arrays,
@@ -38,8 +38,8 @@ from .base import (
 )
 
 __all__ = [
-    "DistAnalyzer",
-    "DistAnalyzerConfig",
+    "DistAnalyser",
+    "DistAnalyserConfig",
 ]
 
 
@@ -51,8 +51,8 @@ def _is_complex(arr: Any) -> bool:
     return str(getattr(dtype, "kind", dtype)) in {"c", "complex"}
 
 
-class DistAnalyzerConfig(PluginConfigBase):
-    """Configuration for Distribution Analyzer."""
+class DistAnalyserConfig(PluginConfigBase):
+    """Configuration for Distribution Analyser."""
 
     modes: list[int] = Field(..., description="Mode indices for analysis")
     bins: int = Field(50, description="Number of bins for histogram")
@@ -62,7 +62,7 @@ class DistAnalyzerConfig(PluginConfigBase):
     density: bool = Field(True, description="Normalize histogram to form a PDF")
 
     @model_validator(mode="after")
-    def validate_modes(self) -> "DistAnalyzerConfig":
+    def validate_modes(self) -> "DistAnalyserConfig":
         if not self.modes:
             raise ValueError("modes must be non-empty")
         return self
@@ -116,14 +116,14 @@ def _build_dist_products(
     return None if product is None else {label: product}
 
 
-class DistAnalyzer(Analyzer):
-    """Analyzer for Phase Space Distribution."""
+class DistAnalyser(Analyser):
+    """Analyser for Phase Space Distribution."""
 
     name: ClassVar[str] = "dist"
     description: ClassVar[str] = "Phase Space Distribution analyzer"
-    config_schema: ClassVar[type[DistAnalyzerConfig]] = DistAnalyzerConfig
+    config_schema: ClassVar[type[DistAnalyserConfig]] = DistAnalyserConfig
 
-    def __init__(self, config: DistAnalyzerConfig | None = None, **kwargs):
+    def __init__(self, config: DistAnalyserConfig | None = None, **kwargs):
         super().__init__(config, **kwargs)
 
     def input_requirements(self) -> list[ProductRequirement]:
@@ -146,7 +146,7 @@ class DistAnalyzer(Analyzer):
         def compute(point: Dataset) -> Mapping[str, Dataset]:
             data, _, _, recorded = trajectory_arrays(point)
             modes, columns = select_mode_columns(
-                recorded, cast(DistAnalyzerConfig, self.config).modes
+                recorded, cast(DistAnalyserConfig, self.config).modes
             )
             payload = self._compute_payload(data, modes, columns, backend)
             products = _build_dist_products(
@@ -165,7 +165,7 @@ class DistAnalyzer(Analyzer):
         mode_columns: list[int],
         backend: BackendBase,
     ) -> dict[str, Any]:
-        config = cast(DistAnalyzerConfig, self.config)
+        config = cast(DistAnalyserConfig, self.config)
         bins = config.bins
         density = config.density
         range_list = config.range
@@ -242,7 +242,7 @@ class DistAnalyzer(Analyzer):
         }
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
-        config = cast(DistAnalyzerConfig, self.config)
+        config = cast(DistAnalyserConfig, self.config)
         fields: list[str] = []
         for mode in config.modes:
             fields += [

@@ -17,12 +17,12 @@ from qphase.data import (
     StatisticsDataset,
     VariableSchema,
 )
-from qphase_sde.analyser.allan_variance import AllanVarianceAnalyzer
-from qphase_sde.analyser.coherence_carrier import CoherenceCarrierAnalyzer
-from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyzer
-from qphase_sde.analyser.moment_statistics import MomentStatisticsAnalyzer
-from qphase_sde.analyser.psd import PsdAnalyzer
-from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyzer
+from qphase_sde.analyser.allan_variance import AllanVarianceAnalyser
+from qphase_sde.analyser.coherence_carrier import CoherenceCarrierAnalyser
+from qphase_sde.analyser.coherence_matrix import CoherenceMatrixAnalyser
+from qphase_sde.analyser.moment_statistics import MomentStatisticsAnalyser
+from qphase_sde.analyser.psd import PsdAnalyser
+from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyser
 from qphase_sde.contracts.quantities import SDEQuantity
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
@@ -60,7 +60,7 @@ class _TwoModeModel(_OneModeModel):
         return np.ones(y.shape + (2,))
 
 
-class _MeanAnalyzer:
+class _MeanAnalyser:
     """Minimal typed analyser used to exercise engine product validation."""
 
     name = "mean"
@@ -96,7 +96,7 @@ class _MeanAnalyzer:
         }
 
 
-class _ProductBuilderAnalyzer(_MeanAnalyzer):
+class _ProductBuilderAnalyser(_MeanAnalyser):
     def __init__(
         self,
         product_name: str,
@@ -144,8 +144,8 @@ class _ProductBuilderAnalyzer(_MeanAnalyzer):
         }
 
 
-def _psd_analyzer() -> PsdAnalyzer:
-    return PsdAnalyzer(
+def _psd_analyzer() -> PsdAnalyser:
+    return PsdAnalyser(
         measurement={"complex_field": {"channels": [0], "representation": "complex"}}
     )
 
@@ -359,7 +359,7 @@ def test_allan_product_is_graph_ready_statistics():
     bundle = _run(
         _OneModeModel(),
         {
-            "allan_variance": AllanVarianceAnalyzer(
+            "allan_variance": AllanVarianceAnalyser(
                 measurement={
                     "phase_frequency": {"channels": [0], "min_independent_windows": 1}
                 },
@@ -403,7 +403,7 @@ def test_moment_and_coherence_products_are_typed_over_scan():
     bundle = _run(
         _TwoModeModel(),
         {
-            "quadratic_moments": QuadraticMomentAnalyzer(
+            "quadratic_moments": QuadraticMomentAnalyser(
                 observables={
                     "n0": {"matrix": [[1.0, 0.0], [0.0, 0.0]]},
                     "n1": {"matrix": [[0.0, 0.0], [0.0, 1.0]]},
@@ -411,13 +411,13 @@ def test_moment_and_coherence_products_are_typed_over_scan():
                 time_blocks=2,
                 min_block_samples=2,
             ),
-            "moment_statistics": MomentStatisticsAnalyzer(
+            "moment_statistics": MomentStatisticsAnalyser(
                 time_blocks=2, min_block_samples=2
             ),
-            "coherence_matrix": CoherenceMatrixAnalyzer(
+            "coherence_matrix": CoherenceMatrixAnalyser(
                 time_blocks=2, min_block_samples=2
             ),
-            "coherence_carrier": CoherenceCarrierAnalyzer(
+            "coherence_carrier": CoherenceCarrierAnalyser(
                 modes=[0], include_trace=True
             ),
         },
@@ -495,7 +495,7 @@ def test_moment_and_coherence_products_are_typed_over_scan():
 
 
 def test_minimal_typed_analyser_produces_graph_ready_product():
-    bundle = _run(_OneModeModel(), {"mean": _MeanAnalyzer()})
+    bundle = _run(_OneModeModel(), {"mean": _MeanAnalyser()})
 
     product = bundle.products["mean"]
     assert isinstance(product, StatisticsDataset)
@@ -507,14 +507,14 @@ def test_analyser_products_cannot_collide_with_each_other_or_engine_products():
         _run(
             _OneModeModel(),
             {
-                "first": _ProductBuilderAnalyzer("shared"),
-                "second": _ProductBuilderAnalyzer("shared"),
+                "first": _ProductBuilderAnalyser("shared"),
+                "second": _ProductBuilderAnalyser("shared"),
             },
         )
     with np.testing.assert_raises_regex(ValueError, "collides"):
         _run(
             _OneModeModel(),
-            {"bad": _ProductBuilderAnalyzer("trajectories")},
+            {"bad": _ProductBuilderAnalyser("trajectories")},
             keep_traj=True,
         )
 
@@ -523,12 +523,12 @@ def test_analyser_products_must_be_graph_ready_and_match_declaration():
     with np.testing.assert_raises_regex(TypeError, "not graph-ready"):
         _run(
             _OneModeModel(),
-            {"bad": _ProductBuilderAnalyzer("bad", graph_ready=False)},
+            {"bad": _ProductBuilderAnalyser("bad", graph_ready=False)},
         )
     with np.testing.assert_raises_regex(TypeError, "expected 'spectral'"):
         _run(
             _OneModeModel(),
-            {"bad": _ProductBuilderAnalyzer("bad", declared_kind=DataKind.SPECTRAL)},
+            {"bad": _ProductBuilderAnalyser("bad", declared_kind=DataKind.SPECTRAL)},
         )
 
 
@@ -536,7 +536,7 @@ def test_singleton_scan_product_carries_scan_axis():
     """A genuine 1-point scan closes the producer's size-1 scan axis."""
     result = _run(
         _OneModeModel(),
-        {"bad": _ProductBuilderAnalyzer("bad")},
+        {"bad": _ProductBuilderAnalyser("bad")},
         grid=_singleton_grid(),
     )
     assert result.products["bad"].axis("scan").size == 1
@@ -546,12 +546,12 @@ def test_builder_products_must_be_declared():
     with np.testing.assert_raises_regex(ValueError, "expected"):
         _run(
             _OneModeModel(),
-            {"bad": _ProductBuilderAnalyzer("bad", declared_name="other")},
+            {"bad": _ProductBuilderAnalyser("bad", declared_name="other")},
         )
 
 
 def test_builder_must_return_all_declared_outputs_atomically():
-    analyser = _ProductBuilderAnalyzer(
+    analyser = _ProductBuilderAnalyser(
         "bad",
         extra_declarations=(
             ProductDeclaration(

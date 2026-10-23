@@ -1,6 +1,6 @@
 """qphase_sde: Lorentzian Fitter (cross-job analyzer)
 ---------------------------------------------------------
-Analyzer plugin that operates on typed spectral scan inputs to perform
+Analyser plugin that operates on typed spectral scan inputs to perform
 cross-job Lorentzian fitting, PSD merging, and distribution collection.
 
 Public API
@@ -37,7 +37,7 @@ from ..contracts.quantities import (
 from ..products import (
     assemble_row_table_product,
 )
-from .base import Analyzer, check_execution_cancelled, report_execution_progress
+from .base import Analyser, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     orientation_metadata,
     resolve_frequency_orientation,
@@ -509,7 +509,7 @@ def _build_lorentz_products(
     return {label: product}
 
 
-class LorentzFitter(Analyzer):
+class LorentzFitter(Analyser):
     """Cross-job analyzer that fits Lorentzians to aggregated PSD data."""
 
     name: ClassVar[str] = "lorentz_fitter"

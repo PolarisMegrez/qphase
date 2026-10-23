@@ -27,14 +27,14 @@ from ..contracts.quantities import (
     SDEQuantity,
 )
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
-from .base import Analyzer, check_execution_cancelled, report_execution_progress
+from .base import Analyser, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     orientation_metadata,
     resolve_frequency_orientation,
 )
 
 __all__ = [
-    "AllanScalingAnalyzer",
+    "AllanScalingAnalyser",
     "AllanScalingConfig",
     "NormalFormExpectation",
 ]
@@ -236,7 +236,7 @@ def _collect_points(
     points.sort(key=lambda point: point.epsilon)
     if not points:
         raise QPhaseError(
-            "AllanScalingAnalyzer received no nonzero perturbation points"
+            "AllanScalingAnalyser received no nonzero perturbation points"
         )
     orientations = {point.orientation for point in points}
     if len(orientations) != 1:
@@ -635,7 +635,7 @@ def _build_allan_scaling_products(
     return None if product is None else {label: product}
 
 
-class AllanScalingAnalyzer(Analyzer):
+class AllanScalingAnalyser(Analyser):
     """Detect white-FM windows and fit Allan-noise scaling across a scan."""
 
     name: ClassVar[str] = "allan_scaling"

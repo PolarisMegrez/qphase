@@ -53,14 +53,14 @@ from ..math.observable import (
     stage_quadratic_observables,
 )
 from .base import (
-    Analyzer,
+    Analyser,
     check_execution_cancelled,
     requirement_source,
     select_mode_columns,
 )
 
 __all__ = [
-    "ObservableTransformAnalyzer",
+    "ObservableTransformAnalyser",
     "ObservableTransformConfig",
 ]
 
@@ -133,7 +133,7 @@ def validate_mode_indices(raw_modes: Any, n_channel: int) -> tuple[int, ...]:
     return recorded
 
 
-class ObservableTransformAnalyzer(Analyzer):
+class ObservableTransformAnalyser(Analyser):
     """Map complex field trajectories to sampled-observable time series."""
 
     name: ClassVar[str] = "observable_transform"

@@ -36,7 +36,7 @@ from ..numerics.band_limited import (
     track_band_limited_carrier,
 )
 from ..products import assemble_row_table_product
-from .base import Analyzer, check_execution_cancelled, report_execution_progress
+from .base import Analyser, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     orientation_metadata,
     resolve_frequency_orientation,
@@ -47,7 +47,7 @@ from .spectral_ridge import (
 )
 
 __all__ = [
-    "BandLimitedCarrierAnalyzer",
+    "BandLimitedCarrierAnalyser",
     "BandLimitedCarrierConfig",
     "RidgeConditionedCenterConfig",
 ]
@@ -459,7 +459,7 @@ def _build_band_limited_carrier_products(
     }
 
 
-class BandLimitedCarrierAnalyzer(Analyzer):
+class BandLimitedCarrierAnalyser(Analyser):
     """Cross-result adaptive carrier estimator for saved PSD datasets."""
 
     name: ClassVar[str] = "band_limited_carrier"

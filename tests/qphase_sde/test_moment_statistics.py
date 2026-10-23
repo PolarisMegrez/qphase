@@ -1,7 +1,7 @@
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.moment_statistics import (
-    MomentStatisticsAnalyzer,
+    MomentStatisticsAnalyser,
     MomentStatisticsConfig,
 )
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
@@ -12,7 +12,7 @@ from .conftest import product_payload
 
 
 def _analyzer(**kwargs):
-    return MomentStatisticsAnalyzer(MomentStatisticsConfig(**kwargs))
+    return MomentStatisticsAnalyser(MomentStatisticsConfig(**kwargs))
 
 
 def _payload(analyzer, trajectory: TrajectorySet):

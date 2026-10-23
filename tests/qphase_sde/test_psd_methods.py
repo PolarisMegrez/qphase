@@ -1,4 +1,4 @@
-"""Tests for the ``method`` option of ``PsdAnalyzer``.
+"""Tests for the ``method`` option of ``PsdAnalyser``.
 
 The analyzer now supports three PSD estimation methods:
 
@@ -19,7 +19,7 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.registry import discovery, registry
 from qphase.service import RegistryService
 from qphase_sde.analyser.frequency_orientation import resolve_frequency_orientation
-from qphase_sde.analyser.psd import PsdAnalyzer, PsdAnalyzerConfig
+from qphase_sde.analyser.psd import PsdAnalyser, PsdAnalyserConfig
 from qphase_sde.result import trajectory_product
 from qphase_sde.spectral_estimator import create_builtin_estimator
 from qphase_sde.state import TrajectorySet
@@ -28,7 +28,7 @@ BACKEND = NumpyBackend()
 
 
 def _analyzer(method="periodogram", *, estimator_config=None, **kwargs):
-    return PsdAnalyzer(
+    return PsdAnalyser(
         **kwargs,
         subplugins={
             "estimator": create_builtin_estimator(method, estimator_config or {})
@@ -173,7 +173,7 @@ def test_psd_phase_increasing_preserves_forward_fft_axis():
     data = TrajectorySet(data=np.repeat(values, 2, axis=0), t0=0.0, dt=dt)
 
     payload = _payload(
-        PsdAnalyzer(
+        PsdAnalyser(
             measurement=_field(orientation="phase_increasing"),
             convention="symmetric",
         ),
@@ -201,7 +201,7 @@ def test_frequency_orientation_resolver_rejects_missing_metadata():
     [("fft", "phase_increasing"), ("physical", "phase_decreasing")],
 )
 def test_psd_orientation_aliases_serialize_canonically(configured, canonical):
-    config = PsdAnalyzerConfig(measurement=_field(orientation=configured))
+    config = PsdAnalyserConfig(measurement=_field(orientation=configured))
 
     field = config.measurement.complex_field
     assert field is not None
@@ -212,7 +212,7 @@ def test_psd_orientation_aliases_serialize_canonically(configured, canonical):
 
 
 def test_psd_orientation_aliases_are_discoverable_in_schema():
-    schema = PsdAnalyzerConfig.model_json_schema()
+    schema = PsdAnalyserConfig.model_json_schema()
     orientation = schema["$defs"]["PsdComplexFieldMeasurement"]["properties"][
         "orientation"
     ]
@@ -275,7 +275,7 @@ def test_periodogram_reports_cross_trajectory_standard_error():
     data = TrajectorySet(data=values[:, :, None], t0=0.0, dt=dt)
 
     payload = _payload(
-        PsdAnalyzer(
+        PsdAnalyser(
             measurement=_field(orientation="phase_increasing"),
             convention="pragmatic",
         ),
@@ -328,7 +328,7 @@ def test_single_trajectory_marks_psd_uncertainty_unavailable():
         t0=0.0,
         dt=0.1,
     )
-    payload = _payload(PsdAnalyzer(measurement=_field()), data)
+    payload = _payload(PsdAnalyser(measurement=_field()), data)
 
     assert np.all(np.isnan(payload["psd_std"]))
     assert np.all(np.isnan(payload["psd_sem"]))
@@ -372,7 +372,7 @@ def test_expected_freq_max_guards_against_aliasing():
     """The optional frequency-band hint rejects an undersampled PSD."""
     values = _make_sine_data(n_traj=2, n_time=128)
     undersampled = TrajectorySet(data=values, t0=0.0, dt=50.0)
-    analyzer = PsdAnalyzer(
+    analyzer = PsdAnalyser(
         measurement=_field(),
         convention="symmetric",
         expected_freq_max=0.34,
@@ -392,7 +392,7 @@ def test_psd_method_invalid():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError, match="method"):
-        PsdAnalyzer(
+        PsdAnalyser(
             measurement=_field(),
             method="not_a_method",
         )
@@ -519,7 +519,7 @@ def test_raw_psd_product_fields_are_frozen():
         data=_make_sine_data(n_traj=4, n_time=128), t0=0.0, dt=0.1
     )
 
-    product = _product(PsdAnalyzer(measurement=_field()), data)
+    product = _product(PsdAnalyser(measurement=_field()), data)
 
     assert {variable.name for variable in product.variables} == {
         "axis",
@@ -551,7 +551,7 @@ def test_psd_config_orientation_rejects_unsigned():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        PsdAnalyzerConfig(measurement=_field(orientation="unsigned"))
+        PsdAnalyserConfig(measurement=_field(orientation="unsigned"))
 
 
 def test_psd_field_units_follow_source_variable_units():
@@ -607,7 +607,7 @@ def test_psd_field_units_follow_source_variable_units():
         owner="test",
     )
 
-    analyzer = PsdAnalyzer(
+    analyzer = PsdAnalyser(
         measurement=_field(),
         convention="unitary",
         subplugins={"estimator": create_builtin_estimator("periodogram", {})},
@@ -626,7 +626,7 @@ def test_psd_field_accumulator_roundtrip_preserves_units_and_convention():
     data = TrajectorySet(
         data=_make_sine_data(n_traj=8, n_time=128), t0=0.0, dt=0.1
     )
-    analyzer = PsdAnalyzer(measurement=_field(), convention="unitary")
+    analyzer = PsdAnalyser(measurement=_field(), convention="unitary")
     single = _product(analyzer, data)
 
     accumulator = PsdResultAccumulator(analyzer)

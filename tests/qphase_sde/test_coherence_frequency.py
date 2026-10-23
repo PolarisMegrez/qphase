@@ -6,10 +6,10 @@ import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.coherence_frequency import (
-    CoherenceFrequencyAnalyzer,
-    CoherenceFrequencyAnalyzerConfig,
+    CoherenceFrequencyAnalyser,
+    CoherenceFrequencyAnalyserConfig,
 )
-from qphase_sde.analyser.psd import PsdAnalyzer
+from qphase_sde.analyser.psd import PsdAnalyser
 from qphase_sde.coherence_frequency import BandLimitedCoherenceFrequency
 
 
@@ -28,7 +28,7 @@ def _typed_psd_product(scan_values: list[float]):
     product = trajectory_product(
         trajectory, scan_size=len(scan_values), n_traj_per_point=4
     )
-    psd = PsdAnalyzer(
+    psd = PsdAnalyser(
         measurement={"complex_field": {"channels": [0], "representation": "complex"}}
     ).execute({"signal": product}, backend=NumpyBackend(), label="psd")["psd"]
     return add_scan_parameter_coordinates(
@@ -36,9 +36,9 @@ def _typed_psd_product(scan_values: list[float]):
     )
 
 
-def _analyzer() -> CoherenceFrequencyAnalyzer:
-    return CoherenceFrequencyAnalyzer(
-        CoherenceFrequencyAnalyzerConfig(
+def _analyzer() -> CoherenceFrequencyAnalyser:
+    return CoherenceFrequencyAnalyser(
+        CoherenceFrequencyAnalyserConfig(
             scan_param="epsilon",
             input_key="psd",
             estimator={

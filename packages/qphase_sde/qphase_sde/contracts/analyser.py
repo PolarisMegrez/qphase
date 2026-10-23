@@ -14,7 +14,7 @@ details remain inside the resource package.
 
 This module is the sole source of truth for those types: the legacy 1.x
 duplicates in ``qphase_sde.analyser.base`` have been removed. The plugin base class
-(:class:`qphase_sde.analyser.base.Analyzer`) consumes these contract types
+(:class:`qphase_sde.analyser.base.Analyser`) consumes these contract types
 directly. Built-in numerical kernels remain private implementation details
 behind the typed execution boundary.
 

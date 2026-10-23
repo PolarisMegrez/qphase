@@ -21,8 +21,8 @@ Behavior
 
 Public API
 ----------
-``PsdAnalyzer`` : Power spectral density analyzer.
-``PsdAnalyzerConfig`` : Configuration for PSD analyzer.
+``PsdAnalyser`` : Power spectral density analyzer.
+``PsdAnalyserConfig`` : Configuration for PSD analyzer.
 
 Notes
 -----
@@ -85,7 +85,7 @@ from ..spectral_estimator import (
     create_builtin_estimator,
 )
 from .base import (
-    Analyzer,
+    Analyser,
     map_trajectory_product,
 )
 from .frequency_orientation import (
@@ -97,8 +97,8 @@ from .frequency_orientation import (
 from .sampled_signal import read_sampled_signal
 
 __all__ = [
-    "PsdAnalyzer",
-    "PsdAnalyzerConfig",
+    "PsdAnalyser",
+    "PsdAnalyserConfig",
     "PsdComplexFieldMeasurement",
     "PsdMeasurement",
     "PsdSampledScalarMeasurement",
@@ -179,8 +179,8 @@ class PsdMeasurement(PluginConfigBase):
         return self
 
 
-class PsdAnalyzerConfig(PluginConfigBase):
-    """Configuration for PSD Analyzer."""
+class PsdAnalyserConfig(PluginConfigBase):
+    """Configuration for PSD Analyser."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -201,12 +201,12 @@ class PsdAnalyzerConfig(PluginConfigBase):
     )
 
 
-class PsdAnalyzer(Analyzer):
-    """Analyzer for Power Spectral Density."""
+class PsdAnalyser(Analyser):
+    """Analyser for Power Spectral Density."""
 
     name: ClassVar[str] = "psd"
     description: ClassVar[str] = "Power Spectral Density analyzer"
-    config_schema: ClassVar[type[PsdAnalyzerConfig]] = PsdAnalyzerConfig
+    config_schema: ClassVar[type[PsdAnalyserConfig]] = PsdAnalyserConfig
     manifest: ClassVar[PluginManifest] = PluginManifest(
         subplugins={
             "estimator": SubpluginSlot(
@@ -220,7 +220,7 @@ class PsdAnalyzer(Analyzer):
 
     def __init__(
         self,
-        config: PsdAnalyzerConfig | None = None,
+        config: PsdAnalyserConfig | None = None,
         *,
         subplugins: dict[str, Any] | None = None,
         **kwargs,
@@ -232,7 +232,7 @@ class PsdAnalyzer(Analyzer):
             self.estimator = create_builtin_estimator("periodogram", {})
 
     def input_requirements(self) -> list[ProductRequirement]:
-        config = cast(PsdAnalyzerConfig, self.config)
+        config = cast(PsdAnalyserConfig, self.config)
         if config.measurement.complex_field is not None:
             return [
                 ProductRequirement(
@@ -268,7 +268,7 @@ class PsdAnalyzer(Analyzer):
             raise TypeError("PSD analyser requires a 'signal' input product")
 
         def compute(point: Dataset) -> Mapping[str, Dataset]:
-            config = cast(PsdAnalyzerConfig, self.config)
+            config = cast(PsdAnalyserConfig, self.config)
             measurement = config.measurement
             if measurement.complex_field is not None:
                 field = measurement.complex_field
@@ -313,7 +313,7 @@ class PsdAnalyzer(Analyzer):
         return map_trajectory_product(signal, compute, context=context)
 
     def _nyquist_guard(self, dt: float) -> float:
-        config = cast(PsdAnalyzerConfig, self.config)
+        config = cast(PsdAnalyserConfig, self.config)
         convention = config.convention
         if dt <= 0.0:
             raise ValueError("PSD sampling interval must be positive")
@@ -338,7 +338,7 @@ class PsdAnalyzer(Analyzer):
         variable_units: str,
         backend: BackendBase,
     ) -> dict[str, Any]:
-        config = cast(PsdAnalyzerConfig, self.config)
+        config = cast(PsdAnalyserConfig, self.config)
         convention = config.convention
         nyquist = self._nyquist_guard(dt)
         estimate0 = self._estimate_single(
@@ -412,7 +412,7 @@ class PsdAnalyzer(Analyzer):
         variable_units: str,
         backend: BackendBase,
     ) -> dict[str, Any]:
-        config = cast(PsdAnalyzerConfig, self.config)
+        config = cast(PsdAnalyserConfig, self.config)
         convention = config.convention
         nyquist = self._nyquist_guard(dt)
         estimate0 = self._estimate_scalar_single(
@@ -477,7 +477,7 @@ class PsdAnalyzer(Analyzer):
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
         """Declare the graph-ready spectrum product."""
-        config = cast(PsdAnalyzerConfig, self.config)
+        config = cast(PsdAnalyserConfig, self.config)
         fields = (
             list(_PSD_PRODUCT_FIELDS)
             if config.measurement.complex_field is not None
@@ -512,7 +512,7 @@ class PsdAnalyzer(Analyzer):
         """Estimate FFT or host-estimator workspace for one scan point."""
         capabilities = self.estimator.capabilities()
         trajectory_bytes = request.trajectory_bytes
-        config = cast(PsdAnalyzerConfig, self.config)
+        config = cast(PsdAnalyserConfig, self.config)
         measurement = config.measurement
         n_channels = (
             len(measurement.complex_field.channels)
@@ -691,7 +691,7 @@ _ESTIMATOR_DEFAULT_WINDOWS = {
 }
 
 
-def _estimator_window(analyser: PsdAnalyzer) -> str:
+def _estimator_window(analyser: PsdAnalyser) -> str:
     """Return the true window identifier of the analyser's estimator child."""
     estimator = analyser.estimator
     configured = getattr(getattr(estimator, "config", None), "window", None)
@@ -707,7 +707,7 @@ def _build_psd_products(
     *,
     scan_size: int | None,
     label: str,
-    analyser: PsdAnalyzer,
+    analyser: PsdAnalyser,
 ) -> dict[str, Dataset] | None:
     """Assemble the typed spectral product of one PSD analyser payload.
 
@@ -874,9 +874,9 @@ def _build_psd_products(
 class PsdResultAccumulator:
     """Merge PSD batch results without retaining trajectory spectra."""
 
-    def __init__(self, analyzer: PsdAnalyzer) -> None:
+    def __init__(self, analyzer: PsdAnalyser) -> None:
         self.analyzer = analyzer
-        config = cast(PsdAnalyzerConfig, analyzer.config)
+        config = cast(PsdAnalyserConfig, analyzer.config)
         self.measurement_model = (
             "complex_field"
             if config.measurement.complex_field is not None

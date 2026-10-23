@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.allan_variance import (
-    AllanVarianceAnalyzer,
+    AllanVarianceAnalyser,
     AllanVarianceConfig,
 )
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
@@ -25,8 +25,8 @@ def _phase_diffusion_trajectory(n_traj: int = 9) -> TrajectorySet:
     return TrajectorySet(values, t0=10.0, dt=dt, meta={"mode_indices": [2]})
 
 
-def _analyzer() -> AllanVarianceAnalyzer:
-    return AllanVarianceAnalyzer(
+def _analyzer() -> AllanVarianceAnalyser:
+    return AllanVarianceAnalyser(
         AllanVarianceConfig(
             measurement={
                 "phase_frequency": {"channels": [2], "min_independent_windows": 4}
@@ -78,7 +78,7 @@ def test_allan_frequency_uses_configured_phase_orientation():
     )
 
     _, phase_decreasing = _execute(
-        AllanVarianceAnalyzer(
+        AllanVarianceAnalyser(
             AllanVarianceConfig(
                 measurement={
                     "phase_frequency": {"channels": [0], "min_independent_windows": 2}
@@ -89,7 +89,7 @@ def test_allan_frequency_uses_configured_phase_orientation():
         trajectory,
     )
     _, legacy = _execute(
-        AllanVarianceAnalyzer(
+        AllanVarianceAnalyser(
             AllanVarianceConfig(
                 measurement={
                     "phase_frequency": {
@@ -208,7 +208,7 @@ def test_allan_config_rejects_empty_taus():
 
 
 def test_allan_workspace_is_host_resident_for_numpy_backend():
-    analyzer = AllanVarianceAnalyzer(
+    analyzer = AllanVarianceAnalyser(
         AllanVarianceConfig(
             measurement={"phase_frequency": {"channels": [0, 1, 2]}},
             transfer_chunk_samples=8192,
@@ -239,7 +239,7 @@ def test_allan_workspace_is_host_resident_for_numpy_backend():
 def test_allan_workspace_is_trajectory_chunked_on_device(
     real_itemsize, bytes_per_sample
 ):
-    analyzer = AllanVarianceAnalyzer(
+    analyzer = AllanVarianceAnalyser(
         AllanVarianceConfig(
             measurement={"phase_frequency": {"channels": [0, 1, 2]}},
             device_chunk_trajectories=16,
@@ -269,7 +269,7 @@ def test_allan_device_transfer_is_time_chunked():
         dt=source.dt,
         meta=dict(source.meta),
     )
-    analyzer = AllanVarianceAnalyzer(
+    analyzer = AllanVarianceAnalyser(
         AllanVarianceConfig(
             measurement={
                 "phase_frequency": {"channels": [2], "min_independent_windows": 4}
@@ -415,7 +415,7 @@ def test_allan_device_path_matches_host_complex64_long_record():
         :, :, None
     ]
     trajectory = TrajectorySet(values, t0=0.0, dt=dt, meta={"mode_indices": [0]})
-    analyzer = AllanVarianceAnalyzer(
+    analyzer = AllanVarianceAnalyser(
         AllanVarianceConfig(
             measurement={
                 "phase_frequency": {
@@ -470,7 +470,7 @@ def test_allan_device_path_matches_host():
 
     source = _phase_diffusion_trajectory()
     # Odd chunking exercises the trailing partial chunk.
-    analyzer = AllanVarianceAnalyzer(
+    analyzer = AllanVarianceAnalyser(
         AllanVarianceConfig(
             measurement={
                 "phase_frequency": {"channels": [2], "min_independent_windows": 4}
@@ -511,7 +511,7 @@ def test_allan_device_path_matches_host_with_masked_windows():
     amplitude[3, 300:] = 0.0
     values = (amplitude * np.exp(1j * phase))[:, :, None]
     trajectory = TrajectorySet(values, t0=0.0, dt=0.1, meta={"mode_indices": [0]})
-    analyzer = AllanVarianceAnalyzer(
+    analyzer = AllanVarianceAnalyser(
         AllanVarianceConfig(
             measurement={
                 "phase_frequency": {

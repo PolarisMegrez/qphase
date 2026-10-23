@@ -32,7 +32,7 @@ from ..contracts.quantities import (
     FrequencyOrientation,
 )
 from ..products import assemble_row_table_product
-from .base import Analyzer, check_execution_cancelled, report_execution_progress
+from .base import Analyser, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
     orientation_metadata,
     resolve_frequency_orientation,
@@ -105,7 +105,7 @@ def _ridge_candidate_fields(scan_param: str) -> list[str]:
 
 
 __all__ = [
-    "SpectralRidgeAnalyzer",
+    "SpectralRidgeAnalyser",
     "SpectralRidgeConfig",
     "SpectralRidgeEstimate",
     "estimate_spectral_ridges",
@@ -837,7 +837,7 @@ def _build_spectral_ridge_products(
     return {label: selected, f"{label}.candidates": candidate}
 
 
-class SpectralRidgeAnalyzer(Analyzer):
+class SpectralRidgeAnalyser(Analyser):
     """Extract model-independent spectral ridges from logical PSD scans."""
 
     name: ClassVar[str] = "spectral_ridge"

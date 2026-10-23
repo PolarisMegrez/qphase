@@ -1,12 +1,12 @@
-"""qphase_sde: Polar Distribution Analyzer
+"""qphase_sde: Polar Distribution Analyser
 ---------------------------------------------------------
 Compute longitudinal (magnitude) distribution from multi-trajectory time series.
 Includes peak finding and width estimation for the distribution.
 
 Public API
 ----------
-``PolarDistAnalyzer`` : Polar Distribution analyzer.
-``PolarDistAnalyzerConfig`` : Configuration for Polar Dist analyzer.
+``PolarDistAnalyser`` : Polar Distribution analyzer.
+``PolarDistAnalyserConfig`` : Configuration for Polar Dist analyzer.
 """
 
 from collections.abc import Mapping
@@ -27,7 +27,7 @@ from qphase.data import (
 
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
-    Analyzer,
+    Analyser,
     map_trajectory_product,
     select_mode_columns,
     trajectory_arrays,
@@ -35,13 +35,13 @@ from .base import (
 )
 
 __all__ = [
-    "PolarDistAnalyzer",
-    "PolarDistAnalyzerConfig",
+    "PolarDistAnalyser",
+    "PolarDistAnalyserConfig",
 ]
 
 
-class PolarDistAnalyzerConfig(PluginConfigBase):
-    """Configuration for Polar Distribution Analyzer.
+class PolarDistAnalyserConfig(PluginConfigBase):
+    """Configuration for Polar Distribution Analyser.
 
     Analyzes the distribution of the magnitude (r = |z|) of the modes.
     """
@@ -58,7 +58,7 @@ class PolarDistAnalyzerConfig(PluginConfigBase):
     density: bool = Field(True, description="Normalize histogram to form a PDF")
 
     @model_validator(mode="after")
-    def validate_modes(self) -> "PolarDistAnalyzerConfig":
+    def validate_modes(self) -> "PolarDistAnalyserConfig":
         if not self.modes:
             raise ValueError("modes must be non-empty")
         return self
@@ -99,14 +99,14 @@ def _build_polar_dist_products(
     return None if product is None else {label: product}
 
 
-class PolarDistAnalyzer(Analyzer):
-    """Analyzer for Polar (Longitudinal/Magnitude) Distribution."""
+class PolarDistAnalyser(Analyser):
+    """Analyser for Polar (Longitudinal/Magnitude) Distribution."""
 
     name: ClassVar[str] = "polar_dist"
-    description: ClassVar[str] = "Magnitude Distribution Analyzer with Peak Finding"
-    config_schema: ClassVar[type[PolarDistAnalyzerConfig]] = PolarDistAnalyzerConfig
+    description: ClassVar[str] = "Magnitude Distribution Analyser with Peak Finding"
+    config_schema: ClassVar[type[PolarDistAnalyserConfig]] = PolarDistAnalyserConfig
 
-    def __init__(self, config: PolarDistAnalyzerConfig | None = None, **kwargs):
+    def __init__(self, config: PolarDistAnalyserConfig | None = None, **kwargs):
         super().__init__(config, **kwargs)
 
     def input_requirements(self) -> list[ProductRequirement]:
@@ -129,7 +129,7 @@ class PolarDistAnalyzer(Analyzer):
         def compute(point: Dataset) -> Mapping[str, Dataset]:
             data, _, _, recorded = trajectory_arrays(point)
             modes, columns = select_mode_columns(
-                recorded, cast(PolarDistAnalyzerConfig, self.config).modes
+                recorded, cast(PolarDistAnalyserConfig, self.config).modes
             )
             payload = self._compute_payload(data, modes, columns, backend)
             products = _build_polar_dist_products(
@@ -148,7 +148,7 @@ class PolarDistAnalyzer(Analyzer):
         mode_columns: list[int],
         backend: BackendBase,
     ) -> dict[str, Any]:
-        config = cast(PolarDistAnalyzerConfig, self.config)
+        config = cast(PolarDistAnalyserConfig, self.config)
         bins = config.bins
         density = config.density
         range_list = config.range
@@ -205,7 +205,7 @@ class PolarDistAnalyzer(Analyzer):
         }
 
     def output_specs(self, *, label: str) -> tuple[ProductDeclaration, ...]:
-        config = cast(PolarDistAnalyzerConfig, self.config)
+        config = cast(PolarDistAnalyserConfig, self.config)
         fields: list[str] = []
         if isinstance(config.bins, int):
             fields.append("bins_config")

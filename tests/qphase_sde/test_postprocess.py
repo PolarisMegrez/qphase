@@ -23,7 +23,7 @@ from qphase_sde.analyser.lorentz_fitter import (
 from qphase_sde.analyser.lorentz_fitter import (
     _lorentzian_with_baseline as lorentzian_with_baseline,
 )
-from qphase_sde.analyser.psd import PsdAnalyzer, _build_psd_products
+from qphase_sde.analyser.psd import PsdAnalyser, _build_psd_products
 from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.products import add_scan_parameter_coordinates
 from qphase_sde.result import SDEDataBundle
@@ -369,7 +369,7 @@ def _psd_payload(epsilon: float, *, with_uncertainty: bool = False) -> dict:
 
 
 def _make_scan_product(*, with_uncertainty: bool = False):
-    analyzer = PsdAnalyzer(
+    analyzer = PsdAnalyser(
         measurement={"complex_field": {"channels": [0], "representation": "complex"}}
     )
     products = _build_psd_products(
@@ -389,7 +389,7 @@ def _make_scan_product(*, with_uncertainty: bool = False):
 
 def _make_run_dir(tmp_path: Path, *, with_uncertainty: bool = False) -> Path:
     run_dir = tmp_path / "run"
-    analyzer = PsdAnalyzer(
+    analyzer = PsdAnalyser(
         measurement={"complex_field": {"channels": [0], "representation": "complex"}}
     )
     for index, epsilon in enumerate([0.1, 0.2], start=1):

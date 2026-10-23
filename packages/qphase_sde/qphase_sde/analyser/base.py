@@ -1,4 +1,4 @@
-"""qphase_sde: Analyzer Base Class
+"""qphase_sde: Analyser Base Class
 ---------------------------------------------------------
 Base class for all analyzers in the qphase_sde package, plus the shared
 analyser helpers (physical-to-recorded mode-column mapping).
@@ -6,7 +6,7 @@ analyser helpers (physical-to-recorded mode-column mapping).
 The analyser declaration types (execution capabilities, workspace
 request/estimate, work estimates, reducer lifecycle) live in
 ``qphase_sde.contracts.analyser``; this module only hosts the plugin base
-class that consumes them. ``Analyzer`` satisfies
+class that consumes them. ``Analyser`` satisfies
 ``qphase_sde.contracts.analyser:AnalyserDeclarationContract`` via
 ``execution_capabilities``/``workspace``/``work_estimate``/
 ``input_requirements``/``output_specs``/``reducer``.
@@ -16,7 +16,7 @@ returns typed Datasets without any intermediate legacy container.
 
 Public API
 ----------
-``Analyzer`` : Base class for analyzers.
+``Analyser`` : Base class for analyzers.
 ``resolve_mode_columns`` : Map physical mode indices to stored columns.
 ``trajectory_requirement`` : Requirement on the engine trajectory product.
 """
@@ -45,7 +45,7 @@ from ..contracts.quantities import SDEQuantity
 from ..contracts.reducer import ReducerProtocol
 
 __all__ = [
-    "Analyzer",
+    "Analyser",
     "resolve_mode_columns",
     "select_mode_columns",
     "map_trajectory_product",
@@ -76,7 +76,7 @@ def report_execution_progress(
     Heartbeat-only by construction: no ``total`` is ever attached, matching the
     analyser ``WorkEstimate(total=None)`` contract that forbids fabricated
     ETAs. ``unit``/``stage`` must match the analyser's declared
-    :meth:`Analyzer.work_estimate` conventions (default stage prefix
+    :meth:`Analyser.work_estimate` conventions (default stage prefix
     ``"analyze"``).
     """
     progress = getattr(context, "progress", None)
@@ -209,7 +209,7 @@ def map_trajectory_product(
     }
 
 
-class Analyzer(PluginBase, ABC):
+class Analyser(PluginBase, ABC):
     """Base class for analyzers.
 
     All analyzers must inherit from this class and implement the abstract

@@ -1,6 +1,6 @@
 """Golden-value baselines for the ``pdist`` analyser (Wave 5B equivalence).
 
-The current ``PolarDistAnalyzer`` numeric outputs (histogram, edges, bin
+The current ``PolarDistAnalyser`` numeric outputs (histogram, edges, bin
 centers, mean, std) are not pinned by any existing CPU test. These tests
 capture the present NumPy outputs on a fixed-seed fixture so the Wave 5B
 typed-producer rewrite can be checked for exact numerical equivalence.
@@ -15,14 +15,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
-from qphase_sde.analyser.polar_dist import PolarDistAnalyzer, PolarDistAnalyzerConfig
+from qphase_sde.analyser.polar_dist import PolarDistAnalyser, PolarDistAnalyserConfig
 from qphase_sde.result import trajectory_product
 from qphase_sde.state import TrajectorySet
 
 RTOL = 1e-10
 
 
-def _execute(analyzer: PolarDistAnalyzer, trajectory: TrajectorySet) -> dict:
+def _execute(analyzer: PolarDistAnalyser, trajectory: TrajectorySet) -> dict:
     product = analyzer.execute(
         {
             "trajectories": trajectory_product(
@@ -76,8 +76,8 @@ def _complex_fixture() -> TrajectorySet:
 
 def test_pdist_fixed_bins_baseline():
     out = _execute(
-        PolarDistAnalyzer(
-            config=PolarDistAnalyzerConfig(modes=[0, 1], bins=8, density=True)
+        PolarDistAnalyser(
+            config=PolarDistAnalyserConfig(modes=[0, 1], bins=8, density=True)
         ),
         _complex_fixture(),
     )
@@ -195,8 +195,8 @@ def test_pdist_fixed_bins_baseline():
 
 def test_pdist_auto_bins_baseline():
     out = _execute(
-        PolarDistAnalyzer(
-            config=PolarDistAnalyzerConfig(modes=[0], bins="auto", density=True)
+        PolarDistAnalyser(
+            config=PolarDistAnalyserConfig(modes=[0], bins="auto", density=True)
         ),
         _complex_fixture(),
     )

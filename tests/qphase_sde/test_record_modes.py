@@ -7,9 +7,9 @@ import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.data import load_bundle
 from qphase_sde.analyser.base import resolve_mode_columns
-from qphase_sde.analyser.dist import DistAnalyzer
-from qphase_sde.analyser.polar_dist import PolarDistAnalyzer
-from qphase_sde.analyser.psd import PsdAnalyzer
+from qphase_sde.analyser.dist import DistAnalyser
+from qphase_sde.analyser.polar_dist import PolarDistAnalyser
+from qphase_sde.analyser.psd import PsdAnalyser
 from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.result import SDEDataBundle, trajectory_product
 from qphase_sde.state import TrajectorySet
@@ -34,13 +34,13 @@ def test_analyzers_use_physical_mode_mapping():
     trajectory = _trajectory()
     product = trajectory_product(trajectory, scan_size=None, n_traj_per_point=None)
 
-    psd = PsdAnalyzer(
+    psd = PsdAnalyser(
         measurement={"complex_field": {"channels": [3], "representation": "complex"}}
     ).execute({"signal": product}, backend=BACKEND, label="psd")["psd"]
-    dist = DistAnalyzer(modes=[3], bins=16).execute(
+    dist = DistAnalyser(modes=[3], bins=16).execute(
         {"trajectories": product}, backend=BACKEND, label="dist"
     )["dist"]
-    polar = PolarDistAnalyzer(modes=[3], bins=16).execute(
+    polar = PolarDistAnalyser(modes=[3], bins=16).execute(
         {"trajectories": product}, backend=BACKEND, label="polar"
     )["polar"]
 

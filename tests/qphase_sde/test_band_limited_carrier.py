@@ -14,12 +14,12 @@ from qphase.data import (
     VariableSchema,
 )
 from qphase_sde.analyser.band_limited_carrier import (
-    BandLimitedCarrierAnalyzer,
+    BandLimitedCarrierAnalyser,
     BandLimitedCarrierConfig,
     RidgeConditionedCenterConfig,
 )
 from qphase_sde.analyser.spectral_ridge import (
-    SpectralRidgeAnalyzer,
+    SpectralRidgeAnalyser,
     SpectralRidgeConfig,
 )
 from qphase_sde.numerics.band_limited import (
@@ -181,7 +181,7 @@ def test_analyzer_reports_trace_rows_and_bandwidth_audit():
         mode_0 = _lorentzian(axis, center=-parameter, hwhm=0.07)
         mode_1 = _lorentzian(axis, center=-parameter, hwhm=0.07, amplitude=0.5)
         spectra.append(np.column_stack((mode_0, mode_1)))
-    analyzer = BandLimitedCarrierAnalyzer(
+    analyzer = BandLimitedCarrierAnalyser(
         BandLimitedCarrierConfig(
             scan_param="epsilon",
             freq_min=-1.0,
@@ -221,7 +221,7 @@ def test_analyzer_reports_trace_rows_and_bandwidth_audit():
 def test_analyzer_builds_typed_result_and_audit_products():
     axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
     spectrum = _lorentzian(axis, center=-0.1, hwhm=0.07)[None, :, None]
-    analyzer = BandLimitedCarrierAnalyzer(
+    analyzer = BandLimitedCarrierAnalyser(
         BandLimitedCarrierConfig(
             scan_param="epsilon", freq_min=-1.0, freq_max=0.2, maximum_lag=80.0
         )
@@ -243,7 +243,7 @@ def test_analyzer_builds_typed_result_and_audit_products():
 def test_analyzer_keeps_empty_candidate_and_platform_audits():
     axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
     spectrum = np.full((1, axis.size, 1), 0.03)
-    analyzer = BandLimitedCarrierAnalyzer(
+    analyzer = BandLimitedCarrierAnalyser(
         BandLimitedCarrierConfig(
             scan_param="epsilon",
             freq_min=-1.0,
@@ -296,10 +296,10 @@ def test_analyzer_outputs_each_retained_ridge_candidate():
     )
     psd = _spectral_product(axis, spectra, [0.0, 1.0, 2.0], [0])
     ridge_label = "carrier.__ridge"
-    ridge_products = SpectralRidgeAnalyzer(ridge_config).execute(
+    ridge_products = SpectralRidgeAnalyser(ridge_config).execute(
         {"psd": psd}, backend=NumpyBackend(), label=ridge_label
     )
-    analyzer = BandLimitedCarrierAnalyzer(
+    analyzer = BandLimitedCarrierAnalyser(
         BandLimitedCarrierConfig(
             scan_param="epsilon",
             readout=0,
@@ -552,7 +552,7 @@ def test_band_limited_carrier_execute_aborts_mid_loop_on_cancellation():
     from types import SimpleNamespace
 
     psd = _typed_psd_product([0.0, 1.0, 2.0, 3.0, 4.0])
-    analyzer = BandLimitedCarrierAnalyzer(
+    analyzer = BandLimitedCarrierAnalyser(
         BandLimitedCarrierConfig(
             scan_param="epsilon", readout=0, maximum_lag=80.0
         )
@@ -575,7 +575,7 @@ def test_band_limited_carrier_execute_reports_spectrum_progress():
     from types import SimpleNamespace
 
     psd = _typed_psd_product([0.0, 1.0, 2.0])
-    analyzer = BandLimitedCarrierAnalyzer(
+    analyzer = BandLimitedCarrierAnalyser(
         BandLimitedCarrierConfig(
             scan_param="epsilon", readout=0, maximum_lag=80.0
         )

@@ -315,7 +315,7 @@ def test_compiler_selects_sde_task_profiles(tmp_path, sde_profile_plugins):
 def test_compiler_normalizes_analyser_instance_labels(tmp_path, sde_profile_plugins):
     from qphase.core.job_runner import build_plugins
     from qphase.core.registry import discovery
-    from qphase_sde.analyser.psd import PsdAnalyzer
+    from qphase_sde.analyser.psd import PsdAnalyser
 
     discovery.discover_plugins()
     project = ProjectContext.create(tmp_path / "project")
@@ -377,7 +377,7 @@ def test_compiler_normalizes_analyser_instance_labels(tmp_path, sde_profile_plug
 
     instances = build_plugins(registry, dict(compiled.plugin_config))["analyser"]
     assert set(instances) == {"raw_psd", "other_psd"}
-    assert all(isinstance(instance, PsdAnalyzer) for instance in instances.values())
+    assert all(isinstance(instance, PsdAnalyser) for instance in instances.values())
     assert compiled.product_graph is not None
     assert {node.node_id for node in compiled.product_graph.nodes} == {
         "analyser.raw_psd",

@@ -7,7 +7,7 @@ import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.backend.xputil import convert_to_numpy, get_xp
 from qphase.core.scan import ScanSpec
-from qphase_sde.analyser.psd import PsdAnalyzer
+from qphase_sde.analyser.psd import PsdAnalyser
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.base import ChunkStepResult
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
@@ -550,7 +550,7 @@ def test_trajectory_batching_merges_observer_payloads():
             **config,
         )
         engine.plugins["analyser"] = {
-            "psd": PsdAnalyzer(
+            "psd": PsdAnalyser(
                 measurement={
                     "complex_field": {"channels": [0], "representation": "complex"}
                 }
@@ -685,7 +685,7 @@ def test_typed_batched_scan_preserves_per_point_observer_payloads():
             "integrator": EulerMaruyama(),
             "model": DecayScanModel(),
             "analyser": {
-                "psd": PsdAnalyzer(
+                "psd": PsdAnalyser(
                     measurement={
                         "complex_field": {"channels": [0], "representation": "complex"}
                     }
@@ -752,7 +752,7 @@ def test_typed_single_point_batch_preserves_observer_metadata():
             "integrator": EulerMaruyama(),
             "model": LinearGrowthModel(),
             "analyser": {
-                "psd": PsdAnalyzer(
+                "psd": PsdAnalyser(
                     measurement={
                         "complex_field": {"channels": [0], "representation": "complex"}
                     }

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
-from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
-from qphase_sde.analyser.psd import PsdAnalyzer, _build_psd_products
+from qphase_sde.analyser.peaks import PeaksAnalyser, PeaksAnalyserConfig
+from qphase_sde.analyser.psd import PsdAnalyser, _build_psd_products
 from qphase_sde.peak_finder import (
     PeakInfo,
     RationalPeakFinder,
@@ -180,8 +180,8 @@ def test_builtin_finder_emits_grouped_typed_candidate_table():
 
 
 def test_peaks_analyser_publishes_grouped_product():
-    analyzer = PeaksAnalyzer(
-        PeaksAnalyzerConfig(scan_param="epsilon"),
+    analyzer = PeaksAnalyser(
+        PeaksAnalyserConfig(scan_param="epsilon"),
         subplugins={"finder": ScipyPeakFinder()},
     )
     products = analyzer.execute(
@@ -210,8 +210,8 @@ def test_peaks_analyser_resolves_finder_through_registry():
         name = "registry_test"
 
     registry.register("peak_finder", "registry_test", RegistryFinder, overwrite=True)
-    analyzer = PeaksAnalyzer(
-        PeaksAnalyzerConfig(scan_param="epsilon"),
+    analyzer = PeaksAnalyser(
+        PeaksAnalyserConfig(scan_param="epsilon"),
         subplugins={"finder": RegistryFinder()},
     )
     result = analyzer.execute(
@@ -224,12 +224,12 @@ def test_peaks_analyser_resolves_finder_through_registry():
 
 def test_peak_paths_analyser_publishes_typed_path_product():
     from qphase_sde.analyser.peak_paths import (
-        PeakPathsAnalyzer,
-        PeakPathsAnalyzerConfig,
+        PeakPathsAnalyser,
+        PeakPathsAnalyserConfig,
     )
     from qphase_sde.peak_tracker import RidgePeakTracker, RidgePeakTrackerConfig
-    peak_analyzer = PeaksAnalyzer(
-        PeaksAnalyzerConfig(scan_param="epsilon"),
+    peak_analyzer = PeaksAnalyser(
+        PeaksAnalyserConfig(scan_param="epsilon"),
         subplugins={"finder": ScipyPeakFinder()},
     )
     candidates = peak_analyzer.execute(
@@ -237,8 +237,8 @@ def test_peak_paths_analyser_publishes_typed_path_product():
         backend=NumpyBackend(),
         label="peaks",
     )
-    analyzer = PeakPathsAnalyzer(
-        PeakPathsAnalyzerConfig(
+    analyzer = PeakPathsAnalyser(
+        PeakPathsAnalyserConfig(
             scan_param="epsilon",
             tracker=RidgePeakTrackerConfig(path_count=1).model_dump(),
         ),
@@ -274,7 +274,7 @@ def _typed_psd_product(scan_values: list[float], *, points: int = 401):
                 "uncertainty": {"n_independent": 4},
             }
         )
-    analyzer = PsdAnalyzer(
+    analyzer = PsdAnalyser(
         measurement={
             "complex_field": {"channels": [0], "representation": "complex"}
         }
@@ -338,8 +338,8 @@ def test_peaks_execute_aborts_mid_loop_on_cancellation():
 
     import pytest
 
-    analyzer = PeaksAnalyzer(
-        PeaksAnalyzerConfig(scan_param="epsilon"),
+    analyzer = PeaksAnalyser(
+        PeaksAnalyserConfig(scan_param="epsilon"),
         subplugins={"finder": ScipyPeakFinder()},
     )
     context = SimpleNamespace(
@@ -359,8 +359,8 @@ def test_peaks_execute_aborts_mid_loop_on_cancellation():
 def test_peaks_execute_reports_spectrum_progress():
     from types import SimpleNamespace
 
-    analyzer = PeaksAnalyzer(
-        PeaksAnalyzerConfig(scan_param="epsilon"),
+    analyzer = PeaksAnalyser(
+        PeaksAnalyserConfig(scan_param="epsilon"),
         subplugins={"finder": ScipyPeakFinder()},
     )
     progress = _FakeProgress()

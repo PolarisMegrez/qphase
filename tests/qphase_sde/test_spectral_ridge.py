@@ -10,7 +10,7 @@ from qphase.data import (
     VariableSchema,
 )
 from qphase_sde.analyser.spectral_ridge import (
-    SpectralRidgeAnalyzer,
+    SpectralRidgeAnalyser,
     SpectralRidgeConfig,
     SpectralRidgeEstimate,
     _candidate_retention_tiers,
@@ -116,7 +116,7 @@ def test_spectral_ridge_analyzer_handles_multiple_readouts():
             ]
         )
         spectra.append(spectrum)
-    analyzer = SpectralRidgeAnalyzer(
+    analyzer = SpectralRidgeAnalyser(
         SpectralRidgeConfig(
             scan_param="epsilon",
             readouts=[0, 1],
@@ -152,7 +152,7 @@ def test_spectral_ridge_analyzer_handles_multiple_readouts():
 def test_spectral_ridge_builds_typed_rows():
     axis = np.linspace(-2.0, 2.0, 4001)
     spectrum = (0.01 + _gaussian(axis, 0.2, 0.08))[None, :, None]
-    analyzer = SpectralRidgeAnalyzer(
+    analyzer = SpectralRidgeAnalyser(
         SpectralRidgeConfig(
             scan_param="epsilon", readouts=[0], smoothing_scale_bins=[2.0, 4.0, 8.0]
         )
@@ -184,7 +184,7 @@ def test_tracking_segments_split_explicit_scan_gap():
 def test_spectral_ridge_reports_competing_peak_ambiguity():
     axis = np.linspace(-2.0, 2.0, 4001)
     spectrum = 0.01 + _gaussian(axis, -0.6, 0.08) + 0.99 * _gaussian(axis, 0.7, 0.08)
-    analyzer = SpectralRidgeAnalyzer(
+    analyzer = SpectralRidgeAnalyser(
         SpectralRidgeConfig(
             scan_param="epsilon",
             readouts=[0],
@@ -352,7 +352,7 @@ def test_spectral_ridge_execute_aborts_mid_loop_on_cancellation():
     from types import SimpleNamespace
 
     psd = _typed_psd_product([0.0, 1.0, 2.0, 3.0, 4.0])
-    analyzer = SpectralRidgeAnalyzer(
+    analyzer = SpectralRidgeAnalyser(
         SpectralRidgeConfig(scan_param="epsilon", readouts=[0])
     )
     context = SimpleNamespace(
@@ -373,7 +373,7 @@ def test_spectral_ridge_execute_reports_spectrum_progress():
     from types import SimpleNamespace
 
     psd = _typed_psd_product([0.0, 1.0, 2.0])
-    analyzer = SpectralRidgeAnalyzer(
+    analyzer = SpectralRidgeAnalyser(
         SpectralRidgeConfig(scan_param="epsilon", readouts=[0])
     )
     progress = _FakeProgress()
