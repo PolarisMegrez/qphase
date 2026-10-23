@@ -57,9 +57,7 @@ from .finite_delay_carrier import (
     FiniteDelayCarrierConfig,
 )
 from .frequency_orientation import (
-    DEFAULT_FREQUENCY_ORIENTATION,
     ORIENTATION_ALIASES,
-    FrequencyOrientation,
     OrientationInput,
     resolve_frequency_orientation,
 )
@@ -137,10 +135,8 @@ __all__ = [
     "SpectralRidgeConfig",
     "DistAnalyzer",
     "DistAnalyzerConfig",
-    "DEFAULT_FREQUENCY_ORIENTATION",
     "ORIENTATION_ALIASES",
     "OrientationInput",
-    "FrequencyOrientation",
     "FiniteDelayCarrierAnalyzer",
     "FiniteDelayCarrierConfig",
     "PolarDistAnalyzer",

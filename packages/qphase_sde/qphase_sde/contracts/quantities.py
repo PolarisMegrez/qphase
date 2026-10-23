@@ -29,6 +29,9 @@ SpectralProductOrientation
     plus ``unsigned`` for one-sided spectra of real-valued signals.
 DEFAULT_FREQUENCY_ORIENTATION
     Default orientation for 2.x products.
+orientation_sign
+    Sign converting phase velocity to reported frequency, with the guard that
+    rejects ``unsigned`` for phase-signed consumers.
 SDEMomentFamilySchema
     SDE-private, versioned moment family descriptor.
 SPECTRUM_PRODUCT, ALLAN_PRODUCT, MOMENT_FAMILY_PRODUCT, SAMPLED_OBSERVABLE_PRODUCT
@@ -64,6 +67,7 @@ __all__ = [
     "SDEQuantity",
     "SpectralProductOrientation",
     "SpectralQuantity",
+    "orientation_sign",
 ]
 
 
@@ -83,6 +87,22 @@ DEFAULT_FREQUENCY_ORIENTATION: FrequencyOrientation = "phase_decreasing"
 SpectralProductOrientation = Literal[
     "phase_decreasing", "phase_increasing", "unsigned"
 ]
+
+
+def _require_phase_orientation(orientation: str) -> None:
+    """Guard phase-signed helpers against implicit ``else`` interpretation."""
+    if orientation not in {"phase_decreasing", "phase_increasing"}:
+        raise ValueError(
+            f"phase-signed frequency helper does not support orientation "
+            f"{orientation!r}; one-sided real-signal spectra use 'unsigned' "
+            "and carry no phase sign"
+        )
+
+
+def orientation_sign(orientation: FrequencyOrientation) -> float:
+    """Return the sign converting phase velocity to reported frequency."""
+    _require_phase_orientation(orientation)
+    return -1.0 if orientation == "phase_decreasing" else 1.0
 
 
 class SDEQuantity(str, Enum):

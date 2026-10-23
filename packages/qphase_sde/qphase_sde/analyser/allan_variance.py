@@ -30,7 +30,12 @@ from ..contracts.analyser import (
     AnalyserWorkspaceRequest,
     WorkEstimate,
 )
-from ..contracts.quantities import SDEQuantity
+from ..contracts.quantities import (
+    DEFAULT_FREQUENCY_ORIENTATION,
+    FrequencyOrientation,
+    SDEQuantity,
+    orientation_sign,
+)
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .allan_statistics import (
     calculate_allan_variance,
@@ -43,12 +48,9 @@ from .base import (
     map_trajectory_product,
 )
 from .frequency_orientation import (
-    DEFAULT_FREQUENCY_ORIENTATION,
-    FrequencyOrientation,
     OrientationInput,
     orientation_metadata,
     orientation_schema_extra,
-    orientation_sign,
     resolve_frequency_orientation,
 )
 from .sampled_signal import read_sampled_signal

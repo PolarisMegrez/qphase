@@ -38,6 +38,11 @@ from ..contracts.analyser import (
     AnalyserWorkspaceEstimate,
     AnalyserWorkspaceRequest,
 )
+from ..contracts.quantities import (
+    DEFAULT_FREQUENCY_ORIENTATION,
+    FrequencyOrientation,
+    orientation_sign,
+)
 from ..math.coordinates import (
     CANONICAL_COORDINATE_LAYOUT,
     R_CONVENTION,
@@ -54,13 +59,10 @@ from .base import (
     trajectory_requirement,
 )
 from .frequency_orientation import (
-    DEFAULT_FREQUENCY_ORIENTATION,
-    FrequencyOrientation,
     OrientationInput,
     orient_spectrum,
     orientation_metadata,
     orientation_schema_extra,
-    orientation_sign,
 )
 from .trajectory_diagnostic import (
     TrajectoryDiagnosticChild,

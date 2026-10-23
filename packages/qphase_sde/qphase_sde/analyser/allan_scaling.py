@@ -22,11 +22,13 @@ from qphase.data import (
 from scipy.optimize import curve_fit
 
 from ..contracts.analyser import AnalyserWorkspaceRequest, WorkEstimate
-from ..contracts.quantities import SDEQuantity
+from ..contracts.quantities import (
+    FrequencyOrientation,
+    SDEQuantity,
+)
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
-    FrequencyOrientation,
     orientation_metadata,
     resolve_frequency_orientation,
 )

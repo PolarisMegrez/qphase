@@ -29,7 +29,12 @@ from ..contracts.analyser import (
     AnalyserWorkspaceEstimate,
     AnalyserWorkspaceRequest,
 )
-from ..contracts.quantities import SDEQuantity
+from ..contracts.quantities import (
+    DEFAULT_FREQUENCY_ORIENTATION,
+    FrequencyOrientation,
+    SDEQuantity,
+    orientation_sign,
+)
 from ..products import TypedAxisSpec, assemble_typed_product, stack_payload_leaves
 from .base import (
     Analyzer,
@@ -40,12 +45,9 @@ from .base import (
     trajectory_requirement,
 )
 from .frequency_orientation import (
-    DEFAULT_FREQUENCY_ORIENTATION,
-    FrequencyOrientation,
     OrientationInput,
     orientation_metadata,
     orientation_schema_extra,
-    orientation_sign,
 )
 
 __all__ = [

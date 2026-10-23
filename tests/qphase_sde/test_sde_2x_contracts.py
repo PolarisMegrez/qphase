@@ -103,12 +103,15 @@ def test_contracts_never_reference_concrete_sde_plugins():
 
 
 def test_frequency_orientation_single_canonical_source():
-    """Analyser runtime imports the canonical contract definition."""
+    """The canonical orientation and its sign helper live in the contracts."""
     from qphase_sde.analyser import frequency_orientation as runtime
 
-    assert quantities.DEFAULT_FREQUENCY_ORIENTATION == (
-        runtime.DEFAULT_FREQUENCY_ORIENTATION
-    )
+    assert quantities.DEFAULT_FREQUENCY_ORIENTATION == "phase_decreasing"
+    assert quantities.orientation_sign.__module__ == "qphase_sde.contracts.quantities"
+    # The runtime module consumes the canonical names without re-exporting
+    # them, so there is exactly one place to change the convention.
+    assert not hasattr(runtime, "DEFAULT_FREQUENCY_ORIENTATION")
+    assert not hasattr(runtime, "orientation_sign")
 
 
 def test_manifest_schema_refs_resolve():
@@ -665,10 +668,10 @@ def test_spectral_product_orientation_admits_unsigned():
     from qphase_sde.analyser.frequency_orientation import (
         orient_spectrum,
         orientation_metadata,
-        orientation_sign,
         resolve_frequency_orientation,
         resolve_spectral_orientation,
     )
+    from qphase_sde.contracts.quantities import orientation_sign
 
     for value in ("phase_decreasing", "phase_increasing", "unsigned"):
         assert resolve_spectral_orientation({"orientation": value}) == value

@@ -27,10 +27,12 @@ from ..contracts.coherence import (
     COHERENCE_FREQUENCY_PRODUCT,
     CoherenceFrequencyEstimate,
 )
-from .base import Analyzer, check_execution_cancelled, report_execution_progress
-from .frequency_orientation import (
+from ..contracts.quantities import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
+)
+from .base import Analyzer, check_execution_cancelled, report_execution_progress
+from .frequency_orientation import (
     orientation_metadata,
     resolve_frequency_orientation,
 )

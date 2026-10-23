@@ -61,7 +61,11 @@ from ..contracts.analyser import (
     AnalyserWorkspaceRequest,
     WorkEstimate,
 )
-from ..contracts.quantities import SDEQuantity
+from ..contracts.quantities import (
+    DEFAULT_FREQUENCY_ORIENTATION,
+    FrequencyOrientation,
+    SDEQuantity,
+)
 from ..math.spectral import (
     detrend_series,
     fold_one_sided_powers,
@@ -85,8 +89,6 @@ from .base import (
     map_trajectory_product,
 )
 from .frequency_orientation import (
-    DEFAULT_FREQUENCY_ORIENTATION,
-    FrequencyOrientation,
     OrientationInput,
     orient_spectrum,
     orientation_metadata,

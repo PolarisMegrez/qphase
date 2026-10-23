@@ -9,9 +9,9 @@ import numpy as np
 from pydantic import BeforeValidator
 
 from ..contracts.quantities import (
-    DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
     SpectralProductOrientation,
+    _require_phase_orientation,
 )
 
 OrientationInput = Annotated[
@@ -69,7 +69,8 @@ def resolve_spectral_orientation(
     ``unsigned`` marks the one-sided spectrum of a real-valued signal whose
     frequency axis is non-negative by construction. It is accepted here — at
     the generic spectral-product boundary — but never by the phase-specific
-    :func:`resolve_frequency_orientation`, :func:`orientation_sign`,
+    :func:`resolve_frequency_orientation`,
+    :func:`~qphase_sde.contracts.quantities.orientation_sign`,
     :func:`orient_spectrum` or :func:`orientation_metadata` helpers.
     """
     if metadata is None or "orientation" not in metadata:
@@ -80,22 +81,6 @@ def resolve_spectral_orientation(
     if orientation not in {"phase_decreasing", "phase_increasing", "unsigned"}:
         raise ValueError(f"Unsupported spectral orientation: {orientation!r}")
     return cast(SpectralProductOrientation, orientation)
-
-
-def _require_phase_orientation(orientation: str) -> None:
-    """Guard phase-signed helpers against implicit ``else`` interpretation."""
-    if orientation not in {"phase_decreasing", "phase_increasing"}:
-        raise ValueError(
-            f"phase-signed frequency helper does not support orientation "
-            f"{orientation!r}; one-sided real-signal spectra use 'unsigned' "
-            "and carry no phase sign"
-        )
-
-
-def orientation_sign(orientation: FrequencyOrientation) -> float:
-    """Return the sign converting phase velocity to reported frequency."""
-    _require_phase_orientation(orientation)
-    return -1.0 if orientation == "phase_decreasing" else 1.0
 
 
 def orient_spectrum(
@@ -136,14 +121,10 @@ def orientation_metadata(orientation: FrequencyOrientation) -> dict[str, str]:
 
 
 __all__ = [
-    "DEFAULT_FREQUENCY_ORIENTATION",
-    "FrequencyOrientation",
     "ORIENTATION_ALIASES",
     "OrientationInput",
-    "SpectralProductOrientation",
     "orientation_metadata",
     "orientation_schema_extra",
-    "orientation_sign",
     "orient_spectrum",
     "resolve_frequency_orientation",
     "resolve_spectral_orientation",

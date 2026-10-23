@@ -24,13 +24,15 @@ from ..contracts.analyser import (
     AnalyserWorkspaceRequest,
     WorkEstimate,
 )
+from ..contracts.quantities import (
+    DEFAULT_FREQUENCY_ORIENTATION,
+    FrequencyOrientation,
+)
 from ..products import (
     assemble_row_table_product,
 )
 from .base import Analyzer, check_execution_cancelled, report_execution_progress
 from .frequency_orientation import (
-    DEFAULT_FREQUENCY_ORIENTATION,
-    FrequencyOrientation,
     orientation_metadata,
     resolve_frequency_orientation,
 )
