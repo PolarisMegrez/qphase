@@ -49,6 +49,10 @@ jobs:
         # tests/conftest.py skips every gpu-marked case when the device probe
         # fails, so a misconfigured runner would turn this lane green while
         # running nothing.  Fail the job instead of the tests in that case.
+        # `shell: bash` keeps the step portable: GitHub provides bash on every
+        # runner OS (Git Bash on Windows, where the default would be pwsh and
+        # the heredoc below would not parse).
+        shell: bash
         run: |
           uv run python - <<'PY'
           import cupy
