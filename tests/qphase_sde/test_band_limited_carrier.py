@@ -15,16 +15,18 @@ from qphase.data import (
 )
 from qphase_sde.analyser.band_limited_carrier import (
     BandLimitedCarrierAnalyzer,
-    BandLimitedCarrierCandidate,
     BandLimitedCarrierConfig,
+    RidgeConditionedCenterConfig,
+)
+from qphase_sde.analyser.spectral_ridge import SpectralRidgeConfig
+from qphase_sde.numerics.band_limited import (
+    BandLimitedCarrierCandidate,
     BandLimitedCarrierEstimate,
     BandLimitedCarrierPlatform,
-    RidgeConditionedCenterConfig,
     _select_platforms,
     estimate_band_limited_carrier,
     track_band_limited_carrier,
 )
-from qphase_sde.analyser.spectral_ridge import SpectralRidgeConfig
 from qphase_sde.products import add_scan_parameter_coordinates
 
 
@@ -590,6 +592,8 @@ def test_band_limited_carrier_execute_reports_spectrum_progress():
 def test_band_limited_tracking_aborts_mid_loop_on_cancellation():
     from types import SimpleNamespace
 
+    from qphase_sde.analyser.base import check_execution_cancelled
+
     estimates = [
         BandLimitedCarrierEstimate(
             spectral_width=0.02,
@@ -607,5 +611,5 @@ def test_band_limited_tracking_aborts_mid_loop_on_cancellation():
             np.asarray([float(index) for index in range(8)]),
             estimates,
             frequency_scale=0.05,
-            context=context,
+            cancel_check=lambda: check_execution_cancelled(context),
         )

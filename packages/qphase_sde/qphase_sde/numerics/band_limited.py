@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -754,11 +755,15 @@ def track_band_limited_carrier(
     curvature_weight: float = 1.0,
     ambiguity_delta: float = 1.0,
     max_normalized_curvature: float = 3.0,
+    cancel_check: Callable[[], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Track a data-supported carrier platform across an ordered scan.
 
     The path cost uses local platform quality and divided-difference curvature.
     It does not use a theoretical carrier, target exponent, or CAM result.
+
+    ``cancel_check`` is polled once per contiguous scan segment so a caller can
+    abort long tracks; the core itself never imports a cancellation type.
     """
     values = np.asarray(scan_values, dtype=float).reshape(-1)
     if values.size != len(estimates):
@@ -778,6 +783,8 @@ def track_band_limited_carrier(
     available = np.asarray([bool(item.platforms) for item in estimates], dtype=bool)
     indices = np.flatnonzero(available)
     for segment in _contiguous_segments(indices):
+        if cancel_check is not None:
+            cancel_check()
         segment_estimates = [estimates[int(index)] for index in segment]
         widths = [item.spectral_width for item in segment_estimates]
         uncertainties = [
@@ -798,6 +805,7 @@ def track_band_limited_carrier(
             segment_estimates,
             frequency_scale=float(scale),
             curvature_weight=curvature_weight,
+            cancel_check=cancel_check,
         )
         path_status = "ok" if cost_gap > ambiguity_delta else "ambiguous_path"
         for source_index, platform_index in zip(segment, path, strict=True):
@@ -823,6 +831,7 @@ def _track_platform_segment(
     *,
     frequency_scale: float,
     curvature_weight: float,
+    cancel_check: Callable[[], None] | None = None,
 ) -> tuple[list[int], float, np.ndarray]:
     count = len(estimates)
     local_costs = []
@@ -849,6 +858,8 @@ def _track_platform_segment(
             cost += 0.02 * jump**2 * min(abs(step), 1.0) / max(abs(step), 1e-15)
             states.setdefault((first, second), []).append((cost, [first, second]))
     for point in range(2, count):
+        if cancel_check is not None:
+            cancel_check()
         current: dict[tuple[int, int], list[tuple[float, list[int]]]] = {}
         left_step = float(scan_values[point - 1] - scan_values[point - 2])
         right_step = float(scan_values[point] - scan_values[point - 1])
