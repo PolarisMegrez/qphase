@@ -160,9 +160,9 @@ def test_resolver_dotted_path_validation():
     with pytest.raises(ValidationError, match="dotted path"):
         EngineTaskProfile(id="bad", resolver="not a path!")
     ok = EngineTaskProfile(
-        id="ok", resolver="qphase_sde.config:resolve_analyze_profile"
+        id="ok", resolver="qphase_sde.analyser_config:expand_analyser_config"
     )
-    assert ok.resolver == "qphase_sde.config:resolve_analyze_profile"
+    assert ok.resolver == "qphase_sde.analyser_config:expand_analyser_config"
 
 
 def test_profile_input_slot_names_must_be_unique():

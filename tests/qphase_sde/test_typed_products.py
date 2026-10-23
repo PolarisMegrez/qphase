@@ -25,7 +25,6 @@ from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.analyser.quadratic_moments import QuadraticMomentAnalyzer
 from qphase_sde.contracts.quantities import SDEQuantity
 from qphase_sde.engine import Engine, EngineConfig
-from qphase_sde.errors import SDEExecutionError
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 
 
@@ -230,7 +229,7 @@ def _run(model, analysers, *, scan=False, t1=0.2, n_traj=8, keep_traj=False, gri
         if product.attributes.get("graph_ready") is False:
             raise TypeError("analyser product is not graph-ready")
         if grid is not None and "scan" not in {axis.name for axis in product.axes}:
-            raise SDEExecutionError("scan analyser product has no scan axis")
+            raise AssertionError("scan analyser product has no scan axis")
     return result
 
 
