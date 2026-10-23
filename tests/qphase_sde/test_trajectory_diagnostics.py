@@ -7,14 +7,14 @@ from qphase_sde.analyser.trajectory_diagnostics import (
     TrajectoryDiagnostics,
     TrajectoryDiagnosticsConfig,
 )
-from qphase_sde.result import _trajectory_product
+from qphase_sde.result import trajectory_product
 from qphase_sde.state import TrajectorySet
 
 
 def _execute(analyser: TrajectoryDiagnostics, trajectory: TrajectorySet) -> dict:
     product = analyser.execute(
         {
-            "trajectories": _trajectory_product(
+            "trajectories": trajectory_product(
                 trajectory, scan_size=None, n_traj_per_point=None
             )
         },

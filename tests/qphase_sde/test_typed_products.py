@@ -324,11 +324,11 @@ def test_typed_reducer_merge_and_checkpoint_are_portable():
     analyser = _psd_analyzer()
 
     def product(offset: float):
-        from qphase_sde.result import _trajectory_product
+        from qphase_sde.result import trajectory_product
         from qphase_sde.state import TrajectorySet
 
         values = np.full((2, 16, 1), 1.0 + offset, dtype=complex)
-        trajectory = _trajectory_product(
+        trajectory = trajectory_product(
             TrajectorySet(values, t0=0.0, dt=0.1),
             scan_size=None,
             n_traj_per_point=None,

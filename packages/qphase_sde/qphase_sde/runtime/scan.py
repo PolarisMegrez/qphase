@@ -64,7 +64,7 @@ class SDEParameterGridAdapter:
         """Expose one trajectory batch for every point in a scan tile.
 
         The fused array is point-major: each scan point contributes the same
-        trajectory slice. This is the layout consumed by ``_trajectory_product``
+        trajectory slice. This is the layout consumed by ``trajectory_product``
         and keeps the existing model kernels unchanged.
         """
         if not (0 <= scan_start < scan_stop <= self.grid.size):

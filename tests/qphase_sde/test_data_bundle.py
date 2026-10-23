@@ -18,7 +18,7 @@ from qphase.data import (
 from qphase_sde.contracts.bundle import SDEDataBundleProtocol, SDEProvenance
 from qphase_sde.result import (
     SDEDataBundle,
-    _trajectory_product,
+    trajectory_product,
 )
 
 pytestmark = pytest.mark.integration
@@ -44,7 +44,7 @@ def _traj_bundle(scan_size=1, n_traj=2, n_time=5, n_channel=1):
     fused = scan_size * n_traj
     data = np.arange(fused * n_time * n_channel, dtype=np.complex128)
     data = data.reshape(fused, n_time, n_channel)
-    product = _trajectory_product(
+    product = trajectory_product(
         _Trajectory(data),
         scan_size=scan_size,
         n_traj_per_point=n_traj,
@@ -74,7 +74,7 @@ def test_trajectory_product_structure():
 def test_trajectory_product_records_valid_lengths_and_meta():
     meta = {"valid_length": [3, 5], "warmup_steps": 2, "note": "ok"}
     data = np.zeros((2, 5, 1), dtype=np.complex128)
-    product = _trajectory_product(
+    product = trajectory_product(
         _Trajectory(data, meta=meta), scan_size=None, n_traj_per_point=None
     )
     bundle = SDEDataBundle({"trajectories": product}, _provenance())
@@ -197,7 +197,7 @@ def test_bundle_require_filters_by_kind_quantity_fields():
 
 
 def test_scan_bundle_axes_shape_and_point_view():
-    product = _trajectory_product(
+    product = trajectory_product(
         _Trajectory(np.zeros((6, 5, 1), dtype=np.complex128)),
         scan_size=3,
         n_traj_per_point=2,

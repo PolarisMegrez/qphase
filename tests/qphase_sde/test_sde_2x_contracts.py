@@ -819,7 +819,7 @@ def test_trajectory_and_observable_share_time_axis_units(tmp_path):
 
     import numpy as np
     from qphase.data import save_products
-    from qphase_sde.result import _trajectory_product
+    from qphase_sde.result import trajectory_product
     from qphase_sde.state import TrajectorySet
 
     trajectory_time = next(
@@ -834,7 +834,7 @@ def test_trajectory_and_observable_share_time_axis_units(tmp_path):
 
     rng = np.random.default_rng(20261015)
     values = rng.standard_normal((6, 5, 2)) + 1j * rng.standard_normal((6, 5, 2))
-    trajectory_dataset = _trajectory_product(
+    trajectory_dataset = trajectory_product(
         TrajectorySet(values, t0=0.2, dt=0.1),
         scan_size=2,
         n_traj_per_point=3,

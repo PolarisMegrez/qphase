@@ -16,7 +16,7 @@ from qphase_sde.coherence_frequency import BandLimitedCoherenceFrequency
 def _typed_psd_product(scan_values: list[float]):
     """Typed PSD scan product for execute()."""
     from qphase_sde.products import add_scan_parameter_coordinates
-    from qphase_sde.result import _trajectory_product
+    from qphase_sde.result import trajectory_product
     from qphase_sde.state import TrajectorySet
 
     time = np.arange(2048) * 0.1
@@ -25,7 +25,7 @@ def _typed_psd_product(scan_values: list[float]):
         signal = np.exp(1j * (0.7 + 0.1 * value) * time)
         points.append(np.repeat(signal[None, :, None], 4, axis=0))
     trajectory = TrajectorySet(np.concatenate(points), t0=0.0, dt=0.1)
-    product = _trajectory_product(
+    product = trajectory_product(
         trajectory, scan_size=len(scan_values), n_traj_per_point=4
     )
     psd = PsdAnalyzer(

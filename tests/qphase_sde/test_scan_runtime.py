@@ -42,7 +42,7 @@ from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 from qphase_sde.peak_finder import ScipyPeakFinder
-from qphase_sde.result import SDEDataBundle, _trajectory_product
+from qphase_sde.result import SDEDataBundle, trajectory_product
 
 pytestmark = pytest.mark.integration
 
@@ -592,7 +592,7 @@ def test_scan_bundle_saves_finite_shards(tmp_path):
     ).compile()
     bundle = SDEDataBundle(
         {
-            "trajectories": _trajectory_product(
+            "trajectories": trajectory_product(
                 trajectory, scan_size=4, n_traj_per_point=2
             )
         },

@@ -11,7 +11,7 @@ from qphase_sde.analyser.dist import DistAnalyzer
 from qphase_sde.analyser.polar_dist import PolarDistAnalyzer
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.contracts.bundle import SDEProvenance
-from qphase_sde.result import SDEDataBundle, _trajectory_product
+from qphase_sde.result import SDEDataBundle, trajectory_product
 from qphase_sde.state import TrajectorySet
 
 pytestmark = pytest.mark.integration
@@ -32,7 +32,7 @@ def _trajectory() -> TrajectorySet:
 
 def test_analyzers_use_physical_mode_mapping():
     trajectory = _trajectory()
-    product = _trajectory_product(trajectory, scan_size=None, n_traj_per_point=None)
+    product = trajectory_product(trajectory, scan_size=None, n_traj_per_point=None)
 
     psd = PsdAnalyzer(
         measurement={"complex_field": {"channels": [3], "representation": "complex"}}
@@ -55,7 +55,7 @@ def test_missing_recorded_mode_is_rejected():
 
 
 def test_result_round_trip_preserves_trajectory_mode_mapping(tmp_path):
-    trajectory = _trajectory_product(
+    trajectory = trajectory_product(
         _trajectory(), scan_size=None, n_traj_per_point=None
     )
     bundle = SDEDataBundle(

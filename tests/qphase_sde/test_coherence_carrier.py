@@ -11,7 +11,7 @@ from qphase_sde.analyser.coherence_carrier import (
     estimate_coherence_carrier,
 )
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
-from qphase_sde.result import _trajectory_product
+from qphase_sde.result import trajectory_product
 from qphase_sde.state import TrajectorySet
 
 from .conftest import product_payload
@@ -264,7 +264,7 @@ class _FakeProgress:
 
 
 def _typed_trajectories(trajectories: TrajectorySet):
-    return _trajectory_product(trajectories, scan_size=None, n_traj_per_point=None)
+    return trajectory_product(trajectories, scan_size=None, n_traj_per_point=None)
 
 
 def test_coherence_carrier_execute_aborts_mid_lag_loop_on_cancellation():

@@ -36,13 +36,13 @@ from qphase_sde.observer.base import (
 )
 from qphase_sde.planning import (
     SDEExecutionPlan,
-    _typed_batch_scope,
-    _typed_scan_scope,
     build_execution_plan,
     resolve_time_grid,
+    typed_batch_scope,
+    typed_scan_scope,
 )
 from qphase_sde.products import add_scan_parameter_coordinates
-from qphase_sde.result import SDEDataBundle, _fingerprint_text, _trajectory_product
+from qphase_sde.result import SDEDataBundle, fingerprint_text, trajectory_product
 from qphase_sde.runtime.buffers import SDEBufferCache
 from qphase_sde.state import TrajectorySet
 
@@ -626,7 +626,7 @@ class Engine(EngineBase):
             source = SDEDataBundle(
                 {
                     "trajectories": add_scan_parameter_coordinates(
-                        _trajectory_product(
+                        trajectory_product(
                             outcome.trajectory,
                             scan_size=grid.size,
                             n_traj_per_point=adapter.base_n_traj,
@@ -681,7 +681,7 @@ class Engine(EngineBase):
             meta["observer_payloads"] = outcome.observer_payloads
         source = SDEDataBundle(
             {
-                "trajectories": _trajectory_product(
+                "trajectories": trajectory_product(
                     outcome.trajectory,
                     scan_size=None,
                     n_traj_per_point=plan.n_traj_per_point,
@@ -872,7 +872,7 @@ class Engine(EngineBase):
             graph = self._product_graph
         if graph is None:
             raise RuntimeError("typed scan tiling requires a ProductGraph")
-        tile_scope, final_scope = _typed_scan_scope(graph, self._normalised_analysers())
+        tile_scope, final_scope = typed_scan_scope(graph, self._normalised_analysers())
         tile_graph = _tile_scope_sub_graph(graph, tile_scope) if final_scope else graph
         assert context.parameter_grid is not None
         grid = context.parameter_grid
@@ -983,7 +983,7 @@ class Engine(EngineBase):
             }
             tile_source = SDEDataBundle(
                 {
-                    "trajectories": _trajectory_product(
+                    "trajectories": trajectory_product(
                         tile_outcome.trajectory,
                         scan_size=point_count,
                         n_traj_per_point=plan.n_traj_per_point,
@@ -1121,7 +1121,7 @@ class Engine(EngineBase):
         node_ids = {
             node.node_id.removeprefix("analyser."): node.node_id for node in graph.nodes
         }
-        batch_local, reducer_frontier = _typed_batch_scope(
+        batch_local, reducer_frontier = typed_batch_scope(
             graph, analysers, validate=True
         )
         transient_nodes = batch_local - reducer_frontier
@@ -1225,7 +1225,7 @@ class Engine(EngineBase):
                 )
             source = SDEDataBundle(
                 {
-                    "trajectories": _trajectory_product(
+                    "trajectories": trajectory_product(
                         partial.trajectory,
                         scan_size=point_count,
                         n_traj_per_point=count,
@@ -1415,8 +1415,8 @@ class Engine(EngineBase):
             dt=getattr(config, "dt", None),
             warmup_samples=warmup_samples,
             master_seed=getattr(config, "seed", None),
-            model_fingerprint=_fingerprint_text(self.plugins.get("model")),
-            integrator_fingerprint=_fingerprint_text(self._default_integrator),
+            model_fingerprint=fingerprint_text(self.plugins.get("model")),
+            integrator_fingerprint=fingerprint_text(self._default_integrator),
             scan_grid=scan_grid,
         )
 

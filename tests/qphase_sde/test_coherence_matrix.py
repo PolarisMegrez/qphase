@@ -5,7 +5,7 @@ from qphase_sde.analyser.coherence_matrix import (
     CoherenceMatrixConfig,
 )
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
-from qphase_sde.result import _trajectory_product
+from qphase_sde.result import trajectory_product
 from qphase_sde.state import TrajectorySet
 
 from .conftest import product_payload
@@ -18,7 +18,7 @@ def _analyzer(**kwargs):
 def _payload(analyzer, trajectory: TrajectorySet):
     product = analyzer.execute(
         {
-            "trajectories": _trajectory_product(
+            "trajectories": trajectory_product(
                 trajectory, scan_size=None, n_traj_per_point=None
             )
         },

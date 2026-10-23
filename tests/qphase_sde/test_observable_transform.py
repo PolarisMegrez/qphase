@@ -30,7 +30,7 @@ from qphase_sde.analyser.quadratic_moments import (
 )
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
 from qphase_sde.contracts.quantities import SDEQuantity
-from qphase_sde.result import _trajectory_product
+from qphase_sde.result import trajectory_product
 from qphase_sde.state import TrajectorySet
 
 from tests.conftest import cuda_available
@@ -45,7 +45,7 @@ def _field(rng, shape, *, modes=None, scan_size=None, n_traj_per_point=None):
     if modes is None:
         modes = range(shape[-1])
     data = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
-    return _trajectory_product(
+    return trajectory_product(
         TrajectorySet(data, t0=T0, dt=DT, meta={"mode_indices": list(modes)}),
         scan_size=scan_size,
         n_traj_per_point=n_traj_per_point,
@@ -125,7 +125,7 @@ def test_transform_matches_quadratic_moments():
     }
     _, out = _execute(
         {"units": "quadrature", "observables": observables},
-        _trajectory_product(trajectory, scan_size=None, n_traj_per_point=None),
+        trajectory_product(trajectory, scan_size=None, n_traj_per_point=None),
     )
     moments_product = QuadraticMomentAnalyzer(
         QuadraticMomentConfig(
@@ -133,7 +133,7 @@ def test_transform_matches_quadratic_moments():
         )
     ).execute(
         {
-            "trajectories": _trajectory_product(
+            "trajectories": trajectory_product(
                 trajectory, scan_size=None, n_traj_per_point=None
             )
         },
@@ -256,7 +256,7 @@ def test_transform_valid_length_propagates_source_handle():
     data = rng.standard_normal((2, 40, 1)) + 1j * rng.standard_normal((2, 40, 1))
     valid = np.array([40, 25], dtype=np.int64)
     data[1, 25:] = np.nan
-    product = _trajectory_product(
+    product = trajectory_product(
         TrajectorySet(data, t0=T0, dt=DT, meta={"valid_length": valid}),
         scan_size=None,
         n_traj_per_point=None,
@@ -864,7 +864,7 @@ def test_transform_cupy_matches_numpy():
 
     rng = np.random.default_rng(20261109)
     host_product = _field(rng, (4, 64, 2))
-    device_product = _trajectory_product(
+    device_product = trajectory_product(
         TrajectorySet(
             cp.asarray(host_product.handle("alpha").materialize()[0]),
             t0=T0,

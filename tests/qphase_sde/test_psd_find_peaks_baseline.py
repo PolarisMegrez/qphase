@@ -18,7 +18,7 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.peaks import PeaksAnalyzer, PeaksAnalyzerConfig
 from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.peak_finder import ScipyPeakFinder, ScipyPeakFinderConfig
-from qphase_sde.result import _trajectory_product
+from qphase_sde.result import trajectory_product
 from qphase_sde.state import TrajectorySet
 
 RTOL = 1e-6
@@ -50,7 +50,7 @@ def _spectrum_product():
     )
     return analyzer.execute(
         {
-            "signal": _trajectory_product(
+            "signal": trajectory_product(
                 _tone_fixture(), scan_size=None, n_traj_per_point=None
             )
         },

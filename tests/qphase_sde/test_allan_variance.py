@@ -6,7 +6,7 @@ from qphase_sde.analyser.allan_variance import (
     AllanVarianceConfig,
 )
 from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
-from qphase_sde.result import _trajectory_product
+from qphase_sde.result import trajectory_product
 from qphase_sde.state import TrajectorySet
 
 from tests.conftest import cuda_available
@@ -39,7 +39,7 @@ def _analyzer() -> AllanVarianceAnalyzer:
 def _execute(analyzer, trajectory: TrajectorySet, backend=None):
     product = analyzer.execute(
         {
-            "signal": _trajectory_product(
+            "signal": trajectory_product(
                 trajectory, scan_size=None, n_traj_per_point=None
             )
         },

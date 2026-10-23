@@ -185,14 +185,14 @@ def test_cupy_vs_numpy_psd_periodogram():
         )
     )
 
-    from qphase_sde.result import _trajectory_product
+    from qphase_sde.result import trajectory_product
 
-    np_input = _trajectory_product(
+    np_input = trajectory_product(
         TrajectorySet(signal[:, :, None], t0=0.0, dt=0.1),
         scan_size=None,
         n_traj_per_point=None,
     )
-    cp_input = _trajectory_product(
+    cp_input = trajectory_product(
         TrajectorySet(cp_be.asarray(signal[:, :, None]), t0=0.0, dt=0.1),
         scan_size=None,
         n_traj_per_point=None,
@@ -338,7 +338,7 @@ def test_cupy_typed_scan_and_trajectory_batching_roundtrip(tmp_path):
 def test_cupy_dist_matches_numpy():
     """CuPy dist analyzer matches numpy reference."""
     from qphase_sde.analyser.dist import DistAnalyzer, DistAnalyzerConfig
-    from qphase_sde.result import _trajectory_product
+    from qphase_sde.result import trajectory_product
 
     np_be = NumpyBackend()
     cp_be = CuPyBackend()
@@ -350,7 +350,7 @@ def test_cupy_dist_matches_numpy():
         config=DistAnalyzerConfig(modes=[0], bins=20, density=True)
     ).execute(
         {
-            "trajectories": _trajectory_product(
+            "trajectories": trajectory_product(
                 TrajectorySet(data, t0=0.0, dt=1.0),
                 scan_size=None,
                 n_traj_per_point=None,
@@ -364,7 +364,7 @@ def test_cupy_dist_matches_numpy():
         config=DistAnalyzerConfig(modes=[0], bins=20, density=True)
     ).execute(
         {
-            "trajectories": _trajectory_product(
+            "trajectories": trajectory_product(
                 TrajectorySet(data_cp, t0=0.0, dt=1.0),
                 scan_size=None,
                 n_traj_per_point=None,
@@ -387,7 +387,7 @@ def test_cupy_polar_dist_matches_numpy():
         PolarDistAnalyzer,
         PolarDistAnalyzerConfig,
     )
-    from qphase_sde.result import _trajectory_product
+    from qphase_sde.result import trajectory_product
 
     np_be = NumpyBackend()
     cp_be = CuPyBackend()
@@ -399,7 +399,7 @@ def test_cupy_polar_dist_matches_numpy():
         config=PolarDistAnalyzerConfig(modes=[0], bins=20, density=True)
     ).execute(
         {
-            "trajectories": _trajectory_product(
+            "trajectories": trajectory_product(
                 TrajectorySet(data, t0=0.0, dt=1.0),
                 scan_size=None,
                 n_traj_per_point=None,
@@ -412,7 +412,7 @@ def test_cupy_polar_dist_matches_numpy():
         config=PolarDistAnalyzerConfig(modes=[0], bins=20, density=True)
     ).execute(
         {
-            "trajectories": _trajectory_product(
+            "trajectories": trajectory_product(
                 TrajectorySet(cp_be.asarray(data), t0=0.0, dt=1.0),
                 scan_size=None,
                 n_traj_per_point=None,

@@ -12,6 +12,9 @@ Public API
 ``SDEDataBundle`` : 2.0 bundle of typed data products plus provenance.
 ``recorded_distribution_versions`` : Real installed distribution versions
 recorded in artifact provenance.
+``trajectory_product`` : Wrap a trajectory set as a typed ``trajectories``
+product for graph inputs and tests.
+``fingerprint_text`` : Readable ``class@version`` identity of one plugin.
 """
 
 import importlib.metadata
@@ -46,6 +49,14 @@ from qphase_sde.contracts.quantities import SDEQuantity
 from qphase_sde.products import (
     json_safe_meta,
 )
+
+__all__ = [
+    "SDEDataBundle",
+    "fingerprint_text",
+    "recorded_distribution_versions",
+    "restore_sde_bundle",
+    "trajectory_product",
+]
 
 
 def recorded_distribution_versions() -> dict[str, str]:
@@ -391,7 +402,7 @@ class SDEDataBundle:
         )
 
 
-def _fingerprint_text(instance: Any) -> str:
+def fingerprint_text(instance: Any) -> str:
     """Return a readable plugin identity for numerical provenance."""
     if instance is None:
         return ""
@@ -402,7 +413,7 @@ def _fingerprint_text(instance: Any) -> str:
     return f"{payload['class']}@{version}"
 
 
-def _trajectory_product(
+def trajectory_product(
     trajectory: Any,
     *,
     scan_size: int | None,

@@ -16,7 +16,7 @@ from __future__ import annotations
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.dist import DistAnalyzer, DistAnalyzerConfig
-from qphase_sde.result import _trajectory_product
+from qphase_sde.result import trajectory_product
 from qphase_sde.state import TrajectorySet
 
 RTOL = 1e-10
@@ -25,7 +25,7 @@ RTOL = 1e-10
 def _execute(analyzer: DistAnalyzer, trajectory: TrajectorySet) -> dict:
     product = analyzer.execute(
         {
-            "trajectories": _trajectory_product(
+            "trajectories": trajectory_product(
                 trajectory, scan_size=None, n_traj_per_point=None
             )
         },

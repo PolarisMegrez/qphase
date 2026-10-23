@@ -17,6 +17,8 @@ __all__ = [
     "SDETimeGrid",
     "build_execution_plan",
     "resolve_time_grid",
+    "typed_batch_scope",
+    "typed_scan_scope",
 ]
 
 
@@ -209,7 +211,7 @@ def build_execution_plan(
     batch_local: frozenset[str] = frozenset()
     batch_frontier: frozenset[str] = frozenset()
     if product_graph is not None:
-        batch_local, batch_frontier = _typed_batch_scope(
+        batch_local, batch_frontier = typed_batch_scope(
             product_graph, analysers, validate=False
         )
     workspace_analysers = (
@@ -372,7 +374,7 @@ def build_execution_plan(
             )
         trajectory_batch = logical_rng_group
     if trajectory_batch < n_traj and product_graph is not None:
-        _typed_batch_scope(product_graph, analysers, validate=True)
+        typed_batch_scope(product_graph, analysers, validate=True)
     if trajectory_batch < n_traj and (not incremental or should_keep):
         raise SDEMemoryPlanningError(
             "trajectory batching requires keep_traj=false and every analyser "
@@ -475,7 +477,7 @@ def build_execution_plan(
     deferred_device_bytes = 0
     deferred_host_bytes = 0
     if product_graph is not None and tile_size < scan_size:
-        tile_scope, final_scope = _typed_scan_scope(product_graph, analysers)
+        tile_scope, final_scope = typed_scan_scope(product_graph, analysers)
         trajectory_consumers = {
             binding.consumer
             for binding in product_graph.external_inputs
@@ -943,7 +945,7 @@ def _analyzer_capabilities(analyser: Any) -> Any:
     )
 
 
-def _typed_scan_scope(
+def typed_scan_scope(
     graph: Any, analysers: dict[str, Any]
 ) -> tuple[frozenset[str], frozenset[str]]:
     """Partition graph nodes into tile-scope and final-scope node ids.
@@ -972,7 +974,7 @@ def _typed_scan_scope(
     return frozenset(tile_scope), frozenset(all_nodes - tile_scope)
 
 
-def _typed_batch_scope(
+def typed_batch_scope(
     graph: Any,
     analysers: dict[str, Any],
     *,

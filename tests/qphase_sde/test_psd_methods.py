@@ -20,7 +20,7 @@ from qphase.core.registry import discovery, registry
 from qphase.service import RegistryService
 from qphase_sde.analyser.frequency_orientation import resolve_frequency_orientation
 from qphase_sde.analyser.psd import PsdAnalyzer, PsdAnalyzerConfig
-from qphase_sde.result import _trajectory_product
+from qphase_sde.result import trajectory_product
 from qphase_sde.spectral_estimator import create_builtin_estimator
 from qphase_sde.state import TrajectorySet
 
@@ -45,7 +45,7 @@ def _field(channels=(0,), *, orientation=None, representation="complex"):
 
 
 def _product(analyzer, data, backend=BACKEND):
-    trajectory = _trajectory_product(data, scan_size=None, n_traj_per_point=None)
+    trajectory = trajectory_product(data, scan_size=None, n_traj_per_point=None)
     return analyzer.execute({"signal": trajectory}, backend=backend, label="psd")[
         "psd"
     ]
