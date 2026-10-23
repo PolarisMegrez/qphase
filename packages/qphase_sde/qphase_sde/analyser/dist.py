@@ -120,7 +120,7 @@ class DistAnalyser(Analyser):
     """Analyser for Phase Space Distribution."""
 
     name: ClassVar[str] = "dist"
-    description: ClassVar[str] = "Phase Space Distribution analyzer"
+    description: ClassVar[str] = "Phase Space Distribution analyser"
     config_schema: ClassVar[type[DistAnalyserConfig]] = DistAnalyserConfig
 
     def __init__(self, config: DistAnalyserConfig | None = None, **kwargs):

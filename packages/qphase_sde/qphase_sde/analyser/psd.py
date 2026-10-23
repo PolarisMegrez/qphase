@@ -205,7 +205,7 @@ class PsdAnalyser(Analyser):
     """Analyser for Power Spectral Density."""
 
     name: ClassVar[str] = "psd"
-    description: ClassVar[str] = "Power Spectral Density analyzer"
+    description: ClassVar[str] = "Power Spectral Density analyser"
     config_schema: ClassVar[type[PsdAnalyserConfig]] = PsdAnalyserConfig
     manifest: ClassVar[PluginManifest] = PluginManifest(
         subplugins={
