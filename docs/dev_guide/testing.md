@@ -63,7 +63,7 @@ pytest                                                # the whole tree
 | `slow` | `-m "slow and not gpu"` (push only) | 3.13 | 60 min |
 | `lint` | `ruff check .` and `mypy packages` | 3.13 | 15 min |
 
-Every job installs the CPU-only dependency group
+Every job in `ci.yml` installs the CPU-only dependency group
 (`uv sync --no-dev --group dev-cpu`), which carries pytest, ruff, mypy and the
 CLI/GUI/resource packages but no CuPy. That keeps the whole matrix installable
 on interpreters without a CuPy wheel — and it means the suite always runs the
@@ -78,20 +78,25 @@ not type-checked: `mypy packages tests` still reports a registered backlog of
 
 `.github/workflows/gpu.yml` is the only workflow that actually executes `gpu`
 cases; it targets a self-hosted CUDA runner rather than a GitHub-hosted one.
-`-m gpu` currently collects 49 parametrized cases across 13 files.
 
 - Runner: a self-hosted runner registered with the labels `self-hosted` and
-  `gpu`, on a machine with the NVIDIA driver. CuPy 14+ ships the required CUDA
-  components as PyPI wheels (`cupy-cuda12x[ctk]`), so no system CUDA toolkit is
-  needed.
-- Trigger: `workflow_dispatch` only, for now. With no matching runner, a
-  push-triggered job queues for roughly 24 hours before failing, so the `push`
-  trigger is added back only after the first manual dispatch passes.
+  `gpu`, on a machine with an NVIDIA driver. The CUDA libraries may come from
+  CuPy's own wheels (`cupy-cuda12x[ctk]`) or from a system CUDA toolkit — the
+  registered runner uses a system CUDA 12.6 toolkit with driver 582.08, which
+  is equally valid.
+- Trigger: `workflow_dispatch` and `push` (branches `main`/`stable`) are both
+  live. If the runner is ever decommissioned, revert to dispatch-only first:
+  with no matching runner a push-triggered job is queued for roughly 24 hours
+  before it fails, which pollutes the check status of every push.
 - Install: plain `uv sync` — the default `dev` group, which includes
   `qphase[cupy]`. This lane must never use `dev-cpu`: without CuPy every case
   would skip and the lane would look green while testing nothing.
-- Guard: a dedicated step fails the job when CuPy cannot be imported or
-  `cupy.cuda.runtime.getDeviceCount()` is 0, so the lane cannot pass by
-  skipping everything.
-- Matrix: 3.11–3.13. 3.14 joins once `uv.lock` moves from `cupy-cuda12x` 13.6.0
-  (cp311–cp313 wheels only) to CuPy 14 (cp314 wheels).
+- Guard: a dedicated `shell: bash` step fails the job when CuPy cannot be
+  imported or `cupy.cuda.runtime.getDeviceCount()` is 0, so the lane cannot
+  pass by skipping everything.
+- Matrix: 3.11–3.14. The lock pins `cupy-cuda12x` 14.2.0, which ships cp314
+  wheels.
+- Collection: on a machine without CuPy, `-m gpu` collects 49 cases across 13
+  files; with CuPy installed the ten module-gated cases of
+  `tests/qphase_sde/test_cupy_backend.py` join the collection, so the runner
+  sees 59 cases across 14 files.

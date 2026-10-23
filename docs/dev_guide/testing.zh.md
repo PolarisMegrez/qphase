@@ -60,7 +60,7 @@ pytest                                                # 全量
 | `slow` | `-m "slow and not gpu"`（仅 push） | 3.13 | 60 分钟 |
 | `lint` | `ruff check .` 与 `mypy packages` | 3.13 | 15 分钟 |
 
-所有 job 都安装纯 CPU 依赖组（`uv sync --no-dev --group dev-cpu`）：它带 pytest、
+`ci.yml` 的所有 job 都安装纯 CPU 依赖组（`uv sync --no-dev --group dev-cpu`）：它带 pytest、
 ruff、mypy 与 CLI/GUI/资源包，但不含 CuPy。这样整个解释器矩阵在没有 CuPy wheel 的
 版本上也能安装，并且套件始终走"未安装 CuPy"的分支——所有 `gpu` 用例经由设备探测被跳过，
 而不是经由 import 失败。
@@ -71,16 +71,19 @@ ruff、mypy 与 CLI/GUI/资源包，但不含 CuPy。这样整个解释器矩阵
 ## GPU CI lane
 
 `.github/workflows/gpu.yml` 是唯一真正执行 `gpu` 用例的 workflow，它跑在自建的 CUDA
-runner 上而不是 GitHub 托管 runner 上。`-m gpu` 当前在 13 个文件里收集到 49 个参数化用例。
+runner 上而不是 GitHub 托管 runner 上。
 
 - Runner：注册一台带 `self-hosted` 与 `gpu` 标签的 self-hosted runner，机器装好 NVIDIA
-  驱动即可。CuPy 14 起所需的 CUDA 组件以 PyPI wheel 形式提供
-  （`cupy-cuda12x[ctk]`），不需要系统 CUDA toolkit。
-- 触发：目前只有 `workflow_dispatch`。没有匹配的 runner 时，push 触发的 job 会先排队约
-  24 小时再失败，因此只有首次手动 dispatch 通过后才把 `push` 触发器加回来。
+  驱动即可。CUDA 库可以来自 CuPy 自带的 wheel（`cupy-cuda12x[ctk]`），也可以来自系统
+  CUDA toolkit——当前已注册的 runner 用的是系统 CUDA 12.6 toolkit + 驱动 582.08，同样成立。
+- 触发：`workflow_dispatch` 与 `push`（branches `main`/`stable`）均已生效。若该 runner
+  将来退役，必须先把触发器回退为 dispatch-only：没有匹配的 runner 时，push 触发的 job
+  会先排队约 24 小时再失败，污染每次推送的检查状态。
 - 安装：直接 `uv sync`（默认 `dev` 组，含 `qphase[cupy]`）。该 lane 绝不能改用
   `dev-cpu`：没有 CuPy 时所有用例都会 skip，lane 会看起来是绿的却什么都没测。
-- 保险：单独一步在 CuPy 无法 import 或
+- 保险：单独一个 `shell: bash` 步骤，在 CuPy 无法 import 或
   `cupy.cuda.runtime.getDeviceCount()` 为 0 时直接让 job 失败，避免"全部 skip 即通过"。
-- 矩阵：3.11–3.13。等 `uv.lock` 从 `cupy-cuda12x` 13.6.0（只有 cp311–cp313 wheel）
-  升级到 CuPy 14（有 cp314 wheel）后再加入 3.14。
+- 矩阵：3.11–3.14。lock 中 `cupy-cuda12x` 为 14.2.0，已提供 cp314 wheel。
+- 收集数量：未安装 CuPy 的机器上 `-m gpu` 收集 49 个用例 / 13 个文件；安装 CuPy 后
+  `tests/qphase_sde/test_cupy_backend.py` 里 10 个模块级门控用例加入收集，runner 上为
+  59 个用例 / 14 个文件。
