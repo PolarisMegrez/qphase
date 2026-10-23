@@ -12,8 +12,8 @@ from ..contracts.coherence import (
     CoherenceFrequencyEstimate,
     CoherenceFrequencyStatus,
 )
+from ..numerics.short_delay import estimate_coherence_carrier
 from .base import BaseCoherenceFrequencyConfig, CoherenceFrequencyProtocol
-from .math.short_delay import estimate_coherence_carrier
 
 __all__ = ["ShortDelayCoherenceFrequency", "ShortDelayCoherenceFrequencyConfig"]
 

@@ -8,7 +8,7 @@ from statistics import NormalDist
 
 import numpy as np
 
-from ...contracts.quantities import (
+from ..contracts.quantities import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
     orientation_sign,

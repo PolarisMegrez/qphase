@@ -12,8 +12,8 @@ from ..contracts.coherence import (
     CoherenceFrequencyEstimate,
     CoherenceFrequencyStatus,
 )
+from ..numerics.band_limited import estimate_band_limited_carrier
 from .base import BaseCoherenceFrequencyConfig, CoherenceFrequencyProtocol
-from .math.band_limited import estimate_band_limited_carrier
 
 __all__ = ["BandLimitedCoherenceFrequency", "BandLimitedCoherenceFrequencyConfig"]
 

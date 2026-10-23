@@ -18,7 +18,6 @@ from qphase.data import (
     SpectralQuantity,
 )
 
-from ..coherence_frequency.math.finite_delay import finite_delay_carrier_from_spectrum
 from ..contracts.analyser import (
     AnalyserExecutionCapabilities,
     AnalyserWorkspaceRequest,
@@ -28,6 +27,7 @@ from ..contracts.quantities import (
     DEFAULT_FREQUENCY_ORIENTATION,
     FrequencyOrientation,
 )
+from ..numerics.finite_delay import finite_delay_carrier_from_spectrum
 from ..products import (
     assemble_row_table_product,
 )

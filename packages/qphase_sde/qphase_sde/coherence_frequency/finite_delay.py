@@ -12,8 +12,8 @@ from ..contracts.coherence import (
     CoherenceFrequencyEstimate,
     CoherenceFrequencyStatus,
 )
+from ..numerics.finite_delay import finite_delay_carrier_from_spectrum
 from .base import BaseCoherenceFrequencyConfig, CoherenceFrequencyProtocol
-from .math.finite_delay import finite_delay_carrier_from_spectrum
 
 __all__ = ["FiniteDelayCoherenceFrequency", "FiniteDelayCoherenceFrequencyConfig"]
 
