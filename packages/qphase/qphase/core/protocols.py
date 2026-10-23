@@ -85,6 +85,13 @@ class EngineManifest(PluginManifest):
     product_graph_builder : str | None
         Optional resource-package control-plane callable that builds a
         validated ProductGraph for one job.
+    analyser_config_expander : str | None
+        Dotted path ('module:attr') to a callable
+        ``(analyser_config: Mapping[str, Any]) -> dict[str, Any]`` that expands
+        the merged analyser section before it is validated, compiled and
+        snapshotted. It runs once per job, must be deterministic and
+        idempotent, and receives a deep copy: the returned mapping becomes the
+        job's analyser configuration.
 
     """
 
@@ -106,6 +113,9 @@ class EngineManifest(PluginManifest):
     # Dotted path to the callable selecting the task profile id for a job.
     profile_selector: str | None = None
     product_graph_builder: str | None = None
+    # Dotted path to the callable expanding the merged analyser config before
+    # validation, graph compilation and snapshotting.
+    analyser_config_expander: str | None = None
 
 
 class PluginConfigBase(BaseModel):

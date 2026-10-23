@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import ClassVar
+from collections.abc import Mapping
+from typing import Any, ClassVar
 
 import pytest
 from pydantic import BaseModel
@@ -1234,3 +1235,86 @@ def test_compiler_freezes_revision_scoped_ids_and_rules(tmp_path):
         recompiled.tag_snapshot["assignments"]["workflow"][0]["assignment_id"]
         != workflow_entry["assignment_id"]
     )
+
+
+_EXPANDER_CALLS: list[dict] = []
+
+
+def _probe_analyser_expander(analysers: Mapping[str, Any]) -> dict[str, Any]:
+    """Test expander: records its input and adds a sibling synthetic entry."""
+    import copy
+
+    _EXPANDER_CALLS.append(copy.deepcopy(dict(analysers)))
+    expanded = {label: dict(entry) for label, entry in analysers.items()}
+    if "probe" in expanded:
+        return expanded
+    expanded["probe"] = {"plugin": "dummy", "config": {}}
+    return expanded
+
+
+def test_analyser_config_expander_runs_before_compile_and_snapshot(
+    tmp_path, sde_profile_plugins, monkeypatch
+):
+    """The engine's expander rewrites the analyser section compile sees."""
+    from qphase_sde.engine import Engine
+
+    _EXPANDER_CALLS.clear()
+    monkeypatch.setattr(
+        Engine.manifest,
+        "analyser_config_expander",
+        "tests.qphase.test_compiler:_probe_analyser_expander",
+        raising=False,
+    )
+    project = ProjectContext.create(tmp_path / "project")
+    compiler = WorkflowCompiler(project, SystemConfig())
+
+    compiled = compiler.compile(
+        _workflow(
+            _sde_job(
+                "sim",
+                {"t1": 1.0, "dt": 0.1},
+                backend={"dummy": {}},
+                integrator={"dummy": {}},
+                model={"dummy": {}},
+                analyser={"dummy": {"plugin": "dummy", "config": {}}},
+            )
+        )
+    ).job("sim")
+
+    assert len(_EXPANDER_CALLS) == 1
+    # The expander received the normalized instance shape.
+    assert _EXPANDER_CALLS[0]["dummy"] == {"plugin": "dummy", "config": {}}
+    # Validation, graph compilation and the snapshot all see the same expanded
+    # analyser section.
+    assert compiled.plugin_config["analyser"]["probe"] == {
+        "plugin": "dummy",
+        "config": {},
+    }
+    assert compiled.merged_config["analyser"] == compiled.plugin_config["analyser"]
+
+
+def test_analyser_config_expander_is_idempotent_and_optional():
+    """A missing hook is a no-op; a second expansion changes nothing."""
+    from types import SimpleNamespace
+
+    from qphase.core.compiler import WorkflowCompiler
+
+    compiler = object.__new__(WorkflowCompiler)
+    selected = {"analyser": {"dummy": {"plugin": "dummy", "config": {}}}}
+
+    assert compiler._expand_analyser_config(SimpleNamespace(), selected) is selected
+    once = compiler._expand_analyser_config(
+        SimpleNamespace(
+            analyser_config_expander="tests.qphase.test_compiler:_probe_analyser_expander"
+        ),
+        selected,
+    )
+    twice = compiler._expand_analyser_config(
+        SimpleNamespace(
+            analyser_config_expander="tests.qphase.test_compiler:_probe_analyser_expander"
+        ),
+        once,
+    )
+    assert once["analyser"] == twice["analyser"]
+    # The caller's mapping is never mutated in place.
+    assert "probe" not in selected["analyser"]

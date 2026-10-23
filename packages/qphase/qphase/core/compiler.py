@@ -404,6 +404,7 @@ class WorkflowCompiler:
             selected["analyser"] = self._normalize_analyser_instances(
                 configured_analysers, analyser_defaults
             )
+        selected = self._expand_analyser_config(manifest, selected)
 
         missing = sorted(
             namespace for namespace in required if not selected.get(namespace)
@@ -491,6 +492,54 @@ class WorkflowCompiler:
             product_graph=product_graph,
             task_profile=resolved_profile,
         )
+
+    def _expand_analyser_config(
+        self, manifest: Any, selected: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Apply the engine's analyser-config expander before validation.
+
+        The expander rewrites the merged analyser section (for example by
+        promoting a nested analyser configuration into a sibling analyser).
+        It runs once, on a deep copy, before ``_validate_plugin_sections``,
+        graph compilation and the config snapshot, so validation, execution
+        and the recorded configuration all see the expanded form. Callables
+        must be deterministic and idempotent; a second expansion of an
+        already expanded section is a no-op.
+        """
+        expander_path = getattr(manifest, "analyser_config_expander", None)
+        analysers = selected.get("analyser")
+        if not expander_path or not isinstance(analysers, Mapping):
+            return selected
+        try:
+            expander = _load_dotted_path(str(expander_path))
+        except Exception as exc:
+            raise QPhasePluginError(
+                f"cannot load analyser config expander {expander_path!r}",
+                code=ErrorCode.PLUGIN_DISCOVERY,
+                context={"expander": str(expander_path)},
+            ) from exc
+        try:
+            expanded = expander(deep_copy(dict(analysers)))
+        except QPhaseConfigError:
+            raise
+        except Exception as exc:
+            raise QPhasePluginError(
+                f"analyser config expander {expander_path!r} failed",
+                code=ErrorCode.CONFIG,
+                context={"expander": str(expander_path)},
+            ) from exc
+        if not isinstance(expanded, Mapping):
+            raise QPhasePluginError(
+                f"analyser config expander {expander_path!r} must return a "
+                f"mapping, got {type(expanded).__name__}",
+                code=ErrorCode.CONFIG,
+                context={"expander": str(expander_path)},
+            )
+        if dict(expanded) == dict(analysers):
+            return selected
+        expanded_selected = dict(selected)
+        expanded_selected["analyser"] = dict(expanded)
+        return expanded_selected
 
     def _compile_product_graph(
         self,
