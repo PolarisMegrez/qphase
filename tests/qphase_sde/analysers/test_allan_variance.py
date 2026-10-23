@@ -11,7 +11,7 @@ from qphase_sde.state import TrajectorySet
 
 from tests.conftest import cuda_available
 
-from .conftest import product_payload
+from ..conftest import product_payload
 
 
 def _phase_diffusion_trajectory(n_traj: int = 9) -> TrajectorySet:

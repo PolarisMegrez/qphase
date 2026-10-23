@@ -34,7 +34,7 @@ from qphase_sde.integrator.srk import GenericSRK
 
 pytestmark = pytest.mark.e2e
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURE = (
     _REPO_ROOT / "configs" / "workflows" / "misc" / "e2e_sampled_scalar_3mode.yaml"
 )

@@ -9,7 +9,7 @@ from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
 from qphase_sde.result import trajectory_product
 from qphase_sde.state import TrajectorySet
 
-from .conftest import product_payload
+from ..conftest import product_payload
 
 
 def _analyzer(**kwargs):

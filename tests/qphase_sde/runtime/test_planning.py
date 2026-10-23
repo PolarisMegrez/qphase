@@ -1126,7 +1126,7 @@ class _FakeIncrementalAnalyser:
         )
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # Tracked production workflows whose pre-2.0 runs used a physical batch below
 # the old default RNG group (64); each sim job pins rng_group_size to its

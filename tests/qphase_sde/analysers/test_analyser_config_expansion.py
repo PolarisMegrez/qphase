@@ -128,7 +128,7 @@ def test_expanded_graph_carries_a_transient_ridge_node():
 
 def test_multi_tile_plan_defers_the_expanded_ridge_node():
     """A tiled carrier job plans the synthesized node as a deferred analyser."""
-    from tests.qphase_sde.test_scan_runtime import (
+    from tests.qphase_sde.runtime.test_scan_runtime import (
         ScannedDummyModel,
         _sixteen_point_grid,
     )

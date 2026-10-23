@@ -19,7 +19,7 @@ from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.products import add_scan_parameter_coordinates
 from qphase_sde.result import SDEDataBundle
 
-from .conftest import product_payload
+from ..conftest import product_payload
 
 
 def _result(

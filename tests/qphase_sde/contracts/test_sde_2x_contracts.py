@@ -21,10 +21,10 @@ from qphase_sde.contracts import (
     tasks,
 )
 
-SDE_ROOT = Path(__file__).resolve().parents[2] / "packages" / "qphase_sde"
+SDE_ROOT = Path(__file__).resolve().parents[3] / "packages" / "qphase_sde"
 CONTRACTS_DIR = SDE_ROOT / "qphase_sde" / "contracts"
 MANIFEST_FIXTURE = (
-    Path(__file__).resolve().parents[1] / "fixtures" / "resource_manifests" / "sde.json"
+    Path(__file__).resolve().parents[2] / "fixtures" / "resource_manifests" / "sde.json"
 )
 
 #: Top-level packages the contracts package may import.
