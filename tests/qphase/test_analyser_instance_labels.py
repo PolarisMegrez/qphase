@@ -25,9 +25,10 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def sde_profile_plugins():
-    """Register the real SDE engine plus dummy plugins for its namespaces."""
+    """Register a core-owned engine plus dummy plugins for its namespaces."""
     from qphase.core.registry import discovery
-    from qphase_sde.engine import Engine
+
+    from tests.plugins.dummy_engine import DummyEngine
 
     # Discover first so engine.sde enters the registry through the normal
     # entry-point path.  Discovery marks entry points as consumed, so the
@@ -36,7 +37,7 @@ def sde_profile_plugins():
     discovery.discover_plugins()
     engine_table = registry._tables.setdefault("engine", {})
     previous_sde = engine_table.get("sde")
-    registry.register("engine", "sde", Engine, overwrite=True)
+    registry.register("engine", "sde", DummyEngine, overwrite=True)
     registry.register("integrator", "dummy", DummyPlugin, overwrite=True)
     registry.register("analyser", "dummy", DummyPlugin, overwrite=True)
     try:
@@ -117,7 +118,8 @@ def test_build_plugins_keeps_single_analyser_instance_label(
     from qphase.core.compiler import WorkflowCompiler
     from qphase.core.project import ProjectContext
     from qphase.core.registry import discovery
-    from qphase_sde.analyser.psd import PsdAnalyser
+
+    from tests.plugins.dummy_plugin import DummyPlugin
 
     discovery.discover_plugins()
     project = ProjectContext.create(tmp_path / "project")
@@ -134,17 +136,7 @@ def test_build_plugins_keeps_single_analyser_instance_label(
                     integrator={"dummy": {}},
                     model={"dummy": {}},
                     analyser={
-                        "raw_psd": {
-                            "plugin": "psd",
-                            "config": {
-                                "measurement": {
-                                    "complex_field": {
-                                        "channels": [0],
-                                        "representation": "complex",
-                                    }
-                                }
-                            },
-                        },
+                        "raw_psd": {"plugin": "dummy", "config": {"param": 2.0}},
                     },
                 )
             ],
@@ -156,7 +148,7 @@ def test_build_plugins_keeps_single_analyser_instance_label(
     analysers = plugins["analyser"]
     assert isinstance(analysers, dict)
     assert set(analysers) == {"raw_psd"}
-    assert isinstance(analysers["raw_psd"], PsdAnalyser)
+    assert isinstance(analysers["raw_psd"], DummyPlugin)
     assert plugins["analyser.raw_psd"] is analysers["raw_psd"]
 
 

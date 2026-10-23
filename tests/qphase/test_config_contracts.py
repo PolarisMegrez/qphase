@@ -35,11 +35,27 @@ def register_dummy_integrator():
 
 @pytest.fixture
 def register_sde_engine():
-    """Ensure the real SDE engine is available in the registry."""
-    from qphase_sde.engine import Engine
+    """Register a core-owned engine under the name the job dicts use.
 
-    registry.register(namespace="engine", name="sde", builder=Engine, overwrite=True)
+    The previous ``engine.sde`` entry is restored afterwards: leaving the
+    fixture engine behind would hand later modules a stand-in where they
+    expect a real engine.
+    """
+    from tests.plugins.dummy_engine import DummyEngineRequiringModel
+
+    engine_table = registry._tables.setdefault("engine", {})
+    previous_sde = engine_table.get("sde")
+    registry.register(
+        namespace="engine",
+        name="sde",
+        builder=DummyEngineRequiringModel,
+        overwrite=True,
+    )
     yield
+    if previous_sde is None:
+        engine_table.pop("sde", None)
+    else:
+        engine_table["sde"] = previous_sde
 
 
 @pytest.fixture

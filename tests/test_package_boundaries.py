@@ -7,14 +7,13 @@ statements, nothing is imported from the scanned packages):
   project-local ``models`` overlay;
 * the resource packages ``qphase_sde``/``qphase_cam``/``qphase_viz`` never
   import each other;
-* the ``qphase_viz`` and ``qphase_cam`` test suites never reach into a sibling
-  resource package's internals.
+* the ``qphase_viz``/``qphase_cam``/``qphase`` test suites never reach into a
+  sibling resource package's internals. The core suite is included: core
+  behaviours are tested with the core-owned fixtures in ``tests/plugins``, and
+  the cases that drive a real resource package live in that package's suite.
 
 The ``models/`` overlay is allowed to import resource packages: it is the
 project-local plugin layer and depends downward, not the other way round.
-Core-package tests (``tests/qphase``) are not asserted here yet — they still
-import ``qphase_sde`` directly (engine fixtures and analyser products), so that
-boundary lands with the corresponding test cleanup.
 """
 
 import ast
@@ -91,4 +90,17 @@ def test_resource_test_suites_do_not_import_sibling_packages(suite):
     """Resource test suites use public contracts, not a sibling's internals."""
     forbidden = tuple(name for name in RESOURCE_PACKAGES if name != suite)
     violations = _crossing_imports(REPO_ROOT / "tests" / suite, forbidden)
+    assert not violations, violations
+
+
+def test_core_test_suite_does_not_import_resource_packages():
+    """Core tests exercise core behaviour through the core-owned fixtures.
+
+    The scan sees function-local imports too: deferring an import into a
+    fixture is still a dependency on the resource package. A case that really
+    needs a resource package's engine or analyser belongs in that package's
+    suite instead.
+    """
+    forbidden = (*RESOURCE_PACKAGES, OVERLAY_PACKAGE)
+    violations = _crossing_imports(REPO_ROOT / "tests" / "qphase", forbidden)
     assert not violations, violations

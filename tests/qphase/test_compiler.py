@@ -159,15 +159,14 @@ def test_compiled_workflow_round_trips_without_registry_access(tmp_path):
 
 
 @pytest.fixture
-def sde_profile_plugins():
-    """Register the real SDE engine plus dummy plugins for its namespaces."""
-    from qphase_sde.engine import Engine
-
+def dummy_engine_plugins():
+    """Register a core-owned engine plus dummy plugins for its namespaces."""
+    from tests.plugins.dummy_engine import DummyEngine
     from tests.plugins.dummy_plugin import DummyPlugin
 
     engine_table = registry._tables.setdefault("engine", {})
     previous_sde = engine_table.get("sde")
-    registry.register("engine", "sde", Engine, overwrite=True)
+    registry.register("engine", "sde", DummyEngine, overwrite=True)
     registry.register("integrator", "dummy", DummyPlugin, overwrite=True)
     registry.register("analyser", "dummy", DummyPlugin, overwrite=True)
     try:
@@ -258,135 +257,7 @@ def _sde_job(name: str, engine_config: dict, **sections) -> JobConfig:
     return JobConfig(name=name, engine={"sde": engine_config}, **sections)
 
 
-def test_compiler_selects_sde_task_profiles(tmp_path, sde_profile_plugins):
-    """The SDE engine selects simulate/simulate_analyze/analyze from config."""
-    project = ProjectContext.create(tmp_path / "project")
-    compiler = WorkflowCompiler(project, SystemConfig())
-
-    simulate = compiler.compile(
-        _workflow(
-            _sde_job(
-                "sim",
-                {"t1": 1.0, "dt": 0.1},
-                backend={"dummy": {}},
-                integrator={"dummy": {}},
-                model={"dummy": {}},
-            )
-        )
-    ).job("sim")
-    assert simulate.required_plugins == ("backend", "integrator", "model")
-    assert simulate.optional_plugins == ("analyser", "observer")
-
-    simulate_analyze = compiler.compile(
-        _workflow(
-            _sde_job(
-                "sim",
-                {"t1": 1.0, "dt": 0.1},
-                backend={"dummy": {}},
-                integrator={"dummy": {}},
-                model={"dummy": {}},
-                analyser={"dummy": {}},
-            )
-        )
-    ).job("sim")
-    assert simulate_analyze.required_plugins == (
-        "analyser",
-        "backend",
-        "integrator",
-        "model",
-    )
-    assert simulate_analyze.optional_plugins == ("observer",)
-
-    analyze = compiler.compile(
-        _workflow(
-            _sde_job(
-                "ana",
-                {"mode": "analyze"},
-                analyser={"dummy": {}},
-                input={"from": str(tmp_path), "mode": "dataset"},
-            ),
-        )
-    ).job("ana")
-    assert analyze.required_plugins == ("analyser",)
-    assert analyze.optional_plugins == ("backend",)
-    assert set(analyze.plugin_config) == {"analyser"}
-
-
-def test_compiler_normalizes_analyser_instance_labels(tmp_path, sde_profile_plugins):
-    from qphase.core.job_runner import build_plugins
-    from qphase.core.registry import discovery
-    from qphase_sde.analyser.psd import PsdAnalyser
-
-    discovery.discover_plugins()
-    project = ProjectContext.create(tmp_path / "project")
-    project.defaults_path.write_text(
-        "analyser:\n  psd:\n    convention: unitary\n",
-        encoding="utf-8",
-    )
-    compiled_workflow = WorkflowCompiler(project, SystemConfig()).compile(
-        _workflow(
-            _sde_job(
-                "sim",
-                {"t1": 1.0, "dt": 0.1},
-                backend={"dummy": {}},
-                integrator={"dummy": {}},
-                model={"dummy": {}},
-                analyser={
-                    "raw_psd": {
-                        "plugin": "psd",
-                        "config": {
-                            "measurement": {
-                                "complex_field": {
-                                    "channels": [0],
-                                    "representation": "complex",
-                                }
-                            }
-                        },
-                    },
-                    "other_psd": {
-                        "plugin": "psd",
-                        "config": {
-                            "measurement": {
-                                "complex_field": {
-                                    "channels": [0],
-                                    "representation": "complex",
-                                }
-                            }
-                        },
-                    },
-                },
-            )
-        )
-    )
-    compiled = compiled_workflow.job("sim")
-
-    expected = {
-        "plugin": "psd",
-        "config": {
-            "measurement": {
-                "complex_field": {"channels": [0], "representation": "complex"}
-            },
-            "convention": "unitary",
-        },
-    }
-    assert dict(compiled.plugin_config["analyser"]["raw_psd"]) == expected
-    assert dict(compiled.plugin_config["analyser"]["other_psd"]) == expected
-    assert dict(compiled.merged_config["analyser"]["raw_psd"]) == expected
-    restored = CompiledWorkflow.from_payload(compiled_workflow.to_payload()).job("sim")
-    assert dict(restored.plugin_config["analyser"]["raw_psd"]) == expected
-
-    instances = build_plugins(registry, dict(compiled.plugin_config))["analyser"]
-    assert set(instances) == {"raw_psd", "other_psd"}
-    assert all(isinstance(instance, PsdAnalyser) for instance in instances.values())
-    assert compiled.product_graph is not None
-    assert {node.node_id for node in compiled.product_graph.nodes} == {
-        "analyser.raw_psd",
-        "analyser.other_psd",
-    }
-    assert {node.producer for node in compiled.product_graph.nodes} == {"analyser:psd"}
-
-
-def test_compiler_normalizes_analyser_shorthand(tmp_path, sde_profile_plugins):
+def test_compiler_normalizes_analyser_shorthand(tmp_path, dummy_engine_plugins):
     project = ProjectContext.create(tmp_path / "project")
     compiled = WorkflowCompiler(project, SystemConfig()).compile(
         _workflow(
@@ -408,7 +279,7 @@ def test_compiler_normalizes_analyser_shorthand(tmp_path, sde_profile_plugins):
 
 
 def test_compiler_rejects_unknown_analyser_implementation(
-    tmp_path, sde_profile_plugins
+    tmp_path, dummy_engine_plugins
 ):
     project = ProjectContext.create(tmp_path / "project")
     with pytest.raises(QPhasePluginError, match="missing_implementation"):
@@ -433,7 +304,7 @@ def test_compiler_rejects_unknown_analyser_implementation(
 
 @pytest.mark.parametrize("source", ["top_level", "plugins"])
 def test_analyser_label_does_not_merge_same_named_implementation_default(
-    tmp_path, sde_profile_plugins, source
+    tmp_path, dummy_engine_plugins, source
 ):
     from qphase.core.registry import discovery
 
@@ -483,7 +354,7 @@ def test_analyser_label_does_not_merge_same_named_implementation_default(
 
 @pytest.mark.parametrize("label", ["with.dot", "input", 7])
 def test_compiler_rejects_invalid_analyser_instance_label(
-    tmp_path, sde_profile_plugins, label
+    tmp_path, dummy_engine_plugins, label
 ):
     project = ProjectContext.create(tmp_path / "project")
     with pytest.raises(QPhaseConfigError, match="instance label|labels must"):
@@ -499,170 +370,6 @@ def test_compiler_rejects_invalid_analyser_instance_label(
                 )
             )
         )
-
-
-def test_compiler_sde_analyze_profile_forbids_model(tmp_path, sde_profile_plugins):
-    """The analyze profile turns configured model/integrator into errors."""
-    project = ProjectContext.create(tmp_path / "project")
-    with pytest.raises(QPhaseConfigError) as excinfo:
-        WorkflowCompiler(project, SystemConfig()).compile(
-            _workflow(
-                _sde_job(
-                    "ana",
-                    {"mode": "analyze"},
-                    analyser={"dummy": {}},
-                    model={"dummy": {}},
-                )
-            )
-        )
-    message = str(excinfo.value)
-    assert "'analyze'" in message
-    assert "forbidden plugins" in message
-    assert "model" in message
-
-
-def test_compiler_sde_profile_reports_missing_required(tmp_path, sde_profile_plugins):
-    """Missing required plugins name the job, engine and resolved profile."""
-    project = ProjectContext.create(tmp_path / "project")
-    compiler = WorkflowCompiler(project, SystemConfig())
-
-    with pytest.raises(QPhaseConfigError, match="missing required plugins"):
-        compiler.compile(_workflow(_sde_job("ana", {"mode": "analyze"})))
-    with pytest.raises(QPhaseConfigError) as excinfo:
-        compiler.compile(
-            _workflow(
-                _sde_job(
-                    "sim",
-                    {"t1": 1.0, "dt": 0.1},
-                    backend={"dummy": {}},
-                    integrator={"dummy": {}},
-                )
-            )
-        )
-    message = str(excinfo.value)
-    assert "'simulate'" in message
-    assert "model" in message
-
-
-def test_compiler_yaml_job_input_bindings_reach_product_graph(
-    tmp_path, sde_profile_plugins
-):
-    """A YAML job's input_bindings compile into explicit graph edges."""
-    from qphase.core.workflow import load_workflow
-    from qphase.data import DataKind, ProductDeclaration, ProductRequirement
-
-    class StubConfig(BaseModel):
-        requirement: str | None = None
-
-    class StubAnalyser:
-        config_schema = StubConfig
-
-        def __init__(self, config):
-            self.config = config
-
-        def input_requirements(self):
-            if self.config.requirement is None:
-                return []
-            return [
-                ProductRequirement(
-                    name=self.config.requirement, kind=DataKind.STATISTICS
-                )
-            ]
-
-        def output_specs(self, *, label):
-            return (ProductDeclaration(name=label, kind=DataKind.STATISTICS),)
-
-    for name in ("binding_stub_source", "binding_stub_sink"):
-        registry.register("analyser", name, StubAnalyser, overwrite=True)
-    try:
-        workflow_path = tmp_path / "workflow.yaml"
-        workflow_path.write_text(
-            "schema: qphase.workflow/2\n"
-            "id: input-binding-test\n"
-            "title: Input binding test\n"
-            "jobs:\n"
-            "- name: ana\n"
-            "  engine: {sde: {mode: analyze}}\n"
-            "  analyser:\n"
-            "    binding_stub_source: {}\n"
-            "    binding_stub_sink: {requirement: spectrum}\n"
-            f"  input: {{from: {tmp_path.as_posix()!r}, mode: dataset}}\n"
-            "  input_bindings:\n"
-            "    binding_stub_sink:\n"
-            "      spectrum: binding_stub_source.binding_stub_source\n"
-        )
-        project = ProjectContext.create(tmp_path / "project")
-        compiled = WorkflowCompiler(project, SystemConfig()).compile(
-            load_workflow(workflow_path)
-        )
-    finally:
-        table = registry._tables.get("analyser", {})
-        table.pop("binding_stub_source", None)
-        table.pop("binding_stub_sink", None)
-
-    graph = compiled.job("ana").product_graph
-    assert graph is not None
-    assert [
-        (edge.producer, edge.product, edge.consumer, edge.requirement)
-        for edge in graph.edges
-    ] == [
-        (
-            "analyser.binding_stub_source",
-            "binding_stub_source",
-            "analyser.binding_stub_sink",
-            "spectrum",
-        )
-    ]
-
-
-def test_compiler_rejects_input_bindings_for_unknown_analyser(
-    tmp_path, sde_profile_plugins
-):
-    """Invalid binding entries are config errors naming the job and entry."""
-    from qphase.data import DataKind, ProductDeclaration, ProductRequirement
-
-    class StubConfig(BaseModel):
-        requirement: str | None = None
-
-    class StubAnalyser:
-        config_schema = StubConfig
-
-        def __init__(self, config):
-            self.config = config
-
-        def input_requirements(self):
-            if self.config.requirement is None:
-                return []
-            return [
-                ProductRequirement(
-                    name=self.config.requirement, kind=DataKind.STATISTICS
-                )
-            ]
-
-        def output_specs(self, *, label):
-            return (ProductDeclaration(name=label, kind=DataKind.STATISTICS),)
-
-    registry.register("analyser", "binding_stub_sink", StubAnalyser, overwrite=True)
-    try:
-        project = ProjectContext.create(tmp_path / "project")
-        with pytest.raises(QPhasePluginError) as excinfo:
-            WorkflowCompiler(project, SystemConfig()).compile(
-                _workflow(
-                    _sde_job(
-                        "ana",
-                        {"mode": "analyze"},
-                        analyser={"binding_stub_sink": {"requirement": "spectrum"}},
-                        input={"from": str(tmp_path), "mode": "dataset"},
-                        input_bindings={"missing": {"spectrum": "input.spectrum"}},
-                    )
-                )
-            )
-    finally:
-        registry._tables.get("analyser", {}).pop("binding_stub_sink", None)
-
-    message = str(excinfo.value)
-    assert "'ana'" in message
-    assert "unknown analyser 'missing'" in message
 
 
 def test_compiler_profile_resolver_replaces_defaults(tmp_path, profiled_engine):
@@ -726,67 +433,6 @@ def test_compiler_profile_selector_switches_profiles(tmp_path, profiled_engine):
     assert "observer" in job.plugin_config
 
 
-def test_compiled_workflow_roundtrip_preserves_resolved_task_profile(
-    tmp_path, sde_profile_plugins
-):
-    """The payload preserves the resolved profile identity and typed I/O."""
-    project = ProjectContext.create(tmp_path / "project")
-    compiled = WorkflowCompiler(project, SystemConfig()).compile(
-        _workflow(
-            _sde_job(
-                "sim",
-                {"t1": 1.0, "dt": 0.1},
-                backend={"dummy": {}},
-                integrator={"dummy": {}},
-                model={"dummy": {}},
-            ),
-            _sde_job(
-                "ana",
-                {"mode": "analyze"},
-                analyser={"dummy": {}},
-                input={"from": str(tmp_path), "mode": "dataset"},
-            ),
-            JobConfig(name="legacy", engine={"dummy": {}}),
-        )
-    )
-    sim = compiled.job("sim")
-    assert sim.task_profile is not None
-    assert sim.task_profile.profile_id == "simulate"
-    assert compiled.job("ana").task_profile is not None
-    assert compiled.job("legacy").task_profile is None
-
-    payload = json.loads(json.dumps(compiled.to_payload()))
-    restored = CompiledWorkflow.from_payload(payload)
-
-    # The restored snapshot is exactly equal, including typed inputs/outputs.
-    assert restored.job("sim").task_profile == sim.task_profile
-    profile = restored.job("sim").task_profile
-    assert profile is not None
-    assert profile.requirements.required == ["backend", "integrator", "model"]
-    assert profile.inputs == []
-    assert [output.name for output in profile.outputs] == ["trajectories"]
-    assert profile.outputs[0].declaration.kind is DataKind.TIME_SERIES
-    analyze = restored.job("ana").task_profile
-    assert analyze is not None
-    assert analyze.profile_id == "analyze"
-    assert [slot.name for slot in analyze.inputs] == ["input"]
-    assert analyze.requirements.forbidden == ["integrator", "model", "observer"]
-    # Legacy-manifest engines carry no snapshot in either direction.
-    assert restored.job("legacy").task_profile is None
-
-
-def test_compiler_analyze_profile_requires_a_job_input(tmp_path, sde_profile_plugins):
-    """The analyze profile's required input slot must map to a job input."""
-    project = ProjectContext.create(tmp_path / "project")
-    with pytest.raises(QPhaseConfigError) as excinfo:
-        WorkflowCompiler(project, SystemConfig()).compile(
-            _workflow(_sde_job("ana", {"mode": "analyze"}, analyser={"dummy": {}}))
-        )
-    message = str(excinfo.value)
-    assert "'analyze'" in message
-    assert "input slot" in message
-
-
 def test_compiler_rejects_profiles_with_multiple_required_inputs(
     tmp_path, multi_input_profile_engine
 ):
@@ -805,56 +451,6 @@ def test_compiler_rejects_profiles_with_multiple_required_inputs(
                 )
             )
         )
-
-
-def test_compiler_profile_selection_ignores_defaulted_optional_plugins(
-    tmp_path, sde_profile_plugins
-):
-    """An analyser living only in project defaults never upgrades the profile."""
-    project = ProjectContext.create(tmp_path / "project")
-    project.defaults_path.write_text("analyser:\n  dummy: {}\n", encoding="utf-8")
-
-    compiled = WorkflowCompiler(project, SystemConfig()).compile(
-        _workflow(
-            _sde_job(
-                "sim",
-                {"t1": 1.0, "dt": 0.1},
-                backend={"dummy": {}},
-                integrator={"dummy": {}},
-                model={"dummy": {}},
-            )
-        )
-    )
-
-    job = compiled.job("sim")
-    assert job.task_profile is not None
-    assert job.task_profile.profile_id == "simulate"
-    assert job.required_plugins == ("backend", "integrator", "model")
-    assert "analyser" not in job.plugin_config
-
-
-def test_compiler_forbidden_plugins_ignore_defaulted_namespaces(
-    tmp_path, sde_profile_plugins
-):
-    """A forbidden plugin injected solely by project defaults fails nothing."""
-    project = ProjectContext.create(tmp_path / "project")
-    project.defaults_path.write_text("model:\n  dummy: {}\n", encoding="utf-8")
-
-    compiled = WorkflowCompiler(project, SystemConfig()).compile(
-        _workflow(
-            _sde_job(
-                "ana",
-                {"mode": "analyze"},
-                analyser={"dummy": {}},
-                input={"from": str(tmp_path), "mode": "dataset"},
-            )
-        )
-    )
-
-    job = compiled.job("ana")
-    assert job.task_profile is not None
-    assert job.task_profile.profile_id == "analyze"
-    assert "model" not in job.plugin_config
 
 
 def test_compiler_rejects_duplicate_task_profile_ids(
@@ -876,7 +472,6 @@ def test_compiler_populates_input_product_schemas_metadata_only(
     from qphase.data import (
         AxisRole,
         AxisSchema,
-        DataKind,
         ProductSchema,
         TimeSeriesDataset,
         VariableSchema,
@@ -954,7 +549,6 @@ def _time_series_artifact(path):
     from qphase.data import (
         AxisRole,
         AxisSchema,
-        DataKind,
         ProductSchema,
         TimeSeriesDataset,
         VariableSchema,
@@ -995,7 +589,6 @@ def _statistics_artifact(path):
     from qphase.data import (
         AxisRole,
         AxisSchema,
-        DataKind,
         ProductSchema,
         StatisticsDataset,
         VariableSchema,
@@ -1253,14 +846,14 @@ def _probe_analyser_expander(analysers: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def test_analyser_config_expander_runs_before_compile_and_snapshot(
-    tmp_path, sde_profile_plugins, monkeypatch
+    tmp_path, dummy_engine_plugins, monkeypatch
 ):
     """The engine's expander rewrites the analyser section compile sees."""
-    from qphase_sde.engine import Engine
+    from tests.plugins.dummy_engine import DummyEngine
 
     _EXPANDER_CALLS.clear()
     monkeypatch.setattr(
-        Engine.manifest,
+        DummyEngine.manifest,
         "analyser_config_expander",
         "tests.qphase.test_compiler:_probe_analyser_expander",
         raising=False,
