@@ -1,0 +1,3124 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://polarismegrez.github.io/qphase/zh/api/qphase_sde/analyzers/">
+      
+      
+        <link rel="prev" href="../models/">
+      
+      
+        <link rel="next" href="../output/">
+      
+      
+        
+          <link rel="alternate" href="../../../../api/qphase_sde/analyzers/" hreflang="en">
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
+    
+    
+      
+        <title>分析器 - QPhase Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#_1" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../../../" title="QPhase Documentation" class="md-header__button md-logo" aria-label="QPhase Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            QPhase Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              分析器
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="../../../../api/qphase_sde/analyzers/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/polarismegrez/qphase" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    polarismegrez/qphase
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../" title="QPhase Documentation" class="md-nav__button md-logo" aria-label="QPhase Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    QPhase Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/polarismegrez/qphase" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    polarismegrez/qphase
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user_guide/getting_started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    入门指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user_guide/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心概念
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user_guide/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workflow 配置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user_guide/gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GUI 与本地 API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user_guide/output/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    结果与复现
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user_guide/tags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    标签与 Catalog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDE 物理
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    SDE 物理
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user_guide/sde/modeling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    建模
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user_guide/sde/simulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    仿真
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user_guide/cam/analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CAM 分析
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_10" id="__nav_10_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API 参考
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    命令行界面
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_10_4" id="__nav_10_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDE
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_10_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_10_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    SDE
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sde/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    概述
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10_4_2" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    qphase_sde
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_10_4_2" id="__nav_10_4_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_10_4_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_10_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    qphase_sde
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    引擎
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    积分器
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    模型
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    分析器
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    分析器
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#psd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        psd
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="psd">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#requirement-typed-product" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        输入 requirement 与 typed product
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        频率轴
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        输出载荷
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coherence_carrier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        coherence_carrier
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#band_limited_carrier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        band_limited_carrier
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#spectral_ridge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spectral_ridge
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#finite_delay_carrier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        finite_delay_carrier
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coherence_matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        coherence_matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#moment_statistics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        moment_statistics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quadratic_moments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        quadratic_moments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pdist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pdist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trajectory_diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        trajectory_diagnostics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#allan_variance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        allan_variance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#allan_scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        allan_scaling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lorentz_fitter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        lorentz_fitter
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="lorentz_fitter">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        输出字段（拟合行）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        裁剪原理
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../output/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    输出格式
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../qphase_cam/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CAM
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_10_5" id="__nav_10_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_10_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CAM
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../qphase_cam/qpsgen_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    qpsgen Contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../dev_guide/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    开发者指南
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_11" id="__nav_11_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    开发者指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/backend/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    后端
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/service_layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    服务层
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/catalog_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog 契约
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/error_handling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    错误处理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/plugin_development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    插件开发
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/postprocess/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    后处理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/protocols/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    协议
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/resource_packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    资源包
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/data_products/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据产品
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    版本与迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/artifact_formats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Artifact Formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    注册表
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/scheduler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    调度器
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    测试分层
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../dev_guide/faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    常见问题
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#psd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        psd
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="psd">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#requirement-typed-product" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        输入 requirement 与 typed product
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        频率轴
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        输出载荷
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coherence_carrier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        coherence_carrier
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#band_limited_carrier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        band_limited_carrier
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#spectral_ridge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spectral_ridge
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#finite_delay_carrier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        finite_delay_carrier
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coherence_matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        coherence_matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#moment_statistics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        moment_statistics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quadratic_moments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        quadratic_moments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pdist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pdist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trajectory_diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        trajectory_diagnostics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#allan_variance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        allan_variance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#allan_scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        allan_scaling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lorentz_fitter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        lorentz_fitter
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="lorentz_fitter">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        输出字段（拟合行）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        裁剪原理
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="_1">分析器</h1>
+<p>分析器在 SDE 积分循环结束后运行，其载荷成为该 job <code>SDEDataBundle</code> 的命名 product。它们也可以在 <code>mode: analyze</code> 下调用，用于后处理。</p>
+<p><code>analyser</code> key 是 instance label。同一 implementation 需要多个实例时，显式配置
+<code>{plugin, config}</code>：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">raw_psd</span><span class="p">:</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">plugin</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">psd</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">config</span><span class="p">:</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">measurement</span><span class="p">:</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="nt">complex_field</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">channels</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">],</span><span class="nt"> representation</span><span class="p">:</span><span class="w"> </span><span class="nv">complex</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">mode_2_psd</span><span class="p">:</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="nt">plugin</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">psd</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="nt">config</span><span class="p">:</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">      </span><span class="nt">measurement</span><span class="p">:</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">        </span><span class="nt">complex_field</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">channels</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">2</span><span class="p p-Indicator">],</span><span class="nt"> representation</span><span class="p">:</span><span class="w"> </span><span class="nv">complex</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="nt">input_bindings</span><span class="p">:</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">  </span><span class="nt">raw_psd</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">signal</span><span class="p">:</span><span class="w"> </span><span class="nv">input.trajectories</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">  </span><span class="nt">mode_2_psd</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">signal</span><span class="p">:</span><span class="w"> </span><span class="nv">input.trajectories</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<p>Project defaults 按 implementation（如 <code>psd</code>）配置；instance config 按 label 配置，
+并覆盖 implementation defaults。Label 必须是非空字符串，不能包含 <code>.</code>，也不能为
+<code>input</code>。Graph binding、progress stage、publish 声明和默认 product name 都使用 label。</p>
+<h2 id="psd"><code>psd</code></h2>
+<p>估算所选通道的功率谱密度（PSD）。必填的 <code>measurement</code> 键恰好选择一个测量变体：
+<code>complex_field</code> 表示记录的复场（按物理模式索引选择），<code>sampled_scalar</code> 表示实数
+sampled-observable product（按 observable channel 名称选择）。</p>
+<h3 id="_2">配置</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">psd</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">measurement</span><span class="p">:</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">complex_field</span><span class="p">:</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">channels</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">representation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">complex</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">        </span><span class="nt">orientation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">phase_decreasing</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="nt">expected_freq_max</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.34</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">    </span><span class="nt">estimator</span><span class="p">:</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">      </span><span class="nt">periodogram</span><span class="p">:</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">        </span><span class="nt">window</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">  </span><span class="nt">peaks</span><span class="p">:</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">    </span><span class="nt">scan_param</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">omega_a</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">    </span><span class="nt">finder</span><span class="p">:</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">      </span><span class="nt">scipy</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="nt">input_bindings</span><span class="p">:</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">  </span><span class="nt">psd</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">signal</span><span class="p">:</span><span class="w"> </span><span class="nv">input.trajectories</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">键</th>
+<th style="text-align: left;">类型</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>measurement.complex_field</code></td>
+<td style="text-align: left;">变体</td>
+<td style="text-align: left;">复场 PSD。<code>channels</code> 列出物理模式索引；<code>representation</code> 取 <code>complex</code>（复场本身）或 <code>magnitude</code>（<code>|alpha|</code>）；可选 <code>orientation</code> 设定正频率约定（<code>phase_decreasing</code> 将 <code>exp(-i*omega*t)</code> 映射到 <code>+omega</code>；<code>phase_increasing</code> 保留前向 FFT 频率轴）。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>measurement.sampled_scalar</code></td>
+<td style="text-align: left;">变体</td>
+<td style="text-align: left;">实数 sampled-observable product 的单边 PSD。<code>channels</code> 列出 observable channel 名称；<code>detrend</code> 取 <code>none</code>（默认）或 <code>constant</code>。该变体为 <code>extra="forbid"</code>，不接受 <code>orientation</code> 键——带符号的频率方向只属于复场路径。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>expected_freq_max</code></td>
+<td style="text-align: left;"><code>float \| None</code></td>
+<td style="text-align: left;">输出频率轴单位下预期的最大频率幅值；达到 Nyquist 上限时分析直接失败。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>estimator</code></td>
+<td style="text-align: left;">子插件选择</td>
+<td style="text-align: left;">必须且只能选择 <code>periodogram</code>、<code>welch</code>、<code>multitaper</code> 之一。</td>
+</tr>
+</tbody>
+</table>
+<p>Estimator 对比：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Estimator</th>
+<th style="text-align: left;">子配置字段</th>
+<th style="text-align: left;">分辨率与开销</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>periodogram</code></td>
+<td style="text-align: left;"><code>window</code></td>
+<td style="text-align: left;">使用完整保存时长；频率分辨率最高，单 trajectory FFT 最大。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>welch</code></td>
+<td style="text-align: left;"><code>window</code>、<code>nperseg</code>、<code>noverlap</code>、<code>nfft</code></td>
+<td style="text-align: left;">方差较低，segment FFT 内存有界；物理分辨率由 <code>nperseg * sample_dt</code> 决定，<code>nfft &gt; nperseg</code> 只插值频点。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>multitaper</code></td>
+<td style="text-align: left;"><code>nw</code>、<code>k_tapers</code></td>
+<td style="text-align: left;">保持完整时长分辨率并平均 taper；每个 taper 需要额外 FFT。</td>
+</tr>
+</tbody>
+</table>
+<p>三者均支持跨 trajectory batch 的在线聚合。Estimator 是 <code>analyser.psd</code> 的
+子插件，可通过 <code>qphase list --parent analyser.psd</code> 发现，并通过
+<code>qphase config schema analyser.psd/estimator.welch</code> 查询 schema。</p>
+<h3 id="requirement-typed-product">输入 requirement 与 typed product</h3>
+<p>该分析器声明一个名为 <code>signal</code> 的 typed 输入 requirement；模拟 job 需要用
+<code>input_bindings: {&lt;label&gt;: {signal: input.trajectories}}</code> 将其显式绑定到保留的
+trajectory product。<code>complex_field</code> 路径接受复场振幅 time-series product（<code>alpha</code>
+变量）；旧的 <code>kind: modular</code> 写法由 <code>representation: magnitude</code> 表达。<code>sampled_scalar</code>
+路径要求实数 <code>sampled_observable</code> time-series product（dims 为
+<code>(scan?, trajectory, time, channel)</code>），含 float64 <code>value</code> 变量与 int64
+<code>valid_length</code> 截尾变量——通常是上游 observable transform 的输出。</p>
+<p>sampled-scalar product 中，<code>psd</code>、<code>psd_std</code>、<code>psd_sem</code> 三个变量均带有
+<code>&lt;value-units&gt;^2/inverse_time</code> 形式的 units（源 observable 无量纲时为
+<code>1/inverse_time</code>），spectral 属性为 <code>orientation: unsigned</code>、<code>sidedness: one_sided</code>。
+复场 product 的所有叶同样声明 units，由源 <code>alpha</code> 变量的 units 推导（<code>alpha</code> 无
+units 时为 <code>1/inverse_time</code>）。两条路径都以顶层属性暴露 <code>convention</code>；复场 product
+另暴露 <code>representation</code>。</p>
+<h3 id="_3">频率轴</h3>
+<p>Estimator 首先执行 NumPy/CuPy 标准前向 DFT。对于 <code>complex_field</code> 测量，报告的频率轴
+随后按所选 orientation 重排（sampled-scalar 谱为单边且无符号，不涉及符号约定）：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>omega_fft = np.fft.fftfreq(n_saved, dt * save_stride) * 2 * pi
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>phase_decreasing: omega = -omega_fft，并按升序重排
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>phase_increasing: omega = +omega_fft，并按升序重排
+</code></pre></div>
+<p>QPhase 默认采用 <code>phase_decreasing</code>。对于
+<code>C(tau) = &lt;a^dagger(t) a(t+tau)&gt;</code>，它对应量子光学发射谱
+<code>S(omega) = integral C(tau) exp(+i*omega*tau) d tau</code>，因此轨迹
+<code>a(t) ~ exp(-i*omega0*t)</code> 的峰位是正载频 <code>+omega0</code>。
+<code>phase_increasing</code> 用于一般信号处理或严格复现前向 FFT 轴。该选项只改变频率轴方向，
+不改变 PSD 归一化、线宽或积分功率。</p>
+<p>每个 typed spectral product 都必须声明 orientation。缺失 orientation metadata
+属于 producer 错误，分析会直接失败，不会回退到 FFT 方向解释。</p>
+<p>配置输入也接受俗名：<code>physical</code> 等价于 <code>phase_decreasing</code>，<code>fft</code> 等价于
+<code>phase_increasing</code>。它们只用于输入；序列化配置和结果元数据始终使用正式名称。
+此处 <code>physical</code> 仅表示 QPhase 默认约定，并不表示跨领域唯一的物理约定。</p>
+<p>对于窄峰，应选择 <code>save_stride</code> 使 Nyquist 频率远高于峰值。
+对于角频率约定，<code>omega_Nyquist = pi / (dt * save_stride)</code>。增大 <code>t1</code> 只能改善
+分辨率 <code>2*pi/t1</code>，不会扩大该带宽。设置 <code>expected_freq_max</code> 可以把原本静默的
+混叠错误转化为明确的配置失败。</p>
+<h3 id="_4">输出载荷</h3>
+<p>分析器保存：</p>
+<ul>
+<li><code>axis</code> — 频率或角频率轴。</li>
+<li><code>psd</code> — 每个请求模式的 PSD 均值。</li>
+<li><code>psd_std</code> — 跨轨迹样本标准差（<code>ddof=1</code>）。</li>
+<li><code>psd_sem</code> — 均值标准误，即 <code>psd_std / sqrt(n_traj)</code>。</li>
+<li><code>uncertainty</code> — 标识 <code>psd_sem</code>、独立统计单元和样本数的元数据。</li>
+<li><code>orientation</code>、<code>positive_frequency_time_dependence</code> 与 <code>spectrum_kernel</code>
+    — 明确记录频率符号定义的元数据。</li>
+</ul>
+<p><code>lorentz_fitter</code> 会把相同元数据传递到结果，并在其 typed product 的每条拟合行中
+增加 <code>orientation</code> 字段；若输入混用了两种方向，则明确拒绝，而非静默拟合不兼容的
+频率轴。</p>
+<p>对于 Welch 和 multitaper，先在每条轨迹内部平均 segment 或 taper，再跨轨迹
+计算不确定度，因此不会把相关 segment 当成独立样本。只有一条轨迹时，
+<code>psd_std</code> 和 <code>psd_sem</code> 为 <code>NaN</code>，并标记不确定度不可用。</p>
+<p><code>analyser.peaks</code> 将检测到的位置和强度发布为 typed grouped candidate table；
+PSD 不在 metadata 中嵌入 peak 字段。</p>
+<h2 id="coherence_carrier"><code>coherence_carrier</code></h2>
+<p>从固定实验读出通道的短延迟一阶相干函数估计载频。插件随模拟运行，支持
+trajectory batching；设置 <code>keep_traj: false</code> 时不会向磁盘保存轨迹：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">coherence_carrier</span><span class="p">:</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">modes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">include_trace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="nt">channels</span><span class="p">:</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">bright</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;0+0j&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;0.70710678+0j&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;0.70710678+0j&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">polynomial_order</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="nt">minimum_lag_points</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="nt">maximum_lag_points</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12</span>
+</code></pre></div>
+<p>对半正定读出矩阵 <code>W</code>，估计量定义为</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>C_W(tau) = mean(alpha(t)^dagger W alpha(t + tau))
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>omega_W = orientation_sign * Im[C_W&#39;(0+) / C_W(0)].
+</code></pre></div>
+<p><code>modes</code> 生成裸模式投影，<code>include_trace</code> 在已记录模式子空间使用 <code>W=I</code>；固定相干读出
+<code>c=l^dagger alpha</code> 使用 <code>W=l l^dagger</code>。通道向量按物理模式编号排列，约定与 CAM
+的 <code>coherence_pole_spectrum</code> 后处理器相同。权重非零的模式必须全部包含在
+<code>engine.sde.record_modes</code> 中。需要与 CAM 的完整 trace 对应时，必须记录模型的全部模式。</p>
+<p>该观测量与 CAM 具有直接对应。对漂移
+<code>d alpha/dt = -i H(R) alpha + noise</code>，平稳性与 CAM 矩闭合给出</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>C_W&#39;(0+) = -i Tr[W H(R) R].
+</code></pre></div>
+<p>因此，在默认 <code>phase_decreasing</code> 方向下，输出退化为广义 Rayleigh 商</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Re Tr[W H(R) R] / Tr[W R].
+</code></pre></div>
+<p>实现只计算少量短延迟相关函数，以约束通过零延迟的局部相位多项式拟合嵌套窗口，
+并在逐轨迹 jackknife 误差尺度内选择与较短窗口一致的最大窗口。点估计始终先对轨迹
+相关函数作系综平均再取比；逐轨迹量仅用于 jackknife。输出包括频率及其 SEM、
+<code>recorded_modes</code>、该基下的读出矩阵、选定延迟、全部嵌套候选、相位残差、首个延迟点
+相干度和 Nyquist 占比诊断。</p>
+<p>该估计器<strong>不</strong>分解长时极点、不计算线宽，也不假定 Lorentz 线型。它要求采样轨迹
+平稳、短延迟分辨率足够且读出强度为正。<code>nyquist_fraction</code> 较高、嵌套窗口不稳定或
+首延迟相干度很低时，应减小保存采样间隔。输出是有限探测带宽下可操作的一阶相干载频；
+多个谱分量共存时，它不保证等于每个谱峰的中心。</p>
+<h2 id="band_limited_carrier"><code>band_limited_carrier</code></h2>
+<p>该插件从已有 PSD dataset 估计经过实验带宽筛选后的长时一阶相干载频。它作为
+<code>engine.sde.mode: analyze</code> 的下游 analyser 运行，不改变 <code>coherence_carrier</code>
+短延迟插件：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">carrier</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">input</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">from</span><span class="p">:</span><span class="w"> </span><span class="nv">sim</span><span class="p p-Indicator">,</span><span class="nt"> mode</span><span class="p">:</span><span class="w"> </span><span class="nv">dataset</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">engine</span><span class="p">:</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span><span class="nt">sde</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="nv">analyze</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">    </span><span class="nt">band_limited_carrier</span><span class="p">:</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">      </span><span class="nt">scan_param</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">omega_a</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">      </span><span class="nt">readout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">trace</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">      </span><span class="nt">freq_min</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-0.75</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">      </span><span class="nt">freq_max</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.2</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">      </span><span class="nt">bandwidth_multipliers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0.5</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.625</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.75</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.875</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1.25</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1.5</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1.75</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2.0</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">      </span><span class="nt">minimum_lag_span</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24.0</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="w">      </span><span class="nt">max_phase_fit_rms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.05</span>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="w">      </span><span class="nt">tracking_enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<p><code>readout</code> 可以是已记录的物理 mode，也可以是 <code>trace</code>，即所有已记录 mode 的
+非相干 PSD 之和。搜索频带属于测量定义的一部分，应排除无关的远端频带。</p>
+<p>估计器先扣除稳健基线，再以平方剩余谱的标准差定义谱集中宽度；对理想、未截断的
+Lorentz 线型，该宽度等于 HWHM。随后生成嵌套余弦边缘通带并分别重建带限
+<code>G^(1)</code>。每个带宽内搜索连续延迟子区间，只接受加权相位残差和二次频率漂移均通过
+门限的线性相位窗口；之后要求频率在有限 <code>log(bandwidth)</code> 跨度内形成平台。
+算法不再在失败时回退到 <code>1x spectral_width</code>：不可辨识点返回 <code>NaN</code>，而不是任意
+候选值。</p>
+<p>局部状态包括 <code>ok</code>、<code>ambiguous_multiband</code> 和 <code>no_bandwidth_plateau</code>；候选层还会
+记录 <code>nonlinear_phase</code> 等具体拒绝原因。只有唯一局部平台时才填写 <code>frequency</code>。
+<code>carrier.candidates</code> product 保存全部带宽/延迟估计，<code>carrier.platforms</code> product
+保存所有竞争平台。</p>
+<p>启用 <code>tracking_enabled</code> 后，analyser 还会按扫描轴顺序，利用局部平台质量和
+divided-difference 曲率跟踪连续谱组分，输出 <code>tracked_frequency</code>、
+<code>tracked_platform_index</code> 与 <code>tracked_status</code>，但不覆盖局部结果。路径代价禁止使用
+CAM、目标幂指数或理论频率；平台缺失会中断路径，过大曲率标为
+<code>discontinuous_path</code>，不会强制连接。</p>
+<p><code>regression_std</code> 是给定延迟窗口下的 HAC 条件回归误差，<code>bandwidth_std</code> 是同一平台
+内的带宽敏感度，均不是 trajectory SEM。<code>diagnostic_uncertainty</code> 仅组合这两个条件
+诊断量。正式采样不确定度仍需逐轨迹充分统计或独立重复运行；仅凭当前平均 PSD 无法
+事后重建。</p>
+<p>可选的 <code>center.spectral_ridge</code> 模式会以每条数据驱动 retained ridge 为中心，分别执行
+相同的延迟—带宽平台检验：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">band_limited_carrier</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">scan_param</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">omega_c</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">readout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">trace</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">freq_min</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-0.3</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">freq_max</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-0.1</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="nt">tracking_enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">  </span><span class="nt">center</span><span class="p">:</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">    </span><span class="nt">maximum_neighbor_fraction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.45</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">    </span><span class="nt">spectral_ridge</span><span class="p">:</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">      </span><span class="nt">scan_param</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">omega_c</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="w">      </span><span class="nt">readouts</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">trace</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="w">      </span><span class="nt">minimum_prominence_fraction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.03</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="w">      </span><span class="nt">tracking_path_count</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+</code></pre></div>
+<p>算法先把 ridge 中心作为粗略本地振荡器频率，再执行相位解缠。每条 retained ridge
+输出一行。通带上限不超过最近多尺度 ridge 距离的 <code>maximum_neighbor_fraction</code>；该邻峰
+集合也包含最终关联时排除的候选。若仍有多个延迟—带宽平台，则选择最接近数据驱动
+ridge 中心者，全程不读取 CAM 或理论频率。<code>ridge_carrier_correction</code> 是相对 ridge
+中心的精细相位频率修正。</p>
+<p><code>ridge_conditioned_uncertainty_upper</code> 保守相加条件载频诊断误差与 ridge 中心标准差。
+由于二者来自同一系综 PSD，该字段是诊断上界，不是 trajectory-bootstrap SEM。</p>
+<h2 id="spectral_ridge"><code>spectral_ridge</code></h2>
+<p>该插件不假设 Lorentz 线型，也不使用模型目标频率。它构造一维 Gaussian scale
+space，以局部二次拟合精化峰位，将多个平滑尺度共同支持的峰聚类为候选谱脊，并可仅
+依据峰证据和频率连续性在参数扫描中跟踪一条路径。</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">spectral_ridge</span><span class="p">:</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">scan_param</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">omega_c</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nt">readouts</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">trace</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="nt">freq_min</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-0.3</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">    </span><span class="nt">freq_max</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-0.1</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">    </span><span class="nt">tracking_gap_factor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.5</span>
+</code></pre></div>
+<p><code>tracking_gap_factor</code> 必须显式启用，用于在遗漏分岔点等显著扫描轴缺口处分段；普通
+不规则或对数扫描应保持未设置。谱脊选择绝不读取 CAM 频率。</p>
+<p>tracking 保留代价最低的 <code>tracking_path_count</code> 条纯数据路径，并用 Huber 跳变损失限制
+真实快速频移对连续性代价的影响。严格候选满足相对峰高、尺度支持和曲率门槛；属于
+与最优路径代价相差不超过 <code>tracking_max_cost_delta</code> 的高峰候选会标记为
+<code>continuity_rescued</code>。若两类均为空，则恰好保留一个证据分数最高的
+<code>fallback_low_confidence</code> 候选。候选 CSV 明确保存保留层级、路径排名和最佳路径代价差；
+这些字段只定义可供下游关联的候选，不使用或暗示任何模型目标。</p>
+<p>输出分别记录局部峰位传播误差、跨平滑尺度漂移、曲率及其显著性、基于 PSD SEM 的
+峰位置信区间，以及描述性的相对峰高平台。另一个歧义包络覆盖峰高达到最强候选
+<code>plateau_fraction</code> 的全部多尺度候选；它是模型选择诊断而非置信区间。
+<code>frequency_bin_covariance: diagonal</code> 对无窗
+periodogram 使用常见的频率 bin 渐近对角近似；<code>conservative</code> 将所有频率 bin 误差视为
+完全相关。由于结果未保存跨 mode PSD 协方差，trace SEM 始终采用各 mode SEM 之和的
+保守上界。</p>
+<h2 id="finite_delay_carrier"><code>finite_delay_carrier</code></h2>
+<p>该插件从完整保存 PSD 重建一阶相干函数 <code>G(tau)</code>，并对探测器速率 <code>kappa</code> 计算</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Omega(kappa) = integral exp(-2*kappa*tau)
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>                 Im[conj(G) dG/dtau] dtau
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>               / integral exp(-2*kappa*tau) |G|^2 dtau。
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">finite_delay_carrier</span><span class="p">:</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="nt">scan_param</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">omega_c</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">    </span><span class="nt">readouts</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">trace</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">    </span><span class="nt">detector_rates</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0.01</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.02</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.05</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.2</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.5</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1.0</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">    </span><span class="nt">maximum_lag</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4096.0</span>
+</code></pre></div>
+<p><code>readouts</code> 可在一次 dataset 遍历中同时计算多个已记录裸 mode 和非相干 trace；仅选择
+一个读出时仍可使用单数形式 <code>readout</code>。相干叠加通道需要交叉谱信息；若积分时仍有原始
+轨迹，应使用 <code>coherence_carrier.channels</code> 接口。</p>
+<p>即使多个 pole 相互干涉，该量仍是完整的有限带宽探测器载频，不要求选定某一 pole
+或假定 Lorentz 线型。增大 <code>kappa</code> 时，direct SDE 结果趋于真实 SDE instantaneous
+coherence carrier；矩闭合失效时，该极限一般不等于 CAM Rayleigh 商。</p>
+<p>对应 CAM postprocessor 使用相同速率和全部闭合 CAM pole residue，其零延迟极限
+严格等于 generalized Rayleigh quotient。<code>finite_delay_carrier</code> 的 typed product
+逐行保存探测器速率、载频、读出名称与类型、瞬时极限、有限延迟修正、相干权重和
+数值延迟范围。仅凭系综平均 PSD 无法得到正式 sampling uncertainty。</p>
+<h2 id="coherence_matrix"><code>coherence_matrix</code></h2>
+<p>计算系综一阶相干矩阵</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>R_ij = mean_trajectory,time(alpha_i * conj(alpha_j))
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>rho_R = R / Tr(R)
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>P_R = Tr(rho_R^2).
+</code></pre></div>
+<p>这里的 <code>P_R</code> 是归一化模态相干矩阵的纯度，不是完整多体量子密度算符的纯度。</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">coherence_matrix</span><span class="p">:</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="nt">modes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">    </span><span class="nt">time_blocks</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">    </span><span class="nt">min_block_samples</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">32</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">    </span><span class="nt">time_chunk_samples</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8192</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">    </span><span class="nt">confidence_level</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.95</span>
+</code></pre></div>
+<p>输出包括 <code>matrix</code>、<code>normalized_matrix</code>、本征值、<code>purity</code>、有效秩、谱熵、
+主模占比、连通协方差和归一化一阶相干度。矩阵元 SEM 以每条独立轨迹的
+时间平均为统计单位；纯度不确定度使用逐轨迹留一 jackknife，输出
+<code>purity_sem</code> 和 <code>purity_ci</code>。</p>
+<p>连续 <code>time_blocks</code> 用于报告矩阵、纯度、迹和漂移距离，以检查稳态收敛；
+插件不会把相关时间块当作独立样本。该 analyser 支持 trajectory batching，
+可以与 <code>keep_traj: false</code> 配合，只保留紧凑矩阵统计量。<code>time_chunk_samples</code>
+限制后端 workspace，选择模式时不会再物化第二份完整轨迹。</p>
+<p>插件不自动实施相空间 ordering 修正。对于 Wigner 轨迹，输出遵循当前模型和
+CAM 方程使用的原始 amplitude 约定；若需要 normal-order 修正，应由显式、
+model-aware 的分析实现，而不是在通用插件中静默减去 <code>1/2</code>。</p>
+<p><code>R</code> 所需的全部模式必须包含在 <code>engine.sde.record_modes</code> 中。省略 <code>modes</code>
+表示分析所有已记录模式。</p>
+<h2 id="moment_statistics"><code>moment_statistics</code></h2>
+<p>该 analyser 从记录的复振幅计算通用的 c-number 占据数矩：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>n_i = |alpha_i|^2
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>G2_ij = mean_trajectory,time(n_i n_j)
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>g2_ij = G2_ij / (mean(n_i) mean(n_j)).
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">moment_statistics</span><span class="p">:</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">    </span><span class="nt">modes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">    </span><span class="nt">time_blocks</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">16</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">    </span><span class="nt">time_chunk_samples</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8192</span>
+</code></pre></div>
+<p>输出包括各模式占据数、四阶矩、全部跨模式占据数乘积、协方差、归一化 <code>g2</code>、
+逐轨迹 SEM 和连续时间块平稳性诊断。<code>g2_sem</code> 使用逐轨迹留一 jackknife。
+插件支持 trajectory batching，并在合并全部批次后重新计算非线性比值。</p>
+<p><code>time_chunk_samples</code> 限制后端临时内存。插件不会物化完整的 <code>|alpha|^2</code> 时序，
+所以达到该分块长度后，其 workspace 不随总观测时间继续增长。插件不自动执行
+Wigner 到 normal ordering 的修正，输出明确遵循模型原始 c-number 约定。</p>
+<h2 id="quadratic_moments"><code>quadratic_moments</code></h2>
+<p>统计命名 Hermitian 二次型的一至四阶矩：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>x_o = alpha^dagger Q_o alpha - center_o
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    = Tr[Q_o (alpha alpha^dagger - R_ref,o)]。
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span><span class="nt">quadratic_moments</span><span class="p">:</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">    </span><span class="nt">modes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">    </span><span class="nt">max_order</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="w">    </span><span class="nt">time_blocks</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">16</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">    </span><span class="nt">time_chunk_samples</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8192</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="w">    </span><span class="nt">observables</span><span class="p">:</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="w">      </span><span class="nt">population_difference</span><span class="p">:</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="w">        </span><span class="nt">matrix</span><span class="p">:</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;1+0j&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;0+0j&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;0+0j&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;-1+0j&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a><span class="w">        </span><span class="nt">center</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0</span>
+<a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a><span class="w">      </span><span class="nt">coherent_quadrature</span><span class="p">:</span>
+<a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a><span class="w">        </span><span class="nt">matrix</span><span class="p">:</span>
+<a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;0+0j&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;0.5+0.25j&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;0.5-0.25j&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;0+0j&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a><span class="w">        </span><span class="nt">reference_matrix</span><span class="p">:</span>
+<a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;1+0j&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;0+0j&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;0+0j&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;1+0j&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>每个矩阵必须为 Hermitian，并使用 <code>modes</code> 声明的物理模式顺序。
+<code>center</code> 与 <code>reference_matrix</code> 互斥；参考矩阵会转换为
+<code>center=Tr(Q R_ref)</code>。结果包含 raw moments、central moments、cumulants、
+逐轨迹 raw moments 和连续时间块统计。raw moment SEM 以独立轨迹的时间均值
+为样本；累积量不确定度使用逐轨迹 leave-one-out jackknife。</p>
+<p>插件支持 trajectory batching，并在全部批次合并后重新计算非线性累积量。
+后端工作区受 <code>time_chunk_samples</code> 限制，因此可与 <code>keep_traj: false</code> 配合，
+不会物化完整二次型时序。时间块只用于平稳性诊断，不视为独立样本；插件也不
+自动进行相空间排序修正。</p>
+<h2 id="dist"><code>dist</code></h2>
+<p>计算所选模式的边缘分布。</p>
+<h2 id="pdist"><code>pdist</code></h2>
+<p>计算所选可观测量的成对或高维分布。</p>
+<h2 id="trajectory_diagnostics"><code>trajectory_diagnostics</code></h2>
+<p>在不预设 Lorentz 或其他谱线模型的前提下计算时间域诊断量。它用于在解释 PSD 拟合线宽
+之前区分非平稳性、轨迹间差异、相干衰减和相位频率噪声。</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span><span class="nt">trajectory_diagnostics</span><span class="p">:</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">    </span><span class="nt">modes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">    </span><span class="nt">orientation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">phase_decreasing</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">    </span><span class="nt">block_durations</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">100.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1000.0</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="w">    </span><span class="nt">coherence</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="w">    </span><span class="nt">coherence_max_lag</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">500.0</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="w">    </span><span class="nt">allan</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="w">    </span><span class="nt">allan_taus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="w">    </span><span class="nt">allan_points</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span>
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="w">    </span><span class="nt">allan_min_windows</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span>
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="w">    </span><span class="nt">amplitude_floor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0</span>
+</code></pre></div>
+<p>相位增量均值和复数 block spectrum 峰值遵循与 <code>psd</code> 相同的 <code>orientation</code>。
+复数 coherence 保留原始时域相位；Allan 方差由相位二阶差分的平方构成，因而不受整体频率反号影响。</p>
+<p>输出的 <code>mode_results[mode]</code> 包含：</p>
+<ul>
+<li><code>block_statistics</code>：逐轨迹、非重叠分块的复振幅、振幅、功率与角频率均值。</li>
+<li><code>phase_increment</code>：逐轨迹平均角频率、最大保存相位步，以及落在 Nyquist 相位边界
+    10% 范围内的步数比例。</li>
+<li><code>coherence</code>：随延迟变化的复数 <code>g1</code>、归一化 <code>g1</code> 与跨轨迹 SEM 模长。</li>
+<li><code>allan</code>：基于重叠相位二阶差分的角频率 Allan 方差、逐轨迹结果、系综均值与跨轨迹 SEM。</li>
+</ul>
+<p>所有配置时长都是物理时间，必须与保存后的采样间隔 <code>dt * save_stride</code> 对齐。自动 Allan
+时标使用对数分布的整数采样点。SEM 只把不同轨迹作为独立统计单元，不会把重叠时间窗
+计作额外独立样本。</p>
+<p>若 Lorentz 窄核的 HWHM 接近软模衰减率，它描述的是稳态中每次随机扰动后的恢复，而不只是
+配置初态的一次性弛豫。设置非零 engine <code>t0</code> 可在 PSD 和本 analyser 之前排除该初态瞬态。</p>
+<p>首版实现会在主机端物化传入的轨迹系综，尚不支持跨 trajectory batch 在线聚合，因此应先
+用于减量诊断任务；流式聚合留待后续阶段。</p>
+<h2 id="allan_variance"><code>allan_variance</code></h2>
+<p>当不需要 coherence 等完整轨迹诊断时，本 analyser 专门计算角频率 Allan 统计量。它与
+<code>trajectory_diagnostics</code> 不同，支持 trajectory batching，可与 <code>keep_traj: false</code> 配合：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">allan_variance</span><span class="p">:</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">    </span><span class="nt">measurement</span><span class="p">:</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">      </span><span class="nt">phase_frequency</span><span class="p">:</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">        </span><span class="nt">channels</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">        </span><span class="nt">orientation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">phase_decreasing</span>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="w">        </span><span class="nt">amplitude_floor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0</span>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="w">        </span><span class="nt">min_independent_windows</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="w">    </span><span class="nt">points</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">40</span>
+<a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="w">    </span><span class="nt">min_windows</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span>
+<a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a><span class="w">    </span><span class="nt">transfer_chunk_samples</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8192</span>
+<a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a><span class="w">    </span><span class="nt">device_chunk_trajectories</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">16</span>
+<a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a><span class="nt">input_bindings</span><span class="p">:</span>
+<a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a><span class="w">  </span><span class="nt">allan_variance</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">signal</span><span class="p">:</span><span class="w"> </span><span class="nv">input.trajectories</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<p>必填的 <code>measurement</code> 键恰好选择一个变体：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">键</th>
+<th style="text-align: left;">类型</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>measurement.phase_frequency</code></td>
+<td style="text-align: left;">变体</td>
+<td style="text-align: left;">复场的角频率 Allan 统计，<code>channels</code> 按物理模式索引选择。相位路径的全部旋钮都位于该变体内：<code>orientation</code>、<code>amplitude_floor</code>、<code>min_independent_windows</code>。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>measurement.sampled_scalar</code></td>
+<td style="text-align: left;">变体</td>
+<td style="text-align: left;">实数 sampled-observable product 的 Allan 方差，<code>channels</code> 按 observable channel 名称选择；<code>min_nonoverlap_pairs</code> 约束非重叠块均值估计。该变体为 <code>extra="forbid"</code>，不接受 <code>orientation</code> 或 <code>amplitude_floor</code> 键。</td>
+</tr>
+</tbody>
+</table>
+<p><code>taus</code>、<code>points</code>、<code>min_windows</code>、<code>transfer_chunk_samples</code> 与 <code>device_chunk_trajectories</code>
+仍是两个变体共用的顶层键。与 <code>psd</code> 相同，typed 输入 requirement 名为 <code>signal</code>，
+通过 <code>input_bindings</code> 绑定（复场路径用 <code>input.trajectories</code>，<code>sampled_scalar</code> 路径用
+上游 sampled-observable product）。</p>
+<p><code>orientation</code> 控制逐轨迹平均角频率的符号。Allan 方差本身不随该配置改变。
+<code>allan_scaling</code> 会将方向信息传递到逐点结果、汇总与产品元数据，并拒绝混合方向的 scan。</p>
+<p>每个 tau 同时输出既有的重叠估计和非重叠相位二阶差分估计，包括逐轨迹结果、跨轨迹
+SEM、实际有效非重叠窗口数以及每条轨迹的名义窗口数。此处“独立”只表示时间块不重叠；
+有色动力学仍可能使相邻块相关。因此，不应把所有块当作可交换样本，指数不确定度优先
+使用逐轨迹 bootstrap。</p>
+<p>对于 <code>sampled_scalar</code> 测量，非重叠相邻块均值差分是主估计量（<code>sampled_scalar_variance</code>），
+重叠变体带 <code>overlap_</code> 前缀；相邻 pair 共享一个块均值，因此 <code>min_nonoverlap_pairs</code>
+统计的是名义而非独立的 pair 数。typed product 的每个方差变量带有
+<code>&lt;value-units&gt;^2</code> 形式的 units（源 observable 无量纲时为 <code>1</code>），<code>&lt;key&gt;_sem</code> 与
+逐轨迹叶声明相同 units。phase-frequency 路径的方差叶声明 <code>inverse_time^2</code>，
+mean-frequency 叶声明 <code>inverse_time</code>。product 属性记录
+<code>measurement_model</code>（<code>phase_frequency</code> 或 <code>sampled_scalar</code>）；带符号的 <code>orientation</code>
+属性只存在于 phase-frequency 路径。</p>
+<p>使用 CuPy 后端时，分析在设备端原生执行：轨迹按 <code>device_chunk_trajectories</code>
+行分块处理，仅逐轨迹 tau 表与最终统计量传回主机。无论输入精度如何，相位都在
+设备端以 float64 累积，因此 complex64 长记录与主机路径保持一致。当输入位于
+主机端（例如重新加载的 artifact）时，插件改为按模式逐个传输，并用
+<code>transfer_chunk_samples</code> 限制每次传输的时间块长度。两条路径都不改变 Allan
+定义，同时避免在主机端复制全部已记录模式。</p>
+<h2 id="allan_scaling"><code>allan_scaling</code></h2>
+<p>在 <code>mode: analyze</code> 中消费逻辑 SDE scan dataset。它逐参数点检测长时白 FM 区，再对连续
+微扰点取白区交集，计算 <code>N_A = tau * angular_frequency_allan_variance</code>，并拟合不带背景的
+<code>N_A = C * abs(epsilon) ** (-q)</code>。指数区间由逐轨迹 bootstrap 给出。相位增量的平均频率
+单独按 <code>omega = omega0 + A * abs(epsilon) ** p</code> 拟合。线性模型仅作为判断非线性是否
+可分辨的零假设；幂律模型中不加入额外线性修正项。</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span><span class="nt">allan_scaling</span><span class="p">:</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">    </span><span class="nt">scan_param</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">omega_c</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">    </span><span class="nt">critical_value</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">    </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="w">    </span><span class="nt">min_scaling_points</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5</span>
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="w">    </span><span class="nt">target_scaling_decades</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0</span>
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="w">    </span><span class="nt">normal_form</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">n</span><span class="p">:</span><span class="w"> </span><span class="nv">3</span><span class="p p-Indicator">,</span><span class="nt"> k</span><span class="p">:</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="nt"> m</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> observable_order</span><span class="p">:</span><span class="w"> </span><span class="nv">2</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<p>对于正规形 <code>epsilon**k * x**m + x**n = 0</code>，预期频移指数为
+<code>observable_order * k / (n - m)</code>；在临界投影噪声保持规则白噪声时，预期 Allan 强度指数为
+<code>2 * (n - observable_order) * k / (n - m)</code>。最终 <code>status: ok</code> 同时要求 epsilon
+跨度充分、Allan 幂律拟合合格、频移非线性可辨认，且指数符合配置的正规形。插件把
+<code>rows</code> 与 <code>summary</code> 持久化为一个 typed <code>allan_scaling</code> product。旧
+<code>trajectory_diagnostics</code> 结果仍可读取，但其独立窗口数会明确标记
+为估算值，而不是实测非重叠计数。</p>
+<h2 id="lorentz_fitter"><code>lorentz_fitter</code></h2>
+<p>对逻辑 SDE scan dataset 的 PSD point view 拟合 Lorentz 曲线。这是一个用于
+<code>mode: analyze</code> 的下游分析器。</p>
+<h3 id="_5">配置</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="nt">analyser</span><span class="p">:</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="nt">lorentz_fitter</span><span class="p">:</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">    </span><span class="nt">scan_param</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">omega_a</span>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">    </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="w">    </span><span class="nt">uncertainty</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="w">    </span><span class="nt">fit_window</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0.1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.2</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="w">    </span><span class="nt">freq_min</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-0.1</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="w">    </span><span class="nt">freq_max</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span>
+<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="w">    </span><span class="nt">clip_by_std</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="w">    </span><span class="nt">clip_sigma</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.0</span>
+<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="w">    </span><span class="nt">min_r2</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.5</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">键</th>
+<th style="text-align: left;">类型</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>scan_param</code></td>
+<td style="text-align: left;"><code>str</code></td>
+<td style="text-align: left;">用于合并 PSD 的扫描参数。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>mode</code></td>
+<td style="text-align: left;"><code>int</code></td>
+<td style="text-align: left;">要拟合的模式索引。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>uncertainty</code></td>
+<td style="text-align: left;"><code>auto \| required \| off</code></td>
+<td style="text-align: left;"><code>auto</code> 在存在 <code>psd_sem</code> 时传播到参数协方差，否则使用残差协方差；<code>required</code> 拒绝缺少 SEM；<code>off</code> 始终使用残差协方差。该选项不会改变拟合权重。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>fit_window</code></td>
+<td style="text-align: left;"><code>list[float] \| None</code></td>
+<td style="text-align: left;">手动 <code>[min, max]</code> 频率窗口。为 <code>None</code> 时，窗口由 <code>freq_min</code>/<code>freq_max</code> 或寻峰结果推导。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>freq_min</code> / <code>freq_max</code></td>
+<td style="text-align: left;"><code>float \| None</code></td>
+<td style="text-align: left;">可选的全局频率边界。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>clip_by_std</code></td>
+<td style="text-align: left;"><code>bool</code></td>
+<td style="text-align: left;">启用基于平方 PSD 加权的裁剪，忽略远端尾部。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>clip_sigma</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">裁剪掉距离平方加权均值超过 <code>clip_sigma * std</code> 的样本。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>min_r2</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">可接受的最小 <code>R^2</code>。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>min_peak_height</code></td>
+<td style="text-align: left;"><code>float \| None</code></td>
+<td style="text-align: left;">最小拟合峰高。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>max_linewidth</code></td>
+<td style="text-align: left;"><code>float \| None</code></td>
+<td style="text-align: left;">最大可接受 FWHM 线宽。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_6">输出字段（拟合行）</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">列</th>
+<th style="text-align: left;">含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>scan_param</code></td>
+<td style="text-align: left;">从逻辑 SDE dataset 读取的命名 scan axis。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>center</code></td>
+<td style="text-align: left;">Lorentz 峰中心（rad/s）。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>center_std</code></td>
+<td style="text-align: left;">拟合峰中心的标准差。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>linewidth</code></td>
+<td style="text-align: left;">半高全宽（FWHM）。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>linewidth_std</code></td>
+<td style="text-align: left;"><code>2 * gamma</code> 传播后的标准差。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>base</code></td>
+<td style="text-align: left;">常数基线。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>base_std</code></td>
+<td style="text-align: left;">基线标准差。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>amplitude</code></td>
+<td style="text-align: left;">Lorentz 振幅。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>amplitude_std</code></td>
+<td style="text-align: left;">振幅标准差。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>peak_intensity</code></td>
+<td style="text-align: left;"><code>amplitude + base</code>。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>peak_intensity_std</code></td>
+<td style="text-align: left;">包含 amplitude/base 协方差的标准差。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>R2</code></td>
+<td style="text-align: left;">决定系数。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>reduced_chi2</code></td>
+<td style="text-align: left;">使用 <code>psd_sem</code> 时的约化卡方；否则为 <code>NaN</code>。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>uncertainty_source</code></td>
+<td style="text-align: left;"><code>psd_sem_sandwich</code> 或 <code>residual_covariance</code>。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>status</code></td>
+<td style="text-align: left;"><code>ok</code> 或 <code>failed</code>。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>error</code></td>
+<td style="text-align: left;">拟合失败时的错误信息。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>warning</code></td>
+<td style="text-align: left;">诊断信息，如 std/FWHM 不匹配。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">裁剪原理</h3>
+<p>PSD 数据通常覆盖由 <code>dt</code> 决定的很宽频率范围，而峰很窄。分析器用 <code>(PSD - min(PSD))^2</code> 作为权重计算频率轴的均值与标准差，然后丢弃 <code>mean ± clip_sigma * std</code> 之外的样本。这样可以去除无关尾部，同时保留峰及附近足够的连续谱，以估计稳定基线。</p>
+<p>当平方加权 <code>std</code> 偏离 Lorentz 期望 <code>std ≈ linewidth / 2</code> 超过 2 倍时，会发出警告，这可能意味着存在多峰或频率分辨率不足。</p>
+<p>PSD 不确定度不会改变无权 <code>curve_fit</code> 的目标函数或拟合参数。fitter 会在拟合参数
+处计算 Lorentzian Jacobian，再通过 heteroscedastic sandwich covariance 传播
+<code>psd_sem</code>。该计算把不同频点近似为独立样本；窗函数、频谱泄漏和有限轨迹动力学
+可能使相邻频点相关，因此这些标准差使用的是对角输入协方差近似，而不是完整的
+频谱协方差模型。</p>
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="页脚" >
+        
+          
+          <a href="../models/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 模型">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                上一页
+              </span>
+              <div class="md-ellipsis">
+                模型
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../output/" class="md-footer__link md-footer__link--next" aria-label="下一页: 输出格式">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                下一页
+              </span>
+              <div class="md-ellipsis">
+                输出格式
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025 - 2026 Yu Xue-Hao
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../../..", "features": ["content.code.annotate", "content.code.copy", "navigation.top", "navigation.sections", "navigation.indexes", "navigation.footer", "navigation.tracking", "search.highlight", "toc.follow"], "search": "../../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
