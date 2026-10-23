@@ -68,10 +68,6 @@ jobs:
     lorentz_fitter:
       scan_param: omega_a
       mode: 0
-      export_dist: true
-      export:
-      - fit_results.csv
-      - psd_merged.csv
 
 - name: vdp_2mode_peaks
   input: {from: vdp_2mode_sim, mode: dataset}
@@ -101,7 +97,3 @@ jobs:
     lorentz_fitter:
       scan_param: omega_a
       mode: 1
-      export_dist: true
-      export:
-      - fit_results.csv
-      - psd_merged.csv

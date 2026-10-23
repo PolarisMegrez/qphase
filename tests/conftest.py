@@ -17,8 +17,13 @@ from qphase.core.system_config import load_system_config
 _LAYER_MARKERS = ("unit", "integration", "e2e", "gpu", "slow")
 
 
-def _cuda_available() -> bool:
-    """Return whether CuPy can access at least one CUDA device."""
+def cuda_available() -> bool:
+    """Return whether CuPy can access at least one CUDA device.
+
+    This is the single device probe of the test suite: the gpu-marker gate
+    below and every per-test ``skipif`` import this function instead of
+    keeping a private copy.
+    """
     try:
         import cupy as cp
 
@@ -30,7 +35,7 @@ def _cuda_available() -> bool:
 def pytest_collection_modifyitems(items):
     """Assign the ``unit`` marker to tests without an explicit layer marker."""
     gpu_available = (
-        _cuda_available() if any("gpu" in item.keywords for item in items) else True
+        cuda_available() if any("gpu" in item.keywords for item in items) else True
     )
     skip_gpu = pytest.mark.skip(reason="CUDA runtime/device not available")
     for item in items:

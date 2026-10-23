@@ -50,7 +50,6 @@ exclude = [
 	".mypy_cache",
 	".pytest_cache",
 	".tox",
-	"tests"
 ]
 
 [tool.ruff.lint]
@@ -111,8 +110,9 @@ disable_error_code = [
 ]
 
 [dependency-groups]
-# Full development environment: all backends (including CUDA), CLI, GUI, docs and test tools.
-# This is what CI uses (`uv sync --dev`).
+# Full-stack local development: all backends (including CUDA), CLI, GUI, docs
+# and test tools.  Use `uv sync --dev` on a machine with a CUDA stack; CI uses
+# the CPU-only group instead (`uv sync --no-dev --group dev-cpu`).
 dev = [
     "qphase[numba,torch,cupy,gui]",
     "qphase-sde",
@@ -127,8 +127,9 @@ dev = [
     "ruff>=0.14.10",
     "types-pyyaml>=6.0.12.20250915",
 ]
-# CPU-only development environment: no GPU/CUDA dependencies.
-# Use with `uv sync --group dev-cpu` on machines without a CUDA stack.
+# CPU-only development environment: no GPU/CUDA dependencies (numba/torch stay,
+# CuPy does not).  This is what every CI job installs, so the matrix also
+# covers interpreters that have no CuPy wheel.
 dev-cpu = [
     "qphase[numba,torch,gui]",
     "qphase-sde",

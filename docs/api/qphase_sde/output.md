@@ -53,41 +53,41 @@ bundle lazily regardless of the physical layout.
 
 ## Lorentz fit output
 
-`lorentz_fitter` writes up to three artifacts depending on `export`:
-
-*   `fit_results.csv` — one row per scan point with columns described in [Analyzers](./analyzers.md).
-*   `psd_merged.csv` — merged PSD table plus `<scan_value>_sem` columns used for uncertainty propagation.
-*   `fit_results.npz` / `fit_results.pkl` — same data in alternative formats.
+`lorentz_fitter` persists one typed statistics product (named after the analyser
+label) whose fields hold one fit row per scan point — columns are described in
+[Analyzers](./analyzers.md) — plus the merged PSD and PSD-SEM traces aligned with
+the reference frequency axis. No side files are written; load it with
+`qphase.data.load_products(job_dir)`.
 
 ## Band-limited carrier output
 
-`band_limited_carrier` writes three auditable tables when their names appear in
-`export`:
+`band_limited_carrier` persists three auditable typed products (`carrier`,
+`carrier.candidates`, `carrier.platforms`):
 
-*   `carrier_results.csv` — local resolution status plus the separately tracked
-    scan carrier. A local or tracked frequency may be `NaN` when the data do not
+*   `carrier` — local resolution status plus the separately tracked scan
+    carrier. A local or tracked frequency may be `NaN` when the data do not
     support a unique platform.
-*   `carrier_candidates.csv` — every bandwidth/lag fit, including phase
-    residual, frequency drift, decay rate, lag bounds, and rejection reason.
-*   `carrier_platforms.csv` — every frequency platform retained before
-    scan-level path tracking, including support and score.
+*   `carrier.candidates` — every bandwidth/lag fit, including phase residual,
+    frequency drift, decay rate, lag bounds, and rejection reason.
+*   `carrier.platforms` — every frequency platform retained before scan-level
+    path tracking, including support and score.
 
 The reported diagnostic uncertainty is conditional estimator sensitivity, not
-a trajectory SEM. The output metadata states this explicitly.
+a trajectory SEM. The product metadata states this explicitly.
 
-In ridge-conditioned mode, all three tables additionally carry
+In ridge-conditioned mode, all three products additionally carry
 `ridge_candidate_index`, `ridge_retention_tier`, ridge-center uncertainty,
 nearest-ridge bandwidth limits, `ridge_carrier_correction`, and
 `ridge_conditioned_uncertainty_upper`. There can be several rows per scan point.
 
-`finite_delay_carrier` writes `finite_delay_carrier.csv`, one row per scan point,
-readout, and detector rate. It contains the measurement name and kind, direct
-detector carrier, its zero-delay SDE limit, finite-delay correction, coherent
-weight, and numerical lag range.
+`finite_delay_carrier` persists a typed `carrier` product with one row per scan
+point, readout, and detector rate. Each row contains the measurement name and
+kind, direct detector carrier, its zero-delay SDE limit, finite-delay
+correction, coherent weight, and numerical lag range.
 
-`spectral_ridge` writes `spectral_ridge.csv`, one selected ridge per scan point
-and readout, and `spectral_ridge_candidates.csv`, the complete scale-supported
-candidate set. The selected table includes peak frequency, local and scale
+`spectral_ridge` persists two typed products: `ridge` holds one selected ridge
+per scan point and readout, `ridge.candidates` the complete scale-supported
+candidate set. Selected rows include peak frequency, local and scale
 uncertainty, curvature diagnostics, PSD-SEM confidence bounds, relative-height
 plateau bounds, competing-ridge ambiguity bounds, path-selection index, and
 status. Candidate rows additionally contain `retained_for_association`,
@@ -98,18 +98,17 @@ status. Candidate rows additionally contain `retained_for_association`,
 `allan_variance` remains inside the logical SDE dataset. It stores overlapping
 and non-overlapping Allan variance, per-trajectory estimates, SEM, and valid
 window counts, but not the original complex trajectories when `keep_traj` is
-false. The downstream `allan_scaling` analyser writes:
+false. The downstream `allan_scaling` analyser persists one typed product with
+two parts:
 
-*   `allan_points.csv` — one row per perturbation with the detected white-FM tau
-    range, `tau * sigma_A^2`, SEM, effective non-overlapping window count, mean
-    angular frequency, and gate status.
-*   `allan_scaling.json` — selected common tau/epsilon windows, pure-power Allan
-    fit, frequency-response fit, bootstrap interval, normal-form expectations,
-    and explicit gate failures.
+*   `rows` — one row per perturbation with the detected white-FM tau range,
+    `tau * sigma_A^2`, SEM, effective non-overlapping window count, mean angular
+    frequency, and gate status.
+*   `summary` — selected common tau/epsilon windows, pure-power Allan fit,
+    frequency-response fit, bootstrap interval, normal-form expectations, and
+    explicit gate failures.
 
-## Distribution outputs
-
-*   `dist_merged.npz` — optional merged distribution export for a scan dataset.
-*   `pdist_merged.pkl` — optional merged polar-distribution export for a scan dataset.
+Distribution and polar-distribution results are typed products of their own
+analysers; `lorentz_fitter` no longer merges them into NPZ/PKL exports.
 
 For details on the Session and Job directory layout, see [User Guide: Output](../../user_guide/output.md).

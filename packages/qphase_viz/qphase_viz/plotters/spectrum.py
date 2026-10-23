@@ -12,7 +12,6 @@ from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
 import numpy as np
-from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.data import DataKind, SpectralQuantity
 
@@ -23,23 +22,6 @@ from ..typed_input import (
     select_product,
 )
 from .base import PlotterProtocol
-
-
-def _get_psd_analyzer_classes():
-    """Lazy import of PsdAnalyzer to keep qphase_sde optional."""
-    try:
-        from qphase_sde.analyser import PsdAnalyzer, PsdAnalyzerConfig
-        from qphase_sde.spectral_estimator import create_builtin_estimator
-    except ImportError as e:
-        raise ImportError(
-            "Power spectrum plotting from raw trajectories requires "
-            "qphase-viz[sde] (qphase-sde)."
-        ) from e
-    return (
-        PsdAnalyzer,
-        PsdAnalyzerConfig,
-        create_builtin_estimator,
-    )
 
 
 class PowerSpectrumPlotter(PlotterProtocol):
@@ -84,43 +66,14 @@ class PowerSpectrumPlotter(PlotterProtocol):
                 quantity=SpectralQuantity.POWER_SPECTRAL_DENSITY.value,
                 fields=("axis", "psd"),
             )
-        except ProductNotFoundError:
-            (
-                PsdAnalyzer,
-                PsdAnalyzerConfig,
-                create_estimator,
-            ) = _get_psd_analyzer_classes()
-            trajectory = select_product(
-                data,
-                role="trajectories",
-                kind=DataKind.TIME_SERIES,
-                quantity="field_amplitude",
-                fields=("alpha",),
-            )
-            require_single_scan_point(data, trajectory)
-            analyzer_config = PsdAnalyzerConfig(
-                measurement={
-                    "complex_field": {
-                        "channels": channels,
-                        "representation": "complex",
-                    }
-                },
-                convention="symmetric",
-            )
-            analyzer = PsdAnalyzer(
-                analyzer_config,
-                subplugins={
-                    "estimator": create_estimator(
-                        "periodogram", {"window": spec.window}
-                    )
-                },
-            )
-
-            product = analyzer.execute(
-                {"signal": trajectory},
-                backend=NumpyBackend(),
-                label="psd",
-            )["psd"]
+        except ProductNotFoundError as exc:
+            raise ProductNotFoundError(
+                "power spectrum plotting needs a persisted PSD product "
+                "(role 'primary_spectrum', kind 'spectral', quantity "
+                "'power_spectral_density', variables 'axis' and 'psd'); run a PSD "
+                "analysis first — e.g. the workflow's psd analyser — and pass its "
+                "typed output to the viz engine"
+            ) from exc
 
         require_single_scan_point(data, product)
 

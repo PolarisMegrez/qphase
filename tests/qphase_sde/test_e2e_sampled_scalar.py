@@ -32,6 +32,8 @@ from qphase_sde.analyser.psd import PsdAnalyzer
 from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.srk import GenericSRK
 
+pytestmark = pytest.mark.e2e
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FIXTURE = (
     _REPO_ROOT / "configs" / "workflows" / "misc" / "e2e_sampled_scalar_3mode.yaml"
@@ -418,6 +420,10 @@ def test_shared_transform_executes_once_per_batch():
     physical batch is 8 trajectories of every point, so 16 trajectories over
     3 points execute the transform twice — not 4 (once per consumer) and not
     1 (a single retained full-size pass).
+
+    The record is shortened to ``t1=3.2`` (65 samples): the count and the
+    per-batch shape are what this probe asserts, so the 513-sample production
+    length only made it cost a second full scan of the fixture job.
     """
     from qphase.core.registry import discovery, registry
     from qphase_sde.graph import compile_product_graph
@@ -438,13 +444,15 @@ def test_shared_transform_executes_once_per_batch():
             },
         },
     )
+    probe_config = dict(_main_job_config())
+    probe_config.update(
+        t1=3.2,
+        trajectory_batching="required",
+        trajectory_batch_size=8,
+        rng_group_size=8,
+    )
     engine = Engine(
-        config=EngineConfig(
-            **_main_job_config(),
-            trajectory_batching="required",
-            trajectory_batch_size=8,
-            rng_group_size=8,
-        ),
+        config=EngineConfig(**probe_config),
         plugins={
             "backend": NumpyBackend(),
             "integrator": GenericSRK(),
@@ -464,10 +472,11 @@ def test_shared_transform_executes_once_per_batch():
         )
     )
     assert transform.calls == 2
-    assert transform.seen_shapes == [(3, 8, 513, 3)] * 2
+    assert transform.seen_shapes == [(3, 8, 65, 3)] * 2
     assert set(result.products) == _MAIN_TERMINAL_PRODUCTS
 
 
+@pytest.mark.gpu
 def test_cupy_end_to_end_and_analyser_parity():
     """CuPy: the full graph runs on the GPU backend, and the scalar
     PSD/Allan estimators match NumPy within float64 tolerance on identical

@@ -9,18 +9,9 @@ import numpy as np
 import pytest
 
 from models.collective_vdp_2mode import CollectiveVDP2ModeModel
+from tests.conftest import cuda_available
 
-pytestmark = pytest.mark.gpu
-
-
-def _cupy_available() -> bool:
-    try:
-        import cupy as cp
-
-        cp.cuda.runtime.getDevice()
-        return True
-    except Exception:
-        return False
+pytestmark = pytest.mark.integration
 
 
 def _model() -> CollectiveVDP2ModeModel:
@@ -129,7 +120,9 @@ def _chunk_worker(queue) -> None:
         queue.put((False, traceback.format_exc()))
 
 
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 @pytest.mark.parametrize("dtype_name", ("complex64", "complex128"))
 def test_fused_step_matches_generic_path(dtype_name):
     context = multiprocessing.get_context("spawn")
@@ -146,7 +139,9 @@ def test_fused_step_matches_generic_path(dtype_name):
     assert payload < tolerance
 
 
-@pytest.mark.skipif(not _cupy_available(), reason="CuPy not available")
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.skipif(not cuda_available(), reason="CUDA device not available")
 def test_fused_chunk_matches_repeated_steps():
     context = multiprocessing.get_context("spawn")
     queue = context.Queue()

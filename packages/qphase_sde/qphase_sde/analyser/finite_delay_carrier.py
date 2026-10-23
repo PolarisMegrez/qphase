@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import csv
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
 import numpy as np
@@ -75,8 +73,6 @@ class FiniteDelayCarrierConfig(PluginConfigBase):
         gt=1.0,
         description="Detector-weight time constants retained before truncation",
     )
-    export: list[str] = Field(default_factory=lambda: ["finite_delay_carrier.csv"])
-    output_dir: str | None = Field(None, description="Usually injected by the engine")
 
     @field_validator("detector_rates")
     @classmethod
@@ -303,17 +299,6 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
                 row["detector_rate"],
             )
         )
-        written: dict[str, str] = {}
-        output_dir = getattr(self, "output_dir", None) or config.output_dir
-        if output_dir is not None and "finite_delay_carrier.csv" in config.export:
-            destination = Path(output_dir)
-            destination.mkdir(parents=True, exist_ok=True)
-            path = destination / "finite_delay_carrier.csv"
-            with path.open("w", newline="", encoding="utf-8") as handle:
-                writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
-                writer.writeheader()
-                writer.writerows(rows)
-            written["finite_delay_carrier"] = str(path)
         metadata = orientation_metadata(
             reference_orientation or DEFAULT_FREQUENCY_ORIENTATION
         )
@@ -321,7 +306,6 @@ class FiniteDelayCarrierAnalyzer(Analyzer):
             {
                 "carrier_rows": rows,
                 "detector_rates": rates,
-                "written": written,
                 **metadata,
             },
             {

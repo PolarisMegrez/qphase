@@ -353,8 +353,17 @@ def test_gui_restores_cli_execution_in_clean_process(tmp_path) -> None:
         "print(app.executions.list_executions()[0].execution_id)\n"
         "app.close()\n"
     )
+    # The spawned interpreter only inherits the environment, not this
+    # process's isolated_user_home fixture, and SystemConfig merges
+    # ``~/.qphase/config.yaml`` on top of the packaged defaults.  Point the
+    # child's home at a scratch directory so a developer machine's real user
+    # policy cannot fail or influence the clean-process recovery check.
+    user_home = tmp_path / "user-home"
+    user_home.mkdir()
     env = dict(os.environ)
     env["QPHASE_PROJECT"] = str(project.root)
+    env["HOME"] = str(user_home)
+    env["USERPROFILE"] = str(user_home)
     completed = subprocess.run(
         [sys.executable, "-c", script],
         env=env,

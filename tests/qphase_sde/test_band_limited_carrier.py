@@ -169,7 +169,7 @@ def test_fixed_ridge_center_recovers_selected_peak_in_multipeak_spectrum():
     assert estimate.selected_half_bandwidth <= 0.25
 
 
-def test_analyzer_exports_trace_rows_and_bandwidth_audit(tmp_path):
+def test_analyzer_reports_trace_rows_and_bandwidth_audit():
     axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
     spectra = []
     for parameter in (0.1, 0.2):
@@ -182,7 +182,6 @@ def test_analyzer_exports_trace_rows_and_bandwidth_audit(tmp_path):
             freq_min=-1.0,
             freq_max=0.2,
             maximum_lag=80.0,
-            output_dir=str(tmp_path),
         )
     )
 
@@ -200,9 +199,17 @@ def test_analyzer_exports_trace_rows_and_bandwidth_audit(tmp_path):
     assert len(candidates["candidate_rows"]) == 18
     assert platforms["platform_rows"]
     assert payload["carrier_rows"][0]["tracked_status"] == "ok"
-    assert (tmp_path / "carrier_results.csv").exists()
-    assert (tmp_path / "carrier_candidates.csv").exists()
-    assert (tmp_path / "carrier_platforms.csv").exists()
+    # The bandwidth audit that used to reach disk as CSV stays in the typed
+    # candidate/platform products.
+    assert all("half_bandwidth" in row for row in candidates["candidate_rows"])
+    assert all(
+        row["status"] in {"ok", "failed"} for row in candidates["candidate_rows"]
+    )
+    assert all("platform_index" in row for row in platforms["platform_rows"])
+    assert all(
+        row["minimum_half_bandwidth"] <= row["maximum_half_bandwidth"]
+        for row in platforms["platform_rows"]
+    )
     assert payload["orientation"] == "phase_decreasing"
 
 
@@ -228,7 +235,7 @@ def test_analyzer_builds_typed_result_and_audit_products():
     assert products["carrier"].axis("row").size == 1
 
 
-def test_analyzer_writes_header_only_csvs_when_no_candidates(tmp_path):
+def test_analyzer_keeps_empty_candidate_and_platform_audits():
     axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
     spectrum = np.full((1, axis.size, 1), 0.03)
     analyzer = BandLimitedCarrierAnalyzer(
@@ -237,7 +244,6 @@ def test_analyzer_writes_header_only_csvs_when_no_candidates(tmp_path):
             freq_min=-1.0,
             freq_max=0.2,
             maximum_lag=80.0,
-            output_dir=str(tmp_path),
         )
     )
 
@@ -247,25 +253,21 @@ def test_analyzer_writes_header_only_csvs_when_no_candidates(tmp_path):
         label="carrier",
     )
     payload = products["carrier"].attributes["payload_meta"]
-    candidates_payload = products["carrier.candidates"].attributes["payload_meta"]
-    platforms_payload = products["carrier.platforms"].attributes["payload_meta"]
+    candidates = products["carrier.candidates"]
+    platforms = products["carrier.platforms"]
 
     assert payload["carrier_rows"]
-    assert candidates_payload["candidate_rows"] == []
-    assert platforms_payload["platform_rows"] == []
-    candidates_csv = (
-        (tmp_path / "carrier_candidates.csv").read_text(encoding="utf-8").splitlines()
-    )
-    platforms_csv = (
-        (tmp_path / "carrier_platforms.csv").read_text(encoding="utf-8").splitlines()
-    )
-    assert len(candidates_csv) == 1
-    assert "half_bandwidth" in candidates_csv[0]
-    assert len(platforms_csv) == 1
-    assert "platform_index" in platforms_csv[0]
+    assert candidates.attributes["payload_meta"]["candidate_rows"] == []
+    assert platforms.attributes["payload_meta"]["platform_rows"] == []
+    # Empty audits stay declared typed products with their full field set: the
+    # row axis is padded with an invalid placeholder row rather than dropped.
+    assert "half_bandwidth" in {variable.name for variable in candidates.variables}
+    assert not np.any(candidates.handle("row_valid").materialize())
+    assert "platform_index" in {variable.name for variable in platforms.variables}
+    assert not np.any(platforms.handle("row_valid").materialize())
 
 
-def test_analyzer_outputs_each_retained_ridge_candidate(tmp_path):
+def test_analyzer_outputs_each_retained_ridge_candidate():
     axis = np.linspace(-3.0, 3.0, 8192, endpoint=False)
     spectra = []
     for shift in (0.0, 0.04, 0.08):
@@ -295,7 +297,6 @@ def test_analyzer_outputs_each_retained_ridge_candidate(tmp_path):
             freq_max=1.2,
             maximum_lag=80.0,
             center=RidgeConditionedCenterConfig(spectral_ridge=ridge_config),
-            output_dir=str(tmp_path),
         )
     )
 
@@ -539,7 +540,7 @@ def test_band_limited_carrier_execute_aborts_mid_loop_on_cancellation():
     psd = _typed_psd_product([0.0, 1.0, 2.0, 3.0, 4.0])
     analyzer = BandLimitedCarrierAnalyzer(
         BandLimitedCarrierConfig(
-            scan_param="epsilon", readout=0, maximum_lag=80.0, export=[]
+            scan_param="epsilon", readout=0, maximum_lag=80.0
         )
     )
     context = SimpleNamespace(
@@ -562,7 +563,7 @@ def test_band_limited_carrier_execute_reports_spectrum_progress():
     psd = _typed_psd_product([0.0, 1.0, 2.0])
     analyzer = BandLimitedCarrierAnalyzer(
         BandLimitedCarrierConfig(
-            scan_param="epsilon", readout=0, maximum_lag=80.0, export=[]
+            scan_param="epsilon", readout=0, maximum_lag=80.0
         )
     )
     progress = _FakeProgress()

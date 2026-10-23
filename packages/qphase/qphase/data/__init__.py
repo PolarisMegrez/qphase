@@ -1,6 +1,6 @@
 """qphase: Typed Data Product Contracts
 ---------------------------------------------------------
-Experimental contracts (schema ``qphase.product/1``) for typed data products:
+Frozen contracts (schema ``qphase.product/1``) for typed data products:
 the three public data kinds, the product schema language, runtime handles and
 leases, durable artifact references and the product graph.
 

@@ -8,10 +8,11 @@ Postprocessing is not a separate core command or a separate resource package. It
 
 ## Design Principle
 
-- **Core** (`qphase`) provides generic aggregation and export utilities in `qphase.core.aggregation`.
+- **Core** (`qphase`) provides generic in-memory aggregation containers
+  (`qphase.core.aggregation`) and the typed-product persistence layer.
 - **`qphase_sde`** provides SDE-specific cross-job analyzers: `lorentz_fitter`
   for PSD peaks and `allan_scaling` for white-FM windows and perturbation
-  scaling.
+  scaling. Their results are persisted as typed products.
 - The **`qphase postprocess` CLI command has been removed**. Use `qphase run <workflow.yaml>` instead.
 
 ## Workflow Example
@@ -62,24 +63,23 @@ The scheduler will:
 
 1. Compile the `sim` scan and let the SDE engine execute it as one logical dataset.
 2. Pass that complete dataset once to the `fit` job.
-3. Run `analyser.lorentz_fitter` in `analyze` mode, producing `fit_results.csv` and `psd_merged.csv` in the `fit` Job directory.
+3. Run `analyser.lorentz_fitter` in `analyze` mode, persisting its typed product
+   in the `fit` Job directory.
 
 ## Output Files
 
-| File | Produced by | Content |
-| :--- | :--- | :--- |
-| `fit_results.csv` | `lorentz_fitter` | One row per scan value with fitted parameters and covariance-derived standard deviations. |
-| `psd_merged.csv` | `lorentz_fitter` | Frequency axis plus PSD and optional PSD SEM columns per scan value. |
-| `dist_merged.npz` | `lorentz_fitter` (optional) | Aggregated distribution payloads. |
-| `pdist_merged.pkl` | `lorentz_fitter` (optional) | Aggregated polar distribution payloads. |
-| `allan_points.csv` | `allan_scaling` | Per-point white-FM windows, Allan intensity, uncertainty, frequency, and gates. |
-| `allan_scaling.json` | `allan_scaling` | Common tau/epsilon window, bootstrap power-law fits, and normal-form checks. |
+Analysers no longer write CSV/NPZ/PKL side files: every result is persisted as
+one typed product in the Job directory's artifact manifest. Load them with
+`qphase.data.load_products(job_dir)`.
 
-The NPZ/PKL bundles include `__schema_version__` and `__created_by__` metadata via `qphase.core.aggregation`.
+| Product | Produced by | Content |
+| :--- | :--- | :--- |
+| `lorentz_fitter` | `lorentz_fitter` | One fit row per scan value with fitted parameters and covariance-derived standard deviations, plus the merged PSD/SEM traces. |
+| `allan_scaling` | `allan_scaling` | Per-point white-FM windows, Allan intensity, uncertainty, frequency and gates, plus the common tau/epsilon window and bootstrap power-law fits. |
 
 ## Boundaries
 
 - Single-result analysis (per-job PSD, peak finding, distributions) belongs to `analyser` plugins.
-- Dataset views, generic aggregation, and schema-versioned exporting belong to core.
+- Dataset views, in-memory aggregation containers and typed-product persistence belong to core.
 - SDE-specific curve fitting and payload extraction belongs to downstream
   `qphase_sde` analyser plugins such as `lorentz_fitter` and `allan_scaling`.

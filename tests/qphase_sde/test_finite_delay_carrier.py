@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
@@ -30,7 +28,7 @@ def test_finite_delay_carrier_recovers_single_frequency_for_all_rates():
     assert result["instantaneous_frequency"] == pytest.approx(center, abs=2e-5)
 
 
-def test_finite_delay_carrier_analyzer_exports_scan_rows(tmp_path: Path):
+def test_finite_delay_carrier_analyzer_reports_scan_rows():
     axis = np.linspace(-3.0, 3.0, 4096, endpoint=False)
     payloads = []
     for center in (-0.3, -0.2):
@@ -47,7 +45,6 @@ def test_finite_delay_carrier_analyzer_exports_scan_rows(tmp_path: Path):
         FiniteDelayCarrierConfig(
             scan_param="epsilon",
             detector_rates=[0.1, 1.0],
-            output_dir=str(tmp_path),
         )
     )
 
@@ -72,7 +69,7 @@ def test_finite_delay_carrier_analyzer_exports_scan_rows(tmp_path: Path):
         [-0.3, -0.3, -0.2, -0.2],
         atol=2e-5,
     )
-    assert (tmp_path / "finite_delay_carrier.csv").exists()
+    assert [row["detector_rate"] for row in rows] == [0.1, 1.0, 0.1, 1.0]
 
 
 def test_finite_delay_carrier_analyzer_evaluates_multiple_readouts():
@@ -204,7 +201,7 @@ def test_finite_delay_carrier_execute_aborts_mid_loop_on_cancellation():
 
     psd = _typed_psd_product([0.0, 1.0, 2.0, 3.0, 4.0])
     analyzer = FiniteDelayCarrierAnalyzer(
-        FiniteDelayCarrierConfig(scan_param="epsilon", readout=0, export=[])
+        FiniteDelayCarrierConfig(scan_param="epsilon", readout=0)
     )
     context = SimpleNamespace(
         cancellation=_FakeCancellation(abort_after=2), progress=None
@@ -225,7 +222,7 @@ def test_finite_delay_carrier_execute_reports_spectrum_progress():
 
     psd = _typed_psd_product([0.0, 1.0, 2.0])
     analyzer = FiniteDelayCarrierAnalyzer(
-        FiniteDelayCarrierConfig(scan_param="epsilon", readout=0, export=[])
+        FiniteDelayCarrierConfig(scan_param="epsilon", readout=0)
     )
     progress = _FakeProgress()
     context = SimpleNamespace(cancellation=None, progress=progress)

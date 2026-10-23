@@ -269,6 +269,27 @@ class JobConfig(BaseModel):
 
         return v
 
+    @field_validator("system", mode="before")
+    @classmethod
+    def reject_unknown_system_keys(cls, value: Any) -> Any:
+        """Keep a job-level ``system`` block strict.
+
+        A ``system`` block is project policy (it lives in the Workflow file),
+        so a retired or misspelled top-level key must fail instead of being
+        dropped: only the machine-local layers of ``SystemConfigStore`` are
+        forgiving. Nested sections stay closed through the model itself.
+        """
+        if not isinstance(value, dict):
+            return value
+        unknown = sorted(set(value) - set(SystemConfig.model_fields))
+        if unknown:
+            raise QPhaseConfigError(
+                "job.system does not accept unknown top-level keys: "
+                f"{unknown}. Machine-local policy files tolerate retired keys, "
+                "project configuration does not."
+            )
+        return value
+
     def get_engine_name(self) -> str:
         """Get the engine name from the engine configuration.
 

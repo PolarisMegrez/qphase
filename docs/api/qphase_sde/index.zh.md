@@ -25,4 +25,4 @@ nav_order: 2
 *   [积分器](./integrators.zh.md) — `Integrator` 协议与 `GenericSRK`。
 *   [模型](./models.zh.md) — 内置模型与 `SDEModel` 协议。
 *   [分析器](./analyzers.zh.md) — PSD、分布与 Lorentz 拟合分析器。
-*   [输出格式](./output.zh.md) — Artifact v4 布局、`.csv` 导出与合并表的字段说明。
+*   [输出格式](./output.zh.md) — Artifact v4 布局与各 analyser 持久化的 typed product 字段说明。

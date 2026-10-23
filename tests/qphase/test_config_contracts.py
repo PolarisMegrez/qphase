@@ -224,3 +224,25 @@ def test_job_name_rejects_catalog_id_separator():
 
     with pytest.raises(ValidationError, match="must not contain ':'"):
         JobConfig(name="sim:bad", engine={"dummy": {}})
+
+
+def test_job_system_rejects_unknown_top_level_key():
+    """Project policy stays strict: job.system is part of the Workflow file."""
+    with pytest.raises(QPhaseConfigError, match="job.system does not accept"):
+        JobConfig(
+            name="sim",
+            engine={"dummy": {}},
+            system={"parameter_scan": {}},
+        )
+
+
+def test_job_system_still_accepts_known_keys():
+    """The strictness only rejects retired keys, not valid overrides."""
+    job = JobConfig(
+        name="sim",
+        engine={"dummy": {}},
+        system={"auto_save_results": False},
+    )
+
+    assert job.system is not None
+    assert job.system.auto_save_results is False

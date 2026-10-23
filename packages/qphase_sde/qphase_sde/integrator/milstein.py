@@ -61,7 +61,7 @@ class Milstein(Integrator):
     Examples
     --------
     >>> # 典型用法：直接 import 并实例化
-    >>> from qphase_sde.integrators.milstein import Milstein
+    >>> from qphase_sde.integrator.milstein import Milstein
     >>> integrator = Milstein()
     >>> # integrator.step(y, t, dt, model, dW, backend)
 

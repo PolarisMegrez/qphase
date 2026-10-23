@@ -154,4 +154,10 @@ view，并可使用 `select` 与 `group_by`。字符串 `input` 与 `aggregate_i
 日志策略，不包含 Workflow、插件或 Project 路径。`qphase config show --system`
 显示机器策略；`qphase config show` 显示 Project 插件默认值。
 
+其中站点策略、用户覆盖与 `QPHASE_SYSTEM_CONFIG` 属于机器本地层：某个键若已被新版本
+从 schema 中删除，在这些层里会被忽略并给出包含键名的 warning，因此陈旧的
+`~/.qphase/config.yaml` 不会让工具无法使用。包内默认值与显式传入的 `config_path`
+保持严格，已知小节内部的未知键始终报错。`qphase config reset --system`
+可重写用户文件、去掉这些废弃键。
+
 checkpoint 只覆盖已完成的 scan chunk，不覆盖 SDE 内部时间步。

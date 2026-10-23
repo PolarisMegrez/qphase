@@ -746,9 +746,6 @@ class Engine(EngineBase):
                 raise RuntimeError(
                     f"compiled ProductGraph references unknown analyser {name!r}"
                 )
-            output_dir = getattr(self.config, "output_dir", None)
-            if output_dir is not None:
-                analyser.output_dir = output_dir
         backend = (
             self._required_backend() if self._default_backend is not None else None
         )

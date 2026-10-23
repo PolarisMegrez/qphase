@@ -56,9 +56,6 @@ jobs:
       mode: 0
       clip_by_std: true
       clip_sigma: 10.0
-      export:
-      - fit_results.csv
-      - psd_merged.csv
 
 - name: vdp_2mode_auto_peaks
   input: {from: vdp_2mode_auto_sim, mode: dataset}

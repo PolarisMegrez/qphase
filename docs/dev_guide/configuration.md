@@ -48,6 +48,15 @@ into Jobs.
 and explicit policies. Reads do not create files; writes persist only values
 different from package/site defaults. Project paths are schema errors.
 
+Tolerance is asymmetric by design. Machine-local layers — site policy
+(`/etc/qphase/config.yaml`, `%PROGRAMDATA%`), the sparse user override
+(`~/.qphase/config.yaml`), and `QPHASE_SYSTEM_CONFIG` — are written by older
+releases on a developer machine and are not under version control, so a
+retired top-level key is dropped with a warning that names it (and points at
+`qphase config reset --system`, which rewrites the user file without it).
+The packaged defaults, an explicitly named `config_path`, and every nested
+section stay strict: unknown keys there remain errors.
+
 Tests and clients that need another Session root must create or inject a
 different `ProjectContext`; they must not add output-path overrides to
 SystemConfig or Scheduler.

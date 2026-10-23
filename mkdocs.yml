@@ -78,6 +78,7 @@ plugins:
             Versioning & Migration: 版本与迁移
             Registry: 注册表
             Scheduler: 调度器
+            Testing: 测试分层
             FAQ: 常见问题
 
 markdown_extensions:
@@ -136,4 +137,5 @@ nav:
     - Artifact Formats: dev_guide/artifact_formats.md
     - Registry: dev_guide/registry.md
     - Scheduler: dev_guide/scheduler.md
+    - Testing: dev_guide/testing.md
     - FAQ: dev_guide/faq.md

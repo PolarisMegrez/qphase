@@ -8,6 +8,8 @@ from qphase_sde.contracts.analyser import AnalyserWorkspaceRequest
 from qphase_sde.result import _trajectory_product
 from qphase_sde.state import TrajectorySet
 
+from .conftest import product_payload
+
 
 def _analyzer(**kwargs):
     return MomentStatisticsAnalyzer(MomentStatisticsConfig(**kwargs))
@@ -23,25 +25,7 @@ def _payload(analyzer, trajectory: TrajectorySet):
         backend=NumpyBackend(),
         label="moment_statistics",
     )["moment_statistics"]
-    return product, _product_payload(product)
-
-
-def _product_payload(product):
-    payload = {}
-    values = list(product.attributes.get("payload_meta", {}).items()) + [
-        (variable.name, product.handle(variable.name).materialize())
-        for variable in product.variables
-    ]
-    for name, value in values:
-        if np.asarray(value).ndim == 0:
-            value = np.asarray(value).item()
-        target = payload
-        parts = name.split(".")
-        for part in parts[:-1]:
-            key = int(part) if part.isdigit() else part
-            target = target.setdefault(key, {})
-        target[parts[-1]] = value
-    return payload
+    return product, product_payload(product)
 
 
 def test_moment_statistics_matches_direct_reduction():
@@ -122,7 +106,7 @@ def test_moment_statistics_accumulator_matches_full_ensemble():
         accumulator.consume_product(partial)
     products = accumulator.finalize_product("moment_statistics")
     assert products is not None
-    merged = _product_payload(products["moment_statistics"])
+    merged = product_payload(products["moment_statistics"])
 
     for key in (
         "occupation",

@@ -24,7 +24,7 @@ runs/YYYY/MM/<session-id>/
   fit/
     config_snapshot.json
     artifact_manifest.json
-    fit_results.csv
+    00_<product>.npz
 ```
 
 参数扫描始终是一个 Job 和一个逻辑 dataset，不会为每个参数点建立 Session 或
@@ -76,5 +76,5 @@ product，其余分析器经版本化 bridge product 保存。
 ## 跨 Job 后处理
 
 后处理应表示为同一 Workflow 中的下游 Job。例如 `analyser.lorentz_fitter` 在
-`engine.sde.mode: analyze` 下消费 PSD dataset，并生成 `fit_results.csv` 和
-`psd_merged.csv`。这些文件属于下游 Job 的 Artifact，而不是独立 run。
+`engine.sde.mode: analyze` 下消费 PSD dataset，并把拟合行与合并后的 PSD 曲线持久化为
+一个 typed product。该 product 属于下游 Job 的 Artifact，而不是独立 run。

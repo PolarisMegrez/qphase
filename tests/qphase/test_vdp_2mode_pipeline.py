@@ -6,7 +6,7 @@ This test exercises the full scheduler workflow introduced by the refactor:
 * ``model.vdp_2mode`` with a parameter scan on ``omega_a``.
 * Multiple analyzers on the same simulation job: ``psd``, ``dist``, ``pdist``.
 * Two downstream analyze-mode jobs using ``analyser.lorentz_fitter`` for modes 0
-  and 1, including ``export_dist`` outputs.
+  and 1; their fit rows are persisted as typed products.
 * CLI invocation via ``qphase run <job>`` with a temporary system config.
 
 The sequence length is intentionally capped at 1000 steps
@@ -15,11 +15,11 @@ The sequence length is intentionally capped at 1000 steps
 
 from __future__ import annotations
 
-import csv
 import json
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pytest
 from qphase.core import system_config as system_config_module
 from qphase.core.registry import discovery
@@ -44,8 +44,7 @@ def vdp_workflow_path():
         / "vdp_2mode"
         / "vdp_2mode_smoke.yaml"
     )
-    if not path.exists():
-        pytest.skip("VDP smoke workflow config not found")
+    assert path.exists(), f"VDP smoke workflow config is missing: {path}"
     return path
 
 
@@ -122,19 +121,21 @@ def test_vdp_2mode_smoke_workflow_scheduler(vdp_workflow_path, temp_project):
     assert (sim.job_dir / "artifact_manifest.json").exists()
     products = load_products(sim.job_dir)
     assert "psd" in products, "Expected the scan dataset to carry a psd product"
+    # dist/pdist live where they are produced, as typed products of the sim job.
+    assert "dist" in products, sorted(products)
+    assert "pdist" in products, sorted(products)
 
     for mode in (0, 1):
         fit = next(r for r in results if r.job_name == f"vdp_2mode_fit_mode{mode}")
-        assert (fit.job_dir / "fit_results.csv").exists()
-        assert (fit.job_dir / "psd_merged.csv").exists()
-        assert (fit.job_dir / "dist_merged.npz").exists()
-        assert (fit.job_dir / "pdist_merged.pkl").exists()
-
-        with open(fit.job_dir / "fit_results.csv", newline="") as handle:
-            rows = list(csv.DictReader(handle))
+        fit_products = load_products(fit.job_dir)
+        assert "lorentz_fitter" in fit_products, sorted(fit_products)
+        fit_product = fit_products["lorentz_fitter"]
+        rows = fit_product.attributes["payload_meta"]["fit_rows"]
         assert len(rows) == 3, "Expected one fit row per scan value"
+        r2 = np.asarray(fit_product.handle("R2").materialize())
+        assert r2.size == len(rows)
+        assert np.all(r2 >= 0.0)
         for row in rows:
-            assert float(row["R2"]) >= 0.0
             assert row["status"] in {"ok", "low_quality", "failed"}
 
 
@@ -161,7 +162,14 @@ def test_vdp_2mode_smoke_cli_plan(vdp_workflow_path, vdp_cli_project, tmp_path):
 
 
 def test_vdp_2mode_smoke_cli_run(vdp_workflow_path, vdp_cli_project, tmp_path):
-    """CLI run executes the full pipeline and reports all jobs successful."""
+    """CLI run executes the full pipeline and reports all jobs successful.
+
+    The CLI owns its own project and session directory, so this cannot share
+    the scheduler run above: the subject here is the CLI entry point itself
+    (argument handling, session creation, JSON report).  Numeric assertions on
+    the fitted products live in ``test_vdp_2mode_smoke_workflow_scheduler``;
+    this test only asserts that the CLI produced a complete, loadable session.
+    """
     _discover_plugins()
     config_path = _write_system_config(tmp_path)
     _clear_system_config_cache()
@@ -174,9 +182,16 @@ def test_vdp_2mode_smoke_cli_run(vdp_workflow_path, vdp_cli_project, tmp_path):
     assert report["completed"] == 4
     assert report["failed"] == 0
     session = Path(report["session_dir"])
+    for job_name in (
+        "vdp_2mode_sim",
+        "vdp_2mode_fit_mode0",
+        "vdp_2mode_fit_mode1",
+        "vdp_2mode_peaks",
+    ):
+        assert (session / job_name / "artifact_manifest.json").exists(), job_name
+    # The CLI run's products load through the public API.
+    sim_products = load_products(session / "vdp_2mode_sim")
+    assert {"psd", "dist", "pdist"} <= set(sim_products), sorted(sim_products)
     for mode in (0, 1):
-        fit_dir = session / f"vdp_2mode_fit_mode{mode}"
-        assert (fit_dir / "fit_results.csv").exists()
-        assert (fit_dir / "psd_merged.csv").exists()
-        assert (fit_dir / "dist_merged.npz").exists()
-        assert (fit_dir / "pdist_merged.pkl").exists()
+        fit_products = load_products(session / f"vdp_2mode_fit_mode{mode}")
+        assert "lorentz_fitter" in fit_products, sorted(fit_products)

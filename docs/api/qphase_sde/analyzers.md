@@ -146,7 +146,7 @@ configuration failure.
 
 ### Output payload
 
-The analyzer exports:
+The analyzer stores:
 
 *   `axis` — frequency or angular-frequency axis.
 *   `psd` — mean PSD for each requested mode.
@@ -157,8 +157,8 @@ The analyzer exports:
     — explicit frequency-sign metadata.
 
 `lorentz_fitter` propagates the same metadata to its result and adds an
-`orientation` column to `fit_results.csv`. It rejects inputs that mix the two
-orientations instead of silently fitting incompatible axes.
+`orientation` field to each fit row of its typed product. It rejects inputs that
+mix the two orientations instead of silently fitting incompatible axes.
 
 For Welch and multitaper estimates, segments or tapers are averaged within each
 trajectory first. The uncertainty is then computed across trajectories, so
@@ -274,9 +274,9 @@ span. No reference-width fallback is used: an unresolved point returns
 The local status is `ok`, `ambiguous_multiband`, or
 `no_bandwidth_plateau`; individual candidates also record
 `nonlinear_phase` and other failure reasons. `frequency` is populated only for
-a unique local platform. `carrier_candidates.csv` retains every lag-filtered
-bandwidth estimate, while `carrier_platforms.csv` retains all competing local
-platforms.
+a unique local platform. The `carrier.candidates` product retains every
+lag-filtered bandwidth estimate, while `carrier.platforms` retains all competing
+local platforms.
 
 When `tracking_enabled` is true, the analyser additionally follows supported
 platforms through the ordered scan using local platform quality and
@@ -403,9 +403,9 @@ CAM Rayleigh quotient when moment closure fails.
 
 The corresponding CAM postprocessor uses the same rates and all closed-CAM
 pole residues. Its zero-delay limit is exactly the generalized Rayleigh
-quotient. `finite_delay_carrier.csv` stores the detector rate, carrier,
-measurement name and kind, instantaneous limit, finite-delay correction,
-coherent weight, and numerical lag range. Sampling uncertainty is unavailable
+quotient. The `finite_delay_carrier` typed product stores, per row, the detector
+rate, carrier, measurement name and kind, instantaneous limit, finite-delay
+correction, coherent weight, and numerical lag range. Sampling uncertainty is unavailable
 from an ensemble-mean PSD alone.
 
 ## `coherence_matrix`
@@ -629,8 +629,8 @@ sampled-observable product for `sampled_scalar`).
 `orientation` controls the reported per-trajectory mean angular frequency.
 The Allan variance itself is unchanged because it is built from squared phase
 second differences.
-`allan_scaling` propagates the orientation to its rows, summary, and exports,
-and likewise rejects a scan assembled from mixed orientations.
+`allan_scaling` propagates the orientation to its rows, summary, and product
+metadata, and likewise rejects a scan assembled from mixed orientations.
 
 For each tau it reports both the established overlapping estimate and a
 non-overlapping phase-second-difference estimate. The payload includes the
@@ -689,8 +689,8 @@ exponent is `observable_order * k / (n - m)`. With regular projected white
 noise, the expected Allan-intensity exponent is
 `2 * (n - observable_order) * k / (n - m)`. Final `status: ok` requires
 sufficient epsilon span, an acceptable Allan power-law fit, resolved frequency
-nonlinearity, and agreement with configured normal-form exponents. The analyser exports
-`allan_points.csv` and `allan_scaling.json`. Legacy
+nonlinearity, and agreement with configured normal-form exponents. The analyser
+persists its `rows` and `summary` in one typed `allan_scaling` product. Legacy
 `trajectory_diagnostics` payloads remain readable, but their independent
 window counts are explicitly marked as estimated rather than measured.
 
@@ -713,9 +713,6 @@ analyser:
     clip_by_std: true
     clip_sigma: 10.0
     min_r2: 0.5
-    export:
-      - fit_results.csv
-      - psd_merged.csv
 ```
 
 | Key | Type | Description |
@@ -730,9 +727,8 @@ analyser:
 | `min_r2` | `float` | Minimum acceptable `R^2`. |
 | `min_peak_height` | `float \| None` | Minimum fitted peak height. |
 | `max_linewidth` | `float \| None` | Maximum acceptable FWHM linewidth. |
-| `export` | `list[str]` | Artifacts to write. Defaults to `fit_results.csv`. |
 
-### Output fields (`fit_results.csv`)
+### Output fields (fit rows)
 
 | Column | Meaning |
 | :-- | :-- |
