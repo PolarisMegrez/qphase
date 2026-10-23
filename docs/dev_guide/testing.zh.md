@@ -67,3 +67,20 @@ ruff、mypy 与 CLI/GUI/资源包，但不含 CuPy。这样整个解释器矩阵
 
 `mypy` 目前只检查 `packages`。tests 由 `ruff` 检查静态问题，但尚未纳入类型检查：
 `mypy packages tests` 仍报 74 个已登记的存量错误，因此测试侧类型闸门暂挂。
+
+## GPU CI lane
+
+`.github/workflows/gpu.yml` 是唯一真正执行 `gpu` 用例的 workflow，它跑在自建的 CUDA
+runner 上而不是 GitHub 托管 runner 上。`-m gpu` 当前在 12 个文件里收集到 47 个参数化用例。
+
+- Runner：注册一台带 `self-hosted` 与 `gpu` 标签的 self-hosted runner，机器装好 NVIDIA
+  驱动即可。CuPy 14 起所需的 CUDA 组件以 PyPI wheel 形式提供
+  （`cupy-cuda12x[ctk]`），不需要系统 CUDA toolkit。
+- 触发：目前只有 `workflow_dispatch`。没有匹配的 runner 时，push 触发的 job 会先排队约
+  24 小时再失败，因此只有首次手动 dispatch 通过后才把 `push` 触发器加回来。
+- 安装：直接 `uv sync`（默认 `dev` 组，含 `qphase[cupy]`）。该 lane 绝不能改用
+  `dev-cpu`：没有 CuPy 时所有用例都会 skip，lane 会看起来是绿的却什么都没测。
+- 保险：单独一步在 CuPy 无法 import 或
+  `cupy.cuda.runtime.getDeviceCount()` 为 0 时直接让 job 失败，避免"全部 skip 即通过"。
+- 矩阵：3.11–3.13。等 `uv.lock` 从 `cupy-cuda12x` 13.6.0（只有 cp311–cp313 wheel）
+  升级到 CuPy 14（有 cp314 wheel）后再加入 3.14。

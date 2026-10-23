@@ -1,0 +1,68 @@
+# GPU lane — runs the gpu-marked tests on a self-hosted CUDA runner.
+#
+# ⚠️  KEEP THIS DISPATCH-ONLY UNTIL THE RUNNER EXISTS.
+#     The CPU workflows (ci.yml) install the dev-cpu group on GitHub-hosted
+#     runners, which have no GPU, so every gpu-marked case skips there.  This
+#     workflow instead targets `[self-hosted, gpu]`.  While no such runner is
+#     registered, a push-triggered job does not fail fast: GitHub queues it
+#     looking for a matching runner and only gives up after roughly 24 hours.
+#     Once the runner is registered and a manual dispatch run passes, add the
+#     push trigger back:
+#
+#         push:
+#           branches: ["main", "stable"]
+#
+#     to the `on:` block below.
+name: GPU
+
+on:
+  workflow_dispatch:
+
+jobs:
+  gpu:
+    runs-on: [self-hosted, gpu]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.14 is added once uv.lock moves from cupy-cuda12x 13.6.0 (cp311-cp313
+        # wheels only) to CuPy 14, which ships cp314 wheels.
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        # Default dev group on purpose: it pulls qphase[cupy] so the gpu cases
+        # can actually run.  Never switch this lane to `--group dev-cpu` --
+        # without CuPy the whole lane would skip and still look green.
+        run: uv sync
+
+      - name: Verify a CUDA device is visible
+        # tests/conftest.py skips every gpu-marked case when the device probe
+        # fails, so a misconfigured runner would turn this lane green while
+        # running nothing.  Fail the job instead of the tests in that case.
+        run: |
+          uv run python - <<'PY'
+          import cupy
+
+          count = cupy.cuda.runtime.getDeviceCount()
+          if count < 1:
+              raise SystemExit(
+                  f"no CUDA device visible to CuPy (count={count}); "
+                  "check the NVIDIA driver on this runner"
+              )
+          print(f"CuPy {cupy.__version__} sees {count} CUDA device(s)")
+          PY
+
+      - name: Run GPU tests
+        # `-m gpu` is exactly the marker set the CPU lanes exclude; the device
+        # probe above guarantees the cases are not silently skipped.
+        run: uv run pytest -m gpu

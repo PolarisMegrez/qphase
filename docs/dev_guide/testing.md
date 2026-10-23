@@ -73,3 +73,25 @@ probe rather than through an import error.
 `mypy` currently type-checks `packages` only. Tests are linted by `ruff` but
 not type-checked: `mypy packages tests` still reports a registered backlog of
 74 errors, so the test-side type gate is suspended.
+
+## GPU CI lane
+
+`.github/workflows/gpu.yml` is the only workflow that actually executes `gpu`
+cases; it targets a self-hosted CUDA runner rather than a GitHub-hosted one.
+`-m gpu` currently collects 47 parametrized cases across 12 files.
+
+- Runner: a self-hosted runner registered with the labels `self-hosted` and
+  `gpu`, on a machine with the NVIDIA driver. CuPy 14+ ships the required CUDA
+  components as PyPI wheels (`cupy-cuda12x[ctk]`), so no system CUDA toolkit is
+  needed.
+- Trigger: `workflow_dispatch` only, for now. With no matching runner, a
+  push-triggered job queues for roughly 24 hours before failing, so the `push`
+  trigger is added back only after the first manual dispatch passes.
+- Install: plain `uv sync` — the default `dev` group, which includes
+  `qphase[cupy]`. This lane must never use `dev-cpu`: without CuPy every case
+  would skip and the lane would look green while testing nothing.
+- Guard: a dedicated step fails the job when CuPy cannot be imported or
+  `cupy.cuda.runtime.getDeviceCount()` is 0, so the lane cannot pass by
+  skipping everything.
+- Matrix: 3.11–3.13. 3.14 joins once `uv.lock` moves from `cupy-cuda12x` 13.6.0
+  (cp311–cp313 wheels only) to CuPy 14 (cp314 wheels).
