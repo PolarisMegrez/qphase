@@ -1470,14 +1470,16 @@ class Engine(EngineBase):
                 ),
             )
 
-        # Ensure model parameters are in metadata
+        # Ensure model parameters are in metadata. The model's params mapping is
+        # live: scan adapters mutate it in place and restore it on exit, so
+        # snapshot it here instead of keeping a reference that would revert.
         meta: dict[str, Any] = {}
         if hasattr(model, "config") and hasattr(model.config, "model_dump"):
             meta["params"] = model.config.model_dump()
         elif hasattr(model, "parameters"):
             meta["params"] = model.parameters
         elif hasattr(model, "params"):
-            meta["params"] = model.params
+            meta["params"] = dict(model.params)
 
         return _SimulatedRun(
             trajectory=traj_set,
