@@ -73,7 +73,7 @@ def _baseline_peaks() -> dict[str, dict[int, dict[str, object]]]:
     matrix = np.asarray(spectrum.handle("psd").materialize())
     return {
         "peaks": {
-            mode: finder.find_peaks(axis, matrix[:, index]).model_dump()
+            mode: finder._find_peaks(axis, matrix[:, index]).model_dump()
             for index, mode in enumerate((0, 1))
         }
     }

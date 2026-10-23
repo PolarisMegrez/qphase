@@ -4,7 +4,7 @@ import numpy as np
 from pydantic import Field
 from scipy.signal import find_peaks, savgol_filter
 
-from .base import BasePeakFinderConfig, PeakFinder, PeakInfo
+from .base import BasePeakFinderConfig, _NumericalPeakFinder, _PeakInfo
 
 
 class ScipyPeakFinderConfig(BasePeakFinderConfig):
@@ -23,7 +23,7 @@ class ScipyPeakFinderConfig(BasePeakFinderConfig):
     max_peaks: int | None = Field(None, description="Maximum number of peaks to return")
 
 
-class ScipyPeakFinder(PeakFinder):
+class ScipyPeakFinder(_NumericalPeakFinder):
     """Standard peak finding using scipy.signal.find_peaks with smoothing."""
 
     name: ClassVar[str] = "scipy"
@@ -35,7 +35,7 @@ class ScipyPeakFinder(PeakFinder):
     ) -> None:
         super().__init__(config, **kwargs)
 
-    def find_peaks(self, freqs: np.ndarray, psd: np.ndarray) -> PeakInfo:
+    def _find_peaks(self, freqs: np.ndarray, psd: np.ndarray) -> _PeakInfo:
         config = cast(ScipyPeakFinderConfig, self.config)
 
         # Robust Smoothing Strategy
@@ -131,7 +131,7 @@ class ScipyPeakFinder(PeakFinder):
             for k, v in props.items():
                 props[k] = v[top_indices]
 
-        return PeakInfo(
+        return _PeakInfo(
             indices=peaks.tolist(),
             frequencies=r_freqs.tolist(),
             values=r_vals.tolist(),

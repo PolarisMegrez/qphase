@@ -1,23 +1,19 @@
-"""qphase_sde: Peak Finder Plugin Class
+"""qphase_sde: Peak Finder Plugin Classes
 ---------------------------------------------------------
-The numerical finder base retains a small private method for compatibility:
+:class:`TypedPeakFinder` is the only public finder contract: a runtime
+structural protocol whose ``find_candidate_table`` returns the grouped
+candidate-table payload of ``qphase_sde.contracts.peaks`` — exactly the
+mapping :func:`~qphase_sde.contracts.peaks.validate_candidate_table` accepts.
 
-- ``PeakFinder`` provides the numerical ``find_peaks`` implementation and
-  the public typed ``find_candidate_table`` adapter.
-- :class:`TypedPeakFinder` is the public plugin-class contract: a runtime
-  structural protocol whose finders return the grouped candidate-table
-  payload of ``qphase_sde.contracts.peaks`` — exactly the mapping
-  :func:`~qphase_sde.contracts.peaks.validate_candidate_table` accepts.
-
-Built-in finders satisfy :class:`TypedPeakFinder` through the shared base
-implementation.
+Everything else in this module is implementation detail of the built-in
+finders: the numerical ``_find_peaks`` step and its ``_PeakInfo`` container
+are private, and the concrete finders reach the typed contract through the
+shared ``_NumericalPeakFinder`` base.
 
 Public API
 ----------
-``PeakInfo`` : Legacy peak finding result container.
 ``BasePeakFinderConfig`` : Base configuration for peak finders.
-``PeakFinder`` : Abstract legacy peak-finder plugin class.
-``TypedPeakFinder`` : Frozen Wave 5B candidate-table protocol.
+``TypedPeakFinder`` : The candidate-table plugin contract.
 """
 
 from abc import ABC, abstractmethod
@@ -36,8 +32,8 @@ from ...contracts.peaks import (
 )
 
 
-class PeakInfo(BaseModel):
-    """Container for peak finding results."""
+class _PeakInfo(BaseModel):
+    """Private peak container returned by ``_find_peaks``."""
 
     indices: list[int]
     frequencies: list[float]
@@ -220,8 +216,8 @@ def materialize_candidate_product(
     )
 
 
-class PeakFinder(ABC):
-    """Abstract base class for peak finding algorithms."""
+class _NumericalPeakFinder(ABC):
+    """Private base: numerical peak finding plus the typed-table adapter."""
 
     name: ClassVar[str]
     description: ClassVar[str]
@@ -233,7 +229,7 @@ class PeakFinder(ABC):
         self.config = config
 
     @abstractmethod
-    def find_peaks(self, freqs: np.ndarray, psd: np.ndarray) -> PeakInfo:
+    def _find_peaks(self, freqs: np.ndarray, psd: np.ndarray) -> _PeakInfo:
         """Find peaks in power spectral density data.
 
         Parameters
@@ -245,7 +241,7 @@ class PeakFinder(ABC):
 
         Returns
         -------
-        PeakInfo
+        _PeakInfo
             Detected peaks and their properties.
 
         """
@@ -281,7 +277,7 @@ class PeakFinder(ABC):
         sample_indices: list[int] = []
         statuses: list[int] = []
         for channel, spectrum in enumerate(values):
-            result = self.find_peaks(axis, spectrum)
+            result = self._find_peaks(axis, spectrum)
             sample_indices.extend(int(value) for value in result.indices)
             locations.extend(float(value) for value in result.frequencies)
             intensities.extend(float(value) for value in result.values)
@@ -321,8 +317,8 @@ class TypedPeakFinder(Protocol):
     Implementations return the grouped candidate-table payload of
     ``qphase_sde.contracts.peaks`` — a :class:`CandidateTablePayload` mapping
     that must unpack into ``validate_candidate_table`` without raising.
-    Built-in finders inherit the shared implementation from :class:`PeakFinder`;
-    they retain ``find_peaks`` only as a private numerical compatibility method.
+    Built-in finders satisfy this protocol through the shared
+    ``_NumericalPeakFinder`` base, which owns the single implementation.
     """
 
     name: ClassVar[str]

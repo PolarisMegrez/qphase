@@ -7,13 +7,13 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase_sde.analyser.peaks import PeaksAnalyser, PeaksAnalyserConfig
 from qphase_sde.analyser.psd import PsdAnalyser, _build_psd_products
 from qphase_sde.estimators.peak_finder import (
-    PeakInfo,
     RationalPeakFinder,
     RationalPeakFinderConfig,
     ScipyPeakFinder,
     ScipyPeakFinderConfig,
     TypedPeakFinder,
 )
+from qphase_sde.estimators.peak_finder.base import _PeakInfo
 
 
 def _lorentzian(
@@ -28,7 +28,7 @@ def test_scipy_no_peaks():
     psd = np.ones_like(freqs) * 1e-12
     finder = ScipyPeakFinder(ScipyPeakFinderConfig(noise_threshold=10.0))
 
-    info = finder.find_peaks(freqs, psd)
+    info = finder._find_peaks(freqs, psd)
 
     assert info.indices == []
     assert info.frequencies == []
@@ -41,7 +41,7 @@ def test_scipy_single_peak():
     psd = _lorentzian(freqs, center=0.5, gamma=0.1, amplitude=5.0) + 0.01
     finder = ScipyPeakFinder(ScipyPeakFinderConfig(noise_threshold=2.0))
 
-    info = finder.find_peaks(freqs, psd)
+    info = finder._find_peaks(freqs, psd)
 
     assert len(info.indices) == 1
     assert np.isclose(info.frequencies[0], 0.5, atol=0.05)
@@ -59,7 +59,7 @@ def test_scipy_multiple_peaks():
     )
     finder = ScipyPeakFinder(ScipyPeakFinderConfig(noise_threshold=2.0))
 
-    info = finder.find_peaks(freqs, psd)
+    info = finder._find_peaks(freqs, psd)
 
     assert len(info.indices) == 3
     detected = sorted(info.frequencies)
@@ -79,7 +79,7 @@ def test_scipy_max_peaks_filter():
     )
     finder = ScipyPeakFinder(ScipyPeakFinderConfig(noise_threshold=2.0, max_peaks=2))
 
-    info = finder.find_peaks(freqs, psd)
+    info = finder._find_peaks(freqs, psd)
 
     assert len(info.indices) == 2
 
@@ -92,7 +92,7 @@ def test_rational_single_peak():
         RationalPeakFinderConfig(num_order=2, den_order=4, parity="even")
     )
 
-    info = finder.find_peaks(freqs, psd)
+    info = finder._find_peaks(freqs, psd)
 
     assert len(info.indices) >= 1
     assert any(np.isclose(abs(float(f)), 0.6, atol=0.2) for f in info.frequencies)
@@ -104,7 +104,7 @@ def test_rational_empty_on_invalid_data():
     psd = np.full_like(freqs, np.nan)
     finder = RationalPeakFinder(RationalPeakFinderConfig())
 
-    info = finder.find_peaks(freqs, psd)
+    info = finder._find_peaks(freqs, psd)
 
     assert info.indices == []
     assert info.frequencies == []
@@ -112,8 +112,8 @@ def test_rational_empty_on_invalid_data():
 
 
 def test_peak_info_serialization_no_numpy_or_complex():
-    """PeakInfo.model_dump() must not leave numpy arrays or complex numbers."""
-    info = PeakInfo(
+    """_PeakInfo.model_dump() must not leave numpy arrays or complex numbers."""
+    info = _PeakInfo(
         indices=[1, 2],
         frequencies=[0.1, 0.2],
         values=[1.0, 2.0],
@@ -149,7 +149,7 @@ def test_scipy_properties_serialized():
     psd = _lorentzian(freqs, center=0.5, gamma=0.1, amplitude=5.0) + 0.01
     finder = ScipyPeakFinder(ScipyPeakFinderConfig(noise_threshold=2.0))
 
-    info = finder.find_peaks(freqs, psd)
+    info = finder._find_peaks(freqs, psd)
     dumped = info.model_dump()
 
     assert len(dumped["indices"]) == 1

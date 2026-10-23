@@ -5,7 +5,7 @@ from numpy.typing import NDArray
 from pydantic import Field
 from scipy.optimize import curve_fit
 
-from .base import BasePeakFinderConfig, PeakFinder, PeakInfo
+from .base import BasePeakFinderConfig, _NumericalPeakFinder, _PeakInfo
 
 
 class RationalPeakFinderConfig(BasePeakFinderConfig):
@@ -27,7 +27,7 @@ class RationalPeakFinderConfig(BasePeakFinderConfig):
     )
 
 
-class RationalPeakFinder(PeakFinder):
+class RationalPeakFinder(_NumericalPeakFinder):
     """Fit a rational function to the PSD and find analytical peaks."""
 
     name: ClassVar[str] = "rational"
@@ -113,7 +113,7 @@ class RationalPeakFinder(PeakFinder):
 
         return N, D
 
-    def find_peaks(self, freqs: np.ndarray, psd: np.ndarray) -> PeakInfo:
+    def _find_peaks(self, freqs: np.ndarray, psd: np.ndarray) -> _PeakInfo:
         # Step 1: Fit
         config = cast(RationalPeakFinderConfig, self.config)
         num_powers = self._get_powers(config.num_order, config.parity, False)
@@ -233,7 +233,7 @@ class RationalPeakFinder(PeakFinder):
                 idx = np.argmin(np.abs(freqs - tf))
                 indices.append(int(idx))
 
-            return PeakInfo(
+            return _PeakInfo(
                 indices=indices,
                 frequencies=target_freqs,
                 values=target_vals,
@@ -242,7 +242,7 @@ class RationalPeakFinder(PeakFinder):
 
         except Exception:
             # Fit failed
-            return PeakInfo(indices=[], frequencies=[], values=[])
+            return _PeakInfo(indices=[], frequencies=[], values=[])
 
     def _eval_rational(self, w, params):
         # Quick eval helper

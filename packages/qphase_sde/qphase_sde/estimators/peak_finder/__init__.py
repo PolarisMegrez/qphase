@@ -1,9 +1,30 @@
+"""qphase_sde: Peak Finder Plugins
+---------------------------------------------------------
+``TypedPeakFinder`` is the only public finder contract; the built-in finders
+below satisfy it. Their numerical ``find_peaks`` step and its ``PeakInfo``
+container are private implementation details of ``base`` and are not
+re-exported here.
+
+Public API
+----------
+BasePeakFinderConfig
+    Base configuration for peak finders.
+TypedPeakFinder
+    Candidate-table plugin contract.
+ScipyPeakFinder / ScipyPeakFinderConfig
+    ``scipy.signal.find_peaks`` based finder.
+RationalPeakFinder / RationalPeakFinderConfig
+    Rational-function (Padé) based finder.
+materialize_candidate_product
+    Materialize per-scan finder results as a grouped peak product.
+create_peak_finder
+    Build a finder from a plugin configuration value.
+"""
+
 from typing import Any
 
 from .base import (
     BasePeakFinderConfig,
-    PeakFinder,
-    PeakInfo,
     TypedPeakFinder,
     materialize_candidate_product,
 )
@@ -11,20 +32,18 @@ from .rational import RationalPeakFinder, RationalPeakFinderConfig
 from .scipy import ScipyPeakFinder, ScipyPeakFinderConfig
 
 __all__ = [
-    "PeakFinder",
-    "PeakInfo",
     "BasePeakFinderConfig",
-    "TypedPeakFinder",
-    "materialize_candidate_product",
-    "ScipyPeakFinder",
-    "ScipyPeakFinderConfig",
     "RationalPeakFinder",
     "RationalPeakFinderConfig",
+    "ScipyPeakFinder",
+    "ScipyPeakFinderConfig",
+    "TypedPeakFinder",
     "create_peak_finder",
+    "materialize_candidate_product",
 ]
 
 
-def create_peak_finder(config: Any) -> PeakFinder | None:
+def create_peak_finder(config: Any) -> TypedPeakFinder | None:
     """Create a peak finder from configuration."""
     if isinstance(config, str | type(None)):
         if config is None or (isinstance(config, str) and config.lower() == "none"):
