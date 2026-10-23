@@ -13,10 +13,12 @@ from qphase_sde.analyser.spectral_ridge import (
     SpectralRidgeAnalyser,
     SpectralRidgeConfig,
     SpectralRidgeEstimate,
+    estimate_spectral_ridges,
+)
+from qphase_sde.analyser.spectral_ridge.tracking import (
     _candidate_retention_tiers,
     _track_candidate_paths,
     _tracking_segments,
-    estimate_spectral_ridges,
 )
 from qphase_sde.products import add_scan_parameter_coordinates
 
