@@ -6,6 +6,11 @@ old root modules (``batch``/``buffers``/``scan``/``ops``/``coordinates``/
 ``utils``) plus the retired ``math/`` package are gone without aliases. The
 manifest is a pure declaration: importing it must never pull the engine,
 concrete plugins or CuPy, and ``contracts`` must never depend on ``runtime``.
+
+It also freezes the layering direction between the package's own layers, as a
+static AST scan (never by importing): ``contracts`` and ``numerics`` are leaf
+layers, ``runtime`` and ``estimators`` drive plugins without importing the
+analyser layer, and no analyser reaches into another analyser's classes.
 """
 
 import ast
@@ -17,6 +22,7 @@ import tomllib
 from pathlib import Path
 
 import numpy as np
+import pytest
 from qphase.resources import ResourcePackageManifest, validate_manifest
 from qphase_sde.manifest import MANIFEST
 
@@ -37,8 +43,93 @@ NUMERICS_MODULES = (
     "spectral",
 )
 
+#: Layer -> package roots it may never import. ``contracts`` is the bottom
+#: layer; ``numerics`` sits next to it and may keep using ``contracts``;
+#: ``runtime`` and ``estimators`` may use both but never the analyser layer.
+LAYER_FORBIDDEN_IMPORTS = {
+    "contracts": frozenset(
+        {
+            "analyser",
+            "engine",
+            "estimators",
+            "integrator",
+            "numerics",
+            "observer",
+            "planning",
+            "products",
+            "result",
+            "runtime",
+        }
+    ),
+    "numerics": frozenset(
+        {
+            "analyser",
+            "engine",
+            "estimators",
+            "integrator",
+            "observer",
+            "planning",
+            "products",
+            "result",
+            "runtime",
+        }
+    ),
+    "runtime": frozenset({"analyser"}),
+    "estimators": frozenset({"analyser"}),
+}
+
+#: Submodules of ``analyser/`` that hold shared machinery rather than one
+#: analyser family: importing the base class from ``base`` is how every
+#: analyser is written.
+ANALYSER_SHARED_MODULES = frozenset({"base"})
+
 #: Entry-point namespaces reserved by the core registry, not plugin classes.
 _RESERVED_NAMESPACES = frozenset({"engine", "resource"})
+
+
+def _module_name(path: Path) -> str:
+    """Dotted module name of a source file inside the SDE package."""
+    parts = path.relative_to(SDE_ROOT.parent).with_suffix("").parts
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def _imported_modules(path: Path) -> list[str]:
+    """Every absolute module path *path* imports, resolved from its location."""
+    return [target for target, _ in _imported_names(path)]
+
+
+def _imported_names(path: Path) -> list[tuple[str, list[str]]]:
+    """Every import of *path* as ``(absolute module, imported names)``."""
+    module = _module_name(path)
+    base = module if path.name == "__init__.py" else module.rsplit(".", 1)[0]
+    imported: list[tuple[str, list[str]]] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            imported.extend((alias.name, [alias.name]) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                parts = base.split(".")
+                parts = parts[: len(parts) - (node.level - 1)]
+                target = ".".join(parts + ([node.module] if node.module else []))
+            else:
+                target = node.module or ""
+            if target:
+                imported.append((target, [alias.name for alias in node.names]))
+    return imported
+
+
+def _layer_modules(layer: str) -> list[Path]:
+    return sorted((SDE_ROOT / layer).rglob("*.py"))
+
+
+def _analyser_family(module: str) -> str | None:
+    """First component after ``qphase_sde.analyser``, or None if outside it."""
+    parts = module.split(".")
+    if len(parts) < 3 or parts[1] != "analyser":
+        return None
+    return parts[2]
 
 
 def test_old_root_modules_are_gone():
@@ -118,6 +209,53 @@ def _pyproject_entry_points() -> dict[str, str]:
         (SDE_PACKAGE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
     return dict(pyproject["project"]["entry-points"]["qphase"])
+
+
+@pytest.mark.parametrize("layer", sorted(LAYER_FORBIDDEN_IMPORTS))
+def test_layer_does_not_import_upper_layers(layer):
+    """Each layer may only import from the layers beneath it.
+
+    ``contracts`` is the bottom layer, ``numerics`` may use ``contracts``, and
+    both are read-only to everyone else. ``runtime`` and ``estimators`` drive
+    plugins through their protocols, so neither may import the analyser layer.
+    The scan is static: it reads the import statements and never imports the
+    modules under test.
+    """
+    forbidden = LAYER_FORBIDDEN_IMPORTS[layer]
+    offenders = []
+    for path in _layer_modules(layer):
+        module = _module_name(path)
+        for target in _imported_modules(path):
+            if not target.startswith("qphase_sde."):
+                continue
+            top = target.split(".")[1]
+            if top in forbidden:
+                offenders.append(f"{module} -> {target}")
+    assert not offenders, f"{layer}/ imports upper layers: {offenders}"
+
+
+def test_analysers_do_not_import_each_others_classes():
+    """An analyser may reuse another analyser's *config*, never its class.
+
+    Sharing the class would make one plugin's behaviour depend on another's
+    implementation; sharing a config model is the sanctioned form (a carrier
+    that configures an inline ridge is the existing example). ``base`` and a
+    module's own family are excluded, and the scan is static.
+    """
+    offenders = []
+    for path in _layer_modules("analyser"):
+        module = _module_name(path)
+        family = _analyser_family(module)
+        if family is None:
+            continue
+        for target, names in _imported_names(path):
+            other = _analyser_family(target)
+            if other is None or other == family or other in ANALYSER_SHARED_MODULES:
+                continue
+            for name in names:
+                if name.endswith("Analyser") and name != "Analyser":
+                    offenders.append(f"{module} -> {target}.{name}")
+    assert not offenders, f"analysers import each other's classes: {offenders}"
 
 
 def test_manifest_is_valid_and_declares_one_engine():
