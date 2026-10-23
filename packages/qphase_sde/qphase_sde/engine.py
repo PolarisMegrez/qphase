@@ -44,6 +44,21 @@ from qphase_sde.planning import (
 from qphase_sde.products import add_scan_parameter_coordinates
 from qphase_sde.result import SDEDataBundle, fingerprint_text, trajectory_product
 from qphase_sde.runtime.buffers import SDEBufferCache
+from qphase_sde.runtime.graph_surgery import (
+    _batch_scope_sub_graph,
+    _node_source_products,
+    _post_batch_graph,
+    _post_tile_graph,
+    _tile_boundary_outputs,
+    _tile_scope_sub_graph,
+)
+from qphase_sde.runtime.rng import (
+    _AdaptiveNoiseRNG,
+    _fused_rng_groups,
+    _GroupedRNG,
+    _rng_group_seed,
+    draw_standard_normal_into,
+)
 from qphase_sde.state import TrajectorySet
 
 __all__ = ["Engine", "EngineConfig", "TrajectoryDivergenceError"]
@@ -55,60 +70,12 @@ class TrajectoryDivergenceError(RuntimeError):
     """Raised when an SDE trajectory leaves a configured state-norm bound."""
 
 
-@dataclass(frozen=True)
-class _GroupedRNG:
-    """Independent RNG handles, each driving a fixed run of trajectories.
-
-    ``counts`` gives the per-handle trajectory counts when groups are not
-    uniform (a short tail group ends a scan point's ensemble); ``None``
-    means every handle drives ``group_size`` trajectories.
-    """
-
-    handles: tuple[Any, ...]
-    group_size: int
-    counts: tuple[int, ...] | None = None
 
 
-def _rng_group_seed(master_seed: int, point_index: int, group_index: int) -> int:
-    """Derive one logical-group stream seed from (master, scan point, group)."""
-    sequence = np.random.SeedSequence(
-        [int(master_seed), int(point_index), int(group_index)]
-    )
-    return int(sequence.generate_state(1, dtype=np.uint64)[0])
 
 
-def _rng_group_counts(group_size: int, n_traj: int) -> tuple[int, ...]:
-    """Per-group trajectory counts covering ``n_traj`` rows, tail group last."""
-    group_count = -(-n_traj // group_size)
-    return (group_size,) * (group_count - 1) + (
-        n_traj - (group_count - 1) * group_size,
-    )
 
 
-def _fused_rng_groups(
-    master_seed: int,
-    point_start: int,
-    point_stop: int,
-    group_size: int,
-    n_traj_per_point: int,
-) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    """Point-major (seeds, counts) for a fused span of scan points.
-
-    Every trajectory's random stream derives from (master seed, absolute
-    scan point, logical group index), so fused, tiled, and
-    trajectory-batched executions of the same configuration draw identical
-    streams.
-    """
-    point_counts = _rng_group_counts(group_size, n_traj_per_point)
-    seeds: list[int] = []
-    counts: list[int] = []
-    for point in range(point_start, point_stop):
-        seeds.extend(
-            _rng_group_seed(master_seed, point, group)
-            for group in range(len(point_counts))
-        )
-        counts.extend(point_counts)
-    return tuple(seeds), tuple(counts)
 
 
 @dataclass(frozen=True)
@@ -127,171 +94,18 @@ class _SimulatedRun:
     observer_payloads: dict[str, Any]
 
 
-def _tile_scope_sub_graph(graph: Any, tile_scope: frozenset[str]) -> Any:
-    """Build the induced tile-phase sub-graph over the tile-scope nodes.
-
-    Tile-scope is ancestor-closed, so every edge into a tile-scope consumer
-    stays internal and the remaining external bindings keep validating.
-    Outputs crossing the tile boundary become terminal in this induced graph;
-    tile-internal transient outputs keep their original liveness.
-    """
-    from qphase.data import ProductGraph
-
-    nodes = [node for node in graph.nodes if node.node_id in tile_scope]
-    edges = [edge for edge in graph.edges if edge.consumer in tile_scope]
-    external = [
-        binding for binding in graph.external_inputs if binding.consumer in tile_scope
-    ]
-    return ProductGraph(nodes=nodes, edges=edges, external_inputs=external)
 
 
-def _tile_boundary_outputs(
-    graph: Any, tile_scope: frozenset[str]
-) -> dict[str, set[str]]:
-    """Return products that must cross the tile merge boundary."""
-    boundary = graph.terminal_outputs()
-    for node in graph.nodes:
-        boundary[node.node_id].update(node.publish_outputs)
-    for edge in graph.edges:
-        if edge.producer in tile_scope and edge.consumer not in tile_scope:
-            boundary[edge.producer].add(edge.product)
-    return {
-        node_id: names
-        for node_id, names in boundary.items()
-        if node_id in tile_scope and names
-    }
 
 
-def _post_tile_graph(
-    graph: Any,
-    tile_scope: frozenset[str],
-    boundary: Mapping[str, set[str]],
-) -> Any:
-    """Build the final graph with merged tile-boundary nodes completed."""
-    from qphase.data import ProductGraph
-
-    retained = set(boundary)
-    nodes = []
-    for node in graph.nodes:
-        if node.node_id not in tile_scope:
-            nodes.append(node)
-            continue
-        if node.node_id in retained:
-            names = boundary[node.node_id]
-            nodes.append(
-                node.model_copy(
-                    update={
-                        "requirements": [],
-                        "outputs": [
-                            output for output in node.outputs if output.name in names
-                        ],
-                        "publish_outputs": [
-                            name for name in node.publish_outputs if name in names
-                        ],
-                    }
-                )
-            )
-    return ProductGraph(
-        nodes=nodes,
-        edges=[
-            edge
-            for edge in graph.edges
-            if edge.producer in retained and edge.consumer not in tile_scope
-            or edge.producer not in tile_scope and edge.consumer not in tile_scope
-        ],
-        external_inputs=[
-            binding
-            for binding in graph.external_inputs
-            if binding.consumer not in tile_scope
-        ],
-    )
 
 
-def _batch_scope_sub_graph(graph: Any, batch_scope: frozenset[str]) -> Any:
-    """Build the executable per-batch graph over transient and frontier nodes."""
-    from qphase.data import ProductGraph
-
-    return ProductGraph(
-        nodes=[node for node in graph.nodes if node.node_id in batch_scope],
-        edges=[
-            edge
-            for edge in graph.edges
-            if edge.producer in batch_scope and edge.consumer in batch_scope
-        ],
-        external_inputs=[
-            binding
-            for binding in graph.external_inputs
-            if binding.consumer in batch_scope
-        ],
-    )
 
 
-def _node_source_products(graph: Any, node_id: str) -> dict[str, str]:
-    """Resolve every requirement's source identity from the frozen graph.
-
-    External bindings record ``"<source>.<product>"`` (e.g.
-    ``input.trajectories``); internal edges carry the upstream product name.
-    The mapping is requirement-keyed and name-agnostic, so normal, batched
-    and tiled runners hand every typed analyser the same provenance.
-    """
-    sources: dict[str, str] = {}
-    for binding in graph.external_inputs:
-        if binding.consumer == node_id:
-            sources[binding.requirement] = f"{binding.source}.{binding.product}"
-    for edge in graph.edges:
-        if edge.consumer == node_id:
-            sources[edge.requirement] = edge.product
-    return sources
 
 
-def _post_batch_graph(
-    graph: Any,
-    transient: frozenset[str],
-    frontier: frozenset[str],
-) -> Any:
-    """Remove transient nodes and close completed reducer requirements."""
-    from qphase.data import ProductGraph
-
-    return ProductGraph(
-        nodes=[
-            node.model_copy(update={"requirements": []})
-            if node.node_id in frontier
-            else node
-            for node in graph.nodes
-            if node.node_id not in transient
-        ],
-        edges=[
-            edge
-            for edge in graph.edges
-            if edge.producer not in transient and edge.consumer not in frontier
-        ],
-        external_inputs=[
-            binding
-            for binding in graph.external_inputs
-            if binding.consumer not in transient and binding.consumer not in frontier
-        ],
-    )
 
 
-class _AdaptiveNoiseRNG:
-    """Generator-style facade the engine hands to adaptive integrators.
-
-    Adaptive integrators draw noise internally through the ``normal(size=...)``
-    API declared by the integrator contract; this facade routes the draw
-    through the engine's grouped-stream machinery so per-group provenance is
-    preserved without exposing the private ``_GroupedRNG`` container to
-    integrator or backend code.
-    """
-
-    def __init__(self, backend: Any, rng: Any) -> None:
-        self._backend = backend
-        self._rng = rng
-
-    def normal(self, size: Any = None) -> Any:
-        shape = tuple(size) if size is not None else ()
-        out = self._backend.empty(shape, np.float64)
-        Engine._draw_standard_normal_into(self._backend, self._rng, out)
-        return out
 
 
 class EngineConfig(BaseModel):
@@ -2058,7 +1872,7 @@ class Engine(EngineBase):
                 noise_shape = (n_chunk, n_traj, model.noise_dim)
                 raw_noise = buf_cache.get(noise_shape, noise_dtype)
                 try:
-                    self._draw_standard_normal_into(be, rng, raw_noise)
+                    draw_standard_normal_into(be, rng, raw_noise)
                     dt_sqrt = be.asarray(dt**0.5, dtype=raw_noise.dtype)
                     raw_noise *= dt_sqrt
                     save_offsets_list: list[int] = []
@@ -2124,7 +1938,7 @@ class Engine(EngineBase):
                     step_noise_shape = (n_traj, model.noise_dim)
                     raw_noise = buf_cache.get(step_noise_shape, noise_dtype)
                     try:
-                        self._draw_standard_normal_into(be, rng, raw_noise)
+                        draw_standard_normal_into(be, rng, raw_noise)
                         dt_sqrt = current_dt**0.5
                         if hasattr(raw_noise, "dtype"):
                             dt_sqrt = be.asarray(dt_sqrt, dtype=raw_noise.dtype)
@@ -2312,34 +2126,3 @@ class Engine(EngineBase):
             message, {"time": float(t), "step": int(step), "observers": details}
         )
 
-    @staticmethod
-    def _draw_standard_normal_into(backend: BackendBase, rng: Any, out: Any) -> Any:
-        """Fill a cached noise array, including stable grouped RNG slices."""
-        if not isinstance(rng, _GroupedRNG):
-            fill = getattr(backend, "randn_into", None)
-            if callable(fill):
-                return fill(rng, out)
-            out[...] = backend.randn(rng, out.shape, dtype=out.dtype)
-            return out
-
-        trajectory_axis = 1 if out.ndim == 3 else 0
-        counts = rng.counts
-        if counts is None:
-            counts = (rng.group_size,) * len(rng.handles)
-        if len(counts) != len(rng.handles):
-            raise ValueError("grouped RNG counts do not match the handle count")
-        expected = sum(counts)
-        if int(out.shape[trajectory_axis]) != expected:
-            raise ValueError("grouped RNG shape does not match the fused scan tile")
-        fill = getattr(backend, "randn_into", None)
-        start = 0
-        for handle, count in zip(rng.handles, counts, strict=True):
-            selection = [slice(None)] * out.ndim
-            selection[trajectory_axis] = slice(start, start + count)
-            start += count
-            target = out[tuple(selection)]
-            if callable(fill):
-                fill(handle, target)
-            else:
-                target[...] = backend.randn(handle, target.shape, dtype=target.dtype)
-        return out

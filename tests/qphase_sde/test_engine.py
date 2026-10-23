@@ -3,14 +3,10 @@
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend, NumpyConfig
-from qphase_sde.engine import (
-    Engine,
-    EngineConfig,
-    TrajectoryDivergenceError,
-    _GroupedRNG,
-)
+from qphase_sde.engine import Engine, EngineConfig, TrajectoryDivergenceError
 from qphase_sde.integrator.base import ChunkStepResult
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
+from qphase_sde.runtime.rng import _GroupedRNG, draw_standard_normal_into
 
 pytestmark = pytest.mark.integration
 
@@ -158,7 +154,7 @@ def test_grouped_rng_fills_noncontiguous_chunk_slices():
     actual = np.empty((3, 8, 2), dtype=np.float64)
     grouped = _GroupedRNG((backend.rng(31), backend.rng(37)), group_size=4)
 
-    Engine._draw_standard_normal_into(backend, grouped, actual)
+    draw_standard_normal_into(backend, grouped, actual)
 
     expected = np.concatenate(
         (
