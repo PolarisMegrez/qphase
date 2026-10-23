@@ -57,7 +57,7 @@ typed-input requirement name, and the product provenance attribute of
 `qphase_sde`. All configuration models are `extra="forbid"`, so removed keys
 are hard validation errors, and no dual-key compatibility is retained.
 
-1. **PSD/Allan `measurement` union.** `PsdAnalyzerConfig` and
+1. **PSD/Allan `measurement` union.** `PsdAnalyserConfig` and
    `AllanVarianceConfig` dropped the top-level `kind`/`modes` keys in favour of
    a strictly discriminated `measurement` union. PSD takes
    `measurement: {complex_field: {channels, representation, orientation?}}` or

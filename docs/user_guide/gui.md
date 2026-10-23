@@ -45,7 +45,7 @@ the revision.
 
 This supports a long `SDE -> analysis` Workflow: after SDE completes but before
 analysis starts, the pending analysis Job can be corrected. It cannot restore
-data that the upstream Job discarded. For example, an analyzer requiring raw
+data that the upstream Job discarded. For example, an analyser requiring raw
 trajectories cannot be appended after `keep_traj: false` has dropped them.
 
 ## Workflows And Sessions

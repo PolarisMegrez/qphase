@@ -38,7 +38,7 @@ Executes the configured SDE job and returns its result bundle. The engine requir
 
 Catalog of typed data products plus job provenance returned by the engine.
 
-*   `products`: named datasets — the `trajectories` time-series product plus one product per analyzer payload (for example a `spectral` product for `psd`).
+*   `products`: named datasets — the `trajectories` time-series product plus one product per analyser payload (for example a `spectral` product for `psd`).
 *   `provenance`: the job-level SDE provenance record.
 *   `axes` / `shape`: named scan-axis coordinates and grid shape (empty for single-point jobs).
 *   `point_view(index)`: lazily backed view of one scan point; `metadata["params"]` reports that point's swept values.
@@ -138,7 +138,7 @@ Defines the properties of the noise driving the system.
 
 ---
 
-## Analyzers
+## Analysers
 
 ### `protocol qphase_sde.contracts.analyser.AnalyserExecutionContract`
 
@@ -148,9 +148,9 @@ The interface for analysis plugins.
 
 *   `execute(inputs: Mapping[str, Dataset], *, backend, label, metadata, context) -> Mapping[str, Dataset]`: Consumes typed products and returns declared typed products.
 
-### PSD Analyzer
+### PSD Analyser
 
-`qphase_sde.analyser.PsdAnalyzer` consumes the typed `trajectories` product and writes a spectral `Dataset`:
+`qphase_sde.analyser.psd.PsdAnalyser` consumes the typed `trajectories` product and writes a spectral `Dataset`:
 
 *   `axis`: frequency axis.
 *   `psd`: PSD matrix with shape `(n_frequency, n_modes)`.
@@ -198,10 +198,10 @@ Cross-job postprocessing is implemented as a scheduler workflow:
       mode: 0
 ```
 
-The `lorentz_fitter` analyzer reads the logical SDE scan dataset, fits one
+The `lorentz_fitter` analyser reads the logical SDE scan dataset, fits one
 Lorentzian per scan value, and persists its fit rows and merged PSD traces as a
 typed product in the Session Job directory. `band_limited_carrier` is an
-alternative downstream analyzer for an adaptive, filtered long-time `G^(1)`
+alternative downstream analyser for an adaptive, filtered long-time `G^(1)`
 carrier when a Lorentzian profile is not assumed. It refuses unresolved
 single-carrier points and persists local platforms separately from
 scan-continuous tracking. Dataset views and generic in-memory aggregation live

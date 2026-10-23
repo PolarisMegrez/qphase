@@ -1,14 +1,14 @@
 ---
 layout: default
-title: Analyzers
+title: Analysers
 parent: qphase_sde
 grand_parent: API Reference
 nav_order: 4
 ---
 
-# Analyzers
+# Analysers
 
-Analyzers run after the SDE integration loop; their payloads become named products of the job's `SDEDataBundle`. They can also be invoked in `mode: analyze` for post-processing.
+Analysers run after the SDE integration loop; their payloads become named products of the job's `SDEDataBundle`. They can also be invoked in `mode: analyze` for post-processing.
 
 The analyser key is an instance label. To run one implementation more than
 once, configure `{plugin, config}` explicitly:
@@ -146,7 +146,7 @@ configuration failure.
 
 ### Output payload
 
-The analyzer stores:
+The analyser stores:
 
 *   `axis` — frequency or angular-frequency axis.
 *   `psd` — mean PSD for each requested mode.
@@ -583,7 +583,7 @@ count.
 A Lorentzian core with HWHM close to a soft-mode decay rate describes the
 stationary recovery after stochastic perturbations. It is not, by itself, the
 one-time relaxation from the configured initial condition. A nonzero engine
-`t0` removes that initial transient before this analyzer and the PSD run.
+`t0` removes that initial transient before this analyser and the PSD run.
 
 The first implementation materializes each supplied trajectory ensemble on the
 host and does not provide online trajectory-batch aggregation. Use it for
@@ -697,7 +697,7 @@ window counts are explicitly marked as estimated rather than measured.
 ## `lorentz_fitter`
 
 Fits Lorentzians to PSD point views from a logical SDE scan dataset. It is a
-downstream analyzer intended for `mode: analyze`.
+downstream analyser intended for `mode: analyze`.
 
 ### Configuration
 
@@ -752,7 +752,7 @@ analyser:
 
 ### Clipping rationale
 
-PSD data often extends over a very wide frequency range determined by `dt`, while the peak is narrow. The analyzer computes the mean and standard deviation of the frequency axis weighted by `(PSD - min(PSD))^2`, then drops samples outside `mean ± clip_sigma * std`. This removes irrelevant tails while keeping the peak and enough nearby continuum for a stable baseline estimate.
+PSD data often extends over a very wide frequency range determined by `dt`, while the peak is narrow. The analyser computes the mean and standard deviation of the frequency axis weighted by `(PSD - min(PSD))^2`, then drops samples outside `mean ± clip_sigma * std`. This removes irrelevant tails while keeping the peak and enough nearby continuum for a stable baseline estimate.
 
 A warning is emitted when the squared-weighted `std` deviates from the Lorentzian expectation `std ≈ linewidth / 2` by more than a factor of 2, which can indicate multiple peaks or insufficient frequency resolution.
 

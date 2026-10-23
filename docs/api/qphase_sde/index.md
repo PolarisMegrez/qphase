@@ -13,7 +13,7 @@ package for QPhase. It provides:
 *   `engine.sde` — the SDE simulation engine.
 *   Integrator plugins (`euler_maruyama`, `cayley_maruyama`, `milstein`, `srk`).
 *   SDE model implementations (`vdp_2mode`, `kerr_2mode`, `crosskerr_2mode`, `kerr_3mode`).
-*   Analyzer plugins (`psd`, `dist`, `pdist`, `coherence_matrix`,
+*   Analyser plugins (`psd`, `dist`, `pdist`, `coherence_matrix`,
     `moment_statistics`, `quadratic_moments`, `spectral_ridge`, `finite_delay_carrier`,
     `trajectory_diagnostics`, `allan_variance`,
     `allan_scaling`, `lorentz_fitter`).
@@ -27,6 +27,6 @@ This section documents `qphase_sde`-specific behavior. For the core framework
 *   [Engine](./engine.md) — `EngineConfig`, `SDEDataBundle`, `save_stride`, and analyze mode.
 *   [Integrators](./integrators.md) — `Integrator` protocol and `GenericSRK`.
 *   [Models](./models.md) — built-in models and the `SDEModel` protocol.
-*   [Analyzers](./analyzers.md) — PSD, distribution, and Lorentzian-fitting
-    analyzers.
+*   [Analysers](./analyzers.md) — PSD, distribution, and Lorentzian-fitting
+    analysers.
 *   [Output Schemas](./output.md) — the Artifact v4 layout and the typed products each analyser persists.

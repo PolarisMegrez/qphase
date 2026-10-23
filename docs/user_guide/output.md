@@ -71,9 +71,9 @@ directory: a validated `artifact_manifest.json` plus `npz/3` payload files.
 The `trajectories` product holds the complex amplitudes over
 `(scan, trajectory, time, channel)` axes together with per-trajectory
 `valid_length`; it is present only when trajectory retention is enabled.
-Analyzer payloads become their own named products — a `spectral` product for
+Analyser payloads become their own named products — a `spectral` product for
 PSD, `statistics` products for Allan variance, coherence and moment families,
-and versioned bridge products for the remaining analyzers.
+and versioned bridge products for the remaining analysers.
 
 When `engine.sde.keep_traj` is false, analysis products remain available while
 raw trajectories are discarded after analysis. See the

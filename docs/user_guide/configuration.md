@@ -115,7 +115,7 @@ must be non-empty strings, cannot contain `.`, and cannot be `input`.
 `allan_variance` analysers declare a typed input requirement named `signal`, so
 a simulation job pins it to the retained trajectories with
 `input_bindings: {raw_psd: {signal: input.trajectories}}` (see
-[SDE analyzers](../api/qphase_sde/analyzers.md)).
+[SDE analysers](../api/qphase_sde/analyzers.md)).
 
 ## Parameter Scans
 

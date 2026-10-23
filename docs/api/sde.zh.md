@@ -150,7 +150,7 @@ nav_order: 2
 
 ### PSD 分析器
 
-`qphase_sde.analyser.PsdAnalyzer` 消费 typed `trajectories` product，并写出 spectral `Dataset`：
+`qphase_sde.analyser.psd.PsdAnalyser` 消费 typed `trajectories` product，并写出 spectral `Dataset`：
 
 *   `axis`：频率轴。
 *   `psd`：形状为 `(n_frequency, n_modes)` 的 PSD 矩阵。

@@ -18,7 +18,7 @@ Welcome to the QPhase Developer Guide! This section is for developers who want t
 
 ## Extending QPhase
 
-- **[Plugin Development](plugin_development.md)**: How to create new plugins (backends, analyzers, etc.)
+- **[Plugin Development](plugin_development.md)**: How to create new plugins (backends, analysers, etc.)
 - **[Backend Development](backend.md)**: Creating custom computation backends
 - **[Configuration](configuration.md)**: Advanced configuration options
 

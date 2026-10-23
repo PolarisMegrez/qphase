@@ -10,7 +10,7 @@ Postprocessing is not a separate core command or a separate resource package. It
 
 - **Core** (`qphase`) provides generic in-memory aggregation containers
   (`qphase.core.aggregation`) and the typed-product persistence layer.
-- **`qphase_sde`** provides SDE-specific cross-job analyzers: `lorentz_fitter`
+- **`qphase_sde`** provides SDE-specific cross-job analysers: `lorentz_fitter`
   for PSD peaks and `allan_scaling` for white-FM windows and perturbation
   scaling. Their results are persisted as typed products.
 - The **`qphase postprocess` CLI command has been removed**. Use `qphase run <workflow.yaml>` instead.

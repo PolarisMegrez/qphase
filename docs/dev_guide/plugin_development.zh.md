@@ -97,9 +97,9 @@ from qphase.data import (
     DataKind, ProductDeclaration, ProductRequirement, ProductSchema,
     StatisticsDataset, VariableSchema,
 )
-from qphase_sde.analyser.base import Analyzer
+from qphase_sde.analyser.base import Analyser
 
-class MyAnalyser(Analyzer):
+class MyAnalyser(Analyser):
     name: ClassVar[str] = "my_analyser"
     description: ClassVar[str] = "Calculates mean photon number"
     config_schema: ClassVar[type] = MyAnalyserConfig
@@ -173,7 +173,7 @@ class MyEngine:
         pass
 ```
 
-SDE analyser 应继承 `qphase_sde.analyser.Analyzer`。基类提供保守的 planner 默认值；
+SDE analyser 应继承 `qphase_sde.analyser.base.Analyser`。基类提供保守的 planner 默认值；
 当 analyser 会转移完整轨迹、支持 trajectory batching/time streaming，或分配较大
 workspace 时，应使用 `AnalyserExecutionCapabilities` 覆盖
 `execution_capabilities()`，并在

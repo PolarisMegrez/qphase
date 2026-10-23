@@ -58,7 +58,7 @@ memory ~ n_traj * ((t1 - t0) / (dt * save_stride)) * n_modes * dtype_bytes
 ```
 
 `record_modes` reduces the final factor without changing the simulated state.
-The trajectory stores `meta.mode_indices`, and SDE analyzers continue to accept
+The trajectory stores `meta.mode_indices`, and SDE analysers continue to accept
 physical mode numbers:
 
 ```yaml
@@ -91,7 +91,7 @@ engine:
 
 ## `mode: analyze`
 
-Setting `engine.sde.mode: analyze` runs the configured analyzers on upstream
+Setting `engine.sde.mode: analyze` runs the configured analysers on upstream
 input data without performing a new simulation. This is used for downstream
 post-processing, for example fitting Lorentzians to a logical scan dataset:
 

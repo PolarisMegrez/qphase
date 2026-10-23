@@ -42,7 +42,7 @@ Wave 6D 迁移重构了 `qphase_sde` 的 PSD/Allan 测量配置、typed 输入 r
 product provenance 属性。所有配置模型均为 `extra="forbid"`，被删除的键会直接触发校验错误，
 且不保留双键兼容。
 
-1. **PSD/Allan `measurement` union。** `PsdAnalyzerConfig` 与 `AllanVarianceConfig`
+1. **PSD/Allan `measurement` union。** `PsdAnalyserConfig` 与 `AllanVarianceConfig`
    删除了顶层 `kind`/`modes` 键，改为严格判别的 `measurement` union。PSD 取
    `measurement: {complex_field: {channels, representation, orientation?}}` 或
    `measurement: {sampled_scalar: {channels, ...}}`；Allan 取

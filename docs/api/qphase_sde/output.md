@@ -8,7 +8,7 @@ nav_order: 5
 
 # Output Formats
 
-The SDE engine produces one logical result per job: an `SDEDataBundle` of named, typed data products (trajectories plus analyzer products). A scan is one bundle whose products carry named parameter axes; `point_view(index)` yields lazily backed per-point views.
+The SDE engine produces one logical result per job: an `SDEDataBundle` of named, typed data products (trajectories plus analyser products). A scan is one bundle whose products carry named parameter axes; `point_view(index)` yields lazily backed per-point views.
 
 ## Artifact directory
 
@@ -33,7 +33,7 @@ point = bundle.point_view((0,))   # per-scan-point view of the bundle
 
 ## PSD output
 
-The `psd` analyzer stores:
+The `psd` analyser stores:
 
 *   `axis` — frequency or angular-frequency vector.
 *   `psd` — mean PSD values per mode.
@@ -44,7 +44,7 @@ The `psd` analyzer stores:
 
 For a scan, the PSD product carries the named scan axis of the logical SDE
 bundle. A downstream `mode: analyze` job consumes that bundle once with the
-`lorentz_fitter` analyzer.
+`lorentz_fitter` analyser.
 
 With `storage_layout: sharded`, the same logical dataset is split into bounded
 chunk files under one job directory. The manifest records the chunk layout and
@@ -55,7 +55,7 @@ bundle lazily regardless of the physical layout.
 
 `lorentz_fitter` persists one typed statistics product (named after the analyser
 label) whose fields hold one fit row per scan point — columns are described in
-[Analyzers](./analyzers.md) — plus the merged PSD and PSD-SEM traces aligned with
+[Analysers](./analyzers.md) — plus the merged PSD and PSD-SEM traces aligned with
 the reference frequency axis. No side files are written; load it with
 `qphase.data.load_products(job_dir)`.
 

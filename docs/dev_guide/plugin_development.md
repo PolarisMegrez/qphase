@@ -97,9 +97,9 @@ from qphase.data import (
     DataKind, Dataset, ProductDeclaration, ProductRequirement,
     ProductSchema, StatisticsDataset, VariableSchema,
 )
-from qphase_sde.analyser.base import Analyzer
+from qphase_sde.analyser.base import Analyser
 
-class MyAnalyser(Analyzer):
+class MyAnalyser(Analyser):
     name: ClassVar[str] = "my_analyser"
     description: ClassVar[str] = "Calculates mean photon number"
     config_schema: ClassVar[type] = MyAnalyserConfig
@@ -174,7 +174,7 @@ class MyEngine:
         pass
 ```
 
-SDE analysers should inherit `qphase_sde.analyser.Analyzer`. The base class
+SDE analysers should inherit `qphase_sde.analyser.base.Analyser`. The base class
 provides conservative planner defaults. Override `execution_capabilities()` with an
 `AnalyserExecutionCapabilities` value and `workspace()` with separate
 host/device byte estimates whenever the analyser transfers a full trajectory,
