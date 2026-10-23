@@ -13,7 +13,6 @@ Public API
 
 import logging
 from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
 import numpy as np
@@ -34,9 +33,7 @@ from qphase_sde.planning import (
 from qphase_sde.products import add_scan_parameter_coordinates
 from qphase_sde.result import SDEDataBundle, fingerprint_text, trajectory_product
 from qphase_sde.runtime import simulation_loop
-from qphase_sde.runtime.rng import (
-    _fused_rng_groups,
-)
+from qphase_sde.runtime.rng import _fused_rng_groups
 from qphase_sde.runtime.typed_execution import (
     _merge_simulation_trajectory,
     _run_scan_tiled_typed,
@@ -51,22 +48,6 @@ log = logging.getLogger(__name__)
 
 
 TrajectoryDivergenceError = simulation_loop.TrajectoryDivergenceError
-
-
-@dataclass(frozen=True)
-class _SimulatedRun:
-    """In-memory outcome of one integration pass, before typed products.
-
-    Analysers never run inside the integration pass: the trajectory feeds
-    the typed product graph as the ``trajectories`` product, and observer
-    payloads ride along separately so they survive trajectory retention
-    choices. This is engine-internal — it is never persisted or returned
-    from the plugin boundary.
-    """
-
-    trajectory: TrajectorySet
-    meta: dict[str, Any]
-    observer_payloads: dict[str, Any]
 
 
 class EngineConfig(BaseModel):
@@ -604,158 +585,12 @@ class Engine(EngineBase):
             return value[start:stop]
         return value
 
+
     def _run_simulate(
-        self,
-        data: Any | None,
-        *,
-        reporter: Any | None = None,
-        context: Any | None = None,
-        scan_tile: Any | None = None,
-        rng_group_seeds: tuple[int, ...] | None = None,
-        rng_group_size: int | None = None,
-        rng_group_counts: tuple[int, ...] | None = None,
-        observers: dict[str, Any] | None = None,
-        progress_offset: int = 0,
-        progress_scale: int | None = None,
-        progress_total: int | None = None,
-        progress_label: str | None = None,
-    ) -> _SimulatedRun:
-        """Execute one SDE integration pass; analysers never run here.
-
-        The trajectory always comes back retained: whether it is published
-        as a product is decided by the typed graph/merge layer above, never
-        inside the integration pass.
-        """
-        assert self.config is not None
-
-        if observers is None:
-            observers = self._normalised_observers()
-
-        model = self._required_model()
-
-        time_grid = resolve_time_grid(
-            t0=self.config.t0,
-            t1=self.config.t1,
-            dt=self.config.dt,
-        )
-        time_cfg = {
-            "t0": time_grid.integration_t0,
-            "observation_start": time_grid.observation_t0,
-            "dt": self.config.dt,
-            "steps": time_grid.total_steps,
-        }
-        if progress_scale is None:
-            progress_scale = int(self.config.n_traj)
-        effective_progress_total = (
-            progress_total
-            if progress_total is not None
-            else progress_offset + progress_scale * time_cfg["steps"]
-        )
-
-        ic = self.config.ic
-        if ic is None:
-            if hasattr(model, "default_ic"):
-                ic = model.default_ic
-            elif data is not None:
-                ic = data
-            else:
-                raise RuntimeError("No IC provided.")
-
-        # Adapt the integration loop's counters to structured, monotonic work.
-        progress_hook = None
-        if reporter is not None:
-
-            def _sde_cb(
-                k: int, steps: int, eta: float, ic_index: int, ic_total: int
-            ) -> None:
-                del eta
-                prefix = f"{progress_label} | " if progress_label else ""
-                msg = f"{prefix}Traj {ic_index + 1}/{ic_total} | Step {k}/{steps}"
-                stage = "warmup" if k < time_grid.warmup_steps else "sampling"
-                metadata: dict[str, Any] = {
-                    "ic_index": ic_index,
-                    "ic_total": ic_total,
-                }
-                if context is not None:
-                    context_metadata = getattr(context, "metadata", {})
-                    scan_summary = context_metadata.get("scan_summary")
-                    if scan_summary is not None:
-                        metadata["scan_summary"] = scan_summary
-                reporter.update(
-                    completed=progress_offset + progress_scale * k,
-                    total=effective_progress_total,
-                    unit="trajectory-step",
-                    stage=stage,
-                    message=msg,
-                    metadata=metadata,
-                )
-
-            progress_hook = _sde_cb
-
-        traj_set: TrajectorySet = self.run_sde(
-            model=model,
-            ic=ic,
-            time=time_cfg,
-            n_traj=self.config.n_traj,
-            seed=self.config.seed,
-            return_stride=self.config.save_stride,
-            _progress_hook=progress_hook,
-            rng_group_seeds=rng_group_seeds,
-            rng_group_size=rng_group_size,
-            rng_group_counts=rng_group_counts,
-            observers=observers,
-        )
-        # Lift observer payloads out of the trajectory metadata immediately so
-        # they ride along independently of trajectory retention choices in the
-        # typed product layer. They intentionally do not participate in the
-        # keep/drop decision: a record-only observer must not change retention.
-        observer_results: dict[str, Any] = dict(traj_set.meta.pop("observers", {}))
-        n_scan = 1 if scan_tile is None else int(scan_tile.count)
-        if n_scan < 1:
-            n_scan = 1
-        if n_scan > 1 and observer_results:
-            if int(self.config.n_traj) % n_scan:
-                raise ValueError(
-                    f"Observer ensemble has {self.config.n_traj} trajectories, "
-                    f"not divisible by scan count {n_scan}"
-                )
-            group_size = int(self.config.n_traj) // n_scan
-            observer_instances = observers or self._normalised_observers()
-            observer_results = {
-                name: observer_instances[name].split_payload(
-                    payload, [group_size] * n_scan
-                )
-                for name, payload in observer_results.items()
-            }
-        if reporter is not None:
-            reporter.update(
-                completed=(progress_offset + progress_scale * time_cfg["steps"]),
-                total=effective_progress_total,
-                unit="trajectory-step",
-                stage="sampling",
-                message=(
-                    f"{progress_label} complete"
-                    if progress_label
-                    else "Sampling complete"
-                ),
-            )
-
-        # Ensure model parameters are in metadata. The model's params mapping is
-        # live: scan adapters mutate it in place and restore it on exit, so
-        # snapshot it here instead of keeping a reference that would revert.
-        meta: dict[str, Any] = {}
-        if hasattr(model, "config") and hasattr(model.config, "model_dump"):
-            meta["params"] = model.config.model_dump()
-        elif hasattr(model, "parameters"):
-            meta["params"] = model.parameters
-        elif hasattr(model, "params"):
-            meta["params"] = dict(model.params)
-
-        return _SimulatedRun(
-            trajectory=traj_set,
-            meta=meta,
-            observer_payloads=observer_results,
-        )
+        self, *args: Any, **kwargs: Any
+    ) -> simulation_loop.SimulatedRun:
+        """Run one integration pass; see runtime.simulation_loop."""
+        return simulation_loop.run_simulate(self, *args, **kwargs)
 
     def run_sde(self, *args: Any, **kwargs: Any) -> TrajectorySet:
         """Run one integration pass; see runtime.simulation_loop."""
