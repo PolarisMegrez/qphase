@@ -3,10 +3,31 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 from qphase.core.scan import ParameterGrid
+
+from qphase_sde.model import replace_model_params
+
+__all__ = ["SDEParameterGridAdapter", "ScanTile"]
+
+
+@dataclass(frozen=True)
+class ScanTile:
+    """Fused scan-tile facts of the adapter scope currently in effect.
+
+    The fused path runs several scan points through one SDE pass; the engine
+    needs to know how many points that pass covers so it can split
+    observer payloads per point. The adapter hands this record to the
+    integration pass explicitly instead of stashing attributes on the engine
+    configuration.
+    """
+
+    count: int = 1
+    offset: int = 0
+    parameters: tuple[str, ...] = ()
 
 
 class SDEParameterGridAdapter:
@@ -21,16 +42,18 @@ class SDEParameterGridAdapter:
         self.base_n_traj = int(engine.config.n_traj)
         self.base_params = dict(self.model.params)
         self._scanned_values = self._validate_targets()
-        self._had_scan_count = hasattr(engine.config, "_batch_scan_count")
-        self._old_scan_count = getattr(engine.config, "_batch_scan_count", None)
-        self._had_scan_offset = hasattr(engine.config, "_batch_scan_offset")
-        self._old_scan_offset = getattr(engine.config, "_batch_scan_offset", None)
+        self._tile = ScanTile()
         configured_seed = engine.config.seed
         if configured_seed is None:
             configured_seed = int(
                 np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0]
             )
         self.master_seed = int(configured_seed) % (1 << 64)
+
+    @property
+    def scan_tile(self) -> ScanTile:
+        """Scan-tile facts of the currently applied adapter scope."""
+        return self._tile
 
     def __enter__(self) -> SDEParameterGridAdapter:
         """Apply the legacy full-grid fused representation."""
@@ -77,37 +100,24 @@ class SDEParameterGridAdapter:
         batch_count = trajectory_stop - trajectory_start
         original_n_traj = int(self.engine.config.n_traj)
         original_params = dict(self.model.params)
-        original_attrs = {
-            name: getattr(self.engine.config, name, None)
-            for name in (
-                "_batch_scan_count",
-                "_batch_scan_offset",
-                "_batch_scan_params",
-            )
-        }
+        original_tile = self._tile
         scanned = {
             name: np.repeat(values[scan_start:scan_stop], batch_count)
             for name, values in self._scanned_values.items()
         }
-        self._replace_model_params({**self.base_params, **scanned})
+        replace_model_params(self.model, {**self.base_params, **scanned})
         self.engine.config.n_traj = point_count * batch_count
-        object.__setattr__(self.engine.config, "_batch_scan_count", point_count)
-        object.__setattr__(self.engine.config, "_batch_scan_offset", scan_start)
-        object.__setattr__(
-            self.engine.config,
-            "_batch_scan_params",
-            list(scanned),
+        self._tile = ScanTile(
+            count=point_count,
+            offset=scan_start,
+            parameters=tuple(scanned),
         )
         try:
             yield self
         finally:
             self.engine.config.n_traj = original_n_traj
-            self._replace_model_params(original_params)
-            for name, value in original_attrs.items():
-                if value is None and name in self.engine.config.__dict__:
-                    self.engine.config.__dict__.pop(name, None)
-                else:
-                    object.__setattr__(self.engine.config, name, value)
+            replace_model_params(self.model, original_params)
+            self._tile = original_tile
 
     def _validate_targets(self) -> dict[str, np.ndarray]:
         expected_prefix = f"model.{self.model.name}."
@@ -129,40 +139,15 @@ class SDEParameterGridAdapter:
             name: np.repeat(values[start:stop], self.base_n_traj)
             for name, values in self._scanned_values.items()
         }
-        self._replace_model_params({**self.base_params, **scanned})
+        replace_model_params(self.model, {**self.base_params, **scanned})
         self.engine.config.n_traj = (stop - start) * self.base_n_traj
-        object.__setattr__(self.engine.config, "_batch_scan_count", stop - start)
-        object.__setattr__(self.engine.config, "_batch_scan_offset", start)
-        object.__setattr__(
-            self.engine.config,
-            "_batch_scan_params",
-            list(scanned),
+        self._tile = ScanTile(
+            count=stop - start,
+            offset=start,
+            parameters=tuple(scanned),
         )
 
     def _restore(self) -> None:
         self.engine.config.n_traj = self.base_n_traj
-        self._replace_model_params(self.base_params)
-        if self._had_scan_count:
-            object.__setattr__(
-                self.engine.config, "_batch_scan_count", self._old_scan_count
-            )
-        else:
-            self.engine.config.__dict__.pop("_batch_scan_count", None)
-        if self._had_scan_offset:
-            object.__setattr__(
-                self.engine.config, "_batch_scan_offset", self._old_scan_offset
-            )
-        else:
-            self.engine.config.__dict__.pop("_batch_scan_offset", None)
-        self.engine.config.__dict__.pop("_batch_scan_params", None)
-
-    def _replace_model_params(self, params: dict[str, Any]) -> None:
-        if hasattr(self.model, "_params"):
-            self.model._params = params
-            return
-        current = getattr(self.model, "params", None)
-        if isinstance(current, dict):
-            current.clear()
-            current.update(params)
-            return
-        raise TypeError(f"model {self.model.name!r} does not expose mutable parameters")
+        replace_model_params(self.model, self.base_params)
+        self._tile = ScanTile()

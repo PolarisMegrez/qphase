@@ -18,7 +18,8 @@ Public API
 `fpe_to_sde` : Convert a PhaseSpaceModel to a FunctionalSDEModel.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -35,6 +36,8 @@ __all__ = [
     "DiffusionFn",
     "JacobianFn",
     "fpe_to_sde",
+    "model_params",
+    "replace_model_params",
 ]
 
 
@@ -114,7 +117,9 @@ class SDEModel(Protocol):
     noise_dim : int
         Number of real noise channels (M).
     params : dict
-        Model parameters consumed by drift/diffusion functions.
+        Model parameters consumed by drift/diffusion functions. This is the
+        model's live parameter mapping: in-place updates through
+        :func:`replace_model_params` change what the model reads.
 
     """
 
@@ -156,6 +161,36 @@ class MatrixDriftSDEModel(SDEModel, Protocol):
     def drift_matrix(self, y: Any, t: float, params: dict[str, Any]) -> Any:
         """Return drift matrices with shape ``(..., n_modes, n_modes)``."""
         ...
+
+
+def replace_model_params(model: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+    """Replace a model's parameters in place and return the previous mapping.
+
+    The swap goes through the public ``params`` mapping of :class:`SDEModel`,
+    so every implementation keeps reading its own state; no private attribute
+    is written. The caller restores the returned mapping when the temporary
+    parameters no longer apply.
+    """
+    current = getattr(model, "params", None)
+    if not isinstance(current, dict):
+        raise TypeError(
+            f"model {getattr(model, 'name', model)!r} does not expose a mutable "
+            "params mapping"
+        )
+    previous = dict(current)
+    current.clear()
+    current.update(params)
+    return previous
+
+
+@contextmanager
+def model_params(model: Any, params: Mapping[str, Any]) -> Iterator[None]:
+    """Temporarily apply ``params`` to ``model`` for the duration of the block."""
+    previous = replace_model_params(model, params)
+    try:
+        yield
+    finally:
+        replace_model_params(model, previous)
 
 
 @dataclass

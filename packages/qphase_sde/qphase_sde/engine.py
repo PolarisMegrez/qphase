@@ -28,7 +28,7 @@ from qphase.data import concat_datasets, stack_datasets
 
 from qphase_sde.contracts.bundle import SDEProvenance
 from qphase_sde.integrator.base import Integrator
-from qphase_sde.model import NoiseSpec, SDEModel
+from qphase_sde.model import NoiseSpec, SDEModel, model_params
 from qphase_sde.observer.base import (
     ObserverContext,
     ObserverDecision,
@@ -609,6 +609,7 @@ class Engine(EngineBase):
                     data,
                     reporter=reporter,
                     context=context,
+                    scan_tile=adapter.scan_tile,
                     rng_group_seeds=group_seeds,
                     rng_group_size=plan.logical_rng_group_size,
                     rng_group_counts=group_counts,
@@ -966,6 +967,7 @@ class Engine(EngineBase):
                     data,
                     reporter=reporter,
                     context=context,
+                    scan_tile=adapter.scan_tile,
                     rng_group_seeds=group_seeds,
                     rng_group_size=plan.logical_rng_group_size,
                     rng_group_counts=group_counts,
@@ -1197,6 +1199,7 @@ class Engine(EngineBase):
                     f"{plan.trajectory_batch_count}",
                     stage="sampling",
                 )
+            scan_tile = None
             if adapter is None:
                 batch_scope = self._trajectory_batch_scope(
                     start, stop, plan.n_traj_per_point
@@ -1206,10 +1209,13 @@ class Engine(EngineBase):
                     scan_start, scan_stop, start, stop
                 )
             with batch_scope:
+                if adapter is not None:
+                    scan_tile = adapter.scan_tile
                 partial = self._run_simulate(
                     data,
                     reporter=reporter,
                     context=context,
+                    scan_tile=scan_tile,
                     rng_group_seeds=seeds,
                     rng_group_size=group_size,
                     rng_group_counts=group_counts,
@@ -1503,13 +1509,12 @@ class Engine(EngineBase):
         self.config.ic = self._slice_trajectory_value(
             original_ic, start, stop, total_trajectories
         )
-        self._replace_model_params(model, sliced_params)
         try:
-            yield
+            with model_params(model, sliced_params):
+                yield
         finally:
             self.config.n_traj = original_n_traj
             self.config.ic = original_ic
-            self._replace_model_params(model, original_params)
 
     @staticmethod
     def _slice_trajectory_value(
@@ -1525,24 +1530,13 @@ class Engine(EngineBase):
             return value[start:stop]
         return value
 
-    @staticmethod
-    def _replace_model_params(model: Any, params: dict[str, Any]) -> None:
-        if hasattr(model, "_params"):
-            model._params = params
-            return
-        current = getattr(model, "params", None)
-        if isinstance(current, dict):
-            current.clear()
-            current.update(params)
-            return
-        raise TypeError(f"model {model.name!r} does not expose mutable parameters")
-
     def _run_simulate(
         self,
         data: Any | None,
         *,
         reporter: Any | None = None,
         context: Any | None = None,
+        scan_tile: Any | None = None,
         rng_group_seeds: tuple[int, ...] | None = None,
         rng_group_size: int | None = None,
         rng_group_counts: tuple[int, ...] | None = None,
@@ -1642,8 +1636,8 @@ class Engine(EngineBase):
         # typed product layer. They intentionally do not participate in the
         # keep/drop decision: a record-only observer must not change retention.
         observer_results: dict[str, Any] = dict(traj_set.meta.pop("observers", {}))
-        n_scan = getattr(self.config, "_batch_scan_count", 1)
-        if not isinstance(n_scan, int) or n_scan < 1:
+        n_scan = 1 if scan_tile is None else int(scan_tile.count)
+        if n_scan < 1:
             n_scan = 1
         if n_scan > 1 and observer_results:
             if int(self.config.n_traj) % n_scan:
