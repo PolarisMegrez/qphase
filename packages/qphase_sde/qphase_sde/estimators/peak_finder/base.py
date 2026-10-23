@@ -323,7 +323,12 @@ class TypedPeakFinder(Protocol):
 
     name: ClassVar[str]
     description: ClassVar[str]
-    config_schema: ClassVar[type[BasePeakFinderConfig]]
+    #: ``ClassVar[type[Any]]``, like every other plugin protocol
+    #: (``qphase.core.protocols.PluginBase`` and ``SpectralEstimator`` next
+    #: door): a ClassVar of a concrete config class is invariant, so pinning
+    #: the base config here would reject the narrower schemas the concrete
+    #: finders declare.
+    config_schema: ClassVar[type[Any]]
 
     def find_candidate_table(
         self,
