@@ -56,6 +56,12 @@ engine = VizEngine(
 result = engine.run(bundle)  # bundle implements DatasetResultProtocol
 ```
 
+`result.data` holds the figure paths the plotters wrote under
+`output_dir`, and `result.metadata` only counts them. The result carries no
+analysis payload by design: visualization renders typed products, it does not
+recompute or persist their numbers. `result.save(path)` is therefore a no-op
+kept only because the core `ResultProtocol` requires it.
+
 Time-series and phase-plane plotters require a typed field-amplitude
 time-series product. The spectrum plotter requires an existing typed PSD
 product: it never recomputes a spectrum from raw trajectories, so run a PSD

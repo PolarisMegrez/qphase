@@ -562,9 +562,6 @@ class VizEngineConfig(BaseModel):
 
     output_dir: str = Field(default=".", description="Directory to save figures")
     format: str = Field(default="png", description="Output format (png, pdf, svg)")
-    specs: list[dict[str, Any]] = Field(
-        default_factory=list, description="List of plot specifications"
-    )
     style: StyleName = Field(
         DEFAULT_STYLE, description="Default figure style (publication, sm, sans)"
     )

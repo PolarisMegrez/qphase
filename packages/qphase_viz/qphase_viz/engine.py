@@ -22,74 +22,53 @@ from .styles import RenderOptions
 class VizResult(ResultProtocol):
     """Result container for visualization engine.
 
+    A visualization job produces files, so the result is the list of paths the
+    plotters wrote. There is no in-memory analysis payload and no second
+    serialization: the engine already persisted every figure under the
+    configured ``output_dir``.
+
     Parameters
     ----------
     generated_files : list[Path]
-        List of paths to generated plot files.
-    analysis_results : dict[str, Any] | None
-        Dictionary of analysis results (e.g. PSD data).
+        Paths to the plot files this run produced.
 
     """
 
-    def __init__(
-        self,
-        generated_files: list[Path],
-        analysis_results: dict[str, Any] | None = None,
-    ):
+    def __init__(self, generated_files: list[Path]):
         self._data = generated_files
-        self._analysis = analysis_results or {}
-        self._metadata = {
-            "count": len(generated_files),
-            "has_analysis": bool(self._analysis),
-        }
+        self._metadata = {"count": len(generated_files)}
 
     @property
     def data(self) -> list[Path]:
-        """Get the list of generated files."""
+        """Paths of the files written by this run."""
         return self._data
 
     @property
-    def analysis(self) -> dict[str, Any]:
-        """Get the analysis results."""
-        return self._analysis
-
-    @property
     def metadata(self) -> dict[str, Any]:
-        """Get the result metadata."""
+        """Result metadata: the number of generated files."""
         return self._metadata
 
     @property
     def label(self) -> Any:
-        """Get the label from metadata."""
+        """Optional label from the metadata."""
         return self._metadata.get("label")
 
     def save(self, path: str | Path) -> None:
-        """Save the result.
+        """Do nothing: the figures are already on disk.
 
-        Saves analysis results if present.
+        ``ResultProtocol`` requires ``save``, but writing anything here would
+        duplicate the engine's output model (a run persists its figures under
+        ``VizEngineConfig.output_dir``) or invent a second, untyped payload.
+        The parameter is ignored on purpose.
         """
-        if not self._analysis:
-            return
-
-        path = Path(path)
-        # If path is a directory, save analysis there
-        # If it's a file, maybe save a summary or zip?
-        # For now, assume directory or create one
-        if path.suffix:
-            out_dir = path.parent
-        else:
-            out_dir = path
-            out_dir.mkdir(parents=True, exist_ok=True)
-
-        for name, res in self._analysis.items():
-            if hasattr(res, "save"):
-                res.save(out_dir / f"{name}_analysis.npz")
+        del path
 
 
 class VizEngine(EngineBase):
     """Visualization Engine.
 
-    Orchestrates the rendering of plots based on configuration specs.
+    Resolves the figure style once and hands every configured plotter the
+    input bundle; the plotters own what each figure draws.
     """
 
     name: ClassVar[str] = "viz"

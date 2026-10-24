@@ -58,3 +58,40 @@ def test_viz_engine_requires_input(tmp_path):
     engine = VizEngine(config=VizEngineConfig(output_dir=str(tmp_path)))
     with pytest.raises(QPhaseRuntimeError):
         engine.run(None)
+
+
+def test_viz_result_carries_only_generated_files(tmp_path):
+    engine = VizEngine(
+        config=VizEngineConfig(output_dir=str(tmp_path), format="png"),
+        plugins={"visualizer": TimeSeriesPlotter(plots=[{"channels": [0]}])},
+    )
+
+    result = engine.run(trajectory_bundle())
+
+    assert result.data and all(path.is_file() for path in result.data)
+    assert result.metadata == {"count": len(result.data)}
+    # The visualization layer has no analysis payload: it only renders files.
+    assert not hasattr(result, "analysis")
+
+
+def test_viz_result_save_is_a_no_op(tmp_path):
+    engine = VizEngine(
+        config=VizEngineConfig(output_dir=str(tmp_path), format="png"),
+        plugins={"visualizer": TimeSeriesPlotter(plots=[{"channels": [0]}])},
+    )
+    result = engine.run(trajectory_bundle())
+    before = sorted(path.name for path in tmp_path.iterdir())
+
+    result.save(tmp_path / "unused")
+    result.save(tmp_path / "unused.txt")
+
+    assert sorted(path.name for path in tmp_path.iterdir()) == before
+    assert not (tmp_path / "unused").exists()
+    assert not (tmp_path / "unused.txt").exists()
+
+
+def test_viz_engine_config_has_no_specs_field():
+    """The engine is configured by plugin instances, not by a spec list."""
+    config = VizEngineConfig()
+
+    assert "specs" not in config.model_dump()
