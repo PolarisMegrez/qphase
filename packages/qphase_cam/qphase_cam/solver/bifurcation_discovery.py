@@ -11,9 +11,9 @@ from qphase.core.protocols import PluginConfigBase
 @runtime_checkable
 class BifurcationDiscovery(Protocol):
     name: ClassVar[str]
+    description: ClassVar[str]
+    config_schema: ClassVar[type[PluginConfigBase]]
     config: Any
-
-    def seed_values(self, data: Any | None = None) -> list[Any]: ...
 
 
 class SeedDiscoveryConfig(PluginConfigBase):
@@ -30,6 +30,3 @@ class SeedDiscovery:
 
     def __init__(self, config: SeedDiscoveryConfig) -> None:
         self.config = config
-
-    def seed_values(self, data: Any | None = None) -> list[Any]:
-        return [] if data is None else [data]

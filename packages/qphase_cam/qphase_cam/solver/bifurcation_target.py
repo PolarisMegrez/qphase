@@ -13,6 +13,8 @@ class BifurcationTarget(Protocol):
     """Condition family solved by a bifurcation solver."""
 
     name: ClassVar[str]
+    description: ClassVar[str]
+    config_schema: ClassVar[type[PluginConfigBase]]
     order: int
 
 

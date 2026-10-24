@@ -11,6 +11,8 @@ from qphase.core.protocols import PluginConfigBase
 @runtime_checkable
 class BifurcationStrategy(Protocol):
     name: ClassVar[str]
+    description: ClassVar[str]
+    config_schema: ClassVar[type[PluginConfigBase]]
     mode: Literal["auto", "reduced", "full"]
     config: Any
 

@@ -9,10 +9,21 @@ import numpy as np
 from pydantic import ConfigDict, Field
 from qphase.core.protocols import PluginConfigBase
 
+from .scaling import (
+    ScalingFit,
+    TwoStageFrequencyFit,
+    allan_relative_fit,
+    fixed_exponent_fit,
+    free_exponent_fit,
+    two_stage_frequency_fit,
+)
+
 
 @runtime_checkable
 class BifurcationClassifier(Protocol):
     name: ClassVar[str]
+    description: ClassVar[str]
+    config_schema: ClassVar[type[PluginConfigBase]]
 
     def classify(
         self,
@@ -27,6 +38,43 @@ class BifurcationClassifier(Protocol):
         side: str,
         verification_digits: int,
     ) -> dict[str, Any]: ...
+
+    def fit_puiseux(
+        self,
+        epsilon: Any,
+        response: Any,
+        *,
+        order: int,
+        exponent: float | None = None,
+        bounds: tuple[float, float] | None = None,
+        uncertainty: Any | None = None,
+        weighted: bool = False,
+        anchor: float | None = None,
+        calculate_loo: bool = True,
+    ) -> ScalingFit: ...
+
+    def fit_allan(
+        self,
+        epsilon: Any,
+        intensity: Any,
+        *,
+        order: int,
+        bounds: tuple[float, float],
+        profile_points: int = 801,
+        calculate_loo: bool = True,
+    ) -> ScalingFit: ...
+
+    def fit_two_stage(
+        self,
+        epsilon: Any,
+        frequency: Any,
+        *,
+        lower: float,
+        upper: float,
+        exponent_bounds: tuple[float, float],
+        stage1_exponent: float = 1.0 / 3.0,
+        profile_points: int = 401,
+    ) -> TwoStageFrequencyFit: ...
 
 
 class ScalingSignatureConfig(PluginConfigBase):
@@ -169,6 +217,95 @@ class ScalingSignatureClassifier:
             "scaling_signatures": tuple(signatures),
             "classification_accepted": accepted,
         }
+
+    def fit_puiseux(
+        self,
+        epsilon: Any,
+        response: Any,
+        *,
+        order: int,
+        exponent: float | None = None,
+        bounds: tuple[float, float] | None = None,
+        uncertainty: Any | None = None,
+        weighted: bool = False,
+        anchor: float | None = None,
+        calculate_loo: bool = True,
+    ) -> ScalingFit:
+        """Fit the Puiseux basis at a fixed ``exponent`` or with it free.
+
+        ``bounds`` belongs to the free-exponent branch; a fixed exponent has
+        nothing to bound, so passing both raises instead of silently ignoring the
+        window. ``anchor`` holds the constant term (a known critical value) in
+        either branch.
+        """
+        if exponent is None:
+            if bounds is None:
+                raise ValueError("a free-exponent Puiseux fit requires bounds")
+            return free_exponent_fit(
+                epsilon,
+                response,
+                order=order,
+                bounds=bounds,
+                uncertainty=uncertainty,
+                weighted=weighted,
+                anchor=anchor,
+                calculate_loo=calculate_loo,
+            )
+        if bounds is not None:
+            raise ValueError("bounds apply to a free-exponent fit only")
+        return fixed_exponent_fit(
+            epsilon,
+            response,
+            exponent=exponent,
+            order=order,
+            uncertainty=uncertainty,
+            weighted=weighted,
+            offset=anchor is None,
+            anchor=anchor,
+            calculate_loo=calculate_loo,
+        )
+
+    def fit_allan(
+        self,
+        epsilon: Any,
+        intensity: Any,
+        *,
+        order: int,
+        bounds: tuple[float, float],
+        profile_points: int = 801,
+        calculate_loo: bool = True,
+    ) -> ScalingFit:
+        """Fit the Allan intensity ``x**[-2(1-p) + k*p]`` on relative residuals."""
+        return allan_relative_fit(
+            epsilon,
+            intensity,
+            order=order,
+            bounds=bounds,
+            profile_points=profile_points,
+            calculate_loo=calculate_loo,
+        )
+
+    def fit_two_stage(
+        self,
+        epsilon: Any,
+        frequency: Any,
+        *,
+        lower: float,
+        upper: float,
+        exponent_bounds: tuple[float, float],
+        stage1_exponent: float = 1.0 / 3.0,
+        profile_points: int = 401,
+    ) -> TwoStageFrequencyFit:
+        """Fit a fixed-exponent offset stage, then a free exponent on all points."""
+        return two_stage_frequency_fit(
+            epsilon,
+            frequency,
+            lower=lower,
+            upper=upper,
+            exponent_bounds=exponent_bounds,
+            stage1_exponent=stage1_exponent,
+            profile_points=profile_points,
+        )
 
     @staticmethod
     def _state_tangent_matrix(
