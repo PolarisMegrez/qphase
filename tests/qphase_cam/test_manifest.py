@@ -35,6 +35,7 @@ from qphase_cam.data import (
     CAM_EVIDENCE_DECLARATION,
     CAM_STATE_DECLARATION,
     CAM_STATE_SCAN_DECLARATION,
+    EVIDENCE_COUNT_FIELDS,
 )
 from qphase_cam.manifest import CAM_TASK_PROFILES, MANIFEST, cam_task_profile
 
@@ -113,6 +114,7 @@ def test_manifest_declares_only_the_implemented_data_products():
         CAM_CANDIDATE_DECLARATION.name,
         CAM_CONTINUATION_DECLARATION.name,
         CAM_ANNOTATION_DECLARATION.name,
+        CAM_EVIDENCE_DECLARATION.name,
     ]
     for product in MANIFEST.data_products:
         module_name, _, attribute = product.schema_ref.partition(":")
@@ -120,9 +122,7 @@ def test_manifest_declares_only_the_implemented_data_products():
         schema = getattr(module, attribute)
         assert isinstance(schema, ProductSchema), product.name
         assert schema.kind.value == product.kind
-    # The search-evidence schema (Phase 10C2b) is not declared before it exists:
-    # a schema_ref must never point at a placeholder.
-    assert CAM_EVIDENCE_DECLARATION.name not in declared
+    # Phase 10C is complete: every declared product has a schema behind it.
     assert MANIFEST.materializers == []
     assert MANIFEST.backend_capabilities.streaming is False
     assert "numpy" in MANIFEST.backend_capabilities.backends
@@ -299,12 +299,20 @@ def test_declared_fields_are_the_frozen_planning_vocabulary():
             "case_metadata",
         ],
         CAM_EVIDENCE_DECLARATION.name: [
+            "case_identity",
+            "search_identity",
+            "status",
+            "physical_status",
             "search_design",
             "coverage",
-            "accounting",
-            "source_artifacts",
+            "path_audit",
+            *EVIDENCE_COUNT_FIELDS,
+            "prefilter_rejected",
+            "rejected_by_reason",
             "accepted_candidates",
-            "rejection_summary",
+            "near_misses",
+            "control_names",
+            "source_artifacts",
         ],
         CAM_CONTINUATION_DECLARATION.name: [
             "parameters",
@@ -350,7 +358,15 @@ def test_evidence_declaration_can_express_a_negative_result():
     signature column is mandatory.
     """
     fields = set(CAM_EVIDENCE_DECLARATION.fields)
-    assert {"coverage", "accounting", "rejection_summary"} <= fields
+    assert {
+        "coverage",
+        "status",
+        "path_audit",
+        "rejected_by_reason",
+        "near_misses",
+        "accepted_candidates",
+    } <= fields
+    assert set(EVIDENCE_COUNT_FIELDS) <= fields
     assert "states" not in fields
     assert "classification" not in fields
 

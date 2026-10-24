@@ -19,6 +19,12 @@ The CAM product vocabulary, in the order a consumer meets it:
   :class:`CAMTargetKind`, the controlled vocabularies those products use.
 * :mod:`qphase_cam.data.bundle` — :func:`cam_bundle`: the core generic bundle
   plus the ``product_roles`` descriptor.
+* :mod:`qphase_cam.data.evidence` — :func:`build_evidence_product`: one row per
+  search case with its candidate-start counters, its accepted identities and its
+  bounded near misses; incomplete provenance must be declared, never implied.
+* :mod:`qphase_cam.data.migration` — :func:`import_search_evidence_document`: the
+  historical ``qphase.search-evidence/1`` documents as *re-run inputs*, not as
+  evidence.
 * :mod:`qphase_cam.data.legacy` — the one-off import of the pre-2.0 result
   objects and their trusted NPZ payloads.
 * :mod:`qphase_cam.data.compare` — the export comparisons that prove an import
@@ -45,6 +51,9 @@ Schema rules the subpackage enforces
   ``path_offset`` plus ``path_offsets``), so empty blocks are representable.
 * A negative result carries a :class:`CAMOutcomeStatus`, never one
   ``rejected`` boolean.
+* Evidence counts only share one unit when they are candidate-start counts; the
+  per-path generation-trial and workload counters are carried per path and never
+  pooled.
 * Legacy ``postprocess``/``branches`` content and any value with no JSON form
   are reported by name in the bundle provenance; nothing is dropped silently.
 
@@ -60,6 +69,8 @@ CAM_CONTINUATION_PRODUCT
     Schema template of local continuation paths.
 CAM_ANNOTATION_PRODUCT
     Schema template of postprocessor annotations.
+CAM_EVIDENCE_PRODUCT
+    Schema template of search evidence.
 CAM_BUNDLE_TYPE_ID
     Bundle descriptor type id of a CAM product collection.
 CAMOutcomeStatus
@@ -74,6 +85,10 @@ build_continuation_product
     Build the ragged continuation product from per-point arrays.
 build_annotation_product
     Build one annotation product with typed field columns.
+build_evidence_product
+    Build one search-evidence product from validated audit fragments.
+import_search_evidence_document
+    Read a historical search-evidence document as a migration input.
 cam_bundle
     Group CAM products into a :class:`~qphase.data.GenericDataBundle`.
 import_cam_result
@@ -118,13 +133,23 @@ from .declarations import (
     CAM_CONTINUATION_DECLARATION,
     CAM_CONTINUATION_PRODUCT,
     CAM_EVIDENCE_DECLARATION,
+    CAM_EVIDENCE_PRODUCT,
     CAM_STATE_DECLARATION,
     CAM_STATE_PRODUCT,
     CAM_STATE_SCAN_DECLARATION,
     CAM_STATE_SCAN_PRODUCT,
+    EVIDENCE_COUNT_FIELDS,
+    EVIDENCE_STATUS_SEMANTICS,
+    GENERATION_TRIAL_SEMANTICS,
     LEGACY_IDENTITY_SEMANTICS,
     PATH_IDENTITY_SEMANTICS,
     SOLUTION_AXIS_SEMANTICS,
+)
+from .evidence import (
+    COMPLETE_EVIDENCE,
+    INTERMEDIATE_EVIDENCE,
+    SourceArtifactRef,
+    build_evidence_product,
 )
 from .legacy import (
     import_bifurcation_result,
@@ -132,6 +157,11 @@ from .legacy import (
     import_cam_result,
     import_continuation_result,
     import_legacy_artifact,
+)
+from .migration import (
+    SearchEvidenceMigrationInput,
+    SearchEvidenceMigrationWorkflow,
+    import_search_evidence_document,
 )
 from .outcomes import (
     CAMOutcomeStatus,
@@ -151,6 +181,7 @@ __all__ = [
     "CAM_CONTINUATION_DECLARATION",
     "CAM_CONTINUATION_PRODUCT",
     "CAM_EVIDENCE_DECLARATION",
+    "CAM_EVIDENCE_PRODUCT",
     "CAM_PRODUCT_ROLES",
     "CAM_STATE_DECLARATION",
     "CAM_STATE_PRODUCT",
@@ -158,12 +189,21 @@ __all__ = [
     "CAM_STATE_SCAN_PRODUCT",
     "CAMOutcomeStatus",
     "CAMTargetKind",
+    "COMPLETE_EVIDENCE",
+    "EVIDENCE_COUNT_FIELDS",
+    "EVIDENCE_STATUS_SEMANTICS",
+    "GENERATION_TRIAL_SEMANTICS",
+    "INTERMEDIATE_EVIDENCE",
     "LEGACY_IDENTITY_SEMANTICS",
     "PATH_IDENTITY_SEMANTICS",
     "SOLUTION_AXIS_SEMANTICS",
+    "SearchEvidenceMigrationInput",
+    "SearchEvidenceMigrationWorkflow",
+    "SourceArtifactRef",
     "build_annotation_product",
     "build_candidate_product",
     "build_continuation_product",
+    "build_evidence_product",
     "build_state_product",
     "cam_bundle",
     "coerce_outcome_status",
@@ -176,4 +216,5 @@ __all__ = [
     "import_cam_result",
     "import_continuation_result",
     "import_legacy_artifact",
+    "import_search_evidence_document",
 ]

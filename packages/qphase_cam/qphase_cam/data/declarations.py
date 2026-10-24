@@ -8,23 +8,25 @@ Two declaration layers, both static:
   (continuation, annotations) replaced the earlier placeholder field names with
   the fields the implemented schemas actually carry, so a declaration can no
   longer describe a payload that does not exist.
-* the :class:`qphase.data.ProductSchema` *templates* of Phases 10C1 and 10C2a:
-  :data:`CAM_STATE_PRODUCT` (one parameter point),
+* the :class:`qphase.data.ProductSchema` *templates* of Phases 10C1, 10C2a and
+  10C2b: :data:`CAM_STATE_PRODUCT` (one parameter point),
   :data:`CAM_STATE_SCAN_PRODUCT` (a scan of parameter points),
   :data:`CAM_CANDIDATE_PRODUCT` (ragged bifurcation/search candidates),
-  :data:`CAM_CONTINUATION_PRODUCT` (local continuation paths) and
-  :data:`CAM_ANNOTATION_PRODUCT` (postprocessor annotations).
+  :data:`CAM_CONTINUATION_PRODUCT` (local continuation paths),
+  :data:`CAM_ANNOTATION_PRODUCT` (postprocessor annotations) and
+  :data:`CAM_EVIDENCE_PRODUCT` (search evidence per search case).
 
 A template keeps every axis **open** (``AxisSchema.size is None``): it is a
 plan, not a payload. The builders in :mod:`qphase_cam.data.state`,
-:mod:`qphase_cam.data.candidates`, :mod:`qphase_cam.data.continuation` and
-:mod:`qphase_cam.data.annotations` close the axes and materialize a dataset, so
+:mod:`qphase_cam.data.candidates`, :mod:`qphase_cam.data.continuation`,
+:mod:`qphase_cam.data.annotations` and :mod:`qphase_cam.data.evidence` close the
+axes and materialize a dataset, so
 a consumer can always tell "declared" from "written". The variable generators
 live here and are shared with the builders, which is what keeps a frozen column
 list from drifting away from what is actually materialized.
 
-Phase 10C2b adds the evidence declaration here; it is not declared today, and no
-product may reach the manifest before its schema exists.
+With Phase 10C2b the whole Phase 10C product vocabulary exists, so every
+declaration here has a concrete schema behind it.
 """
 
 from __future__ import annotations
@@ -49,14 +51,33 @@ __all__ = [
     "CAM_CONTINUATION_DECLARATION",
     "CAM_CONTINUATION_PRODUCT",
     "CAM_EVIDENCE_DECLARATION",
+    "CAM_EVIDENCE_PRODUCT",
     "CAM_STATE_DECLARATION",
     "CAM_STATE_PRODUCT",
     "CAM_STATE_SCAN_DECLARATION",
     "CAM_STATE_SCAN_PRODUCT",
+    "EVIDENCE_COUNT_FIELDS",
+    "EVIDENCE_STATUS_SEMANTICS",
+    "GENERATION_TRIAL_SEMANTICS",
     "LEGACY_IDENTITY_SEMANTICS",
     "PATH_IDENTITY_SEMANTICS",
     "SOLUTION_AXIS_SEMANTICS",
 ]
+
+
+#: The candidate-start counters. These are the only counts that share one unit, so
+#: these are the only ones that become columns of the evidence product.
+EVIDENCE_COUNT_FIELDS: tuple[str, ...] = (
+    "generated_candidate_count",
+    "prefilter_pass_count",
+    "prefilter_rejected_count",
+    "refinement_start_count",
+    "refinement_duplicate_count",
+    "accepted_count",
+    "rejected_count",
+    "near_miss_saved",
+    "near_miss_dropped",
+)
 
 
 # --- planning declarations -------------------------------------------------
@@ -127,20 +148,29 @@ CAM_CANDIDATE_DECLARATION = ProductDeclaration(
 
 #: Search evidence. It must be able to express a *negative* result — a search
 #: that covered the design space and accepted no candidate — so it carries the
-#: search design, the coverage, the accounting of attempts and rejections, the
-#: source artifacts it was derived from, the accepted candidates and the
-#: rejection summary. No state or signature column is mandatory.
+#: per-case identity and status, the search design and coverage, the
+#: candidate-start counters, the per-path trial audit, the accepted candidate
+#: references, the bounded near misses and the source artifacts it was derived
+#: from. No state or signature column is mandatory.
 CAM_EVIDENCE_DECLARATION = ProductDeclaration(
     name="evidence",
     kind=DataKind.STATISTICS,
     quantity="cam_search_evidence",
     fields=[
+        "case_identity",
+        "search_identity",
+        "status",
+        "physical_status",
         "search_design",
         "coverage",
-        "accounting",
-        "source_artifacts",
+        "path_audit",
+        *EVIDENCE_COUNT_FIELDS,
+        "prefilter_rejected",
+        "rejected_by_reason",
         "accepted_candidates",
-        "rejection_summary",
+        "near_misses",
+        "control_names",
+        "source_artifacts",
     ],
     table="row_table",
 )
@@ -556,4 +586,216 @@ CAM_ANNOTATION_PRODUCT = ProductSchema(
     axes=_annotation_axes(),
     variables=_annotation_variables(),
     attributes=_annotation_attributes(),
+)
+
+
+#: Why an evidence product may contain a case that accepted nothing. Stated once,
+#: in the schema, so a consumer reading only the artifact cannot read a negative
+#: result as a missing one.
+EVIDENCE_STATUS_SEMANTICS = (
+    "a case that searched its design space and accepted nothing is 'not_found', "
+    "a case that never searched is 'not_searched', and an unverified physicality "
+    "is 'unchecked': none of them is a failure verdict"
+)
+
+#: Why generation trials are not a column. They are per-path quantities.
+GENERATION_TRIAL_SEMANTICS = (
+    "generation_trial_count and the workload counters are per-path quantities and "
+    "are carried verbatim per path in the path_audit JSON column; they are never "
+    "summed into one unitless total"
+)
+
+
+def _evidence_axes() -> list[AxisSchema]:
+    return [
+        AxisSchema(name="case", role=AxisRole.INDEX),
+        AxisSchema(name="case_offset", role=AxisRole.INDEX),
+        AxisSchema(name="accepted", role=AxisRole.INDEX),
+        AxisSchema(name="near_miss", role=AxisRole.INDEX),
+        AxisSchema(name="control", role=AxisRole.INDEX),
+    ]
+
+
+def _evidence_variables() -> list[VariableSchema]:
+    case_counts = [
+        VariableSchema(
+            name=name,
+            dtype="int64",
+            value_domain="real",
+            dims=("case",),
+            quantity="cam_candidate_start_count",
+        )
+        for name in EVIDENCE_COUNT_FIELDS
+    ]
+    return [
+        VariableSchema(
+            name="case_identity",
+            dtype="U1",
+            value_domain="real",
+            dims=("case",),
+            quantity="cam_case_identity",
+        ),
+        VariableSchema(
+            name="search_identity",
+            dtype="U1",
+            value_domain="real",
+            dims=("case",),
+            quantity="cam_search_identity",
+        ),
+        VariableSchema(
+            name="status",
+            dtype="U1",
+            value_domain="real",
+            dims=("case",),
+            quantity="cam_outcome_status",
+        ),
+        VariableSchema(
+            name="physical_status",
+            dtype="U1",
+            value_domain="real",
+            dims=("case",),
+        ),
+        VariableSchema(
+            name="search_design",
+            dtype="U1",
+            value_domain="real",
+            dims=("case",),
+        ),
+        VariableSchema(
+            name="coverage",
+            dtype="U1",
+            value_domain="real",
+            dims=("case",),
+        ),
+        VariableSchema(
+            name="path_audit",
+            dtype="U1",
+            value_domain="real",
+            dims=("case",),
+        ),
+        VariableSchema(
+            name="prefilter_rejected",
+            dtype="U1",
+            value_domain="real",
+            dims=("case",),
+        ),
+        VariableSchema(
+            name="rejected_by_reason",
+            dtype="U1",
+            value_domain="real",
+            dims=("case",),
+        ),
+        *case_counts,
+        VariableSchema(
+            name="accepted_offsets",
+            dtype="int64",
+            value_domain="real",
+            dims=("case_offset",),
+        ),
+        VariableSchema(
+            name="near_miss_offsets",
+            dtype="int64",
+            value_domain="real",
+            dims=("case_offset",),
+        ),
+        VariableSchema(
+            name="accepted_identity",
+            dtype="U1",
+            value_domain="real",
+            dims=("accepted",),
+            quantity="cam_candidate_identity",
+        ),
+        VariableSchema(
+            name="control_names",
+            dtype="U1",
+            value_domain="real",
+            dims=("control",),
+        ),
+        VariableSchema(
+            name="near_miss_path",
+            dtype="U1",
+            value_domain="real",
+            dims=("near_miss",),
+        ),
+        VariableSchema(
+            name="near_miss_reduction",
+            dtype="U1",
+            value_domain="real",
+            dims=("near_miss",),
+        ),
+        VariableSchema(
+            name="near_miss_seed_source",
+            dtype="U1",
+            value_domain="real",
+            dims=("near_miss",),
+        ),
+        VariableSchema(
+            name="near_miss_rejection_reasons",
+            dtype="U1",
+            value_domain="real",
+            dims=("near_miss",),
+        ),
+        VariableSchema(
+            name="near_miss_search_residual",
+            dtype="float64",
+            value_domain="real",
+            dims=("near_miss",),
+        ),
+        VariableSchema(
+            name="near_miss_full_residual",
+            dtype="float64",
+            value_domain="real",
+            dims=("near_miss",),
+        ),
+        VariableSchema(
+            name="near_miss_min_state_eigenvalue",
+            dtype="float64",
+            value_domain="real",
+            dims=("near_miss",),
+        ),
+        VariableSchema(
+            name="near_miss_control_values",
+            dtype="float64",
+            value_domain="real",
+            dims=("near_miss", "control"),
+        ),
+    ]
+
+
+def _evidence_attributes() -> dict[str, Any]:
+    return {
+        "table": "cam_search_evidence",
+        "product": "evidence",
+        "case_axis": "case",
+        "case_offset_axis": "case_offset",
+        "ragged_axes": ["accepted", "near_miss"],
+        "offsets_variables": ["accepted_offsets", "near_miss_offsets"],
+        "accepted_identity_variable": "accepted_identity",
+        "control_names_variable": "control_names",
+        "count_fields": list(EVIDENCE_COUNT_FIELDS),
+        "candidate_start_unit": (
+            "every count column counts candidate starts; prefilter, refinement, "
+            "duplicate and acceptance all split the same population"
+        ),
+        "json_columns": [
+            "search_design",
+            "coverage",
+            "path_audit",
+            "prefilter_rejected",
+            "rejected_by_reason",
+            "near_miss_rejection_reasons",
+        ],
+        "status_semantics": EVIDENCE_STATUS_SEMANTICS,
+        "generation_trial_semantics": GENERATION_TRIAL_SEMANTICS,
+        "ragged": True,
+    }
+
+
+#: Search evidence: one row per search case plus the accepted identities and the
+#: bounded near misses that belong to it. Axis sizes stay open here.
+CAM_EVIDENCE_PRODUCT = ProductSchema(
+    kind=DataKind.STATISTICS,
+    axes=_evidence_axes(),
+    variables=_evidence_variables(),
+    attributes=_evidence_attributes(),
 )

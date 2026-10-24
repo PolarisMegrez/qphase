@@ -808,6 +808,3 @@ def test_data_package_grew_by_the_two_new_modules():
     package = Path(cam_data.__file__).parent
     for module in ("annotations", "continuation", "outcomes"):
         assert (package / f"{module}.py").exists(), module
-    # Evidence is the next sub-phase; nothing may implement it yet.
-    assert not (package / "evidence.py").exists()
-    assert "CAM_EVIDENCE_PRODUCT" not in cam_data.__all__
