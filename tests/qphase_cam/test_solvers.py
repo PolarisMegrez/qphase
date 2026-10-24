@@ -315,6 +315,23 @@ def test_global_seed_discovery_recovers_all_roots_across_scan():
     assert [len(row) for row in output.solutions] == [3, 3]
     assert output.metadata["global_seed_count"] >= 3
 
+    # Behaviour freeze (Phase 10A): the model residual is
+    # (x - center + 2)(x - center)(x - center - 2), so each scan point must
+    # recover exactly center + [-2, 0, 2] and nothing else. Checking the root
+    # values (not just the count) is what makes the multistability solver
+    # non-trivially frozen: a solver that returns three spurious roots would
+    # still pass a count-only assertion.
+    centers = (-0.5, 0.5)
+    for center, row in zip(centers, output.solutions, strict=True):
+        roots = sorted(
+            float(np.real(np.asarray(solution.state)[0, 0])) for solution in row
+        )
+        np.testing.assert_allclose(
+            roots, [center - 2.0, center, center + 2.0], atol=1e-9
+        )
+        assert all(solution.success for solution in row)
+        assert max(float(solution.residual) for solution in row) < 1e-8
+
 
 def test_root_acceptance_uses_residual_tolerance(monkeypatch, no_jacobian_model):
     from qphase_cam.solver import common
@@ -355,6 +372,51 @@ def test_continuation_has_fixed_slots_without_branch_id():
     assert "gamma_b" in output.axes
     assert "branch_id" not in output.axes
     assert output.metadata["continuation"] is True
+
+    # Behaviour freeze (Phase 10A): the adaptive continuation axis and the
+    # first/last slot states, recorded from the implementation. The step is
+    # clamped by ``stop`` (the configured 2e-4 never lands), so these numbers
+    # cannot be derived from the solver arguments — they pin the actual
+    # adaptive stepping and the per-slot ordering in one place.
+    np.testing.assert_allclose(
+        np.asarray(output.axes["gamma_b"]),
+        np.asarray(
+            [
+                0.5,
+                0.5000000230981062,
+                0.5000000485060234,
+                0.5000000764547328,
+            ]
+        ),
+        rtol=1e-9,
+        atol=0.0,
+    )
+    assert len(output.solutions) == 4
+    assert all(len(row) == 1 for row in output.solutions)
+    first = np.asarray(output.solutions[0][0].state)
+    np.testing.assert_allclose(
+        first,
+        np.asarray(
+            [
+                [7503.443592420682 + 0.0j, 0.0 + 3750.5553133533112j],
+                [0.0 - 3750.5553133533112j, 7501.6106267066225 + 0.0j],
+            ]
+        ),
+        rtol=1e-9,
+        atol=1e-9,
+    )
+    last = np.asarray(output.solutions[-1][0].state)
+    np.testing.assert_allclose(
+        last,
+        np.asarray(
+            [
+                [7503.4432104864345 + 0.0j, 0.0 + 3750.5556956608557j],
+                [0.0 - 3750.5556956608557j, 7501.6102443309346 + 0.0j],
+            ]
+        ),
+        rtol=1e-9,
+        atol=1e-9,
+    )
 
 
 @pytest.mark.slow

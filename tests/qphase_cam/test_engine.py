@@ -64,6 +64,31 @@ def test_vdp_engine_postprocess_and_round_trip(tmp_path):
     assert result.success[0]
     assert result.postprocess["jacobian_source"][0] == "analytic"
     assert result.postprocess["is_hermitian"][0]
+
+    # Behaviour freeze (Phase 10A): the steady state this model/solver/guess
+    # combination converges to, recorded from the implementation rather than
+    # derived from the equations. The Cholesky solver has no free parameters
+    # left once the guess is fixed, so these values may only change if the
+    # solver or the model changes.
+    np.testing.assert_allclose(
+        result.states[0],
+        np.asarray(
+            [
+                [7503.443592415266 + 0.0j, 0.0 + 3750.555313355958j],
+                [0.0 - 3750.555313355958j, 7501.610626711914 + 0.0j],
+            ]
+        ),
+        rtol=1e-9,
+        atol=1e-9,
+    )
+    assert float(result.residuals[0]) < 1e-10
+    # Two-mode spectrum at the frozen state (Hamiltonian postprocessor).
+    np.testing.assert_allclose(
+        result.postprocess["mode_frequencies"][0],
+        np.asarray([0.43308321934995564, -0.43308321934995586]),
+        rtol=1e-9,
+    )
+
     target = tmp_path / "cam_result.npz"
     result.save(target)
     loaded = CAMResult.load(target)
