@@ -445,3 +445,95 @@ def restored(bundle: VizTestBundle, path: Path) -> VizTestBundle:
         shape=bundle.shape,
         meta=bundle.metadata,
     )
+
+
+#: Scan values of the multi-point fixtures below.
+SCAN_POINTS = (0.1, 0.2, 0.3, 0.4, 0.5)
+
+
+def spectral_scan_dataset(
+    *, scan_values: tuple[float, ...] = SCAN_POINTS
+) -> Dataset:
+    """PSD scan product: ``psd[scan, frequency, mode]`` with a scan coordinate.
+
+    Each mode carries a Lorentzian peak that moves with the scan coordinate, so
+    a rendered panel visibly changes along the scan.
+    """
+    scan_size = len(scan_values)
+    frequency = np.linspace(-4.0, 4.0, N_FREQUENCY)
+    psd = np.empty((scan_size, N_FREQUENCY, N_CHANNEL), dtype=float)
+    for scan, value in enumerate(scan_values):
+        for mode in range(N_CHANNEL):
+            peak = value * (mode + 1)
+            psd[scan, :, mode] = 1.0 / (1.0 + (frequency - peak) ** 2)
+    scan_variables, scan_coordinates, arrays = _scan_coordinate(scan_values)
+    schema = ProductSchema(
+        kind=DataKind.SPECTRAL,
+        axes=[
+            _scan_axis(scan_size),
+            AxisSchema(
+                name="frequency",
+                role=AxisRole.COORDINATE,
+                size=N_FREQUENCY,
+                coordinate="regular",
+                start=float(frequency[0]),
+                step=float(frequency[1] - frequency[0]),
+                units="Hz",
+            ),
+            AxisSchema(name="mode", role=AxisRole.COMPONENT, size=N_CHANNEL),
+        ],
+        variables=[
+            VariableSchema(
+                name="axis",
+                dtype="<f8",
+                value_domain="real",
+                dims=("scan", "frequency"),
+                quantity="frequency",
+                units="Hz",
+            ),
+            VariableSchema(
+                name="psd",
+                dtype="<f8",
+                value_domain="real",
+                dims=("scan", "frequency", "mode"),
+                quantity=SpectralQuantity.POWER_SPECTRAL_DENSITY.value,
+            ),
+            VariableSchema(
+                name="modes",
+                dtype="<i8",
+                value_domain="real",
+                dims=("mode",),
+                quantity="mode_index",
+            ),
+            *scan_variables,
+        ],
+        coordinates=scan_coordinates,
+        attributes={
+            "frequency_units": "Hz",
+            "orientation": "phase_decreasing",
+            "sidedness": "two_sided",
+            "normalization": "power_per_hz",
+            "window": "rectangular",
+            "estimator": "periodogram",
+            "graph_ready": True,
+        },
+    )
+    return SpectralDataset.from_arrays(
+        schema,
+        {
+            "axis": np.broadcast_to(frequency, (scan_size, N_FREQUENCY)).copy(),
+            "psd": psd,
+            "modes": np.arange(N_CHANNEL, dtype=np.int64),
+            **arrays,
+        },
+        owner="test.viz",
+    )
+
+
+def spectral_scan_bundle() -> VizTestBundle:
+    """Multi-point bundle carrying a per-scan PSD product."""
+    return VizTestBundle(
+        {"psd": spectral_scan_dataset()},
+        axes={"omega": np.asarray(SCAN_POINTS, dtype=float)},
+        shape=(len(SCAN_POINTS),),
+    )

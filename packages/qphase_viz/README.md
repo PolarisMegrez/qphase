@@ -114,6 +114,23 @@ the `publication` default. Styling is applied in a local Matplotlib rc
 context, so rendering never changes the process-wide `rcParams`. A direct
 `plotter.plot(data, output_dir, format)` call uses the `publication` defaults.
 
+### PSD across a scan
+
+`SpectralScanPlotter` draws a multi-point PSD scan as one panel per mode,
+sharing the frequency axis. The scan coordinate is always named explicitly and
+the plotter never averages across scan points:
+
+```yaml
+visualizer:
+  spectral_scan:
+    plots:
+      - scan_parameter: omega       # coordinate stored on the PSD product
+        channels: [0, 1, 2]         # one panel each
+        scan_indices: [0, 10, 20]   # or scan_coordinates: [0.12, 0.24]
+        log_scale: true
+        label_template: "{name}={value:.6g}"
+```
+
 ## License
 
 MIT License

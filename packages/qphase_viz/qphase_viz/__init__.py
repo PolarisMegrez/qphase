@@ -14,6 +14,8 @@ from .config import (
     AnnotationSpec,
     PhasePlaneConfig,
     PowerSpectrumConfig,
+    SpectralScanConfig,
+    SpectralScanSpec,
     TimeSeriesConfig,
     VizEngineConfig,
 )
@@ -37,6 +39,8 @@ __all__ = [
     "PhasePlaneConfig",
     "PowerSpectrumConfig",
     "RenderOptions",
+    "SpectralScanConfig",
+    "SpectralScanSpec",
     "StyleName",
     "TimeSeriesConfig",
     "VizEngine",

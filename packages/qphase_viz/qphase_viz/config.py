@@ -12,6 +12,8 @@ Public API
 `PhasePlaneConfig` : Configuration for Phase Plane Plotter (list of specs).
 `PowerSpectrumSpec` : Specification for a single Power Spectrum plot.
 `PowerSpectrumConfig` : Configuration for Power Spectrum Plotter (list of specs).
+`SpectralScanSpec` : Specification for one PSD-across-scan figure.
+`SpectralScanConfig` : Configuration for the PSD scan plotter.
 `VizEngineConfig` : Configuration for the Visualization Engine.
 """
 
@@ -19,7 +21,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .styles import DEFAULT_STYLE, StyleName
+from .styles import DEFAULT_STYLE, PALETTE, StyleName
+
+#: Default overlay colour: the ``ink`` role of the semantic palette.
+PALETTE_INK = PALETTE["ink"]
 
 
 class AnnotationSpec(BaseModel):
@@ -84,6 +89,9 @@ class BasePlotterConfig(BaseModel):
     )
     annotations: list[AnnotationSpec] = Field(
         default_factory=list, description="Text annotations drawn on this figure"
+    )
+    constrained_layout: bool = Field(
+        False, description="Use Matplotlib's constrained layout for this figure"
     )
 
     model_config = ConfigDict(extra="allow")
@@ -199,6 +207,69 @@ class ParameterEvolutionConfig(BaseModel):
 
     plots: list[ParameterEvolutionSpec] = Field(
         default_factory=list, description="List of evolution plots"
+    )
+
+
+class SpectralScanSpec(BasePlotterConfig):
+    """Specification for a multi-panel PSD-across-scan figure.
+
+    One panel per selected mode, all sharing the frequency axis: each panel
+    draws the PSD of the chosen scan points in that mode, coloured by the scan
+    coordinate. The scan coordinate is always explicit — the plotter never
+    aggregates across scan points.
+    """
+
+    kind: Literal["spectral_scan"] = "spectral_scan"
+    scan_parameter: str = Field(
+        ...,
+        description="Scan coordinate name to read from the PSD product "
+        "(for example 'omega'); required, never inferred",
+    )
+    channels: list[int] = Field(
+        default_factory=lambda: [0],
+        description="Modes to draw, one panel each, top to bottom",
+    )
+    scan_indices: list[int] | None = Field(
+        None, description="Scan points to draw, by flat index; None draws all"
+    )
+    scan_coordinates: list[float] | None = Field(
+        None,
+        description="Scan points to draw, by coordinate value (nearest match)",
+    )
+    scan_tolerance: float | None = Field(
+        None,
+        gt=0.0,
+        description=(
+            "Largest accepted distance between a requested coordinate and the "
+            "nearest scan point; None uses half the local grid spacing"
+        ),
+    )
+    log_scale: bool = Field(True, description="Draw the PSD on a log y axis")
+    cmap: str = Field(
+        "scan",
+        description="Curve colours: 'scan' (allan_scan_colormap), 'flow' "
+        "(cam_flow_colormap), or any Matplotlib colormap name",
+    )
+    label_template: str = Field(
+        "{name}={value:.6g}",
+        description=(
+            "Legend label for one scan point; Python str.format fields are "
+            "'name' (scan parameter), 'value' (coordinate) and 'index'"
+        ),
+    )
+    mode_label_template: str = Field(
+        "Mode {mode}", description="Y label of one panel; format field 'mode'"
+    )
+    constrained_layout: bool = Field(
+        True, description="Use constrained layout (multi-panel default)"
+    )
+
+
+class SpectralScanConfig(BaseModel):
+    """Configuration for the PSD scan plotter."""
+
+    plots: list[SpectralScanSpec] = Field(
+        default_factory=list, description="List of PSD scan figures"
     )
 
 

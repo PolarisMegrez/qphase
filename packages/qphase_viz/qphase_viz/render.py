@@ -25,13 +25,56 @@ from typing import Any, Literal
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from .config import AnnotationSpec
 from .styles import RenderOptions
 
-__all__ = ["apply_axes_style", "draw_annotations", "save_figure", "styled_figure"]
+__all__ = [
+    "apply_axes_style",
+    "draw_annotations",
+    "save_figure",
+    "styled_figure",
+    "styled_subplots",
+]
+
+
+@contextmanager
+def styled_subplots(
+    options: RenderOptions,
+    *,
+    rows: int = 1,
+    cols: int = 1,
+    figsize: tuple[float, float] = (6.0, 4.0),
+    dpi: int = 100,
+    sharex: bool = False,
+    sharey: bool = False,
+    constrained_layout: bool = False,
+) -> Iterator[tuple[Figure, np.ndarray]]:
+    """Yield ``(figure, axes)`` under *options* and always close the figure.
+
+    ``axes`` always has shape ``(rows, cols)``, so a single-panel plotter and a
+    stacked-panel plotter share one rendering path. The rc parameters live only
+    for the duration of the block, so a caller may render any number of figures
+    without leaking style into the process.
+    """
+    with mpl.rc_context(options.rc_params()):
+        fig, axes = plt.subplots(
+            rows,
+            cols,
+            figsize=figsize,
+            dpi=dpi,
+            sharex=sharex,
+            sharey=sharey,
+            constrained_layout=constrained_layout,
+            squeeze=False,
+        )
+        try:
+            yield fig, axes
+        finally:
+            plt.close(fig)
 
 
 @contextmanager
@@ -41,17 +84,9 @@ def styled_figure(
     figsize: tuple[float, float],
     dpi: int,
 ) -> Iterator[tuple[Figure, Axes]]:
-    """Yield ``(figure, axes)`` rendered under *options* and always closed.
-
-    The rc parameters live only for the duration of the block, so a caller may
-    render any number of figures without leaking style into the process.
-    """
-    with mpl.rc_context(options.rc_params()):
-        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-        try:
-            yield fig, ax
-        finally:
-            plt.close(fig)
+    """Yield a single styled ``(figure, axes)`` pair and always close it."""
+    with styled_subplots(options, figsize=figsize, dpi=dpi) as (fig, axes):
+        yield fig, axes[0, 0]
 
 
 def apply_axes_style(
@@ -116,5 +151,6 @@ def save_figure(
 ) -> Path:
     """Write *fig* as ``output_dir/filename.format`` and return the path."""
     out_path = output_dir / f"{filename}.{format}"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, format=format, bbox_inches="tight")
     return out_path
