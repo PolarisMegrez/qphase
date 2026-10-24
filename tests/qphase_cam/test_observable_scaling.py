@@ -460,3 +460,51 @@ def test_the_default_readout_is_the_rayleigh_frequency(monkeypatch):
     )
     assert isinstance(RayleighObservable(_Model()), object)
     assert CAMOutcomeStatus.VALID.value == "valid"
+
+
+# --- collective paper fit family (10G1) ------------------------------------
+
+
+def test_allan_free_exponent_puiseux_fit_uses_the_k_minus_4_basis():
+    """The paper's Allan family is (k-4)p, not the solver's -2(1-p)+kp."""
+    from qphase_cam.scaling_analysis import (
+        ALLAN_PUISEUX_FAMILY_NOTE,
+        allan_free_exponent_puiseux_fit,
+        evaluate_allan_free_exponent_puiseux,
+    )
+
+    assert "(k - 4) p" in ALLAN_PUISEUX_FAMILY_NOTE
+    assert "-2(1-p)" in ALLAN_PUISEUX_FAMILY_NOTE
+    coefficients = [4.0, 1.5, 0.5]
+    reference = sum(
+        coefficient * X ** ((power - 4) * (1.0 / 3.0))
+        for power, coefficient in enumerate(coefficients)
+    )
+    exponent, uncertainty, fitted, prediction = allan_free_exponent_puiseux_fit(
+        X, reference, order=2, exponent_bounds=(0.25, 0.45)
+    )
+    assert exponent == pytest.approx(1.0 / 3.0, rel=1e-6)
+    assert uncertainty > 0.0
+    np.testing.assert_allclose(fitted, coefficients, rtol=1e-5)
+    np.testing.assert_allclose(prediction, reference, rtol=1e-9)
+    np.testing.assert_allclose(
+        evaluate_allan_free_exponent_puiseux(X, fitted, exponent),
+        reference,
+        rtol=1e-5,
+    )
+
+
+def test_local_slope_is_a_weighted_local_quadratic():
+    from qphase_cam.scaling_analysis import local_slope
+
+    values = 2.0 * X**2
+    slope, slope_sem = local_slope(
+        X, values, np.full(X.size, 0.01), np.ones(X.size, dtype=bool), half_window=2
+    )
+    # d/dx of 2x^2 is 4x; the local fit recovers it at every accepted point.
+    np.testing.assert_allclose(slope, 4.0 * X, rtol=1e-9)
+    assert np.all(np.isfinite(slope_sem))
+    short = local_slope(
+        X[:2], values[:2], np.full(2, 0.01), np.ones(2, dtype=bool), half_window=2
+    )[0]
+    assert np.all(np.isnan(short))

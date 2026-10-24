@@ -40,14 +40,19 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel, ConfigDict
 from qphase.core.utils import canonical_json
+from scipy.optimize import minimize_scalar
 
 from .solver.scaling import ScalingFit, free_exponent_fit
 
 __all__ = [
+    "ALLAN_PUISEUX_FAMILY_NOTE",
     "LogLinearFit",
     "OuterExtrapolation",
+    "allan_free_exponent_puiseux_fit",
+    "evaluate_allan_free_exponent_puiseux",
     "fixed_exponent_tolerance_upper",
     "local_log_exponents",
+    "local_slope",
     "log_linear_scaling_fit",
     "predict_puiseux",
     "puiseux_outer_extrapolation",
@@ -338,3 +343,133 @@ def series_identity(
     }
     text = canonical_json(digest_payload)
     return "cam:scaling:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+#: The Allan Puiseux exponent here is a *different fit family* from the
+#: ``-2(1-p) + k p`` basis of :mod:`qphase_cam.solver.scaling`: this one uses
+#: ``(k - 4) p`` and therefore absorbs the transfer-function prefactor into the
+#: exponent instead of carrying it as a separate leading power. The two bases are
+#: not interchangeable and must never be substituted for one another; the paper
+#: summary's Allan fields are defined by the ``(k - 4) p`` family below.
+ALLAN_PUISEUX_FAMILY_NOTE = (
+    "Allan free-exponent Puiseux with the (k - 4) p basis; a different fit family "
+    "from the -2(1-p) + k p basis of solver.scaling, not interchangeable"
+)
+
+
+def allan_free_exponent_puiseux_fit(
+    epsilon: Any,
+    values: Any,
+    *,
+    order: int,
+    exponent_bounds: tuple[float, float],
+) -> tuple[float, float, np.ndarray, np.ndarray]:
+    """Fit the ``(k - 4) p`` Allan Puiseux family on relative residuals.
+
+    The design column ``k`` is ``epsilon ** ((k - 4) * p)`` for ``k = 0..order``,
+    which is deliberately **not** the ``-2(1-p) + k p`` basis of the solver-layer
+    Allan fit (see :data:`ALLAN_PUISEUX_FAMILY_NOTE`). The exponent minimises the
+    relative residual, and its uncertainty comes from the profile curvature at
+    step ``1e-4`` with ``n - (order + 2)`` degrees of freedom.
+    """
+    x, y = _as_series(epsilon, values, minimum_points=max(3, order + 3))
+    resolved_order = int(order)
+    if resolved_order < 0:
+        raise ValueError(f"order must be non-negative; got {order}")
+    low, high = (float(exponent_bounds[0]), float(exponent_bounds[1]))
+    if not (np.isfinite(low) and np.isfinite(high)) or low <= 0.0 or low >= high:
+        raise ValueError(
+            f"exponent_bounds must be finite, positive and increasing; got "
+            f"{exponent_bounds}"
+        )
+
+    def projected_fit(exponent: float) -> tuple[float, np.ndarray, np.ndarray]:
+        design = np.column_stack(
+            [x ** ((power - 4) * exponent) for power in range(resolved_order + 1)]
+        )
+        coefficients, *_ = np.linalg.lstsq(
+            design / y[:, None], np.ones(y.size), rcond=None
+        )
+        prediction = design @ coefficients
+        objective = float(np.sum(((y - prediction) / y) ** 2))
+        return objective, coefficients, prediction
+
+    optimum = minimize_scalar(
+        lambda exponent: projected_fit(float(exponent))[0],
+        bounds=(low, high),
+        method="bounded",
+        options={"xatol": 1e-13},
+    )
+    exponent = float(optimum.x)
+    objective, coefficients, prediction = projected_fit(exponent)
+    step = 1e-4
+    curvature = (
+        projected_fit(exponent + step)[0]
+        - 2.0 * objective
+        + projected_fit(exponent - step)[0]
+    ) / step**2
+    if not np.isfinite(curvature) or curvature <= 0.0:
+        raise ValueError("the Allan Puiseux profile curvature is not positive")
+    degrees_of_freedom = y.size - (resolved_order + 2)
+    if degrees_of_freedom < 1:
+        raise ValueError(
+            f"order {resolved_order} leaves no residual degrees of freedom"
+        )
+    residual_scale = float(np.sqrt(objective / degrees_of_freedom))
+    uncertainty = float(np.sqrt(2.0 / curvature) * residual_scale)
+    return exponent, uncertainty, coefficients, prediction
+
+
+def evaluate_allan_free_exponent_puiseux(
+    epsilon: Any, coefficients: Any, exponent: float
+) -> np.ndarray:
+    """Evaluate the ``(k - 4) p`` Allan Puiseux sum, matching its fit."""
+    x = np.asarray(epsilon, dtype=float).reshape(-1)
+    return sum(
+        coefficient * x ** ((power - 4) * float(exponent))
+        for power, coefficient in enumerate(np.asarray(coefficients, dtype=float))
+    )
+
+
+def local_slope(
+    epsilon: Any,
+    values: Any,
+    sem: Any,
+    accepted: Any,
+    half_window: int = 2,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the weighted local-quadratic slope and its uncertainty.
+
+    For every accepted point the slope comes from a second-order Taylor fit over
+    the accepted neighbours inside ``half_window`` (clamped at the sequence ends),
+    weighted by ``1/sem``; a window with fewer than three points stays ``NaN``
+    instead of being fitted with a lower order.
+    """
+    x = np.asarray(epsilon, dtype=float).reshape(-1)
+    y = np.asarray(values, dtype=float).reshape(-1)
+    sigma = np.asarray(sem, dtype=float).reshape(-1)
+    mask = np.asarray(accepted, dtype=bool).reshape(-1)
+    if not (x.size == y.size == sigma.size == mask.size):
+        raise ValueError("epsilon, values, sem and accepted must have equal length")
+    if np.any(sigma <= 0.0) or not np.all(np.isfinite(sigma)):
+        raise ValueError("sem must be finite and strictly positive")
+    if int(half_window) < 1:
+        raise ValueError(f"half_window must be at least 1; got {half_window}")
+    index = np.flatnonzero(mask)
+    slope = np.full(x.size, np.nan)
+    slope_sem = np.full(x.size, np.nan)
+    for position, center in enumerate(index):
+        width = min(2 * int(half_window) + 1, index.size)
+        offset = min(max(0, position - int(half_window)), index.size - width)
+        window = index[offset : offset + width]
+        if window.size < 3:
+            continue
+        local_x = x[window] - x[center]
+        local_y = y[window]
+        weight = 1.0 / sigma[window]
+        coefficients, covariance = np.polyfit(
+            local_x, local_y, min(2, window.size - 1), w=weight, cov="unscaled"
+        )
+        slope[center] = coefficients[-2]
+        slope_sem[center] = float(np.sqrt(covariance[-2, -2]))
+    return slope, slope_sem
