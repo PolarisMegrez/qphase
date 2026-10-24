@@ -16,6 +16,9 @@ dependencies = [
 ]
 
 [project.entry-points.qphase]
+# Resource package manifest (Phase 10B: declaration only; the engine manifest
+# and execution path are unchanged until Phase 10E).
+"resource.cam" = "qphase_cam.manifest:MANIFEST"
 "engine.cam" = "qphase_cam.engine:Engine"
 "cam_solver.steady_state" = "qphase_cam.solver.steady_state:SteadyStateSolver"
 "cam_solver.multistability" = "qphase_cam.solver.multistability:MultistabilitySolver"
