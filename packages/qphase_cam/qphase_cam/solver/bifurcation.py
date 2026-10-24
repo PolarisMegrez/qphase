@@ -44,6 +44,24 @@ from .bifurcation_classifier import BifurcationClassifier
 from .bifurcation_discovery import BifurcationDiscovery
 from .bifurcation_strategy import BifurcationStrategy
 from .bifurcation_target import BifurcationTarget
+from .identity import (
+    candidate_content as derive_candidate_content,
+)
+from .identity import (
+    candidate_identity as derive_candidate_identity,
+)
+from .identity import (
+    case_identity as derive_case_identity,
+)
+from .identity import (
+    search_identity as derive_search_identity,
+)
+from .identity import (
+    search_scope as derive_search_scope,
+)
+from .identity import (
+    start_identity as derive_start_identity,
+)
 
 #: Audit count fields sharing the ``candidate start`` unit.  These are the
 #: only count fields aggregated into ``audit["totals"]``; generation-trial
@@ -220,9 +238,13 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         adapter = QPSGenDynamicsAdapter.from_model(model)
         self._validate_controls(adapter)
         reporter = context.progress if context is not None else None
+        scope_search, scope_case = self._scope_identities(model)
         if self.strategy.mode == "full":
             full_candidates, metadata = self._solve_full(
                 adapter, data=data, reporter=reporter
+            )
+            full_candidates, metadata = self._finalize_identities(
+                full_candidates, metadata, model=model
             )
             return CAMBifurcationOutput(
                 candidates=full_candidates,
@@ -241,6 +263,9 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                 adapter, data=data, reporter=reporter
             )
             metadata["fallback_reason"] = "no_regular_scalar_reduction"
+            full_candidates, metadata = self._finalize_identities(
+                full_candidates, metadata, model=model
+            )
             return CAMBifurcationOutput(
                 candidates=full_candidates,
                 target=self.target.name,
@@ -259,6 +284,9 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             )
             metadata["fallback_reason"] = "no_regular_scalar_reduction"
             metadata["reduction_search"] = reduction_search
+            full_candidates, metadata = self._finalize_identities(
+                full_candidates, metadata, model=model
+            )
             return CAMBifurcationOutput(
                 candidates=full_candidates,
                 target=self.target.name,
@@ -367,9 +395,14 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                     "workload": _workload_fields(seed_stats),
                 }
             )
+        # Start identities exist before deduplication: a start that merges into
+        # another candidate keeps its own identity on the survivor.
+        self._assign_start_identities(candidates, case=scope_case, model=model)
         candidates = self._deduplicate_candidates(candidates)
         metadata = {
             "control_names": tuple(self.config.controls),
+            "search_identity": scope_search,
+            "case_identity": scope_case,
             "strategy": self.strategy.mode,
             "reduction_runs": reduction_runs,
             "reduction_state_id": (
@@ -413,6 +446,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             full_candidates, full_metadata = self._solve_full(
                 adapter, data=data, reporter=reporter, near_misses=near_misses
             )
+            self._assign_start_identities(full_candidates, case=scope_case, model=model)
             candidates = self._deduplicate_candidates([*candidates, *full_candidates])
             metadata["full_fallback"] = full_metadata
             metadata["coverage"] = f"{metadata['coverage']}_and_bordered_local_search"
@@ -464,6 +498,9 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             ),
         }
         metadata["near_misses_json"] = near_miss_json(near_miss_records)
+        candidates, metadata = self._finalize_identities(
+            candidates, metadata, model=model
+        )
         return CAMBifurcationOutput(
             candidates=candidates,
             target=self.target.name,
@@ -1375,6 +1412,98 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             metadata=metadata,
         )
 
+    # -- solver-owned identities -------------------------------------------
+
+    def _scope_identities(self, model: Any) -> tuple[str, str]:
+        """Return the ``(search, case)`` identities of this solve call."""
+        scope = derive_search_scope(
+            model,
+            target=self.target.name,
+            order=int(self.target.order),
+            controls=self.config.controls,
+            perturbation={
+                "parameter": self.config.perturbation.parameter,
+                "scale": float(self.config.perturbation.scale),
+                "side": str(self.config.perturbation.side),
+            },
+            strategy=str(self.strategy.mode),
+        )
+        search = derive_search_identity(scope)
+        params = getattr(model, "params", {}) or {}
+        case_params = {
+            name: float(np.asarray(params[name]).item())
+            for name in self.config.controls
+            if name in params and np.asarray(params[name]).ndim == 0
+        }
+        return search, derive_case_identity(search, case_params)
+
+    def _identity_content(
+        self, model: Any, candidate: CAMBifurcationCandidate
+    ) -> tuple[dict[str, Any], str]:
+        """Return the content payload and basis of one candidate."""
+        return derive_candidate_content(
+            model_name=str(getattr(model, "name", type(model).__name__)),
+            target=self.target.name,
+            order=int(self.target.order),
+            state_vector=candidate.state_vector,
+            controls=candidate.controls,
+            verified_full_state_decimal_values=candidate.metadata.get(
+                "verified_full_state_decimal_values", ()
+            ),
+        )
+
+    def _assign_start_identities(
+        self,
+        candidates: list[CAMBifurcationCandidate],
+        *,
+        case: str,
+        model: Any,
+    ) -> None:
+        """Give every accepted start its own identity (idempotent)."""
+        for candidate in candidates:
+            if candidate.metadata.get("accepted_start_identities"):
+                continue
+            content, _ = self._identity_content(model, candidate)
+            candidate.metadata["accepted_start_identities"] = (
+                derive_start_identity(
+                    case=case, method=candidate.method, content=content
+                ),
+            )
+
+    def _assign_candidate_identities(
+        self, candidates: list[CAMBifurcationCandidate], *, model: Any
+    ) -> None:
+        """Give every surviving candidate its content identity and basis."""
+        for candidate in candidates:
+            content, basis = self._identity_content(model, candidate)
+            candidate.metadata["candidate_identity"] = derive_candidate_identity(
+                content
+            )
+            candidate.metadata["identity_basis"] = basis
+
+    def _finalize_identities(
+        self,
+        candidates: list[CAMBifurcationCandidate],
+        metadata: dict[str, Any],
+        *,
+        model: Any,
+    ) -> tuple[list[CAMBifurcationCandidate], dict[str, Any]]:
+        """Attach both identity layers and expose them in the output metadata."""
+        search, case = self._scope_identities(model)
+        metadata["search_identity"] = search
+        metadata["case_identity"] = case
+        self._assign_start_identities(candidates, case=case, model=model)
+        self._assign_candidate_identities(candidates, model=model)
+        metadata["accepted_start_identities"] = tuple(
+            identity
+            for candidate in candidates
+            for identity in candidate.metadata.get("accepted_start_identities", ())
+        )
+        metadata["accepted_candidate_identities"] = tuple(
+            str(candidate.metadata["candidate_identity"]) for candidate in candidates
+        )
+        return candidates, metadata
+
     def _deduplicate_candidates(
         self, candidates: list[CAMBifurcationCandidate]
     ) -> list[CAMBifurcationCandidate]:
@@ -1418,6 +1547,17 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                 )
             )
             duplicate.metadata["discovery_methods"] = methods
+            # The merged start keeps its identity on the survivor: a duplicate
+            # must never erase an accepted start from the evidence.
+            merged = list(duplicate.metadata.get("accepted_start_identities", ()))
+            for identity in candidate.metadata.get("accepted_start_identities", ()):
+                if identity in merged:
+                    raise RuntimeError(
+                        "duplicate accepted-start identity "
+                        f"{identity!r}: one start was counted twice"
+                    )
+                merged.append(identity)
+            duplicate.metadata["accepted_start_identities"] = tuple(merged)
             if (
                 duplicate.metadata.get("classification_status") != "classified"
                 and candidate.metadata.get("classification_status") == "classified"

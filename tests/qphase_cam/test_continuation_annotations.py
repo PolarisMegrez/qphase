@@ -806,5 +806,9 @@ def test_data_package_grew_by_the_two_new_modules():
     from pathlib import Path
 
     package = Path(cam_data.__file__).parent
-    for module in ("annotations", "continuation", "outcomes"):
+    for module in ("annotations", "continuation"):
         assert (package / f"{module}.py").exists(), module
+    # The outcome vocabulary is shared with the solver contract, so it lives at
+    # the package root and the data package re-exports it.
+    assert (package.parent / "outcomes.py").exists()
+    assert cam_data.CAMOutcomeStatus.VALID == "valid"

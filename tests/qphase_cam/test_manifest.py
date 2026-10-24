@@ -311,6 +311,7 @@ def test_declared_fields_are_the_frozen_planning_vocabulary():
             "prefilter_rejected",
             "rejected_by_reason",
             "accepted_candidates",
+            "accepted_starts",
             "near_misses",
             "control_names",
             "source_artifacts",

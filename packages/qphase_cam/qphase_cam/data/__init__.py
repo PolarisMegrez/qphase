@@ -15,7 +15,7 @@ The CAM product vocabulary, in the order a consumer meets it:
 * :mod:`qphase_cam.data.annotations` — :func:`build_annotation_product`:
   postprocessor annotations with typed field columns and one outcome status per
   row, so a negative result is a status rather than a boolean.
-* :mod:`qphase_cam.data.outcomes` — :class:`CAMOutcomeStatus` and
+* :mod:`qphase_cam.outcomes` — :class:`CAMOutcomeStatus` and
   :class:`CAMTargetKind`, the controlled vocabularies those products use.
 * :mod:`qphase_cam.data.bundle` — :func:`cam_bundle`: the core generic bundle
   plus the ``product_roles`` descriptor.
@@ -111,6 +111,12 @@ compare_continuation_export
 
 from __future__ import annotations
 
+from ..outcomes import (
+    CAMOutcomeStatus,
+    CAMTargetKind,
+    coerce_outcome_status,
+    coerce_target_kind,
+)
 from .annotations import build_annotation_product
 from .bundle import (
     CAM_BUNDLE_ADAPTER_ID,
@@ -162,12 +168,6 @@ from .migration import (
     SearchEvidenceMigrationInput,
     SearchEvidenceMigrationWorkflow,
     import_search_evidence_document,
-)
-from .outcomes import (
-    CAMOutcomeStatus,
-    CAMTargetKind,
-    coerce_outcome_status,
-    coerce_target_kind,
 )
 from .state import build_state_product
 

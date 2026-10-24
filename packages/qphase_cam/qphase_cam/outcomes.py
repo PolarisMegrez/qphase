@@ -15,9 +15,13 @@ which is the negative-result semantics of Phase 10C2.
 ``target_identity`` is never ambiguous between a solved state, a candidate, a
 continuation path or a scan case.
 
-Both are resource-defined vocabularies, not core enumerations: they live in the
-CAM package, they are used by the annotation product (Phase 10C2a) and will be
-used by the evidence product (Phase 10C2b).
+Both are resource-defined vocabularies, not core enumerations. They live at the
+package root rather than under ``qphase_cam.data`` because both layers use them:
+the annotation and evidence products (``qphase_cam.data``) and the search-audit
+fragment contract (``qphase_cam.evidence``). Keeping them here is what lets the
+fragment contract import the vocabulary without importing the data package, which
+would be a circular import. ``qphase_cam.data`` re-exports both names, so
+``from qphase_cam.data import CAMOutcomeStatus`` keeps working.
 """
 
 from __future__ import annotations

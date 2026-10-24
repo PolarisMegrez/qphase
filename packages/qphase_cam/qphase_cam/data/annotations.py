@@ -14,7 +14,7 @@ Two deliberate constraints:
   rejected outright. ``method_metadata`` stays JSON because it records *how* the
   number was produced, not the number.
 * **A negative result is a status, not a boolean.** Every row carries one
-  :class:`~qphase_cam.data.outcomes.CAMOutcomeStatus`, so "we looked and found
+  :class:`~qphase_cam.outcomes.CAMOutcomeStatus`, so "we looked and found
   nothing" (``not_found``) is distinguishable from "we never looked"
   (``not_searched``) and from "it exists but is unstable" (``unstable``).
 """
@@ -27,14 +27,14 @@ from typing import Any
 import numpy as np
 from qphase.data import AxisRole, AxisSchema, Dataset, StatisticsDataset, VariableSchema
 
-from ._common import closed_product, json_text_column, string_column, string_widths
-from .declarations import CAM_ANNOTATION_PRODUCT, _annotation_variables
-from .outcomes import (
+from ..outcomes import (
     CAMOutcomeStatus,
     CAMTargetKind,
     coerce_outcome_status,
     coerce_target_kind,
 )
+from ._common import closed_product, json_text_column, string_column, string_widths
+from .declarations import CAM_ANNOTATION_PRODUCT, _annotation_variables
 
 __all__ = ["build_annotation_product"]
 
@@ -225,7 +225,7 @@ def build_annotation_product(
     size and a later disagreement raises.
 
     ``target_identity`` must be non-empty and unique inside the product, and
-    ``status`` must be a :class:`~qphase_cam.data.outcomes.CAMOutcomeStatus`
+    ``status`` must be a :class:`~qphase_cam.outcomes.CAMOutcomeStatus`
     value — either one value for every row or one per row.
     """
     kind = str(annotation_kind).strip()

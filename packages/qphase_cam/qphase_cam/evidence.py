@@ -34,7 +34,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .data.outcomes import CAMOutcomeStatus, coerce_outcome_status
+from .outcomes import CAMOutcomeStatus, coerce_outcome_status
 from .solver.bifurcation_audit import (
     AUDIT_CONSERVATION,
     AUDIT_FIELD_UNITS,
@@ -185,6 +185,10 @@ class SearchAuditFragment(BaseModel):
     generation_trial_count: int | None = Field(default=None, ge=0)
 
     # -- evidence payload -----------------------------------------------------
+    #: One identity per *accepted start*. A deduplicated case has more starts
+    #: than candidates, and several starts may point at the same candidate.
+    accepted_start_identities: tuple[str, ...] = ()
+    #: One identity per *final candidate row* (after deduplication).
     accepted_candidate_identities: tuple[str, ...] = ()
     near_misses: tuple[SearchAuditNearMiss, ...] = ()
 
@@ -238,35 +242,69 @@ class SearchAuditFragment(BaseModel):
             )
         return self
 
+    @model_validator(mode="before")
+    @classmethod
+    def _default_start_identities(cls, data: Any) -> Any:
+        """Fall back to the candidate identities only when nothing was deduplicated.
+
+        A case with ``accepted_count`` equal to the number of final candidates has
+        one start per candidate, so the two identity layers coincide and the
+        start layer may be omitted (this keeps the Phase 10C construction working).
+        A deduplicated case must state its start identities: inferring them would
+        mean pretending two starts are one.
+        """
+        if not isinstance(data, Mapping):
+            return data
+        if data.get("accepted_start_identities"):
+            return data
+        final = tuple(data.get("accepted_candidate_identities") or ())
+        accepted = data.get("accepted_count")
+        if accepted is None:
+            return data
+        if len(final) == int(accepted):
+            return {**data, "accepted_start_identities": final}
+        raise ValueError(
+            f"case {data.get('case_identity')!r}: accepted_count={int(accepted)} but "
+            f"{len(final)} candidate identities were given and no "
+            "accepted_start_identities; a deduplicated case must provide the start "
+            "identities"
+        )
+
     @model_validator(mode="after")
     def _check_evidence_payload(self) -> SearchAuditFragment:
         label = self.case_identity
-        if len(self.accepted_candidate_identities) != self.accepted_count:
+        starts = list(self.accepted_start_identities)
+        final = list(self.accepted_candidate_identities)
+        if len(starts) != self.accepted_count:
             raise ValueError(
-                f"case {label!r}: {len(self.accepted_candidate_identities)} accepted "
-                f"identities for accepted_count={self.accepted_count}"
+                f"case {label!r}: {len(starts)} accepted_start_identities for "
+                f"accepted_count={self.accepted_count}"
             )
-        identities = list(self.accepted_candidate_identities)
-        for position, value in enumerate(identities):
-            if not value.strip():
+        for name, values in (
+            ("accepted_start_identities", starts),
+            ("accepted_candidate_identities", final),
+        ):
+            for position, value in enumerate(values):
+                if not value.strip():
+                    raise ValueError(f"case {label!r}: {name}[{position}] is empty")
+            if len(set(values)) != len(values):
+                raise ValueError(f"case {label!r}: {name} must be unique")
+        if self.unique_candidate_count is not None:
+            if self.unique_candidate_count != len(final):
                 raise ValueError(
-                    f"case {label!r}: accepted identity[{position}] is empty"
+                    f"case {label!r}: unique_candidate_count="
+                    f"{self.unique_candidate_count} but {len(final)} candidate "
+                    "identities were given"
                 )
-        if len(set(identities)) != len(identities):
+        if len(final) > self.accepted_count:
             raise ValueError(
-                f"case {label!r}: accepted candidate identities must be unique"
+                f"case {label!r}: the unique candidate count must not exceed "
+                "accepted_count"
             )
         if len(self.near_misses) != self.near_miss_saved:
             raise ValueError(
                 f"case {label!r}: {len(self.near_misses)} near-miss records for "
                 f"near_miss_saved={self.near_miss_saved}"
-            )
-        if (
-            self.unique_candidate_count is not None
-            and self.unique_candidate_count > self.accepted_count
-        ):
-            raise ValueError(
-                f"case {label!r}: unique_candidate_count must not exceed accepted_count"
             )
         return self
 
@@ -567,6 +605,7 @@ def fragment_from_bifurcation_metadata(
     case_identity: str,
     search_identity: str,
     accepted_candidate_identities: Sequence[str],
+    accepted_start_identities: Sequence[str] | None = None,
     backend: str,
     dtype: str,
     plugins: Mapping[str, str] | None = None,
@@ -603,19 +642,29 @@ def fragment_from_bifurcation_metadata(
     totals = _counter_totals(audit)
     accepted_count = int(totals["accepted_count"])
     names = list(accepted_candidate_identities)
-    if len(names) != accepted_count:
-        unique = totals.get("unique_candidate_count")
-        hint = (
-            " A multi-path case is deduplicated before packing, so several "
-            "accepted starts can collapse into one candidate row; one identity "
-            "per accepted start needs the solver-owned identity of Phase 10D."
-            if unique is not None and int(unique) < accepted_count
-            else ""
-        )
+    unique = totals.get("unique_candidate_count")
+    expected_candidates = accepted_count if unique is None else int(unique)
+    if len(names) != expected_candidates:
         raise ValueError(
-            f"case {case_identity!r}: {len(names)} accepted identities for "
-            f"audit accepted_count={accepted_count}.{hint}"
+            f"case {case_identity!r}: {len(names)} candidate identities for "
+            f"unique_candidate_count={expected_candidates}"
         )
+    # Start identities come from the caller, else from the solver metadata, else
+    # from the candidate identities when nothing was deduplicated.
+    starts = list(
+        accepted_start_identities
+        if accepted_start_identities is not None
+        else (metadata.get("accepted_start_identities") or ())
+    )
+    if not starts:
+        if len(names) == accepted_count:
+            starts = list(names)
+        else:
+            raise ValueError(
+                f"case {case_identity!r}: accepted_count={accepted_count} but only "
+                f"{len(names)} candidate identities and no start identities; a "
+                "deduplicated case must provide accepted_start_identities"
+            )
 
     resolved_plugins = {
         str(key): str(value)
@@ -701,6 +750,7 @@ def fragment_from_bifurcation_metadata(
         ),
         paths=_path_entries(metadata, audit),
         generation_trial_count=_single_path_trials(metadata, audit),
+        accepted_start_identities=tuple(starts),
         accepted_candidate_identities=tuple(names),
         near_misses=near_misses,
         solver=solver,

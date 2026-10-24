@@ -169,6 +169,7 @@ CAM_EVIDENCE_DECLARATION = ProductDeclaration(
         "prefilter_rejected",
         "rejected_by_reason",
         "accepted_candidates",
+        "accepted_starts",
         "near_misses",
         "control_names",
         "source_artifacts",
@@ -612,6 +613,7 @@ def _evidence_axes() -> list[AxisSchema]:
         AxisSchema(name="case", role=AxisRole.INDEX),
         AxisSchema(name="case_offset", role=AxisRole.INDEX),
         AxisSchema(name="accepted", role=AxisRole.INDEX),
+        AxisSchema(name="accepted_start", role=AxisRole.INDEX),
         AxisSchema(name="near_miss", role=AxisRole.INDEX),
         AxisSchema(name="control", role=AxisRole.INDEX),
     ]
@@ -701,6 +703,12 @@ def _evidence_variables() -> list[VariableSchema]:
             dims=("case_offset",),
         ),
         VariableSchema(
+            name="accepted_start_offsets",
+            dtype="int64",
+            value_domain="real",
+            dims=("case_offset",),
+        ),
+        VariableSchema(
             name="near_miss_offsets",
             dtype="int64",
             value_domain="real",
@@ -712,6 +720,13 @@ def _evidence_variables() -> list[VariableSchema]:
             value_domain="real",
             dims=("accepted",),
             quantity="cam_candidate_identity",
+        ),
+        VariableSchema(
+            name="accepted_start_identity",
+            dtype="U1",
+            value_domain="real",
+            dims=("accepted_start",),
+            quantity="cam_accepted_start_identity",
         ),
         VariableSchema(
             name="control_names",
@@ -776,9 +791,21 @@ def _evidence_attributes() -> dict[str, Any]:
         "product": "evidence",
         "case_axis": "case",
         "case_offset_axis": "case_offset",
-        "ragged_axes": ["accepted", "near_miss"],
-        "offsets_variables": ["accepted_offsets", "near_miss_offsets"],
+        "ragged_axes": ["accepted", "accepted_start", "near_miss"],
+        "offsets_variables": [
+            "accepted_offsets",
+            "accepted_start_offsets",
+            "near_miss_offsets",
+        ],
         "accepted_identity_variable": "accepted_identity",
+        "accepted_start_identity_variable": "accepted_start_identity",
+        # An accepted start is a refined trial; a candidate is a deduplicated
+        # row. They are two layers, and neither is a branch of its own.
+        "identity_layers": (
+            "accepted_identity references the final (deduplicated) candidate rows "
+            "one to one; accepted_start_identity lists every accepted start and "
+            "may repeat a candidate across several starts"
+        ),
         "control_names_variable": "control_names",
         "count_fields": list(EVIDENCE_COUNT_FIELDS),
         "candidate_start_unit": (

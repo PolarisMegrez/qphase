@@ -165,6 +165,21 @@ def _not_found_fragment(**overrides):
     return SearchAuditFragment(**payload)
 
 
+def _deduplicated_fragment(**overrides):
+    """Return a case where two accepted starts deduplicate into one candidate."""
+    payload = _fragment_payload(
+        accepted_count=2,
+        unique_candidate_count=1,
+        accepted_start_identities=("cam:start:bbb", "cam:start:aaa"),
+        accepted_candidate_identities=("cam:candidate:ccc",),
+        generated_candidate_count=8,
+        prefilter_pass_count=8,
+        refinement_start_count=8,
+    )
+    payload.update(overrides)
+    return SearchAuditFragment(**payload)
+
+
 def _no_object_dtypes(product):
     for variable in product.variables:
         assert not np.dtype(variable.dtype).hasobject, variable.name
@@ -446,11 +461,11 @@ def test_unchecked_physicality_is_not_a_failure():
     [
         (
             {"accepted_candidate_identities": ()},
-            "0 accepted identities for accepted_count=1",
+            "accepted_count=1 but 0 candidate identities",
         ),
         (
             {"accepted_candidate_identities": ("",)},
-            "identity\\[0\\] is empty",
+            "identities\\[0\\] is empty",
         ),
         (
             {
@@ -465,6 +480,22 @@ def test_unchecked_physicality_is_not_a_failure():
         ),
         (
             {"unique_candidate_count": 5},
+            "unique_candidate_count=5 but 1 candidate identities",
+        ),
+        (
+            {
+                "accepted_count": 2,
+                "accepted_start_identities": ("start:a", "start:b"),
+                "accepted_candidate_identities": (
+                    "candidate:a",
+                    "candidate:b",
+                    "candidate:c",
+                ),
+                "unique_candidate_count": 3,
+                "generated_candidate_count": 8,
+                "prefilter_pass_count": 8,
+                "refinement_start_count": 8,
+            },
             "must not exceed accepted_count",
         ),
         (
@@ -575,8 +606,8 @@ def test_fragment_from_metadata_requires_the_producing_environment():
         )
 
 
-def test_fragment_from_metadata_reports_a_deduplicated_case():
-    """A deduplicated multi-path case cannot claim one identity per start."""
+def test_fragment_from_metadata_represents_a_deduplicated_case():
+    """The auto strategy accepts 2 starts that dedup into 1 candidate row."""
     from .test_bifurcation import _solver
 
     model = TwoModeFoldModel()
@@ -584,16 +615,64 @@ def test_fragment_from_metadata_reports_a_deduplicated_case():
         model, NumpyBackend()
     )
     result = Engine._pack_bifurcation(output, model)
-    audit = result.meta["audit"]
-    if audit["totals"]["unique_candidate_count"] >= audit["totals"]["accepted_count"]:
+    totals = result.meta["audit"]["totals"]
+    if totals["unique_candidate_count"] >= totals["accepted_count"]:
         pytest.skip("the auto strategy did not deduplicate this run")
-    identities = [f"legacy:abc:0:{index}" for index in range(len(result.states))]
-    with pytest.raises(ValueError, match="Phase 10D"):
+    fragment = fragment_from_bifurcation_metadata(
+        result.meta,
+        case_identity=result.meta["case_identity"],
+        search_identity=result.meta["search_identity"],
+        accepted_candidate_identities=result.meta["accepted_candidate_identities"],
+        backend="numpy",
+        dtype="complex128",
+    )
+    # accepted_count keeps its scientific meaning: accepted *starts*.
+    assert fragment.accepted_count == totals["accepted_count"] == 2
+    assert fragment.unique_candidate_count == totals["unique_candidate_count"] == 1
+    assert len(fragment.accepted_start_identities) == 2
+    assert len(fragment.accepted_candidate_identities) == 1
+    assert len(set(fragment.accepted_start_identities)) == 2
+    # Two starts point at the same final candidate; neither layer is a slot.
+    assert (
+        fragment.accepted_start_identities == (result.meta["accepted_start_identities"])
+    )
+    assert (
+        fragment.accepted_candidate_identities
+        == (result.meta["accepted_candidate_identities"])
+    )
+    assert all(
+        identity.startswith("cam:start:")
+        for identity in fragment.accepted_start_identities
+    )
+    assert all(
+        identity.startswith("cam:candidate:")
+        for identity in fragment.accepted_candidate_identities
+    )
+
+
+def test_fragment_from_metadata_requires_start_ids_for_a_deduplicated_case():
+    """Without the start layer the case must not be silently collapsed."""
+    from .test_bifurcation import _solver
+
+    model = TwoModeFoldModel()
+    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).solve(
+        model, NumpyBackend()
+    )
+    result = Engine._pack_bifurcation(output, model)
+    totals = result.meta["audit"]["totals"]
+    if totals["unique_candidate_count"] >= totals["accepted_count"]:
+        pytest.skip("the auto strategy did not deduplicate this run")
+    metadata = {
+        key: value
+        for key, value in result.meta.items()
+        if key != "accepted_start_identities"
+    }
+    with pytest.raises(ValueError, match="must provide accepted_start_identities"):
         fragment_from_bifurcation_metadata(
-            result.meta,
-            case_identity="case:0",
-            search_identity="search:0",
-            accepted_candidate_identities=identities,
+            metadata,
+            case_identity=result.meta["case_identity"],
+            search_identity=result.meta["search_identity"],
+            accepted_candidate_identities=result.meta["accepted_candidate_identities"],
             backend="numpy",
             dtype="complex128",
         )
@@ -609,6 +688,7 @@ def test_evidence_template_keeps_its_axes_open_and_declares_the_units():
         "case",
         "case_offset",
         "accepted",
+        "accepted_start",
         "near_miss",
         "control",
     ]
@@ -632,7 +712,8 @@ def test_build_evidence_product_maps_cases_and_blocks():
         search_design={"target": "equilibrium_multiplicity", "order": 2},
     )
     assert product.attributes["case_count"] == 2
-    assert product.attributes["accepted_count"] == 1
+    assert product.attributes["accepted_start_count"] == 1
+    assert product.attributes["accepted_candidate_count"] == 1
     assert product.attributes["near_miss_count"] == 4
     assert product.attributes["evidence_completeness"] == "complete"
     assert product.attributes["source_artifacts"] == [
@@ -650,6 +731,13 @@ def test_build_evidence_product_maps_cases_and_blocks():
     )
     np.testing.assert_array_equal(
         np.asarray(product.handle("accepted_identity").materialize()),
+        ["legacy:abc:0:0"],
+    )
+    np.testing.assert_array_equal(
+        np.asarray(product.handle("accepted_start_offsets").materialize()), [0, 1, 1]
+    )
+    np.testing.assert_array_equal(
+        np.asarray(product.handle("accepted_start_identity").materialize()),
         ["legacy:abc:0:0"],
     )
     # The typed counts are candidate-start counts only.
@@ -770,7 +858,7 @@ def test_evidence_product_rejects_a_dangling_accepted_reference():
         search_design={"target": "equilibrium_multiplicity"},
         candidate_product=candidate_product,
     )
-    assert product.attributes["accepted_count"] == 1
+    assert product.attributes["accepted_candidate_count"] == 1
 
 
 def test_evidence_product_requires_complete_provenance():
@@ -949,6 +1037,108 @@ def test_evidence_product_keeps_mixed_execution_provenance(tmp_path):
             )
         ] == expected
         assert reloaded.variable("execution_provenance").dims == ("case",)
+
+
+def test_evidence_product_maps_both_identity_layers():
+    product = build_evidence_product(
+        fragments=[_deduplicated_fragment()],
+        source_artifacts=[{"artifact_id": "artifact-1"}],
+        search_design={"target": "equilibrium_multiplicity"},
+    )
+    assert product.attributes["accepted_start_count"] == 2
+    assert product.attributes["accepted_candidate_count"] == 1
+    assert product.axis("accepted").size == 1
+    assert product.axis("accepted_start").size == 2
+    np.testing.assert_array_equal(
+        np.asarray(product.handle("accepted_offsets").materialize()), [0, 1]
+    )
+    np.testing.assert_array_equal(
+        np.asarray(product.handle("accepted_start_offsets").materialize()), [0, 2]
+    )
+    np.testing.assert_array_equal(
+        np.asarray(product.handle("accepted_identity").materialize()),
+        ["cam:candidate:ccc"],
+    )
+    np.testing.assert_array_equal(
+        np.asarray(product.handle("accepted_start_identity").materialize()),
+        ["cam:start:bbb", "cam:start:aaa"],
+    )
+    assert product.attributes["identity_layers"].startswith("accepted_identity")
+    _no_object_dtypes(product)
+
+
+def test_evidence_product_accepts_start_ids_that_are_not_candidates():
+    """The candidate cross-check only applies to the final identity layer."""
+    from qphase_cam.data import build_candidate_product
+
+    candidate_product = build_candidate_product(
+        states=np.eye(2)[None].astype(complex),
+        state_vectors=np.zeros((1, 4)),
+        control_values=np.full((1, 1), -0.5),
+        control_names=("gamma",),
+        full_residual_norm=np.zeros(1),
+        search_residual_norm=np.zeros(1),
+        success=np.ones(1, dtype=bool),
+        status=["verified"],
+        method=["test"],
+        verification_digits=np.zeros(1, dtype=np.int64),
+        verification_status=["verified"],
+        candidate_identity=["cam:candidate:ccc"],
+    )
+    product = build_evidence_product(
+        fragments=[_deduplicated_fragment()],
+        source_artifacts=[{"artifact_id": "artifact-1"}],
+        search_design={"target": "equilibrium_multiplicity"},
+        candidate_product=candidate_product,
+    )
+    assert product.attributes["accepted_candidate_count"] == 1
+    # A final identity that is not a candidate row still fails.
+    with pytest.raises(ValueError, match="not present in the candidate product"):
+        build_evidence_product(
+            fragments=[
+                _deduplicated_fragment(
+                    accepted_candidate_identities=("cam:candidate:missing",)
+                )
+            ],
+            source_artifacts=[{"artifact_id": "artifact-1"}],
+            search_design={"target": "equilibrium_multiplicity"},
+            candidate_product=candidate_product,
+        )
+
+
+def test_evidence_bundle_roundtrips_both_identity_layers(tmp_path):
+    bundle = cam_bundle(
+        {
+            "evidence": build_evidence_product(
+                fragments=[
+                    _deduplicated_fragment(),
+                    _fragment(case_identity="search:0:case:1"),
+                ],
+                source_artifacts=[{"artifact_id": "artifact-1"}],
+                search_design={"target": "equilibrium_multiplicity"},
+            )
+        },
+        provenance={"cam_task": "search"},
+    )
+    for layout in ("single", "sharded"):
+        root = tmp_path / layout
+        bundle.save_dataset(root, layout=layout, shard_target_bytes=256)
+        reloaded = load_bundle(root).require("evidence").materialize()
+        np.testing.assert_array_equal(
+            np.asarray(reloaded.handle("accepted_offsets").materialize()), [0, 1, 2]
+        )
+        np.testing.assert_array_equal(
+            np.asarray(reloaded.handle("accepted_start_offsets").materialize()),
+            [0, 2, 3],
+        )
+        np.testing.assert_array_equal(
+            np.asarray(reloaded.handle("accepted_identity").materialize()),
+            ["cam:candidate:ccc", "legacy:abc:0:0"],
+        )
+        np.testing.assert_array_equal(
+            np.asarray(reloaded.handle("accepted_start_identity").materialize()),
+            ["cam:start:bbb", "cam:start:aaa", "legacy:abc:0:0"],
+        )
 
 
 def test_evidence_product_point_view_reads_strings():
@@ -1214,7 +1404,10 @@ def test_migration_input_is_not_evidence():
 
 def test_data_package_has_the_three_10c2b_modules():
     package = Path(cam_data.__file__).parent
-    for module in ("evidence", "migration", "outcomes"):
+    for module in ("evidence", "migration"):
         assert (package / f"{module}.py").exists(), module
     root = package.parent
+    # The fragment contract, the shared vocabulary and the identity helper.
     assert (root / "evidence.py").exists()
+    assert (root / "outcomes.py").exists()
+    assert (root / "solver" / "identity.py").exists()

@@ -12,7 +12,7 @@ Three rules shape it:
   ``path_audit`` and are never summed into an unqualified total.
 * **A negative result is a status.** ``not_found`` (searched, accepted nothing),
   ``not_searched`` (never looked) and ``unchecked`` (no physical verdict) are
-  distinct :class:`~qphase_cam.data.outcomes.CAMOutcomeStatus` values; none of
+  distinct :class:`~qphase_cam.outcomes.CAMOutcomeStatus` values; none of
   them collapses into "failed".
 * **Incomplete provenance fails.** A complete product needs at least one source
   artifact, unique case identities and conserving counters. A solver intermediate
@@ -37,6 +37,7 @@ from ..evidence import (
     REJECTION_COUNTER_SEMANTICS,
     SearchAuditFragment,
 )
+from ..outcomes import CAMOutcomeStatus
 from ._common import (
     closed_product,
     json_text_column,
@@ -47,7 +48,6 @@ from .declarations import (
     EVIDENCE_COUNT_FIELDS,
     _evidence_variables,
 )
-from .outcomes import CAMOutcomeStatus
 
 __all__ = [
     "COMPLETE_EVIDENCE",
@@ -223,8 +223,14 @@ def build_evidence_product(
     else:
         reason = None
     controls = _control_axis(cases)
+    # Two layers: the final (deduplicated) candidate rows, and the accepted
+    # starts that produced them. An accepted start is never a candidate row, so
+    # the candidate cross-check only ever sees the final identities.
     accepted_identities = [
         identity for case in cases for identity in case.accepted_candidate_identities
+    ]
+    accepted_start_identities = [
+        identity for case in cases for identity in case.accepted_start_identities
     ]
     if candidate_product is not None:
         _check_candidate_references(accepted_identities, candidate_product)
@@ -309,12 +315,18 @@ def build_evidence_product(
             for field in EVIDENCE_COUNT_FIELDS
         },
         "accepted_offsets": _offsets(
-            [case.accepted_count for case in cases], "accepted_offsets"
+            [len(case.accepted_candidate_identities) for case in cases],
+            "accepted_offsets",
+        ),
+        "accepted_start_offsets": _offsets(
+            [len(case.accepted_start_identities) for case in cases],
+            "accepted_start_offsets",
         ),
         "near_miss_offsets": _offsets(
             [case.near_miss_saved for case in cases], "near_miss_offsets"
         ),
         "accepted_identity": text(accepted_identities),
+        "accepted_start_identity": text(accepted_start_identities),
         "control_names": text(controls),
         "near_miss_path": text([record.path for record in near_misses]),
         "near_miss_reduction": text([record.reduction or "" for record in near_misses]),
@@ -353,7 +365,8 @@ def build_evidence_product(
     attributes = {
         **CAM_EVIDENCE_PRODUCT.attributes,
         "case_count": n_case,
-        "accepted_count": len(accepted_identities),
+        "accepted_start_count": len(accepted_start_identities),
+        "accepted_candidate_count": len(accepted_identities),
         "near_miss_count": len(near_misses),
         "control_names": list(controls),
         "search_design": dict(search_design),
@@ -374,6 +387,7 @@ def build_evidence_product(
             "case": n_case,
             "case_offset": n_case + 1,
             "accepted": len(accepted_identities),
+            "accepted_start": len(accepted_start_identities),
             "near_miss": len(near_misses),
             "control": len(controls),
         },
