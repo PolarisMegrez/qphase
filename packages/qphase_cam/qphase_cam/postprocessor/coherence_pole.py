@@ -156,6 +156,11 @@ class CoherencePoleSpectrum(CAMPostprocessor[CoherencePoleConfig]):
     description: ClassVar[str] = "Channel-visible poles of Tr[W exp(-i H tau) R]"
     config_schema: ClassVar[type[CoherencePoleConfig]] = CoherencePoleConfig
 
+    annotation_kind: ClassVar[str] = "coherence_pole_spectrum"
+    accepted_product_roles: ClassVar[tuple[str, ...]] = ("state", "state_scan")
+    requires_model: ClassVar[bool] = True
+    requires_backend: ClassVar[bool] = False
+
     def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
         del backend
         names, measurements = _measurement_matrices(self.config, int(model.n_modes))

@@ -101,6 +101,11 @@ class PetermannSpectrum(CAMPostprocessor[PetermannSpectrumConfig]):
     )
     config_schema: ClassVar[type[PetermannSpectrumConfig]] = PetermannSpectrumConfig
 
+    annotation_kind: ClassVar[str] = "petermann_spectrum"
+    accepted_product_roles: ClassVar[tuple[str, ...]] = ("state", "state_scan")
+    requires_model: ClassVar[bool] = True
+    requires_backend: ClassVar[bool] = False
+
     def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
         del backend
         if not isinstance(model, CAMBogoliubovModel):

@@ -17,16 +17,61 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
-from qphase.data import Dataset, StatisticsDataset
+from qphase.data import Dataset, StatisticsDataset, VariableSchema
 
-from ._common import closed_product, coordinate_columns
+from ._common import (
+    closed_product,
+    content_digest,
+    coordinate_columns,
+    string_widths,
+)
 from .declarations import (
     CAM_STATE_PRODUCT,
     CAM_STATE_SCAN_PRODUCT,
     _state_variables,
 )
 
-__all__ = ["build_state_product"]
+__all__ = ["SOLUTION_IDENTITY_SCHEME", "build_state_product", "solution_identity"]
+
+
+#: Scheme marker mixed into a solution-identity payload.
+SOLUTION_IDENTITY_SCHEME = "qphase_cam.solution_identity/1"
+
+
+def solution_identity(
+    *,
+    state_vector: Any,
+    parameters: Mapping[str, Any],
+) -> str:
+    """Return the content identity of one solved state at one parameter point.
+
+    The digest covers the solved state matrix and the parameter values of its
+    scan point. The solution slot is *not* part of it: two scan points that both
+    solve three states share three slots, and those slots say nothing about which
+    state is which.
+    """
+    payload = {
+        "scheme": SOLUTION_IDENTITY_SCHEME,
+        "parameters": dict(parameters),
+        "state": np.asarray(state_vector, dtype=np.complex128),
+    }
+    return f"cam:solution:{content_digest(payload)}"
+
+
+def _with_string_widths(
+    variables: Sequence[VariableSchema], widths: Mapping[str, int]
+) -> list[VariableSchema]:
+    """Return the state columns with data-dependent string widths."""
+    resolved: list[VariableSchema] = []
+    for variable in variables:
+        width = widths.get(variable.name)
+        if width is None:
+            resolved.append(variable)
+            continue
+        resolved.append(
+            variable.model_copy(update={"dtype": np.dtype(f"U{max(width, 1)}").str})
+        )
+    return resolved
 
 
 def build_state_product(
@@ -135,6 +180,38 @@ def build_state_product(
         **parameter_arrays,
         **axis_arrays,
     }
+    # One identity per filled slot; an empty slot carries an empty string so the
+    # column never implies that a slot exists as a solution.
+    identity_rows: list[list[str]] = [[""] * capacity for _ in range(scan_size)]
+    for point in range(scan_size):
+        point_parameters = {
+            name.removeprefix("parameter."): float(np.asarray(values[point]).real)
+            for name, values in arrays.items()
+            if name.startswith("parameter.")
+        }
+        for slot in range(int(counts_flat[point])):
+            identity_rows[point][slot] = solution_identity(
+                state_vector=arrays["states"][point, slot],
+                parameters=point_parameters,
+            )
+    # Two slots with the same state *and* the same parameter values are the same
+    # solution, so they legitimately share an identity: the digest is content, not
+    # position. The only invariant is that a slot holds an identity exactly when
+    # it holds a solution.
+    if any(
+        bool(identity_rows[point][slot]) != bool(valid_flat[point, slot])
+        for point in range(scan_size)
+        for slot in range(capacity)
+    ):
+        raise ValueError(
+            "solution_identity must be set exactly on valid solution slots"
+        )
+    identity_width = max(
+        (len(value) for row in identity_rows for value in row), default=0
+    )
+    arrays["solution_identity"] = np.asarray(
+        identity_rows, dtype=f"U{max(identity_width, 1)}"
+    ).reshape(scan_size, capacity)
     template = CAM_STATE_PRODUCT if not shape else CAM_STATE_SCAN_PRODUCT
     attributes = {
         **template.attributes,
@@ -151,7 +228,11 @@ def build_state_product(
             "state_row": matrix_shape[0],
             "state_col": matrix_shape[1],
         },
-        variables=[*_state_variables(), *parameter_variables, *axis_variables],
+        variables=[
+            *_with_string_widths(_state_variables(), string_widths(arrays)),
+            *parameter_variables,
+            *axis_variables,
+        ],
         coordinates=coordinates,
         attributes=attributes,
     )

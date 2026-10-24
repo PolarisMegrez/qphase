@@ -47,6 +47,10 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
         "Project approximate sample-matrix noise onto CAM critical modes"
     )
     config_schema: ClassVar[type[StochasticValidityConfig]] = StochasticValidityConfig
+    annotation_kind: ClassVar[str] = "stochastic_validity"
+    accepted_product_roles: ClassVar[tuple[str, ...]] = ("candidates",)
+    requires_model: ClassVar[bool] = True
+    requires_backend: ClassVar[bool] = False
     accepted_result_kinds: ClassVar[frozenset[str]] = frozenset(
         {"bifurcation_candidates", "bifurcation_scan"}
     )

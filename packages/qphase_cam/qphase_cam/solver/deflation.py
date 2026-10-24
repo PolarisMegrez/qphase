@@ -13,7 +13,7 @@ from qphase_cam.core.liouvillian import residual_vector
 from qphase_cam.errors import SolutionCapacityError
 from qphase_cam.state import CAMSolution, CAMSolverOutput
 
-from .base import CAMSolver, CAMSolverConfig
+from .base import SOLVER_OUTPUT_DECLARATIONS, CAMSolver, CAMSolverConfig
 from .common import deduplicate_solutions, random_hermitian_guesses
 
 
@@ -33,6 +33,13 @@ class DeflationSolver(CAMSolver[DeflationSolverConfig]):
     name: ClassVar[str] = "deflation"
     description: ClassVar[str] = "Deflated Newton CAM multi-root solver"
     config_schema: ClassVar[type[DeflationSolverConfig]] = DeflationSolverConfig
+    supported_tasks: ClassVar[tuple[str, ...]] = ("solve", "scan")
+    output_products: ClassVar[tuple[Any, ...]] = (
+        SOLVER_OUTPUT_DECLARATIONS["state"],
+        SOLVER_OUTPUT_DECLARATIONS["state_scan"],
+    )
+    requires_jacobian: ClassVar[bool] = True
+    progress_unit: ClassVar[str] = "point"
 
     def solve(self, model: Any, backend: Any) -> CAMSolverOutput:
         if str(backend.backend_name()).lower() != "numpy":

@@ -22,6 +22,11 @@ class Physicality(CAMPostprocessor[PhysicalityConfig]):
     description: ClassVar[str] = "Check Hermitian and positive-semidefinite states"
     config_schema: ClassVar[type[PhysicalityConfig]] = PhysicalityConfig
 
+    annotation_kind: ClassVar[str] = "physicality"
+    accepted_product_roles: ClassVar[tuple[str, ...]] = ("state", "state_scan")
+    requires_model: ClassVar[bool] = False
+    requires_backend: ClassVar[bool] = False
+
     def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
         del model, backend
         shape = np.asarray(result.valid_mask).shape

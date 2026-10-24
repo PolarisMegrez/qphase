@@ -28,7 +28,7 @@ from qphase_cam.state import (
     CAMBifurcationOutput,
 )
 
-from .base import CAMSolver, CAMSolverConfig
+from .base import SOLVER_OUTPUT_DECLARATIONS, CAMSolver, CAMSolverConfig
 from .bifurcation_audit import (
     AUDIT_CONSERVATION,
     AUDIT_FIELD_UNITS,
@@ -166,6 +166,14 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     name: ClassVar[str] = "bifurcation"
     description: ClassVar[str] = "High-order CAM equilibrium bifurcation search"
     config_schema: ClassVar[type[BifurcationSolverConfig]] = BifurcationSolverConfig
+    supported_tasks: ClassVar[tuple[str, ...]] = ("search",)
+    output_products: ClassVar[tuple[Any, ...]] = (
+        SOLVER_OUTPUT_DECLARATIONS["candidates"],
+    )
+    requires_jacobian: ClassVar[bool] = True
+    requires_symbolic_dynamics: ClassVar[bool] = True
+    search_audit_capability: ClassVar[bool] = True
+    progress_unit: ClassVar[str] = "candidate"
     output_kind: ClassVar[Literal["bifurcation_candidates"]] = "bifurcation_candidates"
     manifest: ClassVar[PluginManifest] = PluginManifest(
         subplugins={

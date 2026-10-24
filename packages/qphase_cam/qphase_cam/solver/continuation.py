@@ -12,7 +12,7 @@ from qphase_cam.core.jacobian import JacobianResolver
 from qphase_cam.core.liouvillian import residual_vector
 from qphase_cam.state import CAMSolution, CAMSolverOutput
 
-from .base import CAMSolver, CAMSolverConfig
+from .base import SOLVER_OUTPUT_DECLARATIONS, CAMSolver, CAMSolverConfig
 from .common import solve_single_state
 
 
@@ -34,6 +34,12 @@ class ContinuationSolver(CAMSolver[ContinuationSolverConfig]):
     name: ClassVar[str] = "continuation"
     description: ClassVar[str] = "Pseudo-arclength CAM continuation"
     config_schema: ClassVar[type[ContinuationSolverConfig]] = ContinuationSolverConfig
+    supported_tasks: ClassVar[tuple[str, ...]] = ("continue",)
+    output_products: ClassVar[tuple[Any, ...]] = (
+        SOLVER_OUTPUT_DECLARATIONS["continuation"],
+    )
+    requires_jacobian: ClassVar[bool] = True
+    progress_unit: ClassVar[str] = "step"
 
     def solve(self, model: Any, backend: Any) -> CAMSolverOutput:
         if str(backend.backend_name()).lower() != "numpy":

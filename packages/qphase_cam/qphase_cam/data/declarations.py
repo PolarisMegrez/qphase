@@ -62,6 +62,7 @@ __all__ = [
     "LEGACY_IDENTITY_SEMANTICS",
     "PATH_IDENTITY_SEMANTICS",
     "SOLUTION_AXIS_SEMANTICS",
+    "SOLUTION_IDENTITY_SEMANTICS",
 ]
 
 
@@ -224,6 +225,14 @@ SOLUTION_AXIS_SEMANTICS = (
     "continuity"
 )
 
+#: What a solution identity promises: it identifies one solved state at one
+#: parameter point by content, never by the slot it happens to occupy.
+SOLUTION_IDENTITY_SEMANTICS = (
+    "identity is a content digest of the solved state and the parameter values of "
+    "its scan point; an empty solution slot carries an empty string and the slot "
+    "index is never part of the identity"
+)
+
 #: What an imported ``legacy:`` identity does and does not promise.
 LEGACY_IDENTITY_SEMANTICS = (
     "identity is the imported snapshot's content fingerprint plus the legacy "
@@ -275,6 +284,13 @@ def _state_variables() -> list[VariableSchema]:
             value_domain="real",
             dims=("scan",),
         ),
+        VariableSchema(
+            name="solution_identity",
+            dtype="U1",
+            value_domain="real",
+            dims=("scan", "solution"),
+            quantity="cam_solution_identity",
+        ),
     ]
 
 
@@ -286,6 +302,8 @@ def _state_attributes(product: str, table: str) -> dict[str, Any]:
         "solution_axis": "solution",
         "state_matrix_axes": ["state_row", "state_col"],
         "solution_semantics": SOLUTION_AXIS_SEMANTICS,
+        "solution_identity_variable": "solution_identity",
+        "solution_identity_semantics": SOLUTION_IDENTITY_SEMANTICS,
         "ragged": False,
     }
 

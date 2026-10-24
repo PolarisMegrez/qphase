@@ -23,6 +23,11 @@ class RayleighFrequency(CAMPostprocessor[FrequencyConfig]):
     description: ClassVar[str] = "Compute Re Tr(HR) / Tr(R)"
     config_schema: ClassVar[type[FrequencyConfig]] = FrequencyConfig
 
+    annotation_kind: ClassVar[str] = "rayleigh_frequency"
+    accepted_product_roles: ClassVar[tuple[str, ...]] = ("state", "state_scan")
+    requires_model: ClassVar[bool] = True
+    requires_backend: ClassVar[bool] = False
+
     def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
         del backend
         output = np.full(np.asarray(result.valid_mask).shape, np.nan)
@@ -43,6 +48,11 @@ class HamiltonianSpectrum(CAMPostprocessor[FrequencyConfig]):
     name: ClassVar[str] = "hamiltonian_spectrum"
     description: ClassVar[str] = "Compute all eigenvalues of H(R)"
     config_schema: ClassVar[type[FrequencyConfig]] = FrequencyConfig
+
+    annotation_kind: ClassVar[str] = "hamiltonian_spectrum"
+    accepted_product_roles: ClassVar[tuple[str, ...]] = ("state", "state_scan")
+    requires_model: ClassVar[bool] = True
+    requires_backend: ClassVar[bool] = False
 
     def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
         del backend

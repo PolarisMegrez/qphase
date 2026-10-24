@@ -8,7 +8,7 @@ from pydantic import Field
 
 from qphase_cam.state import CAMSolverOutput
 
-from .base import CAMSolver, CAMSolverConfig
+from .base import SOLVER_OUTPUT_DECLARATIONS, CAMSolver, CAMSolverConfig
 from .common import solve_single_state
 
 
@@ -25,6 +25,12 @@ class SteadyStateSolver(CAMSolver[SteadyStateSolverConfig]):
     name: ClassVar[str] = "steady_state"
     description: ClassVar[str] = "SciPy CAM steady-state solver"
     config_schema: ClassVar[type[SteadyStateSolverConfig]] = SteadyStateSolverConfig
+    supported_tasks: ClassVar[tuple[str, ...]] = ("solve", "scan")
+    output_products: ClassVar[tuple[Any, ...]] = (
+        SOLVER_OUTPUT_DECLARATIONS["state"],
+        SOLVER_OUTPUT_DECLARATIONS["state_scan"],
+    )
+    progress_unit: ClassVar[str] = "point"
 
     def solve(self, model: Any, backend: Any) -> CAMSolverOutput:
         if str(backend.backend_name()).lower() != "numpy":

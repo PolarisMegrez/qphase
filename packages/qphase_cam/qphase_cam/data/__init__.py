@@ -169,7 +169,7 @@ from .migration import (
     SearchEvidenceMigrationWorkflow,
     import_search_evidence_document,
 )
-from .state import build_state_product
+from .state import SOLUTION_IDENTITY_SCHEME, build_state_product, solution_identity
 
 __all__ = [
     "CAM_ANNOTATION_DECLARATION",
@@ -197,6 +197,7 @@ __all__ = [
     "LEGACY_IDENTITY_SEMANTICS",
     "PATH_IDENTITY_SEMANTICS",
     "SOLUTION_AXIS_SEMANTICS",
+    "SOLUTION_IDENTITY_SCHEME",
     "SearchEvidenceMigrationInput",
     "SearchEvidenceMigrationWorkflow",
     "SourceArtifactRef",
@@ -206,6 +207,7 @@ __all__ = [
     "build_evidence_product",
     "build_state_product",
     "cam_bundle",
+    "solution_identity",
     "coerce_outcome_status",
     "coerce_target_kind",
     "compare_candidates_export",

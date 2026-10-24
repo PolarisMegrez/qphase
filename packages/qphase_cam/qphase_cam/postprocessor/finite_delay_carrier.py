@@ -89,6 +89,11 @@ class CAMFiniteDelayCarrier(CAMPostprocessor[CAMFiniteDelayCarrierConfig]):
         CAMFiniteDelayCarrierConfig
     )
 
+    annotation_kind: ClassVar[str] = "finite_delay_carrier"
+    accepted_product_roles: ClassVar[tuple[str, ...]] = ("state", "state_scan")
+    requires_model: ClassVar[bool] = True
+    requires_backend: ClassVar[bool] = False
+
     def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
         del backend
         names, measurements = _measurement_matrices(self.config, int(model.n_modes))

@@ -25,6 +25,11 @@ class JacobianSpectrum(CAMPostprocessor[JacobianSpectrumConfig]):
     description: ClassVar[str] = "Compute CAM Jacobian eigenvalues and stability"
     config_schema: ClassVar[type[JacobianSpectrumConfig]] = JacobianSpectrumConfig
 
+    annotation_kind: ClassVar[str] = "jacobian_spectrum"
+    accepted_product_roles: ClassVar[tuple[str, ...]] = ("state", "state_scan")
+    requires_model: ClassVar[bool] = True
+    requires_backend: ClassVar[bool] = True
+
     def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
         n_coordinates = int(model.n_modes) ** 2
         shape = np.asarray(result.valid_mask).shape + (n_coordinates,)

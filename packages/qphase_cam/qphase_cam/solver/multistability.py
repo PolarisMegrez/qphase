@@ -19,7 +19,7 @@ from qphase_cam.core.coordinates import matrix_to_vector
 from qphase_cam.errors import SolutionCapacityError
 from qphase_cam.state import CAMSolverOutput
 
-from .base import CAMSolver, CAMSolverConfig
+from .base import SOLVER_OUTPUT_DECLARATIONS, CAMSolver, CAMSolverConfig
 from .common import (
     deduplicate_solutions,
     prepare_root_system,
@@ -67,7 +67,13 @@ class MultistabilitySolver(CAMSolver[MultistabilitySolverConfig]):
     config_schema: ClassVar[type[MultistabilitySolverConfig]] = (
         MultistabilitySolverConfig
     )
+    supported_tasks: ClassVar[tuple[str, ...]] = ("solve", "scan")
+    output_products: ClassVar[tuple[Any, ...]] = (
+        SOLVER_OUTPUT_DECLARATIONS["state"],
+        SOLVER_OUTPUT_DECLARATIONS["state_scan"],
+    )
     supports_batch: ClassVar[bool] = True
+    progress_unit: ClassVar[str] = "point"
 
     def solve(
         self, model: Any, backend: Any, context: Any | None = None

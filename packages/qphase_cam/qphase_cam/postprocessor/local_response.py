@@ -45,6 +45,10 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
     config_schema: ClassVar[type[LocalResponseValidationConfig]] = (
         LocalResponseValidationConfig
     )
+    annotation_kind: ClassVar[str] = "local_response_validation"
+    accepted_product_roles: ClassVar[tuple[str, ...]] = ("candidates",)
+    requires_model: ClassVar[bool] = True
+    requires_backend: ClassVar[bool] = False
     accepted_result_kinds: ClassVar[frozenset[str]] = frozenset(
         {"bifurcation_candidates", "bifurcation_scan"}
     )
