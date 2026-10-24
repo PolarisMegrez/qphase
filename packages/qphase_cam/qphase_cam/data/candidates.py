@@ -29,12 +29,53 @@ from ._common import (
     closed_product,
     coordinate_columns,
     json_text_column,
+    json_value,
     string_column,
     string_widths,
 )
 from .declarations import CAM_CANDIDATE_PRODUCT, _candidate_variables
 
-__all__ = ["build_candidate_product"]
+__all__ = [
+    "build_candidate_product",
+    "is_classification_diagnostic",
+    "split_candidate_diagnostics",
+]
+
+
+def is_classification_diagnostic(name: str) -> bool:
+    lowered = name.lower()
+    return "signature" in lowered or "classif" in lowered
+
+
+def split_candidate_diagnostics(
+    diagnostics: Mapping[str, Any] | None, n_candidate: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    """Split per-candidate diagnostics into classification and audit rows.
+
+    Keys whose name mentions a scaling signature or a classification decision
+    go to ``classification``; every other per-candidate key goes to
+    ``base_audit``. Values are converted recursively, so a legacy object array
+    of tuples/dicts — how the solver stores ``scaling_signatures`` — becomes
+    JSON instead of being refused. Only a *value* that has no JSON
+    representation is reported, as ``<key>[<candidate>]``, and a key that
+    cannot be expressed per candidate at all is reported by name.
+    """
+    classification: list[dict[str, Any]] = [dict() for _ in range(n_candidate)]
+    base_audit: list[dict[str, Any]] = [dict() for _ in range(n_candidate)]
+    unmapped: list[str] = []
+    for raw_name, value in (diagnostics or {}).items():
+        name = str(raw_name)
+        array = np.asarray(value)
+        if array.ndim == 0 or array.shape[0] != n_candidate:
+            unmapped.append(name)
+            continue
+        rows = classification if is_classification_diagnostic(name) else base_audit
+        for position in range(n_candidate):
+            try:
+                rows[position][name] = json_value(array[position])
+            except (TypeError, ValueError):
+                unmapped.append(f"{name}[{position}]")
+    return classification, base_audit, sorted(unmapped)
 
 
 def _candidate_states(values: Any, n_candidate: int) -> np.ndarray:
@@ -160,16 +201,6 @@ def build_candidate_product(
                 f"candidate_identity[{position}] is empty; every candidate "
                 "needs an explicit identity"
             )
-    seen: dict[str, int] = {}
-    for value in identity:
-        seen[value] = seen.get(value, 0) + 1
-    duplicates = sorted(value for value, count in seen.items() if count > 1)
-    if duplicates:
-        raise ValueError(
-            "candidate_identity must be unique across the product; duplicated: "
-            f"{duplicates}"
-        )
-
     if candidate_offsets is None:
         offsets = np.asarray([0, n_candidate], dtype=np.int64)
     else:
@@ -189,6 +220,18 @@ def build_candidate_product(
                 f"{n_candidate}; got {int(offsets[-1])}"
             )
     n_case = int(offsets.size) - 1
+    # A candidate identity names the physical candidate, not its position: the
+    # same candidate found by two search cases may legitimately appear twice in
+    # one product, so uniqueness is required inside a case, not across cases.
+    for case in range(n_case):
+        start, stop = int(offsets[case]), int(offsets[case + 1])
+        block = identity[start:stop]
+        duplicates = sorted({value for value in block if block.count(value) > 1})
+        if duplicates:
+            raise ValueError(
+                f"candidate_identity must be unique within one case; case {case} "
+                f"duplicates {duplicates}"
+            )
     case_shape_list = [int(value) for value in (case_shape or ())] or [n_case]
     if int(np.prod(case_shape_list, dtype=np.int64)) != n_case:
         raise ValueError(

@@ -202,7 +202,7 @@ def _two_mode_fold_metadata():
         },
     )
     model = TwoModeFoldModel()
-    output = solver.solve(model, NumpyBackend())
+    output = solver.search(model, NumpyBackend())
     return Engine._pack_bifurcation(output, model)
 
 
@@ -611,7 +611,7 @@ def test_fragment_from_metadata_represents_a_deduplicated_case():
     from .test_bifurcation import _solver
 
     model = TwoModeFoldModel()
-    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).solve(
+    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).search(
         model, NumpyBackend()
     )
     result = Engine._pack_bifurcation(output, model)
@@ -655,7 +655,7 @@ def test_fragment_from_metadata_requires_start_ids_for_a_deduplicated_case():
     from .test_bifurcation import _solver
 
     model = TwoModeFoldModel()
-    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).solve(
+    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).search(
         model, NumpyBackend()
     )
     result = Engine._pack_bifurcation(output, model)

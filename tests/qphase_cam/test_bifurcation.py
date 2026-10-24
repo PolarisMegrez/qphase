@@ -145,7 +145,7 @@ def test_nonnegative_model_control_rejects_negative_bounds():
         g=0.5,
     )
     with pytest.raises(ValueError, match="nonnegative"):
-        solver.solve(model, NumpyBackend())
+        solver.search(model, NumpyBackend())
 
 
 def test_old_bifurcation_postprocessor_is_removed():
@@ -154,7 +154,7 @@ def test_old_bifurcation_postprocessor_is_removed():
 
 def test_fraction_free_solver_finds_known_physical_double_root():
     solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
-    output = solver.solve(TwoModeFoldModel(), NumpyBackend())
+    output = solver.search(TwoModeFoldModel(), NumpyBackend())
     assert len(output.candidates) == 1
     candidate = output.candidates[0]
     expected_gamma = -6.0 + np.sqrt(28.0)
@@ -230,7 +230,7 @@ def test_reduction_strategy_exposes_qpsgen_work_budgets():
 def test_reduction_search_reports_budget_limited_coverage():
     solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
     solver.strategy = AutoStrategy(ReductionStrategyConfig(partition_limit=4))
-    output = solver.solve(TwoModeFoldModel(), NumpyBackend())
+    output = solver.search(TwoModeFoldModel(), NumpyBackend())
     assert (
         output.metadata["coverage"]
         == "regular_reduction_budget_limited_and_bordered_local_search"
@@ -1127,7 +1127,7 @@ def test_refine_records_multi_label_near_misses():
 def test_reduced_audit_balances_seed_prefilter_and_refinement_counts():
     solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
     solver.strategy = ReducedStrategy(ReductionStrategyConfig())
-    output = solver.solve(TwoModeFoldModel(), NumpyBackend())
+    output = solver.search(TwoModeFoldModel(), NumpyBackend())
     audit = output.metadata["audit"]
     assert audit["schema"] == "cam_bifurcation_audit/2"
     assert audit["rejection_counter_semantics"] == REJECTION_COUNTER_SEMANTICS
@@ -1290,7 +1290,7 @@ def test_empty_result_reports_standard_note_in_metadata_and_cases_csv(tmp_path):
     solver = _solver(2, {"gamma": ControlRange(min=-0.1, max=0.0)})
     solver.strategy = ReducedStrategy(ReductionStrategyConfig())
     model = TwoModeFoldModel()
-    output = solver.solve(model, NumpyBackend())
+    output = solver.search(model, NumpyBackend())
     assert not output.candidates
     audit = output.metadata["audit"]
     assert audit["result_note"] == EMPTY_RESULT_NOTE
@@ -1372,7 +1372,7 @@ def test_cases_csv_exposes_truncation_consumer_and_materialization_failures(
     solver = _solver(2, {"gamma": ControlRange(min=-0.1, max=0.0)})
     solver.strategy = ReducedStrategy(ReductionStrategyConfig())
     model = TwoModeFoldModel()
-    output = solver.solve(model, NumpyBackend())
+    output = solver.search(model, NumpyBackend())
     result = Engine._pack_bifurcation(output, model)
     result.meta.update(output.metadata)
     # inject the qpsgen reduction-contract failure fields (new contract:

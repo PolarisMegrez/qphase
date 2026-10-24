@@ -66,7 +66,7 @@ class ThreeRootModel:
 def _vdp_root() -> np.ndarray:
     output = SteadyStateSolver(
         method="cholesky", initial_guess=VDP_GUESS, tolerance=1e-8
-    ).solve(VDP2ModeModel(**VDP_PARAMS), NumpyBackend())
+    ).solve_point(VDP2ModeModel(**VDP_PARAMS), NumpyBackend())
     assert output.solutions[0].success
     return output.solutions[0].state
 
@@ -74,14 +74,14 @@ def _vdp_root() -> np.ndarray:
 def test_jacobian_required_solvers_reject_missing_capability(no_jacobian_model):
     no_jacobian_model.params["unused"] = 0.0
     with pytest.raises(JacobianUnavailableError):
-        BatchedNewtonSolver(max_iterations=1).solve(no_jacobian_model, NumpyBackend())
+        BatchedNewtonSolver(max_iterations=1).solve_batch(no_jacobian_model, NumpyBackend())
     with pytest.raises(JacobianUnavailableError):
         ContinuationSolver(
             parameter="unused",
             start=0.0,
             stop=1.0,
             initial_guess=np.eye(2),
-        ).solve(no_jacobian_model, NumpyBackend())
+        ).solve_path(no_jacobian_model, NumpyBackend())
 
 
 def test_batched_engine_uses_each_grid_points_parameters():
@@ -118,7 +118,7 @@ def test_multistability_accepts_explicit_and_automatic_bounds():
         tolerance=1e-8,
         residual_tolerance=1e-7,
     )
-    output = solver.solve(VDP2ModeModel(**VDP_PARAMS), NumpyBackend())
+    output = solver.solve_batch(VDP2ModeModel(**VDP_PARAMS), NumpyBackend())
     assert len(output.solutions) == 1
     assert output.solutions[0].success
     inferred = MultistabilitySolver(
@@ -127,7 +127,7 @@ def test_multistability_accepts_explicit_and_automatic_bounds():
         guess_bounds="auto",
         tolerance=1e-8,
         residual_tolerance=1e-7,
-    ).solve(VDP2ModeModel(**VDP_PARAMS), NumpyBackend())
+    ).solve_batch(VDP2ModeModel(**VDP_PARAMS), NumpyBackend())
     assert len(inferred.solutions) == 1
 
 
@@ -310,7 +310,7 @@ def test_global_seed_discovery_recovers_all_roots_across_scan():
         tile_workers=1,
         tolerance=1e-10,
         residual_tolerance=1e-8,
-    ).solve(model, NumpyBackend())
+    ).solve_batch(model, NumpyBackend())
 
     assert [len(row) for row in output.solutions] == [3, 3]
     assert output.metadata["global_seed_count"] >= 3
@@ -367,7 +367,7 @@ def test_continuation_has_fixed_slots_without_branch_id():
         max_steps=3,
         tolerance=1e-7,
         initial_guess=VDP_GUESS,
-    ).solve(VDP2ModeModel(**VDP_PARAMS), NumpyBackend())
+    ).solve_path(VDP2ModeModel(**VDP_PARAMS), NumpyBackend())
     assert len(output.solutions) >= 2
     assert "gamma_b" in output.axes
     assert "branch_id" not in output.axes
@@ -434,7 +434,7 @@ def test_multistability_tile_processes_preserve_point_order():
         refine_suspicious=False,
         tolerance=1e-8,
         residual_tolerance=1e-7,
-    ).solve(VDP2ModeModel(**params), NumpyBackend())
+    ).solve_batch(VDP2ModeModel(**params), NumpyBackend())
     assert [len(row) for row in output.solutions] == [1, 1]
     assert output.metadata["requested_tile_workers"] == 2
     assert output.metadata["tile_workers"] in {1, 2}

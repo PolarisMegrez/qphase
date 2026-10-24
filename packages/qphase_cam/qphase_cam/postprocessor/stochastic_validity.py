@@ -10,8 +10,11 @@ from pydantic import Field
 
 from qphase_cam.core.coordinates import matrix_to_vector
 from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
+from qphase_cam.data import build_annotation_product
+from qphase_cam.outcomes import CAMOutcomeStatus
 
-from .base import CAMPostprocessor, CAMPostprocessorConfig
+from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
+from .candidates import CandidateView, candidate_view, pivot_branch_rows
 
 
 class StochasticValidityConfig(CAMPostprocessorConfig):
@@ -51,14 +54,13 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
     accepted_product_roles: ClassVar[tuple[str, ...]] = ("candidates",)
     requires_model: ClassVar[bool] = True
     requires_backend: ClassVar[bool] = False
-    accepted_result_kinds: ClassVar[frozenset[str]] = frozenset(
-        {"bifurcation_candidates", "bifurcation_scan"}
-    )
 
-    def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
-        del backend
+    def process(self, product: Any, context: CAMAnnotationContext) -> Any:
+        model = context.model
         adapter = QPSGenDynamicsAdapter.from_model(model)
-        candidates = getattr(result, "candidates", result)
+        view = candidate_view(product, metadata=dict(context.metadata))
+        result = view
+        candidates = view
         closure = dict(candidates.meta.get("closure", adapter.closure_provenance()))
         rows: list[dict[str, Any]] = []
         for candidate_index in range(len(candidates.state_vectors)):
@@ -97,7 +99,35 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
             "noise_semantics": "factorized_sample_matrix",
             "closure": closure,
         }
-        return {self.name: output}
+        del output
+        return self._annotation(view, rows)
+
+    def _annotation(self, view: CandidateView, rows: list[dict[str, Any]]) -> Any:
+        """Return the typed stochastic-validity annotation over the candidates."""
+        status: list[str] = []
+        for row in view.rows:
+            sample = [
+                item for item in rows if int(item["candidate_index"]) == row.index
+            ]
+            if not sample:
+                status.append(CAMOutcomeStatus.NOT_FOUND.value)
+            elif any(str(item["status"]) == "complete" for item in sample):
+                status.append(CAMOutcomeStatus.VALID.value)
+            else:
+                status.append(CAMOutcomeStatus.UNCHECKED.value)
+        fields, field_axes, axes = pivot_branch_rows(
+            view, rows, rename={"status": "branch_status"}
+        )
+        return build_annotation_product(
+            annotation_kind=self.annotation_kind,
+            target_kind="candidate",
+            target_identity=[row.identity for row in view.rows],
+            status=status,
+            fields=fields,
+            field_axes=field_axes,
+            axes=axes,
+            method_metadata=[dict(self.result_metadata) for _ in view.rows],
+        )
 
     def _evaluate_branch(
         self,

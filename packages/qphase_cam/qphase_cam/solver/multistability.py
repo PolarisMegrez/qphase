@@ -19,13 +19,20 @@ from qphase_cam.core.coordinates import matrix_to_vector
 from qphase_cam.errors import SolutionCapacityError
 from qphase_cam.state import CAMSolverOutput
 
-from .base import SOLVER_OUTPUT_DECLARATIONS, CAMSolver, CAMSolverConfig
+from .base import (
+    SOLVER_OUTPUT_DECLARATIONS,
+    CAMProductFragment,
+    CAMSolver,
+    CAMSolverConfig,
+    CAMSolveRequest,
+)
 from .common import (
     deduplicate_solutions,
     prepare_root_system,
     random_hermitian_guesses,
     solve_single_state,
 )
+from .execution import state_fragment
 from .guess_bounds import GuessBounds, GuessBoundsConfig, infer_guess_bounds
 
 
@@ -75,9 +82,22 @@ class MultistabilitySolver(CAMSolver[MultistabilitySolverConfig]):
     supports_batch: ClassVar[bool] = True
     progress_unit: ClassVar[str] = "point"
 
-    def solve(
+    def solve(self, request: CAMSolveRequest) -> CAMProductFragment:
+        return state_fragment(
+            request=request,
+            run=lambda model, point: self.solve_batch(
+                model, request.backend, request.context
+            ),
+            supports_batch=True,
+        )
+
+    def solve_batch(
         self, model: Any, backend: Any, context: Any | None = None
     ) -> CAMSolverOutput:
+        """Search every point the model parameters describe.
+
+        The numeric core of :meth:`solve`; it returns the raw solver output.
+        """
         if str(backend.backend_name()).lower() != "numpy":
             raise ValueError("multistability solver requires the numpy backend")
         batch_size = self._batch_size(model.params)

@@ -7,8 +7,9 @@ from typing import Any, ClassVar
 import numpy as np
 from pydantic import Field
 
-from .base import CAMPostprocessor, CAMPostprocessorConfig
-from .frequency import _successful_indices
+from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
+from .frequency import _annotation, _successful
+from .state_view import field_column, state_rows
 
 
 class PhysicalityConfig(CAMPostprocessorConfig):
@@ -27,31 +28,36 @@ class Physicality(CAMPostprocessor[PhysicalityConfig]):
     requires_model: ClassVar[bool] = False
     requires_backend: ClassVar[bool] = False
 
-    def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
-        del model, backend
-        shape = np.asarray(result.valid_mask).shape
-        is_hermitian = np.zeros(shape, dtype=bool)
-        is_psd = np.zeros(shape, dtype=bool)
-        minimum_eigenvalue = np.full(shape, np.nan)
-        residual_ok = np.zeros(shape, dtype=bool)
-        for index in _successful_indices(result):
-            state = np.asarray(result.states[index])
-            is_hermitian[index] = np.allclose(
-                state,
-                state.conj().T,
+    def process(self, product: Any, context: CAMAnnotationContext) -> Any:
+        del context
+        rows = state_rows(product)
+        is_hermitian = field_column(rows, dtype=bool)
+        is_psd = field_column(rows, dtype=bool)
+        minimum_eigenvalue = field_column(rows, dtype=float)
+        residual_ok = field_column(rows, dtype=bool)
+        for position in _successful(rows):
+            row = rows[position]
+            is_hermitian[position] = np.allclose(
+                row.state,
+                row.state.conj().T,
                 atol=self.config.hermitian_tolerance,
                 rtol=0.0,
             )
-            minimum_eigenvalue[index] = float(np.min(np.linalg.eigvalsh(state)))
-            is_psd[index] = minimum_eigenvalue[index] >= -self.config.psd_tolerance
-            residual_ok[index] = (
-                float(np.asarray(result.residuals)[index])
-                <= self.config.residual_tolerance
+            minimum_eigenvalue[position] = float(np.min(np.linalg.eigvalsh(row.state)))
+            is_psd[position] = (
+                minimum_eigenvalue[position] >= -self.config.psd_tolerance
             )
-        return {
-            "is_hermitian": is_hermitian,
-            "is_positive_semidefinite": is_psd,
-            "minimum_state_eigenvalue": minimum_eigenvalue,
-            "residual_within_tolerance": residual_ok,
-            "is_physical": is_hermitian & is_psd & residual_ok,
-        }
+            residual_ok[position] = row.residual <= self.config.residual_tolerance
+        is_physical = is_hermitian & is_psd & residual_ok
+        return _annotation(
+            self,
+            rows,
+            {
+                "is_hermitian": is_hermitian,
+                "is_positive_semidefinite": is_psd,
+                "minimum_state_eigenvalue": minimum_eigenvalue,
+                "residual_within_tolerance": residual_ok,
+                "is_physical": is_physical,
+            },
+            healthy=[bool(value) for value in is_physical],
+        )

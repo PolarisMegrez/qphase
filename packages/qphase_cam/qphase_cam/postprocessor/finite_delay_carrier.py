@@ -7,9 +7,12 @@ from typing import Any, ClassVar
 import numpy as np
 from pydantic import Field, field_validator
 
-from .base import CAMPostprocessor
+from qphase_cam.data import build_annotation_product
+
+from .base import CAMAnnotationContext, CAMPostprocessor
 from .coherence_pole import CoherencePoleConfig, _measurement_matrices
-from .frequency import _successful_indices
+from .frequency import _successful
+from .state_view import annotation_status, field_column, state_rows
 
 __all__ = [
     "CAMFiniteDelayCarrier",
@@ -94,21 +97,22 @@ class CAMFiniteDelayCarrier(CAMPostprocessor[CAMFiniteDelayCarrierConfig]):
     requires_model: ClassVar[bool] = True
     requires_backend: ClassVar[bool] = False
 
-    def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
-        del backend
+    def process(self, product: Any, context: CAMAnnotationContext) -> Any:
+        model = context.model
         names, measurements = _measurement_matrices(self.config, int(model.n_modes))
         rates = np.asarray(self.config.detector_rates, dtype=float)
-        base_shape = np.asarray(result.valid_mask).shape
-        carrier = np.full(base_shape + (len(names), rates.size), np.nan)
-        coherent_weight = np.full_like(carrier, np.nan)
-        instantaneous = np.full(base_shape + (len(names),), np.nan)
-        rayleigh = np.full_like(instantaneous, np.nan)
-        condition_number = np.full(base_shape, np.nan)
+        rows = state_rows(product)
+        carrier = field_column(rows, tail=(len(names), rates.size), dtype=float)
+        coherent_weight = field_column(rows, tail=(len(names), rates.size), dtype=float)
+        instantaneous = field_column(rows, tail=(len(names),), dtype=float)
+        rayleigh = field_column(rows, tail=(len(names),), dtype=float)
+        condition_number = field_column(rows, dtype=float)
 
-        for index in _successful_indices(result):
-            state = np.asarray(result.states[index], dtype=complex)
+        for index in _successful(rows):
+            row = rows[index]
+            state = np.asarray(row.state, dtype=complex)
             hamiltonian = np.asarray(
-                model.cam_hamiltonian(state, result.params_at(index)),
+                model.cam_hamiltonian(state, row.parameters),
                 dtype=complex,
             )
             eigenvalues, right = np.linalg.eig(hamiltonian)
@@ -127,16 +131,14 @@ class CAMFiniteDelayCarrier(CAMPostprocessor[CAMFiniteDelayCarrierConfig]):
                 evaluated = finite_delay_carrier_from_poles(
                     eigenvalues, residues, rates
                 )
-                carrier[index + (measurement_index,)] = evaluated["frequency"]
-                coherent_weight[index + (measurement_index,)] = evaluated[
-                    "coherent_weight"
-                ]
-                instantaneous[index + (measurement_index,)] = evaluated[
+                carrier[index, measurement_index] = evaluated["frequency"]
+                coherent_weight[index, measurement_index] = evaluated["coherent_weight"]
+                instantaneous[index, measurement_index] = evaluated[
                     "instantaneous_frequency"
                 ]
                 denominator = np.trace(measurement @ state)
                 if abs(denominator) > 1e-300:
-                    rayleigh[index + (measurement_index,)] = float(
+                    rayleigh[index, measurement_index] = float(
                         np.real(
                             np.trace(measurement @ hamiltonian @ state) / denominator
                         )
@@ -151,13 +153,38 @@ class CAMFiniteDelayCarrier(CAMPostprocessor[CAMFiniteDelayCarrierConfig]):
             ),
             "instantaneous_limit": "generalized Rayleigh quotient",
         }
-        return {
-            "finite_delay_carrier_frequency": carrier,
-            "finite_delay_carrier_coherent_weight": coherent_weight,
-            "finite_delay_carrier_instantaneous_frequency": instantaneous,
-            "finite_delay_carrier_rayleigh_frequency": rayleigh,
-            "finite_delay_carrier_instantaneous_rayleigh_residual": (
-                instantaneous - rayleigh
+        return build_annotation_product(
+            annotation_kind=self.annotation_kind,
+            target_kind="state",
+            target_identity=[row.identity for row in rows],
+            status=annotation_status(
+                rows,
+                healthy=[
+                    bool(value) for value in np.any(np.isfinite(carrier), axis=(1, 2))
+                ],
             ),
-            "finite_delay_carrier_eigenvector_condition_number": condition_number,
-        }
+            fields={
+                "finite_delay_carrier_frequency": carrier,
+                "finite_delay_carrier_coherent_weight": coherent_weight,
+                "finite_delay_carrier_instantaneous_frequency": instantaneous,
+                "finite_delay_carrier_rayleigh_frequency": rayleigh,
+                "finite_delay_carrier_instantaneous_rayleigh_residual": (
+                    instantaneous - rayleigh
+                ),
+                "finite_delay_carrier_eigenvector_condition_number": condition_number,
+            },
+            field_axes={
+                "finite_delay_carrier_frequency": ("measurement", "detector_rate"),
+                "finite_delay_carrier_coherent_weight": (
+                    "measurement",
+                    "detector_rate",
+                ),
+                "finite_delay_carrier_instantaneous_frequency": ("measurement",),
+                "finite_delay_carrier_rayleigh_frequency": ("measurement",),
+                "finite_delay_carrier_instantaneous_rayleigh_residual": (
+                    "measurement",
+                ),
+            },
+            axes={"measurement": len(names), "detector_rate": rates.size},
+            method_metadata=[dict(self.result_metadata) for _ in rows],
+        )

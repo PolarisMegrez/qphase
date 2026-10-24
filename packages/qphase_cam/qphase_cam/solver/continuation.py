@@ -10,10 +10,18 @@ from pydantic import Field
 from qphase_cam.core.coordinates import matrix_to_vector, vector_to_matrix
 from qphase_cam.core.jacobian import JacobianResolver
 from qphase_cam.core.liouvillian import residual_vector
+from qphase_cam.data import build_continuation_product
 from qphase_cam.state import CAMSolution, CAMSolverOutput
 
-from .base import SOLVER_OUTPUT_DECLARATIONS, CAMSolver, CAMSolverConfig
+from .base import (
+    SOLVER_OUTPUT_DECLARATIONS,
+    CAMProductFragment,
+    CAMSolver,
+    CAMSolverConfig,
+    CAMSolveRequest,
+)
 from .common import solve_single_state
+from .identity import digest_payload
 
 
 class ContinuationSolverConfig(CAMSolverConfig):
@@ -41,7 +49,68 @@ class ContinuationSolver(CAMSolver[ContinuationSolverConfig]):
     requires_jacobian: ClassVar[bool] = True
     progress_unit: ClassVar[str] = "step"
 
-    def solve(self, model: Any, backend: Any) -> CAMSolverOutput:
+    def solve(self, request: CAMSolveRequest) -> CAMProductFragment:
+        model = request.model
+        backend = request.backend
+        if request.parameter_grid is not None:
+            raise ValueError(
+                "continuation cannot be combined with an external ScanSpec"
+            )
+        output = self.solve_path(model, backend)
+        return self._fragment(model, output)
+
+    def _fragment(self, model: Any, output: CAMSolverOutput) -> CAMProductFragment:
+        """Pack the path into the typed continuation product."""
+        solutions = [row[0] for row in output.solutions]
+        coordinate = np.asarray(output.axes[self.config.parameter], dtype=np.float64)
+        states = np.asarray([solution.state for solution in solutions], dtype=complex)
+        residuals = np.asarray([solution.residual for solution in solutions])
+        success = np.asarray([solution.success for solution in solutions], dtype=bool)
+        product = build_continuation_product(
+            path_identity=[self._path_identity(model, coordinate)],
+            continuation_coordinate=coordinate,
+            continuation_coordinate_name=self.config.parameter,
+            states=states,
+            residuals=residuals,
+            success=success,
+            parameters=dict(model.params),
+            axes=dict(output.axes),
+            provenance={"solver": "continuation"},
+        )
+        return CAMProductFragment(
+            products={"continuation": product},
+            metadata={
+                **output.metadata,
+                "path_count": 1,
+                "point_count": int(coordinate.size),
+                "continuation_parameter": self.config.parameter,
+            },
+        )
+
+    def _path_identity(self, model: Any, coordinate: np.ndarray) -> str:
+        """Return the solver-owned identity of this local path.
+
+        The identity is the content of the solve: model, the swept parameter and
+        its configured window, the derived config and the initial state. It is
+        local to this run and never derived from a slot or from a path index.
+        """
+        payload = {
+            "scheme": "qphase_cam.path_identity/1",
+            "model": str(getattr(model, "name", type(model).__name__)),
+            "parameter": self.config.parameter,
+            "start": float(self.config.start),
+            "stop": float(self.config.stop),
+            "step": float(self.config.step),
+            "tolerance": float(self.config.tolerance),
+            "coordinate": [float(value) for value in coordinate],
+        }
+        return f"cam:path:{digest_payload(payload)}"
+
+    def solve_path(self, model: Any, backend: Any) -> CAMSolverOutput:
+        """Run the pseudo-arclength path.
+
+        The numeric core of :meth:`solve`; it returns the raw solver output.
+        """
         if str(backend.backend_name()).lower() != "numpy":
             raise ValueError("continuation solver requires the numpy backend")
         if self.config.parameter not in model.params:

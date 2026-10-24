@@ -97,10 +97,6 @@ class CAMPostprocessor(ABC, Generic[PostprocessorConfigT]):
         CAM_ANNOTATION_DECLARATION,
     )
 
-    #: Legacy dispatch marker, removed when the engine switches to the typed
-    #: contract; it stays here only so the not-yet-switched engine keeps working.
-    accepted_result_kinds: ClassVar[frozenset[str]] = frozenset({"fixed_points"})
-
     config: PostprocessorConfigT
 
     def __init__(
@@ -113,5 +109,9 @@ class CAMPostprocessor(ABC, Generic[PostprocessorConfigT]):
         self.result_metadata: dict[str, Any] = {}
 
     @abstractmethod
-    def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
-        """Return named arrays to merge into ``CAMResult.postprocess``."""
+    def process(self, product: Dataset, context: CAMAnnotationContext) -> Dataset:
+        """Return the annotation product for the given typed product.
+
+        This is the only postprocessor entry point: no result object, no
+        ``postprocess`` dictionary and no analysis sidecar survive Phase 10D2.
+        """

@@ -9,9 +9,11 @@ from pydantic import Field
 from qphase.backend.xputil import convert_to_numpy
 from scipy.linalg import eig
 
+from qphase_cam.data import build_annotation_product
 from qphase_cam.model import CAMBogoliubovModel
 
-from .base import CAMPostprocessor, CAMPostprocessorConfig
+from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
+from .state_view import annotation_status, field_column, state_rows
 
 
 class PetermannSpectrumConfig(CAMPostprocessorConfig):
@@ -106,36 +108,31 @@ class PetermannSpectrum(CAMPostprocessor[PetermannSpectrumConfig]):
     requires_model: ClassVar[bool] = True
     requires_backend: ClassVar[bool] = False
 
-    def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
-        del backend
+    def process(self, product: Any, context: CAMAnnotationContext) -> Any:
+        model = context.model
         if not isinstance(model, CAMBogoliubovModel):
             raise TypeError(
                 f"model {model.name!r} does not provide cam_bogoliubov_interaction"
             )
 
-        mask = np.asarray(convert_to_numpy(result.valid_mask), dtype=bool) & np.asarray(
-            convert_to_numpy(result.success), dtype=bool
-        )
-        indices = [tuple(int(value) for value in index) for index in np.argwhere(mask)]
-        result_shape = mask.shape
+        rows = state_rows(product)
+        chunk_indices = [position for position, row in enumerate(rows) if row.success]
         n_modes = int(model.n_modes)
-        h_values = _complex_output(result_shape + (n_modes,))
-        h_factors = _real_output(result_shape + (n_modes,))
-        doubled_shape = result_shape + (2 * n_modes,)
-        bogoliubov_values = _complex_output(doubled_shape)
-        bogoliubov_factors = _real_output(doubled_shape)
-        monodromy_values = _complex_output(doubled_shape)
-        monodromy_factors = _real_output(doubled_shape)
-        states = np.asarray(convert_to_numpy(result.states))
+        h_values = field_column(rows, tail=(n_modes,), dtype=complex)
+        h_factors = field_column(rows, tail=(n_modes,), dtype=float)
+        bogoliubov_values = field_column(rows, tail=(2 * n_modes,), dtype=complex)
+        bogoliubov_factors = field_column(rows, tail=(2 * n_modes,), dtype=float)
+        monodromy_values = field_column(rows, tail=(2 * n_modes,), dtype=complex)
+        monodromy_factors = field_column(rows, tail=(2 * n_modes,), dtype=float)
 
-        for start in range(0, len(indices), self.config.chunk_size):
-            chunk_indices = indices[start : start + self.config.chunk_size]
+        for start in range(0, len(chunk_indices), self.config.chunk_size):
+            chunk_indices = chunk_indices[start : start + self.config.chunk_size]
             hamiltonians = []
             interactions = []
             frequencies = []
             for index in chunk_indices:
-                state = states[index]
-                params = result.params_at(index)
+                state = rows[index].state
+                params = rows[index].parameters
                 hamiltonian = np.asarray(
                     convert_to_numpy(model.cam_hamiltonian(state, params)),
                     dtype=np.complex128,
@@ -177,15 +174,36 @@ class PetermannSpectrum(CAMPostprocessor[PetermannSpectrumConfig]):
             "monodromy_frame": "rayleigh_frequency",
             "star_operation": "elementwise_conjugation",
         }
-        return {
-            "hamiltonian_eigenvalues": h_values,
-            "mode_frequencies": np.real(h_values),
-            "hamiltonian_petermann_factors": h_factors,
-            "bogoliubov_eigenvalues": bogoliubov_values,
-            "bogoliubov_petermann_factors": bogoliubov_factors,
-            "monodromy_eigenvalues": monodromy_values,
-            "monodromy_petermann_factors": monodromy_factors,
-        }
+        return build_annotation_product(
+            annotation_kind=self.annotation_kind,
+            target_kind="state",
+            target_identity=[row.identity for row in rows],
+            status=annotation_status(rows),
+            fields={
+                "hamiltonian_eigenvalues": h_values,
+                "mode_frequencies": np.real(h_values),
+                "hamiltonian_petermann_factors": h_factors,
+                "bogoliubov_eigenvalues": bogoliubov_values,
+                "bogoliubov_petermann_factors": bogoliubov_factors,
+                "monodromy_eigenvalues": monodromy_values,
+                "monodromy_petermann_factors": monodromy_factors,
+            },
+            field_axes={
+                "hamiltonian_eigenvalues": ("mode",),
+                "mode_frequencies": ("mode",),
+                "hamiltonian_petermann_factors": ("mode",),
+                "bogoliubov_eigenvalues": ("bogoliubov_mode",),
+                "bogoliubov_petermann_factors": ("bogoliubov_mode",),
+                "monodromy_eigenvalues": ("monodromy_mode",),
+                "monodromy_petermann_factors": ("monodromy_mode",),
+            },
+            axes={
+                "mode": n_modes,
+                "bogoliubov_mode": 2 * n_modes,
+                "monodromy_mode": 2 * n_modes,
+            },
+            method_metadata=[dict(self.result_metadata) for _ in rows],
+        )
 
 
 def _validate_blocks(

@@ -7,8 +7,11 @@ from typing import Any, ClassVar
 import numpy as np
 from pydantic import Field, field_serializer, model_validator
 
-from .base import CAMPostprocessor, CAMPostprocessorConfig
-from .frequency import _successful_indices
+from qphase_cam.data import build_annotation_product
+
+from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
+from .frequency import _successful
+from .state_view import annotation_status, field_column, state_rows
 
 
 class CoherencePoleConfig(CAMPostprocessorConfig):
@@ -161,24 +164,23 @@ class CoherencePoleSpectrum(CAMPostprocessor[CoherencePoleConfig]):
     requires_model: ClassVar[bool] = True
     requires_backend: ClassVar[bool] = False
 
-    def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
-        del backend
+    def process(self, product: Any, context: CAMAnnotationContext) -> Any:
+        model = context.model
         names, measurements = _measurement_matrices(self.config, int(model.n_modes))
-        base_shape = np.asarray(result.valid_mask).shape
-        output_shape = base_shape + (len(names),)
-        eigenvalue = np.full(output_shape, np.nan + 1j * np.nan)
-        frequency = np.full(output_shape, np.nan)
-        decay_rate = np.full(output_shape, np.nan)
-        residue = np.full(output_shape, np.nan + 1j * np.nan)
-        relative_residue = np.full(output_shape, np.nan)
-        valid = np.zeros(output_shape, dtype=bool)
-        condition_number = np.full(base_shape, np.nan)
+        rows = state_rows(product)
+        width = len(names)
+        eigenvalue = field_column(rows, tail=(width,), dtype=complex)
+        frequency = field_column(rows, tail=(width,), dtype=float)
+        decay_rate = field_column(rows, tail=(width,), dtype=float)
+        residue = field_column(rows, tail=(width,), dtype=complex)
+        relative_residue = field_column(rows, tail=(width,), dtype=float)
+        valid = field_column(rows, tail=(width,), dtype=bool)
+        condition_number = field_column(rows, dtype=float)
 
-        for index in _successful_indices(result):
-            state = np.asarray(result.states[index])
-            hamiltonian = np.asarray(
-                model.cam_hamiltonian(state, result.params_at(index))
-            )
+        for index in _successful(rows):
+            row = rows[index]
+            state = np.asarray(row.state)
+            hamiltonian = np.asarray(model.cam_hamiltonian(state, row.parameters))
             selected = channel_coherence_poles(
                 hamiltonian,
                 state,
@@ -200,15 +202,33 @@ class CoherencePoleSpectrum(CAMPostprocessor[CoherencePoleConfig]):
             "selection": "minimum_decay_rate_among_visible_residues",
             "relative_residue_floor": self.config.relative_residue_floor,
         }
-        return {
-            "coherence_pole_eigenvalue": eigenvalue,
-            "coherence_pole_frequency": frequency,
-            "coherence_pole_decay_rate": decay_rate,
-            "coherence_pole_residue": residue,
-            "coherence_pole_relative_residue": relative_residue,
-            "coherence_pole_valid": valid,
-            "coherence_pole_eigenvector_condition_number": condition_number,
-        }
+        return build_annotation_product(
+            annotation_kind=self.annotation_kind,
+            target_kind="state",
+            target_identity=[row.identity for row in rows],
+            status=annotation_status(
+                rows, healthy=[bool(np.any(flags)) for flags in valid]
+            ),
+            fields={
+                "coherence_pole_eigenvalue": eigenvalue,
+                "coherence_pole_frequency": frequency,
+                "coherence_pole_decay_rate": decay_rate,
+                "coherence_pole_residue": residue,
+                "coherence_pole_relative_residue": relative_residue,
+                "coherence_pole_valid": valid,
+                "coherence_pole_eigenvector_condition_number": condition_number,
+            },
+            field_axes={
+                "coherence_pole_eigenvalue": ("measurement",),
+                "coherence_pole_frequency": ("measurement",),
+                "coherence_pole_decay_rate": ("measurement",),
+                "coherence_pole_residue": ("measurement",),
+                "coherence_pole_relative_residue": ("measurement",),
+                "coherence_pole_valid": ("measurement",),
+            },
+            axes={"measurement": width},
+            method_metadata=[dict(self.result_metadata) for _ in rows],
+        )
 
 
 __all__ = [

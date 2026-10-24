@@ -14,8 +14,15 @@ from qphase_cam.core.liouvillian import residual_vector
 from qphase_cam.errors import SolutionCapacityError
 from qphase_cam.state import CAMSolution, CAMSolverOutput
 
-from .base import SOLVER_OUTPUT_DECLARATIONS, CAMSolver, CAMSolverConfig
+from .base import (
+    SOLVER_OUTPUT_DECLARATIONS,
+    CAMProductFragment,
+    CAMSolver,
+    CAMSolverConfig,
+    CAMSolveRequest,
+)
 from .common import deduplicate_solutions
+from .execution import state_fragment
 
 
 class BatchedNewtonSolverConfig(CAMSolverConfig):
@@ -39,7 +46,20 @@ class BatchedNewtonSolver(CAMSolver[BatchedNewtonSolverConfig]):
     requires_jacobian: ClassVar[bool] = True
     progress_unit: ClassVar[str] = "point"
 
-    def solve(self, model: Any, backend: Any) -> CAMSolverOutput:
+    def solve(self, request: CAMSolveRequest) -> CAMProductFragment:
+        return state_fragment(
+            request=request,
+            run=lambda model, point: self.solve_batch(model, request.backend),
+            supports_batch=True,
+        )
+
+    def solve_batch(
+        self, model: Any, backend: Any, point: Any | None = None
+    ) -> CAMSolverOutput:
+        """Solve the whole batch the model parameters describe.
+
+        The numeric core of :meth:`solve`; it returns the raw solver output.
+        """
         xp = get_xp(backend.asarray([0.0]))
         batch_size = self._batch_size(model.params)
         guesses = self._guesses(model, backend, batch_size)

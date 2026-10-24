@@ -135,5 +135,9 @@ class CAMSolver(ABC, Generic[SolverConfigT]):
         self.config = self.config_schema.model_validate(source)
 
     @abstractmethod
-    def solve(self, model: Any, backend: Any) -> Any:
-        """Solve the configured CAM task."""
+    def solve(self, request: CAMSolveRequest) -> CAMProductFragment:
+        """Solve one request and return its typed products.
+
+        This is the only solver entry point: no ``solve(model, backend)`` overload
+        and no result-object output survive Phase 10D2.
+        """

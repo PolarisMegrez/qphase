@@ -9,8 +9,11 @@ import numpy as np
 from pydantic import Field, model_validator
 
 from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
+from qphase_cam.data import build_annotation_product
+from qphase_cam.outcomes import CAMOutcomeStatus
 
-from .base import CAMPostprocessor, CAMPostprocessorConfig
+from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
+from .candidates import CandidateView, candidate_view, pivot_branch_rows
 from .petermann import eigensystem_petermann
 
 
@@ -49,21 +52,17 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
     accepted_product_roles: ClassVar[tuple[str, ...]] = ("candidates",)
     requires_model: ClassVar[bool] = True
     requires_backend: ClassVar[bool] = False
-    accepted_result_kinds: ClassVar[frozenset[str]] = frozenset(
-        {"bifurcation_candidates", "bifurcation_scan"}
-    )
 
-    def process(self, result: Any, model: Any, backend: Any) -> dict[str, Any]:
-        del backend
+    def process(self, product: Any, context: CAMAnnotationContext) -> Any:
+        model = context.model
         adapter = QPSGenDynamicsAdapter.from_model(model)
-        candidates = getattr(result, "candidates", result)
+        view = candidate_view(product, metadata=dict(context.metadata))
+        candidates = view
+        result = view
         branches = candidates.branches
-        if branches is None or branches.size == 0:
+        if branches.size == 0:
             self.result_metadata = {"status": "no_real_branches", "sample_count": 0}
-            return {
-                self.name: self._empty(),
-                "local_response_summary": self._empty_summary(),
-            }
+            return self._annotation(product, view, [], status=self._status(view, []))
 
         magnitudes = np.geomspace(
             self.config.epsilon_min,
@@ -182,10 +181,47 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             "precision_digits": self.config.precision_digits,
             "perturbation_parameter": candidates.meta.get("perturbation_parameter"),
         }
-        return {
-            self.name: output,
-            "local_response_summary": self._summary(rows),
-        }
+        del output
+        return self._annotation(product, view, rows, status=self._status(view, rows))
+
+    def _status(self, view: CandidateView, rows: list[dict[str, Any]]) -> list[str]:
+        """Return one outcome status per candidate."""
+        statuses: list[str] = []
+        for row in view.rows:
+            sample = [
+                item for item in rows if int(item["candidate_index"]) == row.index
+            ]
+            if not view.branches_of(row.index):
+                statuses.append(CAMOutcomeStatus.NOT_FOUND.value)
+            elif any(bool(item["converged"]) for item in sample):
+                statuses.append(CAMOutcomeStatus.VALID.value)
+            else:
+                statuses.append(CAMOutcomeStatus.NOT_CONVERGED.value)
+        return statuses
+
+    def _annotation(
+        self,
+        product: Any,
+        view: CandidateView,
+        rows: list[dict[str, Any]],
+        *,
+        status: list[str],
+    ) -> Any:
+        """Return the typed local-response annotation over the candidate rows."""
+        del product
+        fields, field_axes, axes = pivot_branch_rows(
+            view, rows, sample_axis="epsilon_sample"
+        )
+        return build_annotation_product(
+            annotation_kind=self.annotation_kind,
+            target_kind="candidate",
+            target_identity=[row.identity for row in view.rows],
+            status=status,
+            fields=fields,
+            field_axes=field_axes,
+            axes=axes,
+            method_metadata=[dict(self.result_metadata) for _ in view.rows],
+        )
 
     def _newton(
         self,
@@ -253,8 +289,14 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
     def _critical_params(
         self, result: Any, candidate_index: int, model: Any
     ) -> dict[str, Any]:
-        candidates = getattr(result, "candidates", result)
         params = dict(model.params)
+        # The typed candidate view already merges the fixed parameters, the case
+        # parameters and the candidate controls.
+        params_at = getattr(result, "params_at", None)
+        if callable(params_at):
+            params.update(params_at(candidate_index))
+            return params
+        candidates = getattr(result, "candidates", result)
         params.update(candidates.meta.get("fixed_params", {}))
         if hasattr(result, "candidate_offsets"):
             case = int(

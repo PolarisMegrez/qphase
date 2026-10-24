@@ -26,11 +26,11 @@ import numpy as np
 from qphase.data import Dataset
 
 from ._common import canonical_json_text
+from .candidates import split_candidate_diagnostics
 from .legacy import (
     _continuation_columns,
     _legacy_candidate_arrays,
     _legacy_candidate_count,
-    _split_diagnostics,
 )
 
 if TYPE_CHECKING:
@@ -258,7 +258,7 @@ def compare_candidates_export(
         )
         _record(report, name, matched, detail)
 
-    classification, base_audit, _unmapped = _split_diagnostics(
+    classification, base_audit, _unmapped = split_candidate_diagnostics(
         candidates.diagnostics, n_candidate
     )
     for name, expected_rows in (

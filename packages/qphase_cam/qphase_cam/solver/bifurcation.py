@@ -28,7 +28,14 @@ from qphase_cam.state import (
     CAMBifurcationOutput,
 )
 
-from .base import SOLVER_OUTPUT_DECLARATIONS, CAMSolver, CAMSolverConfig
+from ..evidence import fragment_from_bifurcation_metadata
+from .base import (
+    SOLVER_OUTPUT_DECLARATIONS,
+    CAMProductFragment,
+    CAMSolver,
+    CAMSolverConfig,
+    CAMSolveRequest,
+)
 from .bifurcation_audit import (
     AUDIT_CONSERVATION,
     AUDIT_FIELD_UNITS,
@@ -44,6 +51,13 @@ from .bifurcation_classifier import BifurcationClassifier
 from .bifurcation_discovery import BifurcationDiscovery
 from .bifurcation_strategy import BifurcationStrategy
 from .bifurcation_target import BifurcationTarget
+from .execution import (
+    build_candidate_from_cases,
+    candidate_case_arrays,
+    grid_model_parameters,
+    model_parameters,
+    run_cases,
+)
 from .identity import (
     candidate_content as derive_candidate_content,
 )
@@ -233,7 +247,214 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                 "equilibrium multiplicity order m requires exactly m-1 controls"
             )
 
-    def solve(
+    def solve(self, request: CAMSolveRequest) -> CAMProductFragment:
+        """Search one case or a grid of cases; return typed candidates + audits."""
+        model = request.model
+        backend = request.backend
+        if request.parameter_grid is not None:
+            return self._grid_fragment(request)
+        output = self.search(model, backend, data=request.data, context=request.context)
+        return self._fragment(
+            model,
+            backend,
+            [self._case_payload(model, output, flat_index=0, index=(), values={})],
+            case_axes={},
+            case_params={},
+            case_shape=(),
+            scan_metadata={},
+        )
+
+    def _grid_fragment(self, request: CAMSolveRequest) -> CAMProductFragment:
+        """Run one search per grid case and merge the typed products."""
+        model = request.model
+        backend = request.backend
+        grid = request.parameter_grid
+        assert grid is not None
+        base_params = dict(model.params)
+        grid_model_parameters(model, grid, forbidden=tuple(self.config.controls))
+        context = request.context
+        cases = run_cases(
+            grid,
+            model=model,
+            base_params=base_params,
+            call=lambda current, point: self.search(
+                current, backend, data=request.data, context=context
+            ),
+            context=context,
+            policy=request.case_failure_policy,
+        )
+        model_parameters(model, {**base_params, **grid_model_parameters(model, grid)})
+        case_params: dict[str, Any] = {}
+        for name, value in base_params.items():
+            if np.asarray(value).ndim == 0:
+                case_params[name] = np.full(grid.size, value)
+        parameter_arrays = grid.parameter_arrays(flatten=True)
+        for axis_name, target in grid.targets.items():
+            case_params[target.rsplit(".", 1)[-1]] = np.asarray(
+                parameter_arrays[axis_name]
+            )
+        return self._fragment(
+            model,
+            backend,
+            [
+                self._case_payload(
+                    model,
+                    outcome.result,
+                    flat_index=outcome.flat_index,
+                    index=outcome.index,
+                    values=outcome.values,
+                    error=outcome.error,
+                )
+                for outcome in cases
+            ],
+            case_axes={name: np.asarray(values) for name, values in grid.axes.items()},
+            case_params=case_params,
+            case_shape=tuple(grid.shape),
+            scan_metadata={
+                "scan_shape": tuple(grid.shape),
+                "scan_combine": grid.combine,
+                "scan_targets": dict(grid.targets),
+            },
+        )
+
+    def _case_payload(
+        self,
+        model: Any,
+        output: CAMBifurcationOutput | None,
+        *,
+        flat_index: int,
+        index: tuple[int, ...],
+        values: dict[str, Any],
+        error: Exception | None = None,
+    ) -> dict[str, Any]:
+        """Return the per-case payload used to build the merged product."""
+        metadata: dict[str, Any] = {
+            "case_flat_index": int(flat_index),
+            "case_index": [int(value) for value in index],
+            "case_parameters": dict(values),
+        }
+        if output is None:
+            metadata.update(
+                {
+                    "case_status": "error",
+                    "case_error_type": type(error).__name__,
+                    "case_error_message": str(error),
+                }
+            )
+            return {
+                "case_identity": "",
+                "search_identity": "",
+                "arrays": None,
+                "metadata": metadata,
+                "output": None,
+            }
+        search = str(output.metadata.get("search_identity", ""))
+        case = str(output.metadata.get("case_identity", ""))
+        metadata.update(
+            {
+                "case_identity": case,
+                "search_identity": search,
+                "case_status": "complete",
+                "strategy": output.metadata.get("strategy"),
+                "coverage": output.metadata.get("coverage"),
+            }
+        )
+        return {
+            "case_identity": case,
+            "search_identity": search,
+            "arrays": candidate_case_arrays(model, output),
+            "metadata": metadata,
+            "output": output,
+        }
+
+    def _fragment(
+        self,
+        model: Any,
+        backend: Any,
+        cases: list[dict[str, Any]],
+        *,
+        case_axes: dict[str, Any],
+        case_params: dict[str, Any],
+        case_shape: tuple[int, ...],
+        scan_metadata: dict[str, Any],
+    ) -> CAMProductFragment:
+        """Merge per-case payloads into one candidate product and its audits."""
+        arrays = [
+            payload["arrays"]
+            if payload["arrays"] is not None
+            else candidate_case_arrays(model, _empty_candidate_output(self, model))
+            for payload in cases
+        ]
+        product = build_candidate_from_cases(
+            case_arrays=arrays,
+            case_meta=[payload["metadata"] for payload in cases],
+            case_axes=case_axes,
+            case_params=case_params,
+            case_shape=case_shape,
+        )
+        dtype = str(np.asarray(arrays[0]["states"]).dtype) if arrays else "complex128"
+        audits = [
+            fragment_from_bifurcation_metadata(
+                payload["output"].metadata,
+                case_identity=payload["case_identity"],
+                search_identity=payload["search_identity"],
+                accepted_candidate_identities=payload["output"].metadata.get(
+                    "accepted_candidate_identities", ()
+                ),
+                accepted_start_identities=payload["output"].metadata.get(
+                    "accepted_start_identities", ()
+                ),
+                backend=str(backend.backend_name()),
+                dtype=dtype,
+                plugins={
+                    "discovery": type(self.discovery).__name__,
+                    "classifier": type(self.classifier).__name__,
+                    "target": type(self.target).__name__,
+                    "strategy": type(self.strategy).__name__,
+                },
+            )
+            for payload in cases
+            if payload["output"] is not None
+        ]
+        first: dict[str, Any] = {}
+        for payload in cases:
+            if payload["output"] is not None:
+                first = dict(payload["output"].metadata)
+                break
+        metadata = {
+            **scan_metadata,
+            "control_names": tuple(first.get("control_names", ())),
+            "perturbation_parameter": first.get("perturbation_parameter", ""),
+            "perturbation_scale": first.get("perturbation_scale", 1.0),
+            "perturbation_side": first.get("perturbation_side", "both"),
+            "closure": first.get("closure", {}),
+            "fixed_params": first.get("fixed_params", {}),
+            "state_ids": list(first.get("state_ids", ())),
+            "target": first.get("target", self.target.name),
+            "order": int(first.get("order", self.target.order)),
+            "case_count": len(cases),
+            "candidate_count": int(
+                sum(len(item["candidate_identity"]) for item in arrays)
+            ),
+            "search_identities": sorted(
+                {
+                    payload["search_identity"]
+                    for payload in cases
+                    if payload["search_identity"]
+                }
+            ),
+            "case_identities": [
+                payload["case_identity"]
+                for payload in cases
+                if payload["case_identity"]
+            ],
+            "audit_count": len(audits),
+        }
+        return CAMProductFragment(
+            products={"candidates": product}, audits=tuple(audits), metadata=metadata
+        )
+
+    def search(
         self,
         model: Any,
         backend: Any,
@@ -241,6 +462,12 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         data: Any | None = None,
         context: Any | None = None,
     ) -> CAMBifurcationOutput:
+        """Run the numeric search of one case (the core ``solve`` builds on).
+
+        This is the documented numeric entry point: it returns the solver's own
+        candidate output for one model state. The typed product and its audit are
+        produced by :meth:`solve`, which is what the engine calls.
+        """
         if str(backend.backend_name()).lower() != "numpy":
             raise ValueError("bifurcation solver currently requires numpy")
         adapter = QPSGenDynamicsAdapter.from_model(model)
@@ -1646,3 +1873,13 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     @staticmethod
     def _control_scale(control: ControlRange) -> float:
         return float(control.scale or (control.max - control.min))
+
+
+def _empty_candidate_output(solver: Any, model: Any) -> CAMBifurcationOutput:
+    """Return an empty candidate output for a case the policy recorded as failed."""
+    return CAMBifurcationOutput(
+        candidates=[],
+        target=solver.target.name,
+        order=int(solver.target.order),
+        metadata={"control_names": tuple(solver.config.controls)},
+    )

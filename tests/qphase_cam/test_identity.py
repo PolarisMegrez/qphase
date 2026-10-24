@@ -44,7 +44,7 @@ class _Control:
 def auto_run():
     """One auto-strategy TwoModeFold solve (accepted 2, deduplicated to 1)."""
     model = TwoModeFoldModel()
-    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).solve(
+    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).search(
         model, NumpyBackend()
     )
     return output
@@ -279,7 +279,7 @@ def test_identities_survive_packing_into_the_result(auto_run):
 
 def test_identities_are_reproducible_across_solves(auto_run):
     model = TwoModeFoldModel()
-    repeat = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).solve(
+    repeat = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).search(
         model, NumpyBackend()
     )
     for key in (
@@ -299,7 +299,7 @@ def test_a_different_case_reuses_the_candidate_identity(auto_run):
     """The candidate identity carries no case scope, the start identities do."""
     other_model = TwoModeFoldModel()
     other_model.params = {**other_model.params, "gamma": -0.5}
-    other = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).solve(
+    other = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).search(
         other_model, NumpyBackend()
     )
     assert other.metadata["search_identity"] == auto_run.metadata["search_identity"]

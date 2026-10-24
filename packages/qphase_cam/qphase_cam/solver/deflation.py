@@ -13,8 +13,15 @@ from qphase_cam.core.liouvillian import residual_vector
 from qphase_cam.errors import SolutionCapacityError
 from qphase_cam.state import CAMSolution, CAMSolverOutput
 
-from .base import SOLVER_OUTPUT_DECLARATIONS, CAMSolver, CAMSolverConfig
+from .base import (
+    SOLVER_OUTPUT_DECLARATIONS,
+    CAMProductFragment,
+    CAMSolver,
+    CAMSolverConfig,
+    CAMSolveRequest,
+)
 from .common import deduplicate_solutions, random_hermitian_guesses
+from .execution import state_fragment
 
 
 class DeflationSolverConfig(CAMSolverConfig):
@@ -41,7 +48,20 @@ class DeflationSolver(CAMSolver[DeflationSolverConfig]):
     requires_jacobian: ClassVar[bool] = True
     progress_unit: ClassVar[str] = "point"
 
-    def solve(self, model: Any, backend: Any) -> CAMSolverOutput:
+    def solve(self, request: CAMSolveRequest) -> CAMProductFragment:
+        return state_fragment(
+            request=request,
+            run=lambda model, point: self.solve_point(model, request.backend),
+            supports_batch=False,
+        )
+
+    def solve_point(
+        self, model: Any, backend: Any, point: Any | None = None
+    ) -> CAMSolverOutput:
+        """Solve the model once at its current parameters.
+
+        The numeric core of :meth:`solve`; it returns the raw solver output.
+        """
         if str(backend.backend_name()).lower() != "numpy":
             raise ValueError("deflation solver requires the numpy backend")
         resolver = JacobianResolver()

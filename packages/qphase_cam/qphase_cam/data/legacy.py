@@ -45,9 +45,9 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from qphase.data import GenericDataBundle
 
-from ._common import content_digest, json_mapping, json_value
+from ._common import content_digest, json_mapping
 from .bundle import cam_bundle
-from .candidates import build_candidate_product
+from .candidates import build_candidate_product, split_candidate_diagnostics
 from .continuation import build_continuation_product
 from .state import build_state_product
 
@@ -173,42 +173,6 @@ def _state_matrix_shape(result: Any, n_candidate: int) -> tuple[int, int]:
     raise ValueError(
         f"cannot infer the candidate state matrix shape from {array.shape}"
     )
-
-
-def _is_classification_key(name: str) -> bool:
-    lowered = name.lower()
-    return "signature" in lowered or "classif" in lowered
-
-
-def _split_diagnostics(
-    diagnostics: Mapping[str, Any] | None, n_candidate: int
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
-    """Split per-candidate diagnostics into classification and audit rows.
-
-    Keys whose name mentions a scaling signature or a classification decision
-    go to ``classification``; every other per-candidate key goes to
-    ``base_audit``. Values are converted recursively, so a legacy object array
-    of tuples/dicts — how the solver stores ``scaling_signatures`` — becomes
-    JSON instead of being refused. Only a *value* that has no JSON
-    representation is reported, as ``<key>[<candidate>]``, and a key that
-    cannot be expressed per candidate at all is reported by name.
-    """
-    classification: list[dict[str, Any]] = [dict() for _ in range(n_candidate)]
-    base_audit: list[dict[str, Any]] = [dict() for _ in range(n_candidate)]
-    unmapped: list[str] = []
-    for raw_name, value in (diagnostics or {}).items():
-        name = str(raw_name)
-        array = np.asarray(value)
-        if array.ndim == 0 or array.shape[0] != n_candidate:
-            unmapped.append(name)
-            continue
-        rows = classification if _is_classification_key(name) else base_audit
-        for position in range(n_candidate):
-            try:
-                rows[position][name] = json_value(array[position])
-            except (TypeError, ValueError):
-                unmapped.append(f"{name}[{position}]")
-    return classification, base_audit, sorted(unmapped)
 
 
 def _legacy_matrix(values: Any, n_candidate: int, width: int, dtype: Any) -> np.ndarray:
@@ -370,7 +334,7 @@ def import_bifurcation_result(
     token, token_source = _resolve_token(_candidate_payload(result), source_id)
     n_candidate = _legacy_candidate_count(result)
     arrays = _legacy_candidate_arrays(result)
-    classification, base_audit, unmapped_diagnostics = _split_diagnostics(
+    classification, base_audit, unmapped_diagnostics = split_candidate_diagnostics(
         result.diagnostics, n_candidate
     )
     dataset = build_candidate_product(
@@ -451,7 +415,7 @@ def import_bifurcation_scan(
             f"the candidate payload has {n_candidate} rows but the offsets "
             f"describe {len(identity)}"
         )
-    classification, base_audit, unmapped_diagnostics = _split_diagnostics(
+    classification, base_audit, unmapped_diagnostics = split_candidate_diagnostics(
         result.candidates.diagnostics, n_candidate
     )
     dataset = build_candidate_product(
