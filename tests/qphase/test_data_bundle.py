@@ -561,6 +561,70 @@ def test_coordinates_roundtrip_in_clean_subprocess(tmp_path):
     assert payload == {"coordinates": ["omega_b"], "omega_b": [1.0, 2.0, 3.0]}
 
 
+def _generic_descriptor() -> BundleDescriptor:
+    return BundleDescriptor(
+        type_id=GENERIC_BUNDLE_TYPE_ID,
+        adapter_id=GENERIC_BUNDLE_ADAPTER_ID,
+        descriptor_schema=GENERIC_BUNDLE_TYPE_ID,
+        descriptor={},
+        product_roles={},
+    )
+
+
+def test_a_restored_bundle_keeps_its_parent_chain(tmp_path):
+    """The manifest parent chain and the published id survive a restore."""
+    ancestor = "0123456789abcdef0123456789abcdef"
+    published = "fedcba9876543210fedcba9876543210"
+    bundle = GenericDataBundle(
+        {"trajectories": _scan_dataset()},
+        _generic_descriptor(),
+        provenance={"artifact_id": published},
+        parents=[ancestor],
+    )
+    for layout in ("single", "sharded"):
+        root = tmp_path / layout
+        bundle.save_dataset(root, layout=layout, shard_target_bytes=256)
+        restored = load_bundle(root)
+        assert isinstance(restored, GenericDataBundle)
+        assert restored.parents == (ancestor,), layout
+        assert restored.declared_artifact_id() == published, layout
+        assert ArtifactManifest.read(root).parents == [ancestor], layout
+        # Re-persisting the restored bundle keeps its id and its chain.
+        again_root = tmp_path / f"{layout}-again"
+        restored.save(again_root)
+        again = ArtifactManifest.read(again_root)
+        assert again.artifact_id == published, layout
+        assert again.parents == [ancestor], layout
+
+
+def test_an_unregistered_bundle_adapter_still_restores_the_parent_chain(tmp_path):
+    """The generic fallback reads the same manifest parent chain."""
+    ancestor = "11111111111111111111111111111111"
+    published = "22222222222222222222222222222222"
+    root = tmp_path / "artifact"
+    save_products(
+        root,
+        {"trajectories": _scan_dataset()},
+        provenance={"artifact_id": published},
+        artifact_id=published,
+        parents=[ancestor],
+        bundle=_generic_descriptor(),
+        layout="single",
+    )
+    # Point the manifest at an adapter nobody registered: restore takes the generic
+    # fallback path, which must read the manifest parent chain too.
+    manifest_path = root / "artifact_manifest.json"
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    raw["bundle"]["adapter_id"] = "test.unregistered/1"
+    manifest_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    restored = load_bundle(root)
+    assert isinstance(restored, GenericDataBundle)
+    assert restored.parents == (ancestor,)
+    assert restored.declared_artifact_id() == published
+    assert restored.metadata["artifact_id"] == published
+
+
 def test_bundle_parents_reach_the_manifest(tmp_path):
     """A bundle's parent chain is persisted, and stays empty by default."""
     declared_parent = "0123456789abcdef0123456789abcdef"

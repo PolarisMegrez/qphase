@@ -167,6 +167,83 @@ def test_scan_bundle_restores_from_v3_artifact(tmp_path):
     assert alpha.dtype.kind == "c"
 
 
+def test_sde_bundle_restores_its_parent_chain_and_artifact_id(tmp_path):
+    """The SDE bundle keeps the manifest parents, id and provenance schema."""
+    ancestor = "0123456789abcdef0123456789abcdef"
+    published = "fedcba9876543210fedcba9876543210"
+    source = _scan_bundle()
+    bundle = SDEDataBundle(
+        source.products,
+        source.provenance,
+        scan_axes=source.axes,
+        scan_shape=source.shape,
+        meta={
+            key: value
+            for key, value in source.metadata.items()
+            if key != "provenance"
+        },
+        n_traj_per_point=source.n_traj_per_point,
+        parents=(ancestor,),
+        artifact_id=published,
+    )
+    assert bundle.parents == (ancestor,)
+    assert bundle.declared_artifact_id() == published
+    for layout in ("single", "sharded"):
+        job_dir = tmp_path / layout
+        job_dir.mkdir()
+        bundle.save_dataset(job_dir, layout=layout, shard_target_bytes=256)
+        manifest = ArtifactManifest.read(job_dir)
+        assert manifest.artifact_id == published, layout
+        assert manifest.parents == [ancestor], layout
+        assert (
+            manifest.provenance["sde"]["schema_version"]
+            == "qphase_sde.provenance/1"
+        ), layout
+
+        default_artifact_resolver().clear()
+        restored = load_result(layout, job_dir)
+        assert isinstance(restored, SDEDataBundle)
+        assert restored.parents == (ancestor,), layout
+        assert restored.declared_artifact_id() == published, layout
+        assert restored.provenance.schema_version == "qphase_sde.provenance/1"
+        point = restored.point_view((1,))
+        assert point.parents == (ancestor,), layout
+        assert point.declared_artifact_id() == published, layout
+        assert point.provenance == restored.provenance
+
+        # Re-persisting a restored bundle keeps its identity and its chain.
+        again_root = tmp_path / f"{layout}-again"
+        restored.save(again_root)
+        again = ArtifactManifest.read(again_root)
+        assert again.artifact_id == published, layout
+        assert again.parents == [ancestor], layout
+
+
+def test_the_sde_bundle_save_keeps_a_declared_parent_chain(tmp_path):
+    """A plain save() writes the chain, so a re-save never loses an ancestor."""
+    source = _scan_bundle()
+    bundle = SDEDataBundle(
+        source.products,
+        source.provenance,
+        scan_axes=source.axes,
+        scan_shape=source.shape,
+        meta={
+            key: value
+            for key, value in source.metadata.items()
+            if key != "provenance"
+        },
+        parents=("aaaa1111aaaa1111aaaa1111aaaa1111",),
+    )
+    assert bundle.declared_artifact_id() is None
+    job_dir = tmp_path / "plain"
+    job_dir.mkdir()
+    bundle.save(job_dir)
+    manifest = ArtifactManifest.read(job_dir)
+    assert manifest.parents == ["aaaa1111aaaa1111aaaa1111aaaa1111"]
+    # A derived bundle without a declared id mints its own id.
+    assert manifest.artifact_id != "aaaa1111aaaa1111aaaa1111aaaa1111"
+
+
 @pytest.mark.parametrize("extent", [2.5, True, 0, -1])
 def test_sde_bundle_rejects_non_positive_integer_scan_shape(extent):
     descriptor = BundleDescriptor(

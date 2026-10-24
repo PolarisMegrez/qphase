@@ -916,6 +916,7 @@ class _GenericBundleAdapter:
             manifest.bundle,
             provenance=manifest.provenance,
             metadata={"artifact_id": manifest.artifact_id},
+            parents=manifest.parents,
         )
 
     def validate_manifest(self, manifest: ArtifactManifest) -> None:
@@ -958,11 +959,14 @@ def load_bundle(directory: Path | str) -> Any:
     products = _load_products(manifest, directory)
     adapter = _BUNDLE_ADAPTERS.get(manifest.bundle.adapter_id)
     if adapter is None:
+        # An unregistered adapter still restores as the generic bundle; the parent
+        # chain is manifest truth either way.
         return GenericDataBundle(
             products,
             manifest.bundle,
             provenance=manifest.provenance,
             metadata={"artifact_id": manifest.artifact_id},
+            parents=manifest.parents,
         )
     return adapter.build(manifest, products)
 

@@ -10,9 +10,10 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.errors import QPhaseError
 from qphase.core.registry import discovery
+from qphase.core.result_loader import load_result
 from qphase.core.scheduler import Scheduler
 from qphase.core.system_config import SystemConfig
-from qphase.data import load_products
+from qphase.data import ArtifactManifest, load_products, save_products
 from qphase_sde.analyser.lorentz_fitter import (
     LorentzFitter,
     LorentzFitterConfig,
@@ -300,6 +301,129 @@ def test_lorentz_fitter_can_require_psd_uncertainty(tmp_path):
             backend=NumpyBackend(),
             label="fit",
         )
+
+
+def _save_source_artifact(
+    tmp_path: Path, *, generic: bool, ancestor: str, published: str
+) -> Path:
+    """Save one single-point PSD artifact with a parent chain and a stated id."""
+    job_dir = tmp_path / ("generic_source" if generic else "sde_source")
+    job_dir.mkdir()
+    analyser = PsdAnalyser(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    )
+    products = _build_psd_products(
+        _psd_payload(0.1), scan_size=None, label="psd", analyser=analyser
+    )
+    assert products is not None
+    meta = {"params": {"epsilon": 0.1, "value": 0.1}, "job_name": job_dir.name}
+    if generic:
+        # A generic artifact states its id only in the manifest, never in a
+        # declared-artifact-id method; the derived run must still find it.
+        save_products(
+            job_dir,
+            products,
+            provenance={"job_name": job_dir.name, "meta": meta},
+            artifact_id=published,
+            parents=[ancestor],
+            layout="single",
+        )
+    else:
+        SDEDataBundle(
+            products,
+            SDEProvenance(dt=1.0),
+            meta=meta,
+            parents=(ancestor,),
+            artifact_id=published,
+        ).save(job_dir)
+    return job_dir
+
+
+def _run_analyze_job(source_dir: Path, temp_project):
+    job_list = WorkflowSpec(
+        schema="qphase.workflow/2",
+        id="test-workflow",
+        title="Test Workflow",
+        jobs=[
+            JobConfig(
+                name="fit",
+                input={"from": str(source_dir), "mode": "dataset"},
+                engine={"sde": {"mode": "analyze"}},
+                analyser={"lorentz_fitter": {"scan_param": "epsilon", "mode": 0}},
+            )
+        ],
+    )
+    discovery.discover_plugins()
+    discovery.discover_local_plugins()
+    results = Scheduler(
+        system_config=SystemConfig(), project=temp_project
+    ).run(job_list)
+    return results
+
+
+def test_the_simulate_analyze_merge_keeps_both_parent_chains():
+    """Adding the retained trajectory never drops the analysed or source chain."""
+    from types import SimpleNamespace
+
+    from qphase_sde.runtime.typed_execution import _merge_simulation_trajectory
+
+    analyser = PsdAnalyser(
+        measurement={"complex_field": {"channels": [0], "representation": "complex"}}
+    )
+    products = _build_psd_products(
+        _psd_payload(0.1), scan_size=None, label="psd", analyser=analyser
+    )
+    assert products is not None
+    source = SDEDataBundle(
+        {},
+        SDEProvenance(dt=1.0),
+        parents=("ancestor-parent",),
+        artifact_id="source-artifact",
+    )
+    analysed = SDEDataBundle(
+        products,
+        SDEProvenance(dt=1.0),
+        parents=("ancestor-parent", "source-artifact"),
+    )
+    merged = _merge_simulation_trajectory(
+        SimpleNamespace(config=None), source, analysed
+    )
+    assert merged.parents == ("ancestor-parent", "source-artifact")
+    assert merged.declared_artifact_id() is None
+
+
+@pytest.mark.parametrize("generic_source", [False, True])
+def test_analyze_inherits_the_upstream_parent_chain(
+    tmp_path, temp_project, generic_source
+):
+    """A derived analyze artifact names its source and the source's ancestors."""
+    ancestor = "0123456789abcdef0123456789abcdef"
+    published = "fedcba9876543210fedcba9876543210"
+    source_dir = _save_source_artifact(
+        tmp_path, generic=generic_source, ancestor=ancestor, published=published
+    )
+    results = _run_analyze_job(source_dir, temp_project)
+    assert len(results) == 1 and results[0].success is True
+
+    manifest = ArtifactManifest.read(results[0].job_dir)
+    # The source's own ancestors first, then the source artifact itself.
+    assert manifest.parents == [ancestor, published]
+    # The derived result never borrows the id of the artifact it came from.
+    assert manifest.artifact_id != published
+
+    restored = load_result("fit", results[0].job_dir)
+    assert restored.parents == (ancestor, published)
+    # Restored, the derived bundle declares its own published id, never the source's.
+    assert restored.declared_artifact_id() == manifest.artifact_id
+    assert restored.metadata["input_artifact_id"] == published
+    assert "artifact_id" not in restored.metadata
+    assert restored.metadata["mode"] == "analyze"
+    # A chain computed from this derived artifact would start from its id, so the
+    # source's ancestors are not dropped when the derived run is analysed again.
+    assert (
+        restored.parents[-1] == published
+        and manifest.artifact_id not in restored.parents
+    )
 
 
 def test_external_artifact_routes_to_analyze_product_graph(tmp_path, temp_project):

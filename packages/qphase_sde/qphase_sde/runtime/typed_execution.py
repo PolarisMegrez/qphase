@@ -22,6 +22,58 @@ from qphase_sde.runtime.graph_surgery import (
 from qphase_sde.runtime.rng import _fused_rng_groups, _rng_group_seed
 
 
+def _source_artifact_identity(source: Any, metadata: Mapping[str, Any]) -> str | None:
+    """Return the artifact id the analysed source is known by, if any.
+
+    A restored SDE bundle declares the id it was published under; a restored
+    generic bundle only states it in its metadata. Either way it names the *input*
+    of this run, never the result.
+    """
+    declared = getattr(source, "declared_artifact_id", None)
+    if callable(declared):
+        value = declared()
+        if value:
+            return str(value)
+    value = metadata.get("artifact_id")
+    return None if value is None else str(value)
+
+
+def _derived_parents(source: Any, source_artifact_id: str | None) -> tuple[str, ...]:
+    """Return the parent chain a derived bundle inherits from its source.
+
+    The source's own ancestors come first (deduplicated, order preserved) and the
+    source artifact id is appended, so the derived artifact states the whole chain
+    it came from and no ancestor is lost.
+    """
+    chain: list[str] = []
+    for value in getattr(source, "parents", ()) or ():
+        text = str(value)
+        if text and text not in chain:
+            chain.append(text)
+    if source_artifact_id and source_artifact_id not in chain:
+        chain.append(source_artifact_id)
+    return tuple(chain)
+
+
+def _merge_parent_chains(*sources: Any) -> tuple[str, ...]:
+    """Return the ordered union of several bundles' parent chains."""
+    chain: list[str] = []
+    for source in sources:
+        if source is None:
+            continue
+        metadata = getattr(source, "metadata", None)
+        metadata = dict(metadata) if isinstance(metadata, Mapping) else {}
+        identity = _source_artifact_identity(source, metadata)
+        ancestors = tuple(getattr(source, "parents", ()) or ())
+        for value in (*ancestors, identity):
+            if value is None:
+                continue
+            text = str(value)
+            if text and text not in chain:
+                chain.append(text)
+    return tuple(chain)
+
+
 def _run_typed_analyze(
     engine: Any,
     source: DatasetResultProtocol,
@@ -80,8 +132,15 @@ def _run_typed_analyze(
         backend = NumpyBackend()
     source_metadata = getattr(source, "metadata", None)
     execution_metadata = (
-        dict(source_metadata) if isinstance(source_metadata, dict) else {}
+        dict(source_metadata) if isinstance(source_metadata, Mapping) else {}
     )
+    # The source artifact is an input of this run: record it as such instead of
+    # letting a copied ``artifact_id`` look like this result's own identity.
+    source_artifact_id = _source_artifact_identity(source, execution_metadata)
+    execution_metadata.pop("artifact_id", None)
+    if source_artifact_id is not None:
+        execution_metadata["input_artifact_id"] = source_artifact_id
+    parents = _derived_parents(source, source_artifact_id)
     source_provenance = getattr(source, "provenance", None)
     if isinstance(source_provenance, Mapping):
         provenance_meta = source_provenance.get("meta")
@@ -170,6 +229,7 @@ def _run_typed_analyze(
         scan_axes=dict(source.axes),
         scan_shape=source.shape,
         meta=result_meta,
+        parents=parents,
     )
 
 
@@ -709,4 +769,5 @@ def _merge_simulation_trajectory(
         scan_axes=source.axes,
         scan_shape=source.shape,
         meta=result_meta,
+        parents=_merge_parent_chains(analysed, source),
     )

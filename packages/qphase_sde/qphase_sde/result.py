@@ -19,7 +19,7 @@ product for graph inputs and tests.
 
 import importlib.metadata
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -119,9 +119,16 @@ class SDEDataBundle:
         meta: dict[str, Any] | None = None,
         n_traj_per_point: int | None = None,
         product_roles: Mapping[str, str] | None = None,
+        parents: Sequence[str] = (),
+        artifact_id: str | None = None,
     ) -> None:
         self._products = dict(products)
         self._provenance = provenance
+        #: Artifact ids this bundle was derived from; persisted as manifest parents.
+        self._parents = tuple(str(value) for value in parents)
+        #: Artifact id this bundle was restored from (or will be published under);
+        #: a derived bundle leaves it unset so it never borrows its source's id.
+        self._artifact_id = None if artifact_id is None else str(artifact_id)
         self._scan_axes = dict(scan_axes or {})
         self._scan_shape = tuple(scan_shape)
         self._meta = dict(meta or {})
@@ -152,6 +159,20 @@ class SDEDataBundle:
     def provenance(self) -> SDEProvenance:
         """Job-level provenance shared by all products."""
         return self._provenance
+
+    @property
+    def parents(self) -> tuple[str, ...]:
+        """Artifact ids this bundle is derived from (the manifest parent chain)."""
+        return self._parents
+
+    def declared_artifact_id(self) -> str | None:
+        """Return the artifact id this bundle states, if any.
+
+        A bundle restored from an artifact carries the id the manifest published;
+        a derived bundle leaves this unset so persisting it mints its own id
+        instead of borrowing the id of the artifact it was computed from.
+        """
+        return self._artifact_id
 
     def require(
         self,
@@ -297,6 +318,8 @@ class SDEDataBundle:
             meta=meta,
             n_traj_per_point=self._n_traj_per_point,
             product_roles=self._product_roles,
+            parents=self._parents,
+            artifact_id=self._artifact_id,
         )
 
     # -- persistence ---------------------------------------------------------
@@ -347,6 +370,8 @@ class SDEDataBundle:
             Path(path),
             self._products,
             provenance=self._manifest_provenance(),
+            artifact_id=self._artifact_id,
+            parents=self._parents,
             bundle=self.bundle_descriptor,
         )
 
@@ -368,6 +393,8 @@ class SDEDataBundle:
             Path(path),
             self._products,
             provenance=self._manifest_provenance(),
+            artifact_id=self._artifact_id,
+            parents=self._parents,
             shard_target_bytes=shard_target_bytes,
             layout=resolved,
             bundle=self.bundle_descriptor,
@@ -605,6 +632,8 @@ def restore_sde_bundle(manifest: Any, products: dict[str, Dataset]) -> SDEDataBu
         meta=meta,
         n_traj_per_point=int(n_traj) if n_traj is not None else None,
         product_roles=manifest.bundle.product_roles,
+        parents=manifest.parents,
+        artifact_id=manifest.artifact_id,
     )
 
 
