@@ -44,6 +44,7 @@ dependencies = [
 "cam_postprocessor.closure_risk" = "qphase_cam.postprocessor.closure_risk:ClosureRisk"
 "cam_postprocessor.observable_scaling" = "qphase_cam.postprocessor.observable_scaling:ObservableScaling"
 "cam_postprocessor.nonlinear_reconstruction" = "qphase_cam.postprocessor.nonlinear_reconstruction:NonlinearReconstruction"
+"cam_postprocessor.nonlinear_prediction" = "qphase_cam.postprocessor.nonlinear_prediction:NonlinearPrediction"
 
 [tool.setuptools.packages.find]
 where = ["."]

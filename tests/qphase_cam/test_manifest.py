@@ -31,6 +31,7 @@ from qphase_cam.data import (
     CAM_CANDIDATE_DECLARATION,
     CAM_CONTINUATION_DECLARATION,
     CAM_EVIDENCE_DECLARATION,
+    CAM_PREDICTION_DECLARATION,
     CAM_STATE_DECLARATION,
     CAM_STATE_SCAN_DECLARATION,
     EVIDENCE_COUNT_FIELDS,
@@ -113,6 +114,7 @@ def test_manifest_declares_only_the_implemented_data_products():
         CAM_CONTINUATION_DECLARATION.name,
         CAM_ANNOTATION_DECLARATION.name,
         CAM_EVIDENCE_DECLARATION.name,
+        CAM_PREDICTION_DECLARATION.name,
     ]
     for product in MANIFEST.data_products:
         module_name, _, attribute = product.schema_ref.partition(":")

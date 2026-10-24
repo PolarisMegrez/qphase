@@ -47,7 +47,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from scipy.integrate import cumulative_trapezoid
 
 from .core.noise import canonical_sample_matrix_covariance
-from .observable import CAMObservable
+from .observable import CAMObservable, DerivativeRecord
 from .outcomes import CAMOutcomeStatus
 from .validity import (
     CriticalMode,
@@ -60,6 +60,7 @@ __all__ = [
     "NonlinearManifold",
     "NonlinearManifoldConfig",
     "OuIntensities",
+    "ResponsePrediction",
     "ScalarReconstruction",
     "ScalarReconstructionConfig",
     "bilinear_form",
@@ -67,6 +68,7 @@ __all__ = [
     "manifold_embedding",
     "ou_intensities",
     "reconstructed_intensity",
+    "response_prediction",
     "scalar_reconstruction",
     "slow_manifold",
 ]
@@ -892,3 +894,139 @@ def reconstructed_intensity(
         if not np.isfinite(float(value)):
             raise ValueError(f"{name} must be finite; got {value!r}")
     return float(scalar_intensity) + float(full_intensity) - float(soft_intensity)
+
+
+class ResponsePrediction(BaseModel):
+    """The linear and explicit frequency response of one readout to one control.
+
+    ``soft_response`` is the critical-mode-only estimate, ``explicit_response`` the
+    direct derivative of the readout at fixed state, ``full_response`` that
+    derivative plus the static state displacement, and ``regular_response`` the
+    full-minus-soft remainder. The explicit derivative carries its own record, so
+    the prediction can say how it was taken.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rate: float
+    projection: float
+    projected_drive: float
+    drive: tuple[float, ...]
+    soft_response: float
+    explicit_response: float
+    state_response: tuple[float, ...]
+    full_response: float
+    regular_response: float
+    derivative: DerivativeRecord
+    method: dict[str, Any] = Field(default_factory=dict)
+
+
+def response_prediction(
+    adapter: Any,
+    observable: CAMObservable,
+    *,
+    state: Any,
+    params: Mapping[str, Any],
+    parameter: str,
+    scale: float = 1.0,
+    relative_step: float = 2.0e-6,
+    overlap_tolerance: float = 1e-10,
+) -> ResponsePrediction:
+    """Return the soft, explicit and full parameter response of one readout.
+
+    The explicit term is a central difference of the readout in ``parameter`` at a
+    fixed state, recorded as a :class:`~qphase_cam.observable.DerivativeRecord`; the
+    soft and full terms follow the reference study
+    (``projection * projected_drive / rate`` and
+    ``explicit + gradient . (-J)^-1 drive``).
+    """
+    point = np.asarray(state, dtype=float).reshape(-1)
+    parameter_map = dict(params or {})
+    if not parameter:
+        raise ValueError("a response prediction needs the parameter name")
+    if not np.isfinite(relative_step) or relative_step <= 0.0:
+        raise ValueError(
+            f"relative_step must be finite and positive; got {relative_step}"
+        )
+    mode = _critical(adapter, point, parameter_map, overlap_tolerance)
+    rate = -float(np.real(mode.value))
+    if rate <= 0.0:
+        raise ValueError(f"the soft mode does not decay (rate {rate:.3e})")
+    if parameter not in parameter_map:
+        raise ValueError(f"the parameter {parameter!r} has no value in params")
+    direction = np.asarray(
+        adapter.parameter_direction(parameter, float(scale)), dtype=float
+    ).reshape(-1)
+    jacobian = np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
+    drive = (
+        np.asarray(adapter.parameter_jacobian(point, parameter_map), dtype=float)
+        @ direction
+    )
+    projected_drive = (
+        projected_intensity(np.eye(direction.size) * -1.0, np.asarray(mode.left), drive)
+        * -1.0
+    )
+    record = observable.gradient(adapter, point, parameter_map)
+    gradient = np.asarray(record.gradient, dtype=float)
+    projection = float(gradient @ np.asarray(mode.right, dtype=float))
+    soft = projection * projected_drive / rate
+    try:
+        state_response = np.linalg.solve(-jacobian, drive)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(f"the static state response does not exist: {exc}") from exc
+
+    parameter_value = float(parameter_map[parameter])
+    step = relative_step * max(1.0, abs(parameter_value))
+
+    def value_at(offset: float) -> float:
+        shifted = dict(parameter_map)
+        shifted[parameter] = parameter_value + offset
+        return float(observable.value(adapter, point, shifted))
+
+    def explicit_at(width: float) -> float:
+        return (value_at(width) - value_at(-width)) / (2.0 * width)
+
+    explicit = explicit_at(step)
+    refined = explicit_at(step / 2.0)
+    denominator = abs(explicit)
+    repeat_error = (
+        float(abs(explicit - refined) / denominator)
+        if denominator > 0.0 and np.isfinite(explicit)
+        else None
+    )
+    derivative = DerivativeRecord(
+        method="central_difference",
+        order=2,
+        gradient=(float(explicit),),
+        step=(float(step),),
+        scale=(float(max(1.0, abs(parameter_value))),),
+        condition=None,
+        repeat_relative_error=repeat_error,
+        metadata={
+            "quantity": "parameter_direction_response",
+            "parameter": parameter,
+            "relative_step": float(relative_step),
+            "repeat_check": "recomputed at half the step",
+        },
+    )
+    full = float(explicit) + float(gradient @ state_response)
+    return ResponsePrediction(
+        rate=rate,
+        projection=projection,
+        projected_drive=projected_drive,
+        drive=tuple(float(value) for value in drive),
+        soft_response=float(soft),
+        explicit_response=float(explicit),
+        state_response=tuple(float(value) for value in state_response),
+        full_response=full,
+        regular_response=float(full - soft),
+        derivative=derivative,
+        method={
+            "service": "qphase_cam.nonlinear.response_prediction",
+            "soft": "projection * projected_drive / rate",
+            "full": "explicit parameter derivative + gradient . (-J)^-1 drive",
+            "regular": "full - soft",
+            "parameter": parameter,
+            "scale": float(scale),
+        },
+    )

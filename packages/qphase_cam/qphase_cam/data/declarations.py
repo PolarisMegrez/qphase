@@ -50,6 +50,9 @@ __all__ = [
     "CAM_CANDIDATE_PRODUCT",
     "CANDIDATE_IDENTITY_SEMANTICS",
     "CAM_CONTINUATION_DECLARATION",
+    "CAM_PREDICTION_DECLARATION",
+    "CAM_PREDICTION_PRODUCT",
+    "PREDICTION_STATUS_SEMANTICS",
     "CAM_CONTINUATION_PRODUCT",
     "CAM_EVIDENCE_DECLARATION",
     "CAM_EVIDENCE_PRODUCT",
@@ -177,6 +180,50 @@ CAM_EVIDENCE_DECLARATION = ProductDeclaration(
         "near_misses",
         "control_names",
         "source_artifacts",
+    ],
+    table="row_table",
+)
+
+#: One immutable prediction of a readout: what one approximation order implies for
+#: the observable's intensity and response, with the identities, the validity
+#: domain and the source artifacts it was derived from. It is a *product*, not an
+#: annotation: a validation step may add parents and provenance to it, never edit
+#: these fields.
+CAM_PREDICTION_DECLARATION = ProductDeclaration(
+    name="prediction",
+    kind=DataKind.STATISTICS,
+    quantity="cam_prediction",
+    fields=[
+        "prediction_id",
+        "target_identity",
+        "observable_name",
+        "observable_kind",
+        "charge_sector",
+        "measurement_mapping",
+        "approximation",
+        "order",
+        "status",
+        "reason",
+        "validity_domain",
+        "expected_frequency_response_full",
+        "expected_frequency_response_soft",
+        "expected_frequency_response_regular",
+        "allan_intensity_soft",
+        "allan_intensity_full",
+        "allan_intensity_reconstructed",
+        "path_information_rate",
+        "full_information_rate",
+        "regular_response",
+        "bordered_condition",
+        "soft_rate",
+        "sigma",
+        "x_min",
+        "x_max",
+        "negative_physical_boundary",
+        "positive_physical_boundary",
+        "completeness",
+        "source_artifacts",
+        "method",
     ],
     table="row_table",
 )
@@ -921,4 +968,122 @@ CAM_EVIDENCE_PRODUCT = ProductSchema(
     axes=_evidence_axes(),
     variables=_evidence_variables(),
     attributes=_evidence_attributes(),
+)
+
+
+#: What a prediction status means.
+PREDICTION_STATUS_SEMANTICS = (
+    "one CAMOutcomeStatus per prediction; a failed approximation keeps its numbers "
+    "as NaN and its reason, and never becomes a valid prediction"
+)
+
+
+def _prediction_axes() -> list[AxisSchema]:
+    return [AxisSchema(name="prediction", role=AxisRole.INDEX)]
+
+
+def _prediction_variables() -> list[VariableSchema]:
+    text = [
+        "prediction_id",
+        "target_identity",
+        "observable_name",
+        "observable_kind",
+        "charge_sector",
+        "measurement_mapping",
+        "approximation",
+        "status",
+        "reason",
+        "completeness",
+    ]
+    numeric = [
+        "order",
+        "expected_frequency_response_full",
+        "expected_frequency_response_soft",
+        "expected_frequency_response_regular",
+        "allan_intensity_soft",
+        "allan_intensity_full",
+        "allan_intensity_reconstructed",
+        "path_information_rate",
+        "full_information_rate",
+        "regular_response",
+        "bordered_condition",
+        "soft_rate",
+        "sigma",
+        "x_min",
+        "x_max",
+    ]
+    json_columns = ["validity_domain", "source_artifacts", "method"]
+    variables = [
+        VariableSchema(name=name, dtype="U1", value_domain="real", dims=("prediction",))
+        for name in text
+    ]
+    variables.extend(
+        VariableSchema(
+            name=name,
+            dtype="int64" if name == "order" else "float64",
+            value_domain="real",
+            dims=("prediction",),
+        )
+        for name in numeric
+    )
+    variables.extend(
+        VariableSchema(name=name, dtype="U1", value_domain="real", dims=("prediction",))
+        for name in json_columns
+    )
+    variables.extend(
+        VariableSchema(
+            name=name,
+            dtype="int8",
+            value_domain="real",
+            dims=("prediction",),
+            quantity="cam_prediction_tristate",
+        )
+        for name in ("negative_physical_boundary", "positive_physical_boundary")
+    )
+    return variables
+
+
+def _prediction_attributes() -> dict[str, Any]:
+    return {
+        "table": "cam_prediction",
+        "product": "prediction",
+        "prediction_axis": "prediction",
+        "approximations": ["full_ou", "one_loop", "nonlinear_manifold", "soft_ou"],
+        "approximation_semantics": (
+            "soft_ou is the critical-mode-only Gaussian estimate, full_ou the full "
+            "linear response, and nonlinear_manifold the reconstruction along the "
+            "truncated slow manifold; none of them is a rigorous bound on the full "
+            "nonlinear error"
+        ),
+        "identity_semantics": (
+            "prediction_id is a content digest of the observable identity, the "
+            "target identity, the approximation, the order, the validity domain, "
+            "the source artifact ids and the numeric payload; it never depends on a "
+            "slot position, a path or a job name"
+        ),
+        "immutability_semantics": (
+            "a prediction is published as an artifact; a later validation adds "
+            "parents and provenance and never edits these columns"
+        ),
+        "source_artifact_variable": "source_artifacts",
+        "json_columns": ["validity_domain", "source_artifacts", "method"],
+        "tristate_semantics": (
+            "-1 means the check never ran, 0 means it failed, 1 means it passed"
+        ),
+        "completeness_values": ["complete", "intermediate"],
+        "status_semantics": PREDICTION_STATUS_SEMANTICS,
+        "field_units": {
+            "allan_intensity_*": "readout variance per unit bandwidth",
+            "expected_frequency_response_*": "readout per unit parameter",
+            "full_information_rate": "response^2 / reconstructed intensity",
+        },
+    }
+
+
+#: One row per prediction; axis sizes stay open here.
+CAM_PREDICTION_PRODUCT = ProductSchema(
+    kind=DataKind.STATISTICS,
+    axes=_prediction_axes(),
+    variables=_prediction_variables(),
+    attributes=_prediction_attributes(),
 )

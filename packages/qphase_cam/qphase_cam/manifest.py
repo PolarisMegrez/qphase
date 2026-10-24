@@ -68,6 +68,7 @@ from .data import (
     CAM_CANDIDATE_DECLARATION,
     CAM_CONTINUATION_DECLARATION,
     CAM_EVIDENCE_DECLARATION,
+    CAM_PREDICTION_DECLARATION,
     CAM_STATE_DECLARATION,
     CAM_STATE_SCAN_DECLARATION,
 )
@@ -171,6 +172,14 @@ MANIFEST = ResourcePackageManifest(
             schema_ref="qphase_cam.data:CAM_EVIDENCE_PRODUCT",
             description="Search evidence: candidate-start counters, coverage and "
             "bounded near misses per case, with explicit negative statuses.",
+        ),
+        DataProductDeclaration(
+            name=CAM_PREDICTION_DECLARATION.name,
+            kind="statistics",
+            schema_ref="qphase_cam.data:CAM_PREDICTION_PRODUCT",
+            description="Immutable predictions: one row per approximation order "
+            "with its intensity, response, information rate, validity domain and "
+            "source artifacts.",
         ),
     ],
     materializers=[],
