@@ -78,6 +78,11 @@ class CenterManifoldCorrection(BaseModel):
     status: CAMOutcomeStatus
     reason: str | None = None
     reason_code: str | None = None
+    #: The critical eigenvectors the correction was built on (empty on failure), so a
+    #: downstream correction reuses them instead of solving the eigenproblem again.
+    left: tuple[float, ...] = ()
+    right: tuple[float, ...] = ()
+    critical_eigenvalue_real: float = float("nan")
 
     stable_basis: tuple[tuple[float, ...], ...] = ()
     stable_jacobian: tuple[tuple[float, ...], ...] = ()
@@ -192,7 +197,7 @@ def center_manifold_correction(
             f"the noise covariance is not positive semidefinite ({smallest:.3e})",
         )
     basis = np.asarray(null_space(left[None, :]), dtype=float)
-    if basis.shape != (point.size, point.size - 1):
+    if basis.shape[1] == 0 or basis.shape != (point.size, point.size - 1):
         return _failed(
             CAMOutcomeStatus.UNIDENTIFIABLE,
             "stable_basis_degenerate",
@@ -287,6 +292,9 @@ def center_manifold_correction(
         status=CAMOutcomeStatus.VALID,
         reason=None,
         reason_code=None,
+        left=tuple(float(value) for value in left),
+        right=tuple(float(value) for value in right),
+        critical_eigenvalue_real=float(np.real(mode.value)),
         stable_basis=_matrix_tuple(basis),
         stable_jacobian=_matrix_tuple(stable_jacobian),
         stable_noise=_matrix_tuple(stable_noise),
