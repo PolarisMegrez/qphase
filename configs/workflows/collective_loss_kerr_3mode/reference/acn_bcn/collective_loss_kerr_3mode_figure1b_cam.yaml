@@ -48,7 +48,8 @@ jobs:
         - -1.9203550107777119
 
   engine:
-    cam: {}
+    cam:
+      task: scan
 
   backend:
     numpy: {float_dtype: float64}

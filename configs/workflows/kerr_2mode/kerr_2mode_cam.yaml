@@ -19,7 +19,8 @@ jobs:
         values: [1.042848239, 2.220148004]
 
   engine:
-    cam: {}
+    cam:
+      task: scan
 
   plugins:
     backend:

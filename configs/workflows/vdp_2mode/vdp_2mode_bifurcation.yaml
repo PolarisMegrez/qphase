@@ -19,7 +19,8 @@ jobs:
         values: [0.5, 1.0, 2.0]
 
   engine:
-    cam: {}
+    cam:
+      task: search
 
   plugins:
     backend:

@@ -9,7 +9,8 @@ jobs:
 - name: kerr_full_3mode_probe_perturb_omega_c
   save: true
   engine:
-    cam: {}
+    cam:
+      task: search
   plugins:
     backend:
       numpy: {float_dtype: float64}
@@ -63,7 +64,8 @@ jobs:
 - name: kerr_full_3mode_probe_perturb_omega_b
   save: true
   engine:
-    cam: {}
+    cam:
+      task: search
   plugins:
     backend:
       numpy: {float_dtype: float64}

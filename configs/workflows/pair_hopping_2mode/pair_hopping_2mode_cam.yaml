@@ -19,7 +19,8 @@ jobs:
         linspace: {start: 0.898, stop: 0.902, num: 201}
 
   engine:
-    cam: {}
+    cam:
+      task: scan
 
   plugins:
     backend:

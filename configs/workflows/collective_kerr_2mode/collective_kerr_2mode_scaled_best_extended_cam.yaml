@@ -9,6 +9,7 @@ jobs:
   save: true
   engine:
     cam:
+      task: search
       case_failure_policy: record
   backend:
     numpy:

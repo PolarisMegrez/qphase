@@ -118,6 +118,7 @@ jobs:
         - 2.0
   engine:
     cam:
+      task: search
       case_failure_policy: record
   plugins:
     backend:
@@ -296,6 +297,7 @@ jobs:
         - 2.0
   engine:
     cam:
+      task: search
       case_failure_policy: record
   plugins:
     backend:
@@ -474,6 +476,7 @@ jobs:
         - 2.0
   engine:
     cam:
+      task: search
       case_failure_policy: record
   plugins:
     backend:
@@ -652,6 +655,7 @@ jobs:
         - 2.0
   engine:
     cam:
+      task: search
       case_failure_policy: record
   plugins:
     backend:
@@ -831,6 +835,7 @@ jobs:
         - 2.0
   engine:
     cam:
+      task: search
       case_failure_policy: record
   plugins:
     backend:
@@ -1010,6 +1015,7 @@ jobs:
         - 2.0
   engine:
     cam:
+      task: search
       case_failure_policy: record
   plugins:
     backend:
