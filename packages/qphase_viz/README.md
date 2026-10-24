@@ -131,6 +131,40 @@ visualizer:
         label_template: "{name}={value:.6g}"
 ```
 
+### Scalar heatmap
+
+`HeatmapPlotter` renders a two-dimensional scalar grid from a typed product:
+`x` names the 1-D row coordinate, `y` the 1-D column coordinate, and
+`value[row, column]` the grid. A boolean mask variable blanks disallowed
+cells instead of drawing them; contours and explicit point or line series are
+optional overlays:
+
+```yaml
+visualizer:
+  heatmap:
+    plots:
+      - x_variable: gamma_b
+        y_variable: gamma_c
+        value_variable: local_information
+        valid_variable: physical     # boolean mask
+        cmap: flow                   # 'scan', 'flow' or any Matplotlib map
+        norm: linear
+        colorbar_label: Information
+        contours:
+          - variable: continuation_allowed
+            levels: [0.5]
+            linestyle: "--"
+        series:
+          - x_variable: boundary_x
+            y_variable: boundary_y
+            linestyle: "--"
+            label: boundary
+          - x: [0.8]
+            y: [0.957]
+            marker: "*"
+            linestyle: null
+```
+
 ## License
 
 MIT License

@@ -12,6 +12,10 @@ Version : 2.0.0 (Oct 2026)
 
 from .config import (
     AnnotationSpec,
+    HeatmapConfig,
+    HeatmapContour,
+    HeatmapSeries,
+    HeatmapSpec,
     PhasePlaneConfig,
     PowerSpectrumConfig,
     SpectralScanConfig,
@@ -36,6 +40,10 @@ __all__ = [
     "PALETTE",
     "STYLE_NAMES",
     "AnnotationSpec",
+    "HeatmapConfig",
+    "HeatmapContour",
+    "HeatmapSeries",
+    "HeatmapSpec",
     "PhasePlaneConfig",
     "PowerSpectrumConfig",
     "RenderOptions",

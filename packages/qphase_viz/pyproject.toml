@@ -34,6 +34,7 @@ dependencies = [
 "visualizer.time_series" = "qphase_viz.plotters.evolution:TimeSeriesPlotter"
 "visualizer.parameter_evolution" = "qphase_viz.plotters.parameter:ParameterEvolutionPlotter"
 "visualizer.spectral_scan" = "qphase_viz.plotters.spectral_scan:SpectralScanPlotter"
+"visualizer.heatmap" = "qphase_viz.plotters.heatmap:HeatmapPlotter"
 
 [tool.setuptools.packages.find]
 where = ["."]

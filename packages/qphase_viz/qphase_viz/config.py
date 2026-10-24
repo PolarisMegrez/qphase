@@ -14,12 +14,15 @@ Public API
 `PowerSpectrumConfig` : Configuration for Power Spectrum Plotter (list of specs).
 `SpectralScanSpec` : Specification for one PSD-across-scan figure.
 `SpectralScanConfig` : Configuration for the PSD scan plotter.
+`HeatmapSpec` : Specification for one scalar heatmap figure.
+`HeatmapContour` / `HeatmapSeries` : Heatmap overlays.
+`HeatmapConfig` : Configuration for the heatmap plotter.
 `VizEngineConfig` : Configuration for the Visualization Engine.
 """
 
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .styles import DEFAULT_STYLE, PALETTE, StyleName
 
@@ -270,6 +273,119 @@ class SpectralScanConfig(BaseModel):
 
     plots: list[SpectralScanSpec] = Field(
         default_factory=list, description="List of PSD scan figures"
+    )
+
+
+class HeatmapContour(BaseModel):
+    """Contour lines drawn over a heatmap.
+
+    ``variable`` names a product variable to contour; ``None`` contours the
+    boolean validity mask itself, which is the common way to outline the
+    admissible region of a scan.
+    """
+
+    variable: str | None = Field(
+        None, description="Product variable to contour; None contours the mask"
+    )
+    levels: list[float] = Field(
+        default_factory=lambda: [0.5], description="Contour levels"
+    )
+    color: str = Field(PALETTE_INK, description="Line colour")
+    linestyle: str = Field("--", description="Matplotlib line style")
+    linewidth: float = Field(0.9, gt=0.0, description="Line width")
+
+
+class HeatmapSeries(BaseModel):
+    """An explicit point or line series drawn in heatmap data coordinates.
+
+    The series comes either from product variables (``x_variable``/
+    ``y_variable``) or from constant coordinates (``x``/``y``); exactly one
+    source per axis is required. A pure marker series sets
+    ``linestyle=None``.
+    """
+
+    x_variable: str | None = Field(None, description="Product variable for x")
+    y_variable: str | None = Field(None, description="Product variable for y")
+    x: list[float] = Field(default_factory=list, description="Constant x values")
+    y: list[float] = Field(default_factory=list, description="Constant y values")
+    color: str = Field(PALETTE_INK, description="Line and marker colour")
+    linestyle: str | None = Field(
+        "-", description="Line style; None draws markers only"
+    )
+    linewidth: float = Field(1.2, gt=0.0, description="Line width")
+    marker: str | None = Field(None, description="Marker style; None draws a line only")
+    markersize: float = Field(6.0, gt=0.0, description="Marker size")
+    marker_face_color: str | None = Field(
+        None, description="Marker face colour; None uses the line colour"
+    )
+    label: str | None = Field(None, description="Legend label")
+
+    @model_validator(mode="after")
+    def validate_sources(self) -> Self:
+        for axis, variable, values in (
+            ("x", self.x_variable, self.x),
+            ("y", self.y_variable, self.y),
+        ):
+            if (variable is None) == (not values):
+                raise ValueError(
+                    f"heatmap series needs exactly one {axis} source: "
+                    f"'{axis}_variable' or '{axis}'"
+                )
+        if self.x_variable is None and self.y_variable is None and len(self.x) != len(
+            self.y
+        ):
+            raise ValueError("constant heatmap series needs equal x and y lengths")
+        return self
+
+
+class HeatmapSpec(BasePlotterConfig):
+    """Specification for a two-dimensional scalar heatmap.
+
+    ``x`` is the 1-D row coordinate and ``y`` the 1-D column coordinate of
+    ``value[row, column]``; the plotter transposes once for Matplotlib, so the
+    declared orientation and the rendered figure agree. A product may carry a
+    boolean validity mask, which blanks disallowed cells instead of drawing
+    them as zero.
+    """
+
+    kind: Literal["heatmap"] = "heatmap"
+    product: str | None = Field(
+        None, description="Product name to read from; None selects by fields"
+    )
+    x_variable: str = Field(..., description="1-D row coordinate variable")
+    y_variable: str = Field(..., description="1-D column coordinate variable")
+    value_variable: str = Field(..., description="2-D (row, column) value variable")
+    valid_variable: str | None = Field(
+        None, description="Boolean mask variable; False cells are left blank"
+    )
+    cmap: str = Field(
+        "scan",
+        description="'scan' (allan_scan_colormap), 'flow' (cam_flow_colormap) "
+        "or any Matplotlib colormap name",
+    )
+    norm: Literal["linear", "log"] = Field("linear", description="Colour scaling")
+    vmin: float | None = Field(None, description="Colour range minimum")
+    vmax: float | None = Field(None, description="Colour range maximum")
+    colorbar_label: str | None = Field(
+        None, description="Colorbar label; None uses the value variable name"
+    )
+    rasterized: bool = Field(True, description="Rasterize the mesh on export")
+    contours: list[HeatmapContour] = Field(
+        default_factory=list, description="Contour overlays"
+    )
+    series: list[HeatmapSeries] = Field(
+        default_factory=list, description="Point or line overlays"
+    )
+    constrained_layout: bool = Field(
+        True, description="Use constrained layout (mesh plus colorbar default)"
+    )
+
+
+class HeatmapConfig(BaseModel):
+    """Configuration for the heatmap plotter."""
+
+    plots: list[HeatmapSpec] = Field(
+        default_factory=list, description="List of heatmap figures"
     )
 
 

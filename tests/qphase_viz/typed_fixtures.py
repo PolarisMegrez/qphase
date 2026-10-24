@@ -537,3 +537,118 @@ def spectral_scan_bundle() -> VizTestBundle:
         axes={"omega": np.asarray(SCAN_POINTS, dtype=float)},
         shape=(len(SCAN_POINTS),),
     )
+
+
+#: Grid of the scalar-heatmap fixture.
+HEATMAP_X = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+HEATMAP_Y = (10.0, 11.25, 12.5, 13.75, 15.0)
+
+
+def heatmap_dataset() -> Dataset:
+    """Statistics product carrying a scalar grid plus overlays.
+
+    ``value[row, column]`` is indexed by ``x[rows]`` and ``y[columns]``; the
+    mask blanks the upper-right triangle, and the product also carries the
+    variables an overlay needs (``height``, ``boundary``, ``marker_x``,
+    ``marker_y``).
+    """
+    x = np.asarray(HEATMAP_X, dtype=float)
+    y = np.asarray(HEATMAP_Y, dtype=float)
+    value = np.add.outer(x, y)
+    valid = ~(np.add.outer(np.arange(x.size), np.arange(y.size)) >= 6)
+    height = np.add.outer(x * 2.0, y * 0.5)
+    schema = ProductSchema(
+        kind=DataKind.STATISTICS,
+        axes=[
+            AxisSchema(name="row", role=AxisRole.PARAMETER, size=x.size),
+            AxisSchema(name="column", role=AxisRole.PARAMETER, size=y.size),
+            AxisSchema(name="boundary", role=AxisRole.INDEX, size=3),
+            AxisSchema(name="marker", role=AxisRole.INDEX, size=2),
+        ],
+        variables=[
+            VariableSchema(
+                name="x",
+                dtype="<f8",
+                value_domain="real",
+                dims=("row",),
+                quantity="parameter_value",
+            ),
+            VariableSchema(
+                name="y",
+                dtype="<f8",
+                value_domain="real",
+                dims=("column",),
+                quantity="parameter_value",
+            ),
+            VariableSchema(
+                name="value",
+                dtype="<f8",
+                value_domain="real",
+                dims=("row", "column"),
+                quantity="scalar_field",
+            ),
+            VariableSchema(
+                name="height",
+                dtype="<f8",
+                value_domain="real",
+                dims=("row", "column"),
+                quantity="scalar_field",
+            ),
+            VariableSchema(
+                name="valid",
+                dtype="|b1",
+                value_domain="real",
+                dims=("row", "column"),
+                quantity="validity_mask",
+            ),
+            VariableSchema(
+                name="boundary_x",
+                dtype="<f8",
+                value_domain="real",
+                dims=("boundary",),
+                quantity="parameter_value",
+            ),
+            VariableSchema(
+                name="boundary_y",
+                dtype="<f8",
+                value_domain="real",
+                dims=("boundary",),
+                quantity="parameter_value",
+            ),
+            VariableSchema(
+                name="marker_x",
+                dtype="<f8",
+                value_domain="real",
+                dims=("marker",),
+                quantity="parameter_value",
+            ),
+            VariableSchema(
+                name="marker_y",
+                dtype="<f8",
+                value_domain="real",
+                dims=("marker",),
+                quantity="parameter_value",
+            ),
+        ],
+        attributes={"graph_ready": True},
+    )
+    return StatisticsDataset.from_arrays(
+        schema,
+        {
+            "x": x,
+            "y": y,
+            "value": value,
+            "height": height,
+            "valid": valid,
+            "boundary_x": np.asarray([0.2, 0.5, 0.8]),
+            "boundary_y": np.asarray([12.0, 13.0, 14.0]),
+            "marker_x": np.asarray([0.0, 1.0]),
+            "marker_y": np.asarray([10.0, 15.0]),
+        },
+        owner="test.viz",
+    )
+
+
+def heatmap_bundle() -> VizTestBundle:
+    """Single-point bundle carrying the scalar-heatmap product."""
+    return VizTestBundle({"grid": heatmap_dataset()})
