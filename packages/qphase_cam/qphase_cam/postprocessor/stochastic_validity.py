@@ -9,9 +9,11 @@ import numpy as np
 from pydantic import Field
 
 from qphase_cam.core.coordinates import matrix_to_vector
+from qphase_cam.core.noise import canonical_sample_matrix_covariance
 from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.data import build_annotation_product
 from qphase_cam.outcomes import CAMOutcomeStatus
+from qphase_cam.validity import critical_mode, minimum_eigenvalue, projected_intensity
 
 from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
 from .candidates import CandidateView, candidate_view, pivot_branch_rows
@@ -192,21 +194,28 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
         state = np.asarray(candidates.state_vectors[candidate_index], dtype=float)
         matrix = adapter.state_matrix(state, params)
         jacobian = np.asarray(adapter.jacobian(state, params), dtype=float)
-        mode = self._critical_mode(jacobian)
+        # The shared critical-mode solver owns the eigenproblem; the plugin keeps
+        # its historical "nearest zero" selection rule so its published numbers do
+        # not move, and the service's default "slowest" rule stays separate.
+        mode = critical_mode(
+            jacobian,
+            overlap_tolerance=self.config.overlap_tolerance,
+            rule="nearest_zero",
+        )
         if mode is None:
             row["status"] = "critical_mode_unresolved"
             return row
-        critical_value, right, left, condition, spectral_gap, matrix_condition = mode
+        left = mode.left
         row.update(
             {
-                "critical_eigenvalue_real": float(np.real(critical_value)),
-                "critical_eigenvalue_imag": float(np.imag(critical_value)),
-                "noncritical_spectral_gap": spectral_gap,
-                "critical_mode_condition_number": condition,
-                "eigenvector_condition_number": matrix_condition,
+                "critical_eigenvalue_real": float(np.real(mode.value)),
+                "critical_eigenvalue_imag": float(np.imag(mode.value)),
+                "noncritical_spectral_gap": mode.spectral_gap,
+                "critical_mode_condition_number": mode.condition_number,
+                "eigenvector_condition_number": mode.eigenvector_condition_number,
             }
         )
-        if abs(critical_value) > self.config.critical_eigenvalue_tolerance:
+        if abs(mode.value) > self.config.critical_eigenvalue_tolerance:
             row["status"] = "critical_eigenvalue_not_zero"
             return row
 
@@ -218,13 +227,12 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
                 row["status"] = "unsupported_anomalous_diffusion"
                 return row
         covariance = canonical_sample_matrix_covariance(matrix, diffusion)
-        covariance_eigenvalues = np.linalg.eigvalsh((covariance + covariance.T) / 2.0)
-        minimum_covariance = float(np.min(covariance_eigenvalues))
+        minimum_covariance, _ = minimum_eigenvalue(covariance)
         row["noise_covariance_minimum_eigenvalue"] = minimum_covariance
         if minimum_covariance < -self.config.covariance_tolerance:
             row["status"] = "noise_covariance_not_psd"
             return row
-        projected_noise = float(np.real(left @ covariance @ left))
+        projected_noise = projected_intensity(covariance, left, left)
         row["projected_noise_intensity"] = projected_noise
         if projected_noise <= self.config.covariance_tolerance:
             row["status"] = "critical_noise_unresolved"
@@ -283,36 +291,6 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
             }
         )
         return row
-
-    def _critical_mode(
-        self, jacobian: np.ndarray
-    ) -> tuple[complex, np.ndarray, np.ndarray, float, float, float] | None:
-        values, right_vectors = np.linalg.eig(jacobian)
-        index = int(np.argmin(np.abs(values)))
-        critical = values[index]
-        right = np.real_if_close(right_vectors[:, index])
-        left_values, left_vectors = np.linalg.eig(jacobian.T)
-        left_index = int(np.argmin(np.abs(left_values - critical)))
-        left = np.real_if_close(left_vectors[:, left_index])
-        if np.iscomplexobj(right) or np.iscomplexobj(left):
-            return None
-        right = np.asarray(right, dtype=float)
-        left = np.asarray(left, dtype=float)
-        right /= np.linalg.norm(right)
-        overlap = float(left @ right)
-        if abs(overlap) <= self.config.overlap_tolerance:
-            return None
-        left /= overlap
-        remaining = np.delete(values, index)
-        spectral_gap = float(-np.max(np.real(remaining))) if remaining.size else np.nan
-        return (
-            critical,
-            right,
-            left,
-            float(np.linalg.norm(left)),
-            spectral_gap,
-            float(np.linalg.cond(right_vectors)),
-        )
 
     @staticmethod
     def _branch_indices(candidates: Any, candidate_index: int) -> list[int]:
@@ -453,49 +431,3 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
             "deterministic_cam_is_exact",
         )
         return {name: np.asarray([], dtype=fields[name]) for name in names}
-
-
-def canonical_sample_matrix_covariance(
-    state: np.ndarray, diffusion: np.ndarray
-) -> np.ndarray:
-    """Return the M=0 sample-matrix noise covariance in canonical coordinates."""
-    state = np.asarray(state, dtype=complex)
-    diffusion = np.asarray(diffusion, dtype=complex)
-    if state.ndim != 2 or state.shape[0] != state.shape[1]:
-        raise ValueError("CAM state must be a square matrix")
-    if diffusion.shape != state.shape:
-        raise ValueError("CAM diffusion must have the same shape as the state")
-    modes = state.shape[0]
-    complex_covariance = np.empty((modes * modes, modes * modes), dtype=complex)
-    for i in range(modes):
-        for j in range(modes):
-            for k in range(modes):
-                for right in range(modes):
-                    complex_covariance[i * modes + j, k * modes + right] = (
-                        diffusion[i, right] * state[k, j]
-                        + diffusion[k, j] * state[i, right]
-                    )
-    transform = _canonical_hermitian_transform(modes)
-    covariance = np.real_if_close(transform @ complex_covariance @ transform.T)
-    if np.iscomplexobj(covariance):
-        raise ValueError("canonical CAM noise covariance is not real")
-    return np.asarray(covariance, dtype=float)
-
-
-def _canonical_hermitian_transform(modes: int) -> np.ndarray:
-    transform = np.zeros((modes * modes, modes * modes), dtype=complex)
-    row = 0
-    for mode in range(modes):
-        transform[row, mode * modes + mode] = 1.0
-        row += 1
-    for left in range(modes):
-        for right in range(left + 1, modes):
-            transform[row, left * modes + right] = 0.5
-            transform[row, right * modes + left] = 0.5
-            row += 1
-    for left in range(modes):
-        for right in range(left + 1, modes):
-            transform[row, left * modes + right] = -0.5j
-            transform[row, right * modes + left] = 0.5j
-            row += 1
-    return transform

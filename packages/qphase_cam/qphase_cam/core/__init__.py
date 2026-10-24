@@ -7,9 +7,12 @@ from .coordinates import (
 )
 from .jacobian import JacobianResolver, central_difference_jacobian
 from .liouvillian import liouvillian, model_liouvillian, residual_vector
+from .noise import canonical_hermitian_transform, canonical_sample_matrix_covariance
 
 __all__ = [
     "JacobianResolver",
+    "canonical_hermitian_transform",
+    "canonical_sample_matrix_covariance",
     "central_difference_jacobian",
     "liouvillian",
     "matrix_to_vector",
