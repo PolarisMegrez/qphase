@@ -48,6 +48,7 @@ plugins:
             Workflow Configuration: Workflow 配置
             GUI & Local API: GUI 与本地 API
             Results & Reproducibility: 结果与复现
+            Visualization: 可视化
             Tags & Catalog: 标签与 Catalog
             Catalog Contract: Catalog 契约
             SDE Physics: SDE 物理
@@ -98,6 +99,7 @@ nav:
   - Workflow Configuration: user_guide/configuration.md
   - GUI & Local API: user_guide/gui.md
   - Results & Reproducibility: user_guide/output.md
+  - Visualization: user_guide/visualization.md
   - Tags & Catalog: user_guide/tags.md
   - SDE Physics:
     - Modeling: user_guide/sde/modeling.md
