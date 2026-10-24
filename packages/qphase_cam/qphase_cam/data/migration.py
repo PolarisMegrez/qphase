@@ -66,11 +66,13 @@ class SearchEvidenceMigrationWorkflow(BaseModel):
 
     @model_validator(mode="after")
     def _check_workflow(self) -> SearchEvidenceMigrationWorkflow:
+        # A re-run input must name the workflow schema it will be executed with;
+        # a missing schema is not "unknown, run it anyway".
         schema = self.normalized_workflow.get("schema")
-        if schema is not None and str(schema) != WORKFLOW_SCHEMA:
+        if schema != WORKFLOW_SCHEMA:
             raise ValueError(
                 f"workflow {self.source_path!r} declares schema {schema!r}; "
-                f"expected {WORKFLOW_SCHEMA!r}"
+                f"expected exactly {WORKFLOW_SCHEMA!r}"
             )
         jobs = self.normalized_workflow.get("jobs")
         if not isinstance(jobs, list) or not jobs:

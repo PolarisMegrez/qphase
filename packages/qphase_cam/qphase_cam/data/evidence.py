@@ -262,6 +262,21 @@ def build_evidence_product(
     )
     prefilter_rejected = json_column([case.prefilter_rejected for case in cases])
     rejected_by_reason = json_column([case.rejected_by_reason for case in cases])
+    # The producing environment is evidence: it is carried per case, never
+    # deduplicated, so a product mixing solvers or backends keeps both.
+    execution_provenance = json_column(
+        [
+            {
+                "solver": case.solver,
+                "plugins": dict(case.plugins),
+                "distribution": dict(case.distribution),
+                "api_revision": case.api_revision,
+                "backend": case.backend,
+                "dtype": case.dtype,
+            }
+            for case in cases
+        ]
+    )
 
     near_misses = [record for case in cases for record in case.near_misses]
     missing_controls = sorted(
@@ -286,6 +301,7 @@ def build_evidence_product(
         "search_design": search_design_column,
         "coverage": coverage,
         "path_audit": path_audit,
+        "execution_provenance": execution_provenance,
         "prefilter_rejected": prefilter_rejected,
         "rejected_by_reason": rejected_by_reason,
         **{
@@ -373,6 +389,17 @@ def build_evidence_product(
             **dict(provenance or {}),
             "evidence_completeness": attributes["evidence_completeness"],
             "search_identities": sorted({case.search_identity for case in cases}),
+            "execution_provenance": [
+                {
+                    "solver": case.solver,
+                    "plugins": dict(case.plugins),
+                    "distribution": dict(case.distribution),
+                    "api_revision": case.api_revision,
+                    "backend": case.backend,
+                    "dtype": case.dtype,
+                }
+                for case in cases
+            ],
         },
     )
 

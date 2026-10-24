@@ -306,6 +306,7 @@ def test_declared_fields_are_the_frozen_planning_vocabulary():
             "search_design",
             "coverage",
             "path_audit",
+            "execution_provenance",
             *EVIDENCE_COUNT_FIELDS,
             "prefilter_rejected",
             "rejected_by_reason",

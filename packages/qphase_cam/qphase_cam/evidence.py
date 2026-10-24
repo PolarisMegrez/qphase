@@ -214,6 +214,11 @@ class SearchAuditFragment(BaseModel):
                 f"case {label!r}: refinement_start_count must equal accepted_count "
                 "+ rejected_count + refinement_duplicate_count"
             )
+        if self.refinement_start_count != self.prefilter_pass_count:
+            raise ValueError(
+                f"case {label!r}: refinement_start_count must equal "
+                "prefilter_pass_count (AUDIT_CONSERVATION)"
+            )
         if sum(self.prefilter_rejected.values()) != self.prefilter_rejected_count:
             raise ValueError(
                 f"case {label!r}: prefilter_rejected must sum to "

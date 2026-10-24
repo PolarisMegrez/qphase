@@ -164,6 +164,7 @@ CAM_EVIDENCE_DECLARATION = ProductDeclaration(
         "search_design",
         "coverage",
         "path_audit",
+        "execution_provenance",
         *EVIDENCE_COUNT_FIELDS,
         "prefilter_rejected",
         "rejected_by_reason",
@@ -674,6 +675,13 @@ def _evidence_variables() -> list[VariableSchema]:
             dims=("case",),
         ),
         VariableSchema(
+            name="execution_provenance",
+            dtype="U1",
+            value_domain="real",
+            dims=("case",),
+            quantity="cam_execution_provenance",
+        ),
+        VariableSchema(
             name="prefilter_rejected",
             dtype="U1",
             value_domain="real",
@@ -781,9 +789,22 @@ def _evidence_attributes() -> dict[str, Any]:
             "search_design",
             "coverage",
             "path_audit",
+            "execution_provenance",
             "prefilter_rejected",
             "rejected_by_reason",
             "near_miss_rejection_reasons",
+        ],
+        # The environment that produced each case survives in the artifact, so a
+        # restored evidence product can still say which solver, plugins, package
+        # versions, audit revision, backend and dtype it came from.
+        "execution_provenance_variable": "execution_provenance",
+        "execution_provenance_fields": [
+            "solver",
+            "plugins",
+            "distribution",
+            "api_revision",
+            "backend",
+            "dtype",
         ],
         "status_semantics": EVIDENCE_STATUS_SEMANTICS,
         "generation_trial_semantics": GENERATION_TRIAL_SEMANTICS,

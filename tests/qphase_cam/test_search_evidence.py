@@ -148,6 +148,8 @@ def _not_found_fragment(**overrides):
         accepted_count=0,
         accepted_candidate_identities=(),
         unique_candidate_count=0,
+        generated_candidate_count=2,
+        prefilter_pass_count=2,
         refinement_start_count=2,
         refinement_duplicate_count=0,
         rejected_count=2,
@@ -216,6 +218,7 @@ def test_fragment_accepts_a_conserving_case():
     fragment = _fragment()
     assert fragment.generated_candidate_count == 7
     assert fragment.refinement_start_count == 7
+    assert fragment.refinement_start_count == fragment.prefilter_pass_count
     assert fragment.generation_trial_count == 28
     assert len(fragment.accepted_candidate_identities) == fragment.accepted_count
     assert len(fragment.near_misses) == fragment.near_miss_saved
@@ -231,6 +234,10 @@ def test_fragment_accepts_a_conserving_case():
         (
             {"refinement_start_count": 6},
             "refinement_start_count must equal",
+        ),
+        (
+            {"prefilter_pass_count": 6, "prefilter_rejected_count": 1},
+            "must equal prefilter_pass_count",
         ),
         (
             {"prefilter_rejected_count": 1, "generated_candidate_count": 8},
@@ -384,6 +391,7 @@ def test_not_found_requires_an_actual_search():
         _not_found_fragment(
             generated_candidate_count=0,
             prefilter_pass_count=0,
+            prefilter_rejected_count=0,
             refinement_start_count=0,
             rejected_count=0,
             near_miss_saved=0,
@@ -400,6 +408,8 @@ def test_not_found_cannot_carry_an_accepted_candidate():
             accepted_count=1,
             accepted_candidate_identities=("legacy:abc:0:0",),
             unique_candidate_count=1,
+            generated_candidate_count=3,
+            prefilter_pass_count=3,
             refinement_start_count=3,
         )
 
@@ -410,6 +420,8 @@ def test_valid_requires_an_accepted_candidate():
             accepted_count=0,
             accepted_candidate_identities=(),
             unique_candidate_count=0,
+            generated_candidate_count=6,
+            prefilter_pass_count=6,
             refinement_start_count=6,
         )
 
@@ -445,6 +457,8 @@ def test_unchecked_physicality_is_not_a_failure():
                 "accepted_count": 2,
                 "accepted_candidate_identities": ("a", "a"),
                 "unique_candidate_count": 2,
+                "generated_candidate_count": 8,
+                "prefilter_pass_count": 8,
                 "refinement_start_count": 8,
             },
             "must be unique",
@@ -664,6 +678,40 @@ def test_build_evidence_product_maps_cases_and_blocks():
     assert product.attributes["rejection_counter_semantics"] == (
         REJECTION_COUNTER_SEMANTICS
     )
+    # The producing environment is evidence and is carried per case.
+    assert product.attributes["execution_provenance_variable"] == (
+        "execution_provenance"
+    )
+    assert product.attributes["execution_provenance_fields"] == [
+        "solver",
+        "plugins",
+        "distribution",
+        "api_revision",
+        "backend",
+        "dtype",
+    ]
+    provenance = [
+        json.loads(str(value))
+        for value in np.asarray(product.handle("execution_provenance").materialize())
+    ]
+    assert provenance == [
+        {
+            "solver": "bifurcation",
+            "plugins": {"strategy": "full", "target": "equilibrium_multiplicity"},
+            "distribution": {"qphase": "2.0.0", "qphase-cam": "2.0.0"},
+            "api_revision": AUDIT_SCHEMA,
+            "backend": "numpy",
+            "dtype": "complex128",
+        },
+        {
+            "solver": "bifurcation",
+            "plugins": {"strategy": "full", "target": "equilibrium_multiplicity"},
+            "distribution": {"qphase": "2.0.0", "qphase-cam": "2.0.0"},
+            "api_revision": AUDIT_SCHEMA,
+            "backend": "numpy",
+            "dtype": "complex128",
+        },
+    ]
     _no_object_dtypes(product)
 
 
@@ -675,6 +723,8 @@ def test_evidence_product_carries_an_empty_near_miss_block():
                 near_miss_saved=0,
                 near_misses=(),
                 rejected_by_reason={},
+                generated_candidate_count=5,
+                prefilter_pass_count=5,
                 refinement_start_count=5,
                 refinement_duplicate_count=4,
             )
@@ -826,7 +876,79 @@ def test_evidence_bundle_roundtrips_in_both_layouts(tmp_path):
             np.asarray(reloaded.handle("near_miss_offsets").materialize()),
             [0, 2, 4],
         )
+        provenance = [
+            json.loads(str(value))
+            for value in np.asarray(
+                reloaded.handle("execution_provenance").materialize()
+            )
+        ]
+        assert len(provenance) == 2
+        for row in provenance:
+            assert row["solver"] == "bifurcation"
+            assert row["plugins"] == {
+                "strategy": "full",
+                "target": "equilibrium_multiplicity",
+            }
+            assert row["distribution"] == {"qphase": "2.0.0", "qphase-cam": "2.0.0"}
+            assert row["api_revision"] == AUDIT_SCHEMA
+            assert row["backend"] == "numpy"
+            assert row["dtype"] == "complex128"
         _no_object_dtypes(reloaded)
+
+
+def test_evidence_product_keeps_mixed_execution_provenance(tmp_path):
+    """Cases produced by different environments must not be merged."""
+    left = _fragment()
+    right = _not_found_fragment(
+        backend="cupy",
+        dtype="complex64",
+        solver="bifurcation-v2",
+        plugins={"target": "equilibrium_multiplicity", "strategy": "reduced"},
+        distribution={"qphase": "2.0.1", "qphase-cam": "2.0.1"},
+        api_revision="cam_bifurcation_audit/3",
+    )
+    bundle = cam_bundle(
+        {
+            "evidence": build_evidence_product(
+                fragments=[left, right],
+                source_artifacts=[{"artifact_id": "artifact-1"}],
+                search_design={"target": "equilibrium_multiplicity"},
+            )
+        },
+        provenance={"cam_task": "search"},
+    )
+    expected = [
+        {
+            "solver": "bifurcation",
+            "plugins": {"strategy": "full", "target": "equilibrium_multiplicity"},
+            "distribution": {"qphase": "2.0.0", "qphase-cam": "2.0.0"},
+            "api_revision": AUDIT_SCHEMA,
+            "backend": "numpy",
+            "dtype": "complex128",
+        },
+        {
+            "solver": "bifurcation-v2",
+            "plugins": {
+                "strategy": "reduced",
+                "target": "equilibrium_multiplicity",
+            },
+            "distribution": {"qphase": "2.0.1", "qphase-cam": "2.0.1"},
+            "api_revision": "cam_bifurcation_audit/3",
+            "backend": "cupy",
+            "dtype": "complex64",
+        },
+    ]
+    for layout in ("single", "sharded"):
+        root = tmp_path / layout
+        bundle.save_dataset(root, layout=layout, shard_target_bytes=256)
+        reloaded = load_bundle(root).require("evidence").materialize()
+        assert [
+            json.loads(str(value))
+            for value in np.asarray(
+                reloaded.handle("execution_provenance").materialize()
+            )
+        ] == expected
+        assert reloaded.variable("execution_provenance").dims == ("case",)
 
 
 def test_evidence_product_point_view_reads_strings():
@@ -997,6 +1119,69 @@ def test_import_search_evidence_document_rejects_an_invalid_document(
     path = _write_document(tmp_path / "evidence.json", **overrides)
     with pytest.raises(ValueError, match=match):
         import_search_evidence_document(path)
+
+
+def _write_workflow_document(tmp_path: Path, workflow: dict) -> Path:
+    return _write_document(
+        tmp_path / "evidence.json",
+        workflows=[
+            {
+                "source_path": "configs/workflows/demo/demo_auto.yaml",
+                "sha256": "a" * 64,
+                "last_git_commit": "b" * 40,
+                "normalized_workflow": workflow,
+            }
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "workflow, match",
+    [
+        # A re-run input must name the workflow schema; absence is not "unknown".
+        (
+            {"id": "demo_auto", "jobs": [{"name": "demo_sim"}]},
+            "declares schema None; expected exactly 'qphase.workflow/2'",
+        ),
+        (
+            {
+                "schema": None,
+                "id": "demo_auto",
+                "jobs": [{"name": "demo_sim"}],
+            },
+            "declares schema None; expected exactly 'qphase.workflow/2'",
+        ),
+        (
+            {
+                "schema": "qphase.workflow/1",
+                "id": "demo_auto",
+                "jobs": [{"name": "demo_sim"}],
+            },
+            "declares schema 'qphase.workflow/1'",
+        ),
+        (
+            {"schema": "qphase.workflow/2", "jobs": [{"name": "demo_sim"}]},
+            "carries no id",
+        ),
+    ],
+)
+def test_migration_workflow_requires_its_workflow_schema(tmp_path, workflow, match):
+    path = _write_workflow_document(tmp_path, workflow)
+    with pytest.raises(ValueError, match=match):
+        import_search_evidence_document(path)
+
+
+def test_migration_workflow_accepts_the_exact_schema(tmp_path):
+    path = _write_workflow_document(
+        tmp_path,
+        {
+            "schema": "qphase.workflow/2",
+            "id": "demo_auto",
+            "jobs": [{"name": "demo_sim"}],
+        },
+    )
+    document = import_search_evidence_document(path)
+    assert document.workflows[0].normalized_workflow["schema"] == "qphase.workflow/2"
 
 
 def test_import_search_evidence_document_requires_missing_fields(tmp_path):
