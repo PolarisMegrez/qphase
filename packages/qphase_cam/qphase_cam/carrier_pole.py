@@ -21,11 +21,18 @@ computes, without that script's files, model or fixed grid:
   ``diags((lower[1:], diagonal, upper[:-1]), (-1, 0, 1))``;
 * the frequency operator ``diag(omega - median(omega))`` is switched on by a
   continuation coupling ``1/steps … 1`` and the pole follows the eigenvalue nearest to
-  the previous one (shift-invert ``LM``), starting from ``-1e-12``. A tracked pole
-  below ``shift_floor`` keeps that starting shift: a shift far below the rounding
-  level of the grid's ``q / (2 dx²)`` makes the factor *exactly* singular, which is
-  what a constant readout (the discrete mass-conservation mode at zero) otherwise
-  hits;
+  the previous one (shift-invert ``LM``). The shift is the previous pole once the
+  tracked pole is resolvable, and ``-shift_magnitude`` otherwise, with
+  ``shift_magnitude = max(shift_floor, eps · max|diagonal| · size)`` and
+  ``eps = np.finfo(float).eps``. The reference's fixed ``-1e-12`` start is below the
+  rounding level of ``max|diagonal|`` on a fine grid (``q / (2 dx²)`` grows like
+  ``size²``), and a shift the diagonal cannot represent leaves the shifted matrix
+  exactly singular — which is what a constant readout hits, because its discrete
+  generator is the mass-conservation operator with an exact zero row sum. This changes
+  only the shift-invert path: the discretization, the continuation coupling and the
+  "eigenvalue nearest the previous pole" rule are the reference ones. ``shift_floor``
+  is a floor on that numerical shift, never a decay tolerance — ``decay_tolerance``
+  is the separate, physical one;
 * ``carrier_frequency = omega_reference - Im(pole)`` and
   ``carrier_decay_rate = -Re(pole)``.
 
@@ -35,11 +42,13 @@ grids on both the carrier frequency and the decay rate with an absolute plus rel
 tolerance. That is a two-grid comparison, not a convergence-order proof.
 
 Failures are statuses and never a clamped or NaN pole: an unusable source table, a
-resampling that makes the diffusion non-positive, an eigensolver failure
-(``ArpackNoConvergence`` and ``ArpackError`` are runtime errors, as is a singular
-shift-invert factor) or a non-finite eigenvalue, a non-finite pole, a negative decay
-rate beyond the configured tolerance and a two-grid disagreement are all reported,
-with the grids that did solve kept for diagnosis.
+resampling that makes the diffusion non-positive or the grid spacing, diffusion rate
+or generator scale lose its finite positive value, an eigensolver failure
+(``ArpackNoConvergence`` and ``ArpackError`` are ``RuntimeError`` subclasses, and a
+singular shift-invert factor raises a plain ``RuntimeError``) or a non-finite
+eigenvalue, a non-finite pole, a negative decay rate beyond the configured tolerance
+and a two-grid disagreement are all reported, with the grids that did solve kept for
+diagnosis.
 """
 
 from __future__ import annotations
@@ -130,9 +139,9 @@ class CarrierPoleConfig(BaseModel):
         gt=0.0,
         allow_inf_nan=False,
         description=(
-            "A tracked pole smaller than this in magnitude keeps the initial -1e-12 "
-            "shift; a shift far below the grid's rounding level makes the "
-            "shift-invert factor singular"
+            "Absolute floor of the shift-invert shift, which is "
+            "max(shift_floor, eps * max|diagonal| * size); a numerical floor, not a "
+            "decay tolerance (decay_tolerance is separate)"
         ),
     )
 
@@ -239,7 +248,26 @@ def _grid_pole(
             f"non-positive (minimum {float(np.min(q))!r})",
         )
     dx = float(x[1] - x[0])
-    diffusion_rate = q / (2.0 * dx**2)
+    if not np.isfinite(dx) or dx <= 0.0:
+        raise _PoleFailureError(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            FAILURE_RESAMPLED_GRID,
+            f"the uniform {size}-point grid has a non-finite or non-positive spacing "
+            f"({dx!r})",
+        )
+    with np.errstate(over="ignore", under="ignore", divide="ignore", invalid="ignore"):
+        diffusion_rate = q / (2.0 * np.float64(dx) ** 2)
+    if not np.all(np.isfinite(diffusion_rate)) or np.any(diffusion_rate <= 0.0):
+        # An underflowed or overflowed rate would make the generator silently
+        # degenerate (an all-zero row, or an infinite diffusion), and a zero matrix
+        # would still return an eigenvalue; that is not a pole.
+        raise _PoleFailureError(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            FAILURE_RESAMPLED_GRID,
+            f"the diffusion rate q / (2 dx^2) of the {size}-point grid is not finite "
+            f"and positive ({float(np.min(diffusion_rate))!r} … "
+            f"{float(np.max(diffusion_rate))!r} for dx {dx!r})",
+        )
     lower = diffusion_rate + np.maximum(-f, 0.0) / dx
     upper = diffusion_rate + np.maximum(f, 0.0) / dx
     lower[0] = 0.0
@@ -259,18 +287,28 @@ def _grid_pole(
             FAILURE_RESAMPLED_GRID,
             f"the generator of the {size}-point grid is not finite",
         )
+    scale = float(np.max(np.abs(diagonal)))
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise _PoleFailureError(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            FAILURE_RESAMPLED_GRID,
+            f"the generator scale max|diagonal| of the {size}-point grid is not "
+            f"finite and positive ({scale!r})",
+        )
+    # The reference starts the continuation at -1e-12. On a fine grid that absolute
+    # shift is below the rounding level of the diagonal (q / (2 dx^2) grows like
+    # size^2), and a shift the diagonal cannot represent leaves the matrix exactly
+    # singular. The shift is therefore scale aware and floored at ``shift_floor``.
+    shift_magnitude = max(
+        float(settings.shift_floor), float(np.finfo(float).eps) * scale * size
+    )
     count = min(int(settings.k), size - 2)
     pole = 0.0j
     for coupling in np.linspace(
         1.0 / settings.continuation_steps, 1.0, settings.continuation_steps
     ):
         tilted = generator.astype(complex) - 1j * coupling * frequency_operator
-        # The reference probe shifts by the previous pole and starts at -1e-12. A
-        # pole below ``shift_floor`` is numerically zero (a constant readout tracks
-        # the mass-conservation mode at exactly 0), and shifting by such a value
-        # would make the shift-invert factor exactly singular, so it keeps the
-        # initial shift instead.
-        sigma = pole if abs(pole) > settings.shift_floor else -1.0e-12
+        sigma = pole if abs(pole) > shift_magnitude else -shift_magnitude
         try:
             values = eigs(
                 tilted,
@@ -282,10 +320,10 @@ def _grid_pole(
                 maxiter=settings.eigensolver_maxiter,
             )
         except (RuntimeError, np.linalg.LinAlgError) as exc:
-            # ARPACK reports both a stalled iteration (``ArpackNoConvergence``) and a
-            # failed shift-invert factor (a plain ``RuntimeError`` such as "Factor is
-            # exactly singular") as runtime errors; both are numeric failures of the
-            # eigensolver, not configuration errors.
+            # ``ArpackNoConvergence`` and ``ArpackError`` are ``RuntimeError``
+            # subclasses, and a failed shift-invert factor raises a plain
+            # ``RuntimeError`` ("Factor is exactly singular"); all of them are
+            # numeric eigensolver failures, not configuration errors.
             raise _PoleFailureError(
                 CAMOutcomeStatus.NOT_CONVERGED,
                 FAILURE_EIGENSOLVER,
@@ -385,6 +423,12 @@ def carrier_pole(
     so a shape or monotonicity error is a status instead of an ARPACK crash. No
     model, adapter or SDE sample is needed: this is a deterministic eigenvalue
     problem on the discretized backward generator.
+
+    The discretization, the continuation coupling and the nearest-eigenvalue rule are
+    the reference probe's. Only the shift-invert shift is scale aware (see the module
+    docstring), and that is a numerical choice: it changes nothing about which pole is
+    tracked, and it is unrelated to ``decay_tolerance``, the physical tolerance on a
+    negative decay rate.
     """
     settings = config or CarrierPoleConfig()
     method: dict[str, Any] = {
@@ -404,8 +448,9 @@ def carrier_pole(
         ),
         "pole_selection": (
             "shift-invert ARPACK eigenvalues around the previous pole, the nearest "
-            "eigenvalue kept (which=LM), starting at -1e-12; a pole below shift_floor "
-            "keeps that starting shift"
+            "eigenvalue kept (which=LM); the shift is the previous pole, or "
+            "-max(shift_floor, eps*max|diagonal|*size) when the tracked pole is not "
+            "resolvable, so the shift never falls below the diagonal's rounding level"
         ),
         "carrier": (
             "carrier_frequency = omega_reference - Im(pole), "

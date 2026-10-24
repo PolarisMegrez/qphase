@@ -9,9 +9,10 @@ pole.
 
 The discretization is exactly singular when the source coefficients are constant
 (every row sums to zero, which is the discrete mass-conservation mode), so the
-constant-source test uses grids whose ``q / (2 dx²)`` stays far above the rounding
-level of the reference's ``-1e-12`` starting shift; larger constant grids are a
-genuine eigensolver failure, which the mocked tests pin down.
+shift-invert shift has to stay above the rounding level of ``q / (2 dx²)``; the
+constant source is therefore exercised on the reference grids and not only on small
+ones, since a large grid is exactly where the reference's fixed ``-1e-12`` shift
+becomes unrepresentable.
 """
 
 from __future__ import annotations
@@ -49,7 +50,12 @@ def _curved_source():
 
 
 def _reference_pole(x_source, size, steps):
-    """Compute the pole with the reference discretization, written out here."""
+    """Compute the pole with the reference discretization, written out here.
+
+    The shift is kept literally as the reference probe writes it (the previous pole,
+    ``-1e-12`` at the start). A resolvable pole is far above either shift, so the
+    parity test also shows that the service's scale-aware shift does not move it.
+    """
     x, f_source, q_source, omega_source = x_source
     grid = np.linspace(float(x[0]), float(x[-1]), size)
     f = PchipInterpolator(x, f_source)(grid)
@@ -109,6 +115,58 @@ def test_a_constant_source_has_the_mass_conservation_pole():
     assert max(assessment.grid_decay_differences) < 1e-9
     assert "backward Feynman-Kac generator" in assessment.method["discretization"]
     assert "PCHIP" in assessment.method["interpolation"]
+
+
+@pytest.mark.parametrize(
+    ("drift", "diffusion", "readout"),
+    [
+        (0.0, 1.0, 2.0),
+        (0.5, 1.0, 2.0),
+        (-0.5, 1.0, 2.0),
+        (0.0, 2.5, -3.0),
+    ],
+)
+def test_the_constant_source_converges_on_the_reference_grids(
+    drift, diffusion, readout
+):
+    """The large-grid regression for the constant (exactly singular) source.
+
+    The tolerance is the shift-invert accuracy of the tracked zero mode: ARPACK's
+    ``tol`` is relative, so the absolute residual is bounded by
+    ``tol * max|diagonal|`` (about ``1e-10 * 2 q / (2 dx^2)``, i.e. ~4e-5 on the
+    finest grid), while the observed decay is ~2e-11. ``1e-8`` sits about three
+    orders inside that bound and about three above the observation. The carrier
+    frequency is not affected in the same way (``Im(pole)`` is ~0 when the frequency
+    operator is zeroed), so it is held to ``1e-9``.
+    """
+    x = np.linspace(-1.0, 1.0, 9)
+    assessment = carrier_pole(
+        x,
+        np.full(x.size, drift),
+        np.full(x.size, diffusion),
+        np.full(x.size, readout),
+    )
+    assert assessment.status is CAMOutcomeStatus.VALID
+    assert assessment.reason_code is None
+    assert assessment.grid_converged is True
+    assert [grid.grid_size for grid in assessment.grids] == [401, 801, 1201]
+    assert assessment.finest_grid_size == 1201
+    assert assessment.carrier_frequency == pytest.approx(readout, abs=1e-9)
+    assert abs(assessment.carrier_decay_rate) < 1e-8
+    for grid in assessment.grids:
+        assert grid.carrier_frequency == pytest.approx(readout, abs=1e-9)
+        assert abs(grid.carrier_decay_rate) < 1e-8
+        # The readout is constant, so the frequency operator is exactly zero and the
+        # tracked pole is the mass-conservation mode at zero decay on every grid.
+        assert grid.omega_reference == pytest.approx(readout, rel=0.0, abs=0.0)
+        assert abs(grid.pole_imag_shifted) < 1e-8
+    assert max(assessment.grid_decay_differences) < 1e-8
+    # On these grids the scale-aware shift is what makes the solve possible: the
+    # reference's fixed 1e-12 is below ulp(max|diagonal|), which is what turns the
+    # shift-invert factor exactly singular.
+    diagonal_scale = 2.0 * diffusion / (2.0 * (2.0 / 1200.0) ** 2)
+    assert np.finfo(float).eps * diagonal_scale * 1201 > 1e-12
+    assert "eps*max|diagonal|*size" in assessment.method["pole_selection"]
 
 
 def test_the_pole_matches_an_independent_reference_discretization():
@@ -223,6 +281,41 @@ def test_a_non_positive_resampled_diffusion_is_rejected(monkeypatch):
     assert assessment.reason_code == "resampled_grid_invalid"
     assert "non-positive" in assessment.reason
     assert assessment.grids == ()
+
+
+def test_a_degenerate_diffusion_rate_is_a_resampled_grid_failure():
+    """Underflow and overflow of ``q / (2 dx^2)`` must not pose as a pole.
+
+    A zero rate would zero whole rows of the generator (an all-zero matrix still
+    returns an eigenvalue) and an infinite rate poisons the diagonal, so both are
+    typed failures rather than a plausible-looking carrier. The PCHIP resampling stays
+    finite in both cases, so this is the rate guard and not the finiteness guard.
+    """
+    wide = np.linspace(-1.0e50, 1.0e50, 5)
+    underflow = carrier_pole(
+        wide,
+        np.zeros(5),
+        np.full(5, 1.0e-300),
+        np.zeros(5),
+        config=CarrierPoleConfig(grid_sizes=(5, 7)),
+    )
+    assert underflow.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert underflow.reason_code == "resampled_grid_invalid"
+    assert "q / (2 dx^2)" in underflow.reason
+    assert underflow.grids == ()
+
+    narrow = np.linspace(0.0, 2.0e-9, 5)
+    overflow = carrier_pole(
+        narrow,
+        np.zeros(5),
+        np.full(5, 1.0e300),
+        np.zeros(5),
+        config=CarrierPoleConfig(grid_sizes=(5, 7)),
+    )
+    assert overflow.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert overflow.reason_code == "resampled_grid_invalid"
+    assert "q / (2 dx^2)" in overflow.reason
+    assert overflow.carrier_frequency is None
 
 
 # --- eigensolver failures -------------------------------------------------
