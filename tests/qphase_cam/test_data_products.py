@@ -8,9 +8,11 @@ freezes the physics end to end.
 from __future__ import annotations
 
 import json
+import re
 
 import numpy as np
 import pytest
+import qphase_cam.data as cam_data
 from qphase.data import (
     GenericDataBundle,
     ProductSchema,
@@ -40,6 +42,11 @@ from qphase_cam.data import (
 from qphase_cam.engine import Engine
 from qphase_cam.result import CAMResult
 from qphase_cam.state import CAMBifurcationCandidate, CAMBifurcationOutput
+
+#: Imported candidate identity: ``legacy:<16 hex digits>:<case>:<candidate>``.
+LEGACY_IDENTITY = re.compile(
+    r"^legacy:(?P<fingerprint>[0-9a-f]{16}):(?P<case>\d+):(?P<slot>\d+)$"
+)
 
 # --- fixtures --------------------------------------------------------------
 
@@ -77,6 +84,34 @@ def _state_payload(counts, *, capacity=2, n_modes=2):
     }
 
 
+def _scaling_signatures(count, *, control=-0.5):
+    """Return one legacy ``scaling_signatures`` object array per candidate.
+
+    This is the shape the solver really packs: an object array whose elements
+    are tuples of dicts mixing ints, floats, bools and nested tuples. It is the
+    classification evidence, so it must reach the product.
+    """
+    return np.asarray(
+        [
+            (
+                {
+                    "state_order": 3 + index,
+                    "perturbation_order": 1,
+                    "coupling_state_order": 0,
+                    "exponent_numerator": 1,
+                    "exponent_denominator": 3,
+                    "exponent": 1.0 / 3.0,
+                    "sublinear": True,
+                    "coefficient": complex(0.5, control),
+                    "branches": (),
+                },
+            )
+            for index in range(count)
+        ],
+        dtype=object,
+    )
+
+
 def _candidate_payload(*, count=2, n_modes=2, n_state=4):
     """Return one legacy candidate payload with ``count`` candidates."""
     vectors = np.arange(count * n_state, dtype=float).reshape(count, n_state) / 10.0
@@ -99,7 +134,7 @@ def _candidate_payload(*, count=2, n_modes=2, n_state=4):
             "classification_accepted": np.ones(count, dtype=bool),
             "classification_status": np.asarray(["classified"] * count),
             "regularity_determinant": np.full(count, -0.25),
-            "scaling_signatures": np.asarray([{"exponent": 0.5}] * count, dtype=object),
+            "scaling_signatures": _scaling_signatures(count),
         },
         "meta": {"target": "equilibrium_multiplicity", "state_matrix_shape": (2, 2)},
     }
@@ -151,6 +186,21 @@ def _no_object_dtypes(product):
         assert not np.dtype(variable.dtype).hasobject, variable.name
         array = np.asarray(product.handle(variable.name).materialize())
         assert not array.dtype.hasobject, variable.name
+
+
+def _identities(product):
+    """Return the imported candidate identities of a candidate product."""
+    return [str(value) for value in product.handle("candidate_identity").materialize()]
+
+
+def _identity_tuples(product):
+    """Return ``(fingerprint, case, slot)`` for every imported identity."""
+    parsed = []
+    for value in _identities(product):
+        match = LEGACY_IDENTITY.match(value)
+        assert match is not None, value
+        parsed.append((match["fingerprint"], int(match["case"]), int(match["slot"])))
+    return parsed
 
 
 # --- templates -------------------------------------------------------------
@@ -565,24 +615,38 @@ def test_import_bifurcation_result_normalizes_one_case_to_a_scan():
     product = bundle.require("candidates")
     assert product.attributes["case_count"] == 1
     assert product.attributes["case_shape"] == [1]
-    np.testing.assert_array_equal(
-        np.asarray(product.handle("candidate_identity").materialize()),
-        ["legacy:bifurcation_candidates:0:0", "legacy:bifurcation_candidates:0:1"],
-    )
+    parsed = _identity_tuples(product)
+    assert [(case, slot) for _, case, slot in parsed] == [(0, 0), (0, 1)]
+    assert len({fingerprint for fingerprint, _, _ in parsed}) == 1
     assert (
         bundle.provenance["legacy_source"]
         == "qphase_cam.bifurcation_result:CAMBifurcationResult"
     )
-    # Object-array diagnostics and the postprocess table are reported by name.
-    assert bundle.provenance["unmapped_legacy_diagnostics"] == ["scaling_signatures"]
+    assert bundle.provenance["legacy_source_fingerprint"] == parsed[0][0]
+    # The postprocess table is reported by name; the object-array
+    # classification evidence is mapped, not refused.
+    assert bundle.provenance["unmapped_legacy_diagnostics"] == []
     assert bundle.provenance["unmapped_legacy_postprocess"] == [
         "local_response_validation"
     ]
-    classification = np.asarray(product.handle("classification").materialize())
-    assert json.loads(str(classification[0])) == {
-        "classification_accepted": True,
-        "classification_status": "classified",
-    }
+    classification = json.loads(
+        str(np.asarray(product.handle("classification").materialize())[0])
+    )
+    assert classification["classification_accepted"] is True
+    assert classification["classification_status"] == "classified"
+    assert classification["scaling_signatures"] == [
+        {
+            "state_order": 3,
+            "perturbation_order": 1,
+            "coupling_state_order": 0,
+            "exponent_numerator": 1,
+            "exponent_denominator": 3,
+            "exponent": 1.0 / 3.0,
+            "sublinear": True,
+            "coefficient": {"real": 0.5, "imag": -0.5},
+            "branches": [],
+        }
+    ]
     audit = json.loads(str(np.asarray(product.handle("base_audit").materialize())[1]))
     assert audit == {"regularity_determinant": -0.25}
     report = compare_candidates_export(product, legacy)
@@ -611,10 +675,10 @@ def test_import_bifurcation_scan_maps_offsets_coordinates_and_identity():
     assert product.attributes["case_count"] == 3
     assert product.attributes["case_shape"] == [3]
     # The middle case accepted nothing; its identity block is empty, not zero.
-    np.testing.assert_array_equal(
-        np.asarray(product.handle("candidate_identity").materialize()),
-        ["legacy:scan-1:0:0", "legacy:scan-1:0:1", "legacy:scan-1:2:0"],
-    )
+    parsed = _identity_tuples(product)
+    assert [(case, slot) for _, case, slot in parsed] == [(0, 0), (0, 1), (2, 0)]
+    assert len({fingerprint for fingerprint, _, _ in parsed}) == 1
+    assert bundle.provenance["legacy_source_fingerprint"] == parsed[0][0]
     np.testing.assert_array_equal(
         np.asarray(product.handle("candidate_offsets").materialize()), [0, 2, 2, 3]
     )
@@ -648,11 +712,9 @@ def test_imported_candidate_identities_are_unique_across_cases():
         case_metadata=({}, {}),
     )
     product = import_bifurcation_scan(scan).require("candidates")
-    identity = np.asarray(product.handle("candidate_identity").materialize())
-    assert list(identity) == [
-        "legacy:bifurcation_scan:0:0",
-        "legacy:bifurcation_scan:1:0",
-    ]
+    parsed = _identity_tuples(product)
+    assert [(case, slot) for _, case, slot in parsed] == [(0, 0), (1, 0)]
+    identity = _identities(product)
     assert len(set(identity)) == len(identity)
 
 
@@ -788,3 +850,303 @@ def test_engine_candidate_output_imports_and_round_trips(tmp_path):
     assert restored.provenance["unmapped_legacy_branches"] == []
     reported = compare_candidates_export(reloaded, result)
     assert reported["passed"], reported["mismatches"]
+
+
+# --- imported identity is a content fingerprint ---------------------------
+
+
+def test_identity_fingerprint_is_stable_for_the_same_source():
+    """Re-importing one snapshot twice must not invent new identities."""
+    legacy = _legacy_candidates()
+    first = _identities(import_bifurcation_result(legacy).require("candidates"))
+    second = _identities(import_bifurcation_result(legacy).require("candidates"))
+    assert first == second
+    assert (
+        len(
+            {
+                fingerprint
+                for fingerprint, _, _ in _identity_tuples(
+                    import_bifurcation_result(legacy).require("candidates")
+                )
+            }
+        )
+        == 1
+    )
+
+
+def test_identity_fingerprint_matches_between_object_and_npz(tmp_path):
+    """The same content imported from memory and from disk agrees."""
+    legacy = _legacy_candidates()
+    target = tmp_path / "legacy"
+    legacy.save(target)
+    from_object = _identities(import_bifurcation_result(legacy).require("candidates"))
+    from_npz = _identities(import_bifurcation_result(target).require("candidates"))
+    assert from_object == from_npz
+
+
+def test_two_different_sources_do_not_collide():
+    """Two results that differ only in their control values stay distinct."""
+    left = _legacy_candidates()
+    right_payload = _candidate_payload()
+    right_payload["control_values"] = np.full((2, 1), -0.25)
+    right = CAMBifurcationResult(
+        states=right_payload["states"],
+        state_vectors=right_payload["state_vectors"],
+        control_values=right_payload["control_values"],
+        control_names=right_payload["control_names"],
+        full_residual_norm=right_payload["full_residual_norm"],
+        search_residual_norm=right_payload["search_residual_norm"],
+        success=right_payload["success"],
+        status=np.asarray(right_payload["status"]),
+        method=np.asarray(right_payload["method"]),
+        verification_digits=right_payload["verification_digits"],
+        verification_status=np.asarray(right_payload["verification_status"]),
+        diagnostics=right_payload["diagnostics"],
+        meta=right_payload["meta"],
+    )
+    left_products = import_bifurcation_result(left).require("candidates")
+    right_products = import_bifurcation_result(right).require("candidates")
+    left_identity = _identities(left_products)
+    right_identity = _identities(right_products)
+    assert set(left_identity).isdisjoint(right_identity)
+    left_token = _identity_tuples(left_products)[0][0]
+    right_token = _identity_tuples(right_products)[0][0]
+    assert left_token != right_token
+
+
+def test_two_scan_sources_with_identical_cases_do_not_collide():
+    """Two scans share case indices; only the fingerprint may separate them."""
+
+    def scan(offset: float) -> CAMBifurcationScanResult:
+        return CAMBifurcationScanResult(
+            case_axes={"gamma": np.asarray([0.0 + offset, 0.5 + offset])},
+            case_shape=(2,),
+            case_params={"gamma": np.asarray([0.0 + offset, 0.5 + offset])},
+            candidate_offsets=np.asarray([0, 1, 2]),
+            candidates=CAMBifurcationResult.concatenate(
+                [_legacy_candidates(count=1), _legacy_candidates(count=1)]
+            ),
+            case_metadata=({}, {}),
+        )
+
+    left = import_bifurcation_scan(scan(0.0)).require("candidates")
+    right = import_bifurcation_scan(scan(0.1)).require("candidates")
+    assert set(_identities(left)).isdisjoint(_identities(right))
+    assert [case for _, case, _ in _identity_tuples(left)] == [0, 1]
+    assert [case for _, case, _ in _identity_tuples(right)] == [0, 1]
+
+
+def test_identity_records_how_the_token_was_obtained():
+    legacy = _legacy_candidates()
+    derived = import_bifurcation_result(legacy)
+    assert derived.provenance["legacy_source_token"] == "content_fingerprint"
+    named = import_bifurcation_result(legacy, source_id="artifact-7")
+    assert named.provenance["legacy_source_token"] == "source_id"
+    assert _identities(named.require("candidates")) == [
+        "legacy:artifact-7:0:0",
+        "legacy:artifact-7:0:1",
+    ]
+    with pytest.raises(ValueError, match="at least one usable character"):
+        import_bifurcation_result(legacy, source_id="   ")
+
+
+# --- legacy diagnostics keep their evidence -------------------------------
+
+
+def test_scaling_signatures_are_mapped_not_flagged_unmapped():
+    """The object-array classification evidence must survive the import."""
+    legacy = _legacy_candidates()
+    bundle = import_bifurcation_result(legacy)
+    product = bundle.require("candidates")
+    assert "scaling_signatures" not in bundle.provenance["unmapped_legacy_diagnostics"]
+    rows = [
+        json.loads(str(value))
+        for value in np.asarray(product.handle("classification").materialize())
+    ]
+    # Per-candidate slicing is what proves the mapping: each row carries the
+    # signature of its own candidate, not candidate 0's repeated.
+    assert [row["scaling_signatures"][0]["state_order"] for row in rows] == [3, 4]
+    signature = rows[0]["scaling_signatures"][0]
+    assert signature["exponent_denominator"] == 3
+    assert signature["sublinear"] is True
+    assert signature["coefficient"] == {"real": 0.5, "imag": -0.5}
+    assert rows[1]["scaling_signatures"][0]["coefficient"] == {
+        "real": 0.5,
+        "imag": -0.5,
+    }
+
+
+def test_only_values_without_a_json_form_are_reported_unmapped():
+    """A scalar diagnostic and a set argument stay reported, by name."""
+    payload = _candidate_payload()
+    payload["diagnostics"]["summary_scalar"] = 1.5
+    payload["diagnostics"]["not_jsonable"] = np.asarray([{1, 2}, {3}], dtype=object)
+    legacy = CAMBifurcationResult(
+        states=payload["states"],
+        state_vectors=payload["state_vectors"],
+        control_values=payload["control_values"],
+        control_names=payload["control_names"],
+        full_residual_norm=payload["full_residual_norm"],
+        search_residual_norm=payload["search_residual_norm"],
+        success=payload["success"],
+        status=np.asarray(payload["status"]),
+        method=np.asarray(payload["method"]),
+        verification_digits=payload["verification_digits"],
+        verification_status=np.asarray(payload["verification_status"]),
+        diagnostics=payload["diagnostics"],
+        meta=payload["meta"],
+    )
+    bundle = import_bifurcation_result(legacy)
+    assert bundle.provenance["unmapped_legacy_diagnostics"] == [
+        "not_jsonable[0]",
+        "not_jsonable[1]",
+        "summary_scalar",
+    ]
+    product = bundle.require("candidates")
+    assert "scaling_signatures" in json.loads(
+        str(np.asarray(product.handle("classification").materialize())[0])
+    )
+
+
+# --- point_view -----------------------------------------------------------
+
+
+def _candidate_case_metadata(product):
+    """Return the per-case JSON metadata of a candidate product.
+
+    A point view drops the ``scan`` axis, so the column may be 0-d.
+    """
+    values = np.atleast_1d(np.asarray(product.handle("case_metadata").materialize()))
+    return [json.loads(str(value)) for value in values]
+
+
+def test_point_view_reads_identity_json_and_parameters(tmp_path):
+    """`point_view(scan=i)` works on a candidate product, runtime and stored."""
+    payload = _identity_payload(2)
+    payload["candidate_offsets"] = np.asarray([0, 1, 2])
+    product = build_candidate_product(
+        **payload,
+        case_shape=(2,),
+        case_axes={"gamma": np.asarray([0.0, 0.5])},
+        classification=[{"accepted": True}, {"accepted": False}],
+        case_metadata=[{"case": 0}, {"case": 1}],
+    )
+    runtime = product.point_view(scan=0)
+    assert _identities(runtime) == ["new:candidate:0", "new:candidate:1"]
+    assert json.loads(
+        str(np.asarray(runtime.handle("classification").materialize())[0])
+    ) == {"accepted": True}
+    np.testing.assert_allclose(
+        np.asarray(runtime.handle("parameter.gamma").materialize()), 0.0
+    )
+    assert (
+        str(np.asarray(runtime.handle("case_metadata").materialize())) == '{"case":0}'
+    )
+
+    bundle = cam_bundle({"candidates": product}, provenance={"cam_task": "search"})
+    for layout in ("single", "sharded"):
+        restored = _assert_roundtrip(bundle, tmp_path=tmp_path, layout=layout)
+        view = restored.point_view((1,))
+        selected = view.require("candidates")
+        # The scan axis is dropped, so the case metadata and the parameter
+        # coordinate become scalars. The candidate axis is untouched: a point
+        # view never re-computes a ragged slice, it reports the same rows.
+        assert _identities(selected) == ["new:candidate:0", "new:candidate:1"]
+        classification = [
+            json.loads(str(value))
+            for value in np.asarray(selected.handle("classification").materialize())
+        ]
+        assert classification == [{"accepted": True}, {"accepted": False}]
+        np.testing.assert_allclose(
+            np.asarray(selected.handle("parameter.gamma").materialize()), 0.5
+        )
+        assert _candidate_case_metadata(selected) == [{"case": 1}]
+
+
+def test_point_view_does_not_filter_candidates_per_case():
+    """A point view selects the scan axis only; offsets still scope candidates."""
+    payload = _identity_payload(2)
+    payload["candidate_offsets"] = np.asarray([0, 2, 2, 2])
+    product = build_candidate_product(**payload, case_shape=(3,))
+    view = product.point_view(scan=2)
+    # Case 2 accepted nothing, but the candidate block is unchanged: a point
+    # view must not silently re-compute a ragged slice, so a consumer reads
+    # candidate_offsets to scope candidates to a case.
+    assert len(_identities(view)) == 2
+    np.testing.assert_array_equal(
+        np.asarray(view.handle("candidate_offsets").materialize()), [0, 2, 2, 2]
+    )
+    assert product.attributes["case_count"] == 3
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "core Dataset.slice_view downcasts a fixed-width U column to the length "
+        "of the selected element, so slicing a shorter string fails the dtype "
+        "check; reachable through case_metadata when per-case JSON lengths "
+        "differ. Workaround: slice_view(scan=slice(i, i + 1))."
+    ),
+)
+def test_point_view_of_a_shorter_case_metadata_string():
+    """Minimal repro of a core string-slice limit, not a CAM schema defect."""
+    product = build_candidate_product(
+        **_identity_payload(2),
+        candidate_offsets=np.asarray([0, 1, 2]),
+        case_shape=(2,),
+        case_metadata=[{"k": 1}, {"k": 1234567890}],
+    )
+    assert product.variable("case_metadata").dtype == "<U16"
+    product.point_view(scan=0)  # shorter JSON text -> core dtype mismatch
+    product.point_view(scan=1)
+
+
+def test_slice_view_keeps_a_short_case_metadata_column():
+    """The documented workaround for the core string-slice limit."""
+    product = build_candidate_product(
+        **_identity_payload(2),
+        candidate_offsets=np.asarray([0, 1, 2]),
+        case_shape=(2,),
+        case_metadata=[{"k": 1}, {"k": 1234567890}],
+    )
+    view = product.slice_view(scan=slice(0, 1))
+    assert [
+        json.loads(str(value))
+        for value in np.asarray(view.handle("case_metadata").materialize())
+    ] == [{"k": 1}]
+
+
+# --- package layout -------------------------------------------------------
+
+
+def test_data_is_a_package_with_one_implementation():
+    """`qphase_cam.data` is a package; no sibling data.py may shadow it."""
+    from pathlib import Path
+
+    package = Path(cam_data.__file__).parent
+    assert package.name == "data"
+    assert (package / "__init__.py").exists()
+    assert not (package.parent / "data.py").exists()
+    for module in (
+        "_common",
+        "bundle",
+        "candidates",
+        "compare",
+        "declarations",
+        "legacy",
+        "state",
+    ):
+        assert (package / f"{module}.py").exists(), module
+
+
+def test_public_api_is_reexported_not_implemented():
+    """The package `__init__` declares the surface and defines none of it."""
+    from pathlib import Path
+
+    for name in cam_data.__all__:
+        assert hasattr(cam_data, name), name
+    source = Path(cam_data.__file__).read_text(encoding="utf-8")
+    definitions = [
+        line for line in source.splitlines() if line.startswith(("def ", "class "))
+    ]
+    assert definitions == []
