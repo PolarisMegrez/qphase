@@ -42,6 +42,7 @@ dependencies = [
 "cam_postprocessor.local_response_validation" = "qphase_cam.postprocessor.local_response:LocalResponseValidation"
 "cam_postprocessor.stochastic_validity" = "qphase_cam.postprocessor.stochastic_validity:StochasticValidity"
 "cam_postprocessor.closure_risk" = "qphase_cam.postprocessor.closure_risk:ClosureRisk"
+"cam_postprocessor.observable_scaling" = "qphase_cam.postprocessor.observable_scaling:ObservableScaling"
 
 [tool.setuptools.packages.find]
 where = ["."]

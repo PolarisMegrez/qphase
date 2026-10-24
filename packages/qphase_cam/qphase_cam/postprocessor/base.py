@@ -104,8 +104,15 @@ class CAMPostprocessor(ABC, Generic[PostprocessorConfigT]):
     ) -> None:
         if config is not None and kwargs:
             raise TypeError("provide either config or keyword options, not both")
-        source = kwargs if config is None else config.model_dump()
-        self.config = self.config_schema.model_validate(source)
+        if config is None:
+            self.config = self.config_schema.model_validate(kwargs)
+        elif isinstance(config, self.config_schema):
+            # An already-validated config is passed through: dumping and
+            # re-validating it would lose an injected object (an observable, for
+            # example) that only lives in memory.
+            self.config = config
+        else:
+            self.config = self.config_schema.model_validate(config.model_dump())
         self.result_metadata: dict[str, Any] = {}
 
     @abstractmethod
