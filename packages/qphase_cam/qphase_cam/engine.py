@@ -330,7 +330,12 @@ class Engine(EngineBase):
             reporter.status("CAM analysis complete", stage="complete")
         # Only the annotations are produced: the upstream products stay in the
         # artifact they came from and are never copied into a second artifact.
-        return cam_bundle(annotations, provenance=provenance, metadata=metadata)
+        return cam_bundle(
+            annotations,
+            provenance=provenance,
+            metadata=metadata,
+            parents=(input_artifact,),
+        )
 
     # -- summarize_search -------------------------------------------------
 
@@ -398,6 +403,9 @@ class Engine(EngineBase):
                 **dict(evidence.provenance),
             },
             metadata=metadata,
+            parents=tuple(
+                reference.artifact_id for reference in references
+            ),
         )
 
     # -- inputs -----------------------------------------------------------

@@ -118,10 +118,16 @@ class ArtifactStore:
             # cite the artifact that will carry it) hands it over here; a result
             # that does not state one keeps the generated id.
             declared = provenance_payload.get("artifact_id")
+            # The parent chain is a property of the result (manifest parents win
+            # over a plain ``parents`` attribute); it stays empty by default.
+            declared_parents = getattr(result, "manifest_parents", None)
+            if declared_parents is None:
+                declared_parents = getattr(result, "parents", ())
             self.save_products(
                 products,
                 provenance=provenance_payload,
                 artifact_id=None if declared is None else str(declared),
+                parents=tuple(str(value) for value in (declared_parents or ())),
                 bundle=bundle,
             )
             return self.job_dir / "artifact_manifest.json"

@@ -15,7 +15,7 @@ product's own ``product`` attribute.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from qphase.data import BundleDescriptor, Dataset, GenericDataBundle
@@ -47,6 +47,7 @@ def cam_bundle(
     *,
     provenance: Mapping[str, Any] | None = None,
     metadata: Mapping[str, Any] | None = None,
+    parents: Sequence[str] = (),
 ) -> GenericDataBundle:
     """Group CAM products into the core generic bundle.
 
@@ -70,4 +71,5 @@ def cam_bundle(
         descriptor,
         provenance=provenance,
         metadata=metadata,
+        parents=parents,
     )

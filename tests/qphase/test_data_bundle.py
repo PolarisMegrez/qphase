@@ -19,6 +19,7 @@ from qphase.data import (
     ArtifactUnsupportedError,
     AxisRole,
     AxisSchema,
+    BundleDescriptor,
     CoordinateSchema,
     DataKind,
     DirectoryArtifactResolver,
@@ -35,7 +36,6 @@ from qphase.data.npz import NpzStorageAdapter
 from qphase.data.store import (
     GENERIC_BUNDLE_ADAPTER_ID,
     GENERIC_BUNDLE_TYPE_ID,
-    BundleDescriptor,
 )
 
 
@@ -559,3 +559,42 @@ def test_coordinates_roundtrip_in_clean_subprocess(tmp_path):
     assert completed.returncode == 0, completed.stderr
     payload = json.loads(completed.stdout.strip())
     assert payload == {"coordinates": ["omega_b"], "omega_b": [1.0, 2.0, 3.0]}
+
+
+def test_bundle_parents_reach_the_manifest(tmp_path):
+    """A bundle's parent chain is persisted, and stays empty by default."""
+    declared_parent = "0123456789abcdef0123456789abcdef"
+    bundle = GenericDataBundle(
+        {"trajectories": _scan_dataset()},
+        BundleDescriptor(
+            type_id="generic.dataset_bundle/1",
+            adapter_id="generic/1",
+            descriptor_schema="generic.dataset_bundle/1",
+            descriptor={},
+            product_roles={},
+        ),
+        provenance={"artifact_id": "fedcba9876543210fedcba9876543210"},
+        parents=[declared_parent],
+    )
+    assert bundle.parents == (declared_parent,)
+    for layout in ("single", "sharded"):
+        root = tmp_path / layout
+        bundle.save_dataset(root, layout=layout, shard_target_bytes=256)
+        manifest = ArtifactManifest.read(root)
+        assert manifest.parents == [declared_parent], layout
+    bundle.save(tmp_path / "saved")
+    assert ArtifactManifest.read(tmp_path / "saved").parents == [declared_parent]
+    # A bundle without parents keeps the historical empty chain.
+    plain = GenericDataBundle(
+        {"trajectories": _scan_dataset()},
+        BundleDescriptor(
+            type_id="generic.dataset_bundle/1",
+            adapter_id="generic/1",
+            descriptor_schema="generic.dataset_bundle/1",
+            descriptor={},
+            product_roles={},
+        ),
+    )
+    assert plain.parents == ()
+    plain.save_dataset(tmp_path / "plain", layout="single", shard_target_bytes=256)
+    assert ArtifactManifest.read(tmp_path / "plain").parents == []

@@ -19,7 +19,7 @@ GenericDataBundle
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -53,11 +53,14 @@ class GenericDataBundle:
         *,
         provenance: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        parents: Sequence[str] = (),
     ) -> None:
         self._products = dict(products)
         self._descriptor = descriptor
         self._provenance = dict(provenance or {})
         self._metadata = dict(metadata or {})
+        #: Artifact ids this bundle was derived from; persisted as manifest parents.
+        self._parents = tuple(str(value) for value in parents)
 
     # -- bundle surface ---------------------------------------------------
 
@@ -75,6 +78,11 @@ class GenericDataBundle:
     def provenance(self) -> dict[str, Any]:
         """The artifact provenance mapping."""
         return dict(self._provenance)
+
+    @property
+    def parents(self) -> tuple[str, ...]:
+        """Artifact ids this bundle is derived from (the manifest parent chain)."""
+        return self._parents
 
     def require(self, name: str) -> Dataset:
         """Return one product, raising ``KeyError`` when absent."""
@@ -128,6 +136,7 @@ class GenericDataBundle:
             self._products,
             provenance=self._provenance,
             artifact_id=self.declared_artifact_id(),
+            parents=self._parents,
             bundle=self._descriptor,
         )
 
@@ -194,6 +203,7 @@ class GenericDataBundle:
             self._descriptor,
             provenance=self._provenance,
             metadata={**self._metadata, "point_index": tuple(index)},
+            parents=self._parents,
         )
 
     def save_dataset(
@@ -211,6 +221,7 @@ class GenericDataBundle:
             self._products,
             provenance=self._provenance,
             artifact_id=self.declared_artifact_id(),
+            parents=self._parents,
             shard_target_bytes=shard_target_bytes,
             bundle=self._descriptor,
             layout=resolved,
