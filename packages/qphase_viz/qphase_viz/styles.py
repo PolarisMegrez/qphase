@@ -13,6 +13,7 @@ Public API
 ``PALETTE`` : Semantic colour roles shared by papers, SM and the GUI.
 ``allan_scan_colormap`` : Perceptually ordered map for dense scan sequences.
 ``cam_flow_colormap`` : Diverging map for signed flows around zero.
+``resolve_colormap`` : The single name -> colormap resolver for plotters.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from typing import Any, Literal
 
 import matplotlib as mpl
 import numpy as np
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import Colormap, LinearSegmentedColormap
 
 __all__ = [
     "DEFAULT_STYLE",
@@ -34,6 +35,7 @@ __all__ = [
     "allan_scan_colormap",
     "cam_flow_colormap",
     "rc_params",
+    "resolve_colormap",
 ]
 
 #: Semantic colour roles. Names describe what a colour *means* in a figure, not
@@ -185,4 +187,22 @@ def cam_flow_colormap() -> LinearSegmentedColormap:
     return LinearSegmentedColormap.from_list(
         "qphase_cam_flow",
         [PALETTE["cam"], PALETTE["flow_zero"], PALETTE["sde"]],
+    )
+
+
+def resolve_colormap(name: str) -> Colormap:
+    """Resolve a plotter colormap name.
+
+    ``"scan"`` and ``"flow"`` are the two semantic maps above; every other
+    name must be a Matplotlib colormap. Unknown names raise instead of falling
+    back to a default, so a typo cannot silently change a figure.
+    """
+    if name == "scan":
+        return allan_scan_colormap()
+    if name == "flow":
+        return cam_flow_colormap()
+    if name in mpl.colormaps:
+        return mpl.colormaps[name]
+    raise ValueError(
+        f"unknown colormap {name!r}; use 'scan', 'flow' or a Matplotlib colormap"
     )

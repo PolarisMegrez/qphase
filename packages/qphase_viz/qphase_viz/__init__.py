@@ -33,6 +33,7 @@ from .styles import (
     allan_scan_colormap,
     cam_flow_colormap,
     rc_params,
+    resolve_colormap,
 )
 
 __all__ = [
@@ -56,4 +57,5 @@ __all__ = [
     "allan_scan_colormap",
     "cam_flow_colormap",
     "rc_params",
+    "resolve_colormap",
 ]

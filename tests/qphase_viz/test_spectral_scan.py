@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -46,7 +47,7 @@ def test_scan_indices_select_points_in_order(tmp_path):
 
 
 def test_scan_coordinates_use_nearest_point(tmp_path):
-    files = _plotter(scan_coordinates=[0.19, 0.41]).plot(
+    files = _plotter(scan_coordinates=[0.19, 0.41], scan_tolerance=0.02).plot(
         spectral_scan_bundle(), tmp_path, "svg"
     )
 
@@ -56,8 +57,6 @@ def test_scan_coordinates_use_nearest_point(tmp_path):
 
 
 def test_scan_coordinate_outside_tolerance_is_rejected(tmp_path):
-    # The default tolerance is half a grid step, so an explicit one is needed
-    # to reject a value that would otherwise snap to the neighbouring point.
     with pytest.raises(ValueError, match="away from the nearest point"):
         _plotter(scan_coordinates=[0.13], scan_tolerance=0.01).plot(
             spectral_scan_bundle(), tmp_path, "svg"
@@ -74,9 +73,9 @@ def test_explicit_tolerance_widens_the_nearest_match(tmp_path):
 
 def test_index_and_coordinate_selection_are_mutually_exclusive(tmp_path):
     with pytest.raises(ValueError, match="not both"):
-        _plotter(scan_indices=[0], scan_coordinates=[0.1]).plot(
-            spectral_scan_bundle(), tmp_path, "svg"
-        )
+        _plotter(
+            scan_indices=[0], scan_coordinates=[0.1], scan_tolerance=0.01
+        ).plot(spectral_scan_bundle(), tmp_path, "svg")
 
 
 def test_scan_index_out_of_range_is_rejected(tmp_path):
@@ -204,3 +203,53 @@ def test_style_options_reach_the_scan_figure(tmp_path):
 def test_unknown_colormap_is_rejected(tmp_path):
     with pytest.raises(ValueError, match="unknown colormap"):
         _plotter(cmap="not-a-map").plot(spectral_scan_bundle(), tmp_path, "svg")
+
+
+def _line_colours(monkeypatch, tmp_path: Path, **spec) -> list[Any]:
+    """Render one figure and return the colours of the plotted curves."""
+    import qphase_viz.plotters.spectral_scan as spectral_scan_module
+
+    captured: dict[str, list[Any]] = {}
+
+    def fake_save(fig, output_dir, filename, format):
+        captured["colours"] = [
+            tuple(float(channel) for channel in np.asarray(line.get_color()))
+            for line in fig.axes[0].lines
+        ]
+        return tmp_path / "stub.png"
+
+    monkeypatch.setattr(spectral_scan_module, "save_figure", fake_save)
+    _plotter(**spec).plot(spectral_scan_bundle(), tmp_path, "png")
+    return captured["colours"]
+
+
+def test_scan_point_colour_comes_from_its_position_in_the_whole_scan(
+    tmp_path, monkeypatch
+):
+    """Selecting a subset must not repaint the remaining curves."""
+    full = _line_colours(monkeypatch, tmp_path, scan_indices=list(range(5)))
+    subset = _line_colours(monkeypatch, tmp_path, scan_indices=[2, 4])
+
+    assert len(full) == len(SCAN_POINTS)
+    assert subset == [full[2], full[4]]
+    assert subset[0] != full[0]
+
+
+def test_coordinate_selection_requires_an_explicit_tolerance(tmp_path):
+    with pytest.raises(ValueError, match="requires an explicit scan_tolerance"):
+        _plotter(scan_coordinates=[0.19]).plot(
+            spectral_scan_bundle(), tmp_path, "svg"
+        )
+
+
+def test_tolerance_must_be_positive():
+    with pytest.raises(ValueError):
+        SpectralScanPlotter(
+            plots=[
+                {
+                    "scan_parameter": "omega",
+                    "scan_coordinates": [0.19],
+                    "scan_tolerance": 0.0,
+                }
+            ]
+        )

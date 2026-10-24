@@ -299,3 +299,46 @@ def test_title_labels_and_annotation_are_applied(tmp_path):
     assert "Y axis" in svg
     assert "Scalar" in svg
     assert "corner" in svg
+
+
+def test_non_typed_input_is_rejected(tmp_path):
+    """A raw mapping of arrays is not a visualization input."""
+
+    class NotATypedBundle:
+        products = {"grid": {"value": [1.0, 2.0]}}
+
+    with pytest.raises(TypeError, match="typed DatasetResultProtocol"):
+        _plotter().plot(NotATypedBundle(), tmp_path, "png")
+
+
+def test_missing_mask_variable_is_a_clear_value_error(tmp_path):
+    with pytest.raises(ValueError, match=r"mask variable 'nope' is not in the product"):
+        _plotter(valid_variable="nope").plot(heatmap_bundle(), tmp_path, "png")
+
+
+def test_missing_contour_variable_is_a_clear_value_error(tmp_path):
+    with pytest.raises(
+        ValueError, match=r"contour variable 'nope' is not in the product"
+    ):
+        _plotter(contours=[{"variable": "nope", "levels": [1.0]}]).plot(
+            heatmap_bundle(), tmp_path, "png"
+        )
+
+
+def test_missing_series_variable_is_a_clear_value_error(tmp_path):
+    with pytest.raises(ValueError, match=r"series variable 'nope' is not in"):
+        _plotter(
+            series=[{"x_variable": "nope", "y_variable": "boundary_y"}]
+        ).plot(heatmap_bundle(), tmp_path, "png")
+
+
+def test_missing_value_variable_names_the_unmatched_fields(tmp_path):
+    with pytest.raises(ValueError, match=r"carries the heatmap variables .*nope"):
+        _plotter(value_variable="nope").plot(heatmap_bundle(), tmp_path, "png")
+
+
+def test_missing_variable_on_a_named_product_is_a_clear_value_error(tmp_path):
+    with pytest.raises(ValueError, match=r"product 'grid' is missing variables"):
+        _plotter(product="grid", value_variable="nope").plot(
+            heatmap_bundle(), tmp_path, "png"
+        )

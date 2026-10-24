@@ -126,10 +126,17 @@ visualizer:
     plots:
       - scan_parameter: omega       # coordinate stored on the PSD product
         channels: [0, 1, 2]         # one panel each
-        scan_indices: [0, 10, 20]   # or scan_coordinates: [0.12, 0.24]
+        scan_indices: [0, 10, 20]   # or scan_coordinates (see below)
         log_scale: true
         label_template: "{name}={value:.6g}"
 ```
+
+Selecting by value needs an explicit bound: `scan_coordinates: [0.12, 0.24]`
+together with `scan_tolerance: 0.01`. There is no default tolerance — a
+nearest-match without one would draw a different scan point than the one
+asked for — and a requested value further than the tolerance from every
+stored point is an error. A curve keeps the colour of its scan position, so
+drawing a subset never repaints the remaining curves.
 
 ### Scalar heatmap
 

@@ -13,14 +13,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, ClassVar
 
-import matplotlib as mpl
 import numpy as np
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.data import DataKind, Dataset, SpectralQuantity
 
 from ..config import SpectralScanConfig, SpectralScanSpec
 from ..render import apply_axes_style, draw_annotations, save_figure, styled_subplots
-from ..styles import RenderOptions, allan_scan_colormap, cam_flow_colormap
+from ..styles import RenderOptions, resolve_colormap
 from ..typed_input import scan_values, select_product
 from .base import PlotterProtocol
 
@@ -81,7 +80,10 @@ class SpectralScanPlotter(PlotterProtocol):
         selected = self._select_scan_points(coordinates, spec)
         channels = self._select_channels(modes, spec.channels)
         floor = self._log_floor(psd) if spec.log_scale else None
-        colours = self._curve_colours(spec.cmap, len(selected))
+        # The colour of a scan point comes from its position in the whole
+        # scan, not from its position among the selected points: a subset
+        # must not repaint the remaining curves.
+        colours = self._curve_colours(spec.cmap, coordinates.size)
 
         options = base.merged(
             style=spec.style,
@@ -102,7 +104,8 @@ class SpectralScanPlotter(PlotterProtocol):
             for row, mode in enumerate(channels):
                 ax = axes[row, 0]
                 column = modes.index(mode)
-                for colour, scan_index in zip(colours, selected, strict=True):
+                for scan_index in selected:
+                    colour = colours[scan_index]
                     values = psd[scan_index, :, column]
                     if floor is not None:
                         values = np.maximum(values, floor)
@@ -224,12 +227,16 @@ class SpectralScanPlotter(PlotterProtocol):
         requested: list[float],
         tolerance: float | None,
     ) -> list[int]:
-        """Map requested coordinate values onto the nearest scan points."""
-        if coordinates.size > 1:
-            spacing = float(np.min(np.abs(np.diff(coordinates))))
-            limit = 0.5 * spacing if tolerance is None else tolerance
-        else:
-            limit = float("inf") if tolerance is None else tolerance
+        """Map requested coordinate values onto the nearest scan points.
+
+        The tolerance is mandatory: without an explicit bound a value that only
+        roughly matches would silently draw a different scan point.
+        """
+        if tolerance is None:
+            raise ValueError(
+                "scan_coordinates requires an explicit scan_tolerance"
+            )
+        limit = float(tolerance)
         selected: list[int] = []
         for value in requested:
             distance = np.abs(coordinates - float(value))
@@ -268,17 +275,6 @@ class SpectralScanPlotter(PlotterProtocol):
 
     @staticmethod
     def _curve_colours(cmap: str, count: int) -> list[Any]:
-        return _colormap(cmap)(np.linspace(*_CMAP_SPAN, max(count, 1)))
-
-
-def _colormap(name: str) -> Any:
-    """Resolve a plotter colormap: the two named maps or a Matplotlib one."""
-    if name == "scan":
-        return allan_scan_colormap()
-    if name == "flow":
-        return cam_flow_colormap()
-    if name in mpl.colormaps:
-        return mpl.colormaps[name]
-    raise ValueError(
-        f"unknown colormap {name!r}; use 'scan', 'flow' or a Matplotlib colormap"
-    )
+        """One colour per scan point, sampled across the whole scan."""
+        colours = resolve_colormap(cmap)(np.linspace(*_CMAP_SPAN, max(count, 1)))
+        return [tuple(float(channel) for channel in colour) for colour in colours]

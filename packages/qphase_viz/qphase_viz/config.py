@@ -237,14 +237,18 @@ class SpectralScanSpec(BasePlotterConfig):
     )
     scan_coordinates: list[float] | None = Field(
         None,
-        description="Scan points to draw, by coordinate value (nearest match)",
+        description=(
+            "Scan points to draw, by coordinate value; each value must land "
+            "within scan_tolerance of a stored point"
+        ),
     )
     scan_tolerance: float | None = Field(
         None,
         gt=0.0,
         description=(
-            "Largest accepted distance between a requested coordinate and the "
-            "nearest scan point; None uses half the local grid spacing"
+            "Required with scan_coordinates: the largest accepted distance "
+            "between a requested value and the nearest stored scan point. No "
+            "default — a silent nearest-match would hide a mistyped target."
         ),
     )
     log_scale: bool = Field(True, description="Draw the PSD on a log y axis")
@@ -266,6 +270,16 @@ class SpectralScanSpec(BasePlotterConfig):
     constrained_layout: bool = Field(
         True, description="Use constrained layout (multi-panel default)"
     )
+
+    @model_validator(mode="after")
+    def validate_scan_selection(self) -> Self:
+        if self.scan_coordinates is not None and self.scan_tolerance is None:
+            raise ValueError(
+                "scan_coordinates requires an explicit scan_tolerance: a "
+                "nearest-match without a bound would silently draw a different "
+                "scan point than the one requested"
+            )
+        return self
 
 
 class SpectralScanConfig(BaseModel):

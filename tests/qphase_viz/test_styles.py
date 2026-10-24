@@ -410,6 +410,7 @@ def test_exported_public_api_is_stable():
         "allan_scan_colormap",
         "cam_flow_colormap",
         "rc_params",
+        "resolve_colormap",
     ):
         assert name in qphase_viz.__all__
         assert getattr(qphase_viz, name) is not None
@@ -444,3 +445,15 @@ def test_figure_is_closed_when_rendering_raises(tmp_path, monkeypatch):
 
     assert plt.get_fignums() == []
     assert not list(tmp_path.glob("*.png"))
+
+
+def test_resolve_colormap_is_the_single_name_resolver():
+    from matplotlib.colors import Colormap
+    from qphase_viz.styles import resolve_colormap
+
+    assert isinstance(resolve_colormap("scan"), Colormap)
+    assert resolve_colormap("scan").name == "qphase_scan"
+    assert resolve_colormap("flow").name == "qphase_cam_flow"
+    assert resolve_colormap("viridis").name == "viridis"
+    with pytest.raises(ValueError, match="unknown colormap"):
+        resolve_colormap("not-a-map")

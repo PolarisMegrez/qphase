@@ -11,11 +11,9 @@ Public API
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar
 
-import matplotlib as mpl
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.colors import LogNorm, Normalize
@@ -24,7 +22,8 @@ from qphase.data import Dataset
 
 from ..config import HeatmapConfig, HeatmapSpec
 from ..render import apply_axes_style, draw_annotations, save_figure, styled_subplots
-from ..styles import RenderOptions, allan_scan_colormap, cam_flow_colormap
+from ..styles import RenderOptions, resolve_colormap
+from ..typed_input import bundle_products
 from .base import PlotterProtocol
 
 
@@ -76,7 +75,7 @@ class HeatmapPlotter(PlotterProtocol):
                 "values in the selected grid"
             )
         norm = self._norm(spec, finite)
-        cmap = _colormap(spec.cmap)
+        cmap = resolve_colormap(spec.cmap)
 
         options = base.merged(
             style=spec.style,
@@ -125,11 +124,9 @@ class HeatmapPlotter(PlotterProtocol):
         self, data: DatasetResultProtocol, spec: HeatmapSpec
     ) -> Dataset:
         fields = (spec.x_variable, spec.y_variable, spec.value_variable)
-        products = getattr(data, "products", None)
-        if not isinstance(products, Mapping):
-            raise TypeError(
-                "visualizers require a typed DatasetResultProtocol input"
-            )
+        # Rejects a non-typed input and any non-Dataset product value, the same
+        # gate every other plotter passes through.
+        _, products = bundle_products(data)
         if spec.product is not None:
             product = products.get(spec.product)
             if product is None:
@@ -146,6 +143,8 @@ class HeatmapPlotter(PlotterProtocol):
                 raise ValueError(
                     f"product {spec.product!r} is missing variables {sorted(missing)}"
                 )
+            if spec.valid_variable is not None:
+                _require_variable(product, spec.valid_variable, "mask")
             return product
 
         matches = [
@@ -166,7 +165,10 @@ class HeatmapPlotter(PlotterProtocol):
 
     @staticmethod
     def _coordinate(product: Dataset, name: str) -> np.ndarray:
-        values = np.asarray(product.handle(name).materialize(), dtype=float)
+        values = np.asarray(
+            _require_variable(product, name, "coordinate").materialize(),
+            dtype=float,
+        )
         if values.ndim != 1:
             raise ValueError(
                 f"heatmap coordinate {name!r} must be one-dimensional, "
@@ -189,8 +191,10 @@ class HeatmapPlotter(PlotterProtocol):
     def _grid(
         product: Dataset, spec: HeatmapSpec, x_size: int, y_size: int
     ) -> np.ndarray:
-        values = np.asarray(product.handle(spec.value_variable).materialize())
-        values = np.asarray(values, dtype=float)
+        values = np.asarray(
+            _require_variable(product, spec.value_variable, "value").materialize(),
+            dtype=float,
+        )
         if values.ndim != 2:
             raise ValueError(
                 f"heatmap variable {spec.value_variable!r} must be two-dimensional "
@@ -211,7 +215,9 @@ class HeatmapPlotter(PlotterProtocol):
         """Return the boolean mask where ``True`` means "leave this cell blank"."""
         if spec.valid_variable is None:
             return np.zeros(shape, dtype=bool)
-        mask = np.asarray(product.handle(spec.valid_variable).materialize())
+        mask = np.asarray(
+            _require_variable(product, spec.valid_variable, "mask").materialize()
+        )
         if mask.dtype != bool:
             if not np.all(np.isin(mask, (0, 1))):
                 raise ValueError(
@@ -271,7 +277,10 @@ class HeatmapPlotter(PlotterProtocol):
                 field = (~mask).astype(float)
             else:
                 field = np.asarray(
-                    product.handle(contour.variable).materialize(), dtype=float
+                    _require_variable(
+                        product, contour.variable, "contour"
+                    ).materialize(),
+                    dtype=float,
                 )
                 if field.shape != x.shape + y.shape:
                     raise ValueError(
@@ -318,28 +327,29 @@ class HeatmapPlotter(PlotterProtocol):
         return labelled
 
 
+def _require_variable(product: Dataset, name: str | None, role: str) -> Any:
+    """Return one product variable handle, or explain which ones exist."""
+    if name is None:
+        raise ValueError(f"heatmap {role} needs a variable name")
+    if name not in {variable.name for variable in product.variables}:
+        raise ValueError(
+            f"heatmap {role} variable {name!r} is not in the product; "
+            f"available: {sorted(variable.name for variable in product.variables)}"
+        )
+    return product.handle(name)
+
+
 def _series_values(
     product: Dataset, variable: str | None, constants: list[float]
 ) -> np.ndarray:
     if variable is None:
         return np.asarray(constants, dtype=float)
-    values = np.asarray(product.handle(variable).materialize(), dtype=float)
+    values = np.asarray(
+        _require_variable(product, variable, "series").materialize(), dtype=float
+    )
     if values.ndim != 1:
         raise ValueError(
             f"heatmap series variable {variable!r} must be one-dimensional, "
             f"got rank {values.ndim}"
         )
     return values
-
-
-def _colormap(name: str) -> Any:
-    """Resolve a plotter colormap: the two named maps or a Matplotlib one."""
-    if name == "scan":
-        return allan_scan_colormap()
-    if name == "flow":
-        return cam_flow_colormap()
-    if name in mpl.colormaps:
-        return mpl.colormaps[name]
-    raise ValueError(
-        f"unknown colormap {name!r}; use 'scan', 'flow' or a Matplotlib colormap"
-    )
