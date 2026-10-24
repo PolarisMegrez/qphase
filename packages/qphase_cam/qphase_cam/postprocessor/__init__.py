@@ -16,6 +16,7 @@ from .nonlinear_reconstruction import (
 )
 from .observable_scaling import ObservableScaling, ObservableScalingConfig
 from .petermann import PetermannSpectrum
+from .petermann_series import PetermannSeries, PetermannSeriesConfig
 from .physicality import Physicality
 from .stochastic_validity import StochasticValidity
 
@@ -37,6 +38,8 @@ __all__ = [
     "ObservableScaling",
     "ObservableScalingConfig",
     "Physicality",
+    "PetermannSeries",
+    "PetermannSeriesConfig",
     "PetermannSpectrum",
     "RayleighFrequency",
     "StochasticValidity",

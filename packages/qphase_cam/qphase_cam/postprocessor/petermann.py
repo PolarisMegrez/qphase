@@ -9,7 +9,10 @@ from pydantic import Field
 from qphase.backend.xputil import convert_to_numpy
 from scipy.linalg import eig
 
+from qphase_cam.core.coordinates import matrix_to_vector
+from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.data import build_annotation_product
+from qphase_cam.data._common import json_text_column
 from qphase_cam.model import CAMBogoliubovModel
 
 from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
@@ -124,6 +127,11 @@ class PetermannSpectrum(CAMPostprocessor[PetermannSpectrumConfig]):
         bogoliubov_factors = field_column(rows, tail=(2 * n_modes,), dtype=float)
         monodromy_values = field_column(rows, tail=(2 * n_modes,), dtype=complex)
         monodromy_factors = field_column(rows, tail=(2 * n_modes,), dtype=float)
+        # The CAM Jacobian is a separate family: its critical-mode Petermann factor is
+        # the quantity the figure pipeline reports, and it needs the adapter.
+        adapter = QPSGenDynamicsAdapter.from_model(model)
+        jacobian_values = field_column(rows, tail=(n_modes * n_modes,), dtype=complex)
+        jacobian_factors = field_column(rows, tail=(n_modes * n_modes,), dtype=float)
 
         for start in range(0, len(chunk_indices), self.config.chunk_size):
             chunk_indices = chunk_indices[start : start + self.config.chunk_size]
@@ -167,12 +175,24 @@ class PetermannSpectrum(CAMPostprocessor[PetermannSpectrumConfig]):
                 bogoliubov_factors[index] = b_factor_chunk[offset]
                 monodromy_values[index] = m_chunk[offset]
                 monodromy_factors[index] = m_factor_chunk[offset]
+                vector = np.asarray(matrix_to_vector(rows[index].state), dtype=float)
+                jacobian = np.asarray(
+                    adapter.jacobian(vector, dict(rows[index].parameters)), dtype=float
+                )
+                j_values, j_factors = eigensystem_petermann(jacobian[None])
+                jacobian_values[index] = j_values[0]
+                jacobian_factors[index] = j_factors[0]
 
         self.result_metadata = {
             "interaction_capability": "cam_bogoliubov_interaction",
             "eigenvalue_order": "real_then_imag",
             "monodromy_frame": "rayleigh_frequency",
             "star_operation": "elementwise_conjugation",
+            "cam_jacobian_petermann": (
+                "eigensystem_petermann on the dynamics Jacobian; the tracked "
+                "critical factor is left.left with a unit right vector and "
+                "left.right = 1"
+            ),
         }
         return build_annotation_product(
             annotation_kind=self.annotation_kind,
@@ -187,6 +207,9 @@ class PetermannSpectrum(CAMPostprocessor[PetermannSpectrumConfig]):
                 "bogoliubov_petermann_factors": bogoliubov_factors,
                 "monodromy_eigenvalues": monodromy_values,
                 "monodromy_petermann_factors": monodromy_factors,
+                "cam_jacobian_eigenvalues": jacobian_values,
+                "cam_jacobian_petermann_factors": jacobian_factors,
+                "parameters": json_text_column([dict(row.parameters) for row in rows]),
             },
             field_axes={
                 "hamiltonian_eigenvalues": ("mode",),
@@ -196,11 +219,14 @@ class PetermannSpectrum(CAMPostprocessor[PetermannSpectrumConfig]):
                 "bogoliubov_petermann_factors": ("bogoliubov_mode",),
                 "monodromy_eigenvalues": ("monodromy_mode",),
                 "monodromy_petermann_factors": ("monodromy_mode",),
+                "cam_jacobian_eigenvalues": ("state_vector",),
+                "cam_jacobian_petermann_factors": ("state_vector",),
             },
             axes={
                 "mode": n_modes,
                 "bogoliubov_mode": 2 * n_modes,
                 "monodromy_mode": 2 * n_modes,
+                "state_vector": n_modes * n_modes,
             },
             method_metadata=[dict(self.result_metadata) for _ in rows],
         )
