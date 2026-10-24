@@ -30,6 +30,10 @@ Deliberate omissions:
   dependency here; moving it into an extra is a packaging change for the phase
   that makes that adapter optional.
 
+Version and core range are declared once each and must agree with
+``pyproject.toml`` and ``qphase_cam.__version__``; the manifest tests compare
+all four values so they cannot drift.
+
 Public API
 ----------
 MANIFEST
@@ -77,7 +81,7 @@ __all__ = ["CAM_TASK_PROFILES", "MANIFEST", "cam_task_profile"]
 #: ``bifurcation_*`` namespaces are the search child-plugin classes.
 MANIFEST = ResourcePackageManifest(
     resource_id="cam",
-    package_version="0.1.0",
+    package_version="2.0.0",
     engine=EngineDeclaration(
         entry_point="engine.cam",
         target="qphase_cam.engine:Engine",
@@ -140,7 +144,7 @@ MANIFEST = ResourcePackageManifest(
             required_for=["backend"],
         ),
     ],
-    compatibility=CompatibilityRange(qphase_core=">=2.0.0a0,<3.0"),
+    compatibility=CompatibilityRange(qphase_core=">=2.0.0,<3.0"),
 )
 
 
@@ -236,13 +240,14 @@ ANALYZE_PROFILE = EngineTaskProfile(
     ],
 )
 
-#: Summarize search candidates/evidence. Reading typed products needs no
-#: solver and no model; annotation providers and a backend stay optional.
+#: Summarize search candidates/evidence. The evidence assembler does no
+#: numerical work: every scientific postprocess that needs a backend or a model
+#: belongs to ``analyze``, so only annotation providers stay optional here.
 SUMMARIZE_SEARCH_PROFILE = EngineTaskProfile(
     id="summarize_search",
     requirements=PluginRequirementSet(
-        optional=["backend", "cam_postprocessor"],
-        forbidden=["cam_solver", "model"],
+        optional=["cam_postprocessor"],
+        forbidden=["backend", "cam_solver", "model"],
     ),
     inputs=[
         # A job input expresses exactly one external input slot, so the

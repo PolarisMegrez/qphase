@@ -60,6 +60,31 @@ def test_manifest_is_valid_and_points_at_the_installed_engine():
     assert MANIFEST.engine.entry_point == "engine.cam"
 
 
+def test_version_and_core_range_agree_across_declarations():
+    """pyproject, ``__version__`` and the manifest declare the same release."""
+    import qphase_cam
+
+    pyproject = tomllib.loads(
+        (PACKAGE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    version = pyproject["project"]["version"]
+    assert version == "2.0.0"
+    assert qphase_cam.__version__ == version
+    assert MANIFEST.package_version == version
+
+    core_requirement = [
+        dependency
+        for dependency in pyproject["project"]["dependencies"]
+        if dependency.startswith("qphase")
+    ]
+    assert core_requirement == ["qphase>=2.0.0,<3.0"], core_requirement
+    assert MANIFEST.compatibility.qphase_core == ">=2.0.0,<3.0"
+    # The installed metadata must agree too, or entry-point discovery is stale.
+    from importlib.metadata import version as installed_version
+
+    assert installed_version("qphase-cam") == version
+
+
 def test_manifest_namespaces_match_the_declared_entry_points():
     """Every CAM-owned entry-point namespace is declared, plus overlay model."""
     entry_points = _pyproject_entry_points()
@@ -160,8 +185,10 @@ def test_solver_tasks_require_a_solver_and_postprocessors_do_not():
     assert "cam_solver" in analyze.forbidden
     assert "cam_postprocessor" in analyze.required
     summarize = by_id["summarize_search"].requirements
-    assert "cam_solver" in summarize.forbidden
-    assert "model" in summarize.forbidden
+    # The evidence assembler does no numerical work: a scientific postprocess
+    # that needs a backend or a model belongs to ``analyze``.
+    assert set(summarize.forbidden) == {"backend", "cam_solver", "model"}
+    assert summarize.optional == ["cam_postprocessor"]
     assert not summarize.required
 
 
@@ -194,12 +221,12 @@ def test_typed_inputs_and_outputs_are_declared():
 
 def test_declarations_carry_no_model_specific_vocabulary():
     allowed_quantities = {
-        "steady_state",
-        "steady_state_scan",
-        "bifurcation_candidate",
-        "search_evidence",
-        "continuation_branch",
-        "annotation",
+        "cam_steady_state",
+        "cam_steady_state_scan",
+        "cam_bifurcation_candidate",
+        "cam_search_evidence",
+        "cam_continuation_branch",
+        "cam_annotation",
     }
     for declaration in (
         CAM_STATE_DECLARATION,
@@ -213,6 +240,82 @@ def test_declarations_carry_no_model_specific_vocabulary():
         for field in declaration.fields:
             for banned in ("kerr", "gamma", "mode", "omega", "eta2"):
                 assert banned not in field, field
+
+
+def test_declared_fields_are_the_frozen_planning_vocabulary():
+    """The field lists are the vocabulary Phase 10C implements."""
+    expected = {
+        CAM_STATE_DECLARATION.name: [
+            "parameters",
+            "states",
+            "residuals",
+            "convergence",
+            "solution_offsets",
+        ],
+        CAM_STATE_SCAN_DECLARATION.name: [
+            "parameters",
+            "states",
+            "residuals",
+            "convergence",
+            "solution_offsets",
+        ],
+        CAM_CANDIDATE_DECLARATION.name: [
+            "case_axes",
+            "candidate_offsets",
+            "candidate_identity",
+            "states",
+            "controls",
+            "classification",
+            "base_audit",
+        ],
+        CAM_EVIDENCE_DECLARATION.name: [
+            "search_design",
+            "coverage",
+            "accounting",
+            "source_artifacts",
+            "accepted_candidates",
+            "rejection_summary",
+        ],
+        CAM_CONTINUATION_DECLARATION.name: [
+            "path_identity",
+            "continuation_coordinate",
+            "states",
+            "events",
+        ],
+        CAM_ANNOTATION_DECLARATION.name: [
+            "target_identity",
+            "fields",
+            "method_metadata",
+        ],
+    }
+    declarations = {
+        declaration.name: declaration
+        for declaration in (
+            CAM_STATE_DECLARATION,
+            CAM_STATE_SCAN_DECLARATION,
+            CAM_CANDIDATE_DECLARATION,
+            CAM_EVIDENCE_DECLARATION,
+            CAM_CONTINUATION_DECLARATION,
+            CAM_ANNOTATION_DECLARATION,
+        )
+    }
+    assert set(expected) == set(declarations)
+    for name, fields in expected.items():
+        assert declarations[name].fields == fields, name
+    # Ragged products keep a table marker; dense state rows do not need one.
+    assert CAM_CANDIDATE_DECLARATION.table == "row_table"
+    assert CAM_EVIDENCE_DECLARATION.table == "row_table"
+    assert CAM_STATE_SCAN_DECLARATION.table == "row_table"
+
+
+def test_evidence_declaration_can_express_a_negative_result():
+    """A search that accepts nothing still has full evidence: no state or
+    signature column is mandatory.
+    """
+    fields = set(CAM_EVIDENCE_DECLARATION.fields)
+    assert {"coverage", "accounting", "rejection_summary"} <= fields
+    assert "states" not in fields
+    assert "classification" not in fields
 
 
 # --- selector --------------------------------------------------------------
