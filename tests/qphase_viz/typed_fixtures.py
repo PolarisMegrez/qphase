@@ -652,3 +652,63 @@ def heatmap_dataset() -> Dataset:
 def heatmap_bundle() -> VizTestBundle:
     """Single-point bundle carrying the scalar-heatmap product."""
     return VizTestBundle({"grid": heatmap_dataset()})
+
+
+#: Realizations per scan point in the distribution fixture.
+N_REALIZATION = 400
+
+
+def distribution_dataset(
+    *, scan_values: tuple[float, ...] = SCAN_POINTS
+) -> Dataset:
+    """Statistics product of per-realization samples: ``samples[scan, realization]``.
+
+    Each scan point observes a normal sample with a mean that shifts with the
+    scan coordinate, so a two-point comparison has a non-zero shift. A few
+    non-finite samples are planted so the plotter's per-series filtering is
+    exercised.
+    """
+    scan_size = len(scan_values)
+    rng = np.random.default_rng(20261021)
+    samples = np.empty((scan_size, N_REALIZATION), dtype=float)
+    for scan in range(scan_size):
+        samples[scan] = rng.normal(
+            loc=0.1 * (scan - 1), scale=0.01, size=N_REALIZATION
+        )
+    samples[0, :3] = np.nan
+    scan_variables, scan_coordinates, arrays = _scan_coordinate(scan_values)
+    schema = ProductSchema(
+        kind=DataKind.STATISTICS,
+        axes=[
+            _scan_axis(scan_size),
+            AxisSchema(
+                name="realization", role=AxisRole.REALIZATION, size=N_REALIZATION
+            ),
+        ],
+        variables=[
+            VariableSchema(
+                name="estimate",
+                dtype="<f8",
+                value_domain="real",
+                dims=("scan", "realization"),
+                quantity="frequency_estimate",
+            ),
+            *scan_variables,
+        ],
+        coordinates=scan_coordinates,
+        attributes={"graph_ready": True},
+    )
+    return StatisticsDataset.from_arrays(
+        schema,
+        {"estimate": samples, **arrays},
+        owner="test.viz",
+    )
+
+
+def distribution_bundle() -> VizTestBundle:
+    """Multi-point bundle carrying a per-realization sample product."""
+    return VizTestBundle(
+        {"estimates": distribution_dataset()},
+        axes={"omega": np.asarray(SCAN_POINTS, dtype=float)},
+        shape=(len(SCAN_POINTS),),
+    )

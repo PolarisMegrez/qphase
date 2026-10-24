@@ -12,6 +12,8 @@ Version : 2.0.0 (Oct 2026)
 
 from .config import (
     AnnotationSpec,
+    DistributionConfig,
+    DistributionSpec,
     HeatmapConfig,
     HeatmapContour,
     HeatmapSeries,
@@ -41,6 +43,8 @@ __all__ = [
     "PALETTE",
     "STYLE_NAMES",
     "AnnotationSpec",
+    "DistributionConfig",
+    "DistributionSpec",
     "HeatmapConfig",
     "HeatmapContour",
     "HeatmapSeries",

@@ -17,6 +17,8 @@ Public API
 `HeatmapSpec` : Specification for one scalar heatmap figure.
 `HeatmapContour` / `HeatmapSeries` : Heatmap overlays.
 `HeatmapConfig` : Configuration for the heatmap plotter.
+`DistributionSpec` : Specification for one sample-distribution figure.
+`DistributionConfig` : Configuration for the distribution plotter.
 `VizEngineConfig` : Configuration for the Visualization Engine.
 """
 
@@ -400,6 +402,132 @@ class HeatmapConfig(BaseModel):
 
     plots: list[HeatmapSpec] = Field(
         default_factory=list, description="List of heatmap figures"
+    )
+
+
+class DistributionSpec(BasePlotterConfig):
+    """Specification for per-realization sample distributions.
+
+    ``value`` holds one sample per realization, optionally per scan point
+    (``value[scan, realization]``). Selecting more than one scan point draws
+    one distribution per point; the samples are never pooled across points.
+
+    ``center``/``scale`` compose the sample transform
+    ``scale * value + center`` — the source of a two-series comparison is
+    ``center: reference_mean`` with ``scale: -1`` (i.e. ``reference - value``),
+    where the reference is the first selected series. The default is the
+    identity, ``center: none`` with ``scale: 1``.
+    """
+
+    kind: Literal["distribution"] = "distribution"
+    product: str | None = Field(
+        None, description="Product name to read from; None selects by variable"
+    )
+    value_variable: str = Field(
+        ..., description="Sample variable: [scan, realization] or [realization]"
+    )
+    scan_parameter: str | None = Field(
+        None,
+        description=(
+            "Scan coordinate name; required when the value has a scan axis "
+            "and points are selected by value"
+        ),
+    )
+    scan_indices: list[int] | None = Field(
+        None, description="Scan points to draw, by flat index; None draws all"
+    )
+    scan_coordinates: list[float] | None = Field(
+        None, description="Scan points to draw, by coordinate value"
+    )
+    scan_tolerance: float | None = Field(
+        None,
+        gt=0.0,
+        description=(
+            "Required with scan_coordinates: the largest accepted distance "
+            "between a requested value and the nearest stored scan point."
+        ),
+    )
+    labels: list[str] | None = Field(
+        None, description="Legend label per series; None draws no legend"
+    )
+    colors: list[str] | None = Field(
+        None, description="Colour per series; None uses the semantic palette"
+    )
+    center: Literal["none", "reference_mean"] = Field(
+        "none", description="Subtract nothing, or the first series' mean"
+    )
+    scale: float = Field(1.0, description="Non-zero scale applied after centring")
+    bin_width: float | None = Field(
+        None, gt=0.0, description="Fixed histogram bin width (needs xlim to match)"
+    )
+    bins: int | None = Field(
+        None, ge=2, description="Histogram bin count (alternative to bin_width)"
+    )
+    show_means: bool = Field(False, description="Draw each series mean as a line")
+    show_fwhm: bool = Field(
+        False, description="Shade the half-maximum band and mark its bounds"
+    )
+    shift_label: str | None = Field(
+        None,
+        description=(
+            "Annotate the mean-to-mean shift of the first two series; requires "
+            "show_means and at least two series"
+        ),
+    )
+    width_label: str | None = Field(
+        None,
+        description=(
+            "Annotate the first series' FWHM; requires show_fwhm"
+        ),
+    )
+    xticks: list[float] | None = Field(
+        None, description="Explicit x tick positions"
+    )
+    xticklabels: list[str] | None = Field(
+        None, description="Explicit x tick labels; one per tick"
+    )
+    hide_yticks: bool = Field(False, description="Hide the y tick labels and marks")
+
+    @model_validator(mode="after")
+    def validate_distribution(self) -> Self:
+        if (self.bin_width is None) == (self.bins is None):
+            raise ValueError(
+                "set exactly one of 'bin_width' or 'bins' so the histogram "
+                "edges are unambiguous"
+            )
+        if self.scale == 0.0:
+            raise ValueError("'scale' must be non-zero")
+        if self.scan_coordinates is not None and self.scan_tolerance is None:
+            raise ValueError(
+                "scan_coordinates requires an explicit scan_tolerance"
+            )
+        if self.shift_label is not None and not self.show_means:
+            raise ValueError(
+                "shift_label annotates the series means; enable 'show_means'"
+            )
+        if self.width_label is not None and not self.show_fwhm:
+            raise ValueError(
+                "width_label annotates the half-maximum width; enable 'show_fwhm'"
+            )
+        if self.xticklabels is not None and self.xticks is None:
+            raise ValueError("xticklabels needs xticks")
+        if (
+            self.xticks is not None
+            and self.xticklabels is not None
+            and len(self.xticks) != len(self.xticklabels)
+        ):
+            raise ValueError("xticks and xticklabels must have the same length")
+        for name, values in (("labels", self.labels), ("colors", self.colors)):
+            if values is not None and not values:
+                raise ValueError(f"'{name}' must not be empty; use None instead")
+        return self
+
+
+class DistributionConfig(BaseModel):
+    """Configuration for the distribution plotter."""
+
+    plots: list[DistributionSpec] = Field(
+        default_factory=list, description="List of distribution figures"
     )
 
 
