@@ -1079,17 +1079,14 @@ def test_point_view_does_not_filter_candidates_per_case():
     assert product.attributes["case_count"] == 3
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "core Dataset.slice_view downcasts a fixed-width U column to the length "
-        "of the selected element, so slicing a shorter string fails the dtype "
-        "check; reachable through case_metadata when per-case JSON lengths "
-        "differ. Workaround: slice_view(scan=slice(i, i + 1))."
-    ),
-)
 def test_point_view_of_a_shorter_case_metadata_string():
-    """Minimal repro of a core string-slice limit, not a CAM schema defect."""
+    """Both ends of a variable-width case_metadata column stay readable.
+
+    Per-case JSON texts differ in length, so the ``U`` column is as wide as the
+    longest one. Selecting the shorter case used to fail the handle dtype check;
+    the declared width is now re-applied, and the selected text, dtype and dims
+    are all preserved.
+    """
     product = build_candidate_product(
         **_identity_payload(2),
         candidate_offsets=np.asarray([0, 1, 2]),
@@ -1097,12 +1094,25 @@ def test_point_view_of_a_shorter_case_metadata_string():
         case_metadata=[{"k": 1}, {"k": 1234567890}],
     )
     assert product.variable("case_metadata").dtype == "<U16"
-    product.point_view(scan=0)  # shorter JSON text -> core dtype mismatch
-    product.point_view(scan=1)
+
+    short = product.point_view(scan=0)
+    assert short.variable("case_metadata").dims == ()
+    assert short.variable("case_metadata").dtype == "<U16"
+    selected = np.asarray(short.handle("case_metadata").materialize())
+    assert selected.dtype == np.dtype("<U16")
+    assert json.loads(str(selected)) == {"k": 1}
+
+    longest = product.point_view(scan=1)
+    assert longest.variable("case_metadata").dtype == "<U16"
+    assert json.loads(
+        str(np.asarray(longest.handle("case_metadata").materialize()))
+    ) == {"k": 1234567890}
+    # The rest of the block is untouched by the selection either side.
+    assert _identities(short) == ["new:candidate:0", "new:candidate:1"]
 
 
 def test_slice_view_keeps_a_short_case_metadata_column():
-    """The documented workaround for the core string-slice limit."""
+    """A slice keeps the declared width too, not just a point view."""
     product = build_candidate_product(
         **_identity_payload(2),
         candidate_offsets=np.asarray([0, 1, 2]),
@@ -1110,10 +1120,9 @@ def test_slice_view_keeps_a_short_case_metadata_column():
         case_metadata=[{"k": 1}, {"k": 1234567890}],
     )
     view = product.slice_view(scan=slice(0, 1))
-    assert [
-        json.loads(str(value))
-        for value in np.asarray(view.handle("case_metadata").materialize())
-    ] == [{"k": 1}]
+    column = np.asarray(view.handle("case_metadata").materialize())
+    assert column.dtype == np.dtype("<U16")
+    assert [json.loads(str(value)) for value in column] == [{"k": 1}]
 
 
 # --- package layout -------------------------------------------------------

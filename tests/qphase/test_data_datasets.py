@@ -575,6 +575,52 @@ def test_point_view_keeps_scalar_parameter_coordinate():
     np.testing.assert_array_equal(view.coordinate("omega_b"), np.asarray(30.0))
 
 
+def test_point_view_restores_a_fixed_width_string_dtype():
+    """Selecting a short string must not narrow the declared ``U``/``S`` width.
+
+    NumPy hands back a scalar typed as wide as the selected value, so a slice of
+    a short string used to fail the handle dtype check. The declared width is
+    re-applied; every other dtype keeps its strict validation.
+    """
+    schema = ProductSchema(
+        kind=DataKind.STATISTICS,
+        axes=[AxisSchema(name="scan", role=AxisRole.PARAMETER, size=2)],
+        variables=[
+            VariableSchema(
+                name="label", dtype="U4", value_domain="real", dims=("scan",)
+            ),
+            VariableSchema(name="tag", dtype="S4", value_domain="real", dims=("scan",)),
+        ],
+    )
+    dataset = StatisticsDataset.from_arrays(
+        schema,
+        {
+            "label": np.asarray(["ab", "abcd"], dtype="U4"),
+            "tag": np.asarray([b"ab", b"abcd"], dtype="S4"),
+        },
+        owner="o",
+    )
+
+    short = dataset.point_view(scan=0)
+    assert short.variable("label").dims == ()
+    assert short.variable("label").dtype == np.dtype("U4").str
+    label = np.asarray(short.handle("label").materialize())
+    assert label.dtype == np.dtype("U4")
+    assert str(label) == "ab"
+    tag = np.asarray(short.handle("tag").materialize())
+    assert tag.dtype == np.dtype("S4")
+    assert tag.item() == b"ab"
+
+    longest = dataset.point_view(scan=1)
+    assert longest.variable("label").dtype == np.dtype("U4").str
+    assert str(np.asarray(longest.handle("label").materialize())) == "abcd"
+    assert np.asarray(longest.handle("tag").materialize()).item() == b"abcd"
+
+    sliced = dataset.slice_view(scan=slice(0, 1))
+    assert np.asarray(sliced.handle("label").materialize()).dtype == np.dtype("U4")
+    assert np.asarray(sliced.handle("tag").materialize()).dtype == np.dtype("S4")
+
+
 def test_concat_datasets_preserves_schema_coordinates_and_values():
     dataset = _coordinate_view_dataset()
     left = dataset.slice_view(scan=slice(0, 2))

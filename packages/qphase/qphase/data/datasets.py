@@ -87,6 +87,25 @@ def _wrap_array(
     )
 
 
+def _match_fixed_width_dtype(array: Any, variable: VariableSchema) -> Any:
+    """Re-apply a declared fixed-width string dtype to a selected payload.
+
+    NumPy re-types every string value it hands back, so selecting one element of
+    a ``U16`` column yields an array as wide as *that* value. A short string
+    would then fail the handle's dtype check even though the schema never
+    changed. ``astype`` on the array itself restores the declared width without
+    leaving the handle's device — ``np.asarray(..., dtype=...)`` would copy a
+    device-resident payload to the host. Every other dtype keeps the strict
+    check, so a genuine dtype mismatch still raises.
+    """
+    declared = np.dtype(variable.dtype)
+    if declared.kind not in {"U", "S"}:
+        return array
+    if np.dtype(array.dtype) == declared:
+        return array
+    return array.astype(declared, copy=False)
+
+
 def _load_artifact_backing(
     ref: ArtifactRef, resolver: ArtifactResolverProtocol | None
 ) -> RuntimeProductBacking:
@@ -458,6 +477,7 @@ class Dataset:
                 # All-int selection on a host array yields a NumPy scalar;
                 # normalize to a 0-d array so handles can expose views.
                 sub = np.asarray(sub)
+            sub = _match_fixed_width_dtype(sub, variable)
             new_dims = tuple(dim for dim in variable.dims if dim not in dropped)
             new_variable = variable.model_copy(update={"dims": new_dims})
             new_handles[variable.name] = _wrap_array(
