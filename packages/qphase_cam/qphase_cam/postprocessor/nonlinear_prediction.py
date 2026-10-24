@@ -21,7 +21,6 @@ from typing import Any, ClassVar
 import numpy as np
 from pydantic import ConfigDict, Field
 
-from qphase_cam.core.coordinates import matrix_to_vector
 from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.data.evidence import SourceArtifactRef
 from qphase_cam.nonlinear import (
@@ -43,8 +42,7 @@ from qphase_cam.prediction import (
 )
 
 from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
-from .candidates import candidate_view
-from .state_view import state_rows
+from .targets import AnnotationTarget, annotation_targets
 
 __all__ = ["NonlinearPrediction", "NonlinearPredictionConfig"]
 
@@ -110,12 +108,7 @@ class NonlinearPrediction(CAMPostprocessor[NonlinearPredictionConfig]):
                 f"{type(observable).__name__}"
             )
         sources = self._sources(context)
-        role = self._target_role(product, context)
-        targets = (
-            self._candidate_targets(product, context, model)
-            if role == "candidates"
-            else self._state_targets(product, model)
-        )
+        targets = annotation_targets(product, context, model, consumer=self.name)
         direction = adapter.parameter_direction(
             self.config.perturbation_parameter, self.config.perturbation_scale
         )
@@ -156,52 +149,6 @@ class NonlinearPrediction(CAMPostprocessor[NonlinearPredictionConfig]):
             return []
         return [SourceArtifactRef(artifact_id=str(declared))]
 
-    @staticmethod
-    def _target_role(product: Any, context: CAMAnnotationContext) -> str:
-        role = str(context.source_role or "")
-        if not role:
-            role = str(getattr(product, "attributes", {}).get("product", ""))
-        if role in ("state", "state_scan", "candidates"):
-            return role
-        raise ValueError(
-            f"nonlinear_prediction annotates state, state_scan or candidates; got "
-            f"{role!r}"
-        )
-
-    @staticmethod
-    def _state_targets(product: Any, model: Any) -> list[dict[str, Any]]:
-        return [
-            {
-                "identity": row.identity,
-                "vector": np.asarray(matrix_to_vector(row.state), dtype=float),
-                "params": {**dict(model.params), **dict(row.parameters)},
-                "success": bool(row.success),
-            }
-            for row in state_rows(product)
-        ]
-
-    @staticmethod
-    def _candidate_targets(
-        product: Any, context: CAMAnnotationContext, model: Any
-    ) -> list[dict[str, Any]]:
-        view = candidate_view(product, metadata=dict(context.metadata))
-        targets: list[dict[str, Any]] = []
-        for row in view.rows:
-            params = dict(model.params)
-            params.update(view.meta.get("fixed_params", {}))
-            for name, values in view.case_params.items():
-                params[name] = float(np.asarray(values).reshape(-1)[row.case])
-            params.update(row.controls)
-            targets.append(
-                {
-                    "identity": row.identity,
-                    "vector": np.asarray(row.state_vector, dtype=float),
-                    "params": params,
-                    "success": bool(row.success),
-                }
-            )
-        return targets
-
     # -- one prediction ---------------------------------------------------
 
     def _prediction(
@@ -209,7 +156,7 @@ class NonlinearPrediction(CAMPostprocessor[NonlinearPredictionConfig]):
         adapter: Any,
         model: Any,
         observable: CAMObservable,
-        target: dict[str, Any],
+        target: AnnotationTarget,
         order: int,
         direction: Any,
         sources: list[SourceArtifactRef],
@@ -219,7 +166,7 @@ class NonlinearPrediction(CAMPostprocessor[NonlinearPredictionConfig]):
         reason: str | None = None
         numbers: dict[str, Any] = {}
         validity: dict[str, Any] = {}
-        if not target["success"]:
+        if not target.success:
             status = CAMOutcomeStatus.NOT_CONVERGED
             reason = "the solver did not converge at this target"
             return self._build(
@@ -228,8 +175,8 @@ class NonlinearPrediction(CAMPostprocessor[NonlinearPredictionConfig]):
         try:
             manifold = slow_manifold(
                 adapter,
-                target["vector"],
-                target["params"],
+                target.vector,
+                target.params,
                 order=order,
                 config=self.config.manifold.model_copy(update={"order": order}),
             )
@@ -237,8 +184,8 @@ class NonlinearPrediction(CAMPostprocessor[NonlinearPredictionConfig]):
                 adapter,
                 model,
                 observable,
-                state=target["vector"],
-                params=target["params"],
+                state=target.vector,
+                params=target.params,
                 order=order,
                 parameter_direction=direction,
                 manifold=manifold,
@@ -247,15 +194,15 @@ class NonlinearPrediction(CAMPostprocessor[NonlinearPredictionConfig]):
             gaussian = ou_intensities(
                 adapter,
                 observable,
-                state=target["vector"],
-                params=target["params"],
+                state=target.vector,
+                params=target.params,
                 model=model,
             )
             response = response_prediction(
                 adapter,
                 observable,
-                state=target["vector"],
-                params=target["params"],
+                state=target.vector,
+                params=target.params,
                 parameter=self.config.perturbation_parameter,
                 scale=self.config.perturbation_scale,
                 relative_step=self.config.response_relative_step,
@@ -340,7 +287,7 @@ class NonlinearPrediction(CAMPostprocessor[NonlinearPredictionConfig]):
     def _build(
         self,
         identity: Any,
-        target: dict[str, Any],
+        target: AnnotationTarget,
         order: int,
         status: CAMOutcomeStatus,
         reason: str | None,
@@ -377,7 +324,7 @@ class NonlinearPrediction(CAMPostprocessor[NonlinearPredictionConfig]):
             )
         draft = CAMPrediction(
             prediction_id="pending",
-            target_identity=target["identity"],
+            target_identity=target.identity,
             observable_name=identity.name,
             observable_kind=identity.kind.value,
             charge_sector=identity.sector.value,

@@ -17,14 +17,40 @@ becomes unrepresentable.
 
 from __future__ import annotations
 
+import importlib.metadata
+import json
+import tomllib
+from pathlib import Path
+from typing import Any
+
 import numpy as np
 import pytest
 from pydantic import ValidationError
+from qphase.core.registry import discovery, registry
 from qphase_cam.carrier_pole import (
     CarrierPoleConfig,
     carrier_pole,
 )
+from qphase_cam.core.coordinates import vector_to_matrix
+from qphase_cam.data import (
+    CAM_ANNOTATION_DECLARATION,
+    build_candidate_product,
+    build_state_product,
+)
+from qphase_cam.nonlinear import (
+    ScalarReconstructionConfig,
+    scalar_reconstruction,
+    slow_manifold,
+)
+from qphase_cam.observable import (
+    ChargeSector,
+    FunctionalObservable,
+    ObservableIdentity,
+    ObservableKind,
+)
 from qphase_cam.outcomes import CAMOutcomeStatus
+from qphase_cam.postprocessor import ScalarCarrierPole, ScalarCarrierPoleConfig
+from qphase_cam.postprocessor.base import CAMAnnotationContext, CAMPostprocessor
 from scipy.interpolate import PchipInterpolator
 from scipy.sparse import diags
 from scipy.sparse.linalg import ArpackNoConvergence, eigs
@@ -424,3 +450,448 @@ def test_a_grid_disagreement_is_not_converged():
 def test_an_invalid_configuration_is_rejected(overrides):
     with pytest.raises(ValidationError):
         CarrierPoleConfig(**overrides)
+
+
+# --- the typed postprocessor -------------------------------------------------
+
+
+class _ToyAdapter:
+    """Four canonical coordinates of a two-mode matrix.
+
+    ``J(v)`` has a quadratic *and* a cubic dependence on the critical coordinate plus
+    a ``v1**2`` coupling into it, so the O3 manifold of this toy is confining
+    (``drift[3] = -8.74``); every one-coordinate toy has ``drift[3] = 0`` by the
+    ``left·e_d = 0`` constraint.
+    """
+
+    moment_layout = "normal"
+
+    def state_matrix(self, vector, params=None):
+        del params
+        return np.asarray(vector_to_matrix(np.asarray(vector, float), 2))
+
+    def jacobian(self, vector, params=None):
+        del params
+        values = np.asarray(vector, float).reshape(-1)
+        return np.asarray(
+            [
+                [
+                    -1.0 - 3.0 * values[0] ** 2 - 3.0 * values[0] ** 3,
+                    values[1] ** 2,
+                    0.0,
+                    0.0,
+                ],
+                [values[1] ** 2, -4.0, 0.0, 0.0],
+                [0.0, 0.0, -3.0, 0.0],
+                [0.0, 0.0, 0.0, -5.0],
+            ]
+        )
+
+    def parameter_jacobian(self, vector, params=None):
+        del vector, params
+        return np.zeros((4, 1))
+
+
+class _UnconfiningAdapter(_ToyAdapter):
+    """The same toy without the cubic term, so its O3 truncation does not confine."""
+
+    def jacobian(self, vector, params=None):
+        del params
+        values = np.asarray(vector, float).reshape(-1)
+        return np.asarray(
+            [
+                [-1.0 - 3.0 * values[0] ** 2, values[1] ** 2, 0.0, 0.0],
+                [values[1] ** 2, -4.0, 0.0, 0.0],
+                [0.0, 0.0, -3.0, 0.0],
+                [0.0, 0.0, 0.0, -5.0],
+            ]
+        )
+
+
+class _ToyModel:
+    """Bounded diffusion: it vanishes at ``R00 = ±2``, so the domain is finite."""
+
+    n_modes = 2
+    params = {"mu": 0.0}
+
+    @staticmethod
+    def cam_diffusion(matrix, params=None):
+        r00 = float(np.real(np.asarray(matrix)[0, 0]))
+        shift = float((params or {}).get("mu", 0.0))
+        return np.asarray(
+            [[1.0 - (r00 / 2.0) ** 2 + 0.1 * shift, 0.0], [0.0, 1.0]], dtype=complex
+        )
+
+    @staticmethod
+    def cam_hamiltonian(matrix, params=None):
+        del params
+        return np.asarray(matrix, dtype=complex)
+
+
+_TOY_STATE = np.asarray([0.5, 0.5, 0.0, 0.0])
+_POLE_CONFIG = CarrierPoleConfig(
+    grid_sizes=(21, 41), continuation_steps=3, grid_absolute_tolerance=1e-2
+)
+_RECONSTRUCTION_CONFIG = ScalarReconstructionConfig(grid_points=301)
+
+
+def _readout_observable():
+    return FunctionalObservable(
+        identity=ObservableIdentity(
+            kind=ObservableKind.STATE,
+            sector=ChargeSector.CHARGE_ZERO,
+            name="R00",
+            measurement_mapping="R00",
+        ),
+        value_fn=lambda adapter, state, params: float(
+            np.asarray(state, float).reshape(-1)[0]
+        ),
+        gradient_fn=lambda adapter, state, params: [1.0, 0.0, 0.0, 0.0],
+    )
+
+
+def _patch_adapter(monkeypatch, adapter):
+    monkeypatch.setattr(
+        "qphase_cam.postprocessor.scalar_carrier_pole.QPSGenDynamicsAdapter.from_model",
+        lambda model: adapter,
+    )
+
+
+def _vector_state_product(vectors, *, success=None):
+    matrices = np.asarray(
+        [vector_to_matrix(np.asarray(vector, float), 2) for vector in vectors]
+    )
+    count = len(vectors)
+    return build_state_product(
+        states=matrices[:, None, :, :],
+        residuals=np.zeros((count, 1)),
+        success=(
+            np.ones((count, 1), dtype=bool)
+            if success is None
+            else np.asarray(success, dtype=bool).reshape(count, 1)
+        ),
+        valid_mask=np.ones((count, 1), dtype=bool),
+        solution_count=np.ones(count, dtype=np.int64),
+        parameters={"mu": np.zeros(count)},
+    )
+
+
+def _context(product, *, role="state", metadata=None):
+    return CAMAnnotationContext(
+        model=_ToyModel(),
+        metadata=dict(metadata or {}),
+        products={role: product},
+        source_role=role,
+    )
+
+
+def _plugin(**kwargs):
+    settings = {
+        "order": 3,
+        "reconstruction": _RECONSTRUCTION_CONFIG,
+        "pole": _POLE_CONFIG,
+        "observable": _readout_observable(),
+    }
+    settings.update(kwargs)
+    return ScalarCarrierPole(**settings)
+
+
+def _direct_pole(adapter, params, config=None):
+    """Run the same three services the plugin runs, for an independent reference."""
+    manifold = slow_manifold(adapter, _TOY_STATE, params, order=3)
+    reconstruction = scalar_reconstruction(
+        adapter,
+        _ToyModel(),
+        _readout_observable(),
+        state=_TOY_STATE,
+        params=params,
+        order=3,
+        manifold=manifold,
+        config=_RECONSTRUCTION_CONFIG,
+    )
+    table = reconstruction.generator_table
+    assert table is not None
+    assessment = carrier_pole(
+        table.x,
+        table.drift,
+        table.diffusion,
+        table.readout,
+        config=config or _POLE_CONFIG,
+    )
+    return reconstruction, table, assessment
+
+
+def _field(product, name):
+    return np.asarray(product.handle(name).materialize())
+
+
+def _dims(product, name):
+    return next(
+        variable.dims for variable in product.variables if variable.name == name
+    )
+
+
+def _metadata(product, row=0):
+    return json.loads(str(_field(product, "method_metadata")[row]))
+
+
+def test_the_postprocessor_annotates_a_real_carrier_pole(monkeypatch):
+    _patch_adapter(monkeypatch, _ToyAdapter())
+    product = _vector_state_product([_TOY_STATE])
+    annotation = _plugin().process(product, _context(product))
+    assert annotation.attributes["annotation_kind"] == "scalar_carrier_pole"
+    assert annotation.attributes["target_kind"] == "state"
+    reconstruction, table, reference = _direct_pole(_ToyAdapter(), {})
+    assert reconstruction.validity_domain == "confining_bounded"
+    assert reference.status is CAMOutcomeStatus.VALID
+
+    identities = _field(annotation, "target_identity")
+    assert list(identities) == list(_field(product, "solution_identity")[:, 0])
+    assert list(_field(annotation, "case_identity")) == [""]
+    assert _field(annotation, "status").tolist() == ["valid"]
+    assert _field(annotation, "order").tolist() == [3]
+    assert _field(annotation, "source_reconstruction_status").tolist() == ["valid"]
+    assert _field(annotation, "reason").tolist() == [""]
+
+    # One row per target, and the pole is the direct call's to rounding: ARPACK
+    # starts from an internal random vector, so the two runs cannot be bit-identical.
+    assert _field(annotation, "carrier_frequency").shape == (1,)
+    assert _field(annotation, "carrier_frequency")[0] == pytest.approx(
+        reference.carrier_frequency, abs=1e-9
+    )
+    assert _field(annotation, "carrier_decay_rate")[0] == pytest.approx(
+        reference.carrier_decay_rate, abs=1e-10
+    )
+    assert _field(annotation, "finest_grid_size").tolist() == [41]
+    assert _field(annotation, "grid_converged").tolist() == [1]
+    assert _field(annotation, "grid_converged").dtype == np.int8
+    assert _field(annotation, "finest_grid_size").dtype == np.int64
+    assert _field(annotation, "carrier_frequency").dtype == np.float64
+    assert _field(annotation, "order").dtype == np.int64
+
+    # The refinement witness is a real array on the configured axis.
+    assert _dims(annotation, "grid_size") == ("annotation", "refinement")
+    assert _dims(annotation, "grid_frequency_differences") == (
+        "annotation",
+        "refinement_difference",
+    )
+    assert _field(annotation, "grid_size").tolist() == [[21, 41]]
+    assert _field(annotation, "grid_size").dtype == np.int64
+    assert _field(annotation, "pole_real").shape == (1, 2)
+    assert _field(annotation, "grid_carrier_frequency")[0, 1] == pytest.approx(
+        reference.carrier_frequency, abs=1e-9
+    )
+    assert _field(annotation, "grid_carrier_decay_rate")[0, 1] == pytest.approx(
+        reference.carrier_decay_rate, abs=1e-10
+    )
+    assert _field(annotation, "pole_imag_shifted")[0, 1] == pytest.approx(
+        reference.grids[-1].pole_imag_shifted, abs=1e-9
+    )
+    assert _field(annotation, "pole_real")[0, 1] == pytest.approx(
+        reference.grids[-1].pole_real, abs=1e-9
+    )
+    assert _field(annotation, "grid_frequency_differences").shape == (1, 1)
+    assert _field(annotation, "grid_decay_differences")[0, 0] == pytest.approx(
+        reference.grid_decay_differences[0], abs=1e-10
+    )
+
+    metadata = _metadata(annotation)
+    assert metadata["approximation"] == "nonlinear_manifold"
+    assert metadata["order"] == 3
+    assert metadata["generator_table_points"] == len(table.x)
+    assert metadata["reconstruction_status"] == "valid"
+    assert metadata["validity_domain"] == "confining_bounded"
+    assert metadata["manifold"]["service"] == "qphase_cam.nonlinear.slow_manifold"
+    assert metadata["configured_grid_sizes"] == [21, 41]
+    assert metadata["continuation_steps"] == 3
+    assert metadata["readout"]["name"] == "R00"
+    scope = metadata["pole"]["scope"]
+    assert "not an SDE frequency measurement" in scope
+    assert "not a time-domain PDE solve" in scope
+
+
+def test_the_postprocessor_keeps_each_candidates_case_parameters(monkeypatch):
+    _patch_adapter(monkeypatch, _ToyAdapter())
+    states = np.asarray(
+        [vector_to_matrix(_TOY_STATE, 2), vector_to_matrix(_TOY_STATE, 2)]
+    )
+    product = build_candidate_product(
+        states=states,
+        state_vectors=np.asarray([_TOY_STATE, _TOY_STATE]),
+        control_values=np.empty((2, 0)),
+        control_names=(),
+        full_residual_norm=np.zeros(2),
+        search_residual_norm=np.zeros(2),
+        success=np.ones(2, dtype=bool),
+        status=["verified", "verified"],
+        method=["test", "test"],
+        verification_digits=np.full(2, 50, dtype=np.int64),
+        verification_status=["verified", "verified"],
+        candidate_identity=["cam:candidate:shared", "cam:candidate:shared"],
+        case_metadata=[
+            {"case_identity": "case:left"},
+            {"case_identity": "case:right"},
+        ],
+        candidate_offsets=np.asarray([0, 1, 2], dtype=np.int64),
+        case_params={"mu": np.asarray([0.0, 2.0])},
+        case_shape=[2],
+    )
+    annotation = _plugin().process(product, _context(product, role="candidates"))
+    assert annotation.attributes["target_kind"] == "candidate"
+    assert list(_field(annotation, "target_identity")) == [
+        "cam:candidate:shared",
+        "cam:candidate:shared",
+    ]
+    assert list(_field(annotation, "case_identity")) == ["case:left", "case:right"]
+    assert _field(annotation, "status").tolist() == ["valid", "valid"]
+    # The two cases hold different parameter values, so their poles differ and each
+    # matches the reconstruction of that case computed independently.
+    frequencies = _field(annotation, "carrier_frequency")
+    assert abs(frequencies[0] - frequencies[1]) > 1e-4
+    for row, mu in enumerate((0.0, 2.0)):
+        _, _, reference = _direct_pole(_ToyAdapter(), {"mu": mu})
+        assert frequencies[row] == pytest.approx(reference.carrier_frequency, abs=1e-9)
+        assert _field(annotation, "carrier_decay_rate")[row] == pytest.approx(
+            reference.carrier_decay_rate, abs=1e-10
+        )
+    assert _metadata(annotation, 0)["order"] == 3
+    assert _metadata(annotation, 1)["approximation"] == "nonlinear_manifold"
+
+
+def test_an_uncontrolled_reconstruction_never_computes_a_pole(monkeypatch):
+    _patch_adapter(monkeypatch, _UnconfiningAdapter())
+    calls: list[Any] = []
+
+    def spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("carrier_pole must not run on an uncontrolled table")
+
+    monkeypatch.setattr(
+        "qphase_cam.postprocessor.scalar_carrier_pole.carrier_pole", spy
+    )
+    product = _vector_state_product([_TOY_STATE])
+    annotation = _plugin().process(product, _context(product))
+    assert calls == []
+    assert annotation.attributes["annotation_kind"] == "scalar_carrier_pole"
+    assert _field(annotation, "status").tolist() == ["uncontrolled_approximation"]
+    assert _field(annotation, "source_reconstruction_status").tolist() == [
+        "uncontrolled_approximation"
+    ]
+    assert _field(annotation, "reason_code").tolist() == ["manifold_not_confining"]
+    # No pole is fabricated: every slot keeps its "not computed" value.
+    assert np.isnan(_field(annotation, "carrier_frequency")).all()
+    assert np.isnan(_field(annotation, "carrier_decay_rate")).all()
+    assert _field(annotation, "finest_grid_size").tolist() == [0]
+    assert _field(annotation, "grid_converged").tolist() == [-1]
+    assert _field(annotation, "grid_size").tolist() == [[0, 0]]
+    assert np.isnan(_field(annotation, "pole_real")).all()
+    assert np.isnan(_field(annotation, "grid_frequency_differences")).all()
+
+
+def test_an_unconverged_solver_target_is_not_converged(monkeypatch):
+    _patch_adapter(monkeypatch, _ToyAdapter())
+    product = _vector_state_product([_TOY_STATE], success=[False])
+    annotation = _plugin().process(product, _context(product))
+    assert _field(annotation, "status").tolist() == ["not_converged"]
+    assert _field(annotation, "reason_code").tolist() == ["not_converged"]
+    assert _field(annotation, "source_reconstruction_status").tolist() == [""]
+    assert np.isnan(_field(annotation, "carrier_frequency")).all()
+    assert _field(annotation, "grid_converged").tolist() == [-1]
+
+
+def test_a_grid_disagreement_is_propagated_with_its_witness(monkeypatch):
+    _patch_adapter(monkeypatch, _ToyAdapter())
+    product = _vector_state_product([_TOY_STATE])
+    annotation = _plugin(
+        pole=CarrierPoleConfig(
+            grid_sizes=(21, 41),
+            continuation_steps=3,
+            grid_absolute_tolerance=0.0,
+            grid_relative_tolerance=1e-14,
+        )
+    ).process(product, _context(product))
+    assert _field(annotation, "status").tolist() == ["not_converged"]
+    assert _field(annotation, "reason_code").tolist() == ["grid_not_converged"]
+    assert _field(annotation, "grid_converged").tolist() == [0]
+    # The solved grids are kept instead of being hidden by the failure.
+    assert _field(annotation, "grid_size").tolist() == [[21, 41]]
+    assert np.all(np.isfinite(_field(annotation, "grid_carrier_frequency")))
+    assert _field(annotation, "grid_frequency_differences")[0, 0] > 1e-4
+    assert _field(annotation, "finest_grid_size").tolist() == [41]
+
+
+def test_a_valid_reconstruction_without_a_table_is_a_contract_error(monkeypatch):
+    _patch_adapter(monkeypatch, _ToyAdapter())
+    manifold = slow_manifold(_ToyAdapter(), _TOY_STATE, {}, order=3)
+    broken = scalar_reconstruction(
+        _ToyAdapter(),
+        _ToyModel(),
+        _readout_observable(),
+        state=_TOY_STATE,
+        params={},
+        order=3,
+        manifold=manifold,
+        config=_RECONSTRUCTION_CONFIG,
+    ).model_copy(update={"generator_table": None})
+    assert broken.status is CAMOutcomeStatus.VALID
+    assert broken.generator_table is None
+    monkeypatch.setattr(
+        "qphase_cam.postprocessor.scalar_carrier_pole.scalar_reconstruction",
+        lambda *args, **kwargs: broken,
+    )
+    product = _vector_state_product([_TOY_STATE])
+    with pytest.raises(RuntimeError, match="generator table"):
+        _plugin().process(product, _context(product))
+
+
+def test_the_plugin_declares_its_protocol_and_is_registered():
+    assert ScalarCarrierPole.name == "scalar_carrier_pole"
+    assert ScalarCarrierPole.annotation_kind == "scalar_carrier_pole"
+    assert ScalarCarrierPole.accepted_product_roles == (
+        "state",
+        "state_scan",
+        "candidates",
+    )
+    assert ScalarCarrierPole.requires_model is True
+    assert ScalarCarrierPole.requires_backend is False
+    assert ScalarCarrierPole.output_products == (CAM_ANNOTATION_DECLARATION,)
+    assert issubclass(ScalarCarrierPole, CAMPostprocessor)
+    config = ScalarCarrierPoleConfig()
+    assert config.order == 7
+    assert config.pole.grid_sizes == (401, 801, 1201)
+    assert config.pole.continuation_steps == 20
+    assert config.reconstruction.grid_points == 3001
+    assert config.observable is None
+
+    pyproject = tomllib.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "packages"
+            / "qphase_cam"
+            / "pyproject.toml"
+        ).read_text(encoding="utf-8")
+    )
+    assert (
+        pyproject["project"]["entry-points"]["qphase"][
+            "cam_postprocessor.scalar_carrier_pole"
+        ]
+        == "qphase_cam.postprocessor.scalar_carrier_pole:ScalarCarrierPole"
+    )
+    # The installed metadata must agree too, or discovery would silently miss it.
+    discovered = {
+        entry.name: entry.value
+        for entry in importlib.metadata.entry_points(group="qphase")
+    }
+    assert (
+        discovered["cam_postprocessor.scalar_carrier_pole"]
+        == "qphase_cam.postprocessor.scalar_carrier_pole:ScalarCarrierPole"
+    )
+    discovery.discover_plugins("qphase")
+    assert (
+        registry.get_plugin_class("cam_postprocessor", "scalar_carrier_pole")
+        is ScalarCarrierPole
+    )
+    assert (
+        registry.get_plugin_schema("cam_postprocessor", "scalar_carrier_pole")
+        is ScalarCarrierPoleConfig
+    )

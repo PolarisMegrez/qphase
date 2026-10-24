@@ -18,6 +18,7 @@ from .observable_scaling import ObservableScaling, ObservableScalingConfig
 from .petermann import PetermannSpectrum
 from .petermann_series import PetermannSeries, PetermannSeriesConfig
 from .physicality import Physicality
+from .scalar_carrier_pole import ScalarCarrierPole, ScalarCarrierPoleConfig
 from .stochastic_validity import StochasticValidity
 
 __all__ = [
@@ -42,5 +43,7 @@ __all__ = [
     "PetermannSeriesConfig",
     "PetermannSpectrum",
     "RayleighFrequency",
+    "ScalarCarrierPole",
+    "ScalarCarrierPoleConfig",
     "StochasticValidity",
 ]

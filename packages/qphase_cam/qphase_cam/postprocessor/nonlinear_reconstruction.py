@@ -25,7 +25,6 @@ from typing import Any, ClassVar
 import numpy as np
 from pydantic import ConfigDict, Field
 
-from qphase_cam.core.coordinates import matrix_to_vector
 from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.data import build_annotation_product
 from qphase_cam.nonlinear import (
@@ -43,8 +42,7 @@ from qphase_cam.observable import CAMObservable, RayleighObservable
 from qphase_cam.outcomes import CAMOutcomeStatus
 
 from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
-from .candidates import candidate_view
-from .state_view import state_rows
+from .targets import AnnotationTarget, annotation_target_role, annotation_targets
 
 __all__ = ["NonlinearReconstruction", "NonlinearReconstructionConfig"]
 
@@ -143,67 +141,12 @@ class NonlinearReconstruction(CAMPostprocessor[NonlinearReconstructionConfig]):
                 "nonlinear_reconstruction needs a CAMObservable readout, got "
                 f"{type(observable).__name__}"
             )
-        role = self._target_role(product, context)
-        if role == "candidates":
-            targets = self._candidate_targets(product, context, model)
-            target_kind = "candidate"
-        else:
-            targets = self._state_targets(product, model)
-            target_kind = "state"
+        role = annotation_target_role(product, context, consumer=self.name)
+        targets = annotation_targets(product, context, model, consumer=self.name)
         rows = self._rows(adapter, model, observable, targets)
-        return self._annotation(rows, observable, target_kind)
-
-    # -- targets ----------------------------------------------------------
-
-    @staticmethod
-    def _target_role(product: Any, context: CAMAnnotationContext) -> str:
-        role = str(context.source_role or "")
-        if not role:
-            role = str(getattr(product, "attributes", {}).get("product", ""))
-        if role in ("state", "state_scan", "candidates"):
-            return role
-        raise ValueError(
-            f"nonlinear_reconstruction annotates state, state_scan or candidates; "
-            f"got {role!r}"
+        return self._annotation(
+            rows, observable, "candidate" if role == "candidates" else "state"
         )
-
-    @staticmethod
-    def _state_targets(product: Any, model: Any) -> list[dict[str, Any]]:
-        targets: list[dict[str, Any]] = []
-        for row in state_rows(product):
-            targets.append(
-                {
-                    "identity": row.identity,
-                    "case_identity": "",
-                    "vector": np.asarray(matrix_to_vector(row.state), dtype=float),
-                    "params": {**dict(model.params), **dict(row.parameters)},
-                    "success": bool(row.success),
-                }
-            )
-        return targets
-
-    @staticmethod
-    def _candidate_targets(
-        product: Any, context: CAMAnnotationContext, model: Any
-    ) -> list[dict[str, Any]]:
-        view = candidate_view(product, metadata=dict(context.metadata))
-        targets: list[dict[str, Any]] = []
-        for row in view.rows:
-            params = dict(model.params)
-            params.update(view.meta.get("fixed_params", {}))
-            for name, values in view.case_params.items():
-                params[name] = float(np.asarray(values).reshape(-1)[row.case])
-            params.update(row.controls)
-            targets.append(
-                {
-                    "identity": row.identity,
-                    "case_identity": row.case_identity,
-                    "vector": np.asarray(row.state_vector, dtype=float),
-                    "params": params,
-                    "success": bool(row.success),
-                }
-            )
-        return targets
 
     # -- rows -------------------------------------------------------------
 
@@ -212,7 +155,7 @@ class NonlinearReconstruction(CAMPostprocessor[NonlinearReconstructionConfig]):
         adapter: QPSGenDynamicsAdapter,
         model: Any,
         observable: CAMObservable,
-        targets: list[dict[str, Any]],
+        targets: tuple[AnnotationTarget, ...],
     ) -> list[dict[str, Any]]:
         """Return one row per target; the orders live on the row's order axis."""
         rows: list[dict[str, Any]] = []
@@ -234,7 +177,7 @@ class NonlinearReconstruction(CAMPostprocessor[NonlinearReconstructionConfig]):
         adapter: Any,
         model: Any,
         observable: CAMObservable,
-        target: dict[str, Any],
+        target: AnnotationTarget,
         order: int,
         direction: Any | None,
     ) -> dict[str, Any]:
@@ -249,7 +192,7 @@ class NonlinearReconstruction(CAMPostprocessor[NonlinearReconstructionConfig]):
             "positive_physical_boundary": None,
             "method": {},
         }
-        if not target["success"]:
+        if not target.success:
             entry.update(
                 {
                     "status": CAMOutcomeStatus.NOT_CONVERGED.value,
@@ -262,8 +205,8 @@ class NonlinearReconstruction(CAMPostprocessor[NonlinearReconstructionConfig]):
         try:
             manifold = slow_manifold(
                 adapter,
-                target["vector"],
-                target["params"],
+                target.vector,
+                target.params,
                 order=order,
                 config=config,
             )
@@ -287,8 +230,8 @@ class NonlinearReconstruction(CAMPostprocessor[NonlinearReconstructionConfig]):
             adapter,
             model,
             observable,
-            state=target["vector"],
-            params=target["params"],
+            state=target.vector,
+            params=target.params,
             order=order,
             parameter_direction=direction,
             manifold=manifold,
@@ -299,8 +242,8 @@ class NonlinearReconstruction(CAMPostprocessor[NonlinearReconstructionConfig]):
             gaussian = ou_intensities(
                 adapter,
                 observable,
-                state=target["vector"],
-                params=target["params"],
+                state=target.vector,
+                params=target.params,
                 model=model,
             )
         except ValueError as exc:
@@ -362,7 +305,7 @@ class NonlinearReconstruction(CAMPostprocessor[NonlinearReconstructionConfig]):
 
     @staticmethod
     def _combine(
-        target: dict[str, Any], entries: list[dict[str, Any]]
+        target: AnnotationTarget, entries: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Collapse the per-order entries into one row with an order axis."""
         statuses = [entry["status"] for entry in entries]
@@ -382,8 +325,8 @@ class NonlinearReconstruction(CAMPostprocessor[NonlinearReconstructionConfig]):
             status = CAMOutcomeStatus.VALID.value
             reason = ""
         return {
-            "identity": target["identity"],
-            "case_identity": target["case_identity"],
+            "identity": target.identity,
+            "case_identity": target.case_identity,
             "status": status,
             "reason": reason,
             "entries": entries,
