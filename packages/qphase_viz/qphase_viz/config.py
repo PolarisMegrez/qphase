@@ -4,6 +4,7 @@ Defines the configuration schemas for the visualization engine and individual pl
 
 Public API
 ----------
+`AnnotationSpec` : One text annotation placed on a figure.
 `BasePlotterConfig` : Base configuration for all plotters.
 `TimeSeriesSpec` : Specification for a single Time Series plot.
 `TimeSeriesConfig` : Configuration for Time Series Plotter (list of specs).
@@ -18,11 +19,46 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .styles import DEFAULT_STYLE, StyleName
+
+
+class AnnotationSpec(BaseModel):
+    """One text annotation drawn on a figure.
+
+    ``coords`` selects the coordinate frame of ``x``/``y``: ``"axes fraction"``
+    is the Matplotlib axes frame (0..1 across the drawn area, independent of
+    the data limits), ``"data"`` is the plotted data space. ``fontsize`` and
+    ``color`` inherit the active style when left unset.
+    """
+
+    text: str = Field(..., description="Annotation text (mathtext allowed)")
+    x: float = Field(..., description="Annotation x position")
+    y: float = Field(..., description="Annotation y position")
+    coords: Literal["axes fraction", "data"] = Field(
+        "axes fraction",
+        description="Coordinate frame of x/y: 'axes fraction' or 'data'",
+    )
+    fontsize: float | None = Field(
+        None, gt=0.0, description="Font size; None inherits the active style"
+    )
+    color: str | None = Field(
+        None, description="Text colour; None inherits the active style"
+    )
+    ha: Literal["left", "center", "right"] = Field(
+        "left", description="Horizontal alignment"
+    )
+    va: Literal["top", "center", "bottom", "baseline"] = Field(
+        "top", description="Vertical alignment"
+    )
+    rotation: float = Field(0.0, description="Rotation in degrees")
+
 
 class BasePlotterConfig(BaseModel):
     """Base configuration for all plotters.
 
-    Contains common matplotlib styling and output settings.
+    Contains common matplotlib styling and output settings. ``style``,
+    ``editable`` and ``style_overrides`` override the engine-level settings for
+    this figure only; leaving them unset inherits the engine's choice.
     """
 
     title: str | None = Field(None, description="Figure title")
@@ -35,6 +71,19 @@ class BasePlotterConfig(BaseModel):
     dpi: int = Field(100, description="Figure DPI")
     filename: str | None = Field(
         None, description="Output filename (without extension)"
+    )
+    style: StyleName | None = Field(
+        None, description="Figure style; None inherits the engine style"
+    )
+    editable: bool | None = Field(
+        None, description="Editable text export; None inherits the engine setting"
+    )
+    style_overrides: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Per-figure Matplotlib overrides; applied after the style",
+    )
+    annotations: list[AnnotationSpec] = Field(
+        default_factory=list, description="Text annotations drawn on this figure"
     )
 
     model_config = ConfigDict(extra="allow")
@@ -154,12 +203,28 @@ class ParameterEvolutionConfig(BaseModel):
 
 
 class VizEngineConfig(BaseModel):
-    """Configuration for the Visualization Engine."""
+    """Configuration for the Visualization Engine.
+
+    ``style``/``editable`` set the figure-wide defaults; a plot spec may
+    override either for its own figure. ``style_overrides`` is applied after
+    the style table and the editable-text switch, so an explicit rc value
+    always wins.
+    """
 
     output_dir: str = Field(default=".", description="Directory to save figures")
     format: str = Field(default="png", description="Output format (png, pdf, svg)")
     specs: list[dict[str, Any]] = Field(
         default_factory=list, description="List of plot specifications"
+    )
+    style: StyleName = Field(
+        DEFAULT_STYLE, description="Default figure style (publication, sm, sans)"
+    )
+    editable: bool = Field(
+        True,
+        description=(
+            "Export text as editable text (svg fonttype 'none', pdf fonttype 42) "
+            "instead of outlines"
+        ),
     )
     style_overrides: dict[str, Any] = Field(
         default_factory=dict, description="Global matplotlib style overrides"

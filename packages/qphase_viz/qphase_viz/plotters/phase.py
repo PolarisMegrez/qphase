@@ -10,12 +10,13 @@ Public API
 from pathlib import Path
 from typing import Any, ClassVar
 
-import matplotlib.pyplot as plt
 import numpy as np
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.data import DataKind
 
 from ..config import PhasePlaneConfig, PhasePlaneSpec
+from ..render import apply_axes_style, draw_annotations, save_figure, styled_figure
+from ..styles import RenderOptions
 from ..typed_input import require_single_scan_point, select_product, trajectory_array
 from .base import PlotterProtocol
 
@@ -54,7 +55,11 @@ class PhasePlanePlotter(PlotterProtocol):
         self.config = config
 
     def plot(
-        self, data: DatasetResultProtocol, output_dir: Path, format: str
+        self,
+        data: DatasetResultProtocol,
+        output_dir: Path,
+        format: str,
+        options: RenderOptions | None = None,
     ) -> list[Path]:
         """Generate phase plane plots from the provided data.
 
@@ -66,6 +71,9 @@ class PhasePlanePlotter(PlotterProtocol):
             The directory to save the plots to.
         format : str
             The file format for the plots (e.g., "png", "pdf").
+        options : RenderOptions | None
+            Engine-resolved style; ``None`` renders with the publication
+            defaults.
 
         Returns
         -------
@@ -73,9 +81,12 @@ class PhasePlanePlotter(PlotterProtocol):
             A list of paths to the generated plot files.
 
         """
+        base = options or RenderOptions()
         generated_files = []
         for spec in self.config.plots:
-            generated_files.append(self._plot_single(data, spec, output_dir, format))
+            generated_files.append(
+                self._plot_single(data, spec, output_dir, format, base)
+            )
         return generated_files
 
     def _plot_single(
@@ -84,6 +95,7 @@ class PhasePlanePlotter(PlotterProtocol):
         spec: PhasePlaneSpec,
         output_dir: Path,
         format: str,
+        base: RenderOptions,
     ) -> Path:
         """Generate a single phase plane plot.
 
@@ -97,6 +109,8 @@ class PhasePlanePlotter(PlotterProtocol):
             The directory to save the plot to.
         format : str
             The file format for the plot.
+        base : RenderOptions
+            Engine-resolved style this figure layers its own overrides onto.
 
         Returns
         -------
@@ -104,8 +118,6 @@ class PhasePlanePlotter(PlotterProtocol):
             The path to the generated plot file.
 
         """
-        config = spec.model_dump()
-
         product = select_product(
             data,
             role="trajectories",
@@ -117,8 +129,8 @@ class PhasePlanePlotter(PlotterProtocol):
         values = trajectory_array(product)
         y = values.reshape(-1, values.shape[-2], values.shape[-1])
 
-        ch_x = config["channel_x"]
-        ch_y = config["channel_y"]
+        ch_x = spec.channel_x
+        ch_y = spec.channel_y
 
         # Flatten trajectories for phase plane statistics
         # (N*T, M)
@@ -143,67 +155,61 @@ class PhasePlanePlotter(PlotterProtocol):
             xlabel = f"Re(Ch{ch_x})"
             ylabel = f"Re(Ch{ch_y})"
 
-        fig, ax = plt.subplots(figsize=config["figsize"], dpi=config["dpi"])
+        options = base.merged(
+            style=spec.style,
+            editable=spec.editable,
+            overrides=spec.style_overrides,
+        )
 
-        mode = config["mode"]
+        with styled_figure(options, figsize=spec.figsize, dpi=spec.dpi) as (fig, ax):
+            mode = spec.mode
 
-        if mode == "scatter":
-            # Downsample if too many points for scatter
-            max_points = 10000
-            if len(x_data) > max_points:
-                idx = np.random.choice(len(x_data), max_points, replace=False)
-                x_plot = x_data[idx]
-                y_plot = y_data[idx]
-            else:
-                x_plot = x_data
-                y_plot = y_data
+            if mode == "scatter":
+                # Downsample if too many points for scatter
+                max_points = 10000
+                if len(x_data) > max_points:
+                    idx = np.random.choice(len(x_data), max_points, replace=False)
+                    x_plot = x_data[idx]
+                    y_plot = y_data[idx]
+                else:
+                    x_plot = x_data
+                    y_plot = y_data
 
-            ax.scatter(x_plot, y_plot, alpha=0.1, s=1, c="k")
+                ax.scatter(x_plot, y_plot, alpha=0.1, s=1, c="k")
 
-        elif mode == "hist2d":
-            h = ax.hist2d(
-                x_data, y_data, bins=config["bins"], cmap=config["cmap"], density=True
+            elif mode == "hist2d":
+                h = ax.hist2d(
+                    x_data, y_data, bins=spec.bins, cmap=spec.cmap, density=True
+                )
+                fig.colorbar(h[3], ax=ax, label="Probability Density")
+
+            elif mode == "kde":
+                # Simple Gaussian KDE approximation or contour
+                # For now, fallback to hist2d as KDE is expensive on large
+                # datasets without scipy optimization or implement a simple
+                # contour over hist2d
+                counts, xedges, yedges = np.histogram2d(
+                    x_data, y_data, bins=spec.bins, density=True
+                )
+                x_centers = (xedges[:-1] + xedges[1:]) / 2
+                y_centers = (yedges[:-1] + yedges[1:]) / 2
+                X, Y = np.meshgrid(x_centers, y_centers)
+
+                # Smooth slightly?
+
+                c = ax.contourf(X, Y, counts.T, cmap=spec.cmap, levels=20)
+                fig.colorbar(c, ax=ax, label="Density")
+
+            apply_axes_style(
+                ax,
+                title=spec.title,
+                xlabel=spec.xlabel or xlabel,
+                ylabel=spec.ylabel or ylabel,
+                xlim=spec.xlim,
+                ylim=spec.ylim,
+                grid=spec.grid,
             )
-            fig.colorbar(h[3], ax=ax, label="Probability Density")
-
-        elif mode == "kde":
-            # Simple Gaussian KDE approximation or contour
-            # For now, fallback to hist2d as KDE is expensive on large datasets
-            # without scipy optimization or implement a simple contour over hist2d
-            counts, xedges, yedges = np.histogram2d(
-                x_data, y_data, bins=config["bins"], density=True
+            draw_annotations(ax, spec.annotations)
+            return save_figure(
+                fig, output_dir, spec.filename or f"phase_plane_{mode}", format
             )
-            x_centers = (xedges[:-1] + xedges[1:]) / 2
-            y_centers = (yedges[:-1] + yedges[1:]) / 2
-            X, Y = np.meshgrid(x_centers, y_centers)
-
-            # Smooth slightly?
-
-            c = ax.contourf(X, Y, counts.T, cmap=config["cmap"], levels=20)
-            fig.colorbar(c, ax=ax, label="Density")
-
-        # Styling
-        if config["title"]:
-            ax.set_title(config["title"])
-        if config["xlabel"]:
-            ax.set_xlabel(config["xlabel"])
-        else:
-            ax.set_xlabel(xlabel)
-        if config["ylabel"]:
-            ax.set_ylabel(config["ylabel"])
-        else:
-            ax.set_ylabel(ylabel)
-        if config["xlim"]:
-            ax.set_xlim(config["xlim"])
-        if config["ylim"]:
-            ax.set_ylim(config["ylim"])
-        if config["grid"]:
-            ax.grid(True, alpha=0.3)
-
-        # Save
-        filename = config["filename"] or f"phase_plane_{mode}"
-        out_path = output_dir / f"{filename}.{format}"
-        fig.savefig(out_path, format=format, bbox_inches="tight")
-        plt.close(fig)
-
-        return out_path

@@ -10,12 +10,13 @@ Public API
 from pathlib import Path
 from typing import Any, ClassVar
 
-import matplotlib.pyplot as plt
 import numpy as np
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.data import DataKind, SpectralQuantity
 
 from ..config import PowerSpectrumConfig, PowerSpectrumSpec
+from ..render import apply_axes_style, draw_annotations, save_figure, styled_figure
+from ..styles import RenderOptions
 from ..typed_input import (
     ProductNotFoundError,
     require_single_scan_point,
@@ -39,11 +40,18 @@ class PowerSpectrumPlotter(PlotterProtocol):
         self.config = config
 
     def plot(
-        self, data: DatasetResultProtocol, output_dir: Path, format: str
+        self,
+        data: DatasetResultProtocol,
+        output_dir: Path,
+        format: str,
+        options: RenderOptions | None = None,
     ) -> list[Path]:
+        base = options or RenderOptions()
         generated_files = []
         for spec in self.config.plots:
-            generated_files.append(self._plot_single(data, spec, output_dir, format))
+            generated_files.append(
+                self._plot_single(data, spec, output_dir, format, base)
+            )
         return generated_files
 
     def _plot_single(
@@ -52,11 +60,10 @@ class PowerSpectrumPlotter(PlotterProtocol):
         spec: PowerSpectrumSpec,
         output_dir: Path,
         format: str,
+        base: RenderOptions,
     ) -> Path:
-        config = spec.model_dump()
-        fig, ax = plt.subplots(figsize=config["figsize"], dpi=config["dpi"])
-        channels = config["channels"]
-        scale = config["scale"]
+        channels = spec.channels
+        scale = spec.scale
 
         try:
             product = select_product(
@@ -109,82 +116,79 @@ class PowerSpectrumPlotter(PlotterProtocol):
             )
 
         # Plotting
-        for ch in channels:
-            if ch in available_modes:
-                idx = available_modes.index(ch)
-                val = Pxx_all[:, idx]
+        options = base.merged(
+            style=spec.style,
+            editable=spec.editable,
+            overrides=spec.style_overrides,
+        )
+        ylabel = "PSD [V**2/Hz]"
+        with styled_figure(options, figsize=spec.figsize, dpi=spec.dpi) as (fig, ax):
+            for ch in channels:
+                if ch in available_modes:
+                    idx = available_modes.index(ch)
+                    val = Pxx_all[:, idx]
 
-                if scale == "dB":
-                    val = 10 * np.log10(val + 1e-20)
-                    ylabel = "PSD [dB/Hz]"
-                elif scale == "log":
-                    ax.set_yscale("log")
-                    ylabel = "PSD [V**2/Hz]"
-                else:
-                    ylabel = "PSD [V**2/Hz]"
+                    if scale == "dB":
+                        val = 10 * np.log10(val + 1e-20)
+                        ylabel = "PSD [dB/Hz]"
+                    elif scale == "log":
+                        ax.set_yscale("log")
+                        ylabel = "PSD [V**2/Hz]"
+                    else:
+                        ylabel = "PSD [V**2/Hz]"
 
-                (line,) = ax.plot(f, val, label=f"Ch{ch}")
-                if peak_product is not None:
-                    group_channels = np.asarray(
-                        peak_product.handle("group_channel_index").materialize()
-                    )
-                    offsets = np.asarray(
-                        peak_product.handle("candidate_offsets").materialize()
-                    )
-                    locations = np.asarray(
-                        peak_product.handle("location").materialize()
-                    )
-                    intensities = np.asarray(
-                        peak_product.handle("intensity").materialize()
-                    )
-                    indices: list[int] = []
-                    for group, channel in enumerate(group_channels):
-                        if int(channel) == idx:
-                            indices.extend(
-                                range(int(offsets[group]), int(offsets[group + 1]))
-                            )
-                    if indices:
-                        selected = np.array(indices, dtype=np.int64)
-                        selected = selected[
-                            np.argsort(intensities[selected])[-3:]
-                        ]
-                        peak_values = intensities[selected]
-                        if scale == "dB":
-                            peak_values = 10 * np.log10(peak_values + 1e-20)
-                        ax.plot(
-                            locations[selected],
-                            peak_values,
-                            "x",
-                            color=line.get_color(),
+                    (line,) = ax.plot(f, val, label=f"Ch{ch}")
+                    if peak_product is not None:
+                        group_channels = np.asarray(
+                            peak_product.handle("group_channel_index").materialize()
                         )
+                        offsets = np.asarray(
+                            peak_product.handle("candidate_offsets").materialize()
+                        )
+                        locations = np.asarray(
+                            peak_product.handle("location").materialize()
+                        )
+                        intensities = np.asarray(
+                            peak_product.handle("intensity").materialize()
+                        )
+                        indices: list[int] = []
+                        for group, channel in enumerate(group_channels):
+                            if int(channel) == idx:
+                                indices.extend(
+                                    range(
+                                        int(offsets[group]), int(offsets[group + 1])
+                                    )
+                                )
+                        if indices:
+                            selected = np.array(indices, dtype=np.int64)
+                            selected = selected[
+                                np.argsort(intensities[selected])[-3:]
+                            ]
+                            peak_values = intensities[selected]
+                            if scale == "dB":
+                                peak_values = 10 * np.log10(peak_values + 1e-20)
+                            ax.plot(
+                                locations[selected],
+                                peak_values,
+                                "x",
+                                color=line.get_color(),
+                            )
 
-            else:
-                print(f"Warning: Channel {ch} not found in PSD data.")
+                else:
+                    print(f"Warning: Channel {ch} not found in PSD data.")
 
-        # Styling
-        if config["title"]:
-            ax.set_title(config["title"])
-        if config["xlabel"]:
-            ax.set_xlabel(config["xlabel"])
-        else:
-            ax.set_xlabel("Frequency [Hz]")
-        if config["ylabel"]:
-            ax.set_ylabel(config["ylabel"])
-        else:
-            ax.set_ylabel(ylabel)
-        if config["xlim"]:
-            ax.set_xlim(config["xlim"])
-        if config["ylim"]:
-            ax.set_ylim(config["ylim"])
-        if config["grid"]:
-            ax.grid(True, alpha=0.3, which="both")
-        if config.get("legend", True):
-            ax.legend()
-
-        # Save
-        filename = config["filename"] or "power_spectrum"
-        out_path = output_dir / f"{filename}.{format}"
-        fig.savefig(out_path, format=format, bbox_inches="tight")
-        plt.close(fig)
-
-        return out_path
+            apply_axes_style(
+                ax,
+                title=spec.title,
+                xlabel=spec.xlabel or "Frequency [Hz]",
+                ylabel=spec.ylabel or ylabel,
+                xlim=spec.xlim,
+                ylim=spec.ylim,
+                grid=spec.grid,
+                legend=getattr(spec, "legend", True),
+                grid_which="both",
+            )
+            draw_annotations(ax, spec.annotations)
+            return save_figure(
+                fig, output_dir, spec.filename or "power_spectrum", format
+            )

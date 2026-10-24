@@ -11,17 +11,37 @@ Version : 2.0.0 (Oct 2026)
 """
 
 from .config import (
+    AnnotationSpec,
     PhasePlaneConfig,
     PowerSpectrumConfig,
     TimeSeriesConfig,
     VizEngineConfig,
 )
 from .engine import VizEngine
+from .styles import (
+    DEFAULT_STYLE,
+    PALETTE,
+    STYLE_NAMES,
+    RenderOptions,
+    StyleName,
+    allan_scan_colormap,
+    cam_flow_colormap,
+    rc_params,
+)
 
 __all__ = [
-    "VizEngine",
-    "VizEngineConfig",
-    "TimeSeriesConfig",
+    "DEFAULT_STYLE",
+    "PALETTE",
+    "STYLE_NAMES",
+    "AnnotationSpec",
     "PhasePlaneConfig",
     "PowerSpectrumConfig",
+    "RenderOptions",
+    "StyleName",
+    "TimeSeriesConfig",
+    "VizEngine",
+    "VizEngineConfig",
+    "allan_scan_colormap",
+    "cam_flow_colormap",
+    "rc_params",
 ]

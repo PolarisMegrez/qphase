@@ -10,26 +10,13 @@ Public API
 from pathlib import Path
 from typing import Any, ClassVar
 
-import matplotlib.pyplot as plt
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.errors import QPhaseRuntimeError
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 
 from .config import VizEngineConfig
 from .plotters.base import PlotterProtocol
-
-
-def _set_default_rcparams() -> None:
-    """Apply project-wide default Matplotlib font/mathtext settings."""
-    plt.rcParams["font.family"] = "sans-serif"
-    plt.rcParams["font.sans-serif"] = ["Arial"]
-    plt.rcParams["mathtext.fontset"] = "custom"
-    plt.rcParams["mathtext.rm"] = "sans"
-    plt.rcParams["mathtext.it"] = "sans:italic"
-    plt.rcParams["mathtext.bf"] = "sans:bold"
-    plt.rcParams["axes.labelsize"] = 18
-    plt.rcParams["xtick.labelsize"] = 15
-    plt.rcParams["ytick.labelsize"] = 15
+from .styles import RenderOptions
 
 
 class VizResult(ResultProtocol):
@@ -142,10 +129,13 @@ class VizEngine(EngineBase):
                 "VizEngine requires a typed DatasetResultProtocol input."
             )
 
-        # Apply global styles
-        _set_default_rcparams()
-        if self.config.style_overrides:
-            plt.rcParams.update(self.config.style_overrides)
+        # Resolve the engine-wide style once; each plotter layers its own
+        # spec settings on top and renders inside its own rc context.
+        options = RenderOptions(
+            style=self.config.style,
+            editable=self.config.editable,
+            overrides=self.config.style_overrides,
+        )
 
         output_dir = Path(self.config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -164,7 +154,9 @@ class VizEngine(EngineBase):
             try:
                 # Execute plot
                 # The plotter is already configured via its own config
-                out_paths = plotter.plot(data, output_dir, self.config.format)
+                out_paths = plotter.plot(
+                    data, output_dir, self.config.format, options
+                )
                 generated_files.extend(out_paths)
             except Exception as e:
                 raise QPhaseRuntimeError(

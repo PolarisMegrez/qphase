@@ -65,6 +65,55 @@ Parameter evolution consumes explicit scan coordinates and typed peak or
 trajectory products. Raw arrays, trajectory containers, and payload dicts are
 not public inputs.
 
+## Styles and editable output
+
+Figures render with a named style: `publication` (default, STIX typography),
+`sm` (the same typography one size tier down), or `sans` (Arial with sans
+math). `publication` and `sm` export text as editable text by default
+(`svg.fonttype='none'`, `pdf.fonttype=42`), so an SVG can be opened and its
+labels edited in Inkscape. A plot spec may override the style for its own
+figure, and `style_overrides` always wins over the style table:
+
+```python
+from qphase_viz import VizEngine, VizEngineConfig
+from qphase_viz.plotters.evolution import TimeSeriesPlotter
+
+engine = VizEngine(
+    config=VizEngineConfig(
+        output_dir="figures",
+        format="svg",
+        style="publication",          # or "sm" / "sans"
+        editable=True,                # svg.fonttype='none', pdf.fonttype=42
+        style_overrides={"axes.grid": False},
+    ),
+    plugins={
+        "visualizer": TimeSeriesPlotter(
+            plots=[
+                {
+                    "channels": [0],
+                    "filename": "narrow",
+                    "style": "sm",                      # per-figure style
+                    "style_overrides": {"axes.labelsize": 12},
+                    "annotations": [
+                        {
+                            "text": r"$\gamma/\kappa = 0.1$",
+                            "x": 0.02,
+                            "y": 0.95,
+                            "coords": "axes fraction",
+                        }
+                    ],
+                }
+            ]
+        )
+    },
+)
+```
+
+Priority for every figure: single-plot setting, then the engine setting, then
+the `publication` default. Styling is applied in a local Matplotlib rc
+context, so rendering never changes the process-wide `rcParams`. A direct
+`plotter.plot(data, output_dir, format)` call uses the `publication` defaults.
+
 ## License
 
 MIT License

@@ -6,12 +6,14 @@ Plots metrics (e.g. PSD peaks) against scanning parameters.
 from pathlib import Path
 from typing import Any, ClassVar
 
-import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.axes import Axes
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.data import DataKind
 
 from ..config import ParameterEvolutionConfig, ParameterEvolutionSpec
+from ..render import apply_axes_style, draw_annotations, save_figure, styled_figure
+from ..styles import RenderOptions
 from ..typed_input import scan_values, select_product, trajectory_array
 from .base import PlotterProtocol
 
@@ -31,11 +33,18 @@ class ParameterEvolutionPlotter(PlotterProtocol):
         self.config = config
 
     def plot(
-        self, data: DatasetResultProtocol, output_dir: Path, format: str
+        self,
+        data: DatasetResultProtocol,
+        output_dir: Path,
+        format: str,
+        options: RenderOptions | None = None,
     ) -> list[Path]:
+        base = options or RenderOptions()
         generated_files = []
         for spec in self.config.plots:
-            generated_files.append(self._plot_single(data, spec, output_dir, format))
+            generated_files.append(
+                self._plot_single(data, spec, output_dir, format, base)
+            )
         return generated_files
 
     def _metric_points(
@@ -97,16 +106,46 @@ class ParameterEvolutionPlotter(PlotterProtocol):
         spec: ParameterEvolutionSpec,
         output_dir: Path,
         format: str,
+        base: RenderOptions,
     ) -> Path:
         x_values, y_values = self._metric_points(data, spec)
         order = np.argsort(x_values)
         x = x_values[order].tolist()
         y = y_values[order].tolist()
 
-        # Plot
-        config = spec.model_dump()
-        fig, ax = plt.subplots(figsize=config["figsize"], dpi=config["dpi"])
+        options = base.merged(
+            style=spec.style,
+            editable=spec.editable,
+            overrides=spec.style_overrides,
+        )
+        with styled_figure(options, figsize=spec.figsize, dpi=spec.dpi) as (fig, ax):
+            self._draw_metric(ax, x, y, spec)
+            apply_axes_style(
+                ax,
+                title=spec.title or f"{spec.metric} vs {spec.parameter}",
+                xlabel=spec.xlabel or spec.parameter,
+                ylabel=spec.ylabel or spec.metric,
+                xlim=spec.xlim,
+                ylim=spec.ylim,
+                grid=spec.grid,
+                legend=True,
+            )
+            draw_annotations(ax, spec.annotations)
+            return save_figure(
+                fig,
+                output_dir,
+                spec.filename or f"evol_{spec.parameter}_{spec.metric}",
+                format,
+            )
 
+    def _draw_metric(
+        self,
+        ax: Axes,
+        x: list[float],
+        y: list[float],
+        spec: ParameterEvolutionSpec,
+    ) -> None:
+        """Draw the metric series and its optional fit on *ax*."""
         ax.plot(x, y, "o-", label=f"Ch{spec.channel}")
 
         # Curve Fitting
@@ -199,26 +238,3 @@ class ParameterEvolutionPlotter(PlotterProtocol):
                             f"Warning: Power fit requires positive values (after abs). "
                             f"Found {np.sum(pos_mask)} valid points."
                         )
-
-        ax.legend()
-        ax.set_xlabel(spec.xlabel or spec.parameter)
-        ax.set_ylabel(spec.ylabel or spec.metric)
-        if spec.title:
-            ax.set_title(spec.title)
-        else:
-            ax.set_title(f"{spec.metric} vs {spec.parameter}")
-
-        if spec.xlim:
-            ax.set_xlim(spec.xlim)
-        if spec.ylim:
-            ax.set_ylim(spec.ylim)
-        if spec.grid:
-            ax.grid(True, alpha=0.3)
-
-        # Save
-        fname = spec.filename or f"evol_{spec.parameter}_{spec.metric}"
-        out_path = output_dir / f"{fname}.{format}"
-        fig.savefig(out_path, bbox_inches="tight")
-        plt.close(fig)
-
-        return out_path
