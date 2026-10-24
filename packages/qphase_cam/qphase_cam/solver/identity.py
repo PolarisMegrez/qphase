@@ -5,10 +5,10 @@ them a slot:
 
 ``search identity``
     What design was searched: the model (name plus the scalar parameters that the
-    search does *not* sweep), the target and its order, the control bounds and
-    sampling, the perturbation spec and the strategy mode. Both the control names
-    and the swept model parameters of the job's scan are excluded, because the
-    search does not fix them.
+    search does *not* sweep), the target and its order, each control's bounds,
+    sampling and physical domain, the perturbation spec and the strategy mode. Both
+    the control names and the swept model parameters of the job's scan are excluded,
+    because the search does not fix them.
 ``case identity``
     One search context: the search identity plus the case values of this solve
     call — the control values and the swept model parameters' values. Two grid
@@ -20,14 +20,17 @@ them a slot:
     It deliberately contains **no case or search scope**, so the same physical
     candidate found by a different search keeps the same identity.
 ``accepted-start identity``
-    One *accepted start*: the case scope, the discovery method and the start's
-    own content. Two starts that converge to the same candidate therefore have
-    two identities, and both are listed on that candidate.
+    One *accepted start*: the case scope, the start's real generation path (the
+    reduction chart it came from, or ``full``) and the start's own content. Two
+    starts that converge to the same candidate therefore have two identities, and
+    both are listed on that candidate; two charts of one retained state stay two
+    starts even when their method name is identical.
 
 Every identity is ``cam:<kind>:<hex>`` where ``<hex>`` is the first 16 hex digits
-of a SHA-256 over canonical JSON. No path, no ``hash()``, no ``id()``, no array
-slot and no wall clock enters the digest, so two identical solves agree and two
-different pieces of science do not collide.
+of a SHA-256 over canonical JSON. No ``hash()``, no ``id()``, no array slot and no
+wall clock enters the digest, so two identical solves agree and two different
+pieces of science do not collide. The only "path" that enters an accepted-start
+identity is the scientific generation path, never a filesystem path.
 
 Precision boundary: when a candidate carries verified decimal values the identity
 is derived from those digits, so it is stable for a solver that reproduces the
@@ -120,6 +123,17 @@ def _scalar_parameters(model: Any) -> dict[str, Any]:
     return payload
 
 
+def _control_domain(name: str, spec: Any) -> str:
+    """Return the declared physical domain of one control."""
+    domain = getattr(spec, "domain", None)
+    if domain is None or not str(domain):
+        raise ValueError(
+            f"control {name!r} declares no physical domain; the search identity "
+            "cannot describe the searched region"
+        )
+    return str(domain)
+
+
 def search_scope(
     model: Any,
     *,
@@ -135,9 +149,11 @@ def search_scope(
     The parameters the search varies are **not** part of the search scope: the
     control names (what the solver solves for) and ``swept_parameters`` (the model
     scalar parameters the job scans over) are what the case identity adds, so every
-    point of one campaign shares the search identity. Every other scalar model
-    parameter is fixed design input and stays in the scope; array-valued parameters
-    remain payload and never enter it.
+    point of one campaign shares the search identity. Each control contributes its
+    declared bounds, sampling and physical domain, because ``real`` and
+    ``nonnegative`` over the same bounds are different searched regions. Every other
+    scalar model parameter is fixed design input and stays in the scope;
+    array-valued parameters remain payload and never enter it.
     """
     params = _scalar_parameters(model)
     for name in controls:
@@ -154,6 +170,7 @@ def search_scope(
             str(name): {
                 "bounds": [float(spec.min), float(spec.max)],
                 "sampling": str(getattr(spec, "sampling", "")),
+                "domain": _control_domain(name, spec),
             }
             for name, spec in controls.items()
         },
@@ -222,12 +239,20 @@ def candidate_identity(content: Mapping[str, Any]) -> str:
     return f"cam:candidate:{digest_payload(content)}"
 
 
-def start_identity(*, case: str, method: str, content: Mapping[str, Any]) -> str:
-    """Return the identity of one accepted start inside one case."""
+def start_identity(*, case: str, path: str, content: Mapping[str, Any]) -> str:
+    """Return the identity of one accepted start inside one case.
+
+    ``path`` is the start's *generation path* — the reduction chart it came from
+    (``<method>:<qpsgen chart id>``) or ``full`` — not just the algorithm name: two
+    charts of one retained state are two different starts even when their equations
+    happen to converge to the same candidate.
+    """
+    if not str(path):
+        raise ValueError("an accepted start needs its generation path")
     payload = {
         "scheme": IDENTITY_SCHEME,
         "case": str(case),
-        "method": str(method),
+        "path": str(path),
         "candidate": content,
     }
     return f"cam:start:{digest_payload(payload)}"

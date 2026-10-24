@@ -29,6 +29,7 @@ def test_condensed_jets_match_explicit_vdp_reduced_dynamics():
         order=4,
         control_names=("omega_a", "gamma_b", "gamma_a"),
         base_params=model.params,
+        chart_id=candidate.chart_id,
     )
     point = np.asarray([12000.0, 0.15, 0.9, 2.1])
     params = {
@@ -83,6 +84,7 @@ def test_kerr_three_mode_condensed_reconstruction_solves_eliminated_block():
         order=3,
         control_names=("omega_b", "gamma_b"),
         base_params=model.params,
+        chart_id=candidate.chart_id,
     )
     point = np.asarray([1.0, -0.1, 1.0])
     state = reduction.reconstruct(point)

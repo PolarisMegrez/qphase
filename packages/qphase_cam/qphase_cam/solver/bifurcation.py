@@ -914,6 +914,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                 candidate = self._full_candidate(
                     system, adapter, value, result.cost, result.success
                 )
+                candidate.metadata["generation_path"] = "full"
                 if candidate.success:
                     candidates.append(candidate)
                 else:
@@ -1579,6 +1580,9 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             candidate = self._candidate(
                 reduction, adapter, value, result.cost, result.success
             )
+            # The start's identity needs the chart it came from, not just the
+            # method name: two charts of one retained state are two starts.
+            candidate.metadata["generation_path"] = path
             if candidate.success:
                 accepted.append(candidate)
             else:
@@ -1811,6 +1815,24 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             ),
         )
 
+    def _generation_path(self, candidate: CAMBifurcationCandidate) -> str:
+        """Return the generation path a candidate's start came from.
+
+        The path is written by the refinement pass that produced the candidate
+        (``<method>:<chart id>`` for a reduction, ``full`` for the bordered search).
+        A candidate without one is an internal contract violation: falling back to
+        the method name would merge two charts of one retained state into one start
+        identity.
+        """
+        path = candidate.metadata.get("generation_path")
+        if not path:
+            raise RuntimeError(
+                "candidate "
+                f"{candidate.metadata.get('candidate_identity') or '<unidentified>'!r} "
+                "carries no generation path; an accepted start cannot be named"
+            )
+        return str(path)
+
     def _assign_start_identities(
         self,
         candidates: list[CAMBifurcationCandidate],
@@ -1818,14 +1840,20 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         case: str,
         model: Any,
     ) -> None:
-        """Give every accepted start its own identity (idempotent)."""
+        """Give every accepted start its own identity (idempotent).
+
+        The identity's path component is the candidate's real generation path, so two
+        charts that converge to the same candidate keep two start identities.
+        """
         for candidate in candidates:
             if candidate.metadata.get("accepted_start_identities"):
                 continue
             content, _ = self._identity_content(model, candidate)
             candidate.metadata["accepted_start_identities"] = (
                 derive_start_identity(
-                    case=case, method=candidate.method, content=content
+                    case=case,
+                    path=self._generation_path(candidate),
+                    content=content,
                 ),
             )
 
@@ -1894,6 +1922,9 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                     break
             if duplicate is None:
                 candidate.metadata["discovery_methods"] = (candidate.method,)
+                candidate.metadata["discovery_paths"] = (
+                    self._generation_path(candidate),
+                )
                 unique.append(candidate)
                 continue
             methods = tuple(
@@ -1907,6 +1938,20 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                 )
             )
             duplicate.metadata["discovery_methods"] = methods
+            # Every chart that reached the survivor stays visible, so a merged
+            # candidate never loses the generation paths behind it.
+            paths = tuple(
+                dict.fromkeys(
+                    (
+                        *duplicate.metadata.get(
+                            "discovery_paths",
+                            (self._generation_path(duplicate),),
+                        ),
+                        self._generation_path(candidate),
+                    )
+                )
+            )
+            duplicate.metadata["discovery_paths"] = paths
             # The merged start keeps its identity on the survivor: a duplicate
             # must never erase an accepted start from the evidence.
             merged = list(duplicate.metadata.get("accepted_start_identities", ()))

@@ -35,10 +35,17 @@ from .test_bifurcation import TwoModeFoldModel, _solver
 class _Control:
     """Minimal control spec for the pure payload helpers."""
 
-    def __init__(self, low: float, high: float, sampling: str = "linear") -> None:
+    def __init__(
+        self,
+        low: float,
+        high: float,
+        sampling: str = "linear",
+        domain: str = "real",
+    ) -> None:
         self.min = low
         self.max = high
         self.sampling = sampling
+        self.domain = domain
 
 
 @pytest.fixture(scope="module")
@@ -51,13 +58,13 @@ def auto_run():
     return output
 
 
-def _scope(model=None, *, strategy="auto", low=-1.0, high=0.0, swept=()):
+def _scope(model=None, *, strategy="auto", low=-1.0, high=0.0, swept=(), domain="real"):
     model = model or TwoModeFoldModel()
     return search_scope(
         model,
         target="equilibrium_multiplicity",
         order=2,
-        controls={"gamma": _Control(low, high)},
+        controls={"gamma": _Control(low, high, domain=domain)},
         perturbation={"parameter": "gamma", "scale": 1.0, "side": "both"},
         strategy=strategy,
         swept_parameters=swept,
@@ -95,6 +102,19 @@ def test_search_identity_tracks_the_design():
     other = TwoModeFoldModel()
     other.params = {**other.params, "Gamma": 2.0}
     assert base != search_identity(_scope(other))
+
+
+def test_the_control_domain_is_part_of_the_search_design():
+    """Same bounds and sampling over a different physical domain is another search."""
+    base = search_identity(_scope())
+    assert base == search_identity(_scope(domain="real"))
+    assert base != search_identity(_scope(domain="nonnegative"))
+    assert base != search_identity(_scope(domain="auto"))
+    assert _scope(domain="nonnegative")["controls"]["gamma"]["domain"] == (
+        "nonnegative"
+    )
+    # The domain is a design input; only the numeric scale is not.
+    assert "scale" not in _scope()["controls"]["gamma"]
 
 
 def test_search_identity_ignores_the_swept_scan_parameters():
@@ -175,7 +195,7 @@ def test_candidate_identity_prefers_verified_decimals():
     assert candidate_identity(decimal_content) != candidate_identity(vector_content)
 
 
-def test_start_identity_separates_case_and_method():
+def test_start_identity_separates_case_and_generation_path():
     content, _ = candidate_content(
         model_name="two_mode_fold",
         target="equilibrium_multiplicity",
@@ -183,17 +203,17 @@ def test_start_identity_separates_case_and_method():
         state_vector=[0.5, 0.25, 0.0, 0.0],
         controls={"gamma": -0.5},
     )
-    base = start_identity(case="cam:case:a", method="bordered_full", content=content)
-    assert base == start_identity(
-        case="cam:case:a", method="bordered_full", content=content
-    )
+    path = "reduced_condensed:ret:r_diag_0|eq:0"
+    base = start_identity(case="cam:case:a", path=path, content=content)
+    assert base == start_identity(case="cam:case:a", path=path, content=content)
     assert base.startswith("cam:start:")
+    assert base != start_identity(case="cam:case:b", path=path, content=content)
     assert base != start_identity(
-        case="cam:case:b", method="bordered_full", content=content
+        case="cam:case:a", path="reduced_condensed:ret:r_diag_0|eq:1", content=content
     )
-    assert base != start_identity(
-        case="cam:case:a", method="reduced_fraction_free", content=content
-    )
+    assert base != start_identity(case="cam:case:a", path="full", content=content)
+    with pytest.raises(ValueError, match="needs its generation path"):
+        start_identity(case="cam:case:a", path="", content=content)
 
 
 def test_identity_is_independent_of_the_python_hash_seed():
@@ -205,10 +225,11 @@ from qphase_cam.solver.identity import (
 
 
 class C:
-    def __init__(self, low, high, sampling="linear"):
+    def __init__(self, low, high, sampling="linear", domain="real"):
         self.min = low
         self.max = high
         self.sampling = sampling
+        self.domain = domain
 
 
 class M:
@@ -287,6 +308,12 @@ def test_solver_attaches_starts_to_the_surviving_candidate(auto_run):
         "reduced_fraction_free",
         "bordered_full",
     )
+    # The survivor also names every generation path behind those starts: the
+    # reduction chart first, then the full bordered search.
+    paths = candidate.metadata["discovery_paths"]
+    assert len(paths) == 2
+    assert paths[0].startswith("reduced_fraction_free:ret:")
+    assert paths[1] == "full"
 
 
 def test_identities_survive_packing_into_the_product(auto_run):

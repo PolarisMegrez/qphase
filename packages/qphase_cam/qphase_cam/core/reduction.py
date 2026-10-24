@@ -96,12 +96,18 @@ class FractionFreeScalarReduction:
         control_names: tuple[str, ...],
         base_params: dict[str, Any],
         retained_scale: float = 1.0,
-        chart_id: str = "",
+        chart_id: str,
     ) -> None:
         plan = materialized.plan
         if len(plan.retained_symbols) != 1 or len(materialized.numerators) != 1:
             raise BifurcationCapabilityError(
                 "fraction-free bifurcation search requires a scalar reduction"
+            )
+        if not str(chart_id):
+            raise BifurcationCapabilityError(
+                "a fraction-free reduction needs the qpsgen chart id of its "
+                "equation/state partition; the generation path cannot be named "
+                "without it"
             )
         self.materialized = materialized
         self.plan = plan
@@ -418,11 +424,17 @@ class CondensedScalarReduction:
         control_names: tuple[str, ...],
         base_params: dict[str, Any],
         retained_scale: float = 1.0,
-        chart_id: str = "",
+        chart_id: str,
     ) -> None:
         if len(plan.retained_symbols) != 1 or len(plan.retained_residual) != 1:
             raise BifurcationCapabilityError(
                 "condensed bifurcation search requires a scalar reduction"
+            )
+        if not str(chart_id):
+            raise BifurcationCapabilityError(
+                "a condensed reduction needs the qpsgen chart id of its "
+                "equation/state partition; the generation path cannot be named "
+                "without it"
             )
         self.plan = plan
         self.chart_id = str(chart_id)

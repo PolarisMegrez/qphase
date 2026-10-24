@@ -387,14 +387,14 @@ def test_pair_hopping_seed_scale_tracks_inverse_nonlinearity():
 def test_condensed_reduction_verifies_known_fold_at_high_precision():
     model = TwoModeFoldModel()
     adapter = QPSGenDynamicsAdapter.from_model(model)
-    plan = adapter.linear_reduction(
-        candidate=adapter.search_linear_reductions(retained_dimension=1).candidates[0]
-    )
+    candidate = adapter.search_linear_reductions(retained_dimension=1).candidates[0]
+    plan = adapter.linear_reduction(candidate=candidate)
     reduction = CondensedScalarReduction(
         plan,
         order=2,
         control_names=("gamma",),
         base_params=model.params,
+        chart_id=candidate.chart_id,
     )
     expected_gamma = -6.0 + np.sqrt(28.0)
     expected_q = (expected_gamma + 4.0) / 4.0
@@ -923,14 +923,14 @@ def test_stochastic_validity_accepts_empty_candidate_table(monkeypatch):
 def _fold_condensed_reduction() -> CondensedScalarReduction:
     model = TwoModeFoldModel()
     adapter = QPSGenDynamicsAdapter.from_model(model)
-    plan = adapter.linear_reduction(
-        candidate=adapter.search_linear_reductions(retained_dimension=1).candidates[0]
-    )
+    candidate = adapter.search_linear_reductions(retained_dimension=1).candidates[0]
+    plan = adapter.linear_reduction(candidate=candidate)
     return CondensedScalarReduction(
         plan,
         order=2,
         control_names=("gamma",),
         base_params=model.params,
+        chart_id=candidate.chart_id,
     )
 
 
@@ -1594,6 +1594,74 @@ def test_a_reduction_names_its_generation_path_by_chart():
     assert output.metadata["full_fallback"]["audit"]["path"] == "full"
     fragment = _fragment_of(output)
     assert [entry.path for entry in fragment.paths] == [*expected, "full"]
+
+
+def _chart_candidate(path, *, residual=1e-12, vector=(1.0, 1.0, 0.0, 0.0)):
+    return CAMBifurcationCandidate(
+        state_vector=np.asarray(vector, dtype=float),
+        controls={"gamma": -0.5},
+        full_residual_norm=residual,
+        search_residual_norm=residual,
+        success=True,
+        status="verified",
+        method="reduced_condensed",
+        metadata={"generation_path": path},
+    )
+
+
+def test_two_charts_of_one_state_are_two_accepted_starts():
+    """The start identity carries the chart: same method and content is not enough."""
+    solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
+    model = TwoModeFoldModel()
+    first = _chart_candidate("reduced_condensed:ret:r_diag_0|eq:0")
+    second = _chart_candidate("reduced_condensed:ret:r_diag_0|eq:1", residual=2e-12)
+    assert first.method == second.method
+    solver._assign_start_identities(
+        [first, second], case="cam:case:charts", model=model
+    )
+    left = first.metadata["accepted_start_identities"]
+    right = second.metadata["accepted_start_identities"]
+    assert len(left) == len(right) == 1
+    assert left != right
+    # Deduplication keeps both starts and both generation paths on the survivor.
+    merged = solver._deduplicate_candidates([second, first])
+    assert len(merged) == 1
+    survivor = merged[0]
+    assert survivor.metadata["accepted_start_identities"] == (*left, *right)
+    assert survivor.metadata["discovery_paths"] == (
+        "reduced_condensed:ret:r_diag_0|eq:0",
+        "reduced_condensed:ret:r_diag_0|eq:1",
+    )
+    assert survivor.metadata["discovery_methods"] == ("reduced_condensed",)
+
+
+def test_an_accepted_start_without_a_generation_path_is_a_contract_error():
+    candidate = _chart_candidate("full")
+    candidate.metadata.pop("generation_path")
+    solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
+    with pytest.raises(RuntimeError, match="carries no generation path"):
+        solver._assign_start_identities(
+            [candidate], case="cam:case:charts", model=TwoModeFoldModel()
+        )
+
+
+def test_identical_path_and_content_is_a_duplicate_start():
+    """Path and content together are the start identity: no index rescue."""
+    solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
+    model = TwoModeFoldModel()
+    path = "reduced_condensed:ret:r_diag_0|eq:0"
+    first = _chart_candidate(path)
+    second = _chart_candidate(path, residual=2e-12)
+    for candidate in (first, second):
+        solver._assign_start_identities(
+            [candidate], case="cam:case:charts", model=model
+        )
+    assert (
+        first.metadata["accepted_start_identities"]
+        == second.metadata["accepted_start_identities"]
+    )
+    with pytest.raises(RuntimeError, match="counted twice"):
+        solver._deduplicate_candidates([first, second])
 
 
 def test_a_duplicated_chart_is_an_error_not_a_second_entry(monkeypatch):
