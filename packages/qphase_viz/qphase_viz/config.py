@@ -412,11 +412,17 @@ class DistributionSpec(BasePlotterConfig):
     (``value[scan, realization]``). Selecting more than one scan point draws
     one distribution per point; the samples are never pooled across points.
 
-    ``center``/``scale`` compose the sample transform
-    ``scale * value + center`` — the source of a two-series comparison is
-    ``center: reference_mean`` with ``scale: -1`` (i.e. ``reference - value``),
-    where the reference is the first selected series. The default is the
-    identity, ``center: none`` with ``scale: 1``.
+    ``center`` selects the origin and ``scale`` the sign and size of the
+    transformed sample set::
+
+        center: none            -> scale * value
+        center: reference_mean  -> scale * (value - reference)
+
+    ``reference`` is the mean of the first selected series, so that series is
+    always centred on zero. A two-series comparison in the source script's
+    orientation is ``center: reference_mean`` with ``scale: -1``
+    (``reference - value``); the default is the identity, ``center: none``
+    with ``scale: 1``.
     """
 
     kind: Literal["distribution"] = "distribution"
@@ -454,9 +460,15 @@ class DistributionSpec(BasePlotterConfig):
         None, description="Colour per series; None uses the semantic palette"
     )
     center: Literal["none", "reference_mean"] = Field(
-        "none", description="Subtract nothing, or the first series' mean"
+        "none",
+        description=(
+            "Sample origin: the raw value, or the first selected series' mean "
+            "(which then lands on zero)"
+        ),
     )
-    scale: float = Field(1.0, description="Non-zero scale applied after centring")
+    scale: float = Field(
+        1.0, description="Non-zero factor applied after centring"
+    )
     bin_width: float | None = Field(
         None, gt=0.0, description="Fixed histogram bin width (needs xlim to match)"
     )
@@ -487,6 +499,14 @@ class DistributionSpec(BasePlotterConfig):
         None, description="Explicit x tick labels; one per tick"
     )
     hide_yticks: bool = Field(False, description="Hide the y tick labels and marks")
+    annotation_fontsize: float | None = Field(
+        None,
+        gt=0.0,
+        description=(
+            "Font size of the shift/width annotations; None inherits the "
+            "active style's font size"
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_distribution(self) -> Self:

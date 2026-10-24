@@ -44,8 +44,13 @@ def fwhm_bounds(x: np.ndarray, density: np.ndarray) -> tuple[float, float]:
     The peak is located by the maximum density, then the walk moves outwards
     while the density stays at or above half the maximum; the two crossing
     positions are linearly interpolated between the neighbouring bin centres.
-    A density with no positive maximum, fewer than two bins or mismatched
-    shapes raises ``ValueError`` instead of returning a degenerate width.
+
+    The band must be fully contained in the binned range: if the walk reaches
+    the first or last bin while still above half the maximum there is no
+    crossing to interpolate, and the call raises instead of extrapolating or
+    returning a collapsed width. Non-finite input, unsorted positions, negative
+    densities, fewer than two bins and a missing positive maximum are rejected
+    for the same reason: a width built from them would be meaningless.
     """
     x_values = np.asarray(x, dtype=float)
     values = np.asarray(density, dtype=float)
@@ -58,6 +63,14 @@ def fwhm_bounds(x: np.ndarray, density: np.ndarray) -> tuple[float, float]:
         )
     if values.size < 2:
         raise ValueError("fwhm_bounds needs at least two bins")
+    if not np.all(np.isfinite(x_values)):
+        raise ValueError("fwhm_bounds needs finite bin positions")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("fwhm_bounds needs finite densities")
+    if np.any(np.diff(x_values) <= 0.0):
+        raise ValueError("fwhm_bounds needs strictly increasing bin positions")
+    if np.any(values < 0.0):
+        raise ValueError("fwhm_bounds needs non-negative densities")
     if not np.any(values > 0.0):
         raise ValueError("fwhm_bounds needs a positive maximum density")
 
@@ -67,8 +80,18 @@ def fwhm_bounds(x: np.ndarray, density: np.ndarray) -> tuple[float, float]:
     right = peak_index
     while left > 0 and values[left] >= half_maximum:
         left -= 1
+    if values[left] >= half_maximum:
+        raise ValueError(
+            "the half-maximum band reaches the start of the range; widen the "
+            "range (for example xlim) so the peak is fully contained"
+        )
     while right < values.size - 1 and values[right] >= half_maximum:
         right += 1
+    if values[right] >= half_maximum:
+        raise ValueError(
+            "the half-maximum band reaches the end of the range; widen the "
+            "range (for example xlim) so the peak is fully contained"
+        )
 
     left_crossing = _interpolate_crossing(
         float(x_values[left]),
@@ -85,6 +108,11 @@ def fwhm_bounds(x: np.ndarray, density: np.ndarray) -> tuple[float, float]:
         half_maximum,
     )
     return left_crossing, right_crossing
+
+
+def _font_kwargs(fontsize: float | None) -> dict[str, Any]:
+    """Font size keyword for an annotation; omitted when it inherits the rc."""
+    return {} if fontsize is None else {"fontsize": float(fontsize)}
 
 
 def _interpolate_crossing(
@@ -143,13 +171,24 @@ class DistributionPlotter(PlotterProtocol):
             "colors",
         )
 
-        reference = float(np.mean(samples[0])) if spec.center != "none" else 0.0
-        offset = reference if spec.center == "reference_mean" else 0.0
-        transformed = [spec.scale * values + offset for values in samples]
+        if spec.center == "reference_mean":
+            # Every sample is measured against the first series, so that series
+            # is centred on zero by construction and the sign of `scale` alone
+            # decides the direction of the drawn shift.
+            reference = float(np.mean(samples[0]))
+            transformed = [spec.scale * (values - reference) for values in samples]
+        else:
+            transformed = [spec.scale * values for values in samples]
         means = [float(np.mean(values)) for values in transformed]
 
         centres, densities = self._histograms(transformed, spec)
-        widths = [fwhm_bounds(centres, density) for density in densities]
+        # Only the half-maximum annotation needs the width; a plain density
+        # plot must not fail because a mode sits on the edge of the range.
+        widths = (
+            [fwhm_bounds(centres, density) for density in densities]
+            if spec.show_fwhm
+            else None
+        )
         maximum = max(float(np.max(density)) for density in densities)
 
         options = base.merged(
@@ -164,9 +203,10 @@ class DistributionPlotter(PlotterProtocol):
             constrained_layout=spec.constrained_layout,
         ) as (fig, ax):
             axes = ax[0, 0]
-            for values, bounds, colour, label in zip(
-                densities, widths, colours, labels, strict=True
+            for index, (values, colour, label) in enumerate(
+                zip(densities, colours, labels, strict=True)
             ):
+                bounds = None if widths is None else widths[index]
                 self._draw_density(axes, centres, values, bounds, colour, label, spec)
             if spec.show_means:
                 for mean, colour in zip(means, colours, strict=True):
@@ -185,10 +225,22 @@ class DistributionPlotter(PlotterProtocol):
                         "shift_label compares the first two series; select at "
                         f"least two scan points (got {len(means)})"
                     )
-                self._annotate_shift(axes, means, colours, maximum, spec.shift_label)
+                self._annotate_shift(
+                    axes,
+                    means,
+                    maximum,
+                    spec.shift_label,
+                    spec.annotation_fontsize,
+                )
             if spec.width_label is not None:
+                assert widths is not None
                 self._annotate_width(
-                    axes, widths[0], maximum, colours[0], spec.width_label
+                    axes,
+                    widths[0],
+                    maximum,
+                    colours[0],
+                    spec.width_label,
+                    spec.annotation_fontsize,
                 )
 
             apply_axes_style(
@@ -221,13 +273,14 @@ class DistributionPlotter(PlotterProtocol):
         ax: Axes,
         centres: np.ndarray,
         density: np.ndarray,
-        bounds: tuple[float, float],
+        bounds: tuple[float, float] | None,
         colour: str,
         label: str | None,
         spec: DistributionSpec,
     ) -> None:
         ax.fill_between(centres, 0.0, density, color=colour, alpha=0.13)
         if spec.show_fwhm:
+            assert bounds is not None
             inside = ((centres >= bounds[0]) & (centres <= bounds[1])).tolist()
             ax.fill_between(
                 centres, 0.0, density, where=inside, color=colour, alpha=0.34
@@ -248,9 +301,9 @@ class DistributionPlotter(PlotterProtocol):
         self,
         ax: Axes,
         means: list[float],
-        colours: list[str],
         maximum: float,
         text: str,
+        fontsize: float | None,
     ) -> None:
         height = 1.04 * maximum
         ax.annotate(
@@ -268,7 +321,7 @@ class DistributionPlotter(PlotterProtocol):
             height - 0.12 * maximum,
             text,
             color=_ANNOTATION_COLOUR,
-            fontsize=13.5,
+            **_font_kwargs(fontsize),
             ha="center",
             va="bottom",
         )
@@ -280,6 +333,7 @@ class DistributionPlotter(PlotterProtocol):
         maximum: float,
         colour: str,
         text: str,
+        fontsize: float | None,
     ) -> None:
         height = 0.29 * maximum
         ax.annotate(
@@ -293,7 +347,7 @@ class DistributionPlotter(PlotterProtocol):
             height - 0.045 * maximum,
             text,
             color=colour,
-            fontsize=13.5,
+            **_font_kwargs(fontsize),
             ha="center",
             va="top",
         )

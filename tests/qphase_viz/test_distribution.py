@@ -62,18 +62,30 @@ def test_fwhm_bounds_on_a_flat_plateau():
     assert right == pytest.approx(3.5)
 
 
-def test_fwhm_bounds_at_the_array_border():
+def test_fwhm_bounds_rejects_a_band_touching_the_start():
     x = np.arange(4, dtype=float)
     density = np.asarray([3.0, 2.0, 1.0, 0.0])
 
-    left, right = fwhm_bounds(x, density)
+    with pytest.raises(ValueError, match="reaches the start of the range"):
+        fwhm_bounds(x, density)
 
-    # The peak sits on the first bin: the outward walk cannot step further
-    # left, so both interpolated crossings collapse onto the same position.
-    # The plotter still draws; a caller that needs a finite width must keep the
-    # mode inside the plotted range.
-    assert left == pytest.approx(1.5)
-    assert right == pytest.approx(1.5)
+
+def test_fwhm_bounds_rejects_a_band_touching_the_end():
+    x = np.arange(4, dtype=float)
+    density = np.asarray([0.0, 1.0, 2.0, 3.0])
+
+    with pytest.raises(ValueError, match="reaches the end of the range"):
+        fwhm_bounds(x, density)
+
+
+def test_fwhm_bounds_needs_a_fully_contained_peak():
+    # A peak inside the range but with a shoulder above half maximum at the
+    # boundary has no crossing either.
+    x = np.arange(4, dtype=float)
+    density = np.asarray([1.0, 3.0, 2.0, 2.0])
+
+    with pytest.raises(ValueError, match="reaches the end of the range"):
+        fwhm_bounds(x, density)
 
 
 def test_fwhm_bounds_rejects_degenerate_input():
@@ -85,6 +97,14 @@ def test_fwhm_bounds_rejects_degenerate_input():
         fwhm_bounds(np.arange(3.0), np.zeros(3))
     with pytest.raises(ValueError, match="one-dimensional"):
         fwhm_bounds(np.ones((2, 2)), np.ones((2, 2)))
+    with pytest.raises(ValueError, match="finite bin positions"):
+        fwhm_bounds(np.asarray([0.0, np.nan, 2.0]), np.asarray([0.0, 1.0, 0.0]))
+    with pytest.raises(ValueError, match="finite densities"):
+        fwhm_bounds(np.arange(3.0), np.asarray([0.0, np.inf, 0.0]))
+    with pytest.raises(ValueError, match="strictly increasing"):
+        fwhm_bounds(np.asarray([0.0, 1.0, 1.0]), np.asarray([0.0, 1.0, 0.0]))
+    with pytest.raises(ValueError, match="non-negative densities"):
+        fwhm_bounds(np.arange(3.0), np.asarray([-1.0, 1.0, 0.0]))
 
 
 # --- configuration ---------------------------------------------------------
@@ -134,6 +154,9 @@ def _capture(monkeypatch, tmp_path: Path) -> dict[str, Any]:
         captured["lines"] = ax.lines
         captured["collections"] = ax.collections
         captured["texts"] = [text.get_text() for text in ax.texts]
+        captured["text_sizes"] = {
+            text.get_text(): float(text.get_fontsize()) for text in ax.texts
+        }
         captured["figure"] = fig
         return tmp_path / "stub.png"
 
@@ -257,9 +280,10 @@ def test_positive_scale_keeps_the_series_direction(tmp_path, monkeypatch):
     means = _vertical_markers(captured["axes"])
     reference = float(np.mean(raw[0][np.isfinite(raw[0])]))
     observed = float(np.mean(raw[2][np.isfinite(raw[2])]))
-    # samples = reference + value here: the raw ordering survives the transform.
-    assert means[0] == pytest.approx(reference + reference, abs=2e-3)
-    assert means[1] == pytest.approx(reference + observed, abs=2e-3)
+    # samples = value - reference here: the reference still lands on zero and
+    # the ordering of the raw series survives.
+    assert means[0] == pytest.approx(0.0, abs=2e-3)
+    assert means[1] == pytest.approx(observed - reference, abs=2e-3)
     assert means[1] > means[0]
 
 
@@ -373,6 +397,21 @@ def test_default_colours_come_from_the_palette(tmp_path, monkeypatch):
     assert PALETTE["sde"] in colours
 
 
+def test_reference_series_always_lands_on_zero(tmp_path, monkeypatch):
+    for scale in (-1.0, 1.0, 2.5):
+        captured = _capture(monkeypatch, tmp_path)
+        _plotter(
+            scan_indices=[0, 3],
+            bins=30,
+            bin_width=None,
+            center="reference_mean",
+            scale=scale,
+            show_means=True,
+        ).plot(distribution_bundle(), tmp_path, "png")
+        means = _vertical_markers(captured["axes"])
+        assert means[0] == pytest.approx(0.0, abs=1e-9), scale
+
+
 # --- annotations and styling ----------------------------------------------
 
 
@@ -390,6 +429,108 @@ def test_fwhm_and_mean_markers_are_drawn(tmp_path, monkeypatch):
     ax = captured["axes"]
     # Two half-maximum bounds plus one mean.
     assert len(_vertical_markers(ax)) == 3
+
+
+def test_single_bin_histogram_draws_without_fwhm(tmp_path):
+    """A one-bin histogram is plottable; only the width annotation needs more."""
+    files = _plotter(
+        scan_indices=[0],
+        bin_width=0.1,
+        xlim=(-0.12, -0.03),
+    ).plot(distribution_bundle(), tmp_path, "png")
+
+    assert files[0].is_file()
+    assert files[0].stat().st_size > 0
+
+
+def test_single_bin_histogram_rejects_fwhm(tmp_path):
+    with pytest.raises(ValueError, match="at least two bins"):
+        _plotter(
+            scan_indices=[0],
+            bin_width=0.1,
+            xlim=(-0.12, -0.03),
+            show_fwhm=True,
+        ).plot(distribution_bundle(), tmp_path, "png")
+
+
+def test_boundary_peak_without_fwhm_still_draws(tmp_path):
+    """A peak at the edge of the range is fine unless half-max is requested."""
+    files = _plotter(
+        scan_indices=[0],
+        bins=10,
+        bin_width=None,
+        xlim=(-0.1, -0.09),
+    ).plot(distribution_bundle(), tmp_path, "png")
+
+    assert files[0].is_file()
+
+
+def test_boundary_peak_with_fwhm_is_an_error(tmp_path):
+    with pytest.raises(ValueError, match="reaches the start of the range"):
+        _plotter(
+            scan_indices=[0],
+            bins=10,
+            bin_width=None,
+            xlim=(-0.1, -0.09),
+            show_fwhm=True,
+        ).plot(distribution_bundle(), tmp_path, "png")
+
+
+def test_annotation_fontsize_inherits_or_overrides(tmp_path, monkeypatch):
+    captured = _capture(monkeypatch, tmp_path)
+    _plotter(
+        scan_indices=[0, 2],
+        bins=20,
+        bin_width=None,
+        show_means=True,
+        show_fwhm=True,
+        shift_label="shift",
+        width_label="width",
+    ).plot(distribution_bundle(), tmp_path, "png")
+    # No explicit size: the annotation inherits font.size from the style.
+    assert captured["text_sizes"]["shift"] == pytest.approx(12.0)
+    assert captured["text_sizes"]["width"] == pytest.approx(12.0)
+
+    captured = _capture(monkeypatch, tmp_path)
+    _plotter(
+        scan_indices=[0, 2],
+        bins=20,
+        bin_width=None,
+        show_means=True,
+        show_fwhm=True,
+        shift_label="shift",
+        width_label="width",
+        annotation_fontsize=9.0,
+    ).plot(distribution_bundle(), tmp_path, "png")
+    assert captured["text_sizes"]["shift"] == pytest.approx(9.0)
+    assert captured["text_sizes"]["width"] == pytest.approx(9.0)
+
+
+def test_window_normalisation_uses_the_full_sample_count(tmp_path, monkeypatch):
+    """A clipped window keeps the density of the complete distribution."""
+    captured = _capture(monkeypatch, tmp_path)
+    dataset = distribution_dataset()
+    raw = np.asarray(dataset.handle("estimate").materialize(), dtype=float)
+    finite = raw[1][np.isfinite(raw[1])]
+    lower, upper, bins = -0.02, 0.0, 10
+
+    _plotter(
+        scan_indices=[1],
+        bins=bins,
+        bin_width=None,
+        xlim=(lower, upper),
+    ).plot(distribution_bundle(), tmp_path, "png")
+
+    centres, density = _line_x(captured["axes"], 0), _line_y(captured["axes"], 0)
+    width = (upper - lower) / bins
+    edges = np.linspace(lower, upper, bins + 1)
+    counts, _ = np.histogram(finite, bins=edges)
+    # Denominator is every finite sample, not just the ones inside the window.
+    expected = counts / (finite.size * width)
+    np.testing.assert_allclose(density, expected, rtol=1e-12)
+    # A clipped distribution therefore integrates to less than one.
+    assert float(np.sum(density) * width) < 1.0
+    assert len(centres) == bins
 
 
 def test_shift_and_width_labels_are_drawn(tmp_path, monkeypatch):

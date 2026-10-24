@@ -178,7 +178,10 @@ visualizer:
 were already computed upstream — it never computes an estimate itself. The
 sample variable holds `value[realization]` or `value[scan, realization]`;
 selecting several scan points draws one curve per point and never pools them.
-`center`/`scale` compose the transform `scale * value + center`:
+`center` picks the origin and `scale` the sign: `center: none` draws
+`scale * value`, `center: reference_mean` draws `scale * (value - reference)`
+with the first selected series' mean as the reference, so that series always
+lands on zero:
 
 ```yaml
 visualizer:
@@ -187,18 +190,23 @@ visualizer:
       - value_variable: estimate
         scan_parameter: omega
         scan_indices: [0, 10]          # or scan_coordinates + scan_tolerance
-        center: reference_mean         # subtract the first series' mean
-        scale: -1                      # reference - value, as in the source plot
+        center: reference_mean          # first series' mean becomes zero
+        scale: -1                       # reference - value, as in the source plot
         bin_width: 0.0001              # needs xlim for fixed edges; or "bins: 40"
         labels: [reference, perturbed]
         show_means: true
         show_fwhm: true
         shift_label: signal shift      # needs show_means and two series
         width_label: noise width       # needs show_fwhm
+        annotation_fontsize: 13.5      # None inherits the style font size
 ```
 
-The histogram is normalised as `counts / (N * bin_width)`, so each curve
-integrates to one over the bins that contain samples. `fwhm_bounds` is a pure
+The histogram is normalised as `counts / (N * bin_width)` with `N` the full
+finite sample count, so a curve integrates to one over the bins that contain
+samples; when `xlim` clips the distribution the drawn window holds less than
+one and the curve keeps the height of the complete distribution. The
+half-maximum width (`show_fwhm`) needs the peak fully inside the range and
+raises otherwise — it never extrapolates a width from the array edge. `fwhm_bounds` is a pure
 `qphase_viz.plotters.distribution` helper: peak, half maximum, linear crossing.
 `xticks`/`xticklabels` and `hide_yticks` reproduce compact panels; colours
 default to the semantic palette and can be overridden per series.
