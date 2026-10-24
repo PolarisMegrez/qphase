@@ -9,6 +9,10 @@ from .finite_delay_carrier import (
 )
 from .frequency import HamiltonianSpectrum, RayleighFrequency
 from .jacobian import JacobianSpectrum
+from .nonlinear_reconstruction import (
+    NonlinearReconstruction,
+    NonlinearReconstructionConfig,
+)
 from .observable_scaling import ObservableScaling, ObservableScalingConfig
 from .petermann import PetermannSpectrum
 from .physicality import Physicality
@@ -25,6 +29,8 @@ __all__ = [
     "CAMFiniteDelayCarrierConfig",
     "HamiltonianSpectrum",
     "JacobianSpectrum",
+    "NonlinearReconstruction",
+    "NonlinearReconstructionConfig",
     "ObservableScaling",
     "ObservableScalingConfig",
     "Physicality",
