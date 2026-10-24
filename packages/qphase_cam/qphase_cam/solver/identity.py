@@ -6,11 +6,14 @@ them a slot:
 ``search identity``
     What design was searched: the model (name plus the scalar parameters that the
     search does *not* sweep), the target and its order, the control bounds and
-    sampling, the perturbation spec and the strategy mode.
+    sampling, the perturbation spec and the strategy mode. Both the control names
+    and the swept model parameters of the job's scan are excluded, because the
+    search does not fix them.
 ``case identity``
-    One search context: the search identity plus the control values of this
-    solve call. Two grid points of the same campaign therefore differ while
-    sharing one search identity.
+    One search context: the search identity plus the case values of this solve
+    call — the control values and the swept model parameters' values. Two grid
+    points of the same campaign therefore differ while sharing one search
+    identity.
 ``candidate identity``
     One physical candidate: the model, target/order, controls and the candidate
     state, preferring the verified decimal values when the solver produced them.
@@ -38,7 +41,7 @@ than a precision-independent one.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -125,15 +128,21 @@ def search_scope(
     controls: Mapping[str, Any],
     perturbation: Mapping[str, Any],
     strategy: str,
+    swept_parameters: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Return the search-design payload of one campaign.
 
-    The swept parameters (the control names) are **not** part of the search
-    scope: they are what the case identity adds, so every point of one campaign
-    shares the search identity.
+    The parameters the search varies are **not** part of the search scope: the
+    control names (what the solver solves for) and ``swept_parameters`` (the model
+    scalar parameters the job scans over) are what the case identity adds, so every
+    point of one campaign shares the search identity. Every other scalar model
+    parameter is fixed design input and stays in the scope; array-valued parameters
+    remain payload and never enter it.
     """
     params = _scalar_parameters(model)
     for name in controls:
+        params.pop(str(name), None)
+    for name in swept_parameters:
         params.pop(str(name), None)
     return {
         "scheme": IDENTITY_SCHEME,

@@ -514,10 +514,14 @@ def _path_entries(
         )
     entries: list[GenerationPathAudit] = []
     for item in raw:
-        path = item.get("path") or item.get("method") or item.get("seed_source")
+        # The path is the producer's explicit generation identity (a reduction chart
+        # or the full bordered path). Falling back to a method or seed-source name
+        # would let two different charts of one state collapse into one path.
+        path = item.get("path")
         if not path:
             raise ValueError(
-                "a generation path entry carries no path/method/seed_source id"
+                "a generation path entry carries no explicit path id; a method or "
+                "seed-source name is not a generation path"
             )
         entries.append(
             GenerationPathAudit(

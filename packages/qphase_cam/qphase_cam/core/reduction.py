@@ -96,6 +96,7 @@ class FractionFreeScalarReduction:
         control_names: tuple[str, ...],
         base_params: dict[str, Any],
         retained_scale: float = 1.0,
+        chart_id: str = "",
     ) -> None:
         plan = materialized.plan
         if len(plan.retained_symbols) != 1 or len(materialized.numerators) != 1:
@@ -104,6 +105,7 @@ class FractionFreeScalarReduction:
             )
         self.materialized = materialized
         self.plan = plan
+        self.chart_id = str(chart_id)
         self.order = order
         self.q = plan.retained_symbols[0]
         self.parameter_specs = tuple(plan.dynamics.parameter_spec)
@@ -416,12 +418,14 @@ class CondensedScalarReduction:
         control_names: tuple[str, ...],
         base_params: dict[str, Any],
         retained_scale: float = 1.0,
+        chart_id: str = "",
     ) -> None:
         if len(plan.retained_symbols) != 1 or len(plan.retained_residual) != 1:
             raise BifurcationCapabilityError(
                 "condensed bifurcation search requires a scalar reduction"
             )
         self.plan = plan
+        self.chart_id = str(chart_id)
         self.order = order
         self.q = plan.retained_symbols[0]
         self.y = tuple(plan.eliminated_symbols)
@@ -881,3 +885,23 @@ def scaled_distance(left: np.ndarray, right: np.ndarray, scales: np.ndarray) -> 
 
 def finite_vector(value: Any) -> bool:
     return all(isfinite(float(item)) for item in np.asarray(value).reshape(-1))
+
+
+def reduction_path(reduction: Any) -> str:
+    """Return the stable generation path of one scalar reduction.
+
+    The path is ``<method>:<chart_id>``: the method names the reduction kind and the
+    qpsgen chart id (``ret:<ids>|eq:<equations>``) names the equation/state partition
+    the reduction was built from. Two charts that retain the same state therefore keep
+    two distinct paths, while re-running the same chart reproduces the same path.
+
+    A reduction without a chart identity is an error: a bare method name or a slot
+    index would silently merge different charts into one audit path.
+    """
+    chart = str(getattr(reduction, "chart_id", "") or "")
+    if not chart:
+        raise BifurcationCapabilityError(
+            f"reduction {getattr(reduction, 'method', '?')!r} carries no chart "
+            "identity, so its generation path cannot be named"
+        )
+    return f"{reduction.method}:{chart}"

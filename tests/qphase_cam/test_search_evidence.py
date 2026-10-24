@@ -36,6 +36,7 @@ from qphase_cam.evidence import (
     SearchAuditFragment,
     fragment_from_bifurcation_metadata,
 )
+from qphase_cam.evidence_assembler import EvidenceAssembler
 from qphase_cam.solver.bifurcation import (
     BifurcationSolver,
     BifurcationSolverConfig,
@@ -548,6 +549,212 @@ def test_fragment_rejects_inconsistent_evidence(overrides, match):
 def test_fragment_requires_complete_provenance(overrides, match):
     with pytest.raises(ValidationError, match=match):
         _fragment(**overrides)
+
+
+# --- generation paths ------------------------------------------------------
+
+_CHART_A = "reduced_condensed:ret:r_diag_0|eq:0,1,2"
+_CHART_B = "reduced_condensed:ret:r_diag_0|eq:0,1,3"
+
+
+def _reduction_entry(path, *, trials, generated, near_misses=0, rejected=0):
+    return {
+        "path": path,
+        "state_id": "r_diag_0",
+        "method": "reduced_condensed",
+        "seed_source": "brentq_scan",
+        "physical_status": "checked",
+        "physical_check_stage": "prefilter",
+        "generation_trial_count": trials,
+        "generated_candidate_count": generated,
+        "prefilter_pass_count": generated,
+        "prefilter_rejected_count": 0,
+        "prefilter_rejected": {},
+        "refinement_start_count": generated,
+        "refinement_duplicate_count": 0,
+        "accepted_count": 0,
+        "rejected_count": rejected,
+        "rejected_by_reason": {"search_residual": rejected} if rejected else {},
+        "seed_skips": {"no_sign_change": trials - generated},
+        "seed_truncated": False,
+        "workload": {"brent_interval_count": trials},
+    }
+
+
+def _multi_chart_metadata(reductions, near_misses):
+    totals = {
+        "generated_candidate_count": 12,
+        "prefilter_pass_count": 5,
+        "prefilter_rejected_count": 7,
+        "prefilter_rejected": {"prefilter": 7},
+        "refinement_start_count": 5,
+        "refinement_duplicate_count": 0,
+        "accepted_count": 0,
+        "rejected_count": 5,
+        "rejected_by_reason": {"search_residual": 5},
+        "seed_skips": {"no_sign_change": 40},
+        "seed_truncated": False,
+        "workload": {"brent_interval_count": 52},
+        "near_miss_saved": len(near_misses),
+        "near_miss_dropped": 5 - len(near_misses),
+        "unique_candidate_count": 0,
+    }
+    return {
+        "audit": {
+            "schema": AUDIT_SCHEMA,
+            "physical_status": "checked",
+            "reductions": reductions,
+            "totals": totals,
+            "near_misses": near_misses,
+            "near_miss_selection": {},
+        },
+        "accepted_candidate_identities": [],
+        "accepted_start_identities": [],
+        "perturbation_parameter": "gamma",
+        "perturbation_side": "both",
+        "control_names": ("gamma",),
+        "domain_coverage": {
+            "control_bounds": [[-1.0, 0.0]],
+            "control_sampling": {"gamma": "linear"},
+        },
+        "coverage": {},
+        "strategy": "auto",
+    }
+
+
+def test_two_charts_of_one_state_are_two_paths_with_their_own_trials():
+    """The bug_report payload: same method/state_id, two charts, two paths."""
+    near_misses = [
+        {
+            "path": _CHART_A,
+            "reduction": "r_diag_0",
+            "seed_source": "brentq_scan",
+            "controls": {"gamma": -0.25},
+            "rejection_reasons": ("search_residual",),
+            "search_residual": 1e-4,
+            "full_residual": 1e-6,
+            "min_state_eigenvalue": 0.5,
+        },
+        {
+            "path": _CHART_B,
+            "reduction": "r_diag_0",
+            "seed_source": "brentq_scan",
+            "controls": {"gamma": -0.75},
+            "rejection_reasons": ("search_residual",),
+            "search_residual": 2e-4,
+            "full_residual": 2e-6,
+            "min_state_eigenvalue": 0.5,
+        },
+    ]
+    metadata = _multi_chart_metadata(
+        [
+            _reduction_entry(
+                _CHART_A, trials=30, generated=6, near_misses=1, rejected=3
+            ),
+            _reduction_entry(
+                _CHART_B, trials=22, generated=6, near_misses=1, rejected=2
+            ),
+        ],
+        near_misses,
+    )
+    fragment = fragment_from_bifurcation_metadata(
+        metadata,
+        case_identity="case:charts",
+        search_identity="search:charts",
+        accepted_candidate_identities=[],
+        backend="numpy",
+        dtype="complex128",
+    )
+    assert [entry.path for entry in fragment.paths] == [_CHART_A, _CHART_B]
+    # Per-path trials stay per path: nothing is pooled or dropped.
+    assert [entry.generation_trial_count for entry in fragment.paths] == [30, 22]
+    assert [entry.generated_candidate_count for entry in fragment.paths] == [6, 6]
+    # Every retained near miss names the chart it came from, so path_audit and
+    # near-miss rows can be joined.
+    assert [record.path for record in fragment.near_misses] == [_CHART_A, _CHART_B]
+
+
+def test_the_evidence_product_keeps_the_chart_of_each_near_miss():
+    """path_audit and near_miss_path name the same charts in the product."""
+    near_misses = [
+        {
+            "path": path,
+            "reduction": "r_diag_0",
+            "seed_source": "brentq_scan",
+            "controls": {"gamma": value},
+            "rejection_reasons": ("search_residual",),
+            "search_residual": residual,
+            "full_residual": residual / 100.0,
+            "min_state_eigenvalue": 0.5,
+        }
+        for path, value, residual in (
+            (_CHART_A, -0.25, 1e-4),
+            (_CHART_B, -0.75, 2e-4),
+        )
+    ]
+    metadata = _multi_chart_metadata(
+        [
+            _reduction_entry(_CHART_A, trials=30, generated=6, rejected=3),
+            _reduction_entry(_CHART_B, trials=22, generated=6, rejected=2),
+        ],
+        near_misses,
+    )
+    fragment = fragment_from_bifurcation_metadata(
+        metadata,
+        case_identity="case:charts",
+        search_identity="search:charts",
+        accepted_candidate_identities=[],
+        backend="numpy",
+        dtype="complex128",
+    )
+    product = EvidenceAssembler().from_fragments(
+        [fragment],
+        artifact_id="phase10g2b-charts",
+        provenance={"engine": "cam", "task": "search", "solver": "bifurcation"},
+    )
+    path_audit = json.loads(
+        str(np.asarray(product.handle("path_audit").materialize())[0])
+    )
+    near_miss_path = [
+        str(value)
+        for value in np.asarray(product.handle("near_miss_path").materialize())
+    ]
+    assert [entry["path"] for entry in path_audit] == [_CHART_A, _CHART_B]
+    assert near_miss_path == [_CHART_A, _CHART_B]
+
+
+def test_a_duplicated_generation_path_is_still_rejected():
+    metadata = _multi_chart_metadata(
+        [
+            _reduction_entry(_CHART_A, trials=30, generated=6, rejected=3),
+            _reduction_entry(_CHART_A, trials=22, generated=6, rejected=2),
+        ],
+        [],
+    )
+    with pytest.raises(ValidationError, match="path entries must be unique"):
+        fragment_from_bifurcation_metadata(
+            metadata,
+            case_identity="case:charts",
+            search_identity="search:charts",
+            accepted_candidate_identities=[],
+            backend="numpy",
+            dtype="complex128",
+        )
+
+
+def test_a_reduction_entry_without_a_path_is_not_named_by_its_method():
+    entry = _reduction_entry(_CHART_A, trials=30, generated=6, rejected=3)
+    entry.pop("path")
+    metadata = _multi_chart_metadata([entry], [])
+    with pytest.raises(ValueError, match="carries no explicit path id"):
+        fragment_from_bifurcation_metadata(
+            metadata,
+            case_identity="case:charts",
+            search_identity="search:charts",
+            accepted_candidate_identities=[],
+            backend="numpy",
+            dtype="complex128",
+        )
 
 
 # --- from-metadata mapping -------------------------------------------------

@@ -51,7 +51,7 @@ def auto_run():
     return output
 
 
-def _scope(model=None, *, strategy="auto", low=-1.0, high=0.0):
+def _scope(model=None, *, strategy="auto", low=-1.0, high=0.0, swept=()):
     model = model or TwoModeFoldModel()
     return search_scope(
         model,
@@ -60,6 +60,7 @@ def _scope(model=None, *, strategy="auto", low=-1.0, high=0.0):
         controls={"gamma": _Control(low, high)},
         perturbation={"parameter": "gamma", "scale": 1.0, "side": "both"},
         strategy=strategy,
+        swept_parameters=swept,
     )
 
 
@@ -94,6 +95,35 @@ def test_search_identity_tracks_the_design():
     other = TwoModeFoldModel()
     other.params = {**other.params, "Gamma": 2.0}
     assert base != search_identity(_scope(other))
+
+
+def test_search_identity_ignores_the_swept_scan_parameters():
+    """A scan axis is case context: it leaves the search design unchanged."""
+    plain = search_identity(_scope())
+    swept = search_identity(_scope(swept=("kappa",)))
+    assert swept == search_identity(_scope(swept=("kappa",)))
+    assert swept != plain
+    # The swept parameter is gone from the design but the fixed ones stay.
+    assert "kappa" not in _scope(swept=("kappa",))["params"]
+    assert "kappa" in _scope()["params"]
+    assert "Gamma" in _scope(swept=("kappa",))["params"]
+    other = TwoModeFoldModel()
+    other.params = {**other.params, "Gamma": 2.0}
+    assert swept != search_identity(_scope(other, swept=("kappa",)))
+
+
+def test_a_scan_case_differs_only_by_its_swept_values():
+    """One search, one case per scan point: the case hash carries the scan value."""
+    search = search_identity(_scope(swept=("kappa",)))
+    left = case_identity(search, {"gamma": -1.0, "kappa": 1.0})
+    right = case_identity(search, {"gamma": -1.0, "kappa": 1.1})
+    assert left != right
+    assert left == case_identity(search, {"gamma": -1.0, "kappa": 1.0})
+    # A non-swept design change still separates the searches.
+    changed = search_identity(_scope(low=-2.0, swept=("kappa",)))
+    assert changed != search and left != case_identity(
+        changed, {"gamma": -1.0, "kappa": 1.0}
+    )
 
 
 def test_case_identity_tracks_the_control_values():
@@ -313,3 +343,54 @@ def test_a_different_case_reuses_the_candidate_identity(auto_run):
     assert set(other.metadata["accepted_start_identities"]).isdisjoint(
         auto_run.metadata["accepted_start_identities"]
     )
+
+
+def test_a_swept_scan_parameter_enters_the_case_not_the_search():
+    """The solver's own scope: one search identity, one case identity per point."""
+
+    def run(kappa, *, gamma=None):
+        model = TwoModeFoldModel()
+        model.params = {**model.params, "kappa": kappa}
+        if gamma is not None:
+            model.params["Gamma"] = gamma
+        return _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).search(
+            model, NumpyBackend(), swept_parameters=("kappa",)
+        )
+
+    left = run(1.0)
+    right = run(1.1)
+    repeat = run(1.0)
+    assert left.metadata["search_identity"] == right.metadata["search_identity"]
+    assert left.metadata["case_identity"] != right.metadata["case_identity"]
+    assert left.metadata["case_identity"] == repeat.metadata["case_identity"]
+    # The scan value is not search design, but a fixed parameter still is.
+    design = run(1.0, gamma=2.0)
+    assert design.metadata["search_identity"] != left.metadata["search_identity"]
+    # A single unscanned call keeps the un-swept scope: kappa stays in the design.
+    plain = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).search(
+        TwoModeFoldModel(), NumpyBackend()
+    )
+    assert plain.metadata["search_identity"] != left.metadata["search_identity"]
+
+
+def test_an_invalid_swept_case_value_fails_instead_of_being_ignored():
+    """A swept name must be a finite scalar of this model, never a skipped axis."""
+    solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
+    with pytest.raises(ValueError, match="missing from the model parameters"):
+        solver.search(
+            TwoModeFoldModel(), NumpyBackend(), swept_parameters=("not_a_parameter",)
+        )
+
+    model = TwoModeFoldModel()
+    model.params = {**model.params, "kappa": float("nan")}
+    solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
+    with pytest.raises(ValueError, match="must be finite"):
+        solver.search(model, NumpyBackend(), swept_parameters=("kappa",))
+
+    # An array-valued case value cannot be a scan point: the scope refuses it
+    # (search() also refuses any array model parameter before that).
+    array_model = TwoModeFoldModel()
+    array_model.params = {**array_model.params, "kappa": np.asarray([1.0, 2.0])}
+    solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
+    with pytest.raises(ValueError, match="must be a scalar"):
+        solver._scope_identities(array_model, swept_parameters=("kappa",))

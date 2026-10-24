@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import time
@@ -20,10 +21,15 @@ from qphase_cam.core.reduction import (
     CondensedScalarReduction,
     ReductionDiagnostics,
     SeedGenerationStats,
+    reduction_path,
 )
 from qphase_cam.data import build_candidate_product, cam_bundle
 from qphase_cam.engine import Engine, EngineConfig
-from qphase_cam.evidence import SearchAuditFragment
+from qphase_cam.errors import BifurcationCapabilityError
+from qphase_cam.evidence import (
+    SearchAuditFragment,
+    fragment_from_bifurcation_metadata,
+)
 from qphase_cam.postprocessor.base import CAMAnnotationContext
 from qphase_cam.postprocessor.candidates import candidate_view
 from qphase_cam.postprocessor.local_response import LocalResponseValidation
@@ -494,8 +500,8 @@ def test_engine_packs_tagged_bifurcation_output_and_passes_input(
                 metadata={"control_names": ("control",)},
             )
 
-        def search(self, model, backend, *, data=None):
-            del model, backend
+        def search(self, model, backend, *, data=None, swept_parameters=()):
+            del model, backend, swept_parameters
             assert data is upstream
             return CAMBifurcationOutput(
                 candidates=[
@@ -1232,6 +1238,7 @@ def test_refine_records_multi_label_near_misses():
         reporter=None,
         near_misses=store,
         seed_source="reduction_roots",
+        path="reduced_fraction_free:ret:q|eq:0,1",
     )
     assert accepted == []
     assert (rejected_count, dedup_skipped) == (1, 0)
@@ -1241,7 +1248,7 @@ def test_refine_records_multi_label_near_misses():
     records = store.finalize()
     assert len(records) == 1
     record = records[0]
-    assert record["path"] == "reduced"
+    assert record["path"] == "reduced_fraction_free:ret:q|eq:0,1"
     assert record["reduction"] == "q"
     assert record["seed_source"] == "reduction_roots"
     assert record["controls"] == {"gamma": pytest.approx(-0.5)}
@@ -1540,3 +1547,73 @@ def test_cases_csv_exposes_truncation_consumer_and_materialization_failures():
         "error": "not polynomial",
     }
     assert search["materialization_failures"][1]["error"] == "bad denominator"
+
+# --- generation paths ------------------------------------------------------
+
+
+def _fragment_of(output, *, plugins=None):
+    """Build the case fragment of one solver output, as ``_fragment`` does."""
+    metadata = output.metadata
+    return fragment_from_bifurcation_metadata(
+        metadata,
+        case_identity=metadata["case_identity"],
+        search_identity=metadata["search_identity"],
+        accepted_candidate_identities=metadata.get("accepted_candidate_identities", ()),
+        accepted_start_identities=metadata.get("accepted_start_identities", ()),
+        backend="numpy",
+        dtype="complex128",
+        plugins=plugins
+        or {
+            "discovery": "SeedDiscovery",
+            "classifier": "ScalingSignatureClassifier",
+            "target": "EquilibriumMultiplicity",
+            "strategy": "AutoStrategy",
+        },
+    )
+
+
+def test_a_reduction_names_its_generation_path_by_chart():
+    """The audit path is ``<method>:<qpsgen chart id>``, not a bare method name."""
+    solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
+    adapter = QPSGenDynamicsAdapter.from_model(TwoModeFoldModel())
+    reductions, _ = solver._select_reductions(adapter)
+    assert reductions, "the fold model must provide a regular reduction"
+    expected = [reduction_path(reduction) for reduction in reductions]
+    for reduction in reductions:
+        assert reduction.chart_id.startswith("ret:")
+        assert "|eq:" in reduction.chart_id
+        assert reduction_path(reduction) == f"{reduction.method}:{reduction.chart_id}"
+
+    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).search(
+        TwoModeFoldModel(), NumpyBackend()
+    )
+    audit = output.metadata["audit"]
+    assert [entry["path"] for entry in audit["reductions"]] == expected
+    assert [entry["path"] for entry in output.metadata["reduction_runs"]] == expected
+    # The full bordered path keeps its own name.
+    assert output.metadata["full_fallback"]["audit"]["path"] == "full"
+    fragment = _fragment_of(output)
+    assert [entry.path for entry in fragment.paths] == [*expected, "full"]
+
+
+def test_a_duplicated_chart_is_an_error_not_a_second_entry(monkeypatch):
+    solver = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)})
+    adapter = QPSGenDynamicsAdapter.from_model(TwoModeFoldModel())
+    reductions, _ = solver._select_reductions(adapter)
+    first = reductions[0]
+    twin = copy.copy(first)
+    twin.chart_id = first.chart_id
+    monkeypatch.setattr(
+        solver, "_select_reductions", lambda adapter: ((first, twin), {})
+    )
+    with pytest.raises(BifurcationCapabilityError, match="duplicated generation chart"):
+        solver.search(TwoModeFoldModel(), NumpyBackend())
+
+
+def test_a_reduction_without_a_chart_cannot_name_a_path():
+    reduction = SimpleNamespace(method="reduced_condensed", chart_id="")
+    with pytest.raises(BifurcationCapabilityError, match="no chart identity"):
+        reduction_path(reduction)
+    named = SimpleNamespace(method="reduced_condensed", chart_id="ret:r|eq:0")
+    assert reduction_path(named) == "reduced_condensed:ret:r|eq:0"
+

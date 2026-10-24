@@ -15,7 +15,7 @@ from qphase_cam.evidence import (
     REJECTION_COUNTER_SEMANTICS,
 )
 from qphase_cam.result import CAMResult
-from qphase_cam.solver.base import CAMSolver, CAMSolverConfig
+from qphase_cam.solver.base import CAMSolver, CAMSolverConfig, CAMSolveRequest
 from qphase_cam.solver.bifurcation import (
     BifurcationSolver,
     BifurcationSolverConfig,
@@ -166,8 +166,10 @@ def _search_double(controls, order, search_impl) -> BifurcationSolver:
             )
             self._reduction_cache = {}
 
-        def search(self, model, backend, *, data=None, context=None):
-            del backend, data, context
+        def search(
+            self, model, backend, *, data=None, context=None, swept_parameters=()
+        ):
+            del backend, data, context, swept_parameters
             return search_impl(model)
 
     return Double()
@@ -217,6 +219,156 @@ def test_cam_engine_preserves_multidimensional_scan_shape():
         np.asarray(product.handle("parameter.gamma_b").materialize()),
         [0.2, 0.3, 0.4, 0.2, 0.3, 0.4],
     )
+
+
+def _fold_search_solver() -> BifurcationSolver:
+    """Return a real auto-strategy search over one fold control."""
+    return BifurcationSolver(
+        BifurcationSolverConfig(
+            controls={"gamma": ControlRange(min=-1.0, max=0.0)},
+            perturbation=PerturbationConfig(parameter="gamma"),
+        ),
+        subplugins={
+            "target": EquilibriumMultiplicity(
+                EquilibriumMultiplicityConfig(order=2)
+            ),
+            "strategy": AutoStrategy(ReductionStrategyConfig()),
+            "discovery": SeedDiscovery(SeedDiscoveryConfig()),
+            "classifier": ScalingSignatureClassifier(ScalingSignatureConfig()),
+        },
+    )
+
+
+def test_a_scan_search_keeps_one_search_identity_and_a_case_per_point():
+    """A scan axis is case context: one search task, one case identity per point."""
+    from .test_bifurcation import TwoModeFoldModel
+
+    class _Stage:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        @staticmethod
+        def update(*args, **kwargs):
+            del args, kwargs
+
+    class _Reporter:
+        """The progress calls the solver and the scan both make."""
+
+        @staticmethod
+        def status(*args, **kwargs):
+            del args, kwargs
+
+        @staticmethod
+        def update(*args, **kwargs):
+            del args, kwargs
+
+        @staticmethod
+        def advance(*args, **kwargs):
+            del args, kwargs
+
+        @staticmethod
+        def stage(*args, **kwargs):
+            del args, kwargs
+            return _Stage()
+
+    model = TwoModeFoldModel()
+    grid = ScanSpec.model_validate(
+        {
+            "combine": "zipped",
+            "axes": {
+                "kappa": {
+                    "target": "model.two_mode_fold.kappa",
+                    "values": [1.0, 1.1],
+                }
+            },
+        }
+    ).compile()
+    bundle = Engine(
+        EngineConfig(task="search"),
+        plugins={
+            "backend": NumpyBackend(),
+            "model": model,
+            "cam_solver": _fold_search_solver(),
+        },
+    ).run(
+        context=SimpleNamespace(
+            parameter_grid=grid,
+            progress=_Reporter(),
+            checkpoints=SimpleNamespace(enabled=False),
+            cancellation=SimpleNamespace(raise_if_cancelled=lambda: None),
+        )
+    )
+
+    evidence = bundle.require("evidence")
+    search_ids = {
+        str(value)
+        for value in np.asarray(evidence.handle("search_identity").materialize())
+    }
+    case_ids = [
+        str(value)
+        for value in np.asarray(evidence.handle("case_identity").materialize())
+    ]
+    assert evidence.attributes["case_count"] == 2
+    # This is the regression: the evidence assembler used to reject the mixed
+    # per-case search identities and produce no product at all.
+    assert len(search_ids) == 1
+    assert len(set(case_ids)) == 2
+    assert all(value.startswith("cam:search:") for value in search_ids)
+    assert all(value.startswith("cam:case:") for value in case_ids)
+
+    # The candidate product keeps the per-case scope of every candidate.
+    candidates = bundle.require("candidates")
+    case_metadata = [
+        json.loads(str(value))
+        for value in np.asarray(candidates.handle("case_metadata").materialize())
+    ]
+    assert {entry["case_identity"] for entry in case_metadata} == set(case_ids)
+    offsets = np.asarray(candidates.handle("candidate_offsets").materialize())
+    assert offsets.shape == (3,)
+    assert int(offsets[0]) == 0
+    # Per-path names survive: every audit path is the chart or the full search.
+    path_audit = [
+        json.loads(str(value))
+        for value in np.asarray(evidence.handle("path_audit").materialize())
+    ]
+    for entries in path_audit:
+        for entry in entries:
+            assert entry["path"] == "full" or "|eq:" in entry["path"]
+
+
+def test_one_scan_point_reproduces_its_case_identity():
+    """The same scan value gives the same case identity on a rerun."""
+    from .test_bifurcation import TwoModeFoldModel
+
+    def identity(kappa: float) -> tuple[str, str]:
+        grid = ScanSpec.model_validate(
+            {
+                "combine": "zipped",
+                "axes": {
+                    "kappa": {
+                        "target": "model.two_mode_fold.kappa",
+                        "values": [kappa],
+                    }
+                },
+            }
+        ).compile()
+        fragment = _fold_search_solver().solve(
+            CAMSolveRequest(
+                task="search",
+                model=TwoModeFoldModel(),
+                backend=NumpyBackend(),
+                parameter_grid=grid,
+            )
+        )
+        return fragment.audits[0].search_identity, fragment.audits[0].case_identity
+
+    left = identity(1.0)
+    assert left == identity(1.0)
+    assert left[0] == identity(1.1)[0]
+    assert left[1] != identity(1.1)[1]
 
 
 def test_cam_dataset_point_view_and_sharded_storage(tmp_path):

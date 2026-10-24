@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 from collections import Counter
+from collections.abc import Sequence
 from itertools import product
 from typing import Any, ClassVar, Literal
 
@@ -20,6 +21,7 @@ from qphase_cam.core.reduction import (
     FractionFreeScalarReduction,
     SeedGenerationStats,
     finite_vector,
+    reduction_path,
     scaled_distance,
 )
 from qphase_cam.errors import BifurcationCapabilityError
@@ -97,6 +99,24 @@ def _workload_fields(stats: SeedGenerationStats) -> dict[str, int]:
     return {
         f"{unit}_count": int(count) for unit, count in sorted(stats.workload.items())
     }
+
+
+def _candidate_chart_id(candidate: Any) -> str:
+    """Return the qpsgen chart id of one linear reduction candidate.
+
+    The chart id names the equation/state partition (``ret:<ids>|eq:<equations>``)
+    the reduction was built from, which is what makes two reductions of the same
+    retained state two different generation paths. It is carried explicitly into the
+    reduction, so no later step has to reach back into the qpsgen candidate and no
+    slot index is ever used as a path.
+    """
+    chart = str(getattr(candidate, "chart_id", "") or "")
+    if not chart:
+        raise BifurcationCapabilityError(
+            "a linear reduction candidate carries no chart id, so its generation "
+            "path cannot be named"
+        )
+    return chart
 
 
 class ControlRange(BaseModel):
@@ -271,7 +291,11 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         grid = request.parameter_grid
         assert grid is not None
         base_params = dict(model.params)
-        grid_model_parameters(model, grid, forbidden=tuple(self.config.controls))
+        # The scan axes are the case axis of this job: their current value per case
+        # belongs to the case identity, never to the search design.
+        swept = tuple(
+            grid_model_parameters(model, grid, forbidden=tuple(self.config.controls))
+        )
         context = request.context
 
         def run_case(current: Any, point: Any) -> dict[str, Any]:
@@ -279,7 +303,11 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             # matrix is reconstructed from them.
             try:
                 output = self.search(
-                    current, backend, data=request.data, context=context
+                    current,
+                    backend,
+                    data=request.data,
+                    context=context,
+                    swept_parameters=swept,
                 )
             except MemoryError:
                 raise
@@ -493,25 +521,35 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         *,
         data: Any | None = None,
         context: Any | None = None,
+        swept_parameters: Sequence[str] = (),
     ) -> CAMBifurcationOutput:
         """Run the numeric search of one case (the core ``solve`` builds on).
 
         This is the documented numeric entry point: it returns the solver's own
         candidate output for one model state. The typed product and its audit are
         produced by :meth:`solve`, which is what the engine calls.
+
+        ``swept_parameters`` names the model scalar parameters whose current values
+        are one point of an external scan (the job's scan axes). They are fixed input
+        of this call rather than search design: they leave the search identity and
+        enter the case identity. A single, unscanned call passes none.
         """
         if str(backend.backend_name()).lower() != "numpy":
             raise ValueError("bifurcation solver currently requires numpy")
         adapter = QPSGenDynamicsAdapter.from_model(model)
         self._validate_controls(adapter)
         reporter = context.progress if context is not None else None
-        scope_search, scope_case = self._scope_identities(model)
+        swept = tuple(str(name) for name in swept_parameters)
+        scope_search, scope_case = self._scope_identities(model, swept_parameters=swept)
         if self.strategy.mode == "full":
             full_candidates, metadata = self._solve_full(
                 adapter, data=data, reporter=reporter
             )
             full_candidates, metadata = self._finalize_identities(
-                full_candidates, metadata, model=model
+                full_candidates,
+                metadata,
+                model=model,
+                swept_parameters=swept,
             )
             return CAMBifurcationOutput(
                 candidates=full_candidates,
@@ -531,7 +569,10 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             )
             metadata["fallback_reason"] = "no_regular_scalar_reduction"
             full_candidates, metadata = self._finalize_identities(
-                full_candidates, metadata, model=model
+                full_candidates,
+                metadata,
+                model=model,
+                swept_parameters=swept,
             )
             return CAMBifurcationOutput(
                 candidates=full_candidates,
@@ -552,13 +593,25 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             metadata["fallback_reason"] = "no_regular_scalar_reduction"
             metadata["reduction_search"] = reduction_search
             full_candidates, metadata = self._finalize_identities(
-                full_candidates, metadata, model=model
+                full_candidates,
+                metadata,
+                model=model,
+                swept_parameters=swept,
             )
             return CAMBifurcationOutput(
                 candidates=full_candidates,
                 target=self.target.name,
                 order=self.target.order,
                 metadata=metadata,
+            )
+        paths = [reduction_path(reduction) for reduction in reductions]
+        duplicates = sorted({path for path in paths if paths.count(path) > 1})
+        if duplicates:
+            # One chart is one generation path: two audit entries with the same path
+            # would pool two attempts under one identity, so this is an error.
+            raise BifurcationCapabilityError(
+                "the reduction search returned duplicated generation charts: "
+                f"{duplicates}"
             )
         candidates: list[CAMBifurcationCandidate] = []
         reduction_runs: list[dict[str, Any]] = []
@@ -573,6 +626,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         seed_skips_total: Counter[str] = Counter()
         workload_total: Counter[str] = Counter()
         for index, reduction in enumerate(reductions):
+            path = paths[index]
             seed_stats = SeedGenerationStats(source=reduction.seed_source)
             starts = reduction.initial_starts(
                 self._control_bounds(),
@@ -610,6 +664,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                         reporter=reporter,
                         near_misses=near_misses,
                         seed_source=seed_stats.source,
+                        path=path,
                     )
             else:
                 found, rejected, run_rejected_count, dedup_skipped = self._refine(
@@ -619,6 +674,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                     reporter=None,
                     near_misses=near_misses,
                     seed_source=seed_stats.source,
+                    path=path,
                 )
             candidates.extend(found)
             rejected_count += run_rejected_count
@@ -628,6 +684,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             workload_total.update(_workload_fields(seed_stats))
             reduction_runs.append(
                 {
+                    "path": path,
                     "state_id": reduction.retained_id,
                     "method": reduction.method,
                     "degree": reduction.degree,
@@ -640,6 +697,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             )
             reduction_audits.append(
                 {
+                    "path": path,
                     "state_id": reduction.retained_id,
                     "method": reduction.method,
                     "seed_source": seed_stats.source,
@@ -766,7 +824,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         }
         metadata["near_misses_json"] = near_miss_json(near_miss_records)
         candidates, metadata = self._finalize_identities(
-            candidates, metadata, model=model
+            candidates, metadata, model=model, swept_parameters=swept
         )
         return CAMBifurcationOutput(
             candidates=candidates,
@@ -1336,6 +1394,10 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         errors = []
         reductions: list[FractionFreeScalarReduction | CondensedScalarReduction] = []
         for candidate in candidates:
+            # A candidate without a chart id cannot name its generation path, and
+            # that is a contract violation rather than a per-candidate materialization
+            # failure: fail here instead of dropping the chart silently.
+            chart_id = _candidate_chart_id(candidate)
             if len(candidate.eliminated_indices) > 3:
                 try:
                     reductions.append(
@@ -1344,6 +1406,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                             order=self.target.order,
                             control_names=tuple(self.config.controls),
                             base_params=adapter.model.params,
+                            chart_id=chart_id,
                         )
                     )
                 except Exception as exc:
@@ -1363,6 +1426,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                     order=self.target.order,
                     control_names=tuple(self.config.controls),
                     base_params=adapter.model.params,
+                    chart_id=chart_id,
                 )
             except Exception as exc:
                 errors.append(f"{candidate.retained_ids}: {exc}")
@@ -1445,6 +1509,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         reporter: Any | None,
         near_misses: NearMissStore | None = None,
         seed_source: str = "unknown",
+        path: str,
     ) -> tuple[list[CAMBifurcationCandidate], Counter[str], int, int]:
         if not starts:
             return [], Counter(), 0, 0
@@ -1524,7 +1589,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                 rejected.update(reasons)
                 if near_misses is not None:
                     near_misses.add(
-                        path="reduced",
+                        path=path,
                         reduction=reduction.retained_id,
                         seed_source=seed_source,
                         controls=candidate.controls,
@@ -1681,8 +1746,17 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
 
     # -- solver-owned identities -------------------------------------------
 
-    def _scope_identities(self, model: Any) -> tuple[str, str]:
-        """Return the ``(search, case)`` identities of this solve call."""
+    def _scope_identities(
+        self, model: Any, *, swept_parameters: Sequence[str] = ()
+    ) -> tuple[str, str]:
+        """Return the ``(search, case)`` identities of this solve call.
+
+        The case values are the controls plus the swept model parameters of the
+        job's scan: two scan points that differ in one of them are two cases of one
+        search. A swept parameter without a finite scalar value is an error, never a
+        silently ignored case axis.
+        """
+        swept = tuple(str(name) for name in swept_parameters)
         scope = derive_search_scope(
             model,
             target=self.target.name,
@@ -1694,6 +1768,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                 "side": str(self.config.perturbation.side),
             },
             strategy=str(self.strategy.mode),
+            swept_parameters=swept,
         )
         search = derive_search_identity(scope)
         params = getattr(model, "params", {}) or {}
@@ -1702,6 +1777,23 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             for name in self.config.controls
             if name in params and np.asarray(params[name]).ndim == 0
         }
+        for name in swept:
+            if name not in params:
+                raise ValueError(
+                    f"swept parameter {name!r} is missing from the model parameters"
+                )
+            value = np.asarray(params[name])
+            if value.ndim != 0:
+                raise ValueError(
+                    f"swept case parameter {name!r} must be a scalar; got shape "
+                    f"{value.shape}"
+                )
+            number = float(value.item())
+            if not np.isfinite(number):
+                raise ValueError(
+                    f"swept case parameter {name!r} must be finite; got {number!r}"
+                )
+            case_params[name] = number
         return search, derive_case_identity(search, case_params)
 
     def _identity_content(
@@ -1754,9 +1846,10 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         metadata: dict[str, Any],
         *,
         model: Any,
+        swept_parameters: Sequence[str] = (),
     ) -> tuple[list[CAMBifurcationCandidate], dict[str, Any]]:
         """Attach both identity layers and expose them in the output metadata."""
-        search, case = self._scope_identities(model)
+        search, case = self._scope_identities(model, swept_parameters=swept_parameters)
         metadata["search_identity"] = search
         metadata["case_identity"] = case
         self._assign_start_identities(candidates, case=case, model=model)

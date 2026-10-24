@@ -103,10 +103,7 @@ def grid_model_parameters(
             raise ValueError(f"unknown CAM model scan target {target!r}")
         if parameter in blocked:
             raise ValueError(
-                "bifurcation ScanSpec targets must be fixed case parameters, not "
-                f"solver controls: {[parameter]}"
-                if False
-                else "ScanSpec targets must be fixed case parameters, not solver "
+                "ScanSpec targets must be fixed case parameters, not solver "
                 f"controls: {[parameter]}"
             )
         output[parameter] = values
