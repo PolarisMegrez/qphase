@@ -74,7 +74,9 @@ def _vdp_root() -> np.ndarray:
 def test_jacobian_required_solvers_reject_missing_capability(no_jacobian_model):
     no_jacobian_model.params["unused"] = 0.0
     with pytest.raises(JacobianUnavailableError):
-        BatchedNewtonSolver(max_iterations=1).solve_batch(no_jacobian_model, NumpyBackend())
+        BatchedNewtonSolver(max_iterations=1).solve_batch(
+            no_jacobian_model, NumpyBackend()
+        )
     with pytest.raises(JacobianUnavailableError):
         ContinuationSolver(
             parameter="unused",
@@ -88,7 +90,7 @@ def test_batched_engine_uses_each_grid_points_parameters():
     root = _vdp_root()
     params = dict(VDP_PARAMS)
     params["omega_a"] = [0.0, 0.001]
-    result = Engine(
+    bundle = Engine(
         plugins={
             "backend": NumpyBackend(),
             "model": VDP2ModeModel(**params),
@@ -98,10 +100,17 @@ def test_batched_engine_uses_each_grid_points_parameters():
             "cam_postprocessor": RayleighFrequency(),
         }
     ).run()
-    assert result.states.shape == (2, 4, 2, 2)
-    assert result.solution_count.tolist() == [1, 1]
-    assert result.params_at((1, 0))["omega_a"] == 0.001
-    assert np.isfinite(result.postprocess["rayleigh_frequency"][:, 0]).all()
+    product = bundle.require("state_scan")
+    assert np.asarray(product.handle("states").materialize()).shape == (2, 4, 2, 2)
+    assert np.asarray(product.handle("solution_count").materialize()).tolist() == [1, 1]
+    np.testing.assert_allclose(
+        np.asarray(product.handle("parameter.omega_a").materialize()), [0.0, 0.001]
+    )
+    # The batch solver used the second point's parameters, not the first's.
+    annotation = bundle.require("rayleigh_frequency")
+    assert np.isfinite(
+        np.asarray(annotation.handle("rayleigh_frequency").materialize())
+    ).all()
 
 
 def test_multistability_accepts_explicit_and_automatic_bounds():

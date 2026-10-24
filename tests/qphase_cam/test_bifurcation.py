@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import importlib.util
 import json
 import time
@@ -15,21 +14,26 @@ import sympy as sp
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.protocols import ResultProtocol
-from qphase_cam.bifurcation_result import (
-    CAMBifurcationBranchTable,
-    CAMBifurcationResult,
-    CAMBifurcationScanResult,
-)
+from qphase.data import load_bundle
 from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.core.reduction import (
     CondensedScalarReduction,
     ReductionDiagnostics,
     SeedGenerationStats,
 )
+from qphase_cam.data import build_candidate_product, cam_bundle
 from qphase_cam.engine import Engine
+from qphase_cam.postprocessor.base import CAMAnnotationContext
+from qphase_cam.postprocessor.candidates import candidate_view
 from qphase_cam.postprocessor.local_response import LocalResponseValidation
 from qphase_cam.postprocessor.stochastic_validity import StochasticValidity
 from qphase_cam.result import CAMResult
+from qphase_cam.solver.base import (
+    SOLVER_OUTPUT_DECLARATIONS,
+    CAMProductFragment,
+    CAMSolver,
+    CAMSolverConfig,
+)
 from qphase_cam.solver.bifurcation import (
     BifurcationSolver,
     BifurcationSolverConfig,
@@ -61,6 +65,7 @@ from qphase_cam.solver.bifurcation_target import (
     EquilibriumMultiplicity,
     EquilibriumMultiplicityConfig,
 )
+from qphase_cam.solver.execution import candidate_product_from_output
 from qphase_cam.state import CAMBifurcationCandidate, CAMBifurcationOutput
 from qpsgen import (
     LindbladChannel,
@@ -294,7 +299,7 @@ def test_full_solver_refines_upstream_fixed_point_to_known_fold():
             "classifier": ScalingSignatureClassifier(ScalingSignatureConfig()),
         },
     )
-    output = solver.solve(TwoModeFoldModel(), NumpyBackend(), data=upstream)
+    output = solver.search(TwoModeFoldModel(), NumpyBackend(), data=upstream)
     assert len(output.candidates) == 1
     candidate = output.candidates[0]
     np.testing.assert_allclose(candidate.controls["gamma"], expected_gamma)
@@ -416,15 +421,32 @@ def test_condensed_reduction_verifies_known_fold_at_high_precision():
 
 
 def test_engine_packs_tagged_bifurcation_output_and_passes_input(
-    no_jacobian_model, tmp_path
+    no_jacobian_model,
 ):
     upstream = object()
 
-    class Solver:
+    class Solver(CAMSolver[CAMSolverConfig]):
         name = "bifurcation"
-        output_kind = "bifurcation_candidates"
+        description = "search double"
+        supported_tasks = ("search",)
+        output_products = (SOLVER_OUTPUT_DECLARATIONS["candidates"],)
+        search_audit_capability = True
+        config_schema = CAMSolverConfig
+        target = SimpleNamespace(name="equilibrium_multiplicity", order=2)
+        config = SimpleNamespace(controls={"control": object()})
 
-        def solve(self, model, backend, *, data=None):
+        def solve(self, request):
+            from qphase_cam.solver.execution import candidate_product_from_output
+
+            assert request.model is no_jacobian_model
+            output = self.search(request.model, request.backend, data=request.data)
+            product = candidate_product_from_output(request.model, output)
+            return CAMProductFragment(
+                products={"candidates": product},
+                metadata={"control_names": ("control",)},
+            )
+
+        def search(self, model, backend, *, data=None):
             del model, backend
             assert data is upstream
             return CAMBifurcationOutput(
@@ -437,7 +459,11 @@ def test_engine_packs_tagged_bifurcation_output_and_passes_input(
                         success=True,
                         status="candidate",
                         method="test",
-                        metadata={"regularity_determinant": 2.0},
+                        metadata={
+                            "regularity_determinant": 2.0,
+                            "candidate_identity": "cam:candidate:test",
+                            "identity_basis": "state_vector_and_controls",
+                        },
                     )
                 ],
                 target="equilibrium_multiplicity",
@@ -445,54 +471,54 @@ def test_engine_packs_tagged_bifurcation_output_and_passes_input(
                 metadata={"control_names": ("control",)},
             )
 
-    result = Engine(
+    bundle = Engine(
         plugins={
             "backend": NumpyBackend(),
             "model": no_jacobian_model,
             "cam_solver": Solver(),
         }
     ).run(data=upstream)
-    assert isinstance(result, CAMBifurcationResult)
-    assert isinstance(result, ResultProtocol)
-    assert isinstance(result, DatasetResultProtocol)
-    np.testing.assert_array_equal(result.axes["candidate"], [0])
-    assert result.result_kind == "bifurcation_candidates"
-    np.testing.assert_allclose(result.control_values, [[0.5]])
-    np.testing.assert_array_equal(result.verification_digits, [0])
-    np.testing.assert_array_equal(result.verification_status, ["not_run"])
-    target = tmp_path / "bifurcation.npz"
-    result.save(target)
-    loaded = CAMBifurcationResult.load(target)
-    np.testing.assert_allclose(loaded.state_vectors, result.state_vectors)
-    np.testing.assert_array_equal(
-        loaded.verification_status, result.verification_status
+    assert isinstance(bundle, ResultProtocol)
+    assert isinstance(bundle, DatasetResultProtocol)
+    product = bundle.require("candidates")
+    assert bundle.bundle_descriptor.product_roles == {"candidates": "candidates"}
+    np.testing.assert_allclose(
+        np.asarray(product.handle("control_values").materialize()), [[0.5]]
     )
-    assert target.with_suffix(".csv").exists()
+    np.testing.assert_array_equal(
+        np.asarray(product.handle("verification_digits").materialize()), [0]
+    )
+    np.testing.assert_array_equal(
+        np.asarray(product.handle("verification_status").materialize()), ["not_run"]
+    )
+    audit = json.loads(str(np.asarray(product.handle("base_audit").materialize())[0]))
+    assert audit["regularity_determinant"] == 2.0
 
 
 def test_engine_persists_scaling_branch_table(tmp_path):
     model = TwoModeFoldModel()
-    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).solve(
+    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).search(
         model, NumpyBackend()
     )
-    result = Engine._pack_bifurcation(output, model)
-    assert result.branches is not None
-    assert result.branches.size == 2
-    assert result.to_candidate_table()[0]["signature_count"] == 1
-    assert result.to_branch_table()[0]["exponent_denominator"] == 2
-    target = tmp_path / "classified.npz"
-    result.save(target)
-    candidate_header = (
-        target.with_suffix(".csv").read_text(encoding="utf-8").splitlines()[0]
+    product = candidate_product_from_output(model, output)
+    view = candidate_view(product)
+    assert view.branches.size == 2
+    # The scaling branch structure arrives as typed annotation input derived from
+    # the candidate product's classification JSON.
+    assert view.branches.exponent_denominator[0] == 2
+    assert sum(len(row.classification["scaling_signatures"]) for row in view.rows) == 1
+    audit = json.loads(str(np.asarray(product.handle("base_audit").materialize())[0]))
+    assert "maximum_jacobian_real_part" in audit
+    assert len(audit["verified_full_state_decimal_values"]) == 4
+    # The typed product is the persisted form.
+    target = tmp_path / "classified"
+    cam_bundle({"candidates": product}).save_dataset(
+        target, layout="single", shard_target_bytes=4096
     )
-    assert "r_diag_0" in candidate_header
-    assert "maximum_jacobian_real_part" in candidate_header
-    assert target.with_name("classified_branches.csv").exists()
-    loaded = CAMBifurcationResult.load(target)
-    assert loaded.branches is not None
+    loaded = candidate_view(load_bundle(target).require("candidates"))
     np.testing.assert_allclose(
-        loaded.branches.leading_state_coefficient,
-        result.branches.leading_state_coefficient,
+        np.asarray([np.real(item) for item in loaded.branches.amplitude]),
+        np.asarray([np.real(item) for item in view.branches.amplitude]),
     )
 
 
@@ -518,7 +544,10 @@ def test_engine_packs_candidates_with_ragged_scaling_metadata(tmp_path):
                 success=True,
                 status="verified",
                 method="test",
-                metadata={"scaling_signatures": (signature,)},
+                metadata={
+                    "scaling_signatures": (signature,),
+                    "candidate_identity": "cam:candidate:a",
+                },
             ),
             CAMBifurcationCandidate(
                 state_vector=np.asarray([2.0, 0.5, 0.0, 0.0]),
@@ -528,30 +557,45 @@ def test_engine_packs_candidates_with_ragged_scaling_metadata(tmp_path):
                 success=True,
                 status="verified",
                 method="test",
-                metadata={"scaling_signatures": ()},
+                metadata={
+                    "scaling_signatures": (),
+                    "candidate_identity": "cam:candidate:b",
+                },
             ),
         ],
         target="equilibrium_multiplicity",
         order=3,
         metadata={"control_names": ("gamma",)},
     )
-    result = Engine._pack_bifurcation(output, model)
-    assert result.diagnostics["scaling_signatures"].shape == (2,)
-    assert result.to_candidate_table()[0]["signature_count"] == 1
-    assert result.to_candidate_table()[1]["signature_count"] == 0
-    target = tmp_path / "ragged.npz"
-    result.save(target)
-    loaded = CAMBifurcationResult.load(target)
-    assert loaded.to_candidate_table()[0]["signature_count"] == 1
-    assert loaded.to_candidate_table()[1]["signature_count"] == 0
+    product = candidate_product_from_output(model, output)
+    classification = [
+        json.loads(str(value))
+        for value in np.asarray(product.handle("classification").materialize())
+    ]
+    # The ragged signature tuple becomes canonical JSON per candidate.
+    assert [len(row["scaling_signatures"]) for row in classification] == [1, 0]
+    target = tmp_path / "ragged"
+    cam_bundle({"candidates": product}).save_dataset(
+        target, layout="single", shard_target_bytes=4096
+    )
+    loaded = [
+        json.loads(str(value))
+        for value in np.asarray(
+            load_bundle(target)
+            .require("candidates")
+            .handle("classification")
+            .materialize()
+        )
+    ]
+    assert [len(row["scaling_signatures"]) for row in loaded] == [1, 0]
 
 
 def test_local_response_validation_solves_and_persists_complete_branches(tmp_path):
     model = TwoModeFoldModel()
-    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).solve(
+    output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).search(
         model, NumpyBackend()
     )
-    result = Engine._pack_bifurcation(output, model)
+    product = candidate_product_from_output(model, output)
     processor = LocalResponseValidation(
         epsilon_min=1e-10,
         epsilon_max=1e-6,
@@ -559,37 +603,108 @@ def test_local_response_validation_solves_and_persists_complete_branches(tmp_pat
         fit_points=3,
         residual_tolerance=1e-25,
     )
-    result.postprocess.update(processor.process(result, model, NumpyBackend()))
-    response = result.postprocess["local_response_validation"]
-    summary = result.postprocess["local_response_summary"]
-    assert len(response["candidate_index"]) == 8
-    assert np.all(response["converged"])
-    assert np.all(response["continuous"])
-    assert np.max(response["full_residual_norm"]) < 1e-25
-    np.testing.assert_allclose(response["state_fit_exponent"], 0.5, atol=1e-3)
-    np.testing.assert_allclose(response["hamiltonian_petermann_max"], 1.0)
-    np.testing.assert_allclose(
-        response["hamiltonian_petermann_fit_exponent"], 0.0, atol=1e-12
+    annotation = processor.process(
+        product,
+        CAMAnnotationContext(
+            model=model,
+            backend=NumpyBackend(),
+            metadata={
+                "perturbation_parameter": "gamma",
+                "perturbation_scale": 1.0,
+                "fixed_params": {},
+            },
+            products={"candidates": product},
+            source_role="candidates",
+        ),
     )
-    assert summary["sample_count"].tolist() == [8]
-    assert summary["all_converged"].tolist() == [True]
-    assert summary["all_continuous"].tolist() == [True]
-    np.testing.assert_allclose(summary["minimum_hamiltonian_petermann_max"], 1.0)
-    np.testing.assert_allclose(summary["maximum_hamiltonian_petermann_max"], 1.0)
+    converged = np.asarray(annotation.handle("converged").materialize())
+    continuous = np.asarray(annotation.handle("continuous").materialize())
+    residuals = np.asarray(annotation.handle("full_residual_norm").materialize())
+    state_fit = np.asarray(annotation.handle("state_fit_exponent").materialize())
+    petermann = np.asarray(annotation.handle("hamiltonian_petermann_max").materialize())
+    petermann_fit = np.asarray(
+        annotation.handle("hamiltonian_petermann_fit_exponent").materialize()
+    )
+    # One candidate, two real branches, four epsilon samples each.
+    assert converged.shape == (1, 2, 4)
+    assert int(converged.sum()) == 8
+    assert np.all(converged)
+    assert np.all(continuous)
+    assert np.max(residuals) < 1e-25
+    np.testing.assert_allclose(state_fit, 0.5, atol=1e-3)
+    np.testing.assert_allclose(petermann, 1.0)
+    np.testing.assert_allclose(petermann_fit, 0.0, atol=1e-12)
+    # The per-candidate summary the old table exposed is derived, not lost.
+    sample_count = (
+        annotation.axis("branch").size * annotation.axis("epsilon_sample").size
+    )
+    assert [sample_count] == [8]
+    np.testing.assert_allclose(float(np.min(petermann)), 1.0)
+    np.testing.assert_allclose(float(np.max(petermann)), 1.0)
+    assert list(np.asarray(annotation.handle("status").materialize())) == ["valid"]
+    target_identity = np.asarray(annotation.handle("target_identity").materialize())
+    np.testing.assert_array_equal(
+        target_identity,
+        np.asarray(product.handle("candidate_identity").materialize()),
+    )
 
-    target = tmp_path / "response.npz"
-    result.save(target)
-    loaded = CAMBifurcationResult.load(target)
+    target = tmp_path / "response"
+    cam_bundle(
+        {"candidates": product, "local_response_validation": annotation}
+    ).save_dataset(target, layout="single", shard_target_bytes=4096)
+    loaded = load_bundle(target).require("local_response_validation")
     np.testing.assert_allclose(
-        loaded.postprocess["local_response_validation"]["delta_state_norm"],
-        response["delta_state_norm"],
+        np.asarray(loaded.handle("delta_state_norm").materialize()),
+        np.asarray(annotation.handle("delta_state_norm").materialize()),
     )
     np.testing.assert_allclose(
-        loaded.postprocess["local_response_validation"]["hamiltonian_petermann_max"],
-        response["hamiltonian_petermann_max"],
+        np.asarray(loaded.handle("hamiltonian_petermann_max").materialize()),
+        petermann,
     )
-    assert target.with_name("response_responses.csv").exists()
-    assert target.with_name("response_response_summary.csv").exists()
+
+
+def _branch_signature(*, epsilon_side=1, amplitude=1.0) -> dict:
+    """Return one classification signature with a single real branch."""
+    return {
+        "state_order": 3,
+        "perturbation_order": 1,
+        "coupling_state_order": 0,
+        "exponent_numerator": 1,
+        "exponent_denominator": 3,
+        "exponent": 1.0 / 3.0,
+        "sublinear": True,
+        "branches": [
+            {
+                "epsilon_side": epsilon_side,
+                "amplitude": amplitude,
+                "leading_state_coefficient": [[1.0]],
+            }
+        ],
+    }
+
+
+def _stochastic_product(*, candidates: int):
+    """Return a candidate product standing in for a classified search case."""
+    identity = [f"cam:candidate:test{index}" for index in range(candidates)]
+    return build_candidate_product(
+        states=np.asarray(
+            [np.asarray([[1.0 + 0.0j]]) for _ in range(candidates)]
+        ).reshape(candidates, 1, 1),
+        state_vectors=np.asarray([[1.0]] * candidates).reshape(candidates, 1),
+        control_values=np.empty((candidates, 0)),
+        control_names=(),
+        full_residual_norm=np.zeros(candidates),
+        search_residual_norm=np.zeros(candidates),
+        success=np.ones(candidates, dtype=bool),
+        status=["verified"] * candidates,
+        method=["test"] * candidates,
+        verification_digits=np.full(candidates, 50, dtype=np.int64),
+        verification_status=["verified"] * candidates,
+        candidate_identity=identity,
+        classification=[
+            {"scaling_signatures": [_branch_signature()]} for _ in range(candidates)
+        ],
+    )
 
 
 def test_stochastic_validity_estimates_additive_cubic_crossover(monkeypatch, tmp_path):
@@ -638,58 +753,62 @@ def test_stochastic_validity_estimates_additive_cubic_crossover(monkeypatch, tmp
         "qphase_cam.postprocessor.stochastic_validity.QPSGenDynamicsAdapter.from_model",
         lambda model: Adapter(),
     )
-    branches = CAMBifurcationBranchTable(
-        candidate_index=np.asarray([0]),
-        local_branch_index=np.asarray([0]),
-        signature_index=np.asarray([0]),
-        state_order=np.asarray([3]),
-        perturbation_order=np.asarray([1]),
-        coupling_state_order=np.asarray([0]),
-        exponent_numerator=np.asarray([1]),
-        exponent_denominator=np.asarray([3]),
-        epsilon_side=np.asarray([1]),
-        amplitude=np.asarray([1.0]),
-        real_branch=np.asarray([True]),
-        sublinear=np.asarray([True]),
-        leading_state_coefficient=np.asarray([[[1.0]]]),
-    )
-    result = CAMBifurcationResult(
-        states=np.asarray([[[1.0 + 0.0j]]]),
-        state_vectors=np.asarray([[1.0]]),
-        control_values=np.empty((1, 0)),
-        control_names=(),
-        full_residual_norm=np.asarray([0.0]),
-        search_residual_norm=np.asarray([0.0]),
-        success=np.asarray([True]),
-        status=np.asarray(["verified"]),
-        method=np.asarray(["test"]),
-        verification_digits=np.asarray([50]),
-        verification_status=np.asarray(["verified"]),
-        branches=branches,
-        meta={
-            "perturbation_parameter": "mu",
-            "perturbation_scale": 1.0,
-        },
-    )
+    product = _stochastic_product(candidates=1)
     processor = StochasticValidity(probe_epsilon=1.0)
-    result.postprocess.update(processor.process(result, Model(), NumpyBackend()))
-    diagnostic = result.postprocess["stochastic_validity"]
-    assert diagnostic["status"].tolist() == ["complete"]
-    np.testing.assert_allclose(diagnostic["projected_noise_intensity"], [2.0])
-    np.testing.assert_allclose(diagnostic["normal_form_state_coefficient"], [-1.0])
-    np.testing.assert_allclose(diagnostic["epsilon_crossover"], [2.0 * np.sqrt(2.0)])
-    assert diagnostic["regime"].tolist() == ["noise_dominated"]
-    # the empty-table schema mirrors the non-empty schema field-for-field
-    empty = StochasticValidity._empty()
-    assert tuple(diagnostic) == tuple(empty)
-    for name, values in diagnostic.items():
-        assert values.dtype.kind == empty[name].dtype.kind, name
-    target = tmp_path / "stochastic.npz"
-    result.save(target)
-    assert target.with_name("stochastic_stochastic_validity.csv").exists()
+    annotation = processor.process(
+        product,
+        CAMAnnotationContext(
+            model=Model(),
+            backend=NumpyBackend(),
+            metadata={
+                "perturbation_parameter": "mu",
+                "perturbation_scale": 1.0,
+                "closed_state_capability": True,
+            },
+            products={"candidates": product},
+            source_role="candidates",
+        ),
+    )
+    branch_status = np.asarray(annotation.handle("branch_status").materialize())
+    assert branch_status.tolist() == [["complete"]]
+    np.testing.assert_allclose(
+        np.asarray(annotation.handle("projected_noise_intensity").materialize()),
+        [[2.0]],
+    )
+    np.testing.assert_allclose(
+        np.asarray(annotation.handle("normal_form_state_coefficient").materialize()),
+        [[-1.0]],
+    )
+    np.testing.assert_allclose(
+        np.asarray(annotation.handle("epsilon_crossover").materialize()),
+        [[2.0 * np.sqrt(2.0)]],
+    )
+    assert np.asarray(annotation.handle("regime").materialize()).tolist() == [
+        ["noise_dominated"]
+    ]
+    # Every field of the old diagnostic table survives as a typed column.
+    from qphase_cam.postprocessor import stochastic_validity as validity
+
+    expected = set(
+        validity.StochasticValidity._base_row(
+            0, branch_index=0, epsilon_side=0, closure={}, status=""
+        )
+    )
+    fields = {item["name"] for item in annotation.attributes["field_variables"]}
+    assert {name for name in expected if name != "status"} <= fields
+    assert "branch_status" in fields
+
+    target = tmp_path / "stochastic"
+    cam_bundle({"candidates": product, "stochastic_validity": annotation}).save_dataset(
+        target, layout="single", shard_target_bytes=4096
+    )
+    loaded = load_bundle(target).require("stochastic_validity")
+    np.testing.assert_allclose(
+        np.asarray(loaded.handle("projected_noise_intensity").materialize()), [[2.0]]
+    )
 
 
-def test_stochastic_validity_accepts_empty_candidate_table(monkeypatch, tmp_path):
+def test_stochastic_validity_accepts_empty_candidate_table(monkeypatch):
     class Adapter:
         moment_layout = "normal"
 
@@ -710,81 +829,30 @@ def test_stochastic_validity_accepts_empty_candidate_table(monkeypatch, tmp_path
         "qphase_cam.postprocessor.stochastic_validity.QPSGenDynamicsAdapter.from_model",
         lambda model: Adapter(),
     )
-    result = CAMBifurcationResult(
-        states=np.empty((0, 1, 1), dtype=complex),
-        state_vectors=np.empty((0, 1)),
-        control_values=np.empty((0, 0)),
-        control_names=(),
-        full_residual_norm=np.empty(0),
-        search_residual_norm=np.empty(0),
-        success=np.empty(0, dtype=bool),
-        status=np.empty(0, dtype=str),
-        method=np.empty(0, dtype=str),
-        verification_digits=np.empty(0, dtype=int),
-        verification_status=np.empty(0, dtype=str),
-        meta={
-            "perturbation_parameter": "mu",
-            "perturbation_scale": 1.0,
-        },
-    )
+    product = _stochastic_product(candidates=0)
     processor = StochasticValidity(probe_epsilon=1.0)
-    output = processor.process(result, Model(), NumpyBackend())
-    diagnostic = output["stochastic_validity"]
-    # the empty table carries the full stable schema, not just candidate_index
-    expected = StochasticValidity._empty()
-    assert tuple(diagnostic) == tuple(expected)
-    assert set(diagnostic) == {
-        "candidate_index",
-        "branch_index",
-        "epsilon_side",
-        "status",
-        "critical_eigenvalue_real",
-        "critical_eigenvalue_imag",
-        "noncritical_spectral_gap",
-        "critical_mode_condition_number",
-        "eigenvector_condition_number",
-        "noise_covariance_minimum_eigenvalue",
-        "projected_noise_intensity",
-        "parameter_forcing",
-        "branch_center_coefficient",
-        "normal_form_state_coefficient",
-        "normal_form_confining",
-        "critical_fluctuation_scale",
-        "epsilon_crossover",
-        "probe_epsilon",
-        "regime",
-        "noise_semantics",
-        "representation",
-        "fpe_is_exact",
-        "moment_closure",
-        "moment_closure_is_exact",
-        "deterministic_cam_is_exact",
-    }
-    for name, values in diagnostic.items():
-        assert values.size == 0
-        assert values.dtype == expected[name].dtype
-    assert diagnostic["candidate_index"].dtype.kind == "i"
-    assert diagnostic["status"].dtype.kind == "U"
-    assert diagnostic["critical_eigenvalue_real"].dtype.kind == "f"
-    assert diagnostic["normal_form_confining"].dtype.kind == "b"
+    annotation = processor.process(
+        product,
+        CAMAnnotationContext(
+            model=Model(), backend=NumpyBackend(), products={"candidates": product}
+        ),
+    )
+    assert annotation.axis("annotation").size == 0
+    assert annotation.axis("branch").size == 0
+    from qphase_cam.postprocessor import stochastic_validity as validity
+
+    expected = validity.StochasticValidity._base_row(
+        0, branch_index=0, epsilon_side=0, closure={}, status=""
+    )
+    fields = {item["name"]: item for item in annotation.attributes["field_variables"]}
+    for name in expected:
+        resolved = "branch_status" if name == "status" else name
+        assert resolved in fields, name
+    assert fields["critical_eigenvalue_real"]["dtype"].startswith("<f")
+    assert fields["normal_form_confining"]["dtype"].startswith("|b")
+    assert fields["branch_status"]["dtype"].startswith("<U")
     assert processor.result_metadata["status"] == "no_supported_branches"
     assert processor.result_metadata["row_count"] == 0
-    # NPZ round trip preserves the full empty schema and dtypes
-    result.postprocess.update(output)
-    target = tmp_path / "empty_stochastic.npz"
-    result.save(target)
-    loaded = CAMBifurcationResult.load(target)
-    loaded_table = loaded.postprocess["stochastic_validity"]
-    assert tuple(loaded_table) == tuple(diagnostic)
-    for name, values in loaded_table.items():
-        assert values.size == 0
-        assert values.dtype == diagnostic[name].dtype
-    # CSV round trip: a header-only file with the full column schema
-    csv_path = target.with_name("empty_stochastic_stochastic_validity.csv")
-    assert csv_path.exists()
-    lines = csv_path.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 1
-    assert next(csv.reader(lines)) == list(expected)
 
 
 def _fold_condensed_reduction() -> CondensedScalarReduction:
@@ -1221,7 +1289,7 @@ def test_full_path_audit_records_seed_provenance_and_balance():
             "classifier": ScalingSignatureClassifier(ScalingSignatureConfig()),
         },
     )
-    output = solver.solve(TwoModeFoldModel(), NumpyBackend(), data=upstream)
+    output = solver.search(TwoModeFoldModel(), NumpyBackend(), data=upstream)
     audit = output.metadata["audit"]
     assert audit["path"] == "full"
     assert audit["seed_source"] == "upstream"
@@ -1274,7 +1342,7 @@ def test_full_path_checks_each_upstream_seed_physicality():
             "classifier": ScalingSignatureClassifier(ScalingSignatureConfig()),
         },
     )
-    output = solver.solve(TwoModeFoldModel(), NumpyBackend(), data=upstream)
+    output = solver.search(TwoModeFoldModel(), NumpyBackend(), data=upstream)
     audit = output.metadata["audit"]
     assert audit["seed_source"] == "upstream"
     # the non-PSD upstream state is filtered at generation, never refined
@@ -1311,74 +1379,69 @@ def test_empty_result_reports_standard_note_in_metadata_and_cases_csv(tmp_path):
         totals["near_miss_saved"] + totals["near_miss_dropped"]
         == totals["rejected_count"]
     )
-    result = Engine._pack_bifurcation(output, model)
-    result.meta.update(output.metadata)
-    scan = CAMBifurcationScanResult(
+    # The zero-candidate case keeps a complete, typed account: the audit fields
+    # the old cases CSV exposed are the case metadata and the audit payload.
+    product = candidate_product_from_output(model, output)
+    scan = build_candidate_product(
+        states=np.empty((0, 2, 2), dtype=complex),
+        state_vectors=np.empty((0, 4)),
+        control_values=np.empty((0, 1)),
+        control_names=("gamma",),
+        full_residual_norm=np.empty(0),
+        search_residual_norm=np.empty(0),
+        success=np.empty(0, dtype=bool),
+        status=[],
+        method=[],
+        verification_digits=np.empty(0, dtype=np.int64),
+        verification_status=[],
+        candidate_identity=[],
         case_axes={"gamma_b": np.asarray([1.0])},
-        case_shape=(1,),
         case_params={"gamma_b": np.asarray([1.0])},
-        candidate_offsets=np.asarray([0, 0]),
-        candidates=result,
-        case_metadata=(dict(result.meta),),
+        case_shape=(1,),
+        case_metadata=[
+            {
+                **output.metadata,
+                "case_status": "complete",
+            }
+        ],
     )
-    target = tmp_path / "empty.npz"
-    scan.save(target)
-    rows = list(
-        csv.DictReader(
-            target.with_name("empty_cases.csv").read_text(encoding="utf-8").splitlines()
-        )
+    assert product.axis("candidate").size == 0
+    metadata = json.loads(
+        str(np.asarray(scan.handle("case_metadata").materialize())[0])
     )
-    (row,) = rows
-    for field in (
-        "singular_coverage",
-        "generated_candidate_count",
-        "prefilter_pass_count",
-        "prefilter_rejected_count",
-        "refinement_start_count",
-        "refinement_duplicate_count",
-        "accepted_count",
-        "rejected_count",
-        "physical_status",
-        "top_rejection_reasons",
-        "near_miss_saved",
-        "near_miss_dropped",
-        "truncation_reasons",
-        "consumer_error_count",
-        "materialization_failure_count",
-        "result_note",
-    ):
-        assert field in row
+    for field in ("singular_coverage", "structural_coverage", "numerical_coverage"):
+        assert field in metadata, field
+    assert metadata["audit"]["physical_status"] == "checked"
+    assert metadata["audit"]["result_note"] == EMPTY_RESULT_NOTE
     for removed in ("raw_start_count", "physical_start_count", "coverage_note"):
-        assert removed not in row
-    assert row["result_note"] == EMPTY_RESULT_NOTE
-    assert row["accepted_count"] == "0"
-    assert row["physical_status"] == "checked"
-    assert int(row["generated_candidate_count"]) == totals["generated_candidate_count"]
-    assert int(row["refinement_start_count"]) == totals["refinement_start_count"]
-    loaded = CAMBifurcationScanResult.load(target)
-    loaded_audit = loaded.case_metadata[0]["audit"]
-    assert loaded_audit["result_note"] == EMPTY_RESULT_NOTE
-    payloads = loaded.case_metadata[0]["near_misses_json"]
-    assert isinstance(payloads, tuple)
-    assert len(payloads) == loaded_audit["totals"]["near_miss_saved"]
+        assert removed not in metadata
+    assert metadata["audit"]["totals"]["accepted_count"] == 0
+    assert (
+        int(metadata["audit"]["totals"]["generated_candidate_count"])
+        == totals["generated_candidate_count"]
+    )
+    assert (
+        int(metadata["audit"]["totals"]["refinement_start_count"])
+        == totals["refinement_start_count"]
+    )
+    payloads = metadata["near_misses_json"]
+    assert isinstance(payloads, list)
+    assert len(payloads) == metadata["audit"]["totals"]["near_miss_saved"]
     for payload in payloads:
         record = json.loads(payload)
         assert record["rejection_reasons"]
 
 
-def test_cases_csv_exposes_truncation_consumer_and_materialization_failures(
-    tmp_path,
-):
+def test_cases_csv_exposes_truncation_consumer_and_materialization_failures():
+    """The reduction-contract failures stay visible in the typed case metadata."""
     solver = _solver(2, {"gamma": ControlRange(min=-0.1, max=0.0)})
     solver.strategy = ReducedStrategy(ReductionStrategyConfig())
     model = TwoModeFoldModel()
     output = solver.search(model, NumpyBackend())
-    result = Engine._pack_bifurcation(output, model)
-    result.meta.update(output.metadata)
     # inject the qpsgen reduction-contract failure fields (new contract:
     # materialization failures are reported with chart_id/error, outside
     # rejected_reason_counts)
-    search = dict(result.meta["reduction_search"])
+    search = dict(output.metadata["reduction_search"])
     search["truncation_reasons"] = ["partition_limit", "materialization_limit"]
     search["consumer_error_count"] = 2
     search["consumer_errors"] = ("('r_diag_0',): boom",)
@@ -1387,28 +1450,34 @@ def test_cases_csv_exposes_truncation_consumer_and_materialization_failures(
         {"chart_id": "ret:r_diag_0|eq:0", "error": "not polynomial"},
         {"chart_id": "ret:r_diag_1|eq:1", "error": "bad denominator"},
     )
-    result.meta["reduction_search"] = search
-    scan = CAMBifurcationScanResult(
+    metadata = {**output.metadata, "reduction_search": search}
+    product = build_candidate_product(
+        states=np.empty((0, 2, 2), dtype=complex),
+        state_vectors=np.empty((0, 4)),
+        control_values=np.empty((0, 1)),
+        control_names=("gamma",),
+        full_residual_norm=np.empty(0),
+        search_residual_norm=np.empty(0),
+        success=np.empty(0, dtype=bool),
+        status=[],
+        method=[],
+        verification_digits=np.empty(0, dtype=np.int64),
+        verification_status=[],
+        candidate_identity=[],
         case_axes={"gamma_b": np.asarray([1.0])},
-        case_shape=(1,),
         case_params={"gamma_b": np.asarray([1.0])},
-        candidate_offsets=np.asarray([0, 0]),
-        candidates=result,
-        case_metadata=(dict(result.meta),),
+        case_shape=(1,),
+        case_metadata=[{**metadata, "case_status": "complete"}],
     )
-    target = tmp_path / "failures.npz"
-    scan.save(target)
-    (row,) = list(
-        csv.DictReader(
-            target.with_name("failures_cases.csv")
-            .read_text(encoding="utf-8")
-            .splitlines()
-        )
-    )
-    assert "partition_limit" in row["truncation_reasons"]
-    assert "materialization_limit" in row["truncation_reasons"]
-    assert row["consumer_error_count"] == "2"
-    assert "boom" in row["consumer_errors"]
-    assert row["materialization_failure_count"] == "2"
-    assert "ret:r_diag_0|eq:0: not polynomial" in row["materialization_failures"]
-    assert "ret:r_diag_1|eq:1: bad denominator" in row["materialization_failures"]
+    row = json.loads(str(np.asarray(product.handle("case_metadata").materialize())[0]))
+    search = row["reduction_search"]
+    assert "partition_limit" in search["truncation_reasons"]
+    assert "materialization_limit" in search["truncation_reasons"]
+    assert search["consumer_error_count"] == 2
+    assert "boom" in search["consumer_errors"][0]
+    assert search["materialization_failure_count"] == 2
+    assert search["materialization_failures"][0] == {
+        "chart_id": "ret:r_diag_0|eq:0",
+        "error": "not polynomial",
+    }
+    assert search["materialization_failures"][1]["error"] == "bad denominator"

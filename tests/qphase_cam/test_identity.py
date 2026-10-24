@@ -7,6 +7,7 @@ Phase 10A are asserted elsewhere and are not repeated here.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -14,8 +15,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
-from qphase_cam.engine import Engine
 from qphase_cam.solver.bifurcation import ControlRange
+from qphase_cam.solver.execution import candidate_product_from_output
 from qphase_cam.solver.identity import (
     CANDIDATE_IDENTITY_BASIS,
     IDENTITY_SCHEME,
@@ -258,23 +259,22 @@ def test_solver_attaches_starts_to_the_surviving_candidate(auto_run):
     )
 
 
-def test_identities_survive_packing_into_the_result(auto_run):
-    result = Engine._pack_bifurcation(auto_run, TwoModeFoldModel())
-    assert result.meta["search_identity"] == auto_run.metadata["search_identity"]
-    assert result.meta["case_identity"] == auto_run.metadata["case_identity"]
-    assert (
-        result.meta["accepted_start_identities"]
-        == (auto_run.metadata["accepted_start_identities"])
-    )
-    assert list(result.diagnostics["candidate_identity"]) == list(
+def test_identities_survive_packing_into_the_product(auto_run):
+    product = candidate_product_from_output(TwoModeFoldModel(), auto_run)
+    assert list(np.asarray(product.handle("candidate_identity").materialize())) == list(
         auto_run.metadata["accepted_candidate_identities"]
     )
-    assert list(result.diagnostics["identity_basis"]) == [
-        auto_run.candidates[0].metadata["identity_basis"]
-    ]
-    # Both start identities are visible per candidate in the diagnostics.
-    starts = np.asarray(result.diagnostics["accepted_start_identities"])
-    assert starts.shape == (1, 2)
+    audit = json.loads(str(np.asarray(product.handle("base_audit").materialize())[0]))
+    assert audit["identity_basis"] == auto_run.candidates[0].metadata["identity_basis"]
+    # Both start identities are visible per candidate in the audit row.
+    assert (
+        tuple(audit["accepted_start_identities"])
+        == auto_run.metadata["accepted_start_identities"]
+    )
+    # The case metadata of a single-case product is empty by contract; the scope
+    # identities live on the solver metadata the engine carries in the bundle.
+    assert auto_run.metadata["search_identity"].startswith("cam:search:")
+    assert auto_run.metadata["case_identity"].startswith("cam:case:")
 
 
 def test_identities_are_reproducible_across_solves(auto_run):

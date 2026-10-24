@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 from qphase.backend.numpy_backend import NumpyBackend
+from qphase_cam.data import build_state_product
 from qphase_cam.postprocessor.petermann import (
     PetermannSpectrum,
     build_bogoliubov_matrix,
@@ -41,19 +42,26 @@ def test_petermann_postprocessor_emits_aligned_spectra():
         gamma_b=1.0,
         g=0.5,
     )
-    result = CAMResult(
-        states=np.asarray([[[2.0, 0.1j], [-0.1j, 1.0]]], dtype=complex),
-        residuals=np.zeros(1),
-        success=np.ones(1, dtype=bool),
-        valid_mask=np.ones(1, dtype=bool),
-        solution_count=np.asarray(1),
+    product = _state_product(
+        np.asarray([[[2.0, 0.1j], [-0.1j, 1.0]]], dtype=complex),
         params=model.params,
     )
-    output = PetermannSpectrum(chunk_size=1).process(result, model, NumpyBackend())
-    assert output["hamiltonian_eigenvalues"].shape == (1, 2)
-    assert output["bogoliubov_eigenvalues"].shape == (1, 4)
-    assert output["monodromy_eigenvalues"].shape == (1, 4)
-    assert np.isfinite(output["hamiltonian_petermann_factors"]).all()
+    output = PetermannSpectrum(chunk_size=1).process(product, _context(model))
+    assert np.asarray(output.handle("hamiltonian_eigenvalues").materialize()).shape == (
+        1,
+        2,
+    )
+    assert np.asarray(output.handle("bogoliubov_eigenvalues").materialize()).shape == (
+        1,
+        4,
+    )
+    assert np.asarray(output.handle("monodromy_eigenvalues").materialize()).shape == (
+        1,
+        4,
+    )
+    assert np.isfinite(
+        np.asarray(output.handle("hamiltonian_petermann_factors").materialize())
+    ).all()
 
 
 def test_solution_order_is_a_non_mutating_per_point_view():
@@ -75,3 +83,35 @@ def test_solution_order_is_a_non_mutating_per_point_view():
     )
     np.testing.assert_array_equal(custom, [[1, 2, 0], [2, 0, -1]])
     np.testing.assert_allclose(result.states, states)
+
+
+def _state_product(states, *, params=None, residuals=None, success=None):
+    """Build the typed state product a postprocessor annotates."""
+    array = np.asarray(states, dtype=complex)
+    if array.ndim == 3:
+        array = array[None]
+    scan, capacity = array.shape[0], array.shape[1]
+    residual = (
+        np.zeros((scan, capacity))
+        if residuals is None
+        else np.asarray(residuals, dtype=float).reshape(scan, capacity)
+    )
+    valid = np.ones((scan, capacity), dtype=bool)
+    return build_state_product(
+        states=array,
+        residuals=residual,
+        success=(
+            np.ones((scan, capacity), dtype=bool)
+            if success is None
+            else np.asarray(success, dtype=bool).reshape(scan, capacity)
+        ),
+        valid_mask=valid,
+        solution_count=np.full(scan, capacity, dtype=np.int64),
+        parameters=dict(params or {}),
+    )
+
+
+def _context(model):
+    from qphase_cam.postprocessor.base import CAMAnnotationContext
+
+    return CAMAnnotationContext(model=model, backend=NumpyBackend())

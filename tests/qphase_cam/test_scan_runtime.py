@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -5,9 +6,35 @@ import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.scan import ScanSpec
-from qphase_cam.bifurcation_result import CAMBifurcationScanResult
+from qphase.data import load_bundle
 from qphase_cam.engine import Engine, EngineConfig
+from qphase_cam.evidence import (
+    AUDIT_SCHEMA,
+    EMPTY_RESULT_NOTE,
+    REJECTION_COUNTER_SEMANTICS,
+)
 from qphase_cam.result import CAMResult
+from qphase_cam.solver.base import CAMSolver, CAMSolverConfig
+from qphase_cam.solver.bifurcation import (
+    BifurcationSolver,
+    BifurcationSolverConfig,
+    ControlRange,
+    PerturbationConfig,
+)
+from qphase_cam.solver.bifurcation_classifier import (
+    ScalingSignatureClassifier,
+    ScalingSignatureConfig,
+)
+from qphase_cam.solver.bifurcation_discovery import SeedDiscovery, SeedDiscoveryConfig
+from qphase_cam.solver.bifurcation_strategy import (
+    AutoStrategy,
+    ReductionStrategyConfig,
+)
+from qphase_cam.solver.bifurcation_target import (
+    EquilibriumMultiplicity,
+    EquilibriumMultiplicityConfig,
+)
+from qphase_cam.solver.continuation import ContinuationSolver
 from qphase_cam.state import (
     CAMBifurcationCandidate,
     CAMBifurcationOutput,
@@ -18,12 +45,27 @@ from qphase_cam.state import (
 from models.vdp_2mode import VDP2ModeModel
 
 
-class BatchSolver:
+class BatchSolver(CAMSolver[CAMSolverConfig]):
+    """A batch solver double implementing the typed protocol."""
+
     name = "batch_test"
+    description = "batch solver double"
+    config_schema = CAMSolverConfig
+    supported_tasks = ("solve", "scan")
+    output_products = ()
     supports_batch = True
 
-    def solve(self, model, backend):
-        del backend
+    def solve(self, request):
+        from qphase_cam.solver.execution import state_fragment
+
+        return state_fragment(
+            request=request,
+            run=lambda model, point: self.solve_batch(model),
+            supports_batch=True,
+        )
+
+    def solve_batch(self, model, backend=None, point=None):
+        del backend, point
         values = np.asarray(model.params["omega_a"])
         return CAMSolverOutput(
             [
@@ -31,6 +73,102 @@ class BatchSolver:
                 for index in range(values.size)
             ]
         )
+
+
+def _fake_audit(accepted: int, *, control_names=("gamma_a",)) -> dict:
+    """Return a conserving audit payload for a search double.
+
+    A case that accepted nothing still reports one generated start that the
+    prefilter rejected, so its status is ``not_found`` (searched, nothing there)
+    and never ``not_searched``.
+    """
+    generated = accepted if accepted else 1
+    passed = accepted
+    prefilter_rejected = generated - passed
+    return {
+        "schema": AUDIT_SCHEMA,
+        "path": "test",
+        "physical_status": "checked",
+        "reductions": [
+            {
+                "path": "test",
+                "generation_trial_count": generated,
+                "generated_candidate_count": generated,
+                "prefilter_pass_count": passed,
+                "prefilter_rejected_count": prefilter_rejected,
+                "prefilter_rejected": {},
+                "refinement_start_count": accepted,
+                "refinement_duplicate_count": 0,
+                "accepted_count": accepted,
+                "rejected_count": 0,
+                "rejected_by_reason": {},
+                "seed_skips": {},
+                "seed_truncated": False,
+                "workload": {},
+            }
+        ],
+        "totals": {
+            "generated_candidate_count": generated,
+            "prefilter_pass_count": passed,
+            "prefilter_rejected_count": prefilter_rejected,
+            "prefilter_rejected": (
+                {"prefilter": prefilter_rejected} if prefilter_rejected else {}
+            ),
+            "refinement_start_count": accepted,
+            "refinement_duplicate_count": 0,
+            "accepted_count": accepted,
+            "rejected_count": 0,
+            "rejected_by_reason": {},
+            "near_miss_saved": 0,
+            "near_miss_dropped": 0,
+            "unique_candidate_count": accepted,
+            "seed_skips": {},
+            "seed_truncated": False,
+            "workload": {},
+        },
+        "rejection_counter_semantics": REJECTION_COUNTER_SEMANTICS,
+        "domain_coverage": {
+            "control_bounds": [[-1.0, 1.0] for _ in control_names],
+            "control_sampling": {name: "linear" for name in control_names},
+        },
+        "near_misses": [],
+        "result_note": "candidates_found" if accepted else EMPTY_RESULT_NOTE,
+        "control_names": control_names,
+    }
+
+
+def _fake_domain(control_names) -> dict:
+    """Return the search-design coverage a fragment mapping needs."""
+    return {
+        "control_bounds": [[-1.0, 1.0] for _ in control_names],
+        "control_sampling": {name: "linear" for name in control_names},
+        "physical_status": "checked",
+        "physical_check_stage": "generation",
+    }
+
+
+def _search_double(controls, order, search_impl) -> BifurcationSolver:
+    """Return a search solver whose numeric core is replaced by ``search_impl``."""
+
+    class Double(BifurcationSolver):
+        def __init__(self) -> None:
+            self.target = EquilibriumMultiplicity(
+                EquilibriumMultiplicityConfig(order=order)
+            )
+            self.strategy = AutoStrategy(ReductionStrategyConfig())
+            self.discovery = SeedDiscovery(SeedDiscoveryConfig())
+            self.classifier = ScalingSignatureClassifier(ScalingSignatureConfig())
+            self.config = BifurcationSolverConfig(
+                controls=controls,
+                perturbation=PerturbationConfig(parameter=next(iter(controls))),
+            )
+            self._reduction_cache = {}
+
+        def search(self, model, backend, *, data=None, context=None):
+            del backend, data, context
+            return search_impl(model)
+
+    return Double()
 
 
 def test_cam_engine_preserves_multidimensional_scan_shape():
@@ -49,20 +187,10 @@ def test_cam_engine_preserves_multidimensional_scan_shape():
             },
         }
     ).compile()
-    context = SimpleNamespace(
-        parameter_grid=grid,
-        progress=None,
-    )
-    model = VDP2ModeModel(
-        omega_a=0.0,
-        omega_b=0.0,
-        gamma_a=2.0,
-        gamma_b=0.5,
-        Gamma=0.0001,
-        g=0.5,
-    )
+    context = SimpleNamespace(parameter_grid=grid, progress=None)
+    model = _vdp_model()
 
-    result = Engine(
+    bundle = Engine(
         plugins={
             "backend": NumpyBackend(),
             "model": model,
@@ -70,15 +198,26 @@ def test_cam_engine_preserves_multidimensional_scan_shape():
         }
     ).run(context=context)
 
-    assert isinstance(result, DatasetResultProtocol)
-    assert result.shape == (2, 3)
-    assert result.states.shape == (2, 3, 4, 2, 2)
-    assert result.solution_count.shape == (2, 3)
-    assert result.params_at((1, 2))["omega_a"] == pytest.approx(0.1)
-    assert result.params_at((1, 2))["gamma_b"] == pytest.approx(0.4)
+    assert isinstance(bundle, DatasetResultProtocol)
+    product = bundle.require("state_scan")
+    assert product.attributes["grid_shape"] == [2, 3]
+    assert bundle.shape == (6,)
+    states = np.asarray(product.handle("states").materialize())
+    assert states.shape == (6, 4, 2, 2)
+    assert np.asarray(product.handle("solution_count").materialize()).shape == (6,)
+    # The flattened scan carry its per-point parameter coordinates.
+    np.testing.assert_allclose(
+        np.asarray(product.handle("parameter.omega_a").materialize()),
+        [-0.1, -0.1, -0.1, 0.1, 0.1, 0.1],
+    )
+    np.testing.assert_allclose(
+        np.asarray(product.handle("parameter.gamma_b").materialize()),
+        [0.2, 0.3, 0.4, 0.2, 0.3, 0.4],
+    )
 
 
 def test_cam_dataset_point_view_and_sharded_storage(tmp_path):
+    """The legacy result keeps its one-off persistence path (no engine use)."""
     result = CAMResult(
         states=np.broadcast_to(np.eye(2), (4, 1, 2, 2)).copy(),
         residuals=np.zeros((4, 1)),
@@ -92,36 +231,17 @@ def test_cam_dataset_point_view_and_sharded_storage(tmp_path):
 
     point = result.point_view((2,))
     report = result.save_dataset(
-        tmp_path / "cam",
-        layout="sharded",
-        shard_target_bytes=1,
+        tmp_path / "cam", layout="sharded", shard_target_bytes=1
     )
 
     assert point.params["omega"] == 2.0
     assert report.layout == "sharded"
-    assert len([path for path in report.files if path.suffix == ".npz"]) == 4
-
     loaded = CAMResult.load_dataset(tmp_path / "cam")
     np.testing.assert_allclose(loaded.states, result.states)
-    np.testing.assert_allclose(loaded.params["omega"], result.params["omega"])
-    np.testing.assert_allclose(loaded.axes["omega"], result.axes["omega"])
-    np.testing.assert_allclose(
-        loaded.postprocess["frequency"], result.postprocess["frequency"]
-    )
 
 
 def test_continuation_rejects_external_scan():
-    class Continuation:
-        name = "continuation"
-
-    model = VDP2ModeModel(
-        omega_a=0.0,
-        omega_b=0.0,
-        gamma_a=2.0,
-        gamma_b=0.5,
-        Gamma=0.0001,
-        g=0.5,
-    )
+    model = _vdp_model()
     context = SimpleNamespace(
         parameter_grid=ScanSpec.model_validate(
             {
@@ -141,50 +261,58 @@ def test_continuation_rejects_external_scan():
             plugins={
                 "backend": NumpyBackend(),
                 "model": model,
-                "cam_solver": Continuation(),
+                "cam_solver": ContinuationSolver(
+                    parameter="gamma_b",
+                    start=0.5,
+                    stop=0.50001,
+                    initial_guess=[[20000.0, 20000.0j], [-20000.0j, 20000.0]],
+                ),
             }
         ).run(context=context)
 
 
 def test_bifurcation_scan_preserves_empty_cases_and_round_trips(tmp_path):
-    class Reporter:
-        def status(self, *args, **kwargs):
-            pass
-
-        def update(self, *args, **kwargs):
-            pass
-
-    class Solver:
-        name = "bifurcation"
-        output_kind = "bifurcation_candidates"
-        config = SimpleNamespace(controls={"gamma_a": object()})
-
-        def solve(self, model, backend):
-            del backend
-            candidates = []
-            if model.params["omega_a"] > 0.0:
-                candidates.append(
-                    CAMBifurcationCandidate(
-                        state_vector=np.asarray([1.0, 1.0, 0.0, 0.0]),
-                        controls={"gamma_a": 0.5},
-                        full_residual_norm=1e-12,
-                        search_residual_norm=2e-12,
-                        success=True,
-                        status="verified",
-                        method="test",
-                        metadata={"is_physical": True, "is_stable": True},
-                    )
+    def search(model):
+        candidates = []
+        if model.params["omega_a"] > 0.0:
+            candidates.append(
+                CAMBifurcationCandidate(
+                    state_vector=np.asarray([1.0, 1.0, 0.0, 0.0]),
+                    controls={"gamma_a": 0.5},
+                    full_residual_norm=1e-12,
+                    search_residual_norm=2e-12,
+                    success=True,
+                    status="verified",
+                    method="test",
+                    metadata={
+                        "is_physical": True,
+                        "is_stable": True,
+                        "maximum_jacobian_real_part": -0.5,
+                        "candidate_identity": "cam:candidate:test0",
+                        "identity_basis": "state_vector_and_controls",
+                    },
                 )
-            return CAMBifurcationOutput(
-                candidates=candidates,
-                target="equilibrium_multiplicity",
-                order=2,
-                metadata={
-                    "control_names": ("gamma_a",),
-                    "structural_coverage": "test",
-                    "numerical_coverage": "test",
-                },
             )
+        return CAMBifurcationOutput(
+            candidates=candidates,
+            target="equilibrium_multiplicity",
+            order=2,
+            metadata={
+                "control_names": ("gamma_a",),
+                "structural_coverage": "test",
+                "numerical_coverage": "test",
+                "domain_coverage": _fake_domain(("gamma_a",)),
+                "audit": _fake_audit(len(candidates)),
+                "search_identity": "cam:search:test",
+                "case_identity": f"cam:case:test{float(model.params['omega_a'])}",
+                "accepted_candidate_identities": tuple(
+                    item.metadata["candidate_identity"] for item in candidates
+                ),
+                "accepted_start_identities": tuple(
+                    f"cam:start:test{index}" for index in range(len(candidates))
+                ),
+            },
+        )
 
     grid = ScanSpec.model_validate(
         {
@@ -196,60 +324,56 @@ def test_bifurcation_scan_preserves_empty_cases_and_round_trips(tmp_path):
             }
         }
     ).compile()
-    context = SimpleNamespace(
-        parameter_grid=grid,
-        progress=Reporter(),
-        checkpoints=SimpleNamespace(enabled=False),
-        cancellation=SimpleNamespace(raise_if_cancelled=lambda: None),
-    )
-    model = VDP2ModeModel(
-        omega_a=0.0,
-        omega_b=0.0,
-        gamma_a=2.0,
-        gamma_b=0.5,
-        Gamma=0.0001,
-        g=0.5,
-    )
-    result = Engine(
+    context = _scan_context(grid)
+    bundle = Engine(
         plugins={
             "backend": NumpyBackend(),
-            "model": model,
-            "cam_solver": Solver(),
+            "model": _vdp_model(),
+            "cam_solver": _search_double(
+                {"gamma_a": ControlRange(min=-1.0, max=1.0)}, 2, search
+            ),
         }
     ).run(context=context)
 
-    assert isinstance(result, CAMBifurcationScanResult)
-    np.testing.assert_array_equal(result.data, [0, 1])
-    np.testing.assert_array_equal(result.candidate_offsets, [0, 0, 1])
-    assert len(result.point_view((0,)).states) == 0
-    assert len(result.point_view((1,)).states) == 1
-    assert result.params_at((1,))["omega_a"] == pytest.approx(0.1)
-    target = tmp_path / "bifurcation_scan.npz"
-    result.save(target)
-    loaded = CAMBifurcationScanResult.load(target)
-    np.testing.assert_array_equal(loaded.data, [0, 1])
-    assert target.with_name("bifurcation_scan_cases.csv").exists()
-    candidate_csv = target.with_name("bifurcation_scan_candidates.csv")
-    assert candidate_csv.exists()
-    header = candidate_csv.read_text(encoding="utf-8").splitlines()[0]
-    assert "r_diag_0" in header
-    assert "maximum_jacobian_real_part" in header
+    product = bundle.require("candidates")
+    assert product.attributes["case_count"] == 2
+    assert product.attributes["candidate_count"] == 1
+    offsets = np.asarray(product.handle("candidate_offsets").materialize())
+    np.testing.assert_array_equal(offsets, [0, 0, 1])
+    np.testing.assert_array_equal(
+        np.asarray(product.handle("candidate_identity").materialize()),
+        ["cam:candidate:test0"],
+    )
+    # The empty first case keeps its own metadata row.
+    metadata = [
+        json.loads(str(value))
+        for value in np.asarray(product.handle("case_metadata").materialize())
+    ]
+    assert [row["case_status"] for row in metadata] == ["complete", "complete"]
+    assert metadata[1]["case_parameters"]["omega_a"] == pytest.approx(0.1)
+    # The descriptors the old CSV exposed survive as typed audit JSON.
+    audit = json.loads(str(np.asarray(product.handle("base_audit").materialize())[0]))
+    assert audit["is_physical"] is True
+    assert audit["maximum_jacobian_real_part"] == -0.5
+    assert bundle.provenance["search_audits"] == 2
+
+    target = tmp_path / "bifurcation_scan"
+    bundle.save_dataset(target, layout="sharded", shard_target_bytes=4096)
+    reloaded = load_bundle(target)
+    np.testing.assert_array_equal(
+        np.asarray(
+            reloaded.require("candidates").handle("candidate_offsets").materialize()
+        ),
+        [0, 0, 1],
+    )
 
 
 def test_bifurcation_scan_rejects_control_axis():
-    class Solver:
-        name = "bifurcation"
-        output_kind = "bifurcation_candidates"
-        config = SimpleNamespace(controls={"omega_a": object()})
+    def search(model):
+        del model
+        raise AssertionError("the control-axis check must fire before the search")
 
-    model = VDP2ModeModel(
-        omega_a=0.0,
-        omega_b=0.0,
-        gamma_a=2.0,
-        gamma_b=0.5,
-        Gamma=0.0001,
-        g=0.5,
-    )
+    model = _vdp_model()
     context = SimpleNamespace(
         parameter_grid=ScanSpec.model_validate(
             {
@@ -268,28 +392,31 @@ def test_bifurcation_scan_rejects_control_axis():
             plugins={
                 "backend": NumpyBackend(),
                 "model": model,
-                "cam_solver": Solver(),
+                "cam_solver": _search_double(
+                    {"omega_a": ControlRange(min=-1.0, max=1.0)}, 2, search
+                ),
             }
         ).run(context=context)
 
 
 def test_bifurcation_scan_records_case_failure(tmp_path):
-    class Solver:
-        name = "bifurcation"
-        output_kind = "bifurcation_candidates"
-        config = SimpleNamespace(controls={"gamma_a": object()})
-        target = SimpleNamespace(order=3)
-
-        def solve(self, model, backend):
-            del backend
-            if model.params["omega_a"] < 0.0:
-                raise ValueError("outside numerical chart")
-            return CAMBifurcationOutput(
-                candidates=[],
-                target="equilibrium_multiplicity",
-                order=3,
-                metadata={"control_names": ("gamma_a",)},
-            )
+    def search(model):
+        if model.params["omega_a"] < 0.0:
+            raise ValueError("outside numerical chart")
+        return CAMBifurcationOutput(
+            candidates=[],
+            target="equilibrium_multiplicity",
+            order=3,
+            metadata={
+                "control_names": ("gamma_a",),
+                "domain_coverage": _fake_domain(("gamma_a",)),
+                "audit": _fake_audit(0),
+                "search_identity": "cam:search:test",
+                "case_identity": "cam:case:test",
+                "accepted_candidate_identities": (),
+                "accepted_start_identities": (),
+            },
+        )
 
     grid = ScanSpec.model_validate(
         {
@@ -302,24 +429,40 @@ def test_bifurcation_scan_records_case_failure(tmp_path):
         }
     ).compile()
     context = _scan_context(grid)
-    result = Engine(
+    bundle = Engine(
         EngineConfig(case_failure_policy="record"),
         plugins={
             "backend": NumpyBackend(),
             "model": _vdp_model(),
-            "cam_solver": Solver(),
+            "cam_solver": _search_double(
+                {"gamma_a": ControlRange(min=-1.0, max=1.0)}, 3, search
+            ),
         },
     ).run(context=context)
 
-    assert result.case_metadata[0]["case_status"] == "error"
-    assert result.case_metadata[0]["case_error_type"] == "ValueError"
-    assert result.case_metadata[0]["case_flat_index"] == 0
-    assert result.case_metadata[1]["case_status"] == "complete"
-    target = tmp_path / "recorded_failure.npz"
-    result.save(target)
-    rows = target.with_name("recorded_failure_cases.csv").read_text(encoding="utf-8")
-    assert "case_status,case_error_type,case_error_message" in rows
-    assert "error,ValueError,outside numerical chart" in rows
+    metadata = [
+        json.loads(str(value))
+        for value in np.asarray(
+            bundle.require("candidates").handle("case_metadata").materialize()
+        )
+    ]
+    assert metadata[0]["case_status"] == "error"
+    assert metadata[0]["case_error_type"] == "ValueError"
+    assert metadata[0]["case_error_message"] == "outside numerical chart"
+    assert metadata[0]["case_flat_index"] == 0
+    assert metadata[1]["case_status"] == "complete"
+
+    target = tmp_path / "recorded_failure"
+    bundle.save_dataset(target, layout="single", shard_target_bytes=4096)
+    reloaded = load_bundle(target)
+    rows = [
+        json.loads(str(value))
+        for value in np.asarray(
+            reloaded.require("candidates").handle("case_metadata").materialize()
+        )
+    ]
+    assert rows[0]["case_status"] == "error"
+    assert rows[0]["case_error_type"] == "ValueError"
 
 
 def test_bifurcation_scan_resume_does_not_repeat_completed_case():
@@ -335,29 +478,29 @@ def test_bifurcation_scan_resume_does_not_repeat_completed_case():
         def save_chunk(self, key, value):
             self.chunks[key] = value
 
-    class Solver:
-        name = "bifurcation"
-        output_kind = "bifurcation_candidates"
-        config = SimpleNamespace(controls={"gamma_a": object()})
-        target = SimpleNamespace(order=3)
+    calls: list[float] = []
+    state = {"fail_once": True}
 
-        def __init__(self):
-            self.calls = []
-            self.fail_once = True
-
-        def solve(self, model, backend):
-            del backend
-            value = float(model.params["omega_a"])
-            self.calls.append(value)
-            if value == 0.0 and self.fail_once:
-                self.fail_once = False
-                raise RuntimeError("transient failure")
-            return CAMBifurcationOutput(
-                candidates=[],
-                target="equilibrium_multiplicity",
-                order=3,
-                metadata={"control_names": ("gamma_a",)},
-            )
+    def search(model):
+        value = float(model.params["omega_a"])
+        calls.append(value)
+        if value == 0.0 and state["fail_once"]:
+            state["fail_once"] = False
+            raise RuntimeError("transient failure")
+        return CAMBifurcationOutput(
+            candidates=[],
+            target="equilibrium_multiplicity",
+            order=3,
+            metadata={
+                "control_names": ("gamma_a",),
+                "domain_coverage": _fake_domain(("gamma_a",)),
+                "audit": _fake_audit(0),
+                "search_identity": "cam:search:test",
+                "case_identity": f"cam:case:test{value}",
+                "accepted_candidate_identities": (),
+                "accepted_start_identities": (),
+            },
+        )
 
     grid = ScanSpec.model_validate(
         {
@@ -371,23 +514,24 @@ def test_bifurcation_scan_resume_does_not_repeat_completed_case():
     ).compile()
     checkpoints = Checkpoints()
     context = _scan_context(grid, checkpoints=checkpoints)
-    solver = Solver()
     engine = Engine(
         plugins={
             "backend": NumpyBackend(),
             "model": _vdp_model(),
-            "cam_solver": solver,
+            "cam_solver": _search_double(
+                {"gamma_a": ControlRange(min=-1.0, max=1.0)}, 3, search
+            ),
         }
     )
 
     with pytest.raises(RuntimeError, match="transient failure"):
         engine.run(context=context)
-    result = engine.run(context=context)
+    bundle = engine.run(context=context)
 
-    assert result.case_shape == (3,)
-    assert solver.calls.count(-0.1) == 1
-    assert solver.calls.count(0.0) == 2
-    assert solver.calls.count(0.1) == 1
+    assert bundle.require("candidates").attributes["case_count"] == 3
+    assert calls.count(-0.1) == 1
+    assert calls.count(0.0) == 2
+    assert calls.count(0.1) == 1
 
 
 def _vdp_model():

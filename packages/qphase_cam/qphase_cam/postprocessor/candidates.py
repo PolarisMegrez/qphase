@@ -21,7 +21,7 @@ product: the branch structure reaches the artifact as typed annotation fields.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -117,6 +117,8 @@ class CandidateView:
     case_params: dict[str, np.ndarray]
     candidate_offsets: np.ndarray
     fixed_params: dict[str, Any]
+    control_names: tuple[str, ...] = ()
+    control_values: np.ndarray = field(default_factory=lambda: np.empty((0, 0)))
 
     def params_at(self, candidate_index: int) -> dict[str, Any]:
         """Return the parameters of the case one candidate belongs to."""
@@ -227,11 +229,15 @@ def _branch_table(rows: list[CandidateRow]) -> CandidateBranchTable:
                 )
                 fields["real_branch"].append(bool(branch.get("epsilon_side", 0)))
                 fields["sublinear"].append(bool(signature.get("sublinear", False)))
-                fields["leading_state_coefficient"].append(
-                    np.full((0, 0), np.nan + 0j)
-                    if coefficient is None
-                    else matrix_from_json(coefficient)
-                )
+                if coefficient is None:
+                    fields["leading_state_coefficient"].append(np.full((0, 0), np.nan))
+                else:
+                    array = matrix_from_json(coefficient)
+                    # A real leading coefficient stays real: the numeric helpers
+                    # cast it to float, exactly as they did on the solver table.
+                    fields["leading_state_coefficient"].append(
+                        array.real if not np.any(array.imag) else array
+                    )
                 local += 1
     return CandidateBranchTable(
         candidate_index=np.asarray(fields["candidate_index"], dtype=np.int64),
@@ -319,6 +325,8 @@ def candidate_view(
     return CandidateView(
         rows=rows,
         branches=_branch_table(rows),
+        control_names=tuple(control_names),
+        control_values=controls,
         meta=resolved,
         diagnostics=_diagnostics(rows),
         state_vectors=vectors,
@@ -383,6 +391,8 @@ def pivot_branch_rows(
         counts[key] = sample + 1
         placed.append((positions[candidate], branch, sample, row))
     n_branch = branch_axis_size(view)
+    if not placed:
+        return {}, {}, {}
     n_sample = max(counts.values(), default=1) if sample_axis is not None else 1
     tail: tuple[str, ...] = (
         ("branch",) if sample_axis is None else ("branch", sample_axis)

@@ -39,7 +39,6 @@ from qphase_cam.data import (
     import_cam_result,
     import_legacy_artifact,
 )
-from qphase_cam.engine import Engine
 from qphase_cam.result import CAMResult
 from qphase_cam.state import CAMBifurcationCandidate, CAMBifurcationOutput
 
@@ -800,6 +799,66 @@ def test_candidate_comparison_reports_a_changed_classification():
 # --- end-to-end from the engine -------------------------------------------
 
 
+def _legacy_result_from_output(output, model):
+    """Repack one solver output as the legacy result the importer reads."""
+    candidates = list(output.candidates)
+    control_names = tuple(output.metadata.get("control_names", ()))
+    from qphase_cam.core.coordinates import vector_to_matrix
+
+    vectors = np.asarray(
+        [candidate.state_vector for candidate in candidates], dtype=float
+    ).reshape((-1, int(model.n_modes) ** 2))
+    states = (
+        np.asarray(vector_to_matrix(vectors, int(model.n_modes)))
+        if candidates
+        else np.empty((0, int(model.n_modes), int(model.n_modes)), dtype=complex)
+    )
+    diagnostics = {
+        name: np.asarray(
+            [candidate.metadata.get(name, np.nan) for candidate in candidates]
+        )
+        for name in sorted(
+            set().union(*(candidate.metadata for candidate in candidates))
+        )
+    }
+    return CAMBifurcationResult(
+        states=states,
+        state_vectors=vectors,
+        control_values=np.asarray(
+            [
+                [candidate.controls[name] for name in control_names]
+                for candidate in candidates
+            ],
+            dtype=float,
+        ).reshape((len(candidates), len(control_names))),
+        control_names=control_names,
+        full_residual_norm=np.asarray(
+            [candidate.full_residual_norm for candidate in candidates]
+        ),
+        search_residual_norm=np.asarray(
+            [candidate.search_residual_norm for candidate in candidates]
+        ),
+        success=np.asarray([candidate.success for candidate in candidates]),
+        status=np.asarray([candidate.status for candidate in candidates]),
+        method=np.asarray([candidate.method for candidate in candidates]),
+        verification_digits=np.asarray(
+            [
+                candidate.metadata.get("verification_digits", 0)
+                for candidate in candidates
+            ],
+            dtype=int,
+        ),
+        verification_status=np.asarray(
+            [
+                candidate.metadata.get("verification_status", "not_run")
+                for candidate in candidates
+            ]
+        ),
+        diagnostics=diagnostics,
+        meta=dict(output.metadata),
+    )
+
+
 def test_engine_candidate_output_imports_and_round_trips(tmp_path):
     """A real packed result keeps its diagnostics through import and storage."""
     output = CAMBifurcationOutput(
@@ -837,7 +896,7 @@ def test_engine_candidate_output_imports_and_round_trips(tmp_path):
         order=2,
         metadata={"control_names": ("gamma",)},
     )
-    result = Engine._pack_bifurcation(output, _FoldModel())
+    result = _legacy_result_from_output(output, _FoldModel())
     bundle = import_bifurcation_result(result)
     product = bundle.require("candidates")
     statuses = [

@@ -26,7 +26,6 @@ from qphase_cam.data import (
     cam_bundle,
     import_search_evidence_document,
 )
-from qphase_cam.engine import Engine
 from qphase_cam.evidence import (
     AUDIT_CONSERVATION,
     AUDIT_FIELD_UNITS,
@@ -187,6 +186,21 @@ def _no_object_dtypes(product):
         assert not array.dtype.hasobject, variable.name
 
 
+class _MetadataView:
+    """Solver metadata plus the candidate count the tests refer to.
+
+    The ``states`` attribute is the length of the accepted candidate list, which
+    is what the old packed result exposed as its candidate axis.
+    """
+
+    def __init__(self, metadata, candidates):
+        self.meta = dict(metadata)
+        self.states = [None] * len(candidates)
+
+    def __getitem__(self, key):
+        return self.meta[key]
+
+
 def _two_mode_fold_metadata():
     """Run the existing TwoModeFold search once and return its packed metadata."""
     solver = BifurcationSolver(
@@ -203,7 +217,14 @@ def _two_mode_fold_metadata():
     )
     model = TwoModeFoldModel()
     output = solver.search(model, NumpyBackend())
-    return Engine._pack_bifurcation(output, model)
+    metadata = dict(output.metadata)
+    metadata.setdefault("target", output.target)
+    metadata.setdefault("order", output.order)
+    metadata.setdefault(
+        "state_ids",
+        list(getattr(model, "state_ids", ())) or [],
+    )
+    return _MetadataView(metadata, output.candidates)
 
 
 # --- fragment vocabulary ---------------------------------------------------
@@ -614,7 +635,7 @@ def test_fragment_from_metadata_represents_a_deduplicated_case():
     output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).search(
         model, NumpyBackend()
     )
-    result = Engine._pack_bifurcation(output, model)
+    result = _MetadataView(output.metadata, output.candidates)
     totals = result.meta["audit"]["totals"]
     if totals["unique_candidate_count"] >= totals["accepted_count"]:
         pytest.skip("the auto strategy did not deduplicate this run")
@@ -658,7 +679,7 @@ def test_fragment_from_metadata_requires_start_ids_for_a_deduplicated_case():
     output = _solver(2, {"gamma": ControlRange(min=-1.0, max=0.0)}).search(
         model, NumpyBackend()
     )
-    result = Engine._pack_bifurcation(output, model)
+    result = _MetadataView(output.metadata, output.candidates)
     totals = result.meta["audit"]["totals"]
     if totals["unique_candidate_count"] >= totals["accepted_count"]:
         pytest.skip("the auto strategy did not deduplicate this run")

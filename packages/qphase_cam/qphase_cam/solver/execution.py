@@ -25,12 +25,14 @@ from qphase.core.scan import ParameterGrid, execute_pointwise
 from ..data import build_candidate_product, build_state_product
 from ..data.candidates import split_candidate_diagnostics
 from ..errors import BifurcationCapabilityError, SolutionCapacityError
+from ..state import CAMSolution
 from .base import CAMProductFragment
 
 __all__ = [
     "CaseOutcome",
     "build_candidate_from_cases",
     "candidate_case_arrays",
+    "candidate_product_from_output",
     "case_metadata",
     "grid_model_parameters",
     "model_parameters",
@@ -156,7 +158,7 @@ def _solution_rows(
     grid_shape: tuple[int, ...],
     capacity: int,
     n_modes: int,
-    sort_key: Callable[[Any], Any],
+    sort_key: Callable[[Any], Any] | None,
 ) -> dict[str, Any]:
     """Pack per-point solution rows into the state product arrays."""
     states = np.full(grid_shape + (capacity, n_modes, n_modes), np.nan + 1j * np.nan)
@@ -176,7 +178,8 @@ def _solution_rows(
                 f"model solution capacity {capacity} exceeded by {len(solutions)} "
                 "solutions"
             )
-        solutions.sort(key=sort_key)
+        if sort_key is not None:
+            solutions.sort(key=sort_key)
         counts[index] = len(solutions)
         for slot, solution in enumerate(solutions):
             states[index + (slot,)] = solution.state
@@ -213,16 +216,26 @@ def state_fragment(
         return model.cam_solution_sort_key(solution.state, model.params)
 
     metadata: dict[str, Any] = {}
+    sorted_rows = False
+    product_params: dict[str, Any] | None = None
 
     if grid is None:
         output = run(model, None)
-        rows = [list(output.solutions)]
-        grid_shape: tuple[int, ...] = ()
+        raw = list(output.solutions)
+        if raw and not isinstance(raw[0], CAMSolution):
+            # A batch solver reports one row per point even without a ScanSpec;
+            # the rows are the scan, exactly as the pre-10D2 packing read them.
+            rows = [list(row) for row in raw]
+            grid_shape: tuple[int, ...] = (len(rows),)
+        else:
+            rows = [raw]
+            grid_shape = ()
         axes = dict(output.axes)
         metadata.update(output.metadata)
     elif supports_batch:
         flattened = grid_model_parameters(model, grid)
-        with restored_parameters(model, {**base_params, **flattened}):
+        product_params = {**base_params, **flattened}
+        with restored_parameters(model, product_params):
             output = run(model, None)
         rows = [list(row) for row in output.solutions]
         grid_shape = tuple(grid.shape)
@@ -230,23 +243,26 @@ def state_fragment(
         metadata.update(output.metadata)
         metadata.update({"scan_shape": grid_shape, "scan_combine": grid.combine})
     else:
+
+        def run_point(current: Any, point: Any) -> list[Any]:
+            # Sort while the case parameters are still the model's, so the slot
+            # order never depends on a later scan-wide parameter array.
+            row = list(run(current, point).solutions)
+            row.sort(key=sort_key)
+            return row
+
         cases = run_cases(
             grid,
             model=model,
             base_params=base_params,
-            call=lambda current, point: run(current, point),
+            call=run_point,
             context=request.context,
             policy=request.case_failure_policy,
         )
         model_parameters(model, {**base_params, **grid_model_parameters(model, grid)})
-        rows = [list(case.result.solutions) for case in cases if not case.failed]
+        rows = [list(case.result) if not case.failed else [] for case in cases]
         failed = [case for case in cases if case.failed]
         if failed:
-            # A recorded failure keeps the point as an empty solution row so the
-            # scan still covers every case.
-            rows = [
-                [] if case.failed else list(case.result.solutions) for case in cases
-            ]
             metadata["failed_cases"] = [
                 {
                     "case_flat_index": case.flat_index,
@@ -256,6 +272,7 @@ def state_fragment(
                 }
                 for case in failed
             ]
+        sorted_rows = True
         grid_shape = tuple(grid.shape)
         axes = dict(grid.axes)
         metadata.update({"scan_shape": grid_shape, "scan_combine": grid.combine})
@@ -265,9 +282,13 @@ def state_fragment(
         grid_shape=grid_shape,
         capacity=capacity,
         n_modes=n_modes,
-        sort_key=sort_key,
+        sort_key=None if sorted_rows else sort_key,
     )
-    parameters = dict(getattr(model, "params", {}))
+    parameters = (
+        dict(product_params)
+        if product_params is not None
+        else dict(getattr(model, "params", {}))
+    )
     if grid is not None:
         for name, values in list(parameters.items()):
             array = np.asarray(values)
@@ -486,10 +507,28 @@ def build_candidate_from_cases(
     merged["base_audit"] = [
         row for arrays in case_arrays for row in arrays["base_audit"]
     ]
-    merged["case_metadata"] = list(case_meta)
+    merged["case_metadata"] = (
+        list(case_meta) if case_meta else [{} for _ in case_arrays]
+    )
     merged["candidate_offsets"] = offsets
     merged["group_scan_index"] = np.arange(len(case_arrays), dtype=np.int64)
     merged["case_axes"] = dict(case_axes)
     merged["case_params"] = dict(case_params)
     merged["case_shape"] = list(case_shape)
     return build_candidate_product(**merged)
+
+
+def candidate_product_from_output(model: Any, output: Any) -> Any:
+    """Pack the candidate output of one search case into the typed product.
+
+    One case, no case axes: this is the product shape a single search produces,
+    and the shape a caller uses when it wants the typed product of one solver
+    output without running a scan.
+    """
+    return build_candidate_from_cases(
+        case_arrays=[candidate_case_arrays(model, output)],
+        case_meta=[],
+        case_axes={},
+        case_params={},
+        case_shape=(),
+    )

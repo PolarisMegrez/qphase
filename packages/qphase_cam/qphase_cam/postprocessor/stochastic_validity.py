@@ -118,6 +118,29 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
         fields, field_axes, axes = pivot_branch_rows(
             view, rows, rename={"status": "branch_status"}
         )
+        if not fields:
+            # An empty candidate set still declares the full field schema, with a
+            # zero-length branch axis, so a consumer sees the same columns.
+            template = self._base_row(
+                0,
+                branch_index=-1,
+                epsilon_side=0,
+                closure={},
+                status="no_real_branch",
+            )
+            for name, value in template.items():
+                resolved = "branch_status" if name == "status" else name
+                if isinstance(value, bool):
+                    dtype: Any = bool
+                elif isinstance(value, int):
+                    dtype = np.int64
+                elif isinstance(value, str):
+                    dtype = f"U{max(len(value), 1)}"
+                else:
+                    dtype = float
+                fields[resolved] = np.zeros((len(view.rows), 0), dtype=dtype)
+                field_axes[resolved] = ("branch",)
+            axes["branch"] = 0
         return build_annotation_product(
             annotation_kind=self.annotation_kind,
             target_kind="candidate",

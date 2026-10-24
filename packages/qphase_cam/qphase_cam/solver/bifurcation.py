@@ -273,13 +273,40 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         base_params = dict(model.params)
         grid_model_parameters(model, grid, forbidden=tuple(self.config.controls))
         context = request.context
+
+        def run_case(current: Any, point: Any) -> dict[str, Any]:
+            # Pack while the case parameters are the model's: the candidate state
+            # matrix is reconstructed from them.
+            try:
+                output = self.search(
+                    current, backend, data=request.data, context=context
+                )
+            except MemoryError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - policy decides
+                if request.case_failure_policy == "abort":
+                    raise
+                return self._case_payload(
+                    current,
+                    None,
+                    flat_index=point.flat_index,
+                    index=point.index,
+                    values=point.values,
+                    error=exc,
+                )
+            return self._case_payload(
+                current,
+                output,
+                flat_index=point.flat_index,
+                index=point.index,
+                values=point.values,
+            )
+
         cases = run_cases(
             grid,
             model=model,
             base_params=base_params,
-            call=lambda current, point: self.search(
-                current, backend, data=request.data, context=context
-            ),
+            call=run_case,
             context=context,
             policy=request.case_failure_policy,
         )
@@ -296,17 +323,7 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
         return self._fragment(
             model,
             backend,
-            [
-                self._case_payload(
-                    model,
-                    outcome.result,
-                    flat_index=outcome.flat_index,
-                    index=outcome.index,
-                    values=outcome.values,
-                    error=outcome.error,
-                )
-                for outcome in cases
-            ],
+            [outcome.result for outcome in cases],
             case_axes={name: np.asarray(values) for name, values in grid.axes.items()},
             case_params=case_params,
             case_shape=tuple(grid.shape),
