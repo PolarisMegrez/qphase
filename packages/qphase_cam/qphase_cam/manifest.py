@@ -284,8 +284,10 @@ ANALYZE_PROFILE = EngineTaskProfile(
 )
 
 #: Summarize search candidates/evidence. The evidence assembler does no
-#: numerical work: every scientific postprocess that needs a backend or a model
-#: belongs to ``analyze``, so only annotation providers stay optional here.
+#: numerical work and the profile forbids a backend and a model, so only a
+#: provider that needs neither can annotate here; ``analyze`` is where a
+#: model-aware or backend-aware postprocess runs. The evidence product is
+#: mandatory and the annotations are optional.
 SUMMARIZE_SEARCH_PROFILE = EngineTaskProfile(
     id="summarize_search",
     requirements=PluginRequirementSet(
@@ -319,7 +321,14 @@ SUMMARIZE_SEARCH_PROFILE = EngineTaskProfile(
         OutputProductDeclaration(
             name=CAM_EVIDENCE_DECLARATION.name,
             declaration=CAM_EVIDENCE_DECLARATION,
-        )
+        ),
+        # An optional annotation provider adds one annotation product per
+        # upstream candidate product; the evidence product is compulsory, the
+        # annotations are not.
+        OutputProductDeclaration(
+            name=CAM_ANNOTATION_DECLARATION.name,
+            declaration=CAM_ANNOTATION_DECLARATION,
+        ),
     ],
 )
 

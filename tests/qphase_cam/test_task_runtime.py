@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import ClassVar
 
 import numpy as np
 import pytest
@@ -17,7 +18,7 @@ from pydantic import ValidationError
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.artifacts import ArtifactStore
 from qphase.data import ArtifactManifest, GenericDataBundle, load_bundle
-from qphase_cam.data import cam_bundle
+from qphase_cam.data import build_annotation_product, cam_bundle
 from qphase_cam.data.evidence import (
     build_evidence_product,
     fragments_from_candidate_product,
@@ -26,6 +27,7 @@ from qphase_cam.data.evidence import (
 from qphase_cam.engine import Engine, EngineConfig, validate_solver_task
 from qphase_cam.evidence import SearchAuditFragment, SearchAuditNearMiss
 from qphase_cam.evidence_assembler import EvidenceAssembler, artifact_reference
+from qphase_cam.postprocessor.base import CAMPostprocessor, CAMPostprocessorConfig
 from qphase_cam.postprocessor.physicality import Physicality
 from qphase_cam.solver.bifurcation import (
     BifurcationSolver,
@@ -203,10 +205,14 @@ def test_search_publishes_mandatory_evidence_with_a_self_reference(search_bundle
 def test_search_evidence_round_trips_through_both_layouts(search_bundle, tmp_path):
     evidence = search_bundle.require("evidence")
     original = fragments_from_evidence_product(evidence)
-    bundle = cam_bundle({"evidence": evidence}, provenance={"artifact_id": "deadbeef"})
     for layout in ("single", "sharded"):
+        # Each persistence keeps its own declared id: one id names one artifact.
+        bundle = cam_bundle(
+            {"evidence": evidence}, provenance={"artifact_id": f"evidence-{layout}"}
+        )
         root = tmp_path / layout
         bundle.save_dataset(root, layout=layout, shard_target_bytes=256)
+        assert ArtifactManifest.read(root).artifact_id == f"evidence-{layout}"
         reloaded = fragments_from_evidence_product(
             load_bundle(root).require("evidence")
         )
@@ -274,9 +280,7 @@ def test_analyze_annotates_an_upstream_bundle_without_a_solver(no_jacobian_model
 
 def _single_state_bundle(artifact_id: str = "00000000000000000000000000000001"):
     """One minimal upstream bundle for the analyze-path error tests."""
-    return cam_bundle(
-        {"state": _tiny_state()}, provenance={"artifact_id": artifact_id}
-    )
+    return cam_bundle({"state": _tiny_state()}, provenance={"artifact_id": artifact_id})
 
 
 def test_analyze_requires_an_upstream_bundle_and_a_postprocessor():
@@ -610,3 +614,210 @@ def test_no_task_returns_a_legacy_result(search_bundle):
     assert not hasattr(search_bundle, "candidates")
     assert search_bundle.metadata["task"] == "search"
     assert json.loads(json.dumps(dict(search_bundle.provenance)))["task"] == "search"
+
+
+# --- artifact id consistency (audit round 2) -------------------------------
+
+
+def test_direct_bundle_save_keeps_the_engine_artifact_id(search_bundle, tmp_path):
+    """``save_result`` and ``bundle.save_dataset`` must publish the same id.
+
+    The engine decides the id before its products exist, so the evidence can
+    cite the artifact that will carry it; whichever persistence path runs must
+    keep that id, otherwise the self reference dangles.
+    """
+    artifact_id = search_bundle.metadata["artifact_id"]
+    store = ArtifactStore(tmp_path / "scheduler", _storage_config())
+    store.save_result(search_bundle, "search")
+    for layout in ("single", "sharded"):
+        root = tmp_path / f"direct_{layout}"
+        search_bundle.save_dataset(root, layout=layout, shard_target_bytes=256)
+        manifest = ArtifactManifest.read(root)
+        assert manifest.artifact_id == artifact_id, layout
+        restored = load_bundle(root)
+        evidence = restored.require("evidence").materialize()
+        assert evidence.attributes["source_artifacts"] == [
+            {"artifact_id": artifact_id, "job": None}
+        ]
+    assert ArtifactManifest.read(tmp_path / "scheduler").artifact_id == artifact_id
+
+
+def test_bundle_save_without_a_declared_id_still_generates_one(tmp_path):
+    plain = cam_bundle({"state": _tiny_state()})
+    plain.save_dataset(tmp_path / "single", layout="single", shard_target_bytes=256)
+    plain.save(tmp_path / "save")
+    first = ArtifactManifest.read(tmp_path / "single").artifact_id
+    second = ArtifactManifest.read(tmp_path / "save").artifact_id
+    assert first and second and first != second
+    assert plain.declared_artifact_id() is None
+
+
+# --- summarize annotation providers (audit round 2) ------------------------
+
+
+class _CandidateTagger(CAMPostprocessor[CAMPostprocessorConfig]):
+    """Annotation provider that tags candidate rows and needs no model."""
+
+    name: ClassVar[str] = "candidate_tagger"
+    description: ClassVar[str] = "Tag candidate rows (test provider)"
+    config_schema: ClassVar[type[CAMPostprocessorConfig]] = CAMPostprocessorConfig
+    annotation_kind: ClassVar[str] = "candidate_tag"
+    accepted_product_roles: ClassVar[tuple[str, ...]] = ("candidates",)
+    requires_model: ClassVar[bool] = False
+    requires_backend: ClassVar[bool] = False
+
+    def process(self, product, context):
+        identities = [
+            str(value)
+            for value in np.asarray(product.handle("candidate_identity").materialize())
+        ]
+        return build_annotation_product(
+            annotation_kind=self.annotation_kind,
+            target_kind="candidate",
+            target_identity=identities,
+            status="valid",
+            fields={"tagged": np.ones(len(identities), dtype=np.int64)},
+            provenance={"source_role": context.source_role},
+        )
+
+
+class _SecondTagger(_CandidateTagger):
+    """Second provider emitting the same annotation kind."""
+
+    name = "candidate_tagger_b"
+
+
+class _ModelTagger(_CandidateTagger):
+    """Provider that declares it needs a model, which summarize never loads."""
+
+    name = "candidate_tagger_model"
+    requires_model = True
+
+
+def test_summarize_runs_an_optional_annotation_provider(search_bundle):
+    summarized = Engine(
+        EngineConfig(task="summarize_search"),
+        plugins={"cam_postprocessor": _CandidateTagger()},
+    ).run(data=search_bundle)
+    assert set(summarized.products) == {"evidence", "candidate_tag"}
+    annotation = summarized.require("candidate_tag")
+    assert annotation.attributes["annotation_kind"] == "candidate_tag"
+    # The annotation covers the candidate identities of the upstream product.
+    upstream = search_bundle.require("candidates")
+    np.testing.assert_array_equal(
+        np.asarray(annotation.handle("target_identity").materialize()),
+        np.asarray(upstream.handle("candidate_identity").materialize()),
+    )
+    assert summarized.metadata["annotations"] == ["candidate_tag"]
+    assert summarized.provenance["annotations"] == ["candidate_tag"]
+
+
+def test_summarize_scopes_annotations_of_two_upstreams_by_artifact_id(fold_model):
+    from qphase.core.dataset import MappedDatasetResult
+
+    first = Engine(
+        EngineConfig(task="search"),
+        plugins={
+            "backend": NumpyBackend(),
+            "model": fold_model,
+            "cam_solver": _fold_solver(0.0),
+        },
+    ).run(context=_reporting_context())
+    second = Engine(
+        EngineConfig(task="search"),
+        plugins={
+            "backend": NumpyBackend(),
+            "model": fold_model,
+            "cam_solver": _fold_solver(-0.25),
+        },
+    ).run(context=_reporting_context())
+    mapped = MappedDatasetResult(
+        {"left": first, "right": second}, {}, (2,), {"mode": "map"}
+    )
+    summarized = Engine(
+        EngineConfig(task="summarize_search"),
+        plugins={"cam_postprocessor": _CandidateTagger()},
+    ).run(data=mapped)
+    first_id = first.metadata["artifact_id"]
+    second_id = second.metadata["artifact_id"]
+    expected = {f"candidate_tag__{first_id}", f"candidate_tag__{second_id}"}
+    assert set(summarized.products) == {"evidence", *expected}
+    # Each annotation covers its own upstream, never a merged candidate set.
+    for artifact_id, bundle in ((first_id, first), (second_id, second)):
+        annotation = summarized.require(f"candidate_tag__{artifact_id}")
+        np.testing.assert_array_equal(
+            np.asarray(annotation.handle("target_identity").materialize()),
+            np.asarray(
+                bundle.require("candidates").handle("candidate_identity").materialize()
+            ),
+        )
+
+
+def test_summarize_keeps_two_providers_of_the_same_kind_apart(search_bundle):
+    summarized = Engine(
+        EngineConfig(task="summarize_search"),
+        plugins={
+            "cam_postprocessor": {
+                "first": _CandidateTagger(),
+                "second": _SecondTagger(),
+            }
+        },
+    ).run(data=search_bundle)
+    # The second provider is distinguished by its configured instance label, so
+    # the same kind never overwrites the first product.
+    assert set(summarized.products) == {
+        "evidence",
+        "candidate_tag",
+        "candidate_tag__second",
+    }
+    assert summarized.metadata["annotations"] == [
+        "candidate_tag",
+        "candidate_tag__second",
+    ]
+
+
+def test_summarize_rejects_a_provider_that_needs_a_model(search_bundle):
+    with pytest.raises(ValueError, match="requires a model"):
+        Engine(
+            EngineConfig(task="summarize_search"),
+            plugins={"cam_postprocessor": _ModelTagger()},
+        ).run(data=search_bundle)
+
+
+def test_summarize_rejects_a_provider_that_matches_no_upstream(search_bundle):
+    with pytest.raises(ValueError, match="matched no upstream product"):
+        Engine(
+            EngineConfig(task="summarize_search"),
+            plugins={"cam_postprocessor": Physicality()},
+        ).run(data=search_bundle)
+
+
+# --- solve rejects an implicit array scan (audit round 2) ------------------
+
+
+def test_solve_rejects_array_valued_model_parameters(fold_model):
+    fold_model.params["gamma_as_array"] = [0.0, 0.1]
+    try:
+        with pytest.raises(ValueError, match="array-valued parameters"):
+            Engine(
+                EngineConfig(task="solve"),
+                plugins={
+                    "backend": NumpyBackend(),
+                    "model": fold_model,
+                    "cam_solver": SteadyStateSolver(method="root"),
+                },
+            ).run()
+    finally:
+        fold_model.params.pop("gamma_as_array", None)
+
+
+def test_solve_accepts_a_scalar_parameter_model(no_jacobian_model):
+    bundle = Engine(
+        EngineConfig(task="solve"),
+        plugins={
+            "backend": NumpyBackend(),
+            "model": no_jacobian_model,
+            "cam_solver": SteadyStateSolver(method="root"),
+        },
+    ).run()
+    assert set(bundle.products) == {"state"}

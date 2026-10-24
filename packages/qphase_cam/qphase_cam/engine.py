@@ -26,9 +26,10 @@ artifact store persists exactly that id.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Literal
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
 from qphase.data import Dataset
@@ -71,15 +72,25 @@ class EngineConfig(BaseModel):
 
 
 def validate_solver_task(
-    solver: CAMSolver, task: str, parameter_grid: Any | None
+    solver: CAMSolver,
+    task: str,
+    parameter_grid: Any | None,
+    *,
+    model: Any | None = None,
 ) -> None:
     """Check that one solver can run the declared task with the given input.
 
     The task is explicit, so this only validates the combination: the solver
-    must declare the task, and the parameter grid must match it. A grid with
-    ``solve`` is rejected instead of being read as an implicit scan, ``scan``
-    requires a grid, ``continue`` forbids one, and ``search`` accepts either a
-    single point or a grid.
+    must declare the task, the parameter grid must match it, and a single-point
+    task must not carry an array-valued model parameter. A grid with ``solve``
+    is rejected instead of being read as an implicit scan, ``scan`` requires a
+    grid, ``continue`` forbids one, and ``search`` accepts either a single point
+    or a grid.
+
+    ``model`` is optional so the grid checks stay usable without one; with a
+    ``solve`` task it is what makes "an array parameter is an implicit scan"
+    detectable. ``model.params`` holding a non-scalar value would silently solve
+    a whole scan from a task that claims one point.
     """
     supported = tuple(solver.supported_tasks)
     unknown = sorted(set(supported) - set(CAM_SOLVER_TASKS))
@@ -103,6 +114,15 @@ def validate_solver_task(
             "the 'solve' task solves one parameter point and does not accept a "
             "grid; declare task: scan instead of relying on an implicit scan"
         )
+    if task == "solve" and model is not None:
+        array_parameters = _array_valued_parameters(model)
+        if array_parameters:
+            raise ValueError(
+                "the 'solve' task solves one parameter point, but the model "
+                f"declares array-valued parameters {array_parameters}; declare "
+                "task: scan with a parameter grid instead of relying on an "
+                "implicit scan"
+            )
     if task == "scan" and parameter_grid is None:
         raise ValueError(
             "the 'scan' task needs a parameter grid; a single point is the 'solve' task"
@@ -111,6 +131,16 @@ def validate_solver_task(
         raise ValueError(
             "continuation cannot be combined with an external parameter grid"
         )
+
+
+def _array_valued_parameters(model: Any) -> list[str]:
+    """Return the model parameters whose value is not a single number."""
+    params = getattr(model, "params", None)
+    if not isinstance(params, Mapping):
+        return []
+    return sorted(
+        str(name) for name, value in params.items() if np.asarray(value).ndim != 0
+    )
 
 
 class Engine(EngineBase):
@@ -182,7 +212,7 @@ class Engine(EngineBase):
                 f"{type(solver).__name__}"
             )
         grid = context.parameter_grid if context is not None else None
-        validate_solver_task(solver, task, grid)
+        validate_solver_task(solver, task, grid, model=model)
         if reporter is not None:
             reporter.status(f"Solving CAM {task}", stage="solve")
         fragment = solver.solve(
@@ -310,16 +340,25 @@ class Engine(EngineBase):
         artifact_id: str,
         reporter: Any,
     ) -> ResultProtocol:
-        """Assemble one evidence product from upstream search artifacts."""
+        """Assemble one evidence product from upstream search artifacts.
+
+        The evidence product is mandatory; ``cam_postprocessor`` plugins stay
+        optional annotation providers. Each upstream candidate product is
+        annotated on its own — two searches are never merged into one product —
+        and each annotation product name carries its source artifact id once more
+        than one upstream is summarized.
+        """
         inputs = self._input_results(data)
         assembler = EvidenceAssembler(allow_multiple_searches=True)
         fragments: list[Any] = []
         references = []
+        sources: list[tuple[str, dict[str, Dataset]]] = []
         for result in inputs:
-            references.append(artifact_reference(result))
-            fragments.extend(
-                assembler.fragments_from_products(self._products_of(result))
-            )
+            reference = artifact_reference(result)
+            references.append(reference)
+            products = self._products_of(result)
+            sources.append((reference.artifact_id, products))
+            fragments.extend(assembler.fragments_from_products(products))
         if reporter is not None:
             reporter.status("Assembling search evidence", stage="summarize")
         evidence = assembler.from_fragments(
@@ -343,10 +382,11 @@ class Engine(EngineBase):
             ),
             "case_count": int(evidence.attributes["case_count"]),
         }
+        annotations = self._annotate_sources(sources, metadata, reporter)
         if reporter is not None:
             reporter.status("CAM analysis complete", stage="complete")
         return cam_bundle(
-            {EVIDENCE_PRODUCT: evidence},
+            {EVIDENCE_PRODUCT: evidence, **annotations},
             provenance={
                 "engine": "cam",
                 "task": "summarize_search",
@@ -354,6 +394,7 @@ class Engine(EngineBase):
                 "summarized_artifact_ids": sorted(
                     reference.artifact_id for reference in references
                 ),
+                "annotations": sorted(annotations),
                 **dict(evidence.provenance),
             },
             metadata=metadata,
@@ -482,14 +523,111 @@ class Engine(EngineBase):
     @staticmethod
     def _annotation_source(processor: Any, products: Mapping[str, Dataset]) -> str:
         """Return the product role one postprocessor annotates."""
-        accepted = tuple(processor.accepted_product_roles)
-        for role in accepted:
+        role = Engine._matching_role(processor, products)
+        if role is None:
+            raise ValueError(
+                f"postprocessor {processor.name!r} accepts "
+                f"{tuple(processor.accepted_product_roles)} but the bundle has "
+                f"{sorted(products)}"
+            )
+        return role
+
+    @staticmethod
+    def _matching_role(processor: Any, products: Mapping[str, Dataset]) -> Any | None:
+        """Return the first accepted role present in the products, if any."""
+        for role in tuple(processor.accepted_product_roles):
             if role in products:
                 return role
-        raise ValueError(
-            f"postprocessor {processor.name!r} accepts {accepted} but the bundle "
-            f"has {sorted(products)}"
+        return None
+
+    def _annotate_sources(
+        self,
+        sources: Sequence[tuple[str, Mapping[str, Dataset]]],
+        metadata: dict[str, Any],
+        reporter: Any,
+    ) -> dict[str, Dataset]:
+        """Annotate every upstream candidate product of a summary.
+
+        A summary has no model and no backend (its task profile forbids both), so
+        a provider that declares it needs one is rejected instead of being run
+        against ``None``. Only the products a provider accepts are annotated, and
+        a configured provider that matches no upstream is an error: silently
+        ignoring a configured provider is exactly what a provider must not do.
+        """
+        configured = self.plugins.get("cam_postprocessor")
+        if not configured:
+            return {}
+        processors = (
+            configured
+            if isinstance(configured, Mapping)
+            else {configured.name: configured}
         )
+        self._check_annotation_capabilities(processors, None, None)
+        annotations: dict[str, Dataset] = {}
+        matched: dict[str, list[str]] = {str(name): [] for name in processors}
+        for source_id, products in sources:
+            for name, processor in processors.items():
+                role = self._matching_role(processor, products)
+                if role is None:
+                    continue
+                context = CAMAnnotationContext(
+                    model=None,
+                    backend=None,
+                    metadata=metadata,
+                    products=products,
+                    source_role=role,
+                )
+                if reporter is not None:
+                    reporter.status(
+                        f"Annotating {role} of {source_id} with {name}",
+                        stage="annotate",
+                    )
+                product = processor.process(products[role], context)
+                if not isinstance(product, Dataset):
+                    raise TypeError(
+                        f"postprocessor {name!r} returned "
+                        f"{type(product).__name__}, expected an annotation Dataset"
+                    )
+                kind = str(processor.annotation_kind or name)
+                base = kind if len(sources) == 1 else f"{kind}__{source_id}"
+                key = self._annotation_product_name(base, str(name), annotations)
+                annotations[key] = product
+                matched[str(name)].append(key)
+                if processor.result_metadata:
+                    metadata.setdefault("annotation_metadata", {})[key] = dict(
+                        processor.result_metadata
+                    )
+        unmatched = sorted(name for name, keys in matched.items() if not keys)
+        if unmatched:
+            available = sorted({role for _, products in sources for role in products})
+            raise ValueError(
+                f"postprocessor(s) {unmatched} matched no upstream product; the "
+                f"summarized artifacts carry {available}"
+            )
+        metadata["annotations"] = sorted(annotations)
+        return annotations
+
+    @staticmethod
+    def _annotation_product_name(
+        base: str, provider: str, annotations: Mapping[str, Dataset]
+    ) -> str:
+        """Return a stable, collision-free product name for one annotation.
+
+        The base is ``kind`` for a single upstream and ``kind__<artifact id>`` for
+        several; two providers that emit the same kind (or two views of the same
+        artifact) are separated by the provider name, never by evaluation order
+        alone.
+        """
+        taken = set(annotations) | {EVIDENCE_PRODUCT}
+        if base not in taken:
+            return base
+        scoped = f"{base}__{provider}"
+        if scoped not in taken:
+            return scoped
+        index = 2
+        while f"{scoped}__{index}" in taken:
+            index += 1
+        return f"{scoped}__{index}"
 
     def _required(self, name: str) -> Any:
         plugin = self.plugins.get(name)

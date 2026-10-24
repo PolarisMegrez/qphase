@@ -305,6 +305,44 @@ def test_bundle_save_repersists_with_descriptor(tmp_path):
     )
 
 
+def test_bundle_save_keeps_the_declared_artifact_id(tmp_path):
+    """Both persistence entry points honour a declared artifact id.
+
+    An engine decides the id before its products exist (its evidence cites the
+    artifact that will carry it), so re-persisting the bundle must not mint a
+    new one; a bundle that states no id keeps the generated-id behaviour.
+    """
+    declared = "0123456789abcdef0123456789abcdef"
+    save_products(
+        tmp_path / "source",
+        {"trajectories": _scan_dataset()},
+        provenance={"artifact_id": declared, "task": "solve"},
+    )
+    bundle = load_bundle(tmp_path / "source")
+    assert bundle.declared_artifact_id() == declared
+
+    bundle.save(tmp_path / "resaved")
+    assert ArtifactManifest.read(tmp_path / "resaved").artifact_id == declared
+
+    for layout in ("single", "sharded"):
+        root = tmp_path / f"dataset_{layout}"
+        bundle.save_dataset(root, layout=layout, shard_target_bytes=256)
+        manifest = ArtifactManifest.read(root)
+        assert manifest.artifact_id == declared, layout
+        assert load_bundle(root).metadata["artifact_id"] == declared
+
+    plain = load_bundle(tmp_path / "source").point_view((0,))
+    assert plain.declared_artifact_id() == declared
+    anonymous = load_bundle(tmp_path / "source")
+    anonymous = GenericDataBundle(anonymous.products, anonymous.bundle_descriptor)
+    assert anonymous.declared_artifact_id() is None
+    anonymous.save_dataset(
+        tmp_path / "generated", layout="single", shard_target_bytes=256
+    )
+    generated = ArtifactManifest.read(tmp_path / "generated").artifact_id
+    assert generated and generated != declared
+
+
 def test_bundle_product_roles_must_reference_products(tmp_path):
     save_products(tmp_path, {"trajectories": _scan_dataset()})
     path = tmp_path / "artifact_manifest.json"

@@ -110,12 +110,24 @@ class GenericDataBundle:
         """Set the optional result label in bundle metadata."""
         self._metadata["label"] = value
 
+    def declared_artifact_id(self) -> str | None:
+        """Return the artifact id this bundle states in its provenance, if any.
+
+        A bundle that was restored from an artifact carries the id the manifest
+        published; a bundle an engine built in memory carries the id it will be
+        published under, so its evidence can cite the artifact that will hold
+        it. Re-persisting either must keep that id instead of minting a new one.
+        """
+        declared = self._provenance.get("artifact_id")
+        return None if declared is None else str(declared)
+
     def save(self, path: str | Path) -> None:
         """Re-persist the products with the same bundle descriptor."""
         save_products(
             Path(path),
             self._products,
             provenance=self._provenance,
+            artifact_id=self.declared_artifact_id(),
             bundle=self._descriptor,
         )
 
@@ -198,6 +210,7 @@ class GenericDataBundle:
             root,
             self._products,
             provenance=self._provenance,
+            artifact_id=self.declared_artifact_id(),
             shard_target_bytes=shard_target_bytes,
             bundle=self._descriptor,
             layout=resolved,
