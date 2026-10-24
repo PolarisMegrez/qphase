@@ -1,6 +1,7 @@
 """CAM postprocessor plugins."""
 
 from .base import CAMPostprocessor, CAMPostprocessorConfig
+from .closure_risk import ClosureRisk, ClosureRiskConfig
 from .coherence_pole import CoherencePoleConfig, CoherencePoleSpectrum
 from .finite_delay_carrier import (
     CAMFiniteDelayCarrier,
@@ -15,6 +16,8 @@ from .stochastic_validity import StochasticValidity
 __all__ = [
     "CAMPostprocessor",
     "CAMPostprocessorConfig",
+    "ClosureRisk",
+    "ClosureRiskConfig",
     "CoherencePoleConfig",
     "CoherencePoleSpectrum",
     "CAMFiniteDelayCarrier",

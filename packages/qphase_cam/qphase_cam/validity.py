@@ -58,7 +58,9 @@ __all__ = [
     "lyapunov_covariance",
     "minimum_eigenvalue",
     "noise_timescales",
+    "numeric_column",
     "projected_intensity",
+    "tristate_column",
     "zero_frequency_gain",
 ]
 
@@ -175,6 +177,20 @@ class CriticalMode:
     condition_number: float
     spectral_gap: float
     eigenvector_condition_number: float
+
+
+def numeric_column(values: Sequence[Any]) -> np.ndarray:
+    """Return one float column in which ``None`` becomes ``NaN``, never zero."""
+    return np.asarray(
+        [np.nan if value is None else float(value) for value in values], dtype=float
+    )
+
+
+def tristate_column(values: Sequence[Any]) -> np.ndarray:
+    """Return one tri-state ``int8`` column: -1 unknown, 0 false, 1 true."""
+    return np.asarray(
+        [-1 if value is None else int(bool(value)) for value in values], dtype=np.int8
+    )
 
 
 def minimum_eigenvalue(covariance: Any) -> tuple[float, np.ndarray]:
@@ -446,10 +462,13 @@ def assess_stochastic_state(
             "left/right eigenvectors)",
         )
     diagnostics["critical_mode_resolved"] = True
+    diagnostics["jacobian"] = jacobian.tolist()
     diagnostics["jacobian_eigenvalues"] = [
         [float(np.real(value)), float(np.imag(value))]
         for value in np.linalg.eigvals(jacobian)
     ]
+    diagnostics["critical_mode_left"] = [float(value) for value in mode.left]
+    diagnostics["critical_mode_right"] = [float(value) for value in mode.right]
     mode_fields: dict[str, Any] = {
         "critical_eigenvalue_real": float(np.real(mode.value)),
         "critical_eigenvalue_imag": float(np.imag(mode.value)),
@@ -492,6 +511,7 @@ def assess_stochastic_state(
             **mode_fields,
         )
     minimum_noise, noise_spectrum = minimum_eigenvalue(covariance_of_noise)
+    diagnostics["diffusion_covariance"] = covariance_of_noise.tolist()
     diffusion_is_psd = minimum_noise >= -settings.covariance_tolerance
     diagnostics["diffusion_eigenvalues"] = [float(value) for value in noise_spectrum]
     noise_fields: dict[str, Any] = {
@@ -510,6 +530,7 @@ def assess_stochastic_state(
 
     covariance, residual = lyapunov_covariance(jacobian, covariance_of_noise)
     solution_finite = bool(np.all(np.isfinite(covariance)))
+    diagnostics["lyapunov_covariance"] = covariance.tolist()
     diagnostics["lyapunov_relative_residual"] = residual
     lyapunov_fields: dict[str, Any] = {
         "lyapunov_solution_finite": solution_finite,
@@ -775,21 +796,9 @@ def build_stochastic_assessment_annotation(
         ),
     }
     for name in _NUMERIC_FIELDS:
-        fields[name] = np.asarray(
-            [
-                np.nan if getattr(item, name) is None else float(getattr(item, name))
-                for item in cases
-            ],
-            dtype=float,
-        )
+        fields[name] = numeric_column([getattr(item, name) for item in cases])
     for name in _TRISATE_FIELDS:
-        fields[name] = np.asarray(
-            [
-                -1 if getattr(item, name) is None else int(bool(getattr(item, name)))
-                for item in cases
-            ],
-            dtype=np.int8,
-        )
+        fields[name] = tristate_column([getattr(item, name) for item in cases])
     fields["derivative_condition"] = np.asarray(
         [
             np.nan
