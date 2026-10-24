@@ -101,7 +101,7 @@ def test_manifest_namespaces_match_the_declared_entry_points():
 
 
 def test_manifest_declares_only_the_implemented_data_products():
-    """Phase 10C1 ships three schemas; every schema_ref must resolve."""
+    """Every declared schema_ref must resolve to a real ProductSchema."""
     import importlib
 
     from qphase.data import ProductSchema
@@ -111,6 +111,8 @@ def test_manifest_declares_only_the_implemented_data_products():
         CAM_STATE_DECLARATION.name,
         CAM_STATE_SCAN_DECLARATION.name,
         CAM_CANDIDATE_DECLARATION.name,
+        CAM_CONTINUATION_DECLARATION.name,
+        CAM_ANNOTATION_DECLARATION.name,
     ]
     for product in MANIFEST.data_products:
         module_name, _, attribute = product.schema_ref.partition(":")
@@ -118,14 +120,9 @@ def test_manifest_declares_only_the_implemented_data_products():
         schema = getattr(module, attribute)
         assert isinstance(schema, ProductSchema), product.name
         assert schema.kind.value == product.kind
-    # Phase 10C2 schemas (continuation, annotation, evidence) are not declared
-    # before they exist: a schema_ref must never point at a placeholder.
-    for later in (
-        CAM_EVIDENCE_DECLARATION,
-        CAM_CONTINUATION_DECLARATION,
-        CAM_ANNOTATION_DECLARATION,
-    ):
-        assert later.name not in declared
+    # The search-evidence schema (Phase 10C2b) is not declared before it exists:
+    # a schema_ref must never point at a placeholder.
+    assert CAM_EVIDENCE_DECLARATION.name not in declared
     assert MANIFEST.materializers == []
     assert MANIFEST.backend_capabilities.streaming is False
     assert "numpy" in MANIFEST.backend_capabilities.backends
@@ -310,13 +307,20 @@ def test_declared_fields_are_the_frozen_planning_vocabulary():
             "rejection_summary",
         ],
         CAM_CONTINUATION_DECLARATION.name: [
+            "parameters",
+            "path_offsets",
             "path_identity",
             "continuation_coordinate",
             "states",
+            "residuals",
+            "success",
             "events",
         ],
         CAM_ANNOTATION_DECLARATION.name: [
+            "annotation_kind",
             "target_identity",
+            "target_kind",
+            "status",
             "fields",
             "method_metadata",
         ],

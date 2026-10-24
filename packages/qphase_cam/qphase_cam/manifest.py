@@ -22,8 +22,9 @@ jobs that the current runtime would still execute as a plain steady-state solve.
 
 Deliberate omissions:
 
-* ``data_products`` stays empty — the typed CAM schemas belong to Phase 10C and
-  the manifest must not reference a ``schema_ref`` that does not exist yet;
+* ``data_products`` declares only the schemas that exist (Phases 10C1/10C2a);
+  the search-evidence product of Phase 10C2b is not declared until its schema
+  does;
 * no second engine entry point and no ``evidence.py`` placeholder;
 * qpsgen is already a hard dependency in ``pyproject.toml`` (the QPSGen
   dynamics adapter imports it eagerly), so it is not declared as an *optional*
@@ -128,8 +129,8 @@ MANIFEST = ResourcePackageManifest(
             description="Candidate classification (scaling signature).",
         ),
     ],
-    # Phase 10C1 implements the steady-state and candidate schemas. The
-    # continuation, annotation and evidence schemas of Phase 10C2 are *not*
+    # Phases 10C1 and 10C2a implement the steady-state, candidate, continuation
+    # and annotation schemas. The search-evidence schema of Phase 10C2b is *not*
     # declared: a schema_ref must resolve to a real ProductSchema.
     data_products=[
         DataProductDeclaration(
@@ -152,6 +153,20 @@ MANIFEST = ResourcePackageManifest(
             schema_ref="qphase_cam.data:CAM_CANDIDATE_PRODUCT",
             description="Ragged bifurcation/search candidates with explicit "
             "identity, classification and audit JSON columns.",
+        ),
+        DataProductDeclaration(
+            name=CAM_CONTINUATION_DECLARATION.name,
+            kind="statistics",
+            schema_ref="qphase_cam.data:CAM_CONTINUATION_PRODUCT",
+            description="Local continuation paths with explicit path identity, "
+            "a continuation coordinate and per-point events.",
+        ),
+        DataProductDeclaration(
+            name=CAM_ANNOTATION_DECLARATION.name,
+            kind="statistics",
+            schema_ref="qphase_cam.data:CAM_ANNOTATION_PRODUCT",
+            description="Postprocessor annotations: typed field columns plus one "
+            "outcome status per target, so a negative result is a status.",
         ),
     ],
     materializers=[],

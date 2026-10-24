@@ -23,6 +23,10 @@ recomputation, a different precision or another run is a different snapshot and
 therefore a different identity. Phase 10D supplies the solver-owned identity
 that survives those.
 
+The continuation importer reads the *fixed-point* legacy result whose metadata
+marks it as a continuation run; it takes the filled solution slot of every point
+and carries the swept parameter as ``continuation_coordinate``.
+
 What is not mapped
 ------------------
 ``postprocess`` tables, ``branches`` tables and any ``meta``/diagnostic value
@@ -44,6 +48,7 @@ from qphase.data import GenericDataBundle
 from ._common import content_digest, json_mapping, json_value
 from .bundle import cam_bundle
 from .candidates import build_candidate_product
+from .continuation import build_continuation_product
 from .state import build_state_product
 
 if TYPE_CHECKING:
@@ -57,6 +62,7 @@ __all__ = [
     "import_bifurcation_result",
     "import_bifurcation_scan",
     "import_cam_result",
+    "import_continuation_result",
     "import_legacy_artifact",
 ]
 
@@ -499,6 +505,133 @@ def import_bifurcation_scan(
     )
 
 
+def _continuation_columns(
+    result: Any,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, str, np.ndarray]:
+    """Flatten a legacy continuation result into per-point columns.
+
+    A legacy continuation result keeps its points on the leading grid axis with a
+    fixed-capacity solution axis behind it, and exactly one of those slots filled.
+    The product has one state per point, so the filled slot is taken and a point
+    without a solution becomes NaN/False instead of disappearing.
+    """
+    meta = dict(result.meta or {})
+    if not meta.get("continuation"):
+        raise ValueError("not a continuation result: meta['continuation'] must be true")
+    axes = {
+        str(name): np.asarray(values) for name, values in (result.axes or {}).items()
+    }
+    if len(axes) != 1:
+        raise ValueError(
+            "a continuation result carries exactly one continuation coordinate "
+            f"axis; got {sorted(axes)}"
+        )
+    name, coordinate = next(iter(axes.items()))
+    coordinate = np.asarray(coordinate, dtype=np.float64).reshape(-1)
+    shape = result.grid_shape
+    n_point = int(np.prod(shape, dtype=np.int64))
+    if coordinate.size != n_point:
+        raise ValueError(
+            f"the continuation axis {name!r} has {coordinate.size} values for "
+            f"{n_point} points"
+        )
+    states = np.asarray(result.states, dtype=np.complex128)
+    if states.ndim != 4 or states.shape[0] != n_point:
+        raise ValueError(
+            "states must span (point, solution, state_row, state_col); got "
+            f"shape {states.shape}"
+        )
+    capacity = int(states.shape[1])
+    valid = np.asarray(result.valid_mask, dtype=bool).reshape(n_point, capacity)
+    counts = np.asarray(result.solution_count, dtype=np.int64).reshape(n_point)
+    if np.any(counts > 1):
+        raise ValueError(
+            "a continuation point carries at most one state, but solution_count "
+            f"reports up to {int(counts.max())}"
+        )
+    if np.any(valid[:, 1:].any(axis=1)):
+        raise ValueError(
+            "a continuation point fills only its first solution slot; the legacy "
+            "payload has a later slot set"
+        )
+    filled = valid[:, 0]
+    residuals = np.asarray(result.residuals, dtype=np.float64).reshape(
+        n_point, capacity
+    )[:, 0]
+    success = np.asarray(result.success, dtype=bool).reshape(n_point, capacity)[:, 0]
+    point_states = np.where(filled[:, None, None], states[:, 0], np.nan + 1j * np.nan)
+    residuals = np.where(filled, residuals, np.nan)
+    success = np.logical_and(success, filled)
+    return coordinate, point_states, residuals, success, name, counts
+
+
+def import_continuation_result(
+    source: CAMResult | str | Path,
+    *,
+    provenance: Mapping[str, Any] | None = None,
+    source_id: str | None = None,
+) -> GenericDataBundle:
+    """Import one legacy continuation run as a single local path.
+
+    The legacy result keeps the swept parameter in one axis and the states in the
+    fixed-capacity slots of the leading grid axis, so the import takes the filled
+    slot of every point, names the path ``legacy:<fingerprint>:0`` and carries the
+    swept values as ``continuation_coordinate``. The legacy result has no event
+    table, so every point gets an empty ``{}`` event row.
+
+    A result whose ``meta['continuation']`` is not true, or which does not carry
+    exactly one continuation axis, is rejected: importing it as a path would
+    invent a continuation that never happened.
+    """
+    from ..result import CAMResult
+
+    result = (
+        CAMResult.load(_legacy_path(source))
+        if isinstance(source, (str, Path))
+        else source
+    )
+    if not isinstance(result, CAMResult):
+        raise TypeError(f"expected a CAMResult, got {type(result).__name__}")
+    coordinate, states, residuals, success, name, counts = _continuation_columns(result)
+    token, token_source = _resolve_token(_state_payload(result), source_id)
+    dataset = build_continuation_product(
+        path_identity=[f"legacy:{token}:0"],
+        continuation_coordinate=coordinate,
+        continuation_coordinate_name=name,
+        states=states,
+        residuals=residuals,
+        success=success,
+        parameters=result.params,
+        axes=result.axes,
+        provenance={"legacy_source": "qphase_cam.result:CAMResult"},
+    )
+    product_provenance = dict(dataset.provenance)
+    meta, unmapped_meta = json_mapping(result.meta or {})
+    return cam_bundle(
+        {"continuation": dataset},
+        provenance={
+            **dict(provenance or {}),
+            "legacy_source": "qphase_cam.result:CAMResult",
+            "legacy_result_kind": result.result_kind,
+            "legacy_source_fingerprint": token,
+            "legacy_source_token": token_source,
+            "legacy_meta": meta,
+            "legacy_continuation_parameter": name,
+            "legacy_point_count": int(coordinate.size),
+            "legacy_empty_point_count": int(np.count_nonzero(counts == 0)),
+            "unmapped_legacy_postprocess": sorted(
+                str(key) for key in (result.postprocess or {})
+            ),
+            "unmapped_legacy_meta": unmapped_meta,
+            "unmapped_legacy_parameters": product_provenance[
+                "unmapped_parameter_names"
+            ],
+            "unmapped_legacy_axes": product_provenance["unmapped_axis_names"],
+        },
+        metadata={"label": result.label},
+    )
+
+
 def import_legacy_artifact(
     path: str | Path,
     *,
@@ -507,15 +640,21 @@ def import_legacy_artifact(
 ) -> GenericDataBundle:
     """Import a trusted pre-2.0 NPZ payload, dispatching on its keys.
 
-    A legacy artifact records its own result type only in the file layout, so
-    the dispatcher reads the key set: ``valid_mask`` is a fixed-point result,
-    ``case_axes`` a candidate scan, ``control_names`` a single candidate set.
+    A legacy artifact records its own result type only in the file layout and in
+    its metadata, so the dispatcher reads both: ``case_axes`` is a candidate
+    scan, ``control_names`` a single candidate set, and among the fixed-point
+    payloads (``valid_mask``) ``meta['continuation']`` marks a continuation run.
     """
     with _trusted_npz(path) as data:
         keys = set(data.files)
+        meta = data["meta"].item() if "meta" in keys else {}
     target = _legacy_path(path)
     if "valid_mask" in keys:
-        return import_cam_result(target, provenance=provenance)
+        if isinstance(meta, Mapping) and meta.get("continuation"):
+            return import_continuation_result(
+                target, provenance=provenance, source_id=source_id
+            )
+        return import_cam_result(target, provenance=provenance, source_id=source_id)
     if "case_axes" in keys:
         return import_bifurcation_scan(
             target, provenance=provenance, source_id=source_id

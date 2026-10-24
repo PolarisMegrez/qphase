@@ -4,24 +4,27 @@ Two declaration layers, both static:
 
 * the six :class:`qphase.data.ProductDeclaration` records the task profiles
   reference — a name, a data kind, a quantity and the field vocabulary of one
-  product. Phase 10C1 replaced the 10B placeholder field names with the fields
-  the implemented schemas actually carry, so a declaration can no longer
-  describe a payload that does not exist.
-* the three :class:`qphase.data.ProductSchema` *templates* of Phase 10C1:
+  product. Phase 10C1 (state, state-scan, candidates) and Phase 10C2a
+  (continuation, annotations) replaced the earlier placeholder field names with
+  the fields the implemented schemas actually carry, so a declaration can no
+  longer describe a payload that does not exist.
+* the :class:`qphase.data.ProductSchema` *templates* of Phases 10C1 and 10C2a:
   :data:`CAM_STATE_PRODUCT` (one parameter point),
-  :data:`CAM_STATE_SCAN_PRODUCT` (a scan of parameter points) and
-  :data:`CAM_CANDIDATE_PRODUCT` (ragged bifurcation/search candidates).
+  :data:`CAM_STATE_SCAN_PRODUCT` (a scan of parameter points),
+  :data:`CAM_CANDIDATE_PRODUCT` (ragged bifurcation/search candidates),
+  :data:`CAM_CONTINUATION_PRODUCT` (local continuation paths) and
+  :data:`CAM_ANNOTATION_PRODUCT` (postprocessor annotations).
 
 A template keeps every axis **open** (``AxisSchema.size is None``): it is a
-plan, not a payload. The builders in :mod:`qphase_cam.data.state` and
-:mod:`qphase_cam.data.candidates` close the axes and materialize a dataset, so
+plan, not a payload. The builders in :mod:`qphase_cam.data.state`,
+:mod:`qphase_cam.data.candidates`, :mod:`qphase_cam.data.continuation` and
+:mod:`qphase_cam.data.annotations` close the axes and materialize a dataset, so
 a consumer can always tell "declared" from "written". The variable generators
 live here and are shared with the builders, which is what keeps a frozen column
 list from drifting away from what is actually materialized.
 
-Phase 10C2 adds the continuation, annotation and evidence declarations here;
-none of them is declared today, and none may reach the manifest before its
-schema exists.
+Phase 10C2b adds the evidence declaration here; it is not declared today, and no
+product may reach the manifest before its schema exists.
 """
 
 from __future__ import annotations
@@ -40,15 +43,18 @@ from qphase.data import (
 
 __all__ = [
     "CAM_ANNOTATION_DECLARATION",
+    "CAM_ANNOTATION_PRODUCT",
     "CAM_CANDIDATE_DECLARATION",
     "CAM_CANDIDATE_PRODUCT",
     "CAM_CONTINUATION_DECLARATION",
+    "CAM_CONTINUATION_PRODUCT",
     "CAM_EVIDENCE_DECLARATION",
     "CAM_STATE_DECLARATION",
     "CAM_STATE_PRODUCT",
     "CAM_STATE_SCAN_DECLARATION",
     "CAM_STATE_SCAN_PRODUCT",
     "LEGACY_IDENTITY_SEMANTICS",
+    "PATH_IDENTITY_SEMANTICS",
     "SOLUTION_AXIS_SEMANTICS",
 ]
 
@@ -146,22 +152,29 @@ CAM_CONTINUATION_DECLARATION = ProductDeclaration(
     kind=DataKind.STATISTICS,
     quantity="cam_continuation_branch",
     fields=[
+        "parameters",
+        "path_offsets",
         "path_identity",
         "continuation_coordinate",
         "states",
+        "residuals",
+        "success",
         "events",
     ],
     table="row_table",
 )
 
-#: Postprocessor annotations: what they are attached to, the annotation fields
-#: and the method metadata that produced them.
+#: Postprocessor annotations: what they are attached to, the annotation verdict,
+#: the typed field columns and the method metadata that produced them.
 CAM_ANNOTATION_DECLARATION = ProductDeclaration(
     name="annotations",
     kind=DataKind.STATISTICS,
     quantity="cam_annotation",
     fields=[
+        "annotation_kind",
         "target_identity",
+        "target_kind",
+        "status",
         "fields",
         "method_metadata",
     ],
@@ -392,4 +405,155 @@ CAM_CANDIDATE_PRODUCT = ProductSchema(
     axes=_candidate_axes(),
     variables=_candidate_variables(),
     attributes=_candidate_attributes(),
+)
+
+
+#: Why a continuation path is a local, solver-owned object. Stated once, in the
+#: schema, so a consumer reading only the artifact cannot treat two paths as one
+#: global branch.
+PATH_IDENTITY_SEMANTICS = (
+    "a path identity is local to the solve that produced it and is supplied by "
+    "the caller, never derived from a path slot; two paths are not claims about "
+    "one global branch"
+)
+
+
+def _continuation_axes() -> list[AxisSchema]:
+    return [
+        AxisSchema(name="point", role=AxisRole.PARAMETER),
+        AxisSchema(name="path", role=AxisRole.INDEX),
+        AxisSchema(name="path_offset", role=AxisRole.INDEX),
+        AxisSchema(name="state_row", role=AxisRole.INDEX),
+        AxisSchema(name="state_col", role=AxisRole.INDEX),
+    ]
+
+
+def _continuation_variables() -> list[VariableSchema]:
+    return [
+        VariableSchema(
+            name="path_identity",
+            dtype="U1",
+            value_domain="real",
+            dims=("path",),
+            quantity="cam_path_identity",
+        ),
+        VariableSchema(
+            name="path_offsets",
+            dtype="int64",
+            value_domain="real",
+            dims=("path_offset",),
+        ),
+        VariableSchema(
+            name="continuation_coordinate",
+            dtype="float64",
+            value_domain="real",
+            dims=("point",),
+            quantity="cam_continuation_coordinate",
+        ),
+        VariableSchema(
+            name="states",
+            dtype="complex128",
+            value_domain="complex",
+            dims=("point", "state_row", "state_col"),
+            quantity="cam_continuation_state",
+        ),
+        VariableSchema(
+            name="residuals",
+            dtype="float64",
+            value_domain="real",
+            dims=("point",),
+            quantity="cam_continuation_residual",
+        ),
+        VariableSchema(
+            name="success",
+            dtype="bool",
+            value_domain="real",
+            dims=("point",),
+        ),
+        VariableSchema(
+            name="events",
+            dtype="U1",
+            value_domain="real",
+            dims=("point",),
+        ),
+    ]
+
+
+def _continuation_attributes() -> dict[str, Any]:
+    return {
+        "table": "cam_continuation",
+        "product": "continuation",
+        "point_axis": "point",
+        "path_axis": "path",
+        "path_offset_axis": "path_offset",
+        "ragged_axis": "point",
+        "offsets_variable": "path_offsets",
+        "identity_variable": "path_identity",
+        "state_matrix_axes": ["state_row", "state_col"],
+        "json_columns": ["events"],
+        "identity_semantics": PATH_IDENTITY_SEMANTICS,
+        "ragged": True,
+    }
+
+
+#: Local continuation paths. Axis sizes stay open here; the builder closes them.
+CAM_CONTINUATION_PRODUCT = ProductSchema(
+    kind=DataKind.STATISTICS,
+    axes=_continuation_axes(),
+    variables=_continuation_variables(),
+    attributes=_continuation_attributes(),
+)
+
+
+def _annotation_axes() -> list[AxisSchema]:
+    return [AxisSchema(name="annotation", role=AxisRole.INDEX)]
+
+
+def _annotation_variables() -> list[VariableSchema]:
+    return [
+        VariableSchema(
+            name="target_identity",
+            dtype="U1",
+            value_domain="real",
+            dims=("annotation",),
+            quantity="cam_annotation_target",
+        ),
+        VariableSchema(
+            name="status",
+            dtype="U1",
+            value_domain="real",
+            dims=("annotation",),
+            quantity="cam_outcome_status",
+        ),
+        VariableSchema(
+            name="method_metadata",
+            dtype="U1",
+            value_domain="real",
+            dims=("annotation",),
+        ),
+    ]
+
+
+def _annotation_attributes() -> dict[str, Any]:
+    return {
+        "table": "cam_annotations",
+        "product": "annotations",
+        "annotation_axis": "annotation",
+        "identity_variable": "target_identity",
+        "status_variable": "status",
+        "json_columns": ["method_metadata"],
+        # Typed annotation payload columns are declared per product: a field is a
+        # real variable with its own dims and dtype, never a JSON stand-in.
+        "field_variables": [],
+        "ragged": False,
+    }
+
+
+#: Postprocessor annotations. The ``annotation`` axis is open and the typed field
+#: columns are added by the builder, one variable per field.
+CAM_ANNOTATION_PRODUCT = ProductSchema(
+    kind=DataKind.STATISTICS,
+    axes=_annotation_axes(),
+    variables=_annotation_variables(),
+    attributes=_annotation_attributes(),
 )

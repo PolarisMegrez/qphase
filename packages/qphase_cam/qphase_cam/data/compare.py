@@ -10,6 +10,10 @@ still matches".
 Both the stored and the in-memory product are accepted, because the helpers
 read through ``Dataset.handle`` — a test can therefore compare the artifact a
 user would load, not just the object the builder returned.
+
+The continuation comparison also checks the legacy *empty* points: a point whose
+fixed-capacity slot was never filled must stay a NaN state with ``success``
+false, so an import cannot silently upgrade a failed point into a solved one.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from qphase.data import Dataset
 
 from ._common import canonical_json_text
 from .legacy import (
+    _continuation_columns,
     _legacy_candidate_arrays,
     _legacy_candidate_count,
     _split_diagnostics,
@@ -31,7 +36,11 @@ from .legacy import (
 if TYPE_CHECKING:
     from ..result import CAMResult
 
-__all__ = ["compare_candidates_export", "compare_state_export"]
+__all__ = [
+    "compare_candidates_export",
+    "compare_continuation_export",
+    "compare_state_export",
+]
 
 
 def _dataset_arrays(product: Dataset) -> dict[str, np.ndarray]:
@@ -288,4 +297,71 @@ def compare_candidates_export(
                 column, np.asarray(value).reshape(-1), rtol=rtol, atol=atol
             )
             _record(report, f"{prefix}{name}", matched, detail)
+    return report
+
+
+def compare_continuation_export(
+    product: Dataset,
+    result: Any,
+    *,
+    rtol: float = 1e-12,
+    atol: float = 0.0,
+) -> dict[str, Any]:
+    """Compare one continuation product against the legacy run it came from.
+
+    The legacy side is normalized exactly as the importer normalizes it (filled
+    slot per point, swept parameter as the coordinate), so the comparison
+    exercises the persisted columns rather than the in-memory object.
+    """
+    from ..result import CAMResult
+
+    if not isinstance(result, CAMResult):
+        raise TypeError(f"expected a CAMResult, got {type(result).__name__}")
+    coordinate, states, residuals, success, name, counts = _continuation_columns(result)
+    arrays = _dataset_arrays(product)
+    report = _comparison_report("continuation")
+
+    for field, expected in (
+        ("states", states),
+        ("residuals", residuals),
+        ("success", success),
+        ("continuation_coordinate", coordinate),
+    ):
+        matched, detail = _array_check(arrays[field], expected, rtol=rtol, atol=atol)
+        _record(report, field, matched, detail)
+
+    offsets = np.asarray([0, coordinate.size], dtype=np.int64)
+    matched, detail = _array_check(
+        arrays["path_offsets"], offsets, rtol=rtol, atol=atol
+    )
+    _record(report, "path_offsets", matched, detail)
+    identity = [str(value) for value in arrays["path_identity"]]
+    _record(
+        report,
+        "path_identity",
+        len(identity) == 1 and bool(identity[0].strip()),
+        {"entries": len(identity)},
+    )
+    _record(
+        report,
+        "empty_points",
+        int(np.count_nonzero(~np.any(np.isfinite(states.real), axis=(1, 2))))
+        == int(np.count_nonzero(counts == 0)),
+        {"legacy_empty": int(np.count_nonzero(counts == 0))},
+    )
+    events = [json.loads(str(value)) for value in arrays["events"]]
+    _record(report, "events", events == [{} for _ in range(coordinate.size)])
+
+    for key, value in (result.params or {}).items():
+        column = arrays.get(f"parameter.{key}")
+        if column is None:
+            report["unmapped"].append(f"parameter.{key}")
+            continue
+        matched, detail = _array_check(
+            column,
+            np.broadcast_to(np.asarray(value), column.shape),
+            rtol=rtol,
+            atol=atol,
+        )
+        _record(report, f"parameter.{key}", matched, detail)
     return report

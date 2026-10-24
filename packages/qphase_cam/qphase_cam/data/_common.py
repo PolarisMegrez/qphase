@@ -24,7 +24,7 @@ from typing import Any
 
 import numpy as np
 from qphase.core.utils import canonical_json
-from qphase.data import CoordinateSchema, ProductSchema, VariableSchema
+from qphase.data import AxisSchema, CoordinateSchema, ProductSchema, VariableSchema
 
 __all__ = [
     "canonical_json_text",
@@ -130,16 +130,28 @@ def closed_product(
     variables: Sequence[VariableSchema],
     coordinates: Sequence[CoordinateSchema],
     attributes: Mapping[str, Any],
+    extra_axes: Sequence[AxisSchema] = (),
 ) -> ProductSchema:
-    """Return the template with every axis closed and payloads attached."""
+    """Return the template with every axis closed and payloads attached.
+
+    ``extra_axes`` covers products whose axes are data-dependent (an annotation
+    product declares one axis per shared field dimension); those axes arrive
+    already closed because only the builder knows their size.
+    """
     unknown = [axis.name for axis in template.axes if axis.name not in sizes]
     if unknown:
         raise ValueError(f"missing axis sizes for {sorted(unknown)}")
+    open_extra = [axis.name for axis in extra_axes if axis.size is None]
+    if open_extra:
+        raise ValueError(f"extra axes must be closed: {sorted(open_extra)}")
     return ProductSchema(
         kind=template.kind,
         axes=[
-            axis.model_copy(update={"size": int(sizes[axis.name])})
-            for axis in template.axes
+            *(
+                axis.model_copy(update={"size": int(sizes[axis.name])})
+                for axis in template.axes
+            ),
+            *extra_axes,
         ],
         sampling_bases=list(template.sampling_bases),
         variables=list(variables),
@@ -172,6 +184,8 @@ def coordinate_columns(
     shape: tuple[int, ...],
     count: int,
     reserved: set[str] | None = None,
+    dims: tuple[str, ...] = ("scan",),
+    quantity: str = "scan_parameter",
 ) -> tuple[
     dict[str, np.ndarray],
     list[VariableSchema],
@@ -180,9 +194,11 @@ def coordinate_columns(
 ]:
     """Turn one parameter mapping into typed columns plus coordinates.
 
+    ``dims`` names the parameter axis the columns span (``scan`` for a state
+    scan, ``point`` for a continuation path); the values are one per that axis.
     Values that are not scalar or grid-shaped, values that are not numeric and
-    names whose coordinate already exists are returned as unmapped names
-    instead of being dropped.
+    names whose coordinate already exists are returned as unmapped names instead
+    of being dropped.
     """
     arrays: dict[str, np.ndarray] = {}
     variables: list[VariableSchema] = []
@@ -206,15 +222,15 @@ def coordinate_columns(
                 name=variable_name,
                 dtype="complex128" if complex_column else "float64",
                 value_domain="complex" if complex_column else "real",
-                dims=("scan",),
-                quantity="scan_parameter",
+                dims=dims,
+                quantity=quantity,
             )
         )
         coordinates.append(
             CoordinateSchema(
                 name=name,
                 variable=variable_name,
-                dims=("scan",),
+                dims=dims,
                 role="parameter",
             )
         )
