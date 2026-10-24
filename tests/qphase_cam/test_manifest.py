@@ -1,9 +1,9 @@
-"""Phase 10B: CAM resource manifest and planning task profiles.
+"""CAM resource manifest and the six active task profiles.
 
-These tests exercise the *planning* contract only. They never touch the active
-``qphase_cam.engine.Engine.manifest``: the current engine keeps its existing
-behaviour and Phase 10E performs the handover that makes the compiler enforce
-the profiles below.
+Phase 10B declared the profiles without attaching them; Phase 10E activates
+them, so these tests now compile against the *real* engine manifest. The
+declaration tests still describe the contract (profiles, declarations, task
+vocabulary) and the compiler tests exercise the activation.
 """
 
 from __future__ import annotations
@@ -11,14 +11,12 @@ from __future__ import annotations
 import ast
 import tomllib
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, ClassVar
+from typing import Any
 
 import pytest
 from qphase.core.compiler import WorkflowCompiler
 from qphase.core.config import JobConfig, WorkflowSpec
 from qphase.core.project import ProjectContext
-from qphase.core.protocols import EngineManifest
 from qphase.core.registry import registry
 from qphase.core.system_config import SystemConfig
 from qphase.core.task_profile import (
@@ -304,9 +302,11 @@ def test_declared_fields_are_the_frozen_planning_vocabulary():
             "status",
             "physical_status",
             "search_design",
+            "controls",
             "coverage",
             "path_audit",
             "execution_provenance",
+            "notes",
             *EVIDENCE_COUNT_FIELDS,
             "prefilter_rejected",
             "rejected_by_reason",
@@ -408,56 +408,31 @@ def test_selector_reads_only_the_job_explicit_view():
 # --- planning-level compiler integration ----------------------------------
 
 
-def test_profiles_are_not_attached_to_the_active_engine_manifest():
-    """Phase 10B must not activate the profiles on the running engine."""
+def test_the_six_profiles_are_attached_to_the_active_engine_manifest():
+    """Phase 10E activates the profiles the compiler now enforces."""
     from qphase_cam.engine import Engine
 
-    assert Engine.manifest.task_profiles is None
-    assert Engine.manifest.profile_selector is None
-
-
-class _PlanningEngineConfig(SimpleNamespace):
-    """Placeholder engine config model for the planning fixture."""
-
-    @classmethod
-    def model_validate(cls, value: Any) -> _PlanningEngineConfig:
-        return cls(**value) if isinstance(value, dict) else value
-
-
-class _PlanningEngine:
-    """Engine fixture carrying the CAM planning manifest, nothing else.
-
-    Mirrors the ``profiled_engine`` pattern of ``tests/qphase/test_compiler.py``:
-    the compiler reads a manifest, so the planning profiles can be validated
-    without instantiating the real engine or activating them on it.
-    """
-
-    name: ClassVar[str] = "cam"
-    description: ClassVar[str] = "CAM planning-profile fixture (Phase 10B)"
-    config_schema: ClassVar[type] = _PlanningEngineConfig
-    manifest: ClassVar[EngineManifest] = EngineManifest(
-        task_profiles="qphase_cam.manifest:CAM_TASK_PROFILES",
-        profile_selector="qphase_cam.config:select_cam_task_profile",
+    assert Engine.manifest.task_profiles == "qphase_cam.manifest:CAM_TASK_PROFILES"
+    assert (
+        Engine.manifest.profile_selector == "qphase_cam.config:select_cam_task_profile"
     )
-
-    def __init__(self, config: Any = None, plugins: dict | None = None, **kwargs: Any):
-        del kwargs
-        self.config = config
-        self.plugins = plugins or {}
 
 
 @pytest.fixture
 def planning_engine():
-    """Register the planning engine fixture under the real ``engine.cam`` name.
+    """Register the real CAM engine class under the real ``engine.cam`` name.
 
-    The selector reads ``engine.cam.task``, so the fixture stands in for the
-    engine under its own name; the previous registration is restored on exit.
+    The compiler reads a manifest and never instantiates the engine, so the
+    activation can be compiled end to end without building a solver. The
+    previous registration is restored on exit.
     """
+    from qphase_cam.engine import Engine
+
     from tests.plugins.dummy_plugin import DummyPlugin
 
     engine_table = registry._tables.setdefault("engine", {})
     previous = engine_table.get("cam")
-    registry.register("engine", "cam", _PlanningEngine, overwrite=True)
+    registry.register("engine", "cam", Engine, overwrite=True)
     for namespace in ("backend", "model", "cam_solver", "cam_postprocessor"):
         registry.register(
             namespace=namespace, name="dummy", builder=DummyPlugin, overwrite=True
@@ -495,7 +470,9 @@ def test_compiler_plans_all_six_tasks_without_instantiating_the_engine(
     def _explode(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("the compiler must plan without instantiating the engine")
 
-    monkeypatch.setattr(_PlanningEngine, "__init__", _explode)
+    from qphase_cam.engine import Engine
+
+    monkeypatch.setattr(Engine, "__init__", _explode)
 
     solver_job = {
         "backend": {"dummy": {}},

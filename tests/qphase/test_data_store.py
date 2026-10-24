@@ -511,6 +511,46 @@ def test_artifact_store_integration(tmp_path):
     )
 
 
+class _Bundle:
+    """Minimal result object: typed products plus a provenance mapping."""
+
+    def __init__(self, products, provenance):
+        self.products = products
+        self.provenance = provenance
+
+    @property
+    def metadata(self):
+        return dict(self.provenance)
+
+
+def test_artifact_store_save_result_uses_the_declared_artifact_id(tmp_path):
+    """A result that states its artifact id is persisted under that id.
+
+    An engine decides the id before its products exist so evidence can cite the
+    artifact that will carry it; the store must publish exactly that id. A
+    result without one keeps the generated-id behaviour.
+    """
+    config = SimpleNamespace(shard_target_mib=1, storage_layout="single")
+    declared = "0123456789abcdef0123456789abcdef"
+    store = ArtifactStore(tmp_path / "declared", config)
+    store.save_result(
+        _Bundle({"trajectories": _dataset()}, {"artifact_id": declared}),
+        "solve",
+    )
+    manifest = ArtifactManifest.read(tmp_path / "declared")
+    assert manifest.artifact_id == declared
+    assert manifest.provenance["artifact_id"] == declared
+    restored = load_result("solve", tmp_path / "declared")
+    assert restored.metadata["artifact_id"] == declared
+
+    generated = ArtifactStore(tmp_path / "generated", config)
+    generated.save_result(_Bundle({"trajectories": _dataset()}, {}), "solve")
+    default_manifest = ArtifactManifest.read(tmp_path / "generated")
+    assert default_manifest.artifact_id
+    assert default_manifest.artifact_id != declared
+    assert "artifact_id" not in default_manifest.provenance
+
+
 def test_save_products_validates_inputs(tmp_path):
     with pytest.raises(TypeError, match="must be a mapping"):
         save_products(tmp_path, [("x", object())])

@@ -193,6 +193,7 @@ def test_cam_engine_preserves_multidimensional_scan_shape():
     model = _vdp_model()
 
     bundle = Engine(
+        EngineConfig(task="scan"),
         plugins={
             "backend": NumpyBackend(),
             "model": model,
@@ -260,6 +261,7 @@ def test_continuation_rejects_external_scan():
 
     with pytest.raises(ValueError, match="continuation"):
         Engine(
+            EngineConfig(task="continue"),
             plugins={
                 "backend": NumpyBackend(),
                 "model": model,
@@ -328,6 +330,7 @@ def test_bifurcation_scan_preserves_empty_cases_and_round_trips(tmp_path):
     ).compile()
     context = _scan_context(grid)
     bundle = Engine(
+        EngineConfig(task="search"),
         plugins={
             "backend": NumpyBackend(),
             "model": _vdp_model(),
@@ -357,7 +360,10 @@ def test_bifurcation_scan_preserves_empty_cases_and_round_trips(tmp_path):
     audit = json.loads(str(np.asarray(product.handle("base_audit").materialize())[0]))
     assert audit["is_physical"] is True
     assert audit["maximum_jacobian_real_part"] == -0.5
-    assert bundle.provenance["search_audits"] == 2
+    assert bundle.provenance["search_audit_count"] == 2
+    # The audit payload lives in the evidence product, not in the provenance.
+    assert "audits" not in bundle.provenance
+    assert bundle.require("evidence").attributes["case_count"] == 2
 
     target = tmp_path / "bifurcation_scan"
     bundle.save_dataset(target, layout="sharded", shard_target_bytes=4096)
@@ -391,6 +397,7 @@ def test_bifurcation_scan_rejects_control_axis():
     )
     with pytest.raises(ValueError, match="not solver controls"):
         Engine(
+            EngineConfig(task="search"),
             plugins={
                 "backend": NumpyBackend(),
                 "model": model,
@@ -432,7 +439,7 @@ def test_bifurcation_scan_records_case_failure(tmp_path):
     ).compile()
     context = _scan_context(grid)
     bundle = Engine(
-        EngineConfig(case_failure_policy="record"),
+        EngineConfig(task="search", case_failure_policy="record"),
         plugins={
             "backend": NumpyBackend(),
             "model": _vdp_model(),
@@ -517,6 +524,7 @@ def test_bifurcation_scan_resume_does_not_repeat_completed_case():
     checkpoints = Checkpoints()
     context = _scan_context(grid, checkpoints=checkpoints)
     engine = Engine(
+        EngineConfig(task="search"),
         plugins={
             "backend": NumpyBackend(),
             "model": _vdp_model(),
@@ -613,6 +621,7 @@ def test_cross_case_candidate_identity_stays_annotatable(tmp_path):
     ).compile()
     context = _scan_context(grid)
     bundle = Engine(
+        EngineConfig(task="search"),
         plugins={
             "backend": NumpyBackend(),
             "model": _vdp_model(),

@@ -8,17 +8,16 @@ planning task profiles. Two layers live here on purpose:
   optional dependencies, the core compatibility range. It imports
   ``qphase.resources`` only; every engine/protocol target stays a dotted string
   so importing this module never pulls a solver, a postprocessor or qpsgen.
-* :data:`CAM_TASK_PROFILES` — the six task profiles (``solve``, ``scan``,
-  ``search``, ``continue``, ``analyze``, ``summarize_search``), built from the
-  core task-profile contract and the planning declarations in
+* :data:`CAM_TASK_PROFILES` — the six active task profiles (``solve``,
+  ``scan``, ``search``, ``continue``, ``analyze``, ``summarize_search``), built
+  from the core task-profile contract and the product declarations in
   :mod:`qphase_cam.data`.
 
-The profiles are **planning contract only**. They are not attached to the
-active ``qphase_cam.engine.Engine.manifest``: the current engine entry point,
-its manifest and its execution path are unchanged, and Phase 10E performs the
-single handover that makes the compiler enforce these profiles. Activating them
-now would let the compiler accept ``search``/``analyze``/``summarize_search``
-jobs that the current runtime would still execute as a plain steady-state solve.
+Phase 10E attaches these profiles to ``qphase_cam.engine.Engine.manifest``
+(``task_profiles`` + ``profile_selector``), so the compiler enforces exactly one
+profile per job and every one of the six tasks has a runtime: four run a solver,
+``analyze`` postprocesses an upstream bundle and ``summarize_search`` assembles
+evidence from upstream artifacts.
 
 Deliberate omissions:
 
@@ -38,9 +37,9 @@ Public API
 MANIFEST
     The static resource package manifest (schema ``qphase.resource/1``).
 CAM_TASK_PROFILES
-    The six planning task profiles, keyed by task id.
+    The six active task profiles, keyed by task id.
 cam_task_profile
-    Look up one planning profile by id.
+    Look up one active profile by id.
 """
 
 from __future__ import annotations

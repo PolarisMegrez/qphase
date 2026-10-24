@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 from qphase.backend.numpy_backend import NumpyBackend
-from qphase_cam.engine import Engine
+from qphase.core.scan import ScanSpec
+from qphase_cam.engine import Engine, EngineConfig
 from qphase_cam.errors import JacobianUnavailableError
 from qphase_cam.postprocessor.frequency import RayleighFrequency
 from qphase_cam.solver import multistability as multistability_module
@@ -90,7 +91,21 @@ def test_batched_engine_uses_each_grid_points_parameters():
     root = _vdp_root()
     params = dict(VDP_PARAMS)
     params["omega_a"] = [0.0, 0.001]
+    # The scan task states its axis explicitly: the grid, not an array-valued
+    # model parameter, is what makes this run a scan.
+    grid = ScanSpec.model_validate(
+        {
+            "axes": {
+                "omega_a": {
+                    "target": "model.vdp_2mode.omega_a",
+                    "values": [0.0, 0.001],
+                }
+            }
+        }
+    ).compile()
+    context = SimpleNamespace(parameter_grid=grid, progress=None)
     bundle = Engine(
+        EngineConfig(task="scan"),
         plugins={
             "backend": NumpyBackend(),
             "model": VDP2ModeModel(**params),
@@ -98,8 +113,8 @@ def test_batched_engine_uses_each_grid_points_parameters():
                 initial_guesses=[root], max_iterations=20, tolerance=1e-8
             ),
             "cam_postprocessor": RayleighFrequency(),
-        }
-    ).run()
+        },
+    ).run(context=context)
     product = bundle.require("state_scan")
     assert np.asarray(product.handle("states").materialize()).shape == (2, 4, 2, 2)
     assert np.asarray(product.handle("solution_count").materialize()).tolist() == [1, 1]

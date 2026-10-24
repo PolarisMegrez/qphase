@@ -158,6 +158,8 @@ from .evidence import (
     INTERMEDIATE_EVIDENCE,
     SourceArtifactRef,
     build_evidence_product,
+    fragments_from_candidate_product,
+    fragments_from_evidence_product,
 )
 from .legacy import (
     import_bifurcation_result,
@@ -208,6 +210,8 @@ __all__ = [
     "build_continuation_product",
     "build_evidence_product",
     "build_state_product",
+    "fragments_from_candidate_product",
+    "fragments_from_evidence_product",
     "cam_bundle",
     "solution_identity",
     "coerce_outcome_status",

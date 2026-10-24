@@ -22,7 +22,8 @@ from qphase_cam.core.reduction import (
     SeedGenerationStats,
 )
 from qphase_cam.data import build_candidate_product, cam_bundle
-from qphase_cam.engine import Engine
+from qphase_cam.engine import Engine, EngineConfig
+from qphase_cam.evidence import SearchAuditFragment
 from qphase_cam.postprocessor.base import CAMAnnotationContext
 from qphase_cam.postprocessor.candidates import candidate_view
 from qphase_cam.postprocessor.local_response import LocalResponseValidation
@@ -445,8 +446,51 @@ def test_engine_packs_tagged_bifurcation_output_and_passes_input(
             assert request.model is no_jacobian_model
             output = self.search(request.model, request.backend, data=request.data)
             product = candidate_product_from_output(request.model, output)
+            # A search states its audit fragment; the engine turns it into the
+            # mandatory evidence product.
             return CAMProductFragment(
                 products={"candidates": product},
+                audits=(
+                    SearchAuditFragment(
+                        case_identity="search:test:case:0",
+                        search_identity="search:test",
+                        status="valid",
+                        physical_status="not_checked",
+                        search_design={
+                            "target": "equilibrium_multiplicity",
+                            "order": 2,
+                        },
+                        controls={
+                            "control": {"bounds": [-1.0, 1.0], "sampling": "linear"}
+                        },
+                        coverage={"coverage": "test_double"},
+                        generated_candidate_count=1,
+                        prefilter_pass_count=1,
+                        prefilter_rejected_count=0,
+                        refinement_start_count=1,
+                        refinement_duplicate_count=0,
+                        accepted_count=1,
+                        rejected_count=0,
+                        near_miss_saved=0,
+                        near_miss_dropped=0,
+                        unique_candidate_count=1,
+                        paths=(
+                            {
+                                "path": "test",
+                                "generation_trial_count": 1,
+                                "generated_candidate_count": 1,
+                            },
+                        ),
+                        generation_trial_count=1,
+                        accepted_candidate_identities=("cam:candidate:test",),
+                        solver="bifurcation",
+                        plugins={"target": "equilibrium_multiplicity"},
+                        distribution={"qphase": "test"},
+                        api_revision="test",
+                        backend="numpy",
+                        dtype="complex128",
+                    ),
+                ),
                 metadata={"control_names": ("control",)},
             )
 
@@ -476,6 +520,7 @@ def test_engine_packs_tagged_bifurcation_output_and_passes_input(
             )
 
     bundle = Engine(
+        EngineConfig(task="search"),
         plugins={
             "backend": NumpyBackend(),
             "model": no_jacobian_model,
@@ -485,7 +530,11 @@ def test_engine_packs_tagged_bifurcation_output_and_passes_input(
     assert isinstance(bundle, ResultProtocol)
     assert isinstance(bundle, DatasetResultProtocol)
     product = bundle.require("candidates")
-    assert bundle.bundle_descriptor.product_roles == {"candidates": "candidates"}
+    # A search always publishes evidence next to its candidates.
+    assert bundle.bundle_descriptor.product_roles == {
+        "candidates": "candidates",
+        "evidence": "evidence",
+    }
     np.testing.assert_allclose(
         np.asarray(product.handle("control_values").materialize()), [[0.5]]
     )
@@ -497,6 +546,12 @@ def test_engine_packs_tagged_bifurcation_output_and_passes_input(
     )
     audit = json.loads(str(np.asarray(product.handle("base_audit").materialize())[0]))
     assert audit["regularity_determinant"] == 2.0
+    evidence = bundle.require("evidence")
+    assert evidence.attributes["case_count"] == 1
+    np.testing.assert_array_equal(
+        np.asarray(evidence.handle("accepted_identity").materialize()),
+        ["cam:candidate:test"],
+    )
 
 
 def test_engine_persists_scaling_branch_table(tmp_path):

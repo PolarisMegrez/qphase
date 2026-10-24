@@ -164,9 +164,11 @@ CAM_EVIDENCE_DECLARATION = ProductDeclaration(
         "status",
         "physical_status",
         "search_design",
+        "controls",
         "coverage",
         "path_audit",
         "execution_provenance",
+        "notes",
         *EVIDENCE_COUNT_FIELDS,
         "prefilter_rejected",
         "rejected_by_reason",
@@ -706,6 +708,22 @@ def _evidence_variables() -> list[VariableSchema]:
             value_domain="real",
             dims=("case",),
         ),
+        # The control contract of one case. ``control_names`` is a typed axis, but
+        # bounds and sampling are per-control values, so they travel as canonical
+        # JSON per case: without this column a restored evidence product could not
+        # rebuild the fragment it was derived from.
+        VariableSchema(
+            name="controls",
+            dtype="U1",
+            value_domain="real",
+            dims=("case",),
+        ),
+        VariableSchema(
+            name="notes",
+            dtype="U1",
+            value_domain="real",
+            dims=("case",),
+        ),
         VariableSchema(
             name="coverage",
             dtype="U1",
@@ -849,6 +867,19 @@ def _evidence_attributes() -> dict[str, Any]:
             "may repeat a candidate across several starts"
         ),
         "control_names_variable": "control_names",
+        "controls_variable": "controls",
+        "controls_semantics": (
+            "controls carries the per-case control contract as canonical JSON "
+            "{name: {bounds: [low, high], sampling: str}}; control_names is the "
+            "typed axis, and bounds/sampling are per-control values that axis "
+            "cannot express. A reader rebuilds one search fragment from these "
+            "columns instead of guessing the window"
+        ),
+        "notes_variable": "notes",
+        "notes_semantics": (
+            "notes carries the fragment's own notes as canonical JSON per case; it "
+            "is an audit annotation, never a count or a status"
+        ),
         "count_fields": list(EVIDENCE_COUNT_FIELDS),
         "candidate_start_unit": (
             "every count column counts candidate starts; prefilter, refinement, "
@@ -856,6 +887,8 @@ def _evidence_attributes() -> dict[str, Any]:
         ),
         "json_columns": [
             "search_design",
+            "controls",
+            "notes",
             "coverage",
             "path_audit",
             "execution_provenance",

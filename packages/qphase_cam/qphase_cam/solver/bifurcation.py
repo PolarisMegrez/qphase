@@ -402,16 +402,12 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             else candidate_case_arrays(model, _empty_candidate_output(self, model))
             for payload in cases
         ]
-        product = build_candidate_from_cases(
-            case_arrays=arrays,
-            case_meta=[payload["metadata"] for payload in cases],
-            case_axes=case_axes,
-            case_params=case_params,
-            case_shape=case_shape,
-        )
         dtype = str(np.asarray(arrays[0]["states"]).dtype) if arrays else "complex128"
-        audits = [
-            fragment_from_bifurcation_metadata(
+        fragments: dict[int, Any] = {}
+        for index, payload in enumerate(cases):
+            if payload["output"] is None:
+                continue
+            fragments[index] = fragment_from_bifurcation_metadata(
                 payload["output"].metadata,
                 case_identity=payload["case_identity"],
                 search_identity=payload["search_identity"],
@@ -430,9 +426,28 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
                     "strategy": type(self.strategy).__name__,
                 },
             )
-            for payload in cases
-            if payload["output"] is not None
-        ]
+        # The fragment is the case's own evidence contract: storing it in the
+        # case metadata is what lets a summary read a candidate-only artifact
+        # back without re-deriving an event. A failed case has no fragment, and
+        # therefore no evidence to guess from.
+        product = build_candidate_from_cases(
+            case_arrays=arrays,
+            case_meta=[
+                (
+                    {
+                        **payload["metadata"],
+                        "search_fragment": fragments[index].model_dump(mode="json"),
+                    }
+                    if index in fragments
+                    else payload["metadata"]
+                )
+                for index, payload in enumerate(cases)
+            ],
+            case_axes=case_axes,
+            case_params=case_params,
+            case_shape=case_shape,
+        )
+        audits = list(fragments.values())
         first: dict[str, Any] = {}
         for payload in cases:
             if payload["output"] is not None:

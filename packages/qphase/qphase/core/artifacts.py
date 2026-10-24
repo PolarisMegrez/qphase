@@ -113,9 +113,15 @@ class ArtifactStore:
             bundle = getattr(result, "bundle_descriptor", None)
             if not isinstance(bundle, _BundleDescriptor):
                 bundle = None
+            provenance_payload = {"job_name": name, **(provenance or {})}
+            # An engine that already decided the artifact id (so its evidence can
+            # cite the artifact that will carry it) hands it over here; a result
+            # that does not state one keeps the generated id.
+            declared = provenance_payload.get("artifact_id")
             self.save_products(
                 products,
-                provenance={"job_name": name, **(provenance or {})},
+                provenance=provenance_payload,
+                artifact_id=None if declared is None else str(declared),
                 bundle=bundle,
             )
             return self.job_dir / "artifact_manifest.json"

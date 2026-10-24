@@ -17,7 +17,7 @@ from qphase_cam.data.declarations import (
     CAM_ANNOTATION_DECLARATION,
     SOLUTION_IDENTITY_SEMANTICS,
 )
-from qphase_cam.engine import select_solver_task
+from qphase_cam.engine import validate_solver_task
 from qphase_cam.postprocessor import (
     CAMFiniteDelayCarrier,
     CAMPostprocessor,
@@ -183,9 +183,11 @@ def test_a_solver_without_the_grid_capability_is_rejected(task):
         {"axes": {"gamma": {"target": "model.demo.gamma", "values": [0.0, 1.0]}}}
     ).compile()
     with pytest.raises(ValueError, match="does not support a parameter grid"):
-        select_solver_task(NoGridSolver(), grid)
-    # Without a grid the same solver is accepted.
-    assert select_solver_task(NoGridSolver(), None) == task
+        validate_solver_task(NoGridSolver(), task, grid)
+    # Without a grid the same solver is accepted for the tasks that run on one
+    # point; ``scan`` needs a grid and is rejected by the task check instead.
+    if task != "scan":
+        validate_solver_task(NoGridSolver(), task, None)
 
 
 def test_continuation_rejects_a_grid_through_the_capability_check():
@@ -204,8 +206,35 @@ def test_continuation_rejects_a_grid_through_the_capability_check():
         {"axes": {"gamma": {"target": "model.demo.gamma", "values": [0.0]}}}
     ).compile()
     with pytest.raises(ValueError, match="does not support a parameter grid"):
-        select_solver_task(Continue(), grid)
-    assert select_solver_task(Continue(), None) == "continue"
+        validate_solver_task(Continue(), "continue", grid)
+    validate_solver_task(Continue(), "continue", None)
+
+
+def test_the_task_is_explicit_and_matched_against_the_grid():
+    """An explicit task never degrades into an inferred scan."""
+
+    class Both(CAMSolver[CAMSolverConfig]):
+        name = "both"
+        description = "declares solve and scan"
+        config_schema = CAMSolverConfig
+        supported_tasks = ("solve", "scan")
+        output_products = (SOLVER_OUTPUT_DECLARATIONS["state"],)
+        supports_parameter_grid = True
+
+        def solve(self, request):  # pragma: no cover - never called here
+            raise AssertionError("validation only")
+
+    grid = ScanSpec.model_validate(
+        {"axes": {"gamma": {"target": "model.demo.gamma", "values": [0.0]}}}
+    ).compile()
+    validate_solver_task(Both(), "solve", None)
+    validate_solver_task(Both(), "scan", grid)
+    with pytest.raises(ValueError, match="does not accept a grid"):
+        validate_solver_task(Both(), "solve", grid)
+    with pytest.raises(ValueError, match="needs a parameter grid"):
+        validate_solver_task(Both(), "scan", None)
+    with pytest.raises(ValueError, match="does not implement the 'search' task"):
+        validate_solver_task(Both(), "search", None)
 
 
 # --- state solution identity ----------------------------------------------

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase.data import load_bundle
-from qphase_cam.engine import Engine
+from qphase_cam.engine import Engine, EngineConfig
 from qphase_cam.errors import SolutionCapacityError
 from qphase_cam.postprocessor.base import CAMAnnotationContext
 from qphase_cam.postprocessor.frequency import (
@@ -36,11 +36,12 @@ def _values(product, name):
 
 def test_no_jacobian_model_solves_without_jacobian(no_jacobian_model):
     bundle = Engine(
+        EngineConfig(task="solve"),
         plugins={
             "backend": NumpyBackend(),
             "model": no_jacobian_model,
             "cam_solver": SteadyStateSolver(method="root"),
-        }
+        },
     ).run()
     assert isinstance(bundle.products["state"].kind.value, str)
     product = bundle.require("state")
@@ -61,6 +62,7 @@ def test_vdp_engine_postprocess_and_round_trip(tmp_path):
         g=0.5,
     )
     bundle = Engine(
+        EngineConfig(task="solve"),
         plugins={
             "backend": NumpyBackend(),
             "model": model,
@@ -161,6 +163,7 @@ def test_rayleigh_zero_trace_has_no_division_warning(no_jacobian_model):
 
 def test_finite_difference_jacobian_records_source_and_step(no_jacobian_model):
     bundle = Engine(
+        EngineConfig(task="solve"),
         plugins={
             "backend": NumpyBackend(),
             "model": no_jacobian_model,
@@ -183,6 +186,7 @@ def test_finite_difference_jacobian_records_source_and_step(no_jacobian_model):
 def test_capacity_overflow_is_an_error(no_jacobian_model):
     with pytest.raises(SolutionCapacityError):
         Engine(
+            EngineConfig(task="solve"),
             plugins={
                 "backend": NumpyBackend(),
                 "model": no_jacobian_model,

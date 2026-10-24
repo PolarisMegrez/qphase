@@ -23,6 +23,7 @@ Three rules shape it:
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -35,7 +36,10 @@ from ..evidence import (
     AUDIT_FIELD_UNITS,
     EMPTY_RESULT_NOTE,
     REJECTION_COUNTER_SEMANTICS,
+    GenerationPathAudit,
     SearchAuditFragment,
+    SearchAuditNearMiss,
+    SearchControlSpec,
 )
 from ..outcomes import CAMOutcomeStatus
 from ._common import (
@@ -54,6 +58,8 @@ __all__ = [
     "INTERMEDIATE_EVIDENCE",
     "SourceArtifactRef",
     "build_evidence_product",
+    "fragments_from_candidate_product",
+    "fragments_from_evidence_product",
 ]
 
 #: Completeness marker of a product built from final evidence.
@@ -249,6 +255,16 @@ def build_evidence_product(
     status = text([case.status.value for case in cases])
     physical_status = text([case.physical_status for case in cases])
     search_design_column = json_column([case.search_design for case in cases])
+    controls_column = json_column(
+        [
+            {
+                name: {"bounds": list(spec.bounds), "sampling": spec.sampling}
+                for name, spec in case.controls.items()
+            }
+            for case in cases
+        ]
+    )
+    notes_column = json_column([list(case.notes) for case in cases])
     coverage = json_column([case.coverage for case in cases])
     path_audit = json_column(
         [
@@ -305,6 +321,8 @@ def build_evidence_product(
         "status": status,
         "physical_status": physical_status,
         "search_design": search_design_column,
+        "controls": controls_column,
+        "notes": notes_column,
         "coverage": coverage,
         "path_audit": path_audit,
         "execution_provenance": execution_provenance,
@@ -432,3 +450,320 @@ def _evidence_variables_with_widths(
             variable.model_copy(update={"dtype": np.dtype(f"U{max(width, 1)}").str})
         )
     return variables
+
+
+# --- readers ---------------------------------------------------------------
+
+
+def _column(product: Dataset, name: str) -> np.ndarray:
+    """Return one materialized column of an evidence or candidate product."""
+    try:
+        handle = product.handle(name)
+    except (KeyError, ValueError) as exc:
+        raise ValueError(
+            f"product has no {name!r} column; a reader needs the full column set"
+        ) from exc
+    return np.asarray(handle.materialize())
+
+
+def _json_rows(product: Dataset, name: str) -> list[Any]:
+    """Return one JSON column decoded per row."""
+    return [json.loads(str(value)) for value in _column(product, name)]
+
+
+def _controls_from_json(
+    value: Any, *, case_identity: str
+) -> dict[str, SearchControlSpec]:
+    """Rebuild one case's control specs from its canonical JSON column entry."""
+    if not isinstance(value, Mapping) or not value:
+        raise ValueError(
+            f"case {case_identity!r}: the controls column carries no control "
+            "contract; the product cannot be read back into a fragment"
+        )
+    specs: dict[str, SearchControlSpec] = {}
+    for name, payload in value.items():
+        if not isinstance(payload, Mapping):
+            raise ValueError(
+                f"case {case_identity!r}: control {name!r} is not a mapping"
+            )
+        bounds = payload.get("bounds")
+        if not isinstance(bounds, Sequence) or isinstance(bounds, (str, bytes)):
+            raise ValueError(
+                f"case {case_identity!r}: control {name!r} carries no bounds pair"
+            )
+        specs[str(name)] = SearchControlSpec(
+            bounds=(float(bounds[0]), float(bounds[1])),
+            sampling=str(payload.get("sampling", "")),
+        )
+    return specs
+
+
+def _paths_from_json(
+    value: Any, *, case_identity: str
+) -> tuple[GenerationPathAudit, ...]:
+    """Rebuild one case's generation-path entries from its JSON column entry."""
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(
+            f"case {case_identity!r}: path_audit is not a sequence of entries"
+        )
+    return tuple(
+        GenerationPathAudit(
+            path=str(entry["path"]),
+            generation_trial_count=int(entry["generation_trial_count"]),
+            generated_candidate_count=int(entry["generated_candidate_count"]),
+            seed_skips={
+                str(key): int(item)
+                for key, item in (entry.get("seed_skips") or {}).items()
+            },
+            seed_truncated=bool(entry.get("seed_truncated", False)),
+            workload={
+                str(key): int(item)
+                for key, item in (entry.get("workload") or {}).items()
+            },
+        )
+        for entry in value
+    )
+
+
+def _execution_provenance(value: Any, *, case_identity: str) -> dict[str, Any]:
+    """Return the producing environment of one case."""
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            f"case {case_identity!r}: execution_provenance is not a mapping"
+        )
+    missing = sorted(
+        {
+            "solver",
+            "plugins",
+            "distribution",
+            "api_revision",
+            "backend",
+            "dtype",
+        }
+        - set(value)
+    )
+    if missing:
+        raise ValueError(
+            f"case {case_identity!r}: execution_provenance lacks {missing}; a "
+            "reader never fills provenance with a default"
+        )
+    return dict(value)
+
+
+def fragments_from_evidence_product(
+    product: Dataset,
+) -> tuple[SearchAuditFragment, ...]:
+    """Rebuild every search case of one evidence product as a fragment.
+
+    The reader is symmetric to :func:`build_evidence_product`: it reuses the
+    stored counts, the accepted/start identity blocks, the path audit, the
+    near-miss block and each case's execution provenance, so a summarized
+    evidence product preserves the counts and the provenance of its inputs
+    instead of recomputing a scientific value. Missing contract columns (for
+    example an evidence product written before the per-case ``controls`` column
+    existed) raise rather than being replaced by a guess.
+
+    ``unique_candidate_count`` is derived: it is left unset when every accepted
+    start produced its own candidate row, because the product stores the final
+    identities and that distinction is exactly "nothing was deduplicated".
+    """
+    identities = [str(value) for value in _column(product, "case_identity")]
+    search_identities = [str(value) for value in _column(product, "search_identity")]
+    statuses = [str(value) for value in _column(product, "status")]
+    physical = [str(value) for value in _column(product, "physical_status")]
+    designs = _json_rows(product, "search_design")
+    controls = _json_rows(product, "controls")
+    coverages = _json_rows(product, "coverage")
+    paths = _json_rows(product, "path_audit")
+    environments = _json_rows(product, "execution_provenance")
+    notes = _json_rows(product, "notes")
+    prefilter_rejected = _json_rows(product, "prefilter_rejected")
+    rejected_by_reason = _json_rows(product, "rejected_by_reason")
+    counts = {
+        name: [int(value) for value in _column(product, name)]
+        for name in EVIDENCE_COUNT_FIELDS
+    }
+    accepted_offsets = [int(value) for value in _column(product, "accepted_offsets")]
+    start_offsets = [int(value) for value in _column(product, "accepted_start_offsets")]
+    near_miss_offsets = [int(value) for value in _column(product, "near_miss_offsets")]
+    accepted = [str(value) for value in _column(product, "accepted_identity")]
+    starts = [str(value) for value in _column(product, "accepted_start_identity")]
+    control_names = [str(value) for value in _column(product, "control_names")]
+    near_miss_path = [str(value) for value in _column(product, "near_miss_path")]
+    near_miss_reduction = [
+        str(value) for value in _column(product, "near_miss_reduction")
+    ]
+    near_miss_seed = [str(value) for value in _column(product, "near_miss_seed_source")]
+    near_miss_reasons = _json_rows(product, "near_miss_rejection_reasons")
+    near_miss_search_residual = [
+        float(value) for value in _column(product, "near_miss_search_residual")
+    ]
+    near_miss_full_residual = [
+        float(value) for value in _column(product, "near_miss_full_residual")
+    ]
+    near_miss_min_eigenvalue = [
+        float(value) for value in _column(product, "near_miss_min_state_eigenvalue")
+    ]
+    near_miss_control_values = np.asarray(
+        _column(product, "near_miss_control_values"), dtype=float
+    ).reshape(len(near_miss_path), len(control_names))
+    if len(identities) + 1 != len(accepted_offsets):
+        raise ValueError(
+            "the case axis and case_offset axis disagree; the product is corrupt"
+        )
+    if len(identities) + 1 != len(start_offsets) or len(identities) + 1 != len(
+        near_miss_offsets
+    ):
+        raise ValueError("the evidence offsets do not cover the case axis")
+
+    fragments: list[SearchAuditFragment] = []
+    for case in range(len(identities)):
+        case_identity = identities[case]
+        label = f"case {case_identity!r}"
+        environment = _execution_provenance(
+            environments[case], case_identity=case_identity
+        )
+        path_entries = _paths_from_json(paths[case], case_identity=case_identity)
+        near_miss_block = []
+        for index in range(near_miss_offsets[case], near_miss_offsets[case + 1]):
+            values = near_miss_control_values[index]
+            near_miss_block.append(
+                SearchAuditNearMiss(
+                    path=near_miss_path[index],
+                    reduction=near_miss_reduction[index] or None,
+                    seed_source=near_miss_seed[index],
+                    controls={
+                        name: float(value)
+                        for name, value in zip(control_names, values, strict=True)
+                        if np.isfinite(value)
+                    },
+                    rejection_reasons=tuple(
+                        str(reason) for reason in near_miss_reasons[index]
+                    ),
+                    search_residual=near_miss_search_residual[index],
+                    full_residual=near_miss_full_residual[index],
+                    min_state_eigenvalue=(
+                        None
+                        if not np.isfinite(near_miss_min_eigenvalue[index])
+                        else near_miss_min_eigenvalue[index]
+                    ),
+                )
+            )
+        final = accepted[accepted_offsets[case] : accepted_offsets[case + 1]]
+        start_block = starts[start_offsets[case] : start_offsets[case + 1]]
+        try:
+            fragments.append(
+                SearchAuditFragment(
+                    case_identity=case_identity,
+                    search_identity=search_identities[case],
+                    status=CAMOutcomeStatus(statuses[case]),
+                    physical_status=physical[case],
+                    search_design=designs[case],
+                    controls=_controls_from_json(
+                        controls[case], case_identity=case_identity
+                    ),
+                    coverage=coverages[case],
+                    generated_candidate_count=counts["generated_candidate_count"][case],
+                    prefilter_pass_count=counts["prefilter_pass_count"][case],
+                    prefilter_rejected_count=counts["prefilter_rejected_count"][case],
+                    refinement_start_count=counts["refinement_start_count"][case],
+                    refinement_duplicate_count=counts["refinement_duplicate_count"][
+                        case
+                    ],
+                    accepted_count=counts["accepted_count"][case],
+                    rejected_count=counts["rejected_count"][case],
+                    prefilter_rejected={
+                        str(key): int(value)
+                        for key, value in prefilter_rejected[case].items()
+                    },
+                    rejected_by_reason={
+                        str(key): int(value)
+                        for key, value in rejected_by_reason[case].items()
+                    },
+                    near_miss_saved=counts["near_miss_saved"][case],
+                    near_miss_dropped=counts["near_miss_dropped"][case],
+                    unique_candidate_count=(
+                        len(final)
+                        if len(final) != counts["accepted_count"][case]
+                        else None
+                    ),
+                    paths=path_entries,
+                    generation_trial_count=(
+                        path_entries[0].generation_trial_count
+                        if len(path_entries) == 1
+                        else None
+                    ),
+                    accepted_start_identities=tuple(start_block),
+                    accepted_candidate_identities=tuple(final),
+                    near_misses=tuple(near_miss_block),
+                    solver=str(environment["solver"]),
+                    plugins={
+                        str(key): str(value)
+                        for key, value in environment["plugins"].items()
+                    },
+                    distribution={
+                        str(key): str(value)
+                        for key, value in environment["distribution"].items()
+                    },
+                    api_revision=str(environment["api_revision"]),
+                    backend=str(environment["backend"]),
+                    dtype=str(environment["dtype"]),
+                    notes=tuple(str(note) for note in notes[case]),
+                )
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{label}: cannot be rebuilt as a fragment: {exc}"
+            ) from exc
+    if not fragments:
+        raise ValueError("the evidence product carries no case rows")
+    return tuple(fragments)
+
+
+def fragments_from_candidate_product(
+    product: Dataset,
+) -> tuple[SearchAuditFragment, ...]:
+    """Rebuild the search cases of one candidate product as fragments.
+
+    A solver stores the fragment it derived for each searched case in the
+    case metadata (key ``search_fragment``), so a summary of a candidate-only
+    artifact reuses exactly what the solver recorded. A case that failed
+    carries no fragment — its evidence was never produced — and that is an
+    error instead of a silently shorter product.
+    """
+    rows = _json_rows(product, "case_metadata")
+    if not rows:
+        raise ValueError("the candidate product carries no case rows")
+    fragments: list[SearchAuditFragment] = []
+    missing: list[str] = []
+    for case, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            raise ValueError(f"case_metadata[{case}] is not a mapping")
+        case_identity = str(row.get("case_identity", "")) or f"case-index:{case}"
+        payload = row.get("search_fragment")
+        if payload is None:
+            missing.append(f"{case_identity} ({row.get('case_status', 'unknown')})")
+            continue
+        fragment = SearchAuditFragment.model_validate(payload)
+        if fragment.case_identity != str(
+            row.get("case_identity", fragment.case_identity)
+        ):
+            raise ValueError(
+                f"case_metadata[{case}] identity {row.get('case_identity')!r} "
+                f"disagrees with its search fragment {fragment.case_identity!r}"
+            )
+        if str(row.get("search_identity", fragment.search_identity)) != (
+            fragment.search_identity
+        ):
+            raise ValueError(
+                f"case {fragment.case_identity!r} search identity disagrees with "
+                "its case metadata"
+            )
+        fragments.append(fragment)
+    if missing:
+        raise ValueError(
+            "the candidate product carries no search fragment for "
+            f"{missing}; those cases produced no evidence, so the summary cannot "
+            "be reconstructed from candidates alone"
+        )
+    return tuple(fragments)

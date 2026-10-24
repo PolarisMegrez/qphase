@@ -7,12 +7,11 @@ Six tasks replace the current implicit behaviour: ``solve`` (one steady state),
 ``continue`` (continuation branches), ``analyze`` (postprocess existing typed
 products) and ``summarize_search`` (summarize candidates/evidence).
 
-This module is **planning only**. The task is selected from the explicit
-``engine.cam.task`` key: there is *no default*, because the v2 contract
-requires every CAM job to state what it does. The current runtime does not read
-this key yet — Phase 10E activates it together with the typed runtime — so a
-job may still carry ``engine.cam`` settings the running engine ignores, and the
-selector must never be used to validate a live job before that handover.
+The task is selected from the explicit ``engine.cam.task`` key: there is *no
+default*, because the v2 contract requires every CAM job to state what it does.
+Phase 10E activates the selector as the engine's ``profile_selector``, so the
+compiler resolves exactly one of the six profiles per job and the engine reads
+the same ``task`` from its own config; an inferred task no longer exists.
 
 Public API
 ----------
