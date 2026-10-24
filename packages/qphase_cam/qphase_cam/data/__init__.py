@@ -42,10 +42,12 @@ Schema rules the subpackage enforces
   annotation field is a real variable with dims and dtype, never JSON.
 * The ``solution`` axis is a fixed-capacity slot, never a branch identity;
   continuation paths carry their own explicit ``path_identity``.
-* ``candidate_identity``/``path_identity`` are explicit, unique ``U`` columns.
-  An imported legacy identity is ``legacy:<content fingerprint>:<case>[:slot]``,
-  which identifies the imported snapshot — not a branch that survives a
-  recomputation. Phase 10D adds the solver-owned identity.
+* ``candidate_identity``/``path_identity`` are explicit ``U`` columns holding the
+  solver-owned content identity. ``candidate_identity`` is unique **within one
+  case**: it names the physical candidate, so the same candidate found by two
+  cases of one scan appears once per case with the same identity. The
+  ``legacy:<content fingerprint>:<case>[:slot]`` form belongs to the one-off
+  importer and identifies an imported snapshot, never a branch.
 * Ragged products use the core ragged contract (``scan``/``group``/
   ``group_offset``/``candidate`` plus ``candidate_offsets``, ``point``/``path``/
   ``path_offset`` plus ``path_offsets``), so empty blocks are representable.

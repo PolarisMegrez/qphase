@@ -17,6 +17,7 @@ from qphase_cam.data.declarations import (
     CAM_ANNOTATION_DECLARATION,
     SOLUTION_IDENTITY_SEMANTICS,
 )
+from qphase_cam.engine import select_solver_task
 from qphase_cam.postprocessor import (
     CAMFiniteDelayCarrier,
     CAMPostprocessor,
@@ -46,6 +47,7 @@ from qphase_cam.solver.base import (
     CAM_SOLVER_TASKS,
     SOLVER_OUTPUT_DECLARATIONS,
     CAMProductFragment,
+    CAMSolverConfig,
     CAMSolveRequest,
 )
 
@@ -101,20 +103,24 @@ def test_every_solver_declares_a_valid_capability_set():
 
 
 @pytest.mark.parametrize(
-    "solver_class, tasks, batch, jacobian, symbolic, audit, outputs",
+    "solver_class, tasks, grid, batch, jacobian, symbolic, audit, outputs",
     [
-        (SteadyStateSolver, ("solve", "scan"), False, False, False, False, 2),
-        (BatchedNewtonSolver, ("solve", "scan"), True, True, False, False, 2),
-        (DeflationSolver, ("solve", "scan"), False, True, False, False, 2),
-        (MultistabilitySolver, ("solve", "scan"), True, False, False, False, 2),
-        (BifurcationSolver, ("search",), False, True, True, True, 1),
-        (ContinuationSolver, ("continue",), False, True, False, False, 1),
+        (SteadyStateSolver, ("solve", "scan"), True, False, False, False, False, 2),
+        (BatchedNewtonSolver, ("solve", "scan"), True, True, True, False, False, 2),
+        (DeflationSolver, ("solve", "scan"), True, False, True, False, False, 2),
+        (MultistabilitySolver, ("solve", "scan"), True, True, False, False, False, 2),
+        (BifurcationSolver, ("search",), True, False, True, True, True, 1),
+        (ContinuationSolver, ("continue",), False, False, True, False, False, 1),
     ],
 )
 def test_solver_capabilities_match_their_implementation(
-    solver_class, tasks, batch, jacobian, symbolic, audit, outputs
+    solver_class, tasks, grid, batch, jacobian, symbolic, audit, outputs
 ):
     assert solver_class.supported_tasks == tasks
+    assert solver_class.supports_parameter_grid is grid
+    # Only the continuation, which owns its own path, refuses an external grid.
+    if tasks == ("continue",):
+        assert grid is False
     assert solver_class.supports_batch is batch
     assert solver_class.requires_jacobian is jacobian
     assert solver_class.requires_symbolic_dynamics is symbolic
@@ -156,6 +162,50 @@ def test_product_fragment_groups_products_audits_and_metadata():
     assert fragment.products == {}
     assert fragment.audits == ()
     assert fragment.metadata == {}
+
+
+@pytest.mark.parametrize("task", ["solve", "scan", "search"])
+def test_a_solver_without_the_grid_capability_is_rejected(task):
+    """The capability is checked on every grid path, not only on ``scan``."""
+
+    class NoGridSolver(CAMSolver[CAMSolverConfig]):
+        name = "no_grid"
+        description = "declares tasks but no grid capability"
+        config_schema = CAMSolverConfig
+        supported_tasks = (task,)
+        output_products = (SOLVER_OUTPUT_DECLARATIONS["state"],)
+        supports_parameter_grid = False
+
+        def solve(self, request):  # pragma: no cover - rejected before the call
+            raise AssertionError("the grid capability must be checked first")
+
+    grid = ScanSpec.model_validate(
+        {"axes": {"gamma": {"target": "model.demo.gamma", "values": [0.0, 1.0]}}}
+    ).compile()
+    with pytest.raises(ValueError, match="does not support a parameter grid"):
+        select_solver_task(NoGridSolver(), grid)
+    # Without a grid the same solver is accepted.
+    assert select_solver_task(NoGridSolver(), None) == task
+
+
+def test_continuation_rejects_a_grid_through_the_capability_check():
+    class Continue(CAMSolver[CAMSolverConfig]):
+        name = "continue"
+        description = "continuation double"
+        config_schema = CAMSolverConfig
+        supported_tasks = ("continue",)
+        output_products = (SOLVER_OUTPUT_DECLARATIONS["continuation"],)
+        supports_parameter_grid = False
+
+        def solve(self, request):  # pragma: no cover - rejected before the call
+            raise AssertionError("continuation must reject an external grid")
+
+    grid = ScanSpec.model_validate(
+        {"axes": {"gamma": {"target": "model.demo.gamma", "values": [0.0]}}}
+    ).compile()
+    with pytest.raises(ValueError, match="does not support a parameter grid"):
+        select_solver_task(Continue(), grid)
+    assert select_solver_task(Continue(), None) == "continue"
 
 
 # --- state solution identity ----------------------------------------------

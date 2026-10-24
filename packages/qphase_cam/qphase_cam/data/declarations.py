@@ -48,6 +48,7 @@ __all__ = [
     "CAM_ANNOTATION_PRODUCT",
     "CAM_CANDIDATE_DECLARATION",
     "CAM_CANDIDATE_PRODUCT",
+    "CANDIDATE_IDENTITY_SEMANTICS",
     "CAM_CONTINUATION_DECLARATION",
     "CAM_CONTINUATION_PRODUCT",
     "CAM_EVIDENCE_DECLARATION",
@@ -233,7 +234,14 @@ SOLUTION_IDENTITY_SEMANTICS = (
     "index is never part of the identity"
 )
 
-#: What an imported ``legacy:`` identity does and does not promise.
+#: What a solver-owned candidate identity promises.
+CANDIDATE_IDENTITY_SEMANTICS = (
+    "identity is a solver-owned content digest of the candidate; it names the "
+    "physical candidate, not a slot, and is therefore stable across the cases of "
+    "one scan (the same candidate may appear once per case)"
+)
+
+#: What an imported ``legacy:`` identity does and does not promise (importer only).
 LEGACY_IDENTITY_SEMANTICS = (
     "identity is the imported snapshot's content fingerprint plus the legacy "
     "case and candidate slots; it identifies this imported artifact, not a "
@@ -444,7 +452,7 @@ def _candidate_attributes() -> dict[str, Any]:
         "identity_variable": "candidate_identity",
         "state_matrix_axes": ["state_row", "state_col"],
         "json_columns": ["classification", "base_audit", "case_metadata"],
-        "identity_semantics": LEGACY_IDENTITY_SEMANTICS,
+        "identity_semantics": CANDIDATE_IDENTITY_SEMANTICS,
         "ragged": True,
     }
 
@@ -576,6 +584,13 @@ def _annotation_variables() -> list[VariableSchema]:
             quantity="cam_outcome_status",
         ),
         VariableSchema(
+            name="case_identity",
+            dtype="U1",
+            value_domain="real",
+            dims=("annotation",),
+            quantity="cam_case_identity",
+        ),
+        VariableSchema(
             name="method_metadata",
             dtype="U1",
             value_domain="real",
@@ -590,6 +605,15 @@ def _annotation_attributes() -> dict[str, Any]:
         "product": "annotations",
         "annotation_axis": "annotation",
         "identity_variable": "target_identity",
+        "case_identity_variable": "case_identity",
+        # A candidate identity names the physical candidate, so the same target
+        # may legitimately be annotated once per scan case. The case scope keeps
+        # those rows distinct: uniqueness is (case_identity, target_identity) when
+        # a case is given and target_identity alone otherwise.
+        "identity_scope": (
+            "annotations are unique per (case_identity, target_identity); a "
+            "target without a case scope must be unique in the product"
+        ),
         "status_variable": "status",
         "json_columns": ["method_metadata"],
         # Typed annotation payload columns are declared per product: a field is a

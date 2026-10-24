@@ -73,6 +73,8 @@ class CandidateRow:
     verification_status: str
     classification: dict[str, Any]
     base_audit: dict[str, Any]
+    case: int = 0
+    case_identity: str = ""
 
 
 @dataclass(frozen=True)
@@ -162,6 +164,47 @@ def matrix_from_json(value: Any) -> np.ndarray:
 def _json_column(product: Dataset, name: str) -> list[dict[str, Any]]:
     column = np.asarray(product.handle(name).materialize())
     return [json.loads(str(value)) for value in np.atleast_1d(column)]
+
+
+def _with_case_scope(
+    rows: list[CandidateRow], *, offsets: np.ndarray, case_rows: list[dict[str, Any]]
+) -> list[CandidateRow]:
+    """Return the rows with their case index and case identity attached.
+
+    A legacy product without a solver case identity still needs a scope that is
+    stable inside the product, so it gets ``legacy_case:<index>``: a case scope,
+    never a branch or candidate identity.
+    """
+    if len(offsets) < 2:
+        scope = [
+            (
+                0,
+                str(case_rows[0].get("case_identity", "") or "") if case_rows else "",
+            )
+        ]
+    else:
+        scope = []
+        for case in range(len(offsets) - 1):
+            metadata = case_rows[case] if case < len(case_rows) else {}
+            identity = str(metadata.get("case_identity", "") or "").strip()
+            scope.append((case, identity or f"legacy_case:{case}"))
+    scoped: list[CandidateRow] = []
+    for row in rows:
+        case = 0
+        if len(offsets) >= 2:
+            case = int(np.searchsorted(offsets, row.index, side="right") - 1)
+            case = max(0, min(case, len(scope) - 1))
+        _, identity = scope[case]
+        scoped.append(
+            CandidateRow(
+                **{
+                    **row.__dict__,
+                    "case": case,
+                    "case_identity": identity or f"legacy_case:{case}",
+                }
+            )
+        )
+    return scoped
 
 
 def _diagnostics(rows: list[CandidateRow]) -> dict[str, Any]:
@@ -320,6 +363,10 @@ def candidate_view(
         if "candidate_offsets" in {variable.name for variable in product.variables}
         else np.asarray([], dtype=np.int64)
     )
+    # Each candidate belongs to the case the offsets delimit; the case's own
+    # solver identity comes from the case metadata JSON.
+    case_rows = _json_column(product, "case_metadata")
+    rows = _with_case_scope(rows, offsets=offsets, case_rows=case_rows)
     resolved = dict(metadata or {})
     fixed = dict(resolved.get("fixed_params", {}))
     return CandidateView(

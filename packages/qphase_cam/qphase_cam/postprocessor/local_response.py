@@ -216,6 +216,7 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             annotation_kind=self.annotation_kind,
             target_kind="candidate",
             target_identity=[row.identity for row in view.rows],
+            case_identity=[row.case_identity for row in view.rows],
             status=status,
             fields=fields,
             field_axes=field_axes,

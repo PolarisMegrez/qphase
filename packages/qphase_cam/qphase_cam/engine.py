@@ -12,7 +12,7 @@ it annotates and returns an annotation product, which joins the same bundle.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict
 from qphase.core.protocols import EngineBase, EngineManifest, ResultProtocol
@@ -32,7 +32,7 @@ class EngineConfig(BaseModel):
     """CAM engine configuration; task details belong to solver plugins."""
 
     model_config = ConfigDict(extra="allow")
-    case_failure_policy: str = "abort"
+    case_failure_policy: Literal["abort", "record"] = "abort"
 
 
 def select_solver_task(solver: CAMSolver, parameter_grid: Any | None) -> str:
@@ -50,6 +50,13 @@ def select_solver_task(solver: CAMSolver, parameter_grid: Any | None) -> str:
             f"CAM solver {solver.name!r} declares unsupported tasks "
             f"{unknown or '(none)'}"
         )
+    if parameter_grid is not None and not solver.supports_parameter_grid:
+        # Every grid path checks the capability: a solver that cannot consume a
+        # ScanSpec must be rejected here, not half-run with the grid dropped.
+        raise ValueError(
+            f"CAM solver {solver.name!r} does not support a parameter grid "
+            f"(supports_parameter_grid=False); declared tasks: {supported}"
+        )
     if "search" in supported:
         return "search"
     if "continue" in supported:
@@ -59,11 +66,6 @@ def select_solver_task(solver: CAMSolver, parameter_grid: Any | None) -> str:
             )
         return "continue"
     if parameter_grid is not None:
-        if "scan" not in supported:
-            raise ValueError(
-                f"CAM solver {solver.name!r} does not support a parameter grid; "
-                f"declared tasks: {supported}"
-            )
         return "scan"
     if "solve" in supported:
         return "solve"

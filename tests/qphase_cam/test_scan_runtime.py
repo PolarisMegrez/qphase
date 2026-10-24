@@ -7,6 +7,7 @@ from qphase.backend.numpy_backend import NumpyBackend
 from qphase.core.dataset import DatasetResultProtocol
 from qphase.core.scan import ScanSpec
 from qphase.data import load_bundle
+from qphase_cam.data import build_annotation_product, cam_bundle
 from qphase_cam.engine import Engine, EngineConfig
 from qphase_cam.evidence import (
     AUDIT_SCHEMA,
@@ -54,6 +55,7 @@ class BatchSolver(CAMSolver[CAMSolverConfig]):
     supported_tasks = ("solve", "scan")
     output_products = ()
     supports_batch = True
+    supports_parameter_grid = True
 
     def solve(self, request):
         from qphase_cam.solver.execution import state_fragment
@@ -559,3 +561,133 @@ def _scan_context(grid, *, checkpoints=None):
         checkpoints=checkpoints or SimpleNamespace(enabled=False),
         cancellation=SimpleNamespace(raise_if_cancelled=lambda: None),
     )
+
+
+def test_cross_case_candidate_identity_stays_annotatable(tmp_path):
+    """The same physical candidate in two cases keeps two annotation rows."""
+
+    def search(model):
+        value = float(model.params["omega_a"])
+        return CAMBifurcationOutput(
+            candidates=[
+                CAMBifurcationCandidate(
+                    state_vector=np.asarray([1.0, 1.0, 0.0, 0.0]),
+                    controls={"gamma_a": 0.5},
+                    full_residual_norm=1e-12,
+                    search_residual_norm=2e-12,
+                    success=True,
+                    status="verified",
+                    method="test",
+                    metadata={
+                        # One physical candidate: the same content identity in
+                        # both cases, which is legal within one product.
+                        "candidate_identity": "cam:candidate:shared",
+                        "identity_basis": "state_vector_and_controls",
+                        "accepted_start_identities": (f"cam:start:test{value}",),
+                        "scaling_signatures": (_signature(),),
+                    },
+                )
+            ],
+            target="equilibrium_multiplicity",
+            order=2,
+            metadata={
+                "control_names": ("gamma_a",),
+                "domain_coverage": _fake_domain(("gamma_a",)),
+                "audit": _fake_audit(1),
+                "search_identity": "cam:search:test",
+                "case_identity": f"cam:case:test{value}",
+                "accepted_candidate_identities": ("cam:candidate:shared",),
+                "accepted_start_identities": (f"cam:start:test{value}",),
+            },
+        )
+
+    grid = ScanSpec.model_validate(
+        {
+            "axes": {
+                "omega_a": {
+                    "target": "model.vdp_2mode.omega_a",
+                    "values": [-0.1, 0.1],
+                }
+            }
+        }
+    ).compile()
+    context = _scan_context(grid)
+    bundle = Engine(
+        plugins={
+            "backend": NumpyBackend(),
+            "model": _vdp_model(),
+            "cam_solver": _search_double(
+                {"gamma_a": ControlRange(min=-1.0, max=1.0)}, 2, search
+            ),
+        }
+    ).run(context=context)
+    product = bundle.require("candidates")
+    # The same identity appears once per case...
+    identities = list(np.asarray(product.handle("candidate_identity").materialize()))
+    assert identities == ["cam:candidate:shared", "cam:candidate:shared"]
+    np.testing.assert_array_equal(
+        np.asarray(product.handle("candidate_offsets").materialize()), [0, 1, 2]
+    )
+    # ... and each row carries its own case scope.
+    assert not product.attributes.get("case_scoped")
+
+    from qphase_cam.postprocessor.candidates import candidate_view
+
+    view = candidate_view(product)
+    assert [row.case for row in view.rows] == [0, 1]
+    assert [row.case_identity for row in view.rows] == [
+        "cam:case:test-0.1",
+        "cam:case:test0.1",
+    ]
+    # Start identities differ across the cases even for the same candidate.
+    audits = [
+        json.loads(str(value))
+        for value in np.asarray(product.handle("base_audit").materialize())
+    ]
+    assert [audit["accepted_start_identities"] for audit in audits] == [
+        ["cam:start:test-0.1"],
+        ["cam:start:test0.1"],
+    ]
+
+    annotation = build_annotation_product(
+        annotation_kind="local_response_validation",
+        target_kind="candidate",
+        target_identity=[row.identity for row in view.rows],
+        case_identity=[row.case_identity for row in view.rows],
+        status=["valid", "valid"],
+        fields={"margin": np.asarray([0.5, 0.25])},
+    )
+    assert annotation.attributes["case_scoped"] is True
+    bundle = cam_bundle(
+        {"candidates": product, "local_response_validation": annotation}
+    )
+    target = tmp_path / "cross_case"
+    bundle.save_dataset(target, layout="sharded", shard_target_bytes=256)
+    restored = load_bundle(target).require("local_response_validation")
+    assert list(np.asarray(restored.handle("case_identity").materialize())) == [
+        "cam:case:test-0.1",
+        "cam:case:test0.1",
+    ]
+    np.testing.assert_array_equal(
+        np.asarray(restored.handle("target_identity").materialize()),
+        ["cam:candidate:shared", "cam:candidate:shared"],
+    )
+
+
+def _signature() -> dict:
+    return {
+        "state_order": 3,
+        "perturbation_order": 1,
+        "coupling_state_order": 0,
+        "exponent_numerator": 1,
+        "exponent_denominator": 3,
+        "exponent": 1.0 / 3.0,
+        "sublinear": True,
+        "branches": [
+            {
+                "epsilon_side": 1,
+                "amplitude": 1.0,
+                "leading_state_coefficient": [[1.0]],
+            }
+        ],
+    }

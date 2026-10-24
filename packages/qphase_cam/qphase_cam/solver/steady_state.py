@@ -37,6 +37,7 @@ class SteadyStateSolver(CAMSolver[SteadyStateSolverConfig]):
         SOLVER_OUTPUT_DECLARATIONS["state"],
         SOLVER_OUTPUT_DECLARATIONS["state_scan"],
     )
+    supports_parameter_grid: ClassVar[bool] = True
     progress_unit: ClassVar[str] = "point"
 
     def solve(self, request: CAMSolveRequest) -> CAMProductFragment:

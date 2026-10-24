@@ -597,6 +597,79 @@ def test_annotation_validates_targets_status_and_kind(overrides, match):
         build_annotation_product(**arguments)
 
 
+def test_annotation_scopes_uniqueness_by_case():
+    """One physical candidate may be annotated once per scan case."""
+    product = build_annotation_product(
+        annotation_kind="local_response_validation",
+        target_kind="candidate",
+        target_identity=["cam:candidate:same", "cam:candidate:same"],
+        case_identity=["cam:case:a", "cam:case:b"],
+        status=["valid", "valid"],
+        fields={"margin": np.asarray([0.5, 0.25])},
+    )
+    assert product.attributes["case_scoped"] is True
+    assert product.attributes["case_identities"] == ["cam:case:a", "cam:case:b"]
+    assert list(np.asarray(product.handle("case_identity").materialize())) == [
+        "cam:case:a",
+        "cam:case:b",
+    ]
+    np.testing.assert_array_equal(
+        np.asarray(product.handle("target_identity").materialize()),
+        ["cam:candidate:same", "cam:candidate:same"],
+    )
+    # Without a case scope the same repeated target stays rejected.
+    with pytest.raises(ValueError, match="unique within one annotation kind"):
+        build_annotation_product(
+            annotation_kind="local_response_validation",
+            target_kind="candidate",
+            target_identity=["cam:candidate:same", "cam:candidate:same"],
+            status=["valid", "valid"],
+        )
+    # A repeated (case, target) pair is still rejected.
+    with pytest.raises(ValueError, match="unique within one case scope"):
+        build_annotation_product(
+            annotation_kind="local_response_validation",
+            target_kind="candidate",
+            target_identity=["cam:candidate:same", "cam:candidate:same"],
+            case_identity=["cam:case:a", "cam:case:a"],
+            status=["valid", "valid"],
+        )
+    # The case scope must cover every row or none.
+    with pytest.raises(ValueError, match="case_identity has 1 entries"):
+        build_annotation_product(
+            annotation_kind="local_response_validation",
+            target_kind="candidate",
+            target_identity=["a", "b"],
+            case_identity=["cam:case:a"],
+            status=["valid", "valid"],
+        )
+
+
+def test_annotation_case_scope_round_trips(tmp_path):
+    product = build_annotation_product(
+        annotation_kind="stochastic_validity",
+        target_kind="candidate",
+        target_identity=["cam:candidate:same", "cam:candidate:same"],
+        case_identity=["cam:case:a", "cam:case:b"],
+        status=["valid", "unchecked"],
+        fields={"epsilon_crossover": np.asarray([1.0, 2.0])},
+    )
+    bundle = cam_bundle(
+        {"stochastic_validity": product}, provenance={"cam_task": "search"}
+    )
+    root = tmp_path / "artifact"
+    bundle.save_dataset(root, layout="sharded", shard_target_bytes=256)
+    restored = load_bundle(root).require("stochastic_validity").materialize()
+    assert list(np.asarray(restored.handle("case_identity").materialize())) == [
+        "cam:case:a",
+        "cam:case:b",
+    ]
+    assert restored.attributes["case_scoped"] is True
+    np.testing.assert_allclose(
+        np.asarray(restored.handle("epsilon_crossover").materialize()), [1.0, 2.0]
+    )
+
+
 def test_annotation_rejects_a_json_field():
     with pytest.raises(ValueError, match="object array"):
         build_annotation_product(

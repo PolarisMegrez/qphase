@@ -47,8 +47,15 @@ RESERVED_FIELD_NAMES = frozenset(
 FIELD_DTYPE_KINDS = frozenset("biufcUS")
 
 
-def _annotation_targets(values: Sequence[str]) -> list[str]:
-    """Return validated, unique, non-empty target identities."""
+def _annotation_targets(
+    values: Sequence[str], case_scope: Sequence[str] | None = None
+) -> list[str]:
+    """Return validated, non-empty target identities.
+
+    A target is unique inside its case scope when one is given: the same physical
+    candidate found by two scan cases carries one identity, and both cases may be
+    annotated. Without a case scope the target must be unique in the product.
+    """
     targets = [str(value) for value in values]
     for position, value in enumerate(targets):
         if not value.strip():
@@ -56,14 +63,23 @@ def _annotation_targets(values: Sequence[str]) -> list[str]:
                 f"target_identity[{position}] is empty; every annotation needs "
                 "an explicit target"
             )
-    seen: dict[str, int] = {}
-    for value in targets:
-        seen[value] = seen.get(value, 0) + 1
-    duplicates = sorted(value for value, count in seen.items() if count > 1)
+    keys = [
+        (case_scope[position] if case_scope is not None else "", target)
+        for position, target in enumerate(targets)
+    ]
+    seen: dict[tuple[str, str], int] = {}
+    for key in keys:
+        seen[key] = seen.get(key, 0) + 1
+    duplicates = sorted(key for key, count in seen.items() if count > 1)
     if duplicates:
+        if case_scope is None:
+            raise ValueError(
+                "target_identity must be unique within one annotation kind; "
+                f"duplicated: {duplicates}"
+            )
         raise ValueError(
-            "target_identity must be unique within one annotation kind; "
-            f"duplicated: {duplicates}"
+            "target_identity must be unique within one case scope; duplicated "
+            f"(case, target): {duplicates}"
         )
     return targets
 
@@ -205,6 +221,7 @@ def build_annotation_product(
     target_kind: str | CAMTargetKind,
     target_identity: Sequence[str],
     status: Sequence[str] | str | CAMOutcomeStatus,
+    case_identity: Sequence[str] | None = None,
     fields: Mapping[str, Any] | None = None,
     field_axes: Mapping[str, Sequence[str]] | None = None,
     axes: Mapping[str, int] | None = None,
@@ -232,7 +249,24 @@ def build_annotation_product(
     if not kind:
         raise ValueError("annotation_kind must not be empty")
     target_kind_value = coerce_target_kind(target_kind)
-    targets = _annotation_targets(target_identity)
+    if case_identity is None:
+        case_scope = None
+        cases: list[str] = ["" for _ in target_identity]
+    else:
+        cases = [str(value) for value in case_identity]
+        if len(cases) != len(target_identity):
+            raise ValueError(
+                f"case_identity has {len(cases)} entries for "
+                f"{len(target_identity)} annotations"
+            )
+        for position, value in enumerate(cases):
+            if not value.strip():
+                raise ValueError(
+                    f"case_identity[{position}] is empty; omit the case scope or "
+                    "give one for every row"
+                )
+        case_scope = cases
+    targets = _annotation_targets(target_identity, case_scope)
     n_annotation = len(targets)
     statuses = _annotation_statuses(status, n_annotation)
     if method_metadata is None:
@@ -255,6 +289,7 @@ def build_annotation_product(
 
     arrays: dict[str, np.ndarray] = {
         "target_identity": string_column(targets),
+        "case_identity": string_column(cases),
         "status": string_column(statuses),
         "method_metadata": json_text_column(metadata_rows),
         **field_arrays,
@@ -269,6 +304,8 @@ def build_annotation_product(
         "annotation_kind": kind,
         "target_kind": target_kind_value.value,
         "annotation_count": n_annotation,
+        "case_scoped": case_scope is not None,
+        "case_identities": sorted({value for value in cases if value}),
         "field_variables": declared_fields,
         "field_axes": {spec["name"]: spec["dims"][1:] for spec in declared_fields},
         "shared_axes": dict(axis_sizes),

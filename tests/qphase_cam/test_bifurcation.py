@@ -133,7 +133,11 @@ def _solver(order: int, controls: dict[str, ControlRange]) -> BifurcationSolver:
 
 def test_bifurcation_solver_validates_target_codimension():
     solver = _solver(2, {"control": ControlRange(min=-1.0, max=1.0)})
-    assert solver.output_kind == "bifurcation_candidates"
+    # Capabilities, not a legacy output_kind, describe what the search emits.
+    assert solver.supported_tasks == ("search",)
+    assert solver.search_audit_capability is True
+    assert [item.name for item in solver.output_products] == ["candidates"]
+    assert not hasattr(solver, "output_kind")
     assert solver.target.order == 2
     with pytest.raises(ValueError, match="m-1 controls"):
         _solver(3, {"control": ControlRange(min=-1.0, max=1.0)})

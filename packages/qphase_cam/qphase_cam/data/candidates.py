@@ -8,9 +8,14 @@ be inferred from a zero length.
 
 Three invariants are enforced here rather than documented and hoped for:
 
-* ``candidate_identity`` is explicit, non-empty and unique across the whole
-  product. The builder refuses to invent one from slot positions — a slot is
-  not a branch id, and Phase 10D is where a solver-owned identity appears.
+* ``candidate_identity`` is explicit, non-empty and **unique within one case**
+  (the block ``candidate_offsets`` delimits). It names the physical candidate,
+  not a slot: the same candidate found by two cases of one scan may appear twice
+  with the same identity, which is why uniqueness is scoped per case. The builder
+  refuses to invent an identity from slot positions. The identity is solver-owned
+  and content-derived (``qphase_cam.solver.identity``); the legacy
+  ``legacy:<fingerprint>:<case>:<slot>`` form exists only in the one-off importer
+  and describes an imported snapshot.
 * Deterministic ``candidate_offsets``: start at zero, monotonic non-decreasing,
   end at the candidate count, and cover the declared ``case_shape``.
 * JSON reaches the product only as canonical text: ``classification``,

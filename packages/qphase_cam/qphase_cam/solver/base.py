@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, Literal, TypeVar
 
 from pydantic import ConfigDict
 from qphase.core.protocols import PluginConfigBase
@@ -74,7 +74,7 @@ class CAMSolveRequest:
     parameter_grid: ParameterGrid | None = None
     data: Any | None = None
     context: Any | None = None
-    case_failure_policy: str = "abort"
+    case_failure_policy: Literal["abort", "record"] = "abort"
 
     @property
     def progress(self) -> Any | None:

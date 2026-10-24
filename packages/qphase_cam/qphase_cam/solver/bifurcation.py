@@ -187,8 +187,8 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
     requires_jacobian: ClassVar[bool] = True
     requires_symbolic_dynamics: ClassVar[bool] = True
     search_audit_capability: ClassVar[bool] = True
+    supports_parameter_grid: ClassVar[bool] = True
     progress_unit: ClassVar[str] = "candidate"
-    output_kind: ClassVar[Literal["bifurcation_candidates"]] = "bifurcation_candidates"
     manifest: ClassVar[PluginManifest] = PluginManifest(
         subplugins={
             "target": SubpluginSlot(

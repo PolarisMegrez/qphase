@@ -46,6 +46,7 @@ class DeflationSolver(CAMSolver[DeflationSolverConfig]):
         SOLVER_OUTPUT_DECLARATIONS["state_scan"],
     )
     requires_jacobian: ClassVar[bool] = True
+    supports_parameter_grid: ClassVar[bool] = True
     progress_unit: ClassVar[str] = "point"
 
     def solve(self, request: CAMSolveRequest) -> CAMProductFragment:
