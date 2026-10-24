@@ -88,9 +88,10 @@ def test_version_and_core_range_agree_across_declarations():
 def test_manifest_namespaces_match_the_declared_entry_points():
     """Every CAM-owned entry-point namespace is declared, plus overlay model."""
     entry_points = _pyproject_entry_points()
-    namespaces = {
-        name.split(".", 1)[0] for name in entry_points
-    } - {"engine", "resource"}
+    namespaces = {name.split(".", 1)[0] for name in entry_points} - {
+        "engine",
+        "resource",
+    }
     declared = set(MANIFEST.plugin_class_namespaces)
     assert namespaces <= declared
     # Models are project overlays: declared, never shipped as entry points.
@@ -99,9 +100,32 @@ def test_manifest_namespaces_match_the_declared_entry_points():
     assert declared - namespaces == {"model"}
 
 
-def test_manifest_declares_no_data_products_yet():
-    """Phase 10C adds the typed schemas; nothing may claim one before."""
-    assert MANIFEST.data_products == []
+def test_manifest_declares_only_the_implemented_data_products():
+    """Phase 10C1 ships three schemas; every schema_ref must resolve."""
+    import importlib
+
+    from qphase.data import ProductSchema
+
+    declared = [product.name for product in MANIFEST.data_products]
+    assert declared == [
+        CAM_STATE_DECLARATION.name,
+        CAM_STATE_SCAN_DECLARATION.name,
+        CAM_CANDIDATE_DECLARATION.name,
+    ]
+    for product in MANIFEST.data_products:
+        module_name, _, attribute = product.schema_ref.partition(":")
+        module = importlib.import_module(module_name)
+        schema = getattr(module, attribute)
+        assert isinstance(schema, ProductSchema), product.name
+        assert schema.kind.value == product.kind
+    # Phase 10C2 schemas (continuation, annotation, evidence) are not declared
+    # before they exist: a schema_ref must never point at a placeholder.
+    for later in (
+        CAM_EVIDENCE_DECLARATION,
+        CAM_CONTINUATION_DECLARATION,
+        CAM_ANNOTATION_DECLARATION,
+    ):
+        assert later.name not in declared
     assert MANIFEST.materializers == []
     assert MANIFEST.backend_capabilities.streaming is False
     assert "numpy" in MANIFEST.backend_capabilities.backends
@@ -123,11 +147,7 @@ def test_manifest_imports_no_concrete_plugins():
         "qphase_cam.core",
         "qpsgen",
     )
-    offenders = sorted(
-        name
-        for name in imported
-        if name.startswith(forbidden_prefixes)
-    )
+    offenders = sorted(name for name in imported if name.startswith(forbidden_prefixes))
     assert not offenders, offenders
 
 
@@ -243,30 +263,43 @@ def test_declarations_carry_no_model_specific_vocabulary():
 
 
 def test_declared_fields_are_the_frozen_planning_vocabulary():
-    """The field lists are the vocabulary Phase 10C implements."""
+    """The field lists are the vocabulary Phase 10C1 implements."""
     expected = {
         CAM_STATE_DECLARATION.name: [
             "parameters",
             "states",
             "residuals",
-            "convergence",
-            "solution_offsets",
+            "success",
+            "valid_mask",
+            "solution_count",
         ],
         CAM_STATE_SCAN_DECLARATION.name: [
             "parameters",
             "states",
             "residuals",
-            "convergence",
-            "solution_offsets",
+            "success",
+            "valid_mask",
+            "solution_count",
         ],
         CAM_CANDIDATE_DECLARATION.name: [
             "case_axes",
+            "case_params",
             "candidate_offsets",
             "candidate_identity",
             "states",
-            "controls",
+            "state_vectors",
+            "control_values",
+            "control_names",
+            "full_residual_norm",
+            "search_residual_norm",
+            "success",
+            "status",
+            "method",
+            "verification_digits",
+            "verification_status",
             "classification",
             "base_audit",
+            "case_metadata",
         ],
         CAM_EVIDENCE_DECLARATION.name: [
             "search_design",
@@ -481,16 +514,12 @@ def test_compiler_rejects_a_solver_task_without_a_solver(tmp_path, planning_engi
 
     with pytest.raises(Exception, match="missing required plugins"):
         compiler.compile(
-            _workflow(
-                _job("solve", backend={"dummy": {}}, model={"dummy": {}})
-            )
+            _workflow(_job("solve", backend={"dummy": {}}, model={"dummy": {}}))
         )
 
 
 def test_resolver_returns_the_profile_defaults_without_a_resolver_call():
     for profile in CAM_TASK_PROFILES:
         assert profile.resolver is None
-        resolved = resolve_plugin_requirements(
-            profile, TaskProfileResolutionContext()
-        )
+        resolved = resolve_plugin_requirements(profile, TaskProfileResolutionContext())
         assert resolved == profile.requirements

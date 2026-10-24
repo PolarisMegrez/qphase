@@ -56,6 +56,7 @@ from qphase.data import DataKind, ProductRequirement
 from qphase.resources import (
     BackendCapabilities,
     CompatibilityRange,
+    DataProductDeclaration,
     EngineDeclaration,
     OptionalDependencyDeclaration,
     PluginClassDeclaration,
@@ -127,9 +128,32 @@ MANIFEST = ResourcePackageManifest(
             description="Candidate classification (scaling signature).",
         ),
     ],
-    # Phase 10C adds the typed product schemas; declaring a schema_ref before
-    # the schema module exists would be a false declaration.
-    data_products=[],
+    # Phase 10C1 implements the steady-state and candidate schemas. The
+    # continuation, annotation and evidence schemas of Phase 10C2 are *not*
+    # declared: a schema_ref must resolve to a real ProductSchema.
+    data_products=[
+        DataProductDeclaration(
+            name=CAM_STATE_DECLARATION.name,
+            kind="statistics",
+            schema_ref="qphase_cam.data:CAM_STATE_PRODUCT",
+            description="One solved parameter point as fixed-capacity state "
+            "slots with their residuals and solution count.",
+        ),
+        DataProductDeclaration(
+            name=CAM_STATE_SCAN_DECLARATION.name,
+            kind="statistics",
+            schema_ref="qphase_cam.data:CAM_STATE_SCAN_PRODUCT",
+            description="Steady states resolved across a flattened scan axis, "
+            "with the original grid shape kept as an attribute.",
+        ),
+        DataProductDeclaration(
+            name=CAM_CANDIDATE_DECLARATION.name,
+            kind="statistics",
+            schema_ref="qphase_cam.data:CAM_CANDIDATE_PRODUCT",
+            description="Ragged bifurcation/search candidates with explicit "
+            "identity, classification and audit JSON columns.",
+        ),
+    ],
     materializers=[],
     backend_capabilities=BackendCapabilities(
         backends=["numpy", "cupy"],
