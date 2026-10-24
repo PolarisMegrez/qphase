@@ -31,6 +31,11 @@ diffusion, or a potential the truncated normal form fails to confine is reported
 through :class:`~qphase_cam.outcomes.CAMOutcomeStatus` — never patched into a
 plausible number.
 
+The sampled ``f``, ``q`` and readout the quadrature integrates are also returned, as
+a :class:`ScalarGeneratorTable`, so a local generator or pole solve
+(:mod:`qphase_cam.carrier_pole`) starts from the coefficients this module already
+computed instead of rebuilding the manifold and the noise.
+
 ``reconstructed_intensity`` (the usual ``scalar + full_ou − soft_ou`` combination)
 and :func:`ou_intensities` live beside the numerical core rather than inside it, so
 the kernel never guesses which correction the caller wants.
@@ -43,7 +48,13 @@ from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
 from scipy.integrate import cumulative_trapezoid
 
 from .core.noise import canonical_sample_matrix_covariance
@@ -61,6 +72,7 @@ __all__ = [
     "NonlinearManifoldConfig",
     "OuIntensities",
     "ResponsePrediction",
+    "ScalarGeneratorTable",
     "ScalarReconstruction",
     "ScalarReconstructionConfig",
     "bilinear_form",
@@ -160,8 +172,66 @@ class ScalarReconstructionConfig(BaseModel):
     )
 
 
+class ScalarGeneratorTable(BaseModel):
+    """The scalar backward-generator coefficients sampled on one grid.
+
+    These are the coefficients of the one-dimensional Feynman-Kac (backward)
+    generator ``L = f(x) ∂_x + ½ q(x) ∂_x²`` together with the readout
+    ``omega(x)`` — the *coefficients*, not a discretized generator matrix: a
+    consumer builds its own stencil (:func:`qphase_cam.carrier_pole.carrier_pole`
+    resamples these with a monotone PCHIP onto a uniform grid and uses an upwind
+    finite-volume stencil).
+
+    The contract is what makes such a consumer safe to write: ``x`` is finite and
+    strictly increasing, at least three points are present, every coefficient is
+    finite and ``diffusion`` is strictly positive. A NaN, a duplicated grid point or
+    a non-positive ``q`` therefore cannot be carried silently into a boundary-value
+    or eigenvalue problem.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    x: tuple[float, ...]
+    drift: tuple[float, ...]
+    diffusion: tuple[float, ...]
+    readout: tuple[float, ...]
+
+    @model_validator(mode="after")
+    def _check_table(self) -> ScalarGeneratorTable:
+        size = len(self.x)
+        if size < 3:
+            raise ValueError(f"a generator table needs at least 3 points; got {size}")
+        for name in ("drift", "diffusion", "readout"):
+            length = len(getattr(self, name))
+            if length != size:
+                raise ValueError(
+                    f"the {name} array has {length} values for {size} x points"
+                )
+        grid = np.asarray(self.x, dtype=float)
+        if not np.all(np.isfinite(grid)):
+            raise ValueError("the x grid is not finite")
+        if np.any(np.diff(grid) <= 0.0):
+            raise ValueError("the x grid is not strictly increasing")
+        for name in ("drift", "diffusion", "readout"):
+            values = np.asarray(getattr(self, name), dtype=float)
+            if not np.all(np.isfinite(values)):
+                raise ValueError(f"the {name} coefficients are not finite")
+        if np.any(np.asarray(self.diffusion, dtype=float) <= 0.0):
+            raise ValueError(
+                "the diffusion coefficients must be strictly positive; a "
+                "non-positive projected intensity has no generator"
+            )
+        return self
+
+
 class ScalarReconstruction(BaseModel):
-    """The stationary scalar problem along one manifold."""
+    """The stationary scalar problem along one manifold.
+
+    ``generator_table`` is the same ``f``, ``q`` and readout the reported scalars are
+    integrated from, kept so a local generator/pole solve does not have to rebuild
+    the manifold; it is ``None`` for the failures that stop before the grid is
+    usable, and kept for the density and boundary verdicts.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -188,6 +258,7 @@ class ScalarReconstruction(BaseModel):
     density_normalization: float | None = None
 
     grid_points: int | None = None
+    generator_table: ScalarGeneratorTable | None = None
     manifold: NonlinearManifold
     method: dict[str, Any] = Field(default_factory=dict)
     diagnostics: dict[str, Any] = Field(default_factory=dict)
@@ -650,7 +721,7 @@ def scalar_reconstruction(
     diagnostics["physical_violation_count"] = int(
         np.count_nonzero(physical_minimum < -settings.physical_tolerance)
     )
-    domain = {
+    domain: dict[str, Any] = {
         "x_min": negative,
         "x_max": positive,
         "negative_physical_boundary": negative_physical,
@@ -667,6 +738,28 @@ def scalar_reconstruction(
             updates=domain,
         )
     f = manifold_drift(resolved_manifold, x)
+    if not np.all(np.isfinite(f)):
+        return report(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "the manifold drift is not finite on the reconstruction grid",
+            code=FAILURE_INVALID_DOMAIN,
+            updates=domain,
+        )
+    try:
+        table = ScalarGeneratorTable(
+            x=tuple(float(value) for value in x),
+            drift=tuple(float(value) for value in f),
+            diffusion=tuple(float(value) for value in q),
+            readout=tuple(float(value) for value in omega),
+        )
+    except ValidationError as exc:
+        return report(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            f"the generator table is not usable: {exc}",
+            code=FAILURE_INVALID_DOMAIN,
+            updates=domain,
+        )
+    domain = {**domain, "generator_table": table}
     potential = cumulative_trapezoid(2.0 * f / q, x, initial=0.0)
     log_density = potential - np.log(q)
     log_density -= float(np.max(log_density))

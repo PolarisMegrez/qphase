@@ -197,6 +197,9 @@ def test_scalar_reconstruction_matches_the_reference():
     assert reconstruction.diagnostics["center_projected_noise"] == pytest.approx(
         1.0, rel=1e-12
     )
+    # The bounded/unbounded verdicts keep the sampled generator coefficients.
+    assert reconstruction.reason_code == "manifold_not_confining"
+    assert reconstruction.generator_table is not None
 
 
 def test_the_gaussian_terms_and_the_reconstruction_combination():
@@ -317,6 +320,40 @@ def test_a_confining_manifold_with_a_bounded_domain_is_valid():
     assert reconstruction.edge_mass_fraction < 1.0
 
 
+def test_the_generator_table_carries_the_reconstruction_coefficients():
+    manifold = _confining_manifold()
+    reconstruction = scalar_reconstruction(
+        _QuadraticAdapter(),
+        _BoundedModel(),
+        _observable(),
+        state=[X0],
+        params={},
+        order=3,
+        manifold=manifold,
+        config=ScalarReconstructionConfig(grid_points=51),
+    )
+    assert reconstruction.status is CAMOutcomeStatus.VALID
+    table = reconstruction.generator_table
+    assert table is not None
+    x = np.asarray(table.x)
+    assert x.size == reconstruction.grid_points
+    assert len(table.drift) == x.size
+    assert len(table.diffusion) == x.size
+    assert len(table.readout) == x.size
+    assert np.all(np.diff(x) > 0.0)
+    # The table is exactly the coefficients the reconstruction integrated.
+    np.testing.assert_array_equal(np.asarray(table.drift), manifold_drift(manifold, x))
+    # The bounded model's diffusion is 1 - v at v = X0 + x, and the canonical sample
+    # covariance of a one-mode matrix is 2 v (1 - v), which one mode projects onto
+    # the critical direction unchanged.
+    state = X0 + x
+    np.testing.assert_allclose(
+        np.asarray(table.diffusion), 2.0 * state * (1.0 - state), atol=1e-12
+    )
+    assert np.all(np.asarray(table.diffusion) > 0.0)
+    np.testing.assert_allclose(np.asarray(table.readout), X0 + x, atol=1e-12)
+
+
 def test_a_confining_but_unbounded_domain_is_reported_as_truncated():
     reconstruction = scalar_reconstruction(
         _QuadraticAdapter(),
@@ -392,6 +429,8 @@ def test_a_negative_diffusion_is_reported_not_used():
     assert assessment.status is CAMOutcomeStatus.STOCHASTIC_INVALID
     assert assessment.reason_code == "invalid_domain"
     assert "projected noise" in (assessment.reason or "")
+    # The grid never became usable, so no generator table is fabricated.
+    assert assessment.generator_table is None
 
 
 def test_a_non_finite_diffusion_is_an_invalid_domain():
