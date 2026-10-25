@@ -8,6 +8,11 @@ from typing import Any, ClassVar
 import numpy as np
 from pydantic import Field, model_validator
 
+from qphase_cam.branch_diagnostics import (
+    BranchDiagnostics,
+    BranchDiagnosticsConfig,
+    branch_diagnostics,
+)
 from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.data import build_annotation_product
 from qphase_cam.outcomes import CAMOutcomeStatus
@@ -39,6 +44,20 @@ class LocalResponseValidationConfig(CAMPostprocessorConfig):
     psd_tolerance: float = Field(default=1e-9, ge=0.0)
     stability_tolerance: float = Field(default=1e-9, ge=0.0)
     continuity_ratio_limit: float = Field(default=10.0, gt=1.0)
+    diagnostic_observables: tuple[Any, ...] = Field(
+        default=(),
+        exclude=True,
+        description=(
+            "Optional CAM observables to diagnose on every solved branch point. Each "
+            "one is evaluated on the state the branch solve already produced, so the "
+            "default (empty) keeps the product, its cost and its numbers unchanged, "
+            "and a non-empty tuple adds one readout axis of diagnostic fields."
+        ),
+    )
+    diagnostic_config: BranchDiagnosticsConfig = Field(
+        default_factory=BranchDiagnosticsConfig,
+        description="Steps and floors of the per-observable branch diagnostics",
+    )
 
     @model_validator(mode="after")
     def validate_interval(self) -> LocalResponseValidationConfig:
@@ -46,7 +65,68 @@ class LocalResponseValidationConfig(CAMPostprocessorConfig):
             raise ValueError("epsilon_max must exceed epsilon_min")
         if self.fit_points > self.epsilon_points:
             raise ValueError("fit_points cannot exceed epsilon_points")
+        names = []
+        for item in self.diagnostic_observables:
+            identity = getattr(item, "identity", None)
+            names.append(str(getattr(identity, "name", "") or ""))
+        if any(not name for name in names):
+            raise ValueError("every diagnostic observable needs a named identity")
+        if len(set(names)) != len(names):
+            raise ValueError(
+                f"diagnostic observable names must be unique; got {names}"
+            )
         return self
+
+
+#: Branch-diagnostic fields the annotation carries, in a stable order. Every one is a
+#: scalar per (candidate, branch, epsilon_sample, readout); ``None`` (an undefined
+#: quantity) is padded as NaN by the pivot, never as a number.
+DIAGNOSTIC_FIELDS = (
+    "diagnostic_status",
+    "soft_eigenvalue_real",
+    "soft_eigenvalue_imag",
+    "soft_rate",
+    "noncritical_spectral_gap",
+    "critical_mode_condition_number",
+    "eigenvector_condition_number",
+    "projected_noise_intensity",
+    "local_ou_sigma_x",
+    "soft_coordinate",
+    "rho_x",
+    "eta2",
+    "minimum_physical_eigenvalue",
+    "frequency",
+    "frequency_soft_projection",
+    "frequency_curvature",
+    "eta_readout",
+    "soft_ou_intensity",
+    "full_ou_intensity",
+    "soft_response",
+    "explicit_response",
+    "full_response",
+    "regular_response",
+    "ou_snr_coefficient",
+)
+
+
+def _diagnostic_fields(diagnostic: BranchDiagnostics) -> dict[str, Any]:
+    """Return one diagnostic as annotation fields, ``None`` kept as "undefined"."""
+    fields: dict[str, Any] = {"diagnostic_status": diagnostic.status.value}
+    for name in DIAGNOSTIC_FIELDS[1:]:
+        fields[name] = getattr(diagnostic, name)
+    return fields
+
+
+def _undefined_diagnostic_fields() -> dict[str, Any]:
+    """Return an empty diagnostic slot: no status, every field undefined.
+
+    A branch point that did not converge is not diagnosed, but its slot in the
+    readout axis is kept so the sample axis stays aligned with the base fields.
+    """
+    fields: dict[str, Any] = {"diagnostic_status": ""}
+    for name in DIAGNOSTIC_FIELDS[1:]:
+        fields[name] = None
+    return fields
 
 
 class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
@@ -80,7 +160,12 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             self.config.epsilon_max,
             self.config.epsilon_points,
         )
+        observables = tuple(self.config.diagnostic_observables)
+        observable_names = tuple(
+            str(item.identity.name) for item in observables
+        )
         rows: list[dict[str, Any]] = []
+        diagnostic_rows: list[dict[str, Any]] = []
         for branch_index in range(branches.size):
             if not bool(branches.real_branch[branch_index]):
                 continue
@@ -148,6 +233,37 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
                 petermann = self._hamiltonian_petermann_max(
                     adapter, model, state, local_params
                 )
+                if observables:
+                    # One diagnostic per observable on the *same* solved state: the
+                    # branch is continued once and every readout reuses it. A branch
+                    # point that did not converge is still placed on its sample slot —
+                    # with no status and no fields — so the readout axis stays aligned
+                    # with the base sample axis instead of shifting later samples.
+                    for observable in observables:
+                        if converged:
+                            fields = _diagnostic_fields(
+                                branch_diagnostics(
+                                    adapter,
+                                    model,
+                                    observable,
+                                    state=state,
+                                    params=local_params,
+                                    parameter=perturbation,
+                                    scale=scale,
+                                    critical_state=critical,
+                                    config=self.config.diagnostic_config,
+                                )
+                            )
+                        else:
+                            fields = _undefined_diagnostic_fields()
+                        diagnostic_rows.append(
+                            {
+                                "candidate_index": candidate_index,
+                                "branch_index": branch_index,
+                                "readout": str(observable.identity.name),
+                                **fields,
+                            }
+                        )
                 branch_rows.append(
                     {
                         "candidate_index": candidate_index,
@@ -207,7 +323,14 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             ],
         }
         del output
-        return self._annotation(product, view, rows, status=self._status(view, rows))
+        return self._annotation(
+            product,
+            view,
+            rows,
+            diagnostic_rows=diagnostic_rows,
+            observable_names=observable_names,
+            status=self._status(view, rows),
+        )
 
     def _status(self, view: CandidateView, rows: list[dict[str, Any]]) -> list[str]:
         """Return one outcome status per candidate."""
@@ -230,13 +353,49 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
         view: CandidateView,
         rows: list[dict[str, Any]],
         *,
+        diagnostic_rows: list[dict[str, Any]] | None = None,
+        observable_names: tuple[str, ...] = (),
         status: list[str],
     ) -> Any:
-        """Return the typed local-response annotation over the candidate rows."""
+        """Return the typed local-response annotation over the candidate rows.
+
+        The base fields are the per-(candidate, branch, epsilon_sample) trace
+        quantities. When diagnostic observables were configured, their fields are
+        added on a ``readout`` axis — the same branch solve, one entry per readout —
+        with the observable identities recorded in the method metadata so a stored
+        annotation states which readout each coordinate is.
+        """
         del product
         fields, field_axes, axes = pivot_branch_rows(
             view, rows, sample_axis="epsilon_sample"
         )
+        resolved = list(diagnostic_rows or [])
+        if resolved:
+            diagnostic_fields, diagnostic_axes, diagnostic_sizes = pivot_branch_rows(
+                view,
+                resolved,
+                sample_axis="epsilon_sample",
+                axis_values={"readout": observable_names},
+            )
+            # The base fields already carry the row anchors and the physical
+            # eigenvalue per (candidate, branch, sample); the diagnostic rows repeat
+            # them for every readout, so those duplicates are dropped instead of
+            # shadowing the base column.
+            for name in set(fields) & set(diagnostic_fields):
+                diagnostic_fields.pop(name)
+                diagnostic_axes.pop(name, None)
+            fields = {**fields, **diagnostic_fields}
+            field_axes = {**field_axes, **diagnostic_axes}
+            axes = {**axes, **diagnostic_sizes}
+        identities = [
+            {
+                "name": str(item.identity.name),
+                "kind": item.identity.kind.value,
+                "sector": item.identity.sector.value,
+                "measurement_mapping": item.identity.measurement_mapping,
+            }
+            for item in self.config.diagnostic_observables
+        ]
         return build_annotation_product(
             annotation_kind=self.annotation_kind,
             target_kind="candidate",
@@ -252,6 +411,10 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
                     "perturbation_parameter": view.design_at(row.index).parameter,
                     "perturbation_scale": view.design_at(row.index).scale,
                     "perturbation_side": view.design_at(row.index).side,
+                    "diagnostic_observables": identities,
+                    "diagnostic_config": self.config.diagnostic_config.model_dump(
+                        mode="json"
+                    ),
                 }
                 for row in view.rows
             ],

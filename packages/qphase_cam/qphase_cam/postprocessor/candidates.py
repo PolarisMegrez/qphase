@@ -21,6 +21,7 @@ product: the branch structure reaches the artifact as typed annotation fields.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -665,9 +666,10 @@ def pivot_branch_rows(
     rows: list[dict[str, Any]],
     *,
     sample_axis: str | None = None,
+    axis_values: Mapping[str, Sequence[str]] | None = None,
     rename: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, tuple[str, ...]], dict[str, int]]:
-    """Pivot per-(candidate, branch[, sample]) rows into typed field columns.
+    """Pivot per-(candidate, branch[, sample][, axis...]) rows into typed columns.
 
     The rows are anchored to a candidate by ``candidate_index`` and to a branch by
     its global ``branch_index`` in the view's branch table; the branch's local
@@ -675,6 +677,13 @@ def pivot_branch_rows(
     rows of one branch become that padded axis, otherwise each branch is one entry
     of the branch axis. Missing entries are padded, so a ragged branch set is
     representable without a JSON payload.
+
+    ``axis_values`` names further axes a row can be placed on: each entry maps an
+    axis name to its ordered coordinate values, and a row states its coordinate in
+    ``row[axis_name]``. The sample counter restarts for every coordinate
+    combination, so a row set that repeats a branch once per (sample, coordinate)
+    keeps its sample ordering. The resulting trailing axes are ``sample_axis`` then
+    the declared axes, in the given order.
     """
     # The row's ``branch_index`` is the branch's position in the view's branch
     # table; its local index is the position inside its own candidate.
@@ -683,35 +692,59 @@ def pivot_branch_rows(
         for position in range(view.branches.size)
     }
     positions = {row.index: position for position, row in enumerate(view.rows)}
-    counts: dict[tuple[int, int], int] = {}
-    placed: list[tuple[int, int, int, dict[str, Any]]] = []
+    declared = {
+        str(name): tuple(str(value) for value in values)
+        for name, values in (axis_values or {}).items()
+    }
+    coordinates = {
+        name: {value: index for index, value in enumerate(values)}
+        for name, values in declared.items()
+    }
+    counts: dict[tuple[Any, ...], int] = {}
+    placed: list[tuple[int, int, int, tuple[int, ...], dict[str, Any]]] = []
     for row in rows:
         candidate = int(row["candidate_index"])
         branch = local[int(row["branch_index"])]
-        key = (candidate, branch)
+        point: list[int] = []
+        for name, index_of in coordinates.items():
+            value = str(row.get(name))
+            if value not in index_of:
+                raise ValueError(
+                    f"row {row.get('candidate_index')}/{row.get('branch_index')} "
+                    f"states {name}={value!r}, which is not one of {declared[name]}"
+                )
+            point.append(index_of[value])
+        key = (candidate, branch, *point)
         sample = counts.get(key, 0)
         counts[key] = sample + 1
-        placed.append((positions[candidate], branch, sample, row))
+        placed.append((positions[candidate], branch, sample, tuple(point), row))
     n_branch = branch_axis_size(view)
     if not placed:
         return {}, {}, {}
     n_sample = max(counts.values(), default=1) if sample_axis is not None else 1
-    tail: tuple[str, ...] = (
-        ("branch",) if sample_axis is None else ("branch", sample_axis)
-    )
+    tail: tuple[str, ...] = ("branch",)
+    if sample_axis is not None:
+        tail += (sample_axis,)
+    tail += tuple(declared)
     axes: dict[str, int] = {"branch": n_branch}
     if sample_axis is not None:
         axes[sample_axis] = n_sample
+    for name, values in declared.items():
+        axes[name] = len(values)
     rename = dict(rename or {})
-    names = sorted({name for _, _, _, row in placed for name in row})
+    # A declared axis coordinate is an axis, not a field.
+    names = sorted(
+        {name for *_, row in placed for name in row if name not in declared}
+    )
     fields: dict[str, Any] = {}
     field_axes: dict[str, tuple[str, ...]] = {}
     for name in names:
-        dtype = _column_dtype([row.get(name) for _, _, _, row in placed])
+        dtype = _column_dtype([row.get(name) for *_, row in placed])
         kind = np.dtype(dtype).kind
         shape: tuple[int, ...] = (len(view.rows), n_branch)
         if sample_axis is not None:
             shape = (len(view.rows), n_branch, n_sample)
+        shape = shape + tuple(len(values) for values in declared.values())
         if kind in "fc":
             array = np.full(shape, np.nan, dtype=dtype)
         elif kind == "U":
@@ -720,14 +753,15 @@ def pivot_branch_rows(
             array = np.zeros(shape, dtype=bool)
         else:
             array = np.zeros(shape, dtype=dtype)
-        for candidate, branch, sample, row in placed:
-            value = row.get(name)
-            if value is None:
+        for candidate, branch, sample, extra, row in placed:
+            entry = row.get(name)
+            if entry is None:
                 continue
-            if sample_axis is None:
-                array[candidate, branch] = value
-            else:
-                array[candidate, branch, sample] = value
+            index: tuple[Any, ...] = (candidate, branch)
+            if sample_axis is not None:
+                index += (sample,)
+            index += extra
+            array[index] = entry
         resolved = rename.get(name, name)
         fields[resolved] = array
         field_axes[resolved] = tail
