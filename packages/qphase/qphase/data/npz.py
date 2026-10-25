@@ -426,38 +426,93 @@ class NpzStorageAdapter:
     ) -> ProductStorage:
         """Persist one runtime-backed dataset as per-variable chunk files.
 
-        ``layout="single"`` writes one payload file holding every variable
-        under its own key (no external sharding); ``layout="sharded"``
-        splits variables along a planned named axis into byte-targeted
-        chunk files.
+        ``layout="sharded"`` plans each variable's chunks from its schema shape and
+        dtype and materializes **one chunk at a time** through a dataset view, so a
+        product whose payload does not fit in memory is still written; the chunk
+        plan, file names, logical ranges and descriptor are the ones this adapter
+        always produced. ``layout="single"`` writes one payload file holding every
+        variable under its own key, so it reads each variable whole by design.
         """
         directory = Path(directory)
-        arrays: dict[str, np.ndarray] = {}
-        for variable in dataset.schema.variables:
-            handle = dataset.handle(variable.name)
-            # Persistence is a host operation: the copy policy is explicit.
-            # np.ascontiguousarray promotes 0-d arrays to 1-d, so keep
-            # scalars as-is (0-d arrays are trivially C-contiguous).
-            array = handle.materialize("cpu", copy_policy="allow")
-            if array.ndim:
-                array = np.ascontiguousarray(array)
-            else:
-                array = np.asarray(array)
-            arrays[variable.name] = array
         if layout == "single":
+            arrays = {
+                variable.name: self._materialized_variable(dataset, variable.name)
+                for variable in dataset.schema.variables
+            }
             variables = self._write_single(file_stem, dataset.schema, arrays, directory)
         else:
             variables = {
-                variable.name: self._write_variable(
+                variable.name: self._write_sharded_variable(
                     file_stem,
                     variable,
-                    arrays[variable.name],
+                    dataset,
                     directory,
                     shard_target_bytes,
                 )
                 for variable in dataset.schema.variables
             }
         return build_product_storage(dataset.schema, variables)
+
+    @staticmethod
+    def _materialized_variable(dataset: Dataset, name: str) -> np.ndarray:
+        """Return one variable's payload as a host array (an explicit full read)."""
+        # Persistence is a host operation: the copy policy is explicit.
+        # np.ascontiguousarray promotes 0-d arrays to 1-d, so keep scalars as-is
+        # (0-d arrays are trivially C-contiguous).
+        array = dataset.handle(name).materialize("cpu", copy_policy="allow")
+        if array.ndim:
+            return np.ascontiguousarray(array)
+        return np.asarray(array)
+
+    @classmethod
+    def _write_sharded_variable(
+        cls,
+        stem: str,
+        variable: VariableSchema,
+        dataset: Dataset,
+        directory: Path,
+        shard_target_bytes: int,
+    ) -> NpzVariableDescriptor:
+        """Write one variable chunk by chunk, reading only the chunk it writes."""
+        shape: list[int] = []
+        for position, dim in enumerate(variable.dims):
+            size = dataset.axis(dim).size
+            if size is None:
+                size = int(dataset.handle(variable.name).shape[position])
+            shape.append(int(size))
+        plan = cls._plan_shape(
+            tuple(shape), np.dtype(variable.dtype).itemsize, shard_target_bytes
+        )
+        if plan is None:
+            return cls._write_whole_variable(
+                stem,
+                variable,
+                cls._materialized_variable(dataset, variable.name),
+                directory,
+            )
+        axis, _ = plan
+        dim = variable.dims[axis]
+        handle = dataset.handle(variable.name)
+        reader = getattr(handle, "materialize_selection", None)
+
+        def chunk_at(start: int, stop: int) -> np.ndarray:
+            if callable(reader):
+                # A lazy handle reads only the chunks this window touches, and
+                # only for this variable.
+                indexers = tuple(
+                    slice(start, stop) if item == dim else slice(None)
+                    for item in variable.dims
+                )
+                chunk = reader(indexers)
+                if np.asarray(chunk).ndim:
+                    return np.ascontiguousarray(chunk)
+                return np.asarray(chunk)
+            view = dataset.slice_view(**{dim: slice(start, stop)})
+            return cls._materialized_variable(view, variable.name)
+
+        return cls._write_chunked_variable(
+            stem, variable, tuple(shape), variable.dtype, directory, plan, chunk_at
+        )
 
     @staticmethod
     def _write_single(
@@ -606,67 +661,50 @@ class NpzStorageAdapter:
     # -- internals -----------------------------------------------------------
 
     @staticmethod
-    def _plan_chunk_axis(
-        array: np.ndarray, shard_target_bytes: int
+    def _plan_shape(
+        shape: tuple[int, ...], itemsize: int, shard_target_bytes: int
     ) -> tuple[int, int] | None:
-        """Choose (axis index, rows per chunk) for sharding, or None.
+        """Choose (axis index, rows per chunk) from one variable's shape.
 
         The first axis whose per-row payload fits the target wins, so scan
         axes (kept whole per point for point-view pruning) are preferred
         over trajectory axes, which are preferred over time; scalar and
-        small variables stay unsharded.
+        small variables stay unsharded. The plan is a function of the shape
+        and dtype alone, so planning from a schema and planning from a
+        materialized array agree exactly.
         """
-        if (
-            array.ndim == 0
-            or shard_target_bytes <= 0
-            or array.nbytes <= shard_target_bytes
-        ):
+        if len(shape) == 0 or shard_target_bytes <= 0:
             return None
-        for axis, size in enumerate(array.shape):
-            if size > 1 and array.nbytes // size <= shard_target_bytes:
-                chunk_count = math.ceil(array.nbytes / shard_target_bytes)
+        nbytes = int(np.prod(shape, dtype=np.int64)) * int(itemsize)
+        if nbytes <= shard_target_bytes:
+            return None
+        for axis, size in enumerate(shape):
+            if size > 1 and nbytes // size <= shard_target_bytes:
+                chunk_count = math.ceil(nbytes / shard_target_bytes)
                 return axis, max(1, math.ceil(size / chunk_count))
-        for axis, size in enumerate(array.shape):
+        for axis, size in enumerate(shape):
             if size > 1:
                 return axis, 1
         return None
 
     @staticmethod
-    def _write_variable(
+    def _plan_chunk_axis(
+        array: np.ndarray, shard_target_bytes: int
+    ) -> tuple[int, int] | None:
+        """Choose (axis index, rows per chunk) for one materialized array."""
+        return NpzStorageAdapter._plan_shape(
+            tuple(array.shape), np.dtype(array.dtype).itemsize, shard_target_bytes
+        )
+
+    @staticmethod
+    def _write_whole_variable(
         stem: str,
         variable: VariableSchema,
         array: np.ndarray,
         directory: Path,
-        shard_target_bytes: int,
     ) -> NpzVariableDescriptor:
-        safe_variable = _sanitize_stem(variable.name)
-        plan = NpzStorageAdapter._plan_chunk_axis(array, shard_target_bytes)
-        if plan is not None:
-            axis, rows_per_chunk = plan
-            size = array.shape[axis]
-            records = []
-            for index, start in enumerate(range(0, size, rows_per_chunk)):
-                stop = min(start + rows_per_chunk, size)
-                selector = (slice(None),) * axis + (slice(start, stop),)
-                chunk = np.ascontiguousarray(array[selector])
-                filename = f"{stem}__{safe_variable}__{index:04d}.npz"
-                np.savez(directory / filename, data=chunk)
-                records.append(
-                    NpzChunkRecord(
-                        file=filename,
-                        key=_KEY,
-                        logical_range=(start, stop),
-                        shape=tuple(chunk.shape),
-                        dtype=np.dtype(chunk.dtype).str,
-                    )
-                )
-            return NpzVariableDescriptor(
-                full_shape=tuple(array.shape),
-                dtype=np.dtype(array.dtype).str,
-                chunk_axis=variable.dims[axis],
-                chunks=records,
-            )
-        filename = f"{stem}__{safe_variable}.npz"
+        """Write one unsharded variable to a single payload file."""
+        filename = f"{stem}__{_sanitize_stem(variable.name)}.npz"
         np.savez(directory / filename, data=array)
         return NpzVariableDescriptor(
             full_shape=tuple(array.shape),
@@ -679,6 +717,72 @@ class NpzStorageAdapter:
                     dtype=np.dtype(array.dtype).str,
                 )
             ],
+        )
+
+    @staticmethod
+    def _write_chunked_variable(
+        stem: str,
+        variable: VariableSchema,
+        shape: tuple[int, ...],
+        dtype: Any,
+        directory: Path,
+        plan: tuple[int, int],
+        chunk_at: Any,
+    ) -> NpzVariableDescriptor:
+        """Write one planned variable, taking each chunk from ``chunk_at``."""
+        safe_variable = _sanitize_stem(variable.name)
+        axis, rows_per_chunk = plan
+        size = int(shape[axis])
+        records = []
+        for index, start in enumerate(range(0, size, rows_per_chunk)):
+            stop = min(start + rows_per_chunk, size)
+            chunk = chunk_at(start, stop)
+            filename = f"{stem}__{safe_variable}__{index:04d}.npz"
+            np.savez(directory / filename, data=chunk)
+            records.append(
+                NpzChunkRecord(
+                    file=filename,
+                    key=_KEY,
+                    logical_range=(start, stop),
+                    shape=tuple(chunk.shape),
+                    dtype=np.dtype(chunk.dtype).str,
+                )
+            )
+        return NpzVariableDescriptor(
+            full_shape=tuple(shape),
+            dtype=np.dtype(dtype).str,
+            chunk_axis=variable.dims[axis],
+            chunks=records,
+        )
+
+    @staticmethod
+    def _write_variable(
+        stem: str,
+        variable: VariableSchema,
+        array: np.ndarray,
+        directory: Path,
+        shard_target_bytes: int,
+    ) -> NpzVariableDescriptor:
+        """Write one materialized variable, planned and chunked like a stream."""
+        plan = NpzStorageAdapter._plan_chunk_axis(array, shard_target_bytes)
+        if plan is None:
+            return NpzStorageAdapter._write_whole_variable(
+                stem, variable, array, directory
+            )
+        axis = plan[0]
+
+        def chunk_at(start: int, stop: int) -> np.ndarray:
+            selector = (slice(None),) * axis + (slice(start, stop),)
+            return np.ascontiguousarray(array[selector])
+
+        return NpzStorageAdapter._write_chunked_variable(
+            stem,
+            variable,
+            tuple(array.shape),
+            array.dtype,
+            directory,
+            plan,
+            chunk_at,
         )
 
     @staticmethod
