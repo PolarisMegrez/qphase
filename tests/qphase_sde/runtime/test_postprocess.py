@@ -392,6 +392,65 @@ def test_the_simulate_analyze_merge_keeps_both_parent_chains():
     assert merged.declared_artifact_id() is None
 
 
+def test_three_levels_of_real_analysis_keep_the_whole_ancestor_chain(
+    tmp_path, temp_project
+):
+    """Peaks -> peak_paths: every real analysis level adds an id and keeps ancestors."""
+    ancestor = "0123456789abcdef0123456789abcdef"
+    source_id = "fedcba9876543210fedcba9876543210"
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    SDEDataBundle(
+        {"psd": _make_scan_product()},
+        SDEProvenance(dt=1.0),
+        scan_axes={"epsilon": [0.1, 0.2]},
+        scan_shape=(2,),
+        meta={"params": {"epsilon": 0.1}, "job_name": "source"},
+        parents=(ancestor,),
+        artifact_id=source_id,
+    ).save(source_dir)
+
+    def analyze(source: Path, name: str, analyser: dict):
+        job = JobConfig(
+            name=name,
+            input={"from": str(source), "mode": "dataset"},
+            engine={"sde": {"mode": "analyze"}},
+            analyser=analyser,
+        )
+        spec = WorkflowSpec(
+            schema="qphase.workflow/2", id=f"wf-{name}", title=name, jobs=[job]
+        )
+        discovery.discover_plugins()
+        discovery.discover_local_plugins()
+        result = Scheduler(
+            system_config=SystemConfig(), project=temp_project
+        ).run(spec)[0]
+        assert result.success is True, result
+        return result
+
+    peaks = analyze(
+        source_dir, "peaks_job", {"peaks": {"scan_param": "epsilon", "psd_key": "psd"}}
+    )
+    paths = analyze(
+        peaks.job_dir,
+        "paths_job",
+        {"peak_paths": {"scan_param": "epsilon", "candidates_key": "peaks"}},
+    )
+    peaks_manifest = ArtifactManifest.read(peaks.job_dir)
+    paths_manifest = ArtifactManifest.read(paths.job_dir)
+    # Level two names the source and its ancestor; level three names both.
+    assert peaks_manifest.parents == [ancestor, source_id]
+    assert paths_manifest.parents == [ancestor, source_id, peaks_manifest.artifact_id]
+    assert len(
+        {source_id, peaks_manifest.artifact_id, paths_manifest.artifact_id}
+    ) == 3
+    restored = load_result("paths", paths.job_dir)
+    assert isinstance(restored, SDEDataBundle)
+    assert restored.parents == tuple(paths_manifest.parents)
+    assert restored.declared_artifact_id() == paths_manifest.artifact_id
+    assert paths_manifest.artifact_id not in {ancestor, source_id}
+
+
 @pytest.mark.parametrize("generic_source", [False, True])
 def test_analyze_inherits_the_upstream_parent_chain(
     tmp_path, temp_project, generic_source
