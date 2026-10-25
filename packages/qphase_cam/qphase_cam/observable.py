@@ -131,9 +131,10 @@ class CAMObservable(Protocol):
     stack and the result is one value per row. An observable that cannot evaluate a
     stack simply does not provide it, and :func:`observable_values` then samples the
     single-point ``value`` row by row — the same arithmetic, without the batching.
-    A batch implementation must equal the point implementation on every row it is
-    given; it exists to avoid re-entering the adapter and the model once per point,
-    not to define a second readout.
+    A batch implementation is the *same readout* evaluated for every row at once: it
+    exists to avoid re-entering the adapter and the model once per point, not to
+    define a second readout, and the two forms agree to rounding rather than to the
+    last bit because the summation order differs.
     """
 
     identity: ObservableIdentity
@@ -176,6 +177,35 @@ def observable_values(
         ],
         dtype=float,
     )
+
+
+def _state_matrices(
+    adapter: Any, stack: np.ndarray, params: Mapping[str, Any]
+) -> np.ndarray:
+    """Return one state matrix per row of a state stack.
+
+    An adapter that declares ``supports_batched_states`` is asked once; one that only
+    implements the single-state contract is sampled row by row, which is the same
+    arithmetic. A batch answer that is not one square matrix per row raises: that is a
+    broken contract, not an unusable state.
+    """
+    if getattr(adapter, "supports_batched_states", False):
+        matrices = np.asarray(adapter.state_matrix(stack, params), dtype=complex)
+    else:
+        matrices = np.stack(
+            [
+                np.asarray(adapter.state_matrix(row, params), dtype=complex)
+                for row in stack
+            ]
+        )
+    if matrices.shape[:-2] != (stack.shape[0],) or (
+        matrices.shape[-2] != matrices.shape[-1]
+    ):
+        raise ValueError(
+            f"the adapter returned state matrices of shape {matrices.shape} for "
+            f"{stack.shape[0]} states"
+        )
+    return matrices
 
 
 def coordinate_scale(state: Any) -> np.ndarray:
@@ -332,55 +362,50 @@ class RayleighObservable:
     def values(
         self, adapter: Any, states: Any, params: Mapping[str, Any]
     ) -> np.ndarray:
-        """Return the Rayleigh frequency of every row of a state stack."""
+        """Return the Rayleigh frequency of every row of a state stack.
+
+        One Hamiltonian call for the whole stack when the model can answer a batch,
+        one row at a time when it cannot: the product, the trace and the ratio are the
+        point readout's, evaluated for every state at once.
+        """
         parameter_map = dict(params or {})
         stack = np.asarray(states, dtype=float)
         if stack.ndim != 2:
             raise ValueError(
                 f"a state stack must be (n, coordinates); got shape {stack.shape}"
             )
-        batched_states = bool(getattr(adapter, "supports_batched_states", False))
-        if batched_states:
-            matrices = np.asarray(
-                adapter.state_matrix(stack, parameter_map), dtype=complex
+        matrices = _state_matrices(adapter, stack, parameter_map)
+        if getattr(self.model, "supports_batched_matrices", False):
+            hamiltonian = np.asarray(
+                self.model.cam_hamiltonian(matrices, parameter_map), dtype=complex
             )
-            if matrices.shape[:-2] != (stack.shape[0],):
-                raise ValueError(
-                    f"the adapter returned state matrices of shape {matrices.shape} "
-                    f"for {stack.shape[0]} states"
-                )
         else:
-            # An adapter that only implements the single-state contract is sampled
-            # row by row; the arithmetic is the point readout's.
-            matrices = np.stack(
+            hamiltonian = np.stack(
                 [
-                    np.asarray(adapter.state_matrix(row, parameter_map), dtype=complex)
-                    for row in stack
+                    np.asarray(
+                        self.model.cam_hamiltonian(
+                            np.array(matrix, dtype=complex, copy=True), parameter_map
+                        ),
+                        dtype=complex,
+                    )
+                    for matrix in matrices
                 ]
             )
-        values = np.empty(stack.shape[0], dtype=float)
-        for index in range(stack.shape[0]):
-            # A fresh contiguous matrix keeps the product's summation order identical
-            # to the point readout's; a strided view can change the last bit.
-            matrix = np.array(matrices[index], dtype=complex, copy=True)
-            denominator = np.trace(matrix)
-            # The same rounding-scale refusal as the point readout, row by row: one
-            # undefined row makes the batch undefined.
-            if abs(denominator) < 1.0e-300:
-                raise ValueError(
-                    "the state matrix has a vanishing trace, so the Rayleigh readout "
-                    "is undefined at this state"
-                )
-            hamiltonian = np.asarray(
-                self.model.cam_hamiltonian(matrix, parameter_map), dtype=complex
+        if hamiltonian.shape != matrices.shape:
+            raise ValueError(
+                f"Hamiltonian shape {hamiltonian.shape} does not match the state "
+                f"matrix stack shape {matrices.shape}"
             )
-            if hamiltonian.shape != matrix.shape:
-                raise ValueError(
-                    f"Hamiltonian shape {hamiltonian.shape} does not match the state "
-                    f"matrix shape {matrix.shape}"
-                )
-            values[index] = np.real(np.trace(hamiltonian @ matrix) / denominator)
-        return values
+        denominator = np.trace(matrices, axis1=-2, axis2=-1)
+        numerator = np.trace(hamiltonian @ matrices, axis1=-2, axis2=-1)
+        # A trace at rounding-error scale cannot normalise the readout; the same
+        # refusal as the point readout, so one undefined row makes the batch undefined.
+        if np.any(np.abs(denominator) < 1.0e-300):
+            raise ValueError(
+                "the state matrix has a vanishing trace, so the Rayleigh readout "
+                "is undefined at this state"
+            )
+        return np.asarray(np.real(numerator / denominator), dtype=float)
 
     def gradient(
         self, adapter: Any, state: Any, params: Mapping[str, Any]

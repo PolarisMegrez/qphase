@@ -56,7 +56,7 @@ from pydantic import (
 )
 from scipy.integrate import cumulative_trapezoid
 
-from .core.noise import canonical_sample_matrix_covariance
+from .core.noise import canonical_sample_matrix_covariance, projected_noise_intensities
 from .observable import CAMObservable, DerivativeRecord, observable_values
 from .outcomes import CAMOutcomeStatus
 from .validity import (
@@ -633,18 +633,17 @@ def _noise_covariance(
     return matrix, covariance, physical
 
 
-def _noise_covariances(
+def _noise_stack(
     adapter: Any, model: Any, vectors: Any, params: Mapping[str, Any]
-) -> tuple[list[np.ndarray], np.ndarray]:
-    """Return the noise covariances and physical spectra of a state stack.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return the state matrices, diffusions and physical spectra of a state stack.
 
-    The same per-row policy as :func:`_noise_covariance`: a row whose state or
-    diffusion is not finite, or whose canonical transform is not real, gets a NaN
-    covariance instead of an exception, which the caller reports as an invalid domain.
-    Only the *adapter* is asked once for the whole stack — the per-point Python entry
-    into a symbolic model is what made the reconstruction slow — while the model's
-    diffusion, the transform and the projection stay the single-matrix operations they
-    were, so the numbers are the per-state numbers.
+    Both the adapter and the model are asked once for the whole stack when they
+    declare they can answer a batch (``supports_batched_states`` /
+    ``supports_batched_matrices``); otherwise the same single-state call is made per
+    row. There is no silent fallback: a batch answer whose shape is not one matrix per
+    state raises, because a shape mismatch is a broken contract rather than an
+    unusable state.
     """
     stack = np.asarray(vectors, dtype=float)
     if stack.ndim != 2:
@@ -669,28 +668,30 @@ def _noise_covariances(
             f"the adapter returned state matrices of shape {matrices.shape} for "
             f"{stack.shape[0]} states"
         )
-    modes = matrices.shape[-1]
+    if getattr(model, "supports_batched_matrices", False):
+        diffusion = np.asarray(model.cam_diffusion(matrices, params), dtype=complex)
+    else:
+        # A model whose cam_diffusion handles exactly one matrix is sampled row by
+        # row; a fresh copy keeps the evaluation free of stack strides.
+        diffusion = np.stack(
+            [
+                np.asarray(
+                    model.cam_diffusion(
+                        np.array(row, dtype=complex, copy=True), params
+                    ),
+                    dtype=complex,
+                )
+                for row in matrices
+            ]
+        )
+    if diffusion.shape != matrices.shape:
+        raise ValueError(
+            f"the model returned diffusion matrices of shape {diffusion.shape} for "
+            f"state matrices of shape {matrices.shape}"
+        )
     hermitian = (matrices + np.conjugate(np.swapaxes(matrices, -1, -2))) / 2.0
     physical = np.min(np.linalg.eigvalsh(hermitian), axis=-1)
-    covariances: list[np.ndarray] = []
-    for index in range(stack.shape[0]):
-        matrix = np.array(matrices[index], dtype=complex, copy=True)
-        diffusion = np.asarray(model.cam_diffusion(matrix, params), dtype=complex)
-        if diffusion.shape != matrix.shape:
-            raise ValueError(
-                f"the model returned diffusion matrices of shape {diffusion.shape} for "
-                f"states of shape {matrix.shape}"
-            )
-        if not np.all(np.isfinite(matrix)) or not np.all(np.isfinite(diffusion)):
-            covariances.append(np.full((modes * modes, modes * modes), np.nan))
-            continue
-        try:
-            covariances.append(
-                canonical_sample_matrix_covariance(matrix, diffusion)
-            )
-        except ValueError:
-            covariances.append(np.full((modes * modes, modes * modes), np.nan))
-    return covariances, physical
+    return matrices, diffusion, physical
 
 
 def _boundary(
@@ -750,9 +751,17 @@ def scalar_reconstruction(
     """Reconstruct the stationary scalar problem along one slow manifold.
 
     ``model`` must provide ``cam_diffusion(state_matrix, params)``. The readout is
-    evaluated on the manifold with ``observable.value``; ``parameter_direction``
-    (a state-space vector, e.g. ``adapter.parameter_direction(name, scale)``)
-    enables the path-information rate and the stationary response.
+    evaluated on the manifold through :func:`~qphase_cam.observable.observable_values`,
+    which is the same readout one state at a time or one stack at a time depending on
+    what the observable implements. ``parameter_direction`` (a state-space vector, e.g.
+    ``adapter.parameter_direction(name, scale)``) enables the path-information rate and
+    the stationary response.
+
+    The grid is sampled in one pass: one adapter call for the state matrices, one model
+    call for their diffusions, then the batch covariance projection of
+    :mod:`qphase_cam.core.noise`. A model or observable without a batch form is
+    sampled row by row instead, with the same single-state arithmetic — the batch path
+    is a way to evaluate the same readout once, not a second definition of it.
     """
     settings = config or ScalarReconstructionConfig()
     point = np.asarray(state, dtype=float).reshape(-1)
@@ -900,16 +909,13 @@ def scalar_reconstruction(
             },
         )
     vectors = manifold_embedding(resolved_manifold, point, x)
-    # One adapter/model call for the whole grid; the per-matrix arithmetic is the
-    # same single-matrix transform and projection, and the readout is asked for the
-    # stack (falling back to its point contract when it has no batch form).
-    covariances, physical_minimum = _noise_covariances(
+    # One adapter and one model call for the whole grid: the noise covariance and its
+    # projection are then the batch primitives of ``core.noise``, which is the order
+    # the reference evaluation uses for every grid point at once.
+    matrices, diffusions, physical_minimum = _noise_stack(
         adapter, model, vectors, parameter_map
     )
-    q = np.asarray(
-        [projected_intensity(covariance, left, left) for covariance in covariances],
-        dtype=float,
-    )
+    q = projected_noise_intensities(matrices, diffusions, left)
     omega = observable_values(observable, adapter, vectors, parameter_map)
     usable = (
         np.isfinite(q) & (q > settings.minimum_projected_diffusion) & np.isfinite(omega)
@@ -978,12 +984,13 @@ def scalar_reconstruction(
                 f"the adapter returned {jacobians.shape[0]} parameter Jacobians for "
                 f"{x.size} states"
             )
-        forcing = np.asarray(
-            [
-                float(left @ (jacobian @ direction))
-                for jacobian in jacobians
-            ],
-            dtype=float,
+        # The projection is one matrix-vector product per row and one dot per row,
+        # both contracted in the reference evaluation's order.
+        forcing = np.einsum(
+            "i,ni->n",
+            left,
+            np.einsum("nij,j->ni", jacobians, direction, optimize=True),
+            optimize=True,
         )
     # One evaluation owns the density and every fraction derived from it; the
     # verdicts below stay the reconstruction's own.

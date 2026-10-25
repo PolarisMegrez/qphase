@@ -32,6 +32,15 @@ class SDEModelPlugin(ABC):
     mode_count: ClassVar[int]
     noise_basis_name: ClassVar[str] = "complex"
 
+    #: Whether :meth:`cam_hamiltonian` and :meth:`cam_diffusion` accept a *stack* of
+    #: state matrices ``(..., modes, modes)`` and answer one matrix per state. A CAM
+    #: reconstruction samples thousands of states along a manifold; this flag is how
+    #: it knows it may ask once instead of per state. The shipped models build their
+    #: matrices with ``...`` indexing only, so the flag is on by default — a model
+    #: whose primitives handle exactly one matrix must set it to ``False``, and a
+    #: consumer falls back to the single-matrix call rather than guessing.
+    supports_batched_matrices: ClassVar[bool] = True
+
     def __init__(self, config: ModelConfig | None = None, **kwargs: Any) -> None:
         if config is not None and kwargs:
             raise TypeError("provide either config or keyword parameters, not both")

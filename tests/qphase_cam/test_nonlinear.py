@@ -11,6 +11,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from qphase.data import load_bundle
+from qphase_cam.core.noise import (
+    canonical_hermitian_transform,
+    canonical_sample_matrix_covariance,
+    canonical_sample_matrix_covariances,
+    projected_noise_intensities,
+)
 from qphase_cam.data import (
     build_candidate_product,
     build_state_product,
@@ -43,6 +49,7 @@ from qphase_cam.postprocessor.base import CAMAnnotationContext
 from qphase_cam.postprocessor.nonlinear_reconstruction import (
     NonlinearReconstruction,
 )
+from qphase_cam.validity import projected_intensity
 
 X0 = 0.5
 IDENTITY = ObservableIdentity(
@@ -457,22 +464,142 @@ class _BatchObservable(FunctionalObservable):
         return super().values(adapter, states, params)
 
 
+class _StackBoundedModel(_BoundedModel):
+    """The bounded toy with the whole-stack diffusion contract."""
+
+    supports_batched_matrices = True
+
+    @staticmethod
+    def cam_diffusion(matrix, params=None):
+        del params
+        array = np.asarray(matrix, dtype=complex)
+        return np.asarray(1.0 - np.real(array), dtype=complex).reshape(array.shape)
+
+
+class _WrongShapeModel(_StackBoundedModel):
+    """A model that claims the batch contract and answers one matrix too few."""
+
+    @staticmethod
+    def cam_diffusion(matrix, params=None):
+        del params
+        array = np.asarray(matrix, dtype=complex)
+        if array.ndim == 2:
+            return np.asarray(1.0 - np.real(array), dtype=complex)
+        return np.ones((array.shape[0] - 1,) + array.shape[1:], dtype=complex)
+
+
+def _three_mode_stack(count: int = 5):
+    """Return a Hermitian state stack, its diffusion stack and a left vector."""
+    rng = np.random.default_rng(20260904)
+    factor = rng.normal(size=(count, 3, 3)) + 1j * rng.normal(size=(count, 3, 3))
+    states = factor @ np.conjugate(np.swapaxes(factor, -1, -2))
+    diffusion = np.zeros((count, 3, 3), dtype=complex)
+    diffusion[:, np.arange(3), np.arange(3)] = np.asarray([0.5, 1.5, 2.5])
+    left = np.linspace(-0.4, 0.6, 9)
+    return states, diffusion, left
+
+
+def _reference_projection(states, diffusions, left):
+    """Return the reference contraction: nested mode indices, then one projection."""
+    count, modes = states.shape[0], states.shape[1]
+    covariance = np.empty((count, modes * modes, modes * modes), dtype=complex)
+    for i in range(modes):
+        for j in range(modes):
+            for k in range(modes):
+                for right in range(modes):
+                    covariance[:, i * modes + j, k * modes + right] = (
+                        diffusions[:, i, right] * states[:, k, j]
+                        + diffusions[:, k, j] * states[:, i, right]
+                    )
+    projected_left = canonical_hermitian_transform(modes).T @ left
+    projected = np.einsum(
+        "i,nij,j->n", projected_left, covariance, projected_left, optimize=True
+    )
+    return np.asarray(np.real(projected), dtype=float)
+
+
+def test_the_batch_projection_reproduces_the_reference_order():
+    """The batch projection is the reference contraction, to the last bit."""
+    states, diffusion, left = _three_mode_stack()
+    expected = _reference_projection(states, diffusion, left)
+    actual = projected_noise_intensities(states, diffusion, left)
+    np.testing.assert_array_equal(actual, expected)
+    # The single-matrix projection is the same number, evaluated in its own order: the
+    # two agree to rounding, not to the last bit, and that is the contract.
+    pointwise = np.asarray(
+        [
+            projected_intensity(
+                canonical_sample_matrix_covariance(state, diff), left, left
+            )
+            for state, diff in zip(states, diffusion, strict=True)
+        ]
+    )
+    np.testing.assert_allclose(actual, pointwise, rtol=1.0e-12, atol=0.0)
+
+
+def test_the_batch_covariance_is_the_single_matrix_covariance():
+    """The batched canonical covariance is the single-matrix one, row for row."""
+    states, diffusion, _ = _three_mode_stack()
+    batched = canonical_sample_matrix_covariances(states, diffusion)
+    assert batched.shape == (states.shape[0], 9, 9)
+    expected = np.stack(
+        [
+            canonical_sample_matrix_covariance(state, diff)
+            for state, diff in zip(states, diffusion, strict=True)
+        ]
+    )
+    np.testing.assert_allclose(batched, expected, rtol=1.0e-12, atol=0.0)
+
+
+def test_a_malformed_batch_is_an_error_not_a_nan():
+    """Wrong shapes and a wrong-length left vector raise; they are not filtered."""
+    states, diffusion, left = _three_mode_stack()
+    with pytest.raises(ValueError, match="state-matrix stack must be"):
+        projected_noise_intensities(states[0], diffusion[0], left)
+    with pytest.raises(ValueError, match="state-matrix stack must be square"):
+        projected_noise_intensities(states[:, :2, :3], diffusion[:, :2, :3], left)
+    with pytest.raises(ValueError, match="diffusion stack has shape"):
+        projected_noise_intensities(states, diffusion[:2], left)
+    with pytest.raises(ValueError, match="left vector has 5 entries"):
+        projected_noise_intensities(states, diffusion, left[:5])
+    with pytest.raises(ValueError, match="diffusion stack has shape"):
+        canonical_sample_matrix_covariances(states, diffusion[:2])
+
+
+def test_a_non_real_projection_is_an_error_and_a_non_finite_row_is_nan():
+    """A mixed-coordinate projection raises; an unusable state is reported as NaN."""
+    states, diffusion, left = _three_mode_stack()
+    skewed = states + 0.3j * np.swapaxes(states, -1, -2).conjugate()
+    with pytest.raises(ValueError, match="projection is not real"):
+        projected_noise_intensities(skewed, diffusion, left)
+    broken = np.array(states, copy=True)
+    broken[2] = np.nan
+    intensities = projected_noise_intensities(broken, diffusion, left)
+    assert np.isnan(intensities[2])
+    assert np.all(np.isfinite(np.delete(intensities, 2)))
+
+
 def test_the_batched_readout_matches_the_point_readout():
-    """A batch readout answers exactly what the point readout answers, row by row."""
-    # The one-mode toy: the Hamiltonian is the state matrix itself, so the trace
-    # readout is well defined and comparable row by row.
+    """A batch readout answers the point readout's value on every row.
+
+    The two differ only in summation order, so the parity is a tolerance rather than
+    bitwise equality: a batch readout exists to avoid one adapter and model call per
+    point, not to define a second readout.
+    """
     model = _UnitModel()
     adapter = _QuadraticAdapter()
     stack = np.linspace(0.4, 0.6, 7)[:, None]
     observable = RayleighObservable(model)
     batched = observable.values(adapter, stack, {})
     point = np.asarray([observable.value(adapter, row, {}) for row in stack])
-    np.testing.assert_array_equal(batched, point)
+    np.testing.assert_allclose(batched, point, rtol=1.0e-13, atol=0.0)
     # A readout without a batch form is sampled by the helper, with the same values.
     functional = _observable()
-    np.testing.assert_array_equal(
+    np.testing.assert_allclose(
         observable_values(functional, adapter, stack, {}),
         np.asarray([functional.value(adapter, row, {}) for row in stack]),
+        rtol=1.0e-13,
+        atol=0.0,
     )
     with pytest.raises(ValueError, match="state stack must be"):
         observable_values(functional, adapter, stack.reshape(-1), {})
@@ -544,6 +671,84 @@ def test_the_batch_adapter_and_the_point_adapter_reconstruct_the_same_table():
     assert point.edge_mass_fraction == batched.edge_mass_fraction
     assert point.endpoint_density_ratio == batched.endpoint_density_ratio
     assert point.generator_table == batched.generator_table
+
+
+def test_a_point_only_model_reconstructs_the_same_table_as_a_batch_model():
+    """A model without the batch contract is sampled row by row, not guessed at."""
+    manifold = _confining_manifold()
+    config = ScalarReconstructionConfig(grid_points=31)
+    point = scalar_reconstruction(
+        _QuadraticAdapter(),
+        _BoundedModel(),
+        _observable(),
+        state=[X0],
+        params={},
+        order=3,
+        manifold=manifold,
+        config=config,
+    )
+    batched = scalar_reconstruction(
+        _QuadraticAdapter(),
+        _StackBoundedModel(),
+        _observable(),
+        state=[X0],
+        params={},
+        order=3,
+        manifold=manifold,
+        config=config,
+    )
+    assert point.status is batched.status
+    assert point.generator_table is not None and batched.generator_table is not None
+    np.testing.assert_allclose(
+        np.asarray(batched.generator_table.diffusion),
+        np.asarray(point.generator_table.diffusion),
+        rtol=1.0e-13,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        np.asarray(batched.generator_table.readout),
+        np.asarray(point.generator_table.readout),
+        rtol=1.0e-13,
+        atol=0.0,
+    )
+
+
+def test_a_model_that_breaks_the_batch_contract_raises():
+    """A diffusion stack of the wrong shape is a broken contract, not a NaN domain."""
+    config = ScalarReconstructionConfig(grid_points=11)
+    with pytest.raises(ValueError, match="diffusion matrices of shape"):
+        scalar_reconstruction(
+            _QuadraticAdapter(),
+            _WrongShapeModel(),
+            _observable(),
+            state=[X0],
+            params={},
+            order=3,
+            manifold=_confining_manifold(),
+            config=config,
+        )
+
+
+def test_the_rayleigh_batch_readout_refuses_an_undefined_row():
+    """One undefined row makes the whole batch readout undefined."""
+    adapter = _QuadraticAdapter()
+    stack = np.linspace(0.4, 0.6, 5)[:, None]
+
+    class _WrongShapeHamiltonian(_UnitModel):
+        supports_batched_matrices = True
+
+        @staticmethod
+        def cam_hamiltonian(matrix, params=None):
+            del params
+            array = np.asarray(matrix, dtype=complex)
+            return np.ones((array.shape[0] - 1, 1, 1), dtype=complex)
+
+    with pytest.raises(ValueError, match="does not match the state matrix stack"):
+        RayleighObservable(_WrongShapeHamiltonian()).values(adapter, stack, {})
+    with pytest.raises(ValueError, match="vanishing trace"):
+        RayleighObservable(_UnitModel()).values(adapter, np.zeros((3, 1)), {})
+    with pytest.raises(ValueError, match="state stack must be"):
+        RayleighObservable(_UnitModel()).values(adapter, stack.reshape(-1), {})
 
 
 def test_a_batch_readout_in_the_reconstruction_matches_a_point_readout():
