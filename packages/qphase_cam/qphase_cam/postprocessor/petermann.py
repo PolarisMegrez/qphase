@@ -119,7 +119,7 @@ class PetermannSpectrum(CAMPostprocessor[PetermannSpectrumConfig]):
             )
 
         rows = state_rows(product)
-        chunk_indices = [position for position, row in enumerate(rows) if row.success]
+        positions = [position for position, row in enumerate(rows) if row.success]
         n_modes = int(model.n_modes)
         h_values = field_column(rows, tail=(n_modes,), dtype=complex)
         h_factors = field_column(rows, tail=(n_modes,), dtype=float)
@@ -133,8 +133,10 @@ class PetermannSpectrum(CAMPostprocessor[PetermannSpectrumConfig]):
         jacobian_values = field_column(rows, tail=(n_modes * n_modes,), dtype=complex)
         jacobian_factors = field_column(rows, tail=(n_modes * n_modes,), dtype=float)
 
-        for start in range(0, len(chunk_indices), self.config.chunk_size):
-            chunk_indices = chunk_indices[start : start + self.config.chunk_size]
+        for start in range(0, len(positions), self.config.chunk_size):
+            # A window over the successful rows: the loop must not overwrite the
+            # list it is iterating over, or every chunk after the first is empty.
+            chunk_indices = positions[start : start + self.config.chunk_size]
             hamiltonians = []
             interactions = []
             frequencies = []

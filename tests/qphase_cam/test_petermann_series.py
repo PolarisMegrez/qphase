@@ -135,6 +135,170 @@ def test_the_series_tracks_the_soft_mode_per_family():
     assert np.asarray(series.handle("parameter_value").materialize()).shape == (1, 5)
 
 
+def _critical_spectrum_product(*, rows: int = 4):
+    """Build a spectrum whose CAM Jacobian critical mode is stable (negative real)."""
+    # The Hamiltonian family has a growing soft mode (so the soft rule is valid),
+    # the CAM Jacobian family only has damped eigenvalues whose largest real part
+    # is the critical one.
+    jacobian_rows = np.asarray(
+        [
+            [-0.10 - 0.05 * index, -1.0 - 0.2 * index]
+            for index in range(rows)
+        ],
+        dtype=complex,
+    )
+    hamiltonian_rows = np.asarray(
+        [[1.0e-3 * (index + 1), -1.0 - index] for index in range(rows)],
+        dtype=complex,
+    )
+    jacobian_factors = np.asarray(
+        [[3.0 + index, 1.0] for index in range(rows)], dtype=float
+    )
+    hamiltonian_factors = np.asarray(
+        [[2.0 + index, 1.0] for index in range(rows)], dtype=float
+    )
+    return build_annotation_product(
+        annotation_kind="petermann_spectrum",
+        target_kind="state",
+        target_identity=[f"cam:solution:c{index}" for index in range(rows)],
+        status=["valid"] * rows,
+        fields={
+            "hamiltonian_eigenvalues": hamiltonian_rows,
+            "hamiltonian_petermann_factors": hamiltonian_factors,
+            "cam_jacobian_eigenvalues": jacobian_rows,
+            "cam_jacobian_petermann_factors": jacobian_factors,
+            "parameters": np.asarray(
+                [json.dumps({"omega": 0.5 + 0.01 * index}) for index in range(rows)],
+                dtype=str,
+            ),
+        },
+        field_axes={
+            "hamiltonian_eigenvalues": ("mode",),
+            "hamiltonian_petermann_factors": ("mode",),
+            "cam_jacobian_eigenvalues": ("mode",),
+            "cam_jacobian_petermann_factors": ("mode",),
+        },
+        axes={"mode": 2},
+    )
+
+
+def test_a_stable_cam_jacobian_critical_mode_is_still_valid():
+    """The Jacobian family tracks the slowest mode even when it is damped."""
+    product = _critical_spectrum_product()
+    series = PetermannSeries().process(product, _spectrum_context(product))
+    # The critical eigenvalue is the largest real part, negative here.
+    eigenvalues = np.asarray(
+        series.handle("cam_jacobian_soft_eigenvalue").materialize()
+    )[0]
+    np.testing.assert_allclose(eigenvalues.real, [-0.10, -0.15, -0.20, -0.25])
+    np.testing.assert_array_equal(
+        np.asarray(series.handle("cam_jacobian_soft_index").materialize()),
+        [[0, 0, 0, 0]],
+    )
+    np.testing.assert_allclose(
+        np.asarray(series.handle("cam_jacobian_soft_petermann").materialize()),
+        [[3.0, 4.0, 5.0, 6.0]],
+    )
+    assert np.asarray(series.handle("cam_jacobian_status").materialize()).tolist() == [
+        ["valid"] * 4
+    ]
+    # The soft families keep their own semantics: the Hamiltonian seed grows, so it
+    # is valid, while the families with no column at all stay unidentifiable.
+    assert np.asarray(series.handle("hamiltonian_status").materialize()).tolist() == [
+        ["valid"] * 4
+    ]
+    assert np.asarray(series.handle("bogoliubov_status").materialize()).tolist() == [
+        ["unidentifiable"] * 4
+    ]
+    metadata = json.loads(
+        str(np.asarray(series.handle("method_metadata").materialize())[0])
+    )
+    assert metadata["tracking"]["cam_jacobian"] == "critical"
+    assert metadata["tracking"]["hamiltonian"] == "soft"
+
+
+def test_a_damped_soft_family_stays_unidentifiable_while_the_jacobian_does_not():
+    """One row, both rules: the soft families reject it, the Jacobian does not."""
+    values = np.asarray([[-0.2, -1.5]])
+    product = build_annotation_product(
+        annotation_kind="petermann_spectrum",
+        target_kind="state",
+        target_identity=["cam:solution:damped"],
+        status=["valid"],
+        fields={
+            "hamiltonian_eigenvalues": values,
+            "hamiltonian_petermann_factors": np.asarray([[7.0, 1.0]]),
+            "cam_jacobian_eigenvalues": values,
+            "cam_jacobian_petermann_factors": np.asarray([[4.0, 1.0]]),
+        },
+        field_axes={
+            "hamiltonian_eigenvalues": ("mode",),
+            "hamiltonian_petermann_factors": ("mode",),
+            "cam_jacobian_eigenvalues": ("mode",),
+            "cam_jacobian_petermann_factors": ("mode",),
+        },
+        axes={"mode": 2},
+    )
+    series = PetermannSeries().process(product, _spectrum_context(product))
+    assert str(np.asarray(series.handle("hamiltonian_status").materialize())[0, 0]) == (
+        "unidentifiable"
+    )
+    jacobian_status = np.asarray(series.handle("cam_jacobian_status").materialize())
+    jacobian_factor = np.asarray(
+        series.handle("cam_jacobian_soft_petermann").materialize()
+    )
+    assert str(jacobian_status[0, 0]) == "valid"
+    assert jacobian_factor[0, 0] == pytest.approx(4.0)
+
+
+def test_the_jacobian_fit_uses_a_stable_critical_mode():
+    """A stable critical mode yields the scaling exponent instead of no fit."""
+    rows = 6
+    distances = np.geomspace(1.0e-3, 1.0e-1, rows)
+    factors = 0.5 * distances**-0.25
+    # Both eigenvalues are damped; the critical one is the larger real part.
+    spectrum = np.stack(
+        [np.asarray([[-0.1 + 0.0j, -2.0 + 0.0j]]) for _ in range(rows)]
+    )
+    factor_field = np.stack([np.asarray([[1.0, 2.0]]) for _ in range(rows)])
+    factor_field[:, 0, 0] = factors
+    product = build_annotation_product(
+        annotation_kind="petermann_spectrum",
+        target_kind="state",
+        target_identity=[f"cam:solution:j{index}" for index in range(rows)],
+        status=["valid"] * rows,
+        fields={
+            "cam_jacobian_eigenvalues": spectrum.reshape(rows, 2),
+            "cam_jacobian_petermann_factors": factor_field.reshape(rows, 2),
+            "parameters": np.asarray(
+                [json.dumps({"omega": 0.5 + float(value)}) for value in distances],
+                dtype=str,
+            ),
+        },
+        field_axes={
+            "cam_jacobian_eigenvalues": ("mode",),
+            "cam_jacobian_petermann_factors": ("mode",),
+        },
+        axes={"mode": 2},
+    )
+    series = PetermannSeries(
+        parameter="omega", critical_value=0.5, inner_max=1.0
+    ).process(product, _spectrum_context(product))
+    exponent = np.asarray(series.handle("cam_jacobian_fit_exponent").materialize())[0]
+    r_squared = np.asarray(
+        series.handle("cam_jacobian_fit_r_squared").materialize()
+    )[0]
+    count = int(
+        np.asarray(series.handle("cam_jacobian_fit_point_count").materialize())[0]
+    )
+    assert exponent == pytest.approx(-0.25, rel=1e-9)
+    assert r_squared == pytest.approx(1.0, abs=1e-12)
+    assert count == rows
+    # The absolute-signed log fit is the historical `_fit_exponent` sign-flipped:
+    # the historical function reported the negative of the log-log slope.
+    assert exponent < 0.0
+
+
 def test_a_damped_spectrum_is_unidentifiable():
     values = np.asarray([[-1.0, -2.0]])
     product = build_annotation_product(

@@ -37,10 +37,10 @@ def test_monodromy_applies_opposite_rayleigh_shifts():
 def _script_critical_mode_petermann(jacobian: np.ndarray) -> tuple[complex, float]:
     """Return the script's critical-mode Petermann factor.
 
-    ``scan_petermann_bdg.py`` takes the critical mode as the eigenvalue with the
-    largest real part, normalises the right vector to unit norm, normalises the
-    left vector so ``left·right = 1`` and reports ``left·left``. Reproduced here as
-    the comparison semantics, not as a second implementation.
+    The historical scan took the critical mode as the eigenvalue with the largest
+    real part, normalised the right vector to unit norm, normalised the left vector
+    so ``left·right = 1`` and reported ``left·left``. Reproduced here as the
+    comparison semantics, not as a second implementation.
     """
     values, right_vectors = np.linalg.eig(jacobian)
     index = int(np.argmax(np.real(values)))
@@ -69,7 +69,7 @@ def test_petermann_factor_matches_the_analytic_two_by_two_value():
 
 
 def test_petermann_factor_matches_the_script_critical_mode_convention():
-    """The plugin and ``scan_petermann_bdg.py`` report the same critical K."""
+    """The plugin and the historical scan report the same critical K."""
     jacobian = np.asarray([[-1.0, 2.0], [0.3, -2.5]])
     value, script_factor = _script_critical_mode_petermann(jacobian)
     eigenvalues, factors = eigensystem_petermann(jacobian[None])
@@ -141,6 +141,69 @@ def test_petermann_postprocessor_emits_aligned_spectra():
     assert np.isfinite(
         np.asarray(output.handle("hamiltonian_petermann_factors").materialize())
     ).all()
+
+
+def _multi_row_state_product(rows: int, model):
+    """Return a state product with several successful states in one slot."""
+    states = np.zeros((rows, 1, 2, 2), dtype=complex)
+    for index in range(rows):
+        states[index, 0] = [[2.0 + 0.1 * index, 0.1j], [-0.1j, 1.0 - 0.05 * index]]
+    return _state_product(states, params=model.params)
+
+
+def test_chunked_spectrum_equals_the_default_single_chunk_result():
+    """Every chunk after the first still sees its own rows."""
+    model = Kerr2ModeModel(
+        omega_a=0.0,
+        omega_b=-0.1,
+        chi=0.01,
+        gamma_a=0.5,
+        gamma_b=1.0,
+        g=0.5,
+    )
+    product = _multi_row_state_product(7, model)
+    default = PetermannSpectrum().process(product, _context(model))
+    # Four rows per chunk exercises three chunks (4 + 3), the case the loop used
+    # to break by overwriting the list it iterated over.
+    chunked = PetermannSpectrum(chunk_size=4).process(product, _context(model))
+    for name in (
+        "hamiltonian_eigenvalues",
+        "hamiltonian_petermann_factors",
+        "bogoliubov_eigenvalues",
+        "bogoliubov_petermann_factors",
+        "monodromy_eigenvalues",
+        "monodromy_petermann_factors",
+        "cam_jacobian_eigenvalues",
+        "cam_jacobian_petermann_factors",
+        "mode_frequencies",
+    ):
+        expected = np.asarray(default.handle(name).materialize())
+        actual = np.asarray(chunked.handle(name).materialize())
+        assert actual.shape == expected.shape, name
+        np.testing.assert_allclose(
+            actual, expected, rtol=1e-12, atol=1e-14, err_msg=name
+        )
+    # Every row is populated: no chunk silently dropped its states.
+    factors = np.asarray(chunked.handle("hamiltonian_petermann_factors").materialize())
+    assert factors.shape == (7, 2)
+    assert np.isfinite(factors).all()
+
+
+def test_a_failed_row_is_skipped_without_shifting_the_chunks():
+    """Only successful rows are solved, and the chunk window covers them."""
+    model = Kerr2ModeModel(
+        omega_a=0.0,
+        omega_b=-0.1,
+        chi=0.01,
+        gamma_a=0.5,
+        gamma_b=1.0,
+        g=0.5,
+    )
+    product = _multi_row_state_product(5, model)
+    output = PetermannSpectrum(chunk_size=2).process(product, _context(model))
+    values = np.asarray(output.handle("hamiltonian_eigenvalues").materialize())
+    assert values.shape == (5, 2)
+    assert np.isfinite(values).all()
 
 
 def test_solution_order_is_a_non_mutating_per_point_view():

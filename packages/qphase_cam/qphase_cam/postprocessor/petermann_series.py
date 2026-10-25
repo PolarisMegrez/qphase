@@ -6,11 +6,22 @@ into one series: the tracked soft mode of each family (Hamiltonian, Bogoliubov,
 monodromy and the CAM Jacobian) with its Petermann factor, plus an optional
 log-space scaling fit of those factors against the control distance.
 
-The tracking rule is ``scan_petermann_bdg.py``'s, applied through one shared helper
-rather than once per family: the seed is the positive-real-part eigenvalue with the
-smallest magnitude (falling back to all eigenvalues), and every later row takes the
-eigenvalue closest to the previous one. A family that cannot be tracked keeps a
-status and a reason instead of a substituted index.
+The series tracks **two kinds of mode**, and the difference is deliberate:
+
+* the Hamiltonian, Bogoliubov and monodromy families are tracked as the *soft mode*
+  of a spectrum whose eigenvalues are decay rates. The seed is the positive-real-part
+  eigenvalue with the smallest magnitude (falling back to all eigenvalues), every
+  later row takes the eigenvalue closest to the previous one, and a tracked mode
+  whose real part is not positive is reported as ``unidentifiable`` — a damped mode is
+  not a soft mode;
+* the CAM Jacobian is the *critical mode* of a linear stability problem, the same
+  quantity the historical scan reported: every row selects the eigenvalue with the
+  largest real part, and a finite one is valid even when its real part is negative.
+  A stable critical mode still has a Petermann factor ``left @ left``, so a stable
+  branch must not be discarded as unidentifiable.
+
+A family that cannot be tracked keeps a status and a reason instead of a substituted
+index.
 """
 
 from __future__ import annotations
@@ -35,6 +46,14 @@ FAMILIES: tuple[tuple[str, str, str], ...] = (
     ("monodromy", "monodromy_eigenvalues", "monodromy_petermann_factors"),
     ("cam_jacobian", "cam_jacobian_eigenvalues", "cam_jacobian_petermann_factors"),
 )
+
+#: Tracking rule per family. ``soft`` follows the historical soft tracker;
+#: ``critical`` takes the slowest mode of each row, which is what the historical
+#: scan did for the CAM Jacobian.
+TRACKING_RULES: dict[str, str] = {"cam_jacobian": "critical"}
+
+#: Rule of every family not named in :data:`TRACKING_RULES`.
+DEFAULT_TRACKING_RULE = "soft"
 
 
 class PetermannSeriesConfig(CAMPostprocessorConfig):
@@ -72,6 +91,20 @@ def track_soft_index(values: np.ndarray, previous: complex | None) -> int:
     return int(np.argmin(np.abs(spectrum - previous)))
 
 
+def track_critical_index(values: np.ndarray) -> int:
+    """Return the critical (slowest) mode index of one row.
+
+    The critical mode of a linear stability problem is the eigenvalue with the
+    largest real part. It is a per-row selection, not a tracked branch: there is no
+    previous value to stay near, and a negative real part is *not* a rejection — a
+    stable critical mode still has a Petermann factor.
+    """
+    spectrum = np.asarray(values, dtype=complex).reshape(-1)
+    if spectrum.size == 0:
+        raise ValueError("an empty spectrum has no critical mode")
+    return int(np.argmax(np.real(spectrum)))
+
+
 class PetermannSeries(CAMPostprocessor[PetermannSeriesConfig]):
     """Track the soft Petermann factors across one spectrum series."""
 
@@ -106,6 +139,7 @@ class PetermannSeries(CAMPostprocessor[PetermannSeriesConfig]):
         for family, values_name, factors_name in FAMILIES:
             values = fields.get(values_name)
             factors = fields.get(factors_name)
+            rule = TRACKING_RULES.get(family, DEFAULT_TRACKING_RULE)
             previous: complex | None = None
             for position in order:
                 entry = tracked[family]
@@ -128,29 +162,55 @@ class PetermannSeries(CAMPostprocessor[PetermannSeriesConfig]):
                     entry["reason"].append("the row carries a non-finite spectrum")
                     previous = None
                     continue
-                index = track_soft_index(spectrum, previous)
-                previous = complex(spectrum[index])
+                if rule == "critical":
+                    index = track_critical_index(spectrum)
+                    previous = None
+                else:
+                    index = track_soft_index(spectrum, previous)
+                    previous = complex(spectrum[index])
                 tracked_value = complex(spectrum[index])
                 factor = float(factor_spectrum[index])
-                positive = bool(np.real(tracked_value) > 0.0)
+                if rule == "critical":
+                    # A stable critical mode is a valid critical mode: its factor is
+                    # the quantity the historical scan reported.
+                    status = CAMOutcomeStatus.VALID.value
+                    reason = ""
+                else:
+                    positive = bool(np.real(tracked_value) > 0.0)
+                    status = (
+                        CAMOutcomeStatus.VALID.value
+                        if positive
+                        else CAMOutcomeStatus.UNIDENTIFIABLE.value
+                    )
+                    reason = (
+                        ""
+                        if positive
+                        else "the tracked mode is damped, so it is not a soft mode"
+                    )
                 entry["index"].append(int(index))
                 entry["eigenvalue"].append(tracked_value)
                 entry["factor"].append(factor)
-                entry["status"].append(
-                    CAMOutcomeStatus.VALID.value
-                    if positive
-                    else CAMOutcomeStatus.UNIDENTIFIABLE.value
-                )
-                entry["reason"].append(
-                    ""
-                    if positive
-                    else "the tracked mode is damped, so it is not a soft mode"
-                )
+                entry["status"].append(status)
+                entry["reason"].append(reason)
         fits = self._fits(tracked, parameters, order)
         self.result_metadata = {
             "service": "qphase_cam.postprocessor.petermann_series",
             "families": [family for family, _, _ in FAMILIES],
-            "tracking": "positive-real-part seed, then nearest to the previous value",
+            "tracking": {
+                family: TRACKING_RULES.get(family, DEFAULT_TRACKING_RULE)
+                for family, _, _ in FAMILIES
+            },
+            "tracking_rules": {
+                "soft": (
+                    "positive-real-part seed with the smallest magnitude, then the "
+                    "eigenvalue nearest the previous row; a tracked mode without a "
+                    "positive real part is unidentifiable"
+                ),
+                "critical": (
+                    "the eigenvalue with the largest real part of each row; a finite "
+                    "one is valid even when its real part is negative"
+                ),
+            },
             "parameter": self.config.parameter,
             "fit": (
                 "log K on log |parameter - critical_value|"
