@@ -42,7 +42,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -96,6 +96,14 @@ class StochasticAssessmentConfig(BaseModel):
         default=1e-10,
         gt=0.0,
         description="Minimum left-right critical eigenvector overlap",
+    )
+    critical_mode_rule: Literal["slowest", "nearest_zero"] = Field(
+        default="slowest",
+        description=(
+            "Which eigenvalue is the critical one. 'slowest' (the default) is the "
+            "linear-noise rule; 'nearest_zero' is the historical bifurcation-probe "
+            "rule, which a caller reproducing that study selects explicitly"
+        ),
     )
     response_tolerance: float = Field(
         default=1e-12,
@@ -424,6 +432,8 @@ def assess_stochastic_state(
     params: Mapping[str, Any],
     diffusion: Any | None = None,
     model: Any | None = None,
+    stationary_covariance: Any | None = None,
+    mode: CriticalMode | None = None,
     config: StochasticAssessmentConfig | None = None,
 ) -> StochasticAssessment:
     """Assess one state's linear-noise validity for one observable.
@@ -433,6 +443,14 @@ def assess_stochastic_state(
     it is omitted, ``model.cam_diffusion`` is transformed through
     :func:`~qphase_cam.core.noise.canonical_sample_matrix_covariance`, which is
     the same covariance the ``stochastic_validity`` postprocessor uses.
+
+    ``stationary_covariance`` and ``mode`` are optional *precomputed* inputs for a
+    caller that assesses several readouts at one state and does not want to repeat the
+    Lyapunov solve or the eigenproblem per readout. They are verified here, not
+    trusted: the covariance must match the Jacobian's shape, be finite, be positive
+    semidefinite and satisfy the Lyapunov equation to the configured residual, and the
+    mode must match the coordinate count with finite eigenvectors. The provenance of
+    both is recorded in ``method``.
 
     Raises
     ------
@@ -450,7 +468,7 @@ def assess_stochastic_state(
         "noise_semantics": "linear_diffusion_covariance",
         "lyapunov_convention": "J Sigma + Sigma J^T + D = 0",
         "observable": observable.identity.model_dump(mode="json"),
-        "critical_mode_rule": "slowest",
+        "critical_mode_rule": settings.critical_mode_rule,
     }
     diagnostics: dict[str, Any] = {}
 
@@ -511,7 +529,30 @@ def assess_stochastic_state(
         return report(
             CAMOutcomeStatus.NOT_CONVERGED, "the dynamics Jacobian is not finite"
         )
-    mode = critical_mode(jacobian, overlap_tolerance=settings.overlap_tolerance)
+    resolved_mode: CriticalMode | None
+    if mode is not None:
+        left_vector = np.asarray(mode.left, dtype=float).reshape(-1)
+        right_vector = np.asarray(mode.right, dtype=float).reshape(-1)
+        if left_vector.size != point.size or right_vector.size != point.size:
+            raise ValueError(
+                "the precomputed critical mode has "
+                f"{left_vector.size}/{right_vector.size} coordinates for a "
+                f"{point.size}-coordinate state"
+            )
+        if not np.all(np.isfinite(left_vector)) or not np.all(
+            np.isfinite(right_vector)
+        ):
+            raise ValueError("the precomputed critical mode is not finite")
+        method["critical_mode_source"] = "precomputed"
+        resolved_mode = mode
+    else:
+        method["critical_mode_source"] = "resolved"
+        resolved_mode = critical_mode(
+            jacobian,
+            overlap_tolerance=settings.overlap_tolerance,
+            rule=settings.critical_mode_rule,
+        )
+    mode = resolved_mode
     if mode is None:
         return report(
             CAMOutcomeStatus.UNIDENTIFIABLE,
@@ -585,7 +626,42 @@ def assess_stochastic_state(
             **noise_fields,
         )
 
-    covariance, residual, solver = _lyapunov_covariance(jacobian, covariance_of_noise)
+    if stationary_covariance is None:
+        covariance, residual, solver = _lyapunov_covariance(
+            jacobian, covariance_of_noise
+        )
+        method["lyapunov_source"] = "solved"
+    else:
+        covariance = np.asarray(stationary_covariance, dtype=float)
+        if covariance.shape != jacobian.shape:
+            raise ValueError(
+                f"the precomputed stationary covariance has shape {covariance.shape} "
+                f"for a {jacobian.shape[0]}-coordinate Jacobian"
+            )
+        if not np.all(np.isfinite(covariance)):
+            return report(
+                CAMOutcomeStatus.STOCHASTIC_INVALID,
+                "the precomputed stationary covariance is not finite",
+                **mode_fields,
+                **noise_fields,
+            )
+        equation = jacobian @ covariance + covariance @ jacobian.T + covariance_of_noise
+        scale = float(np.linalg.norm(covariance_of_noise))
+        residual = (
+            float(np.linalg.norm(equation) / scale) if scale > 0.0 else np.inf
+        )
+        solver = "precomputed"
+        method["lyapunov_source"] = "precomputed"
+        if residual > settings.lyapunov_relative_residual_tolerance:
+            return report(
+                CAMOutcomeStatus.STOCHASTIC_INVALID,
+                "the precomputed stationary covariance does not solve the Lyapunov "
+                f"equation (relative residual {residual:.3e})",
+                **mode_fields,
+                **noise_fields,
+                lyapunov_solution_finite=True,
+                lyapunov_relative_residual=residual,
+            )
     solution_finite = bool(np.all(np.isfinite(covariance)))
     method["lyapunov_solver"] = solver
     diagnostics["lyapunov_covariance"] = covariance.tolist()

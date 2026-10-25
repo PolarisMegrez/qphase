@@ -37,12 +37,14 @@ shared :class:`~qphase_cam.outcomes.CAMOutcomeStatus`.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 from qphase.data import Dataset
 
+from .core.noise import canonical_sample_matrix_covariance
 from .data import build_annotation_product
 from .observable import CAMObservable, DerivativeRecord, coordinate_scale
 from .outcomes import CAMOutcomeStatus
@@ -50,6 +52,8 @@ from .validity import (
     StochasticAssessment,
     StochasticAssessmentConfig,
     assess_stochastic_state,
+    critical_mode,
+    lyapunov_covariance,
     minimum_eigenvalue,
     numeric_column,
     projected_intensity,
@@ -59,7 +63,9 @@ from .validity import (
 __all__ = [
     "ClosureAssessment",
     "ClosureAssessmentConfig",
+    "ClosureState",
     "assess_closure",
+    "closure_state",
     "build_closure_assessment_annotation",
     "closure_contraction",
     "closure_shape_fraction",
@@ -112,6 +118,13 @@ class ClosureAssessmentConfig(BaseModel):
     )
     evaluate_shape: bool = Field(
         default=True, description="Whether the closure shape fraction is evaluated"
+    )
+    critical_mode_rule: Literal["slowest", "nearest_zero"] = Field(
+        default="slowest",
+        description=(
+            "Which eigenvalue is critical. 'slowest' is the linear-noise default; the "
+            "bifurcation-probe reproduction selects 'nearest_zero' explicitly"
+        ),
     )
 
 
@@ -316,6 +329,305 @@ def closure_shape_fraction(matrix: Any, displacement_matrix: Any) -> float | Non
     return float(np.linalg.norm(delta - radial) / delta_norm)
 
 
+@dataclass(frozen=True)
+class ClosureState:
+    """The state-level closure quantities of one state, computed once.
+
+    This is a *precomputed value*, not a runtime or a product: it carries the Jacobian,
+    the canonical noise, the critical mode, the stationary covariance, the closure
+    contraction/displacement/shape and the state's physicality, so several readouts at
+    the same state share one Lyapunov solve, one eigenproblem and one contraction. The
+    readout-specific work — its gradient, its projection, its drift and Jensen bias and
+    its Kubo numbers — is *not* here and is evaluated per observable.
+
+    ``status`` reports a state-level failure (an unresolved mode, an unusable noise
+    covariance, a failed Lyapunov solve, a non-finite contraction or a singular
+    displacement). Physicality is recorded but not turned into a verdict here, because
+    :func:`assess_closure` decides it at the point of its own flow.
+    """
+
+    point: np.ndarray
+    jacobian: np.ndarray | None
+    noise_covariance: np.ndarray | None
+    stationary_covariance: np.ndarray | None
+    mode: Any
+    covariance_minimum_eigenvalue: float | None
+    covariance_spectrum: tuple[float, ...]
+    covariance_condition_number: float | None
+    jacobian_condition_number: float | None
+    closure_contraction: np.ndarray | None
+    closure_derivative: DerivativeRecord | None
+    closure_displacement: np.ndarray | None
+    closure_shape_fraction: float | None
+    physical_minimum_eigenvalue: float | None
+    physical_is_psd: bool | None
+    soft_mode_rate: float | None
+    projected_noise: float | None
+    soft_mode_sigma: float | None
+    status: CAMOutcomeStatus
+    reason: str | None
+    diagnostics: dict[str, Any]
+    method: dict[str, Any]
+
+
+def closure_state(
+    adapter: Any,
+    *,
+    state: Any,
+    params: Mapping[str, Any],
+    diffusion: Any | None = None,
+    model: Any | None = None,
+    config: ClosureAssessmentConfig | None = None,
+) -> ClosureState:
+    """Return the state-level closure quantities of one state.
+
+    The checks are the ones :func:`~qphase_cam.validity.assess_stochastic_state` makes
+    for the same state — a finite Jacobian, a resolved critical mode, a finite and
+    positive-semidefinite noise covariance, and a stationary covariance that is finite,
+    positive semidefinite and solves the Lyapunov equation to the configured residual —
+    plus the closure contraction and displacement. A failure is reported through
+    ``status``/``reason`` with the fields computed before it, and the readouts that
+    share this state all see the same verdict.
+    """
+    settings = config or ClosureAssessmentConfig()
+    point = np.asarray(state, dtype=float).reshape(-1)
+    parameter_map = dict(params or {})
+    diagnostics: dict[str, Any] = {}
+    method: dict[str, Any] = {
+        "service": "qphase_cam.closure.closure_state",
+        "critical_mode_rule": settings.critical_mode_rule,
+        "noise_covariance": "canonical diffusion covariance",
+        "lyapunov_convention": "J Sigma + Sigma J^T + D = 0",
+        "closure_definition": "b = 1/2 sum_k (dJ/dx_k) Sigma[:, k]; dx = (-J)^-1 b",
+        "shared": "one Jacobian/noise/mode/Lyapunov/contraction per state",
+    }
+
+    def failed(
+        status: CAMOutcomeStatus, reason: str, **updates: Any
+    ) -> ClosureState:
+        fields: dict[str, Any] = {
+            "point": point,
+            "jacobian": None,
+            "noise_covariance": None,
+            "stationary_covariance": None,
+            "mode": None,
+            "covariance_minimum_eigenvalue": None,
+            "covariance_spectrum": (),
+            "covariance_condition_number": None,
+            "jacobian_condition_number": None,
+            "closure_contraction": None,
+            "closure_derivative": None,
+            "closure_displacement": None,
+            "closure_shape_fraction": None,
+            "physical_minimum_eigenvalue": None,
+            "physical_is_psd": None,
+            "soft_mode_rate": None,
+            "projected_noise": None,
+            "soft_mode_sigma": None,
+            "status": status,
+            "reason": reason,
+            "diagnostics": dict(diagnostics),
+            "method": dict(method),
+        }
+        fields.update(updates)
+        return ClosureState(**fields)
+
+    if point.size == 0 or not np.all(np.isfinite(point)):
+        return failed(CAMOutcomeStatus.NOT_CONVERGED, "the state is not finite")
+    jacobian = np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
+    if not np.all(np.isfinite(jacobian)):
+        return failed(
+            CAMOutcomeStatus.NOT_CONVERGED, "the dynamics Jacobian is not finite"
+        )
+    diagnostics["jacobian"] = jacobian.tolist()
+    if diffusion is None:
+        if model is None or not callable(getattr(model, "cam_diffusion", None)):
+            raise ValueError(
+                "a closure state needs either the noise covariance or a model"
+            )
+        matrix = np.asarray(adapter.state_matrix(point, parameter_map), dtype=complex)
+        noise = canonical_sample_matrix_covariance(
+            matrix, model.cam_diffusion(matrix, parameter_map)
+        )
+    else:
+        noise = np.asarray(diffusion, dtype=float)
+    if noise.shape != jacobian.shape:
+        raise ValueError(
+            f"the diffusion shape {noise.shape} does not match the Jacobian shape "
+            f"{jacobian.shape}"
+        )
+    if not np.all(np.isfinite(noise)):
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "the diffusion covariance is not finite",
+            jacobian=jacobian,
+            noise_covariance=noise,
+        )
+    minimum_noise, noise_spectrum = minimum_eigenvalue(noise)
+    diagnostics["diffusion_eigenvalues"] = [float(value) for value in noise_spectrum]
+    if minimum_noise < -settings.stochastic.covariance_tolerance:
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "the diffusion covariance is not positive semidefinite "
+            f"(minimum eigenvalue {minimum_noise:.3e})",
+            jacobian=jacobian,
+            noise_covariance=noise,
+        )
+    mode = critical_mode(
+        jacobian,
+        overlap_tolerance=settings.stochastic.overlap_tolerance,
+        rule=settings.critical_mode_rule,
+    )
+    if mode is None:
+        return failed(
+            CAMOutcomeStatus.UNIDENTIFIABLE,
+            "the critical mode could not be resolved (complex or overlapping "
+            "left/right eigenvectors)",
+            jacobian=jacobian,
+            noise_covariance=noise,
+        )
+    diagnostics["critical_mode_left"] = [float(value) for value in mode.left]
+    diagnostics["critical_mode_right"] = [float(value) for value in mode.right]
+    covariance, residual = lyapunov_covariance(jacobian, noise)
+    solver = "continuous lyapunov (public validity path)"
+    diagnostics["lyapunov_relative_residual"] = residual
+    diagnostics["lyapunov_solver"] = solver
+    method["lyapunov_solver"] = solver
+    if not np.all(np.isfinite(covariance)):
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "the stationary covariance solution is not finite",
+            mode=mode,
+            jacobian=jacobian,
+            noise_covariance=noise,
+        )
+    covariance_minimum, covariance_spectrum = minimum_eigenvalue(covariance)
+    diagnostics["covariance_eigenvalues"] = [
+        float(value) for value in covariance_spectrum
+    ]
+    if covariance_minimum < -settings.stochastic.covariance_tolerance:
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "the stationary covariance is not positive semidefinite (minimum "
+            f"eigenvalue {covariance_minimum:.3e})",
+            mode=mode,
+            jacobian=jacobian,
+            noise_covariance=noise,
+        )
+    if residual > settings.stochastic.lyapunov_relative_residual_tolerance:
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "no stationary covariance solves the Lyapunov equation (relative "
+            f"residual {residual:.3e})",
+            mode=mode,
+            jacobian=jacobian,
+            noise_covariance=noise,
+        )
+    left = np.asarray(mode.left, dtype=float)
+    rate = -float(np.real(mode.value))
+    projected_noise = projected_intensity(noise, left, left)
+    sigma = (
+        float(np.sqrt(projected_noise / (2.0 * rate)))
+        if rate > 0.0 and projected_noise > 0.0
+        else None
+    )
+    contraction, record = closure_contraction(
+        lambda vector: adapter.jacobian(vector, parameter_map),
+        point,
+        covariance,
+        relative_step=settings.closure_relative_step,
+    )
+    diagnostics["closure_contraction"] = [float(value) for value in contraction]
+    if not np.all(np.isfinite(contraction)):
+        return failed(
+            CAMOutcomeStatus.NOT_CONVERGED,
+            "the closure contraction is not finite",
+            mode=mode,
+            stationary_covariance=covariance,
+            covariance_minimum_eigenvalue=covariance_minimum,
+            covariance_spectrum=tuple(float(value) for value in covariance_spectrum),
+            closure_derivative=record,
+        )
+    try:
+        displacement = np.linalg.solve(-jacobian, contraction)
+    except np.linalg.LinAlgError:
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "the closure displacement is undefined: -J is singular",
+            mode=mode,
+            stationary_covariance=covariance,
+            covariance_minimum_eigenvalue=covariance_minimum,
+            covariance_spectrum=tuple(float(value) for value in covariance_spectrum),
+            closure_contraction=contraction,
+            closure_derivative=record,
+        )
+    if not np.all(np.isfinite(displacement)):
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "the closure displacement is not finite",
+            mode=mode,
+            stationary_covariance=covariance,
+            covariance_minimum_eigenvalue=covariance_minimum,
+            covariance_spectrum=tuple(float(value) for value in covariance_spectrum),
+            closure_contraction=contraction,
+            closure_derivative=record,
+        )
+    diagnostics["closure_displacement"] = [float(value) for value in displacement]
+    shape_fraction: float | None = None
+    if settings.evaluate_shape:
+        state_matrix = np.asarray(adapter.state_matrix(point, parameter_map))
+        displacement_matrix = np.asarray(
+            adapter.state_matrix(displacement, parameter_map)
+        )
+        shape_fraction = closure_shape_fraction(state_matrix, displacement_matrix)
+        if shape_fraction is None:
+            diagnostics["closure_shape_fraction_status"] = (
+                "undefined: the displacement or the state matrix has a vanishing norm"
+            )
+    physical_minimum: float | None = None
+    physical_is_psd: bool | None = None
+    physical_provider = getattr(adapter, "physical_eigenvalues", None)
+    if callable(physical_provider):
+        try:
+            physical = np.asarray(physical_provider(point, parameter_map), dtype=float)
+        except (ValueError, RuntimeError) as exc:
+            diagnostics["physicality_status"] = f"unavailable: {exc}"
+        else:
+            physical_minimum = float(np.min(physical))
+            physical_is_psd = physical_minimum >= -settings.physicality_tolerance
+    else:
+        diagnostics["physicality_status"] = "unavailable: adapter has no spectrum"
+    covariance_condition = (
+        float(np.linalg.cond(covariance))
+        if covariance_minimum > 0.0
+        else float("inf")
+    )
+    return ClosureState(
+        point=point,
+        jacobian=jacobian,
+        noise_covariance=noise,
+        stationary_covariance=covariance,
+        mode=mode,
+        covariance_minimum_eigenvalue=covariance_minimum,
+        covariance_spectrum=tuple(float(value) for value in covariance_spectrum),
+        covariance_condition_number=covariance_condition,
+        jacobian_condition_number=float(np.linalg.cond(jacobian)),
+        closure_contraction=contraction,
+        closure_derivative=record,
+        closure_displacement=displacement,
+        closure_shape_fraction=shape_fraction,
+        physical_minimum_eigenvalue=physical_minimum,
+        physical_is_psd=physical_is_psd,
+        soft_mode_rate=rate,
+        projected_noise=projected_noise,
+        soft_mode_sigma=sigma,
+        status=CAMOutcomeStatus.VALID,
+        reason=None,
+        diagnostics=dict(diagnostics),
+        method=dict(method),
+    )
+
+
 def assess_closure(
     adapter: Any,
     observable: CAMObservable,
@@ -324,25 +636,58 @@ def assess_closure(
     params: Mapping[str, Any],
     diffusion: Any | None = None,
     model: Any | None = None,
+    state_context: ClosureState | None = None,
     config: ClosureAssessmentConfig | None = None,
 ) -> ClosureAssessment:
     """Assess the closure bias of one observable at one state.
 
     The linear-noise part is delegated to
-    :func:`~qphase_cam.validity.assess_stochastic_state`; a state that fails that
-    assessment returns the same status and every diagnostic it managed to compute,
-    with no closure numbers invented on top.
+    :func:`~qphase_cam.validity.assess_stochastic_state`, which is handed the noise
+    covariance, the stationary covariance and the critical mode of the shared
+    :class:`ClosureState` — and verifies all three before using them. A state that
+    fails that assessment returns the same status and every diagnostic it managed to
+    compute, with no closure numbers invented on top.
+
+    ``state_context`` reuses the state-level closure quantities of a previous call at
+    the same state, so assessing three readouts costs one Jacobian, one noise
+    covariance, one eigenproblem, one Lyapunov solve and one closure contraction
+    instead of three. The shared path and the fresh path are the same code: this
+    function always goes through :func:`closure_state`, and passing the context only
+    skips recomputing it.
     """
     settings = config or ClosureAssessmentConfig()
-    stochastic = assess_stochastic_state(
+    context = state_context or closure_state(
         adapter,
-        observable,
         state=state,
         params=params,
         diffusion=diffusion,
         model=model,
-        config=settings.stochastic,
+        config=settings,
     )
+    if context.status is CAMOutcomeStatus.VALID:
+        stochastic = assess_stochastic_state(
+            adapter,
+            observable,
+            state=state,
+            params=params,
+            diffusion=context.noise_covariance,
+            stationary_covariance=context.stationary_covariance,
+            mode=context.mode,
+            config=settings.stochastic,
+        )
+    else:
+        # The state pass already failed. The readout assessment is still run, on the
+        # caller's own inputs, so the report carries the assessment's own reason
+        # instead of a second-hand one.
+        stochastic = assess_stochastic_state(
+            adapter,
+            observable,
+            state=state,
+            params=params,
+            diffusion=diffusion,
+            model=model,
+            config=settings.stochastic,
+        )
     method: dict[str, Any] = {
         "service": "qphase_cam.closure.assess_closure",
         "approximation": "ito_taylor_second_order",
@@ -374,47 +719,66 @@ def assess_closure(
             stochastic.status,
             stochastic.reason or "the linear-noise assessment is not valid",
         )
-    point = np.asarray(state, dtype=float).reshape(-1)
-    jacobian = np.asarray(stochastic.diagnostics.get("jacobian"), dtype=float)
-    covariance = np.asarray(
-        stochastic.diagnostics.get("lyapunov_covariance"), dtype=float
+    point = context.point
+    jacobian = context.jacobian
+    covariance = context.stationary_covariance
+    noise = context.noise_covariance
+    right = (
+        np.asarray(context.mode.right, dtype=float)
+        if context.mode is not None
+        else np.zeros(0)
     )
-    noise = np.asarray(stochastic.diagnostics.get("diffusion_covariance"), dtype=float)
-    left = np.asarray(stochastic.diagnostics.get("critical_mode_left"), dtype=float)
-    right = np.asarray(stochastic.diagnostics.get("critical_mode_right"), dtype=float)
+    if jacobian is None or noise is None or covariance is None:
+        return report(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "the closure state does not carry a Jacobian, a noise covariance and a "
+            "stationary covariance",
+        )
     if jacobian.shape != (point.size, point.size):
         raise ValueError(
-            "the linear-noise assessment did not record a Jacobian matching the "
+            "the closure state does not record a Jacobian matching the "
             f"{point.size}-coordinate state"
         )
     gradient = np.asarray(stochastic.observable_gradient, dtype=float)
-
-    contraction, record = closure_contraction(
-        lambda vector: adapter.jacobian(vector, dict(params)),
-        point,
-        covariance,
-        relative_step=settings.closure_relative_step,
+    diagnostics.update(
+        {
+            key: value
+            for key, value in context.diagnostics.items()
+            if key
+            in {
+                "jacobian",
+                "diffusion_eigenvalues",
+                "critical_mode_left",
+                "critical_mode_right",
+                "lyapunov_relative_residual",
+                "lyapunov_solver",
+                "covariance_eigenvalues",
+                "closure_contraction",
+                "closure_displacement",
+                "closure_shape_fraction_status",
+                "physicality_status",
+            }
+        }
     )
-    if not np.all(np.isfinite(contraction)):
+
+    contraction = context.closure_contraction
+    record = context.closure_derivative
+    displacement = context.closure_displacement
+    if context.status is not CAMOutcomeStatus.VALID:
+        # A state-level failure is the same verdict for every readout that shares it,
+        # and it keeps whatever the shared pass computed.
+        partial: dict[str, Any] = {}
+        if contraction is not None:
+            partial["closure_contraction_norm"] = float(np.linalg.norm(contraction))
+        if record is not None:
+            partial["closure_derivative"] = record
         return report(
-            CAMOutcomeStatus.NOT_CONVERGED,
-            "the closure contraction is not finite",
+            context.status, context.reason or "the closure state failed", **partial
         )
-    try:
-        displacement = np.linalg.solve(-jacobian, contraction)
-    except np.linalg.LinAlgError:
+    if contraction is None or displacement is None or record is None:
         return report(
             CAMOutcomeStatus.STOCHASTIC_INVALID,
-            "the closure displacement is undefined: -J is singular",
-            closure_contraction_norm=float(np.linalg.norm(contraction)),
-            closure_derivative=record,
-        )
-    if not np.all(np.isfinite(displacement)):
-        return report(
-            CAMOutcomeStatus.STOCHASTIC_INVALID,
-            "the closure displacement is not finite",
-            closure_contraction_norm=float(np.linalg.norm(contraction)),
-            closure_derivative=record,
+            "the closure state does not carry a contraction and displacement",
         )
     drift_bias = float(gradient @ displacement)
     closure_fields: dict[str, Any] = {
@@ -424,20 +788,8 @@ def assess_closure(
         "drift_bias": drift_bias,
         "closure_derivative": record,
     }
-    diagnostics["closure_contraction"] = [float(value) for value in contraction]
-    diagnostics["closure_displacement"] = [float(value) for value in displacement]
-
     if settings.evaluate_shape:
-        state_matrix = np.asarray(adapter.state_matrix(point, dict(params)))
-        displacement_matrix = np.asarray(
-            adapter.state_matrix(displacement, dict(params))
-        )
-        fraction = closure_shape_fraction(state_matrix, displacement_matrix)
-        closure_fields["closure_shape_fraction"] = fraction
-        if fraction is None:
-            diagnostics["closure_shape_fraction_status"] = (
-                "undefined: the displacement or the state matrix has a vanishing norm"
-            )
+        closure_fields["closure_shape_fraction"] = context.closure_shape_fraction
     if settings.evaluate_jensen:
         jensen, jensen_step, jensen_repeat, expanded = observable_jensen_bias(
             lambda vector: observable.value(adapter, vector, dict(params)),
@@ -467,21 +819,27 @@ def assess_closure(
             "unavailable: the readout curvature (Jensen term) was not evaluated"
         )
 
-    rate = -float(np.real(stochastic.critical_eigenvalue_real or 0.0))
+    rate = float(context.soft_mode_rate or 0.0)
     if rate <= 0.0:
         return report(
             CAMOutcomeStatus.UNSTABLE,
             f"the soft-mode decay rate is not positive (gamma={rate:.3e})",
             **closure_fields,
         )
-    projected_noise = projected_intensity(noise, left, left)
+    projected_noise = float(context.projected_noise or 0.0)
     if projected_noise < -settings.stochastic.covariance_tolerance:
         return report(
             CAMOutcomeStatus.STOCHASTIC_INVALID,
             "the projected noise along the critical mode is negative",
             **closure_fields,
         )
-    sigma_x = float(np.sqrt(max(projected_noise, 0.0) / (2.0 * rate)))
+    if context.soft_mode_sigma is None:
+        return report(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "the soft-mode noise scale is not positive",
+            **closure_fields,
+        )
+    sigma_x = float(context.soft_mode_sigma)
     projection = float(gradient @ right)
     soft_sigma = abs(projection) * sigma_x
     soft_kubo = soft_sigma / rate
@@ -505,34 +863,14 @@ def assess_closure(
     else:
         closure_fields["validity_domain"] = "noise_dominated"
 
-    jacobian_condition = float(np.linalg.cond(jacobian))
-    covariance_minimum, covariance_spectrum = minimum_eigenvalue(covariance)
-    covariance_condition = (
-        float(np.linalg.cond(covariance)) if covariance_minimum > 0.0 else float("inf")
-    )
     closure_fields.update(
         {
-            "jacobian_condition_number": jacobian_condition,
-            "covariance_condition_number": covariance_condition,
+            "jacobian_condition_number": context.jacobian_condition_number,
+            "covariance_condition_number": context.covariance_condition_number,
         }
     )
-    diagnostics["covariance_eigenvalues"] = [
-        float(value) for value in covariance_spectrum
-    ]
-
-    physical_minimum: float | None = None
-    physical_is_psd: bool | None = None
-    physical_provider = getattr(adapter, "physical_eigenvalues", None)
-    if callable(physical_provider):
-        try:
-            physical = np.asarray(physical_provider(point, dict(params)), dtype=float)
-        except (ValueError, RuntimeError) as exc:
-            diagnostics["physicality_status"] = f"unavailable: {exc}"
-        else:
-            physical_minimum = float(np.min(physical))
-            physical_is_psd = physical_minimum >= -settings.physicality_tolerance
-    else:
-        diagnostics["physicality_status"] = "unavailable: adapter has no spectrum"
+    physical_minimum = context.physical_minimum_eigenvalue
+    physical_is_psd = context.physical_is_psd
     closure_fields.update(
         {
             "physical_minimum_eigenvalue": physical_minimum,
