@@ -12,6 +12,20 @@ from qphase.core.dataset import DatasetSaveReport
 from qphase.core.errors import QPhaseIOError
 
 
+def strict_index(value: Any, *, what: str) -> int:
+    """Return one integer index, refusing a bool or a non-integer number.
+
+    ``int(1.9)`` silently names index 1 and ``int(True)`` silently names index 1,
+    so an index that is not an ``int``/``np.integer`` is an error here rather than
+    a different row or case.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise TypeError(
+            f"the {what} index must be an integer; got {type(value).__name__}"
+        )
+    return int(value)
+
+
 @dataclass
 class CAMBifurcationBranchTable:
     """Local response branches linked to candidates by integer index."""
@@ -690,7 +704,7 @@ class CAMBifurcationScanResult:
 
     def case_flat_index(self, candidate_index: int) -> int:
         """Return the flat case index of the case one candidate belongs to."""
-        index = int(candidate_index)
+        index = strict_index(candidate_index, what="candidate")
         total = int(self.candidate_offsets[-1]) if self.candidate_offsets.size else 0
         if index < 0 or index >= total:
             raise IndexError(
@@ -700,7 +714,7 @@ class CAMBifurcationScanResult:
 
     def grid_index(self, flat: int) -> tuple[int, ...]:
         """Return the grid index tuple of one flattened case index."""
-        position = int(flat)
+        position = strict_index(flat, what="flat case")
         if position < 0 or position >= self.case_count:
             raise IndexError(
                 f"flat case index {position} is out of bounds for a case grid of "

@@ -27,6 +27,8 @@ from typing import Any
 import numpy as np
 from qphase.data import Dataset
 
+from qphase_cam.bifurcation_result import strict_index
+
 __all__ = [
     "CandidateBranchTable",
     "CandidateRow",
@@ -121,7 +123,7 @@ class PerturbationDesign:
 
     parameter: str = ""
     scale: float = 1.0
-    side: str = ""
+    side: str = "both"
 
     @property
     def is_resolved(self) -> bool:
@@ -146,8 +148,14 @@ class CandidateView:
     case_metadata: tuple[dict[str, Any], ...] = ()
 
     def case_flat_index(self, candidate_index: int) -> int:
-        """Return the flat case index of the case one candidate belongs to."""
-        index = int(candidate_index)
+        """Return the flat case index of the case one candidate belongs to.
+
+        The case comes from ``candidate_offsets`` alone: a product whose case
+        metadata is missing or shorter than the case axis still resolves the case
+        a candidate belongs to, and the missing metadata is reported by
+        :meth:`metadata_at` instead of re-scoping the candidate to another case.
+        """
+        index = strict_index(candidate_index, what="candidate")
         if index < 0 or index >= len(self.rows):
             raise IndexError(
                 f"candidate index {index} is out of bounds for {len(self.rows)} "
@@ -155,13 +163,15 @@ class CandidateView:
             )
         if not self.candidate_offsets.size:
             return 0
-        case = int(
-            np.searchsorted(self.candidate_offsets, index, side="right") - 1
-        )
-        return max(0, min(case, max(len(self.case_metadata) - 1, 0)))
+        case = int(np.searchsorted(self.candidate_offsets, index, side="right") - 1)
+        return max(case, 0)
 
     def metadata_at(self, candidate_index: int) -> dict[str, Any]:
-        """Return the stored (canonical JSON) case metadata of one candidate."""
+        """Return the stored (canonical JSON) case metadata of one candidate.
+
+        A case whose metadata was not stored returns ``{}``: the product is then
+        incomplete for that case, which the callers report instead of guessing.
+        """
         case = self.case_flat_index(candidate_index)
         if case >= len(self.case_metadata):
             return {}
@@ -222,7 +232,11 @@ class CandidateView:
             raise ValueError(
                 f"the perturbation scale must be finite and positive; got {scale}"
             )
-        return PerturbationDesign(parameter=parameter, scale=scale, side=side)
+        # A case that does not record a direction is not a one-sided case: the
+        # design says "both" so a caller never reads an empty side as a side.
+        return PerturbationDesign(
+            parameter=parameter, scale=scale, side=side or "both"
+        )
 
     def branches_of(self, candidate_index: int) -> list[int]:
         """Return the real branch indices of one candidate."""
@@ -237,16 +251,28 @@ class CandidateView:
 def case_fixed_parameters(metadata: dict[str, Any]) -> dict[str, float]:
     """Return the fixed parameters one case metadata mapping records.
 
-    A solver case stores them as ``case_parameters`` (the case's own parameter
-    values); a legacy imported case stores the model-level set as
-    ``fixed_params``. Both are the case's declared base, and a product never
-    carries both under contradictory keys.
+    A solver case stores the case's own parameter values as ``case_parameters``; a
+    legacy imported case stores the model-level set as ``fixed_params``. Both are
+    read when both are present, and a key they disagree on is an error: silently
+    preferring one of two recorded bases would publish a parameter map the product
+    does not state.
     """
+    entries: dict[str, float] = {}
+    origin: dict[str, str] = {}
     for name in ("case_parameters", "fixed_params"):
         value = metadata.get(name)
-        if isinstance(value, dict):
-            return {str(key): float(item) for key, item in value.items()}
-    return {}
+        if not isinstance(value, dict):
+            continue
+        for key, item in value.items():
+            resolved = float(item)
+            if key in entries and entries[key] != resolved:
+                raise ValueError(
+                    f"the case metadata records conflicting values for {key!r}: "
+                    f"{origin[key]}={entries[key]!r}, {name}={resolved!r}"
+                )
+            entries[str(key)] = resolved
+            origin[str(key)] = name
+    return entries
 
 
 def candidate_parameters(
@@ -258,25 +284,39 @@ def candidate_parameters(
     :meth:`CandidateView.params_at`. A legacy ``CAMBifurcationScanResult`` also
     needs the candidate index mapped to its case grid index before
     ``params_at`` can be asked: the two index spaces are different, and passing a
-    candidate index there reads another case's parameters.
+    candidate index there reads another case's parameters. A single
+    ``CAMBifurcationResult`` is one case, so it keeps its own historical order:
+    the model parameters, its recorded fixed parameters, then the candidate's
+    controls.
     """
-    from ..bifurcation_result import CAMBifurcationScanResult
+    from ..bifurcation_result import CAMBifurcationResult, CAMBifurcationScanResult
 
+    index = strict_index(candidate_index, what="candidate")
     params = dict(getattr(model, "params", None) or {})
     if isinstance(result, CandidateView):
-        params.update(result.params_at(candidate_index))
+        params.update(result.params_at(index))
         return params
     if isinstance(result, CAMBifurcationScanResult):
         params.update(dict(result.candidates.meta.get("fixed_params", {})))
-        params.update(result.params_at(result.case_grid_index(candidate_index)))
+        params.update(result.params_at(result.case_grid_index(index)))
         names = tuple(result.candidates.control_names)
         params.update(
-            zip(names, result.candidates.control_values[candidate_index], strict=True)
+            zip(names, result.candidates.control_values[index], strict=True)
         )
         return params
+    if isinstance(result, CAMBifurcationResult):
+        total = int(len(result.control_values))
+        if index < 0 or index >= total:
+            raise IndexError(
+                f"candidate index {index} is out of bounds for {total} candidates"
+            )
+        params.update(dict(result.meta.get("fixed_params", {})))
+        names = tuple(result.control_names)
+        params.update(zip(names, result.control_values[index], strict=True))
+        return params
     raise TypeError(
-        "candidate parameters need a CandidateView or a CAMBifurcationScanResult; "
-        f"got {type(result).__name__}"
+        "candidate parameters need a CandidateView, a CAMBifurcationScanResult or "
+        f"a CAMBifurcationResult; got {type(result).__name__}"
     )
 
 

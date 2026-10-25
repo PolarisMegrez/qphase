@@ -11,6 +11,7 @@ that the two postprocessors and the annotation-target reader all use it.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import numpy as np
@@ -23,10 +24,12 @@ from qphase_cam.core.coordinates import matrix_to_vector
 from qphase_cam.data import build_candidate_product
 from qphase_cam.postprocessor.base import CAMAnnotationContext
 from qphase_cam.postprocessor.candidates import (
+    PerturbationDesign,
     candidate_parameters,
     candidate_view,
     case_fixed_parameters,
 )
+from qphase_cam.postprocessor.closure_risk import ClosureRisk
 from qphase_cam.postprocessor.local_response import LocalResponseValidation
 from qphase_cam.postprocessor.stochastic_validity import StochasticValidity
 from qphase_cam.postprocessor.targets import annotation_targets
@@ -490,3 +493,188 @@ def test_stochastic_validity_reads_the_perturbation_from_the_case_metadata():
     # The perturbation is resolved from the case metadata, so the row is not
     # rejected with a missing-parameter status.
     assert "perturbation_parameter_missing" not in status
+
+
+# --- case-scope boundaries -------------------------------------------------
+
+
+def test_a_short_case_metadata_never_rescopes_a_candidate():
+    view = candidate_view(
+        _product(
+            case_metadata=(
+                {"case_parameters": {"omega": 0.1}},
+                {"case_parameters": {"omega": 0.9}},
+            ),
+            case_params={"omega": np.asarray([0.25, 0.75])},
+        )
+    )
+    damaged = dataclasses.replace(view, case_metadata=())
+    # The case still comes from the offsets; only the metadata is missing.
+    assert [damaged.case_flat_index(row.index) for row in damaged.rows] == [0, 0, 1]
+    assert damaged.metadata_at(2) == {}
+    assert not damaged.design_at(2).is_resolved
+    # The case parameter columns are read for the right case, not for case 0.
+    assert damaged.params_at(2)["omega"] == pytest.approx(0.75)
+    assert damaged.params_at(0)["omega"] == pytest.approx(0.25)
+
+
+def test_a_case_index_rejects_bools_and_non_integers():
+    view = candidate_view(_product())
+    with pytest.raises(TypeError, match="must be an integer"):
+        view.case_flat_index(True)
+    with pytest.raises(TypeError, match="must be an integer"):
+        view.case_flat_index(1.9)
+    with pytest.raises(TypeError, match="must be an integer"):
+        view.params_at(np.float64(1.0))
+    # numpy integers are integers.
+    assert view.case_flat_index(np.int64(2)) == 1
+
+
+def test_a_scan_case_index_rejects_bools_and_non_integers():
+    scan = CAMBifurcationScanResult(
+        case_axes={"gamma": np.asarray([0.0, 0.5])},
+        case_shape=(2,),
+        case_params={"gamma": np.asarray([0.0, 0.5])},
+        candidate_offsets=np.asarray([0, 1, 2]),
+        candidates=_candidates(2),
+        case_metadata=({"case": 0}, {"case": 1}),
+        meta={},
+    )
+    with pytest.raises(TypeError, match="candidate index must be an integer"):
+        scan.case_flat_index(True)
+    with pytest.raises(TypeError, match="candidate index must be an integer"):
+        scan.case_flat_index(1.9)
+    with pytest.raises(TypeError, match="flat case index must be an integer"):
+        scan.grid_index(1.0)
+    assert scan.case_grid_index(np.int64(1)) == (1,)
+
+
+def test_conflicting_case_base_parameters_are_refused():
+    assert case_fixed_parameters(
+        {"case_parameters": {"omega": 1.0}, "fixed_params": {"omega": 1.0}}
+    ) == pytest.approx({"omega": 1.0})
+    with pytest.raises(ValueError, match="conflicting values for 'omega'"):
+        case_fixed_parameters(
+            {"case_parameters": {"omega": 1.0}, "fixed_params": {"omega": 2.0}}
+        )
+
+
+def test_an_unrecorded_side_reads_as_both():
+    view = candidate_view(
+        _product(
+            offsets=(0, 2),
+            case_metadata=({"case_parameters": {}, "perturbation_parameter": "g"},),
+        )
+    )
+    assert view.design_at(0).side == "both"
+    assert PerturbationDesign().side == "both"
+    recorded = candidate_view(
+        _product(
+            offsets=(0, 2),
+            case_metadata=({"case_parameters": {}, "perturbation_side": "positive"},),
+        )
+    )
+    assert recorded.design_at(0).side == "positive"
+
+
+def test_a_single_case_result_keeps_its_legacy_parameter_map():
+    result = _candidates(2)
+    result.meta = {**result.meta, "fixed_params": {"omega": 5.0, "g": 0.4}}
+    params = candidate_parameters(result, 1, _Model())
+    # model.params -> the result's fixed parameters -> the candidate's controls.
+    assert params["omega"] == pytest.approx(5.0)
+    assert params["g"] == pytest.approx(0.4)
+    assert params["gamma"] == pytest.approx(-0.5)
+    with pytest.raises(IndexError, match="out of bounds"):
+        candidate_parameters(result, 2, _Model())
+    with pytest.raises(TypeError, match="must be an integer"):
+        candidate_parameters(result, 1.5, _Model())
+
+
+def test_closure_risk_uses_the_shared_case_map():
+    product = _product(
+        case_metadata=(
+            {"case_parameters": {"omega": 0.1, "g": 0.2}},
+            {"case_parameters": {"omega": 0.9, "g": 0.8}},
+        )
+    )
+    view = candidate_view(product)
+    model = _Model()
+    for row in view.rows:
+        assert ClosureRisk._candidate_parameters(view, row, model) == (
+            candidate_parameters(view, row.index, model)
+        )
+    # The case's own base parameters reach the assessment, not only the columns.
+    assert ClosureRisk._candidate_parameters(view, view.rows[0], model)["g"] == (
+        pytest.approx(0.2)
+    )
+    assert ClosureRisk._candidate_parameters(view, view.rows[-1], model)["g"] == (
+        pytest.approx(0.8)
+    )
+
+
+def test_a_json_complex_coefficient_reaches_the_real_chart():
+    # The producer stores a coefficient matrix as a nested list of per-element
+    # {"real", "imag"} mappings, exactly as this fixture is written.
+    coefficient = [
+        [{"real": 1.0, "imag": 0.0}, {"real": 0.0, "imag": 0.5}],
+        [{"real": 0.0, "imag": -0.5}, {"real": 1.0, "imag": 0.0}],
+    ]
+    signature = {
+        "state_order": 3,
+        "perturbation_order": 1,
+        "coupling_state_order": 0,
+        "exponent_numerator": 1,
+        "exponent_denominator": 3,
+        "exponent": 1.0 / 3.0,
+        "sublinear": True,
+        "branches": (
+            {
+                "epsilon_side": 1,
+                "amplitude": 2.0,
+                "leading_state_coefficient": coefficient,
+            },
+        ),
+    }
+    product = build_candidate_product(
+        states=np.asarray([np.eye(2)], dtype=complex),
+        state_vectors=np.zeros((1, 4)),
+        control_values=np.full((1, 1), -0.5),
+        control_names=("gamma",),
+        full_residual_norm=np.zeros(1),
+        search_residual_norm=np.full(1, 1e-14),
+        success=np.ones(1, dtype=bool),
+        status=["verified"],
+        method=["test"],
+        verification_digits=np.full(1, 50, dtype=np.int64),
+        verification_status=["verified"],
+        candidate_identity=["cam:candidate:0"],
+        classification=[{"scaling_signatures": [signature]}],
+        case_metadata=(
+            {
+                "case_parameters": _FOLD_PARAMS,
+                "perturbation_parameter": "gamma",
+                "perturbation_scale": 1.0,
+            },
+        ),
+        candidate_offsets=np.asarray([0, 1]),
+        case_shape=(1,),
+    )
+    view = candidate_view(product)
+    # A ragged object column stores one matrix per row; the imaginary part
+    # survives the JSON round trip, so the consumer must read a real chart from a
+    # normalised complex array.
+    stored = view.branches.leading_state_coefficient[0]
+    assert np.any(np.asarray(stored, dtype=complex).imag != 0.0)
+    np.testing.assert_allclose(
+        np.asarray(stored, dtype=complex), np.asarray([[1.0, 0.5j], [-0.5j, 1.0]])
+    )
+    np.testing.assert_allclose(
+        matrix_to_vector(np.asarray(stored, dtype=complex)),
+        matrix_to_vector(np.asarray([[1.0, 0.5j], [-0.5j, 1.0]])),
+    )
+    annotation = StochasticValidity(probe_epsilon=1.0).process(
+        product,
+        CAMAnnotationContext(model=_FOLD, metadata={}, source_role="candidates"),
+    )
+    assert len(np.asarray(annotation.handle("status").materialize())) == 1

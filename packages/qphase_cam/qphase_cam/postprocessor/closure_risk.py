@@ -36,7 +36,7 @@ from qphase_cam.observable import CAMObservable, RayleighObservable
 from qphase_cam.outcomes import CAMOutcomeStatus
 
 from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
-from .candidates import candidate_view
+from .candidates import candidate_parameters, candidate_view
 from .state_view import state_rows
 
 
@@ -202,10 +202,10 @@ class ClosureRisk(CAMPostprocessor[ClosureRiskConfig]):
 
     @staticmethod
     def _candidate_parameters(view: Any, row: Any, model: Any) -> dict[str, Any]:
-        """Return the model parameters of one candidate's case."""
-        params = dict(model.params)
-        params.update(view.meta.get("fixed_params", {}))
-        for name, values in view.case_params.items():
-            params[name] = float(np.asarray(values).reshape(-1)[row.case])
-        params.update(row.controls)
-        return params
+        """Return the model parameters of one candidate's case.
+
+        This is the shared map (:func:`candidate_parameters`), so a closure-risk
+        assessment cannot resolve a case's base parameters differently from the
+        other annotations.
+        """
+        return candidate_parameters(view, row.index, model)
