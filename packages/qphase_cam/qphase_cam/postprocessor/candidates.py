@@ -32,10 +32,12 @@ from qphase_cam.bifurcation_result import strict_index
 __all__ = [
     "CandidateBranchTable",
     "CandidateRow",
+    "CandidateState",
     "CandidateView",
     "PerturbationDesign",
     "branch_axis_size",
     "candidate_parameters",
+    "candidate_state",
     "candidate_view",
     "case_fixed_parameters",
     "complex_from_json",
@@ -318,6 +320,84 @@ def candidate_parameters(
         "candidate parameters need a CandidateView, a CAMBifurcationScanResult or "
         f"a CAMBifurcationResult; got {type(result).__name__}"
     )
+
+
+@dataclass(frozen=True)
+class CandidateState:
+    """The state of one candidate: its chart vector and its verified decimals.
+
+    ``decimals`` is the branch's verified decimal expansion when the product
+    carries one; ``vector`` is the state a solve should start from — the decimals
+    when they exist (they are the more precise description of the same state) and
+    the stored chart vector otherwise. ``chart_vector`` is always the stored one,
+    so a caller can compare the two representations.
+    """
+
+    vector: np.ndarray
+    chart_vector: np.ndarray
+    decimals: tuple[str, ...] | None
+
+    @property
+    def has_decimals(self) -> bool:
+        """Whether the state came from a verified decimal expansion."""
+        return self.decimals is not None
+
+
+def _decimal_strings(decimals: Any, index: int) -> tuple[str, ...] | None:
+    """Return one candidate's verified decimal expansion, if the product has one."""
+    if decimals is None:
+        return None
+    values = np.asarray(decimals, dtype=object)[index]
+    if isinstance(values, np.ndarray):
+        values = values.tolist()
+    if values and not isinstance(values, float):
+        return tuple(str(item) for item in values)
+    return None
+
+
+def candidate_state(result: Any, candidate_index: int) -> CandidateState:
+    """Return the state of one candidate, typed or legacy.
+
+    A typed :class:`CandidateView` and a legacy ``CAMBifurcationResult`` both store
+    the chart vector and, when the branch was verified, a decimal expansion of the
+    same state. This is the one place that reads them, so a script and the
+    local-response validation cannot disagree about which state a branch starts
+    from.
+    """
+    from ..bifurcation_result import CAMBifurcationResult
+
+    index = strict_index(candidate_index, what="candidate")
+    if isinstance(result, CandidateView):
+        if index < 0 or index >= len(result.rows):
+            raise IndexError(
+                f"candidate index {index} is out of bounds for {len(result.rows)} "
+                "candidates"
+            )
+        chart = np.asarray(result.rows[index].state_vector, dtype=float)
+        decimals = _decimal_strings(
+            result.diagnostics.get("verified_full_state_decimal_values"), index
+        )
+    elif isinstance(result, CAMBifurcationResult):
+        total = int(len(result.state_vectors))
+        if index < 0 or index >= total:
+            raise IndexError(
+                f"candidate index {index} is out of bounds for {total} candidates"
+            )
+        chart = np.asarray(result.state_vectors[index], dtype=float)
+        decimals = _decimal_strings(
+            result.diagnostics.get("verified_full_state_decimal_values"), index
+        )
+    else:
+        raise TypeError(
+            "a candidate state needs a CandidateView or a CAMBifurcationResult; got "
+            f"{type(result).__name__}"
+        )
+    vector = (
+        np.asarray([float(item) for item in decimals], dtype=float)
+        if decimals is not None
+        else chart
+    )
+    return CandidateState(vector=vector, chart_vector=chart, decimals=decimals)
 
 
 def complex_from_json(value: Any) -> complex:

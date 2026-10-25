@@ -12,10 +12,16 @@ from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.data import build_annotation_product
 from qphase_cam.outcomes import CAMOutcomeStatus
 
+from ..solver.high_precision import (
+    HighPrecisionNewtonConfig,
+    solve_high_precision,
+)
 from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
 from .candidates import (
+    CandidateState,
     CandidateView,
     candidate_parameters,
+    candidate_state,
     candidate_view,
     pivot_branch_rows,
 )
@@ -90,12 +96,9 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
                 )
             perturbation = design.parameter
             scale = design.scale
-            critical_decimals = self._critical_state_decimals(
-                candidates, candidate_index
-            )
-            critical = self._critical_state(
-                candidates, candidate_index, critical_decimals
-            )
+            critical_candidate = candidate_state(candidates, candidate_index)
+            critical_decimals = critical_candidate.decimals
+            critical = critical_candidate.vector
             exponent = float(
                 branches.exponent_numerator[branch_index]
                 / branches.exponent_denominator[branch_index]
@@ -260,62 +263,35 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
         initial: np.ndarray,
         params: dict[str, Any],
         *,
-        critical_decimals: tuple[str, ...] | None,
-        leading_coefficient: np.ndarray,
-        epsilon_magnitude: float,
-        exponent: float,
+        critical_decimals: tuple[str, ...] | None = None,
+        leading_coefficient: np.ndarray | None = None,
+        epsilon_magnitude: float | None = None,
+        exponent: float | None = None,
     ) -> tuple[np.ndarray, float, bool]:
-        import mpmath as mp
+        """Solve one branch point through the public high-precision service.
 
-        previous_digits = mp.mp.dps
-        mp.mp.dps = self.config.precision_digits
-        if critical_decimals is None:
-            state = mp.matrix([mp.mpf(str(item)) for item in initial])
-        else:
-            magnitude = mp.mpf(str(epsilon_magnitude)) ** mp.mpf(str(exponent))
-            state = mp.matrix(
-                [
-                    mp.mpf(value) + mp.mpf(str(coefficient)) * magnitude
-                    for value, coefficient in zip(
-                        critical_decimals, leading_coefficient, strict=True
-                    )
-                ]
-            )
-        mp_params = {
-            name: mp.mpf(str(value)) if np.asarray(value).ndim == 0 else value
-            for name, value in params.items()
-        }
-        tolerance = mp.mpf(str(self.config.residual_tolerance))
-        try:
-            residual = mp.inf
-            for _ in range(self.config.max_iterations):
-                values = adapter.mpmath_rhs(state, mp_params)
-                residual = mp.sqrt(sum(item * item for item in values))
-                if residual <= tolerance:
-                    break
-                jacobian = adapter.mpmath_jacobian(state, mp_params)
-                try:
-                    step = mp.lu_solve(jacobian, -values)
-                except ZeroDivisionError:
-                    break
-                accepted = False
-                damping = mp.mpf("1")
-                for _ in range(16):
-                    trial = state + damping * step
-                    trial_values = adapter.mpmath_rhs(trial, mp_params)
-                    trial_residual = mp.sqrt(sum(item * item for item in trial_values))
-                    if trial_residual < residual:
-                        state = trial
-                        residual = trial_residual
-                        accepted = True
-                        break
-                    damping /= 2
-                if not accepted:
-                    break
-            output = np.asarray([float(item) for item in state], dtype=float)
-            return output, float(residual), bool(residual <= tolerance)
-        finally:
-            mp.mp.dps = previous_digits
+        Kept as the postprocessor's internal entry point; the implementation and
+        its numerics live in :mod:`qphase_cam.solver.high_precision`.
+        """
+        solution = solve_high_precision(
+            adapter,
+            initial,
+            params,
+            config=self._newton_config(),
+            critical_decimals=critical_decimals,
+            leading_coefficient=leading_coefficient,
+            epsilon_magnitude=epsilon_magnitude,
+            exponent=exponent,
+        )
+        return solution.state, solution.residual, solution.converged
+
+    def _newton_config(self) -> HighPrecisionNewtonConfig:
+        """Return the solver configuration this plugin's config describes."""
+        return HighPrecisionNewtonConfig(
+            precision_digits=self.config.precision_digits,
+            residual_tolerance=self.config.residual_tolerance,
+            max_iterations=self.config.max_iterations,
+        )
 
     def _critical_params(
         self, result: Any, candidate_index: int, model: Any
@@ -330,14 +306,8 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
 
     @staticmethod
     def _critical_state_decimals(candidates: Any, index: int) -> tuple[str, ...] | None:
-        decimals = candidates.diagnostics.get("verified_full_state_decimal_values")
-        if decimals is not None:
-            values = np.asarray(decimals, dtype=object)[index]
-            if isinstance(values, np.ndarray):
-                values = values.tolist()
-            if values and not isinstance(values, float):
-                return tuple(str(item) for item in values)
-        return None
+        """Return the candidate's verified decimal expansion, if it has one."""
+        return candidate_state(candidates, index).decimals
 
     @staticmethod
     def _critical_state(
@@ -345,9 +315,15 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
         index: int,
         decimals: tuple[str, ...] | None,
     ) -> np.ndarray:
+        """Return the state one branch starts from.
+
+        ``decimals`` is honoured when given; otherwise the candidate's own state is
+        read through the shared candidate-state service.
+        """
+        state: CandidateState = candidate_state(candidates, index)
         if decimals is not None:
             return np.asarray([float(item) for item in decimals], dtype=float)
-        return np.asarray(candidates.state_vectors[index], dtype=float)
+        return state.chart_vector
 
     @staticmethod
     def _rayleigh(
