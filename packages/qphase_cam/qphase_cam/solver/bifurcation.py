@@ -57,7 +57,7 @@ from .execution import (
     build_candidate_from_cases,
     candidate_case_arrays,
     grid_model_parameters,
-    model_parameters,
+    restored_parameters,
     run_cases,
 )
 from .identity import (
@@ -338,7 +338,6 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             context=context,
             policy=request.case_failure_policy,
         )
-        model_parameters(model, {**base_params, **grid_model_parameters(model, grid)})
         case_params: dict[str, Any] = {}
         for name, value in base_params.items():
             if np.asarray(value).ndim == 0:
@@ -348,19 +347,27 @@ class BifurcationSolver(CAMSolver[BifurcationSolverConfig]):
             case_params[target.rsplit(".", 1)[-1]] = np.asarray(
                 parameter_arrays[axis_name]
             )
-        return self._fragment(
-            model,
-            backend,
-            [outcome.result for outcome in cases],
-            case_axes={name: np.asarray(values) for name, values in grid.axes.items()},
-            case_params=case_params,
-            case_shape=tuple(grid.shape),
-            scan_metadata={
-                "scan_shape": tuple(grid.shape),
-                "scan_combine": grid.combine,
-                "scan_targets": dict(grid.targets),
-            },
-        )
+        # Packing an empty case rebuilds its candidate state matrix from the case
+        # parameters, so the grid values are applied for the fragment only and the
+        # caller's model is handed back exactly as it was entered.
+        with restored_parameters(
+            model, {**base_params, **grid_model_parameters(model, grid)}
+        ):
+            return self._fragment(
+                model,
+                backend,
+                [outcome.result for outcome in cases],
+                case_axes={
+                    name: np.asarray(values) for name, values in grid.axes.items()
+                },
+                case_params=case_params,
+                case_shape=tuple(grid.shape),
+                scan_metadata={
+                    "scan_shape": tuple(grid.shape),
+                    "scan_combine": grid.combine,
+                    "scan_targets": dict(grid.targets),
+                },
+            )
 
     def _case_payload(
         self,

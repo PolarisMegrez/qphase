@@ -119,7 +119,12 @@ def run_cases(
     context: Any | None,
     policy: str,
 ) -> list[CaseOutcome]:
-    """Run one call per grid point, honouring the case failure policy."""
+    """Run one call per grid point, honouring the case failure policy.
+
+    Every point sets the model's parameters to that case's values, so the model
+    must not keep the last case's map (or a grid's per-point arrays) when this
+    returns or raises: the caller's model is left exactly as it was entered.
+    """
 
     def run_point(point: Any) -> CaseOutcome:
         params = dict(base_params)
@@ -146,7 +151,11 @@ def run_cases(
             result=result,
         )
 
-    return list(execute_pointwise(grid, run_point, context=context))
+    entered = dict(getattr(model, "params", {}) or {})
+    try:
+        return list(execute_pointwise(grid, run_point, context=context))
+    finally:
+        model_parameters(model, dict(entered))
 
 
 def _solution_rows(
@@ -256,7 +265,10 @@ def state_fragment(
             context=request.context,
             policy=request.case_failure_policy,
         )
-        model_parameters(model, {**base_params, **grid_model_parameters(model, grid)})
+        # The scan-wide parameters are this call's product metadata, not a model
+        # state: reading them from a model that had them applied would leave the
+        # grid arrays on the caller's model.
+        product_params = {**base_params, **grid_model_parameters(model, grid)}
         rows = [list(case.result) if not case.failed else [] for case in cases]
         failed = [case for case in cases if case.failed]
         if failed:

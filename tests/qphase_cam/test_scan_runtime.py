@@ -835,6 +835,210 @@ def test_cross_case_candidate_identity_stays_annotatable(tmp_path):
     )
 
 
+def _kappa_grid(values: list[float]):
+    """Return a one-axis kappa scan grid for the two-mode fold model."""
+    return ScanSpec.model_validate(
+        {
+            "combine": "zipped",
+            "axes": {
+                "kappa": {
+                    "target": "model.two_mode_fold.kappa",
+                    "values": list(values),
+                }
+            },
+        }
+    ).compile()
+
+
+def _kappa_search_request(grid, *, policy: str = "record") -> CAMSolveRequest:
+    from .test_bifurcation import TwoModeFoldModel
+
+    return grid, CAMSolveRequest(
+        task="search",
+        model=TwoModeFoldModel(),
+        backend=NumpyBackend(),
+        parameter_grid=grid,
+        case_failure_policy=policy,
+    )
+
+
+def test_a_scan_search_restores_the_caller_model_parameters():
+    """A grid leaves its per-point arrays on no caller model, after every policy."""
+    from .test_bifurcation import TwoModeFoldModel
+
+    for policy in ("record", "abort"):
+        grid, request = _kappa_search_request(_kappa_grid([1.0, 1.1]), policy=policy)
+        model = request.model
+        entered = dict(model.params)
+        fragment = _fold_search_solver().solve(request)
+        # The caller's own model keeps its keys and scalar values.
+        assert dict(model.params) == entered
+        assert not any(np.ndim(value) for value in model.params.values())
+        # A second instance of the same class is not polluted by the scan.
+        assert dict(TwoModeFoldModel().params) == entered
+        # The artifact still carries the per-case kappa values.
+        product = fragment.products["candidates"].materialize()
+        np.testing.assert_allclose(
+            np.asarray(product.handle("case_parameter.kappa").materialize()),
+            [1.0, 1.1],
+        )
+        assert list(
+            np.asarray(product.handle("parameter.kappa").materialize())
+        ) == [1.0, 1.1]
+
+
+def _omega_a_grid(values: list[float]):
+    return ScanSpec.model_validate(
+        {
+            "combine": "zipped",
+            "axes": {
+                "omega_a": {
+                    "target": "model.vdp_2mode.omega_a",
+                    "values": list(values),
+                }
+            },
+        }
+    ).compile()
+
+
+def _failing_search_solver(message: str) -> BifurcationSolver:
+    """Return a search double that fails on the second case it is given."""
+
+    def search(model):
+        if model.params["omega_a"] < 0.0:
+            raise ValueError(message)
+        return CAMBifurcationOutput(
+            candidates=[],
+            target="equilibrium_multiplicity",
+            order=3,
+            metadata={
+                "control_names": ("gamma_a",),
+                "domain_coverage": _fake_domain(("gamma_a",)),
+                "audit": _fake_audit(0),
+                "search_identity": "cam:search:test",
+                "case_identity": "cam:case:test",
+                "accepted_candidate_identities": (),
+                "accepted_start_identities": (),
+            },
+        )
+
+    return _search_double({"gamma_a": ControlRange(min=-1.0, max=1.0)}, 3, search)
+
+
+def test_a_recorded_failing_scan_case_restores_the_caller_model_parameters():
+    """A recorded case failure leaves the caller's model exactly as it was."""
+    grid = _omega_a_grid([-0.1, 0.1])
+    model = _vdp_model()
+    entered = dict(model.params)
+    fragment = _failing_search_solver("outside numerical chart").solve(
+        CAMSolveRequest(
+            task="search",
+            model=model,
+            backend=NumpyBackend(),
+            parameter_grid=grid,
+            case_failure_policy="record",
+        )
+    )
+    assert dict(model.params) == entered
+    assert not any(np.ndim(value) for value in model.params.values())
+    assert dict(_vdp_model().params) == entered
+    product = fragment.products["candidates"].materialize()
+    np.testing.assert_allclose(
+        np.asarray(product.handle("case_parameter.omega_a").materialize()),
+        [-0.1, 0.1],
+    )
+    metadata = [
+        json.loads(str(value))
+        for value in np.asarray(product.handle("case_metadata").materialize())
+    ]
+    assert [entry["case_status"] for entry in metadata] == ["error", "complete"]
+
+
+def test_an_aborted_scan_case_restores_the_caller_model_parameters():
+    """An aborting case raises out of the scan but still restores the model."""
+    grid = _omega_a_grid([-0.1, 0.1])
+    model = _vdp_model()
+    entered = dict(model.params)
+    with pytest.raises(ValueError, match="synthetic abort"):
+        _failing_search_solver("synthetic abort").solve(
+            CAMSolveRequest(
+                task="search",
+                model=model,
+                backend=NumpyBackend(),
+                parameter_grid=grid,
+                case_failure_policy="abort",
+            )
+        )
+    assert dict(model.params) == entered
+    assert not any(np.ndim(value) for value in model.params.values())
+    assert dict(_vdp_model().params) == entered
+
+
+class _GridModel:
+    """A model double with class-level parameters, like the fold test model."""
+
+    name = "grid_model"
+    n_modes = 2
+    steady_state_capacity = 2
+    params = {"rate": 1.0, "gamma": -1.0}
+
+    @staticmethod
+    def cam_solution_sort_key(state, params):
+        del params
+        return float(np.real(np.asarray(state)[0, 0]))
+
+
+def test_a_state_scan_restores_the_caller_model_parameters():
+    """A pointwise state scan does not leave its grid arrays on the model."""
+    from qphase_cam.solver.execution import state_fragment
+
+    grid = ScanSpec.model_validate(
+        {
+            "combine": "zipped",
+            "axes": {
+                "rate": {"target": "model.grid_model.rate", "values": [1.0, 1.1]}
+            },
+        }
+    ).compile()
+    model = _GridModel()
+    entered = dict(model.params)
+
+    def run(current, point):
+        del point
+        value = float(current.params["rate"])
+        return CAMSolverOutput(
+            [
+                CAMSolution(
+                    state=np.eye(2) * value,
+                    residual=0.0,
+                    success=True,
+                    method="test",
+                )
+            ]
+        )
+
+    fragment = state_fragment(
+        request=CAMSolveRequest(
+            task="scan",
+            model=model,
+            backend=NumpyBackend(),
+            parameter_grid=grid,
+        ),
+        run=run,
+        supports_batch=False,
+    )
+    assert dict(model.params) == entered
+    assert not any(np.ndim(value) for value in model.params.values())
+    assert dict(_GridModel().params) == entered
+    product = fragment.products["state_scan"].materialize()
+    np.testing.assert_allclose(
+        np.asarray(product.handle("parameter.rate").materialize()), [1.0, 1.1]
+    )
+    np.testing.assert_allclose(
+        np.asarray(product.handle("states").materialize())[:, 0, 0, 0], [1.0, 1.1]
+    )
+
+
 def _signature() -> dict:
     return {
         "state_order": 3,
