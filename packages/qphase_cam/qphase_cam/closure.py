@@ -508,6 +508,8 @@ def closure_state(
             "the stationary covariance is not positive semidefinite (minimum "
             f"eigenvalue {covariance_minimum:.3e})",
             mode=mode,
+            stationary_covariance=covariance,
+            covariance_minimum_eigenvalue=covariance_minimum,
             jacobian=jacobian,
             noise_covariance=noise,
         )
