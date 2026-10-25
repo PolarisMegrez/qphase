@@ -90,8 +90,26 @@ class StochasticAssessmentConfig(BaseModel):
     covariance_tolerance: float = Field(
         default=1e-9,
         ge=0.0,
-        description="Tolerance for covariance PSD and projected-noise checks",
+        description=(
+            "Tolerance of the noise-covariance PSD and projected-noise checks"
+        ),
     )
+    lyapunov_covariance_tolerance: float | None = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "PSD tolerance of the stationary (Lyapunov) covariance. None uses "
+            "covariance_tolerance; setting it separates the state-covariance "
+            "threshold from the noise one, which a study with its own historical "
+            "state tolerance needs"
+        ),
+    )
+
+    def resolved_lyapunov_covariance_tolerance(self) -> float:
+        """Return the state-covariance PSD tolerance this config means."""
+        if self.lyapunov_covariance_tolerance is None:
+            return float(self.covariance_tolerance)
+        return float(self.lyapunov_covariance_tolerance)
     overlap_tolerance: float = Field(
         default=1e-10,
         gt=0.0,
@@ -680,7 +698,10 @@ def assess_stochastic_state(
             **lyapunov_fields,
         )
     minimum_covariance, covariance_spectrum = minimum_eigenvalue(covariance)
-    lyapunov_is_psd = minimum_covariance >= -settings.covariance_tolerance
+    state_tolerance = settings.resolved_lyapunov_covariance_tolerance()
+    method["lyapunov_covariance_tolerance"] = state_tolerance
+    diagnostics["lyapunov_covariance_tolerance"] = state_tolerance
+    lyapunov_is_psd = minimum_covariance >= -state_tolerance
     diagnostics["lyapunov_eigenvalues"] = [
         float(value) for value in covariance_spectrum
     ]

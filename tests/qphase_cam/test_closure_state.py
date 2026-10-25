@@ -410,3 +410,114 @@ def test_a_failed_context_keeps_its_own_verdict():
     )
     assert assessment.status is context.status
     assert assessment.reason == context.reason
+
+
+def test_the_state_covariance_tolerance_is_its_own_setting():
+    """The noise and the stationary covariance have separately resolvable tolerances."""
+    from qphase_cam.validity import StochasticAssessmentConfig
+
+    unified = StochasticAssessmentConfig()
+    assert unified.resolved_lyapunov_covariance_tolerance() == 1.0e-9
+    following_noise = StochasticAssessmentConfig(covariance_tolerance=1.0e-8)
+    assert following_noise.resolved_lyapunov_covariance_tolerance() == 1.0e-8
+    separated = StochasticAssessmentConfig(
+        covariance_tolerance=1.0e-9, lyapunov_covariance_tolerance=1.0e-7
+    )
+    assert separated.resolved_lyapunov_covariance_tolerance() == 1.0e-7
+
+
+def test_the_stationary_psd_threshold_is_applied_and_recorded(monkeypatch):
+    """A marginally negative state covariance passes only under the looser setting."""
+    import qphase_cam.closure as closure
+    import qphase_cam.validity as validity
+    from qphase_cam.validity import StochasticAssessmentConfig
+
+    adapter = _ScalarAdapter()
+    observable = _scalar_observable()
+
+    def fake_lyapunov(jacobian, noise):
+        del jacobian, noise
+        return np.asarray([[-1.0e-8]]), 0.0, "test stub"
+
+    monkeypatch.setattr(validity, "_lyapunov_covariance", fake_lyapunov)
+    monkeypatch.setattr(closure, "_lyapunov_covariance", fake_lyapunov)
+
+    strict = assess_stochastic_state(
+        adapter, observable, state=[X0], params={}, diffusion=DIFFUSION
+    )
+    assert strict.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert strict.lyapunov_is_psd is False
+    assert strict.method["lyapunov_covariance_tolerance"] == 1.0e-9
+
+    loose = assess_stochastic_state(
+        adapter,
+        observable,
+        state=[X0],
+        params={},
+        diffusion=DIFFUSION,
+        config=StochasticAssessmentConfig(lyapunov_covariance_tolerance=1.0e-7),
+    )
+    assert loose.method["lyapunov_covariance_tolerance"] == 1.0e-7
+    assert loose.lyapunov_is_psd is True
+
+    context = closure.closure_state(
+        adapter,
+        state=[X0],
+        params={},
+        diffusion=DIFFUSION,
+        config=closure.ClosureAssessmentConfig(
+            stochastic=StochasticAssessmentConfig(lyapunov_covariance_tolerance=1.0e-7)
+        ),
+    )
+    assert context.status is CAMOutcomeStatus.VALID
+    assert context.method["lyapunov_covariance_tolerance"] == 1.0e-7
+
+    def more_negative(jacobian, noise):
+        del jacobian, noise
+        return np.asarray([[-1.0e-6]]), 0.0, "test stub"
+
+    monkeypatch.setattr(validity, "_lyapunov_covariance", more_negative)
+    monkeypatch.setattr(closure, "_lyapunov_covariance", more_negative)
+    still_bad = assess_stochastic_state(
+        adapter,
+        observable,
+        state=[X0],
+        params={},
+        diffusion=DIFFUSION,
+        config=StochasticAssessmentConfig(lyapunov_covariance_tolerance=1.0e-7),
+    )
+    assert still_bad.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert still_bad.lyapunov_is_psd is False
+
+
+def test_the_loose_state_tolerance_does_not_bypass_the_other_checks(monkeypatch):
+    """The residual and the noise PSD are still enforced under the loose setting."""
+    import qphase_cam.validity as validity
+    from qphase_cam.validity import StochasticAssessmentConfig
+
+    adapter = _ScalarAdapter()
+    observable = _scalar_observable()
+    loose = StochasticAssessmentConfig(lyapunov_covariance_tolerance=1.0e-7)
+
+    def bad_residual(jacobian, noise):
+        del jacobian, noise
+        return np.array([[0.5]]), 1.0e-3, "test stub"
+
+    monkeypatch.setattr(validity, "_lyapunov_covariance", bad_residual)
+    residual = assess_stochastic_state(
+        adapter, observable, state=[X0], params={}, diffusion=DIFFUSION, config=loose
+    )
+    assert residual.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert "Lyapunov" in (residual.reason or "")
+
+    monkeypatch.undo()
+    noise = assess_stochastic_state(
+        adapter,
+        observable,
+        state=[X0],
+        params={},
+        diffusion=np.asarray([[-1.0e-6]]),
+        config=loose,
+    )
+    assert noise.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert "diffusion covariance" in (noise.reason or "")

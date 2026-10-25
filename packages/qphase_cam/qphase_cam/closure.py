@@ -502,7 +502,10 @@ def closure_state(
     diagnostics["covariance_eigenvalues"] = [
         float(value) for value in covariance_spectrum
     ]
-    if covariance_minimum < -settings.stochastic.covariance_tolerance:
+    state_tolerance = settings.stochastic.resolved_lyapunov_covariance_tolerance()
+    method["lyapunov_covariance_tolerance"] = state_tolerance
+    diagnostics["lyapunov_covariance_tolerance"] = state_tolerance
+    if covariance_minimum < -state_tolerance:
         return failed(
             CAMOutcomeStatus.STOCHASTIC_INVALID,
             "the stationary covariance is not positive semidefinite (minimum "
