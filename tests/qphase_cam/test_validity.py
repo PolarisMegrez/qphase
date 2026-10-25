@@ -44,6 +44,7 @@ from qphase_cam.validity import (
     projected_intensity,
     zero_frequency_gain,
 )
+from scipy.linalg import solve_continuous_lyapunov
 
 SCALAR_IDENTITY = ObservableIdentity(
     kind=ObservableKind.STATE,
@@ -327,6 +328,62 @@ def test_a_non_finite_lyapunov_solution_fails_instead_of_looking_large():
     assert assessment.status is CAMOutcomeStatus.STOCHASTIC_INVALID
     assert assessment.lyapunov_solution_finite is False
     assert "not finite" in (assessment.reason or "")
+
+
+def test_a_stable_covariance_is_the_direct_lyapunov_solve():
+    """A stable multivariable system is solved directly, not by least squares.
+
+    The reference is SciPy's Bartels-Stewart solve, symmetrized the same way: the
+    covariance must match it bit for bit, and the equation itself must be satisfied
+    to rounding.
+    """
+    rng = np.random.default_rng(20260904)
+    size = 4
+    raw = rng.normal(size=(size, size))
+    jacobian = raw - (np.max(np.real(np.linalg.eigvals(raw))) + 1.0) * np.eye(size)
+    factor = rng.normal(size=(size, size))
+    diffusion = factor @ factor.T
+    covariance, residual = lyapunov_covariance(jacobian, diffusion)
+    reference = solve_continuous_lyapunov(jacobian, -diffusion)
+    reference = (reference + reference.T) / 2.0
+    np.testing.assert_array_equal(covariance, reference)
+    equation = jacobian @ covariance + covariance @ jacobian.T + diffusion
+    np.testing.assert_allclose(equation, np.zeros_like(equation), atol=1.0e-12)
+    assert residual == pytest.approx(
+        float(np.linalg.norm(equation) / np.linalg.norm(diffusion)), rel=1.0e-12
+    )
+    assert residual < 1.0e-12
+    # A stable system stays a valid assessment, and the report says which solver
+    # produced the covariance.
+    assessment = _scalar_assessment(jacobian=-2.0, diffusion=1.0)
+    assert assessment.method["lyapunov_solver"].startswith("continuous lyapunov")
+    assert assessment.status is CAMOutcomeStatus.VALID
+    assert assessment.lyapunov_relative_residual < 1.0e-12
+
+
+def test_a_singular_spectrum_falls_back_to_the_least_squares_diagnostic():
+    """A singular Jacobian has no direct solve, so the residual reports the fallback."""
+    covariance, residual = lyapunov_covariance(
+        np.asarray([[0.0, 1.0], [0.0, 0.0]]), np.eye(2)
+    )
+    assert np.all(np.isfinite(covariance))
+    assert residual > 1.0e-3
+    assessment = _scalar_assessment(jacobian=0.0)
+    assert assessment.method["lyapunov_solver"].startswith("kronecker")
+    assert assessment.diagnostics["lyapunov_solver"].startswith("kronecker")
+    assert assessment.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+
+
+def test_a_non_finite_lyapunov_input_is_an_error():
+    """A non-finite Jacobian or diffusion is a caller error, not a fallback."""
+    with pytest.raises(ValueError, match="must be finite"):
+        lyapunov_covariance(np.asarray([[np.nan]]), np.asarray([[1.0]]))
+    with pytest.raises(ValueError, match="must be finite"):
+        lyapunov_covariance(np.asarray([[-1.0]]), np.asarray([[np.inf]]))
+    with pytest.raises(ValueError, match="must be square"):
+        lyapunov_covariance(np.zeros((2, 3)), np.zeros((2, 3)))
+    with pytest.raises(ValueError, match="does not match the Jacobian"):
+        lyapunov_covariance(np.eye(2), np.eye(3))
 
 
 def test_the_observable_must_be_evaluable():

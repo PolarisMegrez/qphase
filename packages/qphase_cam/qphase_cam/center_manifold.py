@@ -138,7 +138,10 @@ def center_manifold_correction(
     method: dict[str, Any] = {
         "service": "qphase_cam.center_manifold.center_manifold_correction",
         "stable_basis": "null_space of the critical left eigenvector",
-        "stable_covariance": "continuous Lyapunov solve on the stable basis",
+        "stable_covariance": (
+            "continuous Lyapunov solve on the stable basis (direct Sylvester solve; "
+            "least-squares Kronecker form when the spectrum is singular)"
+        ),
         "drift_correction": "1/2 sum_ij Sigma_s[ij] B(e_i, e_j)",
         "readout_curvature": "median of 1/2 trace(H_s Sigma_s) over the step factors",
     }

@@ -10,7 +10,10 @@ Conventions (stated once, used everywhere):
 
 * ``J`` is the dynamics Jacobian at the state and ``D`` the noise covariance in
   the *same* canonical coordinates, with the Itô convention
-  ``J Σ + Σ Jᵀ + D = 0`` for the stationary covariance ``Σ``.
+  ``J Σ + Σ Jᵀ + D = 0`` for the stationary covariance ``Σ``. A stable ``J`` is
+  solved directly by LAPACK's Bartels-Stewart Sylvester solver, which is the solver
+  the historical centre-manifold probe uses; a singular spectrum falls back to the
+  Kronecker least-squares form and is reported through its residual.
 * The zero-frequency response of an observable with gradient ``g`` is the static
   susceptibility ``gᵀ(-J)⁻¹``; its norm is reported.
 * The integrated noise intensity is the zero-frequency spectrum
@@ -36,6 +39,7 @@ Three rules shape the report:
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -43,6 +47,7 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 from qphase.data import Dataset
+from scipy.linalg import solve_continuous_lyapunov
 
 from .data import build_annotation_product
 from .observable import CAMObservable, DerivativeRecord
@@ -281,13 +286,22 @@ def critical_mode(
     )
 
 
-def lyapunov_covariance(jacobian: Any, diffusion: Any) -> tuple[np.ndarray, float]:
-    """Solve ``J Σ + Σ Jᵀ + D = 0`` and return ``(Σ, relative residual)``.
+def _lyapunov_covariance(
+    jacobian: Any, diffusion: Any
+) -> tuple[np.ndarray, float, str]:
+    """Return ``(Σ, relative residual, solver name)`` of ``J Σ + Σ Jᵀ + D = 0``.
 
-    The solve is a least-squares solve of the Kronecker form, so a singular
-    Jacobian (no stationary covariance) yields a residual instead of an exception
-    or a silently regularised answer. The residual is relative to
-    ``‖D‖``: it is the honest measure of "this equation was not satisfied".
+    A stable Jacobian is solved by LAPACK's Bartels-Stewart Sylvester solver
+    (:func:`scipy.linalg.solve_continuous_lyapunov`). That is the solver the
+    historical centre-manifold probe uses, so the covariance of a stable system is
+    the probe's covariance rather than a second solution of the same equation.
+
+    The Sylvester solver *perturbs the coefficients* when a pair of eigenvalues sums
+    to zero — a singular Jacobian with no stationary covariance — and reports that as
+    a warning; it can also overflow. Neither is a solve, so those cases fall back to
+    the Kronecker least-squares solve, which always answers and whose returned
+    residual then says the equation was not satisfied. The solver name travels with
+    the result so a report can say which one produced it.
     """
     matrix = np.asarray(jacobian, dtype=float)
     noise = np.asarray(diffusion, dtype=float)
@@ -298,14 +312,57 @@ def lyapunov_covariance(jacobian: Any, diffusion: Any) -> tuple[np.ndarray, floa
             f"the diffusion shape {noise.shape} does not match the Jacobian "
             f"shape {matrix.shape}"
         )
+    if not np.all(np.isfinite(matrix)) or not np.all(np.isfinite(noise)):
+        raise ValueError("the Jacobian and the diffusion must be finite")
     size = matrix.shape[0]
-    operator = np.kron(np.eye(size), matrix) + np.kron(matrix, np.eye(size))
-    solution, *_ = np.linalg.lstsq(operator, -noise.reshape(-1), rcond=None)
-    covariance = solution.reshape(size, size)
-    covariance = (covariance + covariance.T) / 2.0
-    residual = operator @ covariance.reshape(-1) + noise.reshape(-1)
+    solution: np.ndarray | None = None
+    solver = "continuous lyapunov (LAPACK trsyl)"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", RuntimeWarning)
+        with np.errstate(over="ignore", invalid="ignore"):
+            try:
+                solution = np.asarray(
+                    solve_continuous_lyapunov(matrix, -noise), dtype=float
+                )
+            except (ValueError, np.linalg.LinAlgError):
+                solution = None
+    if solution is not None and caught:
+        # The one warning this solver raises is that it perturbed the coefficients;
+        # its answer is then a solve of a nearby problem, not of this one.
+        solution = None
+    if solution is None or not np.all(np.isfinite(solution)):
+        operator = np.kron(np.eye(size), matrix) + np.kron(matrix, np.eye(size))
+        solution, *_ = np.linalg.lstsq(operator, -noise.reshape(-1), rcond=None)
+        solution = solution.reshape(size, size)
+        solver = "kronecker least squares (singular spectrum fallback)"
+    covariance = (solution + solution.T) / 2.0
+    # The residual is the equation itself, evaluated on the closed-form matrix: no
+    # Kronecker operator is involved, so it measures the answer rather than the
+    # solver's internal scaling.
+    equation = matrix @ covariance + covariance @ matrix.T + noise
     scale = float(np.linalg.norm(noise))
-    relative = float(np.linalg.norm(residual) / scale) if scale > 0.0 else np.inf
+    relative = float(np.linalg.norm(equation) / scale) if scale > 0.0 else np.inf
+    return covariance, relative, solver
+
+
+def lyapunov_covariance(jacobian: Any, diffusion: Any) -> tuple[np.ndarray, float]:
+    """Solve ``J Σ + Σ Jᵀ + D = 0`` and return ``(Σ, relative residual)``.
+
+    A stable Jacobian is solved directly (:func:`_lyapunov_covariance`), so the
+    covariance is the one the historical probe reports. A singular Jacobian has no
+    stationary covariance; the solve then falls back to the least-squares Kronecker
+    form, which yields a residual instead of an exception or a silently regularised
+    answer. The residual is relative to ``‖D‖``: it is the honest measure of "this
+    equation was not satisfied" and is never clamped.
+
+    Raises
+    ------
+    ValueError
+        If the Jacobian is not square, the diffusion has a different shape, or either
+        is not finite.
+
+    """
+    covariance, relative, _ = _lyapunov_covariance(jacobian, diffusion)
     return covariance, relative
 
 
@@ -528,10 +585,12 @@ def assess_stochastic_state(
             **noise_fields,
         )
 
-    covariance, residual = lyapunov_covariance(jacobian, covariance_of_noise)
+    covariance, residual, solver = _lyapunov_covariance(jacobian, covariance_of_noise)
     solution_finite = bool(np.all(np.isfinite(covariance)))
+    method["lyapunov_solver"] = solver
     diagnostics["lyapunov_covariance"] = covariance.tolist()
     diagnostics["lyapunov_relative_residual"] = residual
+    diagnostics["lyapunov_solver"] = solver
     lyapunov_fields: dict[str, Any] = {
         "lyapunov_solution_finite": solution_finite,
         "lyapunov_relative_residual": residual,
