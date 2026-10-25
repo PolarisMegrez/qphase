@@ -43,7 +43,6 @@ the kernel never guesses which correction the caller wants.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -68,6 +67,7 @@ from .validity import (
 
 __all__ = [
     "DEFAULT_MANIFOLD_ORDERS",
+    "ScalarGeneratorEvaluation",
     "NonlinearManifold",
     "NonlinearManifoldConfig",
     "OuIntensities",
@@ -81,6 +81,7 @@ __all__ = [
     "ou_intensities",
     "reconstructed_intensity",
     "response_prediction",
+    "evaluate_generator",
     "scalar_reconstruction",
     "slow_manifold",
 ]
@@ -262,6 +263,142 @@ class ScalarReconstruction(BaseModel):
     manifold: NonlinearManifold
     method: dict[str, Any] = Field(default_factory=dict)
     diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScalarGeneratorEvaluation(BaseModel):
+    """The stationary scalar problem of one generator table, evaluated.
+
+    ``density`` is the normalized stationary density on ``x`` (the table's own grid);
+    ``normalizable`` is false when the raw density integral is not finite and
+    positive, in which case the density is returned unnormalized and every derived
+    number is ``None``. ``stationary_mean`` is the readout mean and
+    ``stationary_mean_x`` the mean of ``x`` itself; ``stationary_response`` and
+    ``path_information_rate`` need a forcing vector and stay ``None`` without one.
+
+    ``core_point_count`` counts the grid points whose density is above the core floor
+    (the points the intensity integrand uses), ``edge_point_count`` the points of each
+    edge window the edge mass is integrated over.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    x: tuple[float, ...]
+    density: tuple[float, ...]
+    density_normalization: float
+    normalizable: bool
+    stationary_mean: float | None = None
+    stationary_mean_x: float | None = None
+    stationary_response: float | None = None
+    path_information_rate: float | None = None
+    scalar_intensity: float | None = None
+    edge_mass_fraction: float | None = None
+    endpoint_density_ratio: float | None = None
+    minimum_projected_diffusion: float
+    core_point_count: int = 0
+    edge_point_count: int = 0
+
+
+def evaluate_generator(
+    table: ScalarGeneratorTable,
+    *,
+    forcing: Any | None = None,
+    config: ScalarReconstructionConfig | None = None,
+) -> ScalarGeneratorEvaluation:
+    """Evaluate the stationary scalar problem of one generator table.
+
+    The algorithm is the reconstruction's own, line for line: the density is
+    ``pi ~ exp(int 2f/q) / q`` clipped at ``log_density_floor`` and normalized; the
+    intensity is ``4 (int (omega - mean) pi)^2 / (q pi)`` summed over the points
+    whose density is above ``density_floor_relative`` times the peak; the edge mass
+    is the density integrated over ``edge_fraction`` of the grid at both ends and the
+    endpoint ratio compares the larger edge density with the peak. With ``forcing``
+    the path-information rate ``int forcing^2 pi / q`` and the stationary response
+    ``int (omega - mean) score pi`` with ``score = int 2 forcing / q`` are added; the
+    forcing is the caller's, because it comes from the model's parameter Jacobian.
+
+    This is a pure evaluation of a table: it never decides whether the manifold is
+    confining or whether the physical region is bounded. Those verdicts belong to the
+    caller, which is why a non-normalizable density is reported through
+    ``normalizable`` instead of raising.
+    """
+    settings = config or ScalarReconstructionConfig()
+    x = np.asarray(table.x, dtype=float)
+    f = np.asarray(table.drift, dtype=float)
+    q = np.asarray(table.diffusion, dtype=float)
+    omega = np.asarray(table.readout, dtype=float)
+    potential = cumulative_trapezoid(2.0 * f / q, x, initial=0.0)
+    log_density = potential - np.log(q)
+    log_density -= float(np.max(log_density))
+    density = np.exp(np.clip(log_density, settings.log_density_floor, 0.0))
+    normalization = float(np.trapezoid(density, x))
+    minimum_diffusion = float(np.min(q))
+    if not np.isfinite(normalization) or normalization <= 0.0:
+        return ScalarGeneratorEvaluation(
+            x=tuple(float(value) for value in x),
+            density=tuple(float(value) for value in density),
+            density_normalization=normalization,
+            normalizable=False,
+            minimum_projected_diffusion=minimum_diffusion,
+        )
+    density = density / normalization
+    path_information: float | None = None
+    stationary_score: np.ndarray | None = None
+    if forcing is not None:
+        force = np.asarray(forcing, dtype=float).reshape(-1)
+        if force.size != x.size:
+            raise ValueError(
+                f"the forcing vector has {force.size} values for {x.size} x points"
+            )
+        path_information = float(np.trapezoid(force**2 * density / q, x))
+        stationary_score = cumulative_trapezoid(2.0 * force / q, x, initial=0.0)
+    stationary_mean = float(np.trapezoid(omega * density, x))
+    stationary_mean_x = float(np.trapezoid(x * density, x))
+    centered = omega - stationary_mean
+    stationary_response: float | None = None
+    if stationary_score is not None:
+        response = float(np.trapezoid(centered * stationary_score * density, x))
+        stationary_response = response if np.isfinite(response) else None
+    weighted = centered * density
+    h_left = cumulative_trapezoid(weighted, x, initial=0.0)
+    h_right = -cumulative_trapezoid(weighted[::-1], x[::-1], initial=0.0)[::-1]
+    # The integral switches from the left to the right antiderivative at x = 0, which
+    # is the split of the two half grids the reconstruction builds.
+    zero_index = int(np.searchsorted(x, 0.0, side="right")) - 1
+    integrated = np.where(np.arange(x.size) <= zero_index, h_left, h_right)
+    floor = float(np.max(density)) * settings.density_floor_relative
+    core = density >= floor
+    integrand = np.zeros_like(x)
+    integrand[core] = 4.0 * integrated[core] ** 2 / (q[core] * density[core])
+    intensity = float(np.trapezoid(integrand, x))
+    count = x.size
+    edge_count = max(1, int(settings.edge_fraction * count))
+    edge_mass = float(
+        np.trapezoid(density[:edge_count], x[:edge_count])
+        + np.trapezoid(density[-edge_count:], x[-edge_count:])
+    )
+    endpoint_ratio = float(
+        max(density[0], density[-1]) / max(float(np.max(density)), 1.0e-300)
+    )
+    return ScalarGeneratorEvaluation(
+        x=tuple(float(value) for value in x),
+        density=tuple(float(value) for value in density),
+        density_normalization=normalization,
+        normalizable=True,
+        stationary_mean=stationary_mean,
+        stationary_mean_x=stationary_mean_x,
+        stationary_response=stationary_response,
+        path_information_rate=(
+            path_information
+            if path_information is not None and np.isfinite(path_information)
+            else None
+        ),
+        scalar_intensity=intensity,
+        edge_mass_fraction=edge_mass,
+        endpoint_density_ratio=endpoint_ratio,
+        minimum_projected_diffusion=minimum_diffusion,
+        core_point_count=int(np.count_nonzero(core)),
+        edge_point_count=edge_count,
+    )
 
 
 class OuIntensities(BaseModel):
@@ -760,22 +897,7 @@ def scalar_reconstruction(
             updates=domain,
         )
     domain = {**domain, "generator_table": table}
-    potential = cumulative_trapezoid(2.0 * f / q, x, initial=0.0)
-    log_density = potential - np.log(q)
-    log_density -= float(np.max(log_density))
-    density = np.exp(np.clip(log_density, settings.log_density_floor, 0.0))
-    normalization = float(np.trapezoid(density, x))
-    diagnostics["density_normalization_raw"] = normalization
-    if not np.isfinite(normalization) or normalization <= 0.0:
-        return report(
-            CAMOutcomeStatus.STOCHASTIC_INVALID,
-            f"the stationary density does not normalize (integral {normalization!r})",
-            code=FAILURE_NOT_NORMALIZABLE,
-            updates=domain,
-        )
-    density = density / normalization
-    path_information = math.nan
-    stationary_score = None
+    forcing: np.ndarray | None = None
     if parameter_direction is not None:
         direction = np.asarray(parameter_direction, dtype=float).reshape(-1)
         forcing = np.empty(x.size)
@@ -784,50 +906,30 @@ def scalar_reconstruction(
                 adapter.parameter_jacobian(vectors[index], parameter_map), dtype=float
             )
             forcing[index] = float(left @ (jacobian @ direction))
-        path_information = float(np.trapezoid(forcing**2 * density / q, x))
-        stationary_score = cumulative_trapezoid(2.0 * forcing / q, x, initial=0.0)
-    stationary_mean = float(np.trapezoid(omega * density, x))
-    centered = omega - stationary_mean
-    stationary_response = (
-        float(np.trapezoid(centered * stationary_score * density, x))
-        if stationary_score is not None
-        else math.nan
-    )
-    weighted = centered * density
-    h_left = cumulative_trapezoid(weighted, x, initial=0.0)
-    h_right = -cumulative_trapezoid(weighted[::-1], x[::-1], initial=0.0)[::-1]
-    zero_index = left_grid.size - 1
-    integrated = np.where(np.arange(x.size) <= zero_index, h_left, h_right)
-    floor = float(np.max(density)) * settings.density_floor_relative
-    core = density >= floor
-    integrand = np.zeros_like(x)
-    integrand[core] = 4.0 * integrated[core] ** 2 / (q[core] * density[core])
-    intensity = float(np.trapezoid(integrand, x))
-    count = x.size
-    edge_count = max(1, int(settings.edge_fraction * count))
-    edge_mass = float(
-        np.trapezoid(density[:edge_count], x[:edge_count])
-        + np.trapezoid(density[-edge_count:], x[-edge_count:])
-    )
-    endpoint_ratio = float(
-        max(density[0], density[-1]) / max(float(np.max(density)), 1.0e-300)
-    )
+    # One evaluation owns the density and every fraction derived from it; the
+    # verdicts below stay the reconstruction's own.
+    evaluation = evaluate_generator(table, forcing=forcing, config=settings)
+    diagnostics["density_normalization_raw"] = evaluation.density_normalization
+    diagnostics["core_point_count"] = evaluation.core_point_count
+    diagnostics["edge_point_count"] = evaluation.edge_point_count
+    if not evaluation.normalizable:
+        return report(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "the stationary density does not normalize (integral "
+            f"{evaluation.density_normalization!r})",
+            code=FAILURE_NOT_NORMALIZABLE,
+            updates=domain,
+        )
     fractions = {
-        "scalar_intensity": intensity,
-        "stationary_mean": stationary_mean,
-        "stationary_response": (
-            None if not np.isfinite(stationary_response) else stationary_response
-        ),
-        "path_information_rate": (
-            None if not np.isfinite(path_information) else path_information
-        ),
-        "minimum_projected_diffusion": float(np.min(q)),
-        "endpoint_density_ratio": endpoint_ratio,
-        "edge_mass_fraction": edge_mass,
-        "density_normalization": normalization,
+        "scalar_intensity": evaluation.scalar_intensity,
+        "stationary_mean": evaluation.stationary_mean,
+        "stationary_response": evaluation.stationary_response,
+        "path_information_rate": evaluation.path_information_rate,
+        "minimum_projected_diffusion": evaluation.minimum_projected_diffusion,
+        "endpoint_density_ratio": evaluation.endpoint_density_ratio,
+        "edge_mass_fraction": evaluation.edge_mass_fraction,
+        "density_normalization": evaluation.density_normalization,
     }
-    diagnostics["core_point_count"] = int(np.count_nonzero(core))
-    diagnostics["edge_point_count"] = edge_count
     confining = resolved_manifold.confining
     bounded = bool(negative_physical and positive_physical)
     if not confining:

@@ -20,7 +20,9 @@ from qphase_cam.nonlinear import (
     DEFAULT_MANIFOLD_ORDERS,
     NonlinearManifold,
     NonlinearManifoldConfig,
+    ScalarGeneratorTable,
     ScalarReconstructionConfig,
+    evaluate_generator,
     manifold_drift,
     manifold_embedding,
     ou_intensities,
@@ -318,6 +320,119 @@ def test_a_confining_manifold_with_a_bounded_domain_is_valid():
         value = getattr(reconstruction, name)
         assert value is not None and np.isfinite(value), name
     assert reconstruction.edge_mass_fraction < 1.0
+
+
+def _confining_table(points: int = 201) -> ScalarGeneratorTable:
+    """Return a symmetric confining table: f = -x, q = 1, omega = x."""
+    x = np.linspace(-3.0, 3.0, 2 * points - 1)
+    return ScalarGeneratorTable(
+        x=tuple(float(value) for value in x),
+        drift=tuple(float(-value) for value in x),
+        diffusion=tuple(1.0 for _ in x),
+        readout=tuple(float(value) for value in x),
+    )
+
+
+def test_the_generator_evaluation_reproduces_the_reconstruction_numbers():
+    """The exported evaluation is the reconstruction's own arithmetic."""
+    manifold = _confining_manifold()
+    reconstruction = scalar_reconstruction(
+        _QuadraticAdapter(),
+        _BoundedModel(),
+        _observable(),
+        state=[X0],
+        params={},
+        order=3,
+        manifold=manifold,
+        config=ScalarReconstructionConfig(grid_points=51),
+    )
+    table = reconstruction.generator_table
+    assert table is not None
+    evaluation = evaluate_generator(
+        table, config=ScalarReconstructionConfig(grid_points=51)
+    )
+    assert evaluation.normalizable
+    assert evaluation.scalar_intensity == reconstruction.scalar_intensity
+    assert evaluation.stationary_mean == reconstruction.stationary_mean
+    assert evaluation.density_normalization == reconstruction.density_normalization
+    assert evaluation.edge_mass_fraction == reconstruction.edge_mass_fraction
+    assert evaluation.endpoint_density_ratio == reconstruction.endpoint_density_ratio
+    assert (
+        evaluation.minimum_projected_diffusion
+        == reconstruction.minimum_projected_diffusion
+    )
+    assert evaluation.core_point_count == reconstruction.diagnostics["core_point_count"]
+    assert evaluation.edge_point_count == reconstruction.diagnostics["edge_point_count"]
+    # No forcing: the two forced numbers stay unavailable instead of being faked.
+    assert evaluation.path_information_rate is None
+    assert evaluation.stationary_response is None
+    assert evaluation.stationary_mean_x is not None
+    assert len(evaluation.density) == len(table.x)
+
+
+def test_the_generator_evaluation_scales_with_the_forcing():
+    table = _confining_table()
+    forcing = np.asarray(table.x, dtype=float)
+    doubled = evaluate_generator(table, forcing=2.0 * forcing)
+    single = evaluate_generator(table, forcing=forcing)
+    # The forcing enters quadratically, and the stationary response scales linearly
+    # with the stationary score.
+    assert doubled.path_information_rate == pytest.approx(
+        4.0 * single.path_information_rate, rel=1e-12
+    )
+    assert doubled.stationary_response == pytest.approx(
+        2.0 * single.stationary_response, rel=1e-12
+    )
+    with pytest.raises(ValueError, match="forcing vector has"):
+        evaluate_generator(table, forcing=np.ones(3))
+
+
+def test_grid_points_is_the_point_count_per_side():
+    """``grid_points`` counts one side, so the table holds ``2 n - 1`` points."""
+    manifold = _confining_manifold()
+    reconstruction = scalar_reconstruction(
+        _QuadraticAdapter(),
+        _BoundedModel(),
+        _observable(),
+        state=[X0],
+        params={},
+        order=3,
+        manifold=manifold,
+        config=ScalarReconstructionConfig(grid_points=31),
+    )
+    table = reconstruction.generator_table
+    assert table is not None
+    assert len(table.x) == 2 * 31 - 1
+    assert reconstruction.grid_points == 2 * 31 - 1
+
+
+def test_a_density_that_does_not_normalize_is_reported_not_raised():
+    """A table whose density integral is not finite reports it instead of raising."""
+    points = 51
+    x = np.linspace(-1.0, 1.0, 2 * points - 1)
+    # A flat drift gives a flat density, which normalizes.
+    flat = ScalarGeneratorTable(
+        x=tuple(float(value) for value in x),
+        drift=tuple(0.0 for _ in x),
+        diffusion=tuple(1.0 for _ in x),
+        readout=tuple(0.0 for _ in x),
+    )
+    assert evaluate_generator(flat).normalizable
+    # A drift large enough to overflow the potential leaves no normalization.
+    steep = ScalarGeneratorTable(
+        x=tuple(float(value) for value in x),
+        drift=tuple(1.0e308 * float(value) for value in x),
+        diffusion=tuple(1.0 for _ in x),
+        readout=tuple(0.0 for _ in x),
+    )
+    with np.errstate(over="ignore", invalid="ignore"):
+        empty = evaluate_generator(steep)
+    assert empty.normalizable is False
+    assert empty.scalar_intensity is None
+    assert empty.stationary_mean is None
+    assert empty.stationary_mean_x is None
+    assert empty.path_information_rate is None
+    assert empty.stationary_response is None
 
 
 def test_the_generator_table_carries_the_reconstruction_coefficients():
