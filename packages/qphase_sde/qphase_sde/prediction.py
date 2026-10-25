@@ -23,12 +23,12 @@ The service is deliberately small and ordinary:
   ``prediction_id`` are unchanged by the call and by persisting the result.
 
 Tolerance convention (recorded in the product attributes): with
-``scale = max(|expected|, |observed|)``, ``absolute_deviation = |observed - expected|``,
-``relative_deviation = absolute_deviation / scale`` (0 when ``scale == 0``) and
-``effective_tolerance = max(absolute_tolerance, relative_tolerance * scale)``, a row
-is valid exactly when ``relative_deviation <= effective_tolerance``. The relative
-deviation is computed from the same scale as the tolerance, so no division by zero
-and no NaN can enter the table.
+``scale = max(|expected|, |observed|)``, ``absolute_deviation = |observed - expected|``
+and ``effective_tolerance = max(absolute_tolerance, relative_tolerance * scale)``, a row
+is valid exactly when ``absolute_deviation <= effective_tolerance``. The comparison is
+in the observable's own units on both sides; ``relative_deviation = absolute_deviation /
+scale`` (0 when ``scale == 0``) is reported as a dimensionless diagnostic only and is
+never compared with a tolerance. No division by zero and no NaN can enter the table.
 
 The returned bundle carries the validation table as its only product, keeps the
 observation's :class:`~qphase_sde.contracts.bundle.SDEProvenance` unchanged, states
@@ -43,7 +43,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 from qphase.core.utils import canonical_json
 from qphase.data import (
     ArtifactManifest,
@@ -94,11 +94,11 @@ _SCAN_AXIS = "scan"
 
 #: Deviation and tolerance semantics, recorded on the product.
 _TOLERANCE_SEMANTICS = (
-    "scale = max(|expected|, |observed|); absolute_deviation = |observed - "
-    "expected|; relative_deviation = absolute_deviation / scale (0 when scale is 0); "
+    "scale = max(|expected|, |observed|); absolute_deviation = |observed - expected|; "
     "effective_tolerance = max(absolute_tolerance, relative_tolerance * scale); a row "
-    "is valid when relative_deviation <= effective_tolerance and "
-    "threshold_rejected otherwise"
+    "is valid when absolute_deviation <= effective_tolerance and threshold_rejected "
+    "otherwise; relative_deviation = absolute_deviation / scale (0 when scale is 0) is "
+    "a dimensionless diagnostic and is never compared with a tolerance"
 )
 
 _SELECTION_SEMANTICS = (
@@ -128,8 +128,8 @@ class PredictionComparison(BaseModel):
     observed_field: str = Field(min_length=1)
     absolute_tolerance: float = Field(ge=0.0, allow_inf_nan=False)
     relative_tolerance: float = Field(ge=0.0, allow_inf_nan=False)
-    scan_index: int | tuple[int, ...] | None = None
-    selection: Mapping[str, int] = Field(default_factory=dict)
+    scan_index: StrictInt | tuple[StrictInt, ...] | None = None
+    selection: Mapping[str, StrictInt] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _check_selection(self) -> PredictionComparison:
@@ -173,18 +173,28 @@ def validate_prediction(
     observation: SDEDataBundle,
     comparisons: Sequence[PredictionComparison],
     *,
+    prediction_label: str = "prediction",
     product_label: str = "prediction_validation",
 ) -> SDEDataBundle:
     """Validate the selected prediction rows against one restored observation.
 
     ``prediction`` is the restored CAM prediction table, ``manifest`` the artifact
     manifest that table was published under, ``observation`` the restored SDE
-    observation and ``comparisons`` the explicit comparisons to run. The result is a
-    bundle holding one ``prediction_validation`` product; it states no artifact id of
-    its own and names both inputs in its parent chain.
+    observation and ``comparisons`` the explicit comparisons to run.
+    ``prediction_label`` is the product name the prediction artifact publishes (the
+    manifest must hold that entry with exactly this schema). The result is a bundle
+    holding one ``prediction_validation`` product; it states no artifact id of its own
+    and names both inputs in its parent chain.
     """
+    if not isinstance(observation, SDEDataBundle):
+        raise TypeError(
+            "the observation must be a restored SDEDataBundle; got "
+            f"{type(observation).__name__}"
+        )
     rows = _prediction_rows(prediction)
-    prediction_artifact_id = _prediction_artifact_id(prediction, manifest)
+    prediction_artifact_id = _prediction_artifact_id(
+        prediction, manifest, label=prediction_label
+    )
     observation_artifact_id = _observation_artifact_id(observation)
     provenance = observation.provenance
     if not isinstance(provenance, SDEProvenance):
@@ -287,12 +297,40 @@ def _prediction_rows(prediction: Dataset) -> dict[str, int]:
 
 
 def _prediction_artifact_id(
-    prediction: Dataset, manifest: ArtifactManifest
+    prediction: Dataset, manifest: ArtifactManifest, *, label: str
 ) -> str:
-    """Return the prediction artifact id, refusing an inconsistent manifest."""
+    """Return the prediction artifact id, proving the manifest published it.
+
+    A manifest is evidence only if it lists this product under the requested name
+    with exactly this schema; an id match alone would accept a foreign or forged
+    manifest.
+    """
     published = str(manifest.artifact_id or "").strip()
     if not published:
         raise ValueError("the prediction manifest carries no artifact id")
+    if not manifest.products:
+        raise ValueError(
+            f"the manifest {published!r} lists no products; it cannot have published "
+            "the prediction table"
+        )
+    available = {entry.name: entry for entry in manifest.products}
+    entry = available.get(label)
+    if entry is None:
+        raise ValueError(
+            f"the manifest {published!r} publishes no product {label!r}; available: "
+            f"{sorted(available)}"
+        )
+    if entry.product_schema != prediction.schema:
+        raise ValueError(
+            f"the manifest product {label!r} does not match the restored prediction "
+            "schema; the dataset and the manifest describe different products"
+        )
+    stated = prediction.provenance.get("product")
+    if stated is not None and str(stated) != label:
+        raise ValueError(
+            f"the dataset provenance names product {str(stated)!r} but the manifest "
+            f"entry read is {label!r}"
+        )
     declared = prediction.provenance.get("artifact_id")
     if declared is not None and str(declared) != published:
         raise ValueError(
@@ -404,7 +442,9 @@ def _compare(
         request.absolute_tolerance, request.relative_tolerance * scale
     )
     verdict: PredictionValidationStatus = (
-        "valid" if relative_deviation <= effective_tolerance else "threshold_rejected"
+        "valid"
+        if absolute_deviation <= effective_tolerance
+        else "threshold_rejected"
     )
     return {
         "prediction_id": request.prediction_id,
@@ -452,12 +492,17 @@ def _observed_scalar(
             f"observed field {request.observed_field!r} is not numeric "
             f"(dtype {variable.dtype})"
         )
-    array = np.asarray(product.handle(request.observed_field).materialize())
-    if array.ndim != len(variable.dims):
-        raise ValueError(
-            f"observed field {request.observed_field!r} declares {len(variable.dims)} "
-            f"dimensions {list(variable.dims)} but materializes {array.ndim}"
-        )
+    # The declared dims and axis sizes are enough to place the read: nothing is
+    # loaded until the point selection below asks the storage layer for it.
+    extents: dict[str, int] = {}
+    for dim in variable.dims:
+        size = product.axis(dim).size
+        if size is None:
+            raise ValueError(
+                f"observed field {request.observed_field!r} spans axis {dim!r} whose "
+                "size is not declared; the product cannot be point-selected"
+            )
+        extents[dim] = int(size)
     scan_shape = tuple(int(value) for value in observation.shape)
     if scan_index:
         if not scan_shape:
@@ -495,10 +540,10 @@ def _observed_scalar(
     else:
         flat_scan = 0
     selection = dict(request.selection_items())
-    chosen: list[int] = []
+    chosen: dict[str, int] = {}
     coordinates: dict[str, Any] = {}
-    for position, dim in enumerate(variable.dims):
-        extent = int(array.shape[position])
+    for dim in variable.dims:
+        extent = extents[dim]
         if dim == _SCAN_AXIS:
             if not scan_index and extent > 1:
                 raise ValueError(
@@ -515,7 +560,7 @@ def _observed_scalar(
                     f"scan_index {scan_index} is out of bounds for the observed "
                     f"field scan dimension of extent {extent}"
                 )
-            chosen.append(flat_scan)
+            chosen[dim] = flat_scan
             # The scan placement is already carried by scan_index and the scan
             # coordinates; the selection column records only the axes chosen here.
             continue
@@ -526,11 +571,11 @@ def _observed_scalar(
                     f"selection index for {dim!r} is {index}, out of bounds for "
                     f"extent {extent}"
                 )
-            chosen.append(index)
+            chosen[dim] = index
             coordinates[dim] = index
             continue
         if extent == 1:
-            chosen.append(0)
+            chosen[dim] = 0
             coordinates[dim] = 0
             continue
         raise ValueError(
@@ -542,13 +587,25 @@ def _observed_scalar(
             f"selection names axes the observed field does not have: "
             f"{sorted(selection)}; its axes are {list(variable.dims)}"
         )
-    value = array[tuple(chosen)]
-    if np.asarray(value).ndim != 0:
+    # Point-select through the existing dataset view: the point selection asks the
+    # storage handles for the touched chunks only (`materialize_selection`), so a
+    # point of a large spectral product never loads the whole field.
+    point = product.materialize().point_view(**chosen)
+    scalar_variable = point.variable(request.observed_field)
+    if scalar_variable.dims:
+        raise ValueError(
+            f"observed field {request.observed_field!r} still spans "
+            f"{list(scalar_variable.dims)} after the point selection; its declared "
+            "dims do not match the stored payload"
+        )
+    selected = np.asarray(point.handle(request.observed_field).materialize())
+    if selected.ndim != 0:
         raise ValueError(
             f"observed field {request.observed_field!r} does not resolve to a "
-            "scalar at the requested indices"
+            "scalar at the requested indices (materialized shape "
+            f"{tuple(selected.shape)})"
         )
-    number = float(value)
+    number = float(selected)
     if not np.isfinite(number):
         raise ValueError(
             f"observed field {request.observed_field!r} is not finite at the "

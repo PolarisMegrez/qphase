@@ -348,6 +348,258 @@ def test_the_remaining_axes_are_selected_explicitly(tmp_path):
 # --- input rejection -------------------------------------------------------
 
 
+def test_the_verdict_compares_the_absolute_deviation_with_the_tolerance(tmp_path):
+    """The comparison is in observable units: absolute deviation, not a ratio."""
+    prediction, manifest = _saved_prediction(tmp_path)
+
+    def verdict(observed: float, **overrides) -> tuple[str, dict]:
+        tag = abs(hash((observed, tuple(sorted(overrides.items()))))) % 10**20
+        obs = _saved_observation(
+            tmp_path / f"obs-{tag}",
+            products={"spectrum": _spectrum([[observed, 9.0], [3.0, 4.0]])},
+            artifact_id=f"{tag:032d}",
+        )
+        result = validate_prediction(
+            prediction, manifest, obs, [_comparison(**overrides)]
+        )
+        rows = _rows(result)
+        return str(rows["status"][0]), {
+            "expected": float(rows["expected"][0]),
+            "observed": float(rows["observed"][0]),
+            "absolute_deviation": float(rows["absolute_deviation"][0]),
+            "relative_deviation": float(rows["relative_deviation"][0]),
+            "effective_tolerance": float(rows["effective_tolerance"][0]),
+        }
+
+    # expected 2.0 vs observed 2.1: absolute deviation 0.1 exceeds atol 0.05 even
+    # though the dimensionless relative deviation (0.0476) is below 0.05.
+    status, numbers = verdict(2.1, absolute_tolerance=0.05, relative_tolerance=0.0)
+    assert status == "threshold_rejected"
+    assert numbers["absolute_deviation"] == pytest.approx(0.1)
+    assert numbers["relative_deviation"] == pytest.approx(0.1 / 2.1)
+    assert numbers["effective_tolerance"] == pytest.approx(0.05)
+
+    # A relative-only tolerance scales with max(|expected|, |observed|).
+    status, numbers = verdict(2.1, absolute_tolerance=0.0, relative_tolerance=0.05)
+    assert status == "valid"
+    assert numbers["effective_tolerance"] == pytest.approx(0.105)
+
+    # Exact boundary: equality passes.
+    status, _ = verdict(2.05, absolute_tolerance=0.05, relative_tolerance=0.0)
+    assert status == "valid"
+
+    # A large-scale pair with a tiny relative deviation still needs absolute room.
+    large_prediction, large_manifest = _saved_prediction(
+        tmp_path / "large",
+        [
+            _prediction(
+                expected_frequency_response_full=1000.0,
+                allan_intensity_reconstructed=0.5,
+                full_information_rate=8.0,
+            )
+        ],
+        artifact_id="aa00000000000000000000000000000000",
+    )
+    large_observation = _saved_observation(
+        tmp_path / "large-obs",
+        products={"spectrum": _spectrum([[1001.0, 9.0], [3.0, 4.0]])},
+        artifact_id="bb00000000000000000000000000000000",
+    )
+    result = validate_prediction(
+        large_prediction,
+        large_manifest,
+        large_observation,
+        [
+            _comparison(
+                absolute_tolerance=0.5,
+                relative_tolerance=0.0001,
+                selection={"channel": 0},
+            )
+        ],
+    )
+    rows = _rows(result)
+    assert float(rows["absolute_deviation"][0]) == pytest.approx(1.0)
+    assert float(rows["effective_tolerance"][0]) == pytest.approx(0.5)
+    assert list(rows["status"]) == ["threshold_rejected"]
+
+    # Zero expected and observed is exactly valid, and no NaN enters the table.
+    zero_prediction, zero_manifest = _saved_prediction(
+        tmp_path / "zero",
+        [
+            _prediction(
+                expected_frequency_response_full=0.0,
+                allan_intensity_reconstructed=0.5,
+                full_information_rate=8.0,
+            )
+        ],
+        artifact_id="cc00000000000000000000000000000000",
+    )
+    zero_observation = _saved_observation(
+        tmp_path / "zero-obs",
+        products={"spectrum": _spectrum([[0.0, 9.0], [3.0, 4.0]])},
+        artifact_id="dd00000000000000000000000000000000",
+    )
+    result = validate_prediction(
+        zero_prediction,
+        zero_manifest,
+        zero_observation,
+        [
+            _comparison(
+                absolute_tolerance=0.0,
+                relative_tolerance=0.0,
+                selection={"channel": 0},
+            )
+        ],
+    )
+    rows = _rows(result)
+    assert float(rows["relative_deviation"][0]) == 0.0
+    assert list(rows["status"]) == ["valid"]
+
+
+def test_the_manifest_must_actually_publish_the_prediction(tmp_path):
+    prediction, manifest = _saved_prediction(tmp_path)
+    observation = _saved_observation(tmp_path)
+    with pytest.raises(ValueError, match="lists no products"):
+        validate_prediction(
+            prediction,
+            manifest.model_copy(update={"products": []}),
+            observation,
+            [_comparison()],
+        )
+    # The observation's manifest is real, but it did not publish this product.
+    with pytest.raises(ValueError, match="publishes no product"):
+        validate_prediction(
+            prediction,
+            ArtifactManifest.read(
+                tmp_path / f"observation-{OBSERVATION_ARTIFACT}-single"
+            ),
+            observation,
+            [_comparison()],
+        )
+    # A manifest entry with another schema is not proof either.
+    wider, wider_manifest = _saved_prediction(
+        tmp_path / "wider",
+        [_prediction(), _prediction("cam:prediction:two")],
+        artifact_id="ee00000000000000000000000000000000",
+    )
+    assert wider.axis("prediction").size == 2
+    with pytest.raises(ValueError, match="does not match the restored prediction"):
+        validate_prediction(wider, manifest, observation, [_comparison()])
+    assert wider_manifest.parents == [PREDICTION_ANCESTOR]
+    # The other manifest does publish a product named "prediction", but not this one.
+    with pytest.raises(ValueError, match="does not match the restored prediction"):
+        validate_prediction(prediction, wider_manifest, observation, [_comparison()])
+
+
+def test_a_prediction_published_under_another_label_is_explicit(tmp_path):
+    from qphase.data import save_products
+
+    directory = tmp_path / "labeled"
+    directory.mkdir()
+    product = build_prediction_product(
+        [_prediction()], provenance={"artifact_id": "ff000000000000000000000000000000"}
+    )
+    save_products(
+        directory,
+        {"cam_prediction": product},
+        provenance={"artifact_id": "ff000000000000000000000000000000"},
+        artifact_id="ff000000000000000000000000000000",
+        layout="single",
+    )
+    manifest = ArtifactManifest.read(directory)
+    restored = load_bundle(directory).require("cam_prediction")
+    observation = _saved_observation(tmp_path)
+    with pytest.raises(ValueError, match="publishes no product 'prediction'"):
+        validate_prediction(restored, manifest, observation, [_comparison()])
+    result = validate_prediction(
+        restored,
+        manifest,
+        observation,
+        [_comparison()],
+        prediction_label="cam_prediction",
+    )
+    assert list(_rows(result)["status"]) == ["valid"]
+
+
+def test_the_observation_must_be_a_real_sde_bundle(tmp_path):
+    from qphase.data import GenericDataBundle
+
+    prediction, manifest = _saved_prediction(tmp_path)
+    observation = _saved_observation(tmp_path)
+    generic = GenericDataBundle(
+        observation.products,
+        observation.bundle_descriptor,
+        provenance=observation.provenance.model_dump(mode="json"),
+        parents=observation.parents,
+    )
+    with pytest.raises(TypeError, match="restored SDEDataBundle"):
+        validate_prediction(prediction, manifest, generic, [_comparison()])
+
+
+def test_boolean_or_float_indices_are_rejected():
+    with pytest.raises(ValidationError):
+        _comparison(scan_index=True)
+    with pytest.raises(ValidationError):
+        _comparison(selection={"channel": True})
+    with pytest.raises(ValidationError):
+        _comparison(scan_index=0.0)
+
+
+def test_a_point_read_does_not_materialize_the_whole_field(tmp_path, monkeypatch):
+    """The observed point goes through the lazy point selection, not a full read."""
+    from qphase.data.npz import ShardedNpzArrayHandle
+
+    values = np.arange(4 * 256, dtype=float).reshape(4, 256) / 1000.0
+    prediction, manifest = _saved_prediction(tmp_path)
+    observation = _saved_observation(
+        tmp_path,
+        products={"spectrum": _spectrum(values)},
+        scan_axes={"epsilon": [0.1, 0.2, 0.3, 0.4]},
+        scan_shape=(4,),
+        artifact_id="77000000000000000000000000000000",
+        layout="sharded",
+    )
+    assert observation.products["spectrum"].axis("scan").size == 4
+
+    calls: list[tuple[str, tuple]] = []
+    real_selection = ShardedNpzArrayHandle.materialize_selection
+    real_materialize = ShardedNpzArrayHandle.materialize
+
+    def spy_selection(self, indexers):
+        calls.append(("selection", tuple(indexers)))
+        return real_selection(self, indexers)
+
+    def spy_materialize(self, *args, **kwargs):
+        calls.append(("full", ()))
+        return real_materialize(self, *args, **kwargs)
+
+    monkeypatch.setattr(ShardedNpzArrayHandle, "materialize_selection", spy_selection)
+    monkeypatch.setattr(ShardedNpzArrayHandle, "materialize", spy_materialize)
+
+    result = validate_prediction(
+        prediction,
+        manifest,
+        observation,
+        [
+            _comparison(
+                scan_index=1,
+                selection={"channel": 17},
+                relative_tolerance=0.5,
+            )
+        ],
+    )
+    rows = _rows(result)
+    assert float(rows["observed"][0]) == pytest.approx(values[1, 17])
+    assert float(rows["expected"][0]) == pytest.approx(2.0)
+    # No full read of the field happened; the point selection was used instead.
+    assert [kind for kind, _ in calls if kind == "full"] == []
+    selections = [indexers for kind, indexers in calls if kind == "selection"]
+    assert selections, "the observed point must go through materialize_selection"
+    for indexers in selections:
+        assert len(indexers) == 2
+        assert all(isinstance(index, (int, np.integer)) for index in indexers)
+
+
 def test_a_prediction_that_cannot_be_validated_is_rejected(tmp_path):
     observation = _saved_observation(tmp_path)
     intermediate, intermediate_manifest = _saved_prediction(
