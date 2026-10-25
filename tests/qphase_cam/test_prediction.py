@@ -265,6 +265,33 @@ def test_the_response_split_matches_the_reference_semantics():
     assert response.derivative.metadata["quantity"] == "parameter_direction_response"
 
 
+class _WideParameterAdapter(_Adapter):
+    """A model whose parameter space is wider than its state space."""
+
+    def parameter_jacobian(self, vector, params=None):
+        del vector, params
+        return np.asarray([[1.7, 0.0]])
+
+    def parameter_direction(self, name, scale=1.0):
+        assert name == "mu"
+        return np.asarray([scale, 0.0])
+
+
+def test_the_projection_uses_the_state_dimension_not_the_parameter_count():
+    # The projected drive is leftᵀ (−I) drive, so the identity is a state-space
+    # object: a parameter direction longer than the state must not enter its size.
+    adapter = _WideParameterAdapter()
+    response = response_prediction(
+        adapter,
+        _observable(),
+        state=[X0],
+        params={"mu": 0.0},
+        parameter="mu",
+    )
+    assert response.projected_drive == pytest.approx(1.7, rel=1e-12)
+    assert response.full_response == pytest.approx(1.7 / 1.75, rel=1e-9)
+
+
 # --- postprocessor ---------------------------------------------------------
 
 

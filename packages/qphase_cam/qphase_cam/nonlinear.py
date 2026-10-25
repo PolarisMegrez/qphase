@@ -1056,7 +1056,7 @@ def response_prediction(
         @ direction
     )
     projected_drive = (
-        projected_intensity(np.eye(direction.size) * -1.0, np.asarray(mode.left), drive)
+        projected_intensity(np.eye(point.size) * -1.0, np.asarray(mode.left), drive)
         * -1.0
     )
     record = observable.gradient(adapter, point, parameter_map)
