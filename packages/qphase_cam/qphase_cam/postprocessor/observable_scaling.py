@@ -21,7 +21,8 @@ case — raise, because no annotation of that shape is meaningful.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from collections.abc import Mapping
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import ConfigDict, Field
@@ -92,6 +93,24 @@ class ObservableScalingConfig(CAMPostprocessorConfig):
         default=None,
         description="Leading amplitude, if the caller knows it; otherwise the "
         "first-point ratio is reported as such",
+    )
+    leading_error_normalization: Literal["prediction", "response"] = Field(
+        default="prediction",
+        description=(
+            "How the leading-law residual is normalised. 'prediction' is "
+            "'|prediction / response - 1|', the historical default of this "
+            "plugin; 'response' is '|response / prediction - 1|', the R-scaling "
+            "script's convention. The choice is recorded in the method metadata"
+        ),
+    )
+    leading_coefficient_source: str = Field(
+        default="config",
+        description=(
+            "Provenance label recorded when the leading coefficient is supplied; a "
+            "caller that computed it from the leading state's response says so "
+            "(e.g. 'leading_state_response') instead of letting it read as an "
+            "analytic derivative"
+        ),
     )
     relative_tolerance: float = Field(
         default=0.05,
@@ -183,7 +202,7 @@ class ObservableScaling(CAMPostprocessor[ObservableScalingConfig]):
             if role == "state_scan"
             else self._candidate_series(product, context, adapter, observable, model)
         )
-        return self._annotation(series, observable)
+        return self.build_annotation(series, observable)
 
     # -- series -----------------------------------------------------------
 
@@ -304,7 +323,23 @@ class ObservableScaling(CAMPostprocessor[ObservableScalingConfig]):
 
     # -- annotation -------------------------------------------------------
 
-    def _annotation(self, series: dict[str, Any], observable: Any) -> Any:
+    def build_annotation(
+        self,
+        series: dict[str, Any],
+        observable: Any,
+        *,
+        method_extra: Mapping[str, Any] | None = None,
+    ) -> Any:
+        """Build the typed scaling annotation of one series.
+
+        ``series`` carries ``parameter_values``, ``converged`` and either the
+        raw ``values`` (the scan readout, shifted against the critical value
+        here) or a pre-registered ``x`` and ``response``. The second form is
+        what a :class:`~qphase_cam.scaling_series.ScalingSeries` supplies: the
+        abscissa is the exact configured ``abs_epsilon``, not a floating-point
+        parameter difference, and the response is already a positive
+        displacement magnitude, so it is never shifted again.
+        """
         parameters = np.asarray(series["parameter_values"], dtype=float)
         values = np.asarray(series["values"], dtype=float)
         converged = list(series["converged"])
@@ -320,8 +355,12 @@ class ObservableScaling(CAMPostprocessor[ObservableScalingConfig]):
             "bounds": list(self.config.bounds),
             "weighted": bool(self.config.weighted),
             "window_maxima": list(self.config.window_maxima),
+            "leading_error_normalization": self.config.leading_error_normalization,
             "inner_max": self.config.inner_max,
         }
+        # A public caller (for example a pre-registered scaling series) records its own
+        # provenance here instead of rewriting the built product afterwards.
+        method.update(dict(method_extra or {}))
         fields: dict[str, Any] = {
             "reason": np.asarray([""], dtype=str),
             "parameter": np.asarray([self.config.parameter], dtype=str),
@@ -384,27 +423,51 @@ class ObservableScaling(CAMPostprocessor[ObservableScalingConfig]):
                 "at least one point of the series did not converge, so the "
                 "series is incomplete",
             )
-        x = np.abs(parameters - float(self.config.critical_parameter))
-        if np.any(np.diff(x[np.argsort(x)]) == 0.0):
-            raise ValueError(
-                "the series has duplicate |parameter - critical_parameter| values "
-                "(for example both sides of a symmetric perturbation); a scaling "
-                "series needs one side"
+        if series.get("x") is not None and series.get("response") is not None:
+            # A pre-registered series: the abscissa and the positive response are the
+            # caller's, and nothing is shifted a second time.
+            x = np.asarray(series["x"], dtype=float).reshape(-1)
+            response = np.asarray(series["response"], dtype=float).reshape(-1)
+            observed = response
+            anchor = (
+                None
+                if self.config.critical_value is None
+                else float(self.config.critical_value)
             )
-        anchor, anchor_source = self._critical_value(parameters, values, x)
-        keep = np.isfinite(x) & np.isfinite(values) & (x > 0.0)
-        dropped = int(np.count_nonzero(~keep))
-        x = x[keep]
-        observed = values[keep]
-        if x.size == 0:
-            raise ValueError(
-                "no scan point has a finite, non-zero |parameter - "
-                "critical_parameter|; there is no scaling series to fit"
-            )
-        order = np.argsort(x)
-        x = x[order]
-        observed = observed[order]
-        response = np.abs(observed - anchor) if anchor is not None else observed
+            anchor_source = "config" if anchor is not None else "not_used"
+            keep = np.isfinite(x) & np.isfinite(response) & (x > 0.0)
+            dropped = int(np.count_nonzero(~keep))
+            x = x[keep]
+            response = response[keep]
+            observed = response
+            if np.any(np.diff(x) <= 0.0):
+                raise ValueError(
+                    "a pre-registered scaling series must be sorted by x with unique "
+                    "values"
+                )
+            order = np.arange(x.size)
+        else:
+            x = np.abs(parameters - float(self.config.critical_parameter))
+            if np.any(np.diff(x[np.argsort(x)]) == 0.0):
+                raise ValueError(
+                    "the series has duplicate |parameter - critical_parameter| values "
+                    "(for example both sides of a symmetric perturbation); a scaling "
+                    "series needs one side"
+                )
+            anchor, anchor_source = self._critical_value(parameters, values, x)
+            keep = np.isfinite(x) & np.isfinite(values) & (x > 0.0)
+            dropped = int(np.count_nonzero(~keep))
+            x = x[keep]
+            observed = values[keep]
+            if x.size == 0:
+                raise ValueError(
+                    "no scan point has a finite, non-zero |parameter - "
+                    "critical_parameter|; there is no scaling series to fit"
+                )
+            order = np.argsort(x)
+            x = x[order]
+            observed = observed[order]
+            response = np.abs(observed - anchor) if anchor is not None else observed
         fields["point_parameter"] = parameters[keep][order].reshape(1, -1)
         fields["point_x"] = x.reshape(1, -1)
         fields["point_response"] = response.reshape(1, -1)
@@ -524,12 +587,17 @@ class ObservableScaling(CAMPostprocessor[ObservableScalingConfig]):
         resolved = float(exponent)
         if self.config.leading_coefficient is not None:
             coefficient = float(self.config.leading_coefficient)
-            source = "config"
+            source = str(self.config.leading_coefficient_source)
         else:
             coefficient = float(response[0] / x[0] ** resolved)
             source = "first_point_ratio"
         prediction = coefficient * x**resolved
-        relative = np.abs(prediction / response - 1.0)
+        if self.config.leading_error_normalization == "response":
+            # The R-scaling convention: the response is the reference and the
+            # prediction is measured against it.
+            relative = np.abs(response / prediction - 1.0)
+        else:
+            relative = np.abs(prediction / response - 1.0)
         fields["leading_coefficient"] = np.asarray([coefficient], dtype=float)
         fields["leading_coefficient_source"] = np.asarray([source], dtype=str)
         fields["leading_relative_rmse"] = np.asarray(
@@ -558,6 +626,7 @@ class ObservableScaling(CAMPostprocessor[ObservableScalingConfig]):
             "exponent": resolved,
             "coefficient_source": source,
             "relative_tolerance": float(self.config.relative_tolerance),
+            "error_normalization": self.config.leading_error_normalization,
             "prefix_upper": prefix,
             "fixed_exponent_prefix_upper": fixed,
         }
