@@ -31,8 +31,11 @@ __all__ = [
     "CandidateBranchTable",
     "CandidateRow",
     "CandidateView",
+    "PerturbationDesign",
     "branch_axis_size",
+    "candidate_parameters",
     "candidate_view",
+    "case_fixed_parameters",
     "complex_from_json",
     "matrix_from_json",
     "pivot_branch_rows",
@@ -108,6 +111,25 @@ class CandidateBranchTable:
 
 
 @dataclass(frozen=True)
+class PerturbationDesign:
+    """The perturbation one case was searched along.
+
+    ``parameter`` is the swept parameter name (empty when the product does not
+    record one), ``scale`` the factor that turns an epsilon into a parameter
+    offset and ``side`` the recorded direction (``"both"`` when unknown).
+    """
+
+    parameter: str = ""
+    scale: float = 1.0
+    side: str = ""
+
+    @property
+    def is_resolved(self) -> bool:
+        """Whether the design names a parameter a postprocessor can use."""
+        return bool(self.parameter)
+
+
+@dataclass(frozen=True)
 class CandidateView:
     """Typed view of one candidate product."""
 
@@ -121,21 +143,86 @@ class CandidateView:
     fixed_params: dict[str, Any]
     control_names: tuple[str, ...] = ()
     control_values: np.ndarray = field(default_factory=lambda: np.empty((0, 0)))
+    case_metadata: tuple[dict[str, Any], ...] = ()
+
+    def case_flat_index(self, candidate_index: int) -> int:
+        """Return the flat case index of the case one candidate belongs to."""
+        index = int(candidate_index)
+        if index < 0 or index >= len(self.rows):
+            raise IndexError(
+                f"candidate index {index} is out of bounds for {len(self.rows)} "
+                "candidates"
+            )
+        if not self.candidate_offsets.size:
+            return 0
+        case = int(
+            np.searchsorted(self.candidate_offsets, index, side="right") - 1
+        )
+        return max(0, min(case, max(len(self.case_metadata) - 1, 0)))
+
+    def metadata_at(self, candidate_index: int) -> dict[str, Any]:
+        """Return the stored (canonical JSON) case metadata of one candidate."""
+        case = self.case_flat_index(candidate_index)
+        if case >= len(self.case_metadata):
+            return {}
+        return dict(self.case_metadata[case])
 
     def params_at(self, candidate_index: int) -> dict[str, Any]:
-        """Return the parameters of the case one candidate belongs to."""
+        """Return the parameters of the case one candidate belongs to.
+
+        The merge order is fixed: the caller's global fixed parameters, the fixed
+        parameters the candidate's own case records, the case parameter columns,
+        then the candidate's controls. Every step reads the case of *this*
+        candidate, so one case's base parameters never leak into another's.
+        """
+        case = self.case_flat_index(candidate_index)
         params = dict(self.fixed_params)
-        if self.candidate_offsets.size:
-            case = int(
-                np.searchsorted(self.candidate_offsets, candidate_index, side="right")
-                - 1
-            )
-            for name, values in self.case_params.items():
-                flat = np.asarray(values).reshape(-1)
-                if case < flat.size:
-                    params[name] = flat[case]
+        params.update(case_fixed_parameters(self.metadata_at(candidate_index)))
+        for name, values in self.case_params.items():
+            flat = np.asarray(values).reshape(-1)
+            if case < flat.size:
+                params[name] = flat[case]
         params.update(self.rows[candidate_index].controls)
         return params
+
+    def design_at(self, candidate_index: int) -> PerturbationDesign:
+        """Return the perturbation design recorded for one candidate's case.
+
+        An explicit execution-metadata value (``context.metadata``) overrides the
+        stored case design, because the caller may be re-running a case along a
+        different parameter; the stored case design is the default, so an empty
+        execution metadata never loses what the product already states.
+        """
+        metadata = self.metadata_at(candidate_index)
+        fragment = metadata.get("search_fragment")
+        design = dict(fragment.get("search_design") or {}) if isinstance(
+            fragment, dict
+        ) else {}
+        parameter = str(
+            design.get("perturbation_parameter")
+            or metadata.get("perturbation_parameter")
+            or ""
+        ).strip()
+        raw_scale = design.get("perturbation_scale")
+        if raw_scale is None:
+            raw_scale = metadata.get("perturbation_scale", 1.0)
+        side = str(
+            design.get("perturbation_side")
+            or metadata.get("perturbation_side")
+            or ""
+        ).strip()
+        if "perturbation_parameter" in self.meta:
+            parameter = str(self.meta["perturbation_parameter"]).strip()
+        if "perturbation_scale" in self.meta:
+            raw_scale = self.meta["perturbation_scale"]
+        if "perturbation_side" in self.meta:
+            side = str(self.meta["perturbation_side"]).strip()
+        scale = float(raw_scale)
+        if not np.isfinite(scale) or scale <= 0.0:
+            raise ValueError(
+                f"the perturbation scale must be finite and positive; got {scale}"
+            )
+        return PerturbationDesign(parameter=parameter, scale=scale, side=side)
 
     def branches_of(self, candidate_index: int) -> list[int]:
         """Return the real branch indices of one candidate."""
@@ -145,6 +232,52 @@ class CandidateView:
             if int(self.branches.candidate_index[index]) == candidate_index
             and bool(self.branches.real_branch[index])
         ]
+
+
+def case_fixed_parameters(metadata: dict[str, Any]) -> dict[str, float]:
+    """Return the fixed parameters one case metadata mapping records.
+
+    A solver case stores them as ``case_parameters`` (the case's own parameter
+    values); a legacy imported case stores the model-level set as
+    ``fixed_params``. Both are the case's declared base, and a product never
+    carries both under contradictory keys.
+    """
+    for name in ("case_parameters", "fixed_params"):
+        value = metadata.get(name)
+        if isinstance(value, dict):
+            return {str(key): float(item) for key, item in value.items()}
+    return {}
+
+
+def candidate_parameters(
+    result: Any, candidate_index: int, model: Any
+) -> dict[str, Any]:
+    """Return the model parameters of one candidate, typed or legacy.
+
+    A typed :class:`CandidateView` resolves the candidate through
+    :meth:`CandidateView.params_at`. A legacy ``CAMBifurcationScanResult`` also
+    needs the candidate index mapped to its case grid index before
+    ``params_at`` can be asked: the two index spaces are different, and passing a
+    candidate index there reads another case's parameters.
+    """
+    from ..bifurcation_result import CAMBifurcationScanResult
+
+    params = dict(getattr(model, "params", None) or {})
+    if isinstance(result, CandidateView):
+        params.update(result.params_at(candidate_index))
+        return params
+    if isinstance(result, CAMBifurcationScanResult):
+        params.update(dict(result.candidates.meta.get("fixed_params", {})))
+        params.update(result.params_at(result.case_grid_index(candidate_index)))
+        names = tuple(result.candidates.control_names)
+        params.update(
+            zip(names, result.candidates.control_values[candidate_index], strict=True)
+        )
+        return params
+    raise TypeError(
+        "candidate parameters need a CandidateView or a CAMBifurcationScanResult; "
+        f"got {type(result).__name__}"
+    )
 
 
 def complex_from_json(value: Any) -> complex:
@@ -364,7 +497,8 @@ def candidate_view(
         else np.asarray([], dtype=np.int64)
     )
     # Each candidate belongs to the case the offsets delimit; the case's own
-    # solver identity comes from the case metadata JSON.
+    # solver identity and its perturbation design come from the case metadata
+    # JSON, which the view keeps verbatim so a caller never has to guess.
     case_rows = _json_column(product, "case_metadata")
     rows = _with_case_scope(rows, offsets=offsets, case_rows=case_rows)
     resolved = dict(metadata or {})
@@ -380,6 +514,7 @@ def candidate_view(
         case_params=case_params,
         candidate_offsets=offsets,
         fixed_params=fixed,
+        case_metadata=tuple(case_rows),
     )
 
 

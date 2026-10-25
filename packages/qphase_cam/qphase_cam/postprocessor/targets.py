@@ -9,8 +9,9 @@ internals, no solver result.
 
 The parameter map of a target is the model parameters overridden by whatever the
 product says about that target: the scan parameters of a state slot, and for a
-candidate the view's fixed parameters, the row's case parameter values and finally
-the row's own controls (later wins, as in the engine's own resolution).
+candidate the view's own per-case resolution
+(:meth:`~qphase_cam.postprocessor.candidates.CandidateView.params_at`), so this
+module never maintains a second merge order.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import numpy as np
 from qphase_cam.core.coordinates import matrix_to_vector
 
 from .base import CAMAnnotationContext
-from .candidates import candidate_view
+from .candidates import candidate_parameters, candidate_view
 from .state_view import state_rows
 
 __all__ = [
@@ -109,17 +110,12 @@ def _candidate_targets(
     view = candidate_view(product, metadata=dict(context.metadata))
     targets: list[AnnotationTarget] = []
     for row in view.rows:
-        params = dict(model.params)
-        params.update(view.meta.get("fixed_params", {}))
-        for name, values in view.case_params.items():
-            params[name] = float(np.asarray(values).reshape(-1)[row.case])
-        params.update(row.controls)
         targets.append(
             AnnotationTarget(
                 identity=row.identity,
                 case_identity=row.case_identity,
                 vector=np.asarray(row.state_vector, dtype=float),
-                params=params,
+                params=candidate_parameters(view, row.index, model),
                 success=bool(row.success),
             )
         )

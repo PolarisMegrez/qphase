@@ -651,14 +651,22 @@ class CAMBifurcationScanResult:
         )
 
     def params_at(self, index: tuple[int, ...]) -> dict[str, Any]:
-        flat = int(np.ravel_multi_index(index, self.case_shape))
+        """Return the parameters of one case, addressed by its grid index.
+
+        A single-case scan has ``case_shape == ()`` and exactly one address,
+        ``()``; a multi-dimensional grid needs one index per axis. A candidate
+        index is *not* a grid index: resolve it first with
+        :meth:`case_grid_index`.
+        """
+        flat = self._flat_case(index)
         return {
             name: np.asarray(values).reshape(-1)[flat]
             for name, values in self.case_params.items()
         }
 
     def point_view(self, index: tuple[int, ...]) -> CAMBifurcationResult:
-        flat = int(np.ravel_multi_index(index, self.case_shape))
+        """Return the candidates of one case, addressed by its grid index."""
+        flat = self._flat_case(index)
         start = int(self.candidate_offsets[flat])
         stop = int(self.candidate_offsets[flat + 1])
         result = self.candidates.subset(start, stop)
@@ -674,6 +682,72 @@ class CAMBifurcationScanResult:
             }
         )
         return result
+
+    @property
+    def case_count(self) -> int:
+        """Number of cases in the case grid (1 for a single-case scan)."""
+        return int(np.prod(self.case_shape)) if self.case_shape else 1
+
+    def case_flat_index(self, candidate_index: int) -> int:
+        """Return the flat case index of the case one candidate belongs to."""
+        index = int(candidate_index)
+        total = int(self.candidate_offsets[-1]) if self.candidate_offsets.size else 0
+        if index < 0 or index >= total:
+            raise IndexError(
+                f"candidate index {index} is out of bounds for {total} candidates"
+            )
+        return int(np.searchsorted(self.candidate_offsets, index, side="right") - 1)
+
+    def grid_index(self, flat: int) -> tuple[int, ...]:
+        """Return the grid index tuple of one flattened case index."""
+        position = int(flat)
+        if position < 0 or position >= self.case_count:
+            raise IndexError(
+                f"flat case index {position} is out of bounds for a case grid of "
+                f"shape {self.case_shape}"
+            )
+        if not self.case_shape:
+            return ()
+        return tuple(
+            int(value) for value in np.unravel_index(position, self.case_shape)
+        )
+
+    def case_grid_index(self, candidate_index: int) -> tuple[int, ...]:
+        """Return the case grid index of the case one candidate belongs to.
+
+        This is the mapping a caller holding a candidate index needs before it can
+        address ``params_at``: a candidate index is a row in the flat candidate
+        table, and its case is found through ``candidate_offsets``.
+        """
+        return self.grid_index(self.case_flat_index(candidate_index))
+
+    def _flat_case(self, index: tuple[int, ...]) -> int:
+        """Return the flat case index of one grid index (the addressing contract)."""
+        if not isinstance(index, tuple):
+            raise TypeError(
+                "a case grid index must be a tuple of axis indices; got "
+                f"{type(index).__name__}"
+            )
+        if len(index) != len(self.case_shape):
+            raise IndexError(
+                f"case grid index {index} has rank {len(index)} for a case grid of "
+                f"shape {self.case_shape}"
+            )
+        for value in index:
+            if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+                raise TypeError(
+                    f"case grid index {index} must hold integers; got "
+                    f"{type(value).__name__}"
+                )
+        if not index:
+            return 0
+        try:
+            return int(np.ravel_multi_index(index, self.case_shape))
+        except ValueError as exc:
+            raise IndexError(
+                f"case grid index {index} is out of bounds for a case grid of shape "
+                f"{self.case_shape}"
+            ) from exc
 
     def save(self, path: str | Path) -> None:
         target = Path(path).with_suffix(".npz")

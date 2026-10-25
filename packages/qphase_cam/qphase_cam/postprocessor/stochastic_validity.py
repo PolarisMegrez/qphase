@@ -16,7 +16,12 @@ from qphase_cam.outcomes import CAMOutcomeStatus
 from qphase_cam.validity import critical_mode, minimum_eigenvalue, projected_intensity
 
 from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
-from .candidates import CandidateView, candidate_view, pivot_branch_rows
+from .candidates import (
+    CandidateView,
+    candidate_parameters,
+    candidate_view,
+    pivot_branch_rows,
+)
 
 
 class StochasticValidityConfig(CAMPostprocessorConfig):
@@ -238,19 +243,23 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
             row["status"] = "critical_noise_unresolved"
             return row
 
-        perturbation = str(candidates.meta.get("perturbation_parameter", ""))
-        if not perturbation:
+        design = candidates.design_at(candidate_index)
+        if not design.is_resolved:
             row["status"] = "perturbation_parameter_missing"
             return row
-        scale = float(candidates.meta.get("perturbation_scale", 1.0))
+        perturbation = design.parameter
+        scale = design.scale
         parameter_direction = adapter.parameter_direction(perturbation, scale)
         forcing = float(
             np.real(
                 left @ adapter.parameter_jacobian(state, params) @ parameter_direction
             )
         )
+        # The product stores each coefficient matrix as a per-row array; a single
+        # row arrives as an object array of Python complex numbers, so normalise
+        # the dtype before the canonical real chart is read from it.
         coefficient_matrix = np.asarray(
-            branches.leading_state_coefficient[branch_index]
+            branches.leading_state_coefficient[branch_index], dtype=complex
         )
         coefficient = np.asarray(matrix_to_vector(coefficient_matrix), dtype=float)
         center_coefficient = float(left @ coefficient)
@@ -308,28 +317,13 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
     def _critical_params(
         result: Any, candidate_index: int, model: Any
     ) -> dict[str, Any]:
-        candidates = getattr(result, "candidates", result)
-        params = dict(model.params)
-        params.update(candidates.meta.get("fixed_params", {}))
-        if hasattr(result, "candidate_offsets"):
-            case = int(
-                np.searchsorted(result.candidate_offsets, candidate_index, side="right")
-                - 1
-            )
-            params.update(
-                {
-                    name: np.asarray(values).reshape(-1)[case]
-                    for name, values in result.case_params.items()
-                }
-            )
-        params.update(
-            zip(
-                candidates.control_names,
-                candidates.control_values[candidate_index],
-                strict=True,
-            )
-        )
-        return params
+        """Return the model parameters of one candidate.
+
+        The typed path resolves the candidate through the candidate view; a
+        legacy scan result maps the candidate index to its case grid index first,
+        so a candidate is never read as if it were a case.
+        """
+        return candidate_parameters(result, candidate_index, model)
 
     @staticmethod
     def _base_row(

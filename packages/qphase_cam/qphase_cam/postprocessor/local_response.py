@@ -13,7 +13,12 @@ from qphase_cam.data import build_annotation_product
 from qphase_cam.outcomes import CAMOutcomeStatus
 
 from .base import CAMAnnotationContext, CAMPostprocessor, CAMPostprocessorConfig
-from .candidates import CandidateView, candidate_view, pivot_branch_rows
+from .candidates import (
+    CandidateView,
+    candidate_parameters,
+    candidate_view,
+    pivot_branch_rows,
+)
 from .petermann import eigensystem_petermann
 
 
@@ -75,10 +80,16 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
                 continue
             candidate_index = int(branches.candidate_index[branch_index])
             params = self._critical_params(result, candidate_index, model)
-            perturbation = str(candidates.meta.get("perturbation_parameter", ""))
-            if not perturbation:
-                raise ValueError("bifurcation result has no perturbation_parameter")
-            scale = float(candidates.meta.get("perturbation_scale", 1.0))
+            design = candidates.design_at(candidate_index)
+            if not design.is_resolved:
+                raise ValueError(
+                    "the case of candidate "
+                    f"{candidates.rows[candidate_index].identity!r} records no "
+                    "perturbation parameter; the local-response branch cannot be "
+                    "probed along an axis it does not name"
+                )
+            perturbation = design.parameter
+            scale = design.scale
             critical_decimals = self._critical_state_decimals(
                 candidates, candidate_index
             )
@@ -175,11 +186,22 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             rows.extend(branch_rows)
 
         output = self._columns(rows)
+        designs = {
+            (design.parameter, design.scale, design.side): design
+            for design in (
+                candidates.design_at(index)
+                for index in range(len(candidates.rows))
+            )
+            if design.is_resolved
+        }
         self.result_metadata = {
             "status": "complete" if rows else "no_real_branches",
             "sample_count": len(rows),
             "precision_digits": self.config.precision_digits,
-            "perturbation_parameter": candidates.meta.get("perturbation_parameter"),
+            "perturbation_designs": [
+                {"parameter": item.parameter, "scale": item.scale, "side": item.side}
+                for _, item in sorted(designs.items())
+            ],
         }
         del output
         return self._annotation(product, view, rows, status=self._status(view, rows))
@@ -221,7 +243,15 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             fields=fields,
             field_axes=field_axes,
             axes=axes,
-            method_metadata=[dict(self.result_metadata) for _ in view.rows],
+            method_metadata=[
+                {
+                    **self.result_metadata,
+                    "perturbation_parameter": view.design_at(row.index).parameter,
+                    "perturbation_scale": view.design_at(row.index).scale,
+                    "perturbation_side": view.design_at(row.index).side,
+                }
+                for row in view.rows
+            ],
         )
 
     def _newton(
@@ -290,34 +320,13 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
     def _critical_params(
         self, result: Any, candidate_index: int, model: Any
     ) -> dict[str, Any]:
-        params = dict(model.params)
-        # The typed candidate view already merges the fixed parameters, the case
-        # parameters and the candidate controls.
-        params_at = getattr(result, "params_at", None)
-        if callable(params_at):
-            params.update(params_at(candidate_index))
-            return params
-        candidates = getattr(result, "candidates", result)
-        params.update(candidates.meta.get("fixed_params", {}))
-        if hasattr(result, "candidate_offsets"):
-            case = int(
-                np.searchsorted(result.candidate_offsets, candidate_index, side="right")
-                - 1
-            )
-            params.update(
-                {
-                    name: np.asarray(values).reshape(-1)[case]
-                    for name, values in result.case_params.items()
-                }
-            )
-        params.update(
-            zip(
-                candidates.control_names,
-                candidates.control_values[candidate_index],
-                strict=True,
-            )
-        )
-        return params
+        """Return the model parameters of one candidate.
+
+        The typed path resolves the candidate through the candidate view; a
+        legacy scan result maps the candidate index to its case grid index first,
+        so a candidate is never read as if it were a case.
+        """
+        return candidate_parameters(result, candidate_index, model)
 
     @staticmethod
     def _critical_state_decimals(candidates: Any, index: int) -> tuple[str, ...] | None:
