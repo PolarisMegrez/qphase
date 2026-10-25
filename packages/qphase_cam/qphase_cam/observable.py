@@ -46,6 +46,7 @@ __all__ = [
     "ObservableKind",
     "RayleighObservable",
     "coordinate_scale",
+    "observable_values",
     "finite_difference_gradient",
 ]
 
@@ -125,6 +126,14 @@ class CAMObservable(Protocol):
     together with the derivative provenance. A discrete or unbranched observable
     still has to state a gradient record, even if it refuses (analytic with a
     stated reason) — the assessment never invents one.
+
+    ``values`` is the optional batch form: ``states`` is a ``(n, coordinates)``
+    stack and the result is one value per row. An observable that cannot evaluate a
+    stack simply does not provide it, and :func:`observable_values` then samples the
+    single-point ``value`` row by row — the same arithmetic, without the batching.
+    A batch implementation must equal the point implementation on every row it is
+    given; it exists to avoid re-entering the adapter and the model once per point,
+    not to define a second readout.
     """
 
     identity: ObservableIdentity
@@ -134,6 +143,39 @@ class CAMObservable(Protocol):
     def gradient(
         self, adapter: Any, state: Any, params: Mapping[str, Any]
     ) -> DerivativeRecord: ...
+
+
+def observable_values(
+    observable: Any, adapter: Any, states: Any, params: Mapping[str, Any]
+) -> np.ndarray:
+    """Return one readout value per row of a state stack.
+
+    A readout that implements the batch contract answers directly; one that only
+    implements ``value`` is sampled row by row, which is the same arithmetic on the
+    same states. The result is validated against the stack length so a readout cannot
+    silently return a different number of values.
+    """
+    stack = np.asarray(states, dtype=float)
+    if stack.ndim != 2:
+        raise ValueError(
+            f"a state stack must be (n, coordinates); got shape {stack.shape}"
+        )
+    batched = getattr(observable, "values", None)
+    if callable(batched):
+        values = np.asarray(batched(adapter, stack, params), dtype=float).reshape(-1)
+        if values.size != stack.shape[0]:
+            raise ValueError(
+                f"the readout returned {values.size} values for {stack.shape[0]} "
+                "states"
+            )
+        return values
+    return np.asarray(
+        [
+            float(observable.value(adapter, vector, params))
+            for vector in stack
+        ],
+        dtype=float,
+    )
 
 
 def coordinate_scale(state: Any) -> np.ndarray:
@@ -287,6 +329,59 @@ class RayleighObservable:
             )
         return float(np.real(np.trace(hamiltonian @ matrix) / denominator))
 
+    def values(
+        self, adapter: Any, states: Any, params: Mapping[str, Any]
+    ) -> np.ndarray:
+        """Return the Rayleigh frequency of every row of a state stack."""
+        parameter_map = dict(params or {})
+        stack = np.asarray(states, dtype=float)
+        if stack.ndim != 2:
+            raise ValueError(
+                f"a state stack must be (n, coordinates); got shape {stack.shape}"
+            )
+        batched_states = bool(getattr(adapter, "supports_batched_states", False))
+        if batched_states:
+            matrices = np.asarray(
+                adapter.state_matrix(stack, parameter_map), dtype=complex
+            )
+            if matrices.shape[:-2] != (stack.shape[0],):
+                raise ValueError(
+                    f"the adapter returned state matrices of shape {matrices.shape} "
+                    f"for {stack.shape[0]} states"
+                )
+        else:
+            # An adapter that only implements the single-state contract is sampled
+            # row by row; the arithmetic is the point readout's.
+            matrices = np.stack(
+                [
+                    np.asarray(adapter.state_matrix(row, parameter_map), dtype=complex)
+                    for row in stack
+                ]
+            )
+        values = np.empty(stack.shape[0], dtype=float)
+        for index in range(stack.shape[0]):
+            # A fresh contiguous matrix keeps the product's summation order identical
+            # to the point readout's; a strided view can change the last bit.
+            matrix = np.array(matrices[index], dtype=complex, copy=True)
+            denominator = np.trace(matrix)
+            # The same rounding-scale refusal as the point readout, row by row: one
+            # undefined row makes the batch undefined.
+            if abs(denominator) < 1.0e-300:
+                raise ValueError(
+                    "the state matrix has a vanishing trace, so the Rayleigh readout "
+                    "is undefined at this state"
+                )
+            hamiltonian = np.asarray(
+                self.model.cam_hamiltonian(matrix, parameter_map), dtype=complex
+            )
+            if hamiltonian.shape != matrix.shape:
+                raise ValueError(
+                    f"Hamiltonian shape {hamiltonian.shape} does not match the state "
+                    f"matrix shape {matrix.shape}"
+                )
+            values[index] = np.real(np.trace(hamiltonian @ matrix) / denominator)
+        return values
+
     def gradient(
         self, adapter: Any, state: Any, params: Mapping[str, Any]
     ) -> DerivativeRecord:
@@ -311,10 +406,28 @@ class FunctionalObservable:
     value_fn: Callable[[Any, Any, Mapping[str, Any]], float]
     gradient_fn: Callable[[Any, Any, Mapping[str, Any]], Any] | None = None
     relative_step: float = 1.0e-5
+    values_fn: Callable[[Any, Any, Mapping[str, Any]], Any] | None = None
 
     def value(self, adapter: Any, state: Any, params: Mapping[str, Any]) -> float:
         """Return the caller's readout at one state."""
         return float(self.value_fn(adapter, state, params))
+
+    def values(
+        self, adapter: Any, states: Any, params: Mapping[str, Any]
+    ) -> np.ndarray:
+        """Return the caller's readout for every row of a state stack.
+
+        Without ``values_fn`` the caller supplied only a point readout, so the stack
+        is sampled row by row: the same function, the same arithmetic, no batching.
+        """
+        if self.values_fn is None:
+            return np.asarray(
+                [float(self.value_fn(adapter, state, params)) for state in states],
+                dtype=float,
+            )
+        return np.asarray(
+            self.values_fn(adapter, states, params), dtype=float
+        ).reshape(-1)
 
     def gradient(
         self, adapter: Any, state: Any, params: Mapping[str, Any]

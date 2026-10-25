@@ -57,7 +57,7 @@ from pydantic import (
 from scipy.integrate import cumulative_trapezoid
 
 from .core.noise import canonical_sample_matrix_covariance
-from .observable import CAMObservable, DerivativeRecord
+from .observable import CAMObservable, DerivativeRecord, observable_values
 from .outcomes import CAMOutcomeStatus
 from .validity import (
     CriticalMode,
@@ -633,6 +633,66 @@ def _noise_covariance(
     return matrix, covariance, physical
 
 
+def _noise_covariances(
+    adapter: Any, model: Any, vectors: Any, params: Mapping[str, Any]
+) -> tuple[list[np.ndarray], np.ndarray]:
+    """Return the noise covariances and physical spectra of a state stack.
+
+    The same per-row policy as :func:`_noise_covariance`: a row whose state or
+    diffusion is not finite, or whose canonical transform is not real, gets a NaN
+    covariance instead of an exception, which the caller reports as an invalid domain.
+    Only the *adapter* is asked once for the whole stack — the per-point Python entry
+    into a symbolic model is what made the reconstruction slow — while the model's
+    diffusion, the transform and the projection stay the single-matrix operations they
+    were, so the numbers are the per-state numbers.
+    """
+    stack = np.asarray(vectors, dtype=float)
+    if stack.ndim != 2:
+        raise ValueError(
+            f"a state stack must be (n, coordinates); got shape {stack.shape}"
+        )
+    if getattr(adapter, "supports_batched_states", False):
+        matrices = np.asarray(adapter.state_matrix(stack, params), dtype=complex)
+    else:
+        # An adapter with only the single-state contract is sampled row by row; the
+        # arithmetic is the single-state path's.
+        matrices = np.stack(
+            [
+                np.asarray(adapter.state_matrix(row, params), dtype=complex)
+                for row in stack
+            ]
+        )
+    if matrices.shape[:-2] != (stack.shape[0],) or (
+        matrices.shape[-2] != matrices.shape[-1]
+    ):
+        raise ValueError(
+            f"the adapter returned state matrices of shape {matrices.shape} for "
+            f"{stack.shape[0]} states"
+        )
+    modes = matrices.shape[-1]
+    hermitian = (matrices + np.conjugate(np.swapaxes(matrices, -1, -2))) / 2.0
+    physical = np.min(np.linalg.eigvalsh(hermitian), axis=-1)
+    covariances: list[np.ndarray] = []
+    for index in range(stack.shape[0]):
+        matrix = np.array(matrices[index], dtype=complex, copy=True)
+        diffusion = np.asarray(model.cam_diffusion(matrix, params), dtype=complex)
+        if diffusion.shape != matrix.shape:
+            raise ValueError(
+                f"the model returned diffusion matrices of shape {diffusion.shape} for "
+                f"states of shape {matrix.shape}"
+            )
+        if not np.all(np.isfinite(matrix)) or not np.all(np.isfinite(diffusion)):
+            covariances.append(np.full((modes * modes, modes * modes), np.nan))
+            continue
+        try:
+            covariances.append(
+                canonical_sample_matrix_covariance(matrix, diffusion)
+            )
+        except ValueError:
+            covariances.append(np.full((modes * modes, modes * modes), np.nan))
+    return covariances, physical
+
+
 def _boundary(
     adapter: Any,
     model: Any,
@@ -840,17 +900,17 @@ def scalar_reconstruction(
             },
         )
     vectors = manifold_embedding(resolved_manifold, point, x)
-    q = np.empty(x.size)
-    omega = np.empty(x.size)
-    physical_minimum = np.empty(x.size)
-    for index in range(x.size):
-        vector = vectors[index]
-        _, covariance, physical = _noise_covariance(
-            adapter, model, vector, parameter_map
-        )
-        q[index] = projected_intensity(covariance, left, left)
-        physical_minimum[index] = physical
-        omega[index] = float(observable.value(adapter, vector, parameter_map))
+    # One adapter/model call for the whole grid; the per-matrix arithmetic is the
+    # same single-matrix transform and projection, and the readout is asked for the
+    # stack (falling back to its point contract when it has no batch form).
+    covariances, physical_minimum = _noise_covariances(
+        adapter, model, vectors, parameter_map
+    )
+    q = np.asarray(
+        [projected_intensity(covariance, left, left) for covariance in covariances],
+        dtype=float,
+    )
+    omega = observable_values(observable, adapter, vectors, parameter_map)
     usable = (
         np.isfinite(q) & (q > settings.minimum_projected_diffusion) & np.isfinite(omega)
     )
@@ -900,12 +960,31 @@ def scalar_reconstruction(
     forcing: np.ndarray | None = None
     if parameter_direction is not None:
         direction = np.asarray(parameter_direction, dtype=float).reshape(-1)
-        forcing = np.empty(x.size)
-        for index in range(x.size):
-            jacobian = np.asarray(
-                adapter.parameter_jacobian(vectors[index], parameter_map), dtype=float
+        if getattr(adapter, "supports_batched_states", False):
+            jacobians = np.asarray(
+                adapter.parameter_jacobian(vectors, parameter_map), dtype=float
             )
-            forcing[index] = float(left @ (jacobian @ direction))
+        else:
+            jacobians = np.stack(
+                [
+                    np.asarray(
+                        adapter.parameter_jacobian(vector, parameter_map), dtype=float
+                    )
+                    for vector in vectors
+                ]
+            )
+        if jacobians.shape[0] != x.size:
+            raise ValueError(
+                f"the adapter returned {jacobians.shape[0]} parameter Jacobians for "
+                f"{x.size} states"
+            )
+        forcing = np.asarray(
+            [
+                float(left @ (jacobian @ direction))
+                for jacobian in jacobians
+            ],
+            dtype=float,
+        )
     # One evaluation owns the density and every fraction derived from it; the
     # verdicts below stay the reconstruction's own.
     evaluation = evaluate_generator(table, forcing=forcing, config=settings)

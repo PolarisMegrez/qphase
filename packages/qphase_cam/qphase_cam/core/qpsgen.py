@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 import numpy as np
 
@@ -240,9 +240,16 @@ class QPSGenDynamicsAdapter:
     def jacobian(self, vector: Any, params: dict[str, Any] | None = None) -> np.ndarray:
         return np.asarray(self.compiled.jacobian(vector, self.parameter_vector(params)))
 
+    #: Whether :meth:`state_matrix` and :meth:`parameter_jacobian` accept a state
+    #: *stack* ``(n, coordinates)`` and answer one matrix per row. A consumer that
+    #: evaluates many states uses this to choose one batched call over a per-state
+    #: loop; the arithmetic is identical either way.
+    supports_batched_states: ClassVar[bool] = True
+
     def state_matrix(
         self, vector: Any, params: dict[str, Any] | None = None
     ) -> np.ndarray:
+        """Return the state matrix of one state, or of a stack of states."""
         return np.asarray(
             self.compiled.state_matrix(vector, self.parameter_vector(params)),
             dtype=complex,
@@ -261,6 +268,7 @@ class QPSGenDynamicsAdapter:
     def parameter_jacobian(
         self, vector: Any, params: dict[str, Any] | None = None
     ) -> np.ndarray:
+        """Return the parameter Jacobian of one state, or of a stack of states."""
         return np.asarray(
             self.compiled.parameter_jacobian(vector, self.parameter_vector(params))
         )

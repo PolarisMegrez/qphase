@@ -35,6 +35,8 @@ from qphase_cam.observable import (
     FunctionalObservable,
     ObservableIdentity,
     ObservableKind,
+    RayleighObservable,
+    observable_values,
 )
 from qphase_cam.outcomes import CAMOutcomeStatus
 from qphase_cam.postprocessor.base import CAMAnnotationContext
@@ -433,6 +435,155 @@ def test_a_density_that_does_not_normalize_is_reported_not_raised():
     assert empty.stationary_mean_x is None
     assert empty.path_information_rate is None
     assert empty.stationary_response is None
+
+
+class _BatchAdapter(_QuadraticAdapter):
+    """The same adapter, declaring and implementing the stack contract."""
+
+    supports_batched_states = True
+
+    def state_matrix(self, vector, params=None):
+        del params
+        array = np.asarray(vector, dtype=float)
+        if array.ndim == 1:
+            return array.reshape(1, 1).astype(complex)
+        return array.reshape(array.shape[0], 1, 1).astype(complex)
+
+
+class _BatchObservable(FunctionalObservable):
+    """A readout whose batch form is the caller's, so a test can count its calls."""
+
+    def values(self, adapter, states, params):
+        return super().values(adapter, states, params)
+
+
+def test_the_batched_readout_matches_the_point_readout():
+    """A batch readout answers exactly what the point readout answers, row by row."""
+    # The one-mode toy: the Hamiltonian is the state matrix itself, so the trace
+    # readout is well defined and comparable row by row.
+    model = _UnitModel()
+    adapter = _QuadraticAdapter()
+    stack = np.linspace(0.4, 0.6, 7)[:, None]
+    observable = RayleighObservable(model)
+    batched = observable.values(adapter, stack, {})
+    point = np.asarray([observable.value(adapter, row, {}) for row in stack])
+    np.testing.assert_array_equal(batched, point)
+    # A readout without a batch form is sampled by the helper, with the same values.
+    functional = _observable()
+    np.testing.assert_array_equal(
+        observable_values(functional, adapter, stack, {}),
+        np.asarray([functional.value(adapter, row, {}) for row in stack]),
+    )
+    with pytest.raises(ValueError, match="state stack must be"):
+        observable_values(functional, adapter, stack.reshape(-1), {})
+
+
+def test_a_batch_readout_is_used_only_when_it_exists():
+    """The helper prefers the batch call and validates its length."""
+    adapter = _QuadraticAdapter()
+    stack = np.linspace(0.4, 0.6, 5)[:, None]
+    observable = _observable()
+    recorder: list[int] = []
+    batch = _BatchObservable(
+        identity=observable.identity,
+        value_fn=observable.value_fn,
+        values_fn=lambda adapter_, states_, params_: (
+            recorder.append(int(np.asarray(states_).shape[0]))
+            or np.asarray(
+                [observable.value_fn(adapter_, row, params_) for row in states_]
+            )
+        ),
+    )
+    values = observable_values(batch, adapter, stack, {})
+    assert recorder == [5]
+    np.testing.assert_array_equal(
+        values, np.asarray([observable.value(adapter, row, {}) for row in stack])
+    )
+
+    class _WrongLength(_BatchObservable):
+        def values(self, adapter, states, params):
+            return np.zeros(2)
+
+    with pytest.raises(ValueError, match="2 values for 5"):
+        observable_values(
+            _WrongLength(identity=observable.identity, value_fn=observable.value_fn),
+            adapter,
+            stack,
+            {},
+        )
+
+
+def test_the_batch_adapter_and_the_point_adapter_reconstruct_the_same_table():
+    """Batching the adapter call must not change one number of the reconstruction."""
+    manifold = _confining_manifold()
+    config = ScalarReconstructionConfig(grid_points=31)
+    point = scalar_reconstruction(
+        _QuadraticAdapter(),
+        _BoundedModel(),
+        _observable(),
+        state=[X0],
+        params={},
+        order=3,
+        manifold=manifold,
+        config=config,
+    )
+    batched = scalar_reconstruction(
+        _BatchAdapter(),
+        _BoundedModel(),
+        _observable(),
+        state=[X0],
+        params={},
+        order=3,
+        manifold=manifold,
+        config=config,
+    )
+    assert point.status is batched.status
+    assert point.scalar_intensity == batched.scalar_intensity
+    assert point.stationary_mean == batched.stationary_mean
+    assert point.density_normalization == batched.density_normalization
+    assert point.edge_mass_fraction == batched.edge_mass_fraction
+    assert point.endpoint_density_ratio == batched.endpoint_density_ratio
+    assert point.generator_table == batched.generator_table
+
+
+def test_a_batch_readout_in_the_reconstruction_matches_a_point_readout():
+    """A batched readout and a point readout give the same reconstruction."""
+    manifold = _confining_manifold()
+    config = ScalarReconstructionConfig(grid_points=31)
+    point = scalar_reconstruction(
+        _QuadraticAdapter(),
+        _BoundedModel(),
+        _observable(),
+        state=[X0],
+        params={},
+        order=3,
+        manifold=manifold,
+        config=config,
+    )
+    recorder: list[int] = []
+    base = _observable()
+    batch = FunctionalObservable(
+        identity=base.identity,
+        value_fn=base.value_fn,
+        values_fn=lambda adapter_, states_, params_: (
+            recorder.append(int(np.asarray(states_).shape[0]))
+            or np.asarray([base.value_fn(adapter_, row, params_) for row in states_])
+        ),
+    )
+    batched = scalar_reconstruction(
+        _QuadraticAdapter(),
+        _BoundedModel(),
+        batch,
+        state=[X0],
+        params={},
+        order=3,
+        manifold=manifold,
+        config=config,
+    )
+    assert recorder == [2 * 31 - 1]
+    assert point.scalar_intensity == batched.scalar_intensity
+    assert point.path_information_rate is None and batched.path_information_rate is None
+    assert point.generator_table == batched.generator_table
 
 
 def test_the_generator_table_carries_the_reconstruction_coefficients():
