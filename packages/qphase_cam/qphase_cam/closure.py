@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -51,9 +51,9 @@ from .outcomes import CAMOutcomeStatus
 from .validity import (
     StochasticAssessment,
     StochasticAssessmentConfig,
+    _lyapunov_covariance,
     assess_stochastic_state,
     critical_mode,
-    lyapunov_covariance,
     minimum_eigenvalue,
     numeric_column,
     projected_intensity,
@@ -118,13 +118,6 @@ class ClosureAssessmentConfig(BaseModel):
     )
     evaluate_shape: bool = Field(
         default=True, description="Whether the closure shape fraction is evaluated"
-    )
-    critical_mode_rule: Literal["slowest", "nearest_zero"] = Field(
-        default="slowest",
-        description=(
-            "Which eigenvalue is critical. 'slowest' is the linear-noise default; the "
-            "bifurcation-probe reproduction selects 'nearest_zero' explicitly"
-        ),
     )
 
 
@@ -347,6 +340,8 @@ class ClosureState:
     """
 
     point: np.ndarray
+    params: dict[str, Any]
+    config: ClosureAssessmentConfig
     jacobian: np.ndarray | None
     noise_covariance: np.ndarray | None
     stationary_covariance: np.ndarray | None
@@ -390,12 +385,13 @@ def closure_state(
     share this state all see the same verdict.
     """
     settings = config or ClosureAssessmentConfig()
+    model_copy = settings.model_copy(deep=True)
     point = np.asarray(state, dtype=float).reshape(-1)
     parameter_map = dict(params or {})
     diagnostics: dict[str, Any] = {}
     method: dict[str, Any] = {
         "service": "qphase_cam.closure.closure_state",
-        "critical_mode_rule": settings.critical_mode_rule,
+        "critical_mode_rule": settings.stochastic.critical_mode_rule,
         "noise_covariance": "canonical diffusion covariance",
         "lyapunov_convention": "J Sigma + Sigma J^T + D = 0",
         "closure_definition": "b = 1/2 sum_k (dJ/dx_k) Sigma[:, k]; dx = (-J)^-1 b",
@@ -407,6 +403,8 @@ def closure_state(
     ) -> ClosureState:
         fields: dict[str, Any] = {
             "point": point,
+            "params": parameter_map,
+            "config": model_copy,
             "jacobian": None,
             "noise_covariance": None,
             "stationary_covariance": None,
@@ -476,7 +474,7 @@ def closure_state(
     mode = critical_mode(
         jacobian,
         overlap_tolerance=settings.stochastic.overlap_tolerance,
-        rule=settings.critical_mode_rule,
+        rule=settings.stochastic.critical_mode_rule,
     )
     if mode is None:
         return failed(
@@ -488,8 +486,7 @@ def closure_state(
         )
     diagnostics["critical_mode_left"] = [float(value) for value in mode.left]
     diagnostics["critical_mode_right"] = [float(value) for value in mode.right]
-    covariance, residual = lyapunov_covariance(jacobian, noise)
-    solver = "continuous lyapunov (public validity path)"
+    covariance, residual, solver = _lyapunov_covariance(jacobian, noise)
     diagnostics["lyapunov_relative_residual"] = residual
     diagnostics["lyapunov_solver"] = solver
     method["lyapunov_solver"] = solver
@@ -604,6 +601,8 @@ def closure_state(
     )
     return ClosureState(
         point=point,
+        params=parameter_map,
+        config=model_copy,
         jacobian=jacobian,
         noise_covariance=noise,
         stationary_covariance=covariance,
@@ -626,6 +625,47 @@ def closure_state(
         diagnostics=dict(diagnostics),
         method=dict(method),
     )
+
+
+def _check_context(
+    context: ClosureState,
+    *,
+    state: Any,
+    params: Mapping[str, Any],
+    config: ClosureAssessmentConfig | None,
+) -> None:
+    """Refuse a shared state that was computed for something else.
+
+    A context is only reusable for the exact state, parameters and configuration it
+    was built from: a different state of the same shape, a different parameter value or
+    a different step would silently mix two assessments. Values are compared with
+    ``np.array_equal``, so an array-like parameter equal to a float is accepted.
+    """
+    point = np.asarray(state, dtype=float).reshape(-1)
+    if point.shape != context.point.shape or not np.array_equal(
+        point, context.point
+    ):
+        raise ValueError(
+            "the shared closure state was computed at a different state; build a new "
+            "context for this one"
+        )
+    requested = dict(params or {})
+    if set(requested) != set(context.params):
+        raise ValueError(
+            "the shared closure state was computed with different parameter names: "
+            f"{sorted(set(requested) ^ set(context.params))}"
+        )
+    for name, value in requested.items():
+        if not np.array_equal(np.asarray(value), np.asarray(context.params[name])):
+            raise ValueError(
+                f"the shared closure state was computed with a different value for "
+                f"{name!r}"
+            )
+    if config is not None and config != context.config:
+        raise ValueError(
+            "an explicit config disagrees with the config the shared closure state was "
+            "computed with"
+        )
 
 
 def assess_closure(
@@ -655,7 +695,13 @@ def assess_closure(
     function always goes through :func:`closure_state`, and passing the context only
     skips recomputing it.
     """
-    settings = config or ClosureAssessmentConfig()
+    if state_context is not None:
+        _check_context(state_context, state=state, params=params, config=config)
+        settings = (
+            state_context.config if config is None else config
+        )
+    else:
+        settings = config or ClosureAssessmentConfig()
     context = state_context or closure_state(
         adapter,
         state=state,
@@ -715,6 +761,13 @@ def assess_closure(
         return ClosureAssessment(**payload)
 
     if stochastic.status is not CAMOutcomeStatus.VALID:
+        # The shared state's own failure is the authoritative reason when it failed;
+        # the readout assessment may fail for a second-hand reason of its own.
+        if context.status is not CAMOutcomeStatus.VALID:
+            return report(
+                context.status,
+                context.reason or "the closure state is not valid",
+            )
         return report(
             stochastic.status,
             stochastic.reason or "the linear-noise assessment is not valid",

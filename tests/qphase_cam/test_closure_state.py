@@ -50,7 +50,7 @@ def counters(monkeypatch):
     }
     precomputed: list[dict[str, bool]] = []
     original_mode = closure.critical_mode
-    original_lyapunov = closure.lyapunov_covariance
+    original_lyapunov = closure._lyapunov_covariance
     original_contraction = closure.closure_contraction
     original_validity_mode = validity.critical_mode
 
@@ -65,7 +65,9 @@ def counters(monkeypatch):
         closure, "critical_mode", counted("closure_mode", original_mode)
     )
     monkeypatch.setattr(
-        closure, "lyapunov_covariance", counted("closure_lyapunov", original_lyapunov)
+        closure,
+        "_lyapunov_covariance",
+        counted("closure_lyapunov", original_lyapunov),
     )
     monkeypatch.setattr(
         closure,
@@ -233,7 +235,7 @@ def test_a_state_level_failure_is_the_same_for_every_readout():
 def test_a_mismatched_state_context_is_refused():
     adapter = _ScalarAdapter()
     context = closure_state(adapter, state=[X0], params={}, diffusion=DIFFUSION)
-    with pytest.raises(ValueError, match="coordinates|shape"):
+    with pytest.raises(ValueError, match="different state"):
         assess_closure(
             adapter,
             _scalar_observable(),
@@ -312,3 +314,99 @@ def test_the_critical_mode_rule_is_explicit():
         ).StochasticAssessmentConfig(critical_mode_rule="nearest_zero"),
     )
     assert historical.method["critical_mode_rule"] == "nearest_zero"
+
+
+def test_a_same_shape_different_state_is_refused():
+    """A context of the same shape is not a context of the same state."""
+    adapter = _ScalarAdapter()
+    context = closure_state(adapter, state=[X0], params={}, diffusion=DIFFUSION)
+    with pytest.raises(ValueError, match="different state"):
+        assess_closure(
+            adapter,
+            _scalar_observable(),
+            state=[X0 + 1.0e-9],
+            params={},
+            diffusion=DIFFUSION,
+            state_context=context,
+        )
+
+
+def test_a_different_parameter_or_config_is_refused():
+    """Parameters and configuration are part of the context's identity."""
+    adapter = _ScalarAdapter()
+    context = closure_state(
+        adapter, state=[X0], params={"mu": 0.0}, diffusion=DIFFUSION
+    )
+    with pytest.raises(ValueError, match="different value for 'mu'"):
+        assess_closure(
+            adapter,
+            _scalar_observable(),
+            state=[X0],
+            params={"mu": 0.5},
+            diffusion=DIFFUSION,
+            state_context=context,
+        )
+    with pytest.raises(ValueError, match="different parameter names"):
+        assess_closure(
+            adapter,
+            _scalar_observable(),
+            state=[X0],
+            params={"other": 0.0},
+            diffusion=DIFFUSION,
+            state_context=context,
+        )
+    from qphase_cam.closure import ClosureAssessmentConfig
+
+    with pytest.raises(ValueError, match="explicit config disagrees"):
+        assess_closure(
+            adapter,
+            _scalar_observable(),
+            state=[X0],
+            params={"mu": 0.0},
+            diffusion=DIFFUSION,
+            state_context=context,
+            config=ClosureAssessmentConfig(closure_relative_step=1.0e-4),
+        )
+    # An equal array-like parameter is the same parameter, not a different type.
+    same = assess_closure(
+        adapter,
+        _scalar_observable(),
+        state=[X0],
+        params={"mu": np.asarray(0.0)},
+        diffusion=DIFFUSION,
+        state_context=context,
+    )
+    assert same.status is CAMOutcomeStatus.VALID
+    # Without an explicit config the context's own configuration is used; the
+    # default step is the historical 1e-5 and the closure screen overrides it.
+    assert context.config.closure_relative_step == 1.0e-5
+
+
+def test_the_context_records_the_real_lyapunov_solver():
+    """The context states which solver produced the covariance, not a placeholder."""
+    adapter = _ScalarAdapter()
+    context = closure_state(adapter, state=[X0], params={}, diffusion=DIFFUSION)
+    assert context.status is CAMOutcomeStatus.VALID
+    assert context.method["lyapunov_solver"] in {
+        "continuous lyapunov (LAPACK trsyl)",
+        "kronecker least squares (singular spectrum fallback)",
+    }
+    assert context.diagnostics["lyapunov_solver"] == context.method["lyapunov_solver"]
+
+
+def test_a_failed_context_keeps_its_own_verdict():
+    """The shared state's failure is not replaced by a second-hand reason."""
+    adapter = _ScalarAdapter()
+    diffusion = np.asarray([[-1.0]])
+    context = closure_state(adapter, state=[X0], params={}, diffusion=diffusion)
+    assert context.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assessment = assess_closure(
+        adapter,
+        _scalar_observable(),
+        state=[X0],
+        params={},
+        diffusion=diffusion,
+        state_context=context,
+    )
+    assert assessment.status is context.status
+    assert assessment.reason == context.reason

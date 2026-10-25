@@ -280,9 +280,15 @@ def finite_difference_gradient(
     )
     magnitude = np.abs(gradient)
     nonzero = magnitude[magnitude > 0.0]
+    # A non-finite gradient has no max/min ratio: computing one would divide infinity
+    # by infinity. The record already says the gradient is not finite.
     condition = (
         float(np.max(nonzero) / np.min(nonzero))
-        if nonzero.size == magnitude.size and nonzero.size
+        if (
+            nonzero.size == magnitude.size
+            and nonzero.size
+            and np.all(np.isfinite(gradient))
+        )
         else None
     )
     return DerivativeRecord(
@@ -464,9 +470,14 @@ class FunctionalObservable:
             ).reshape(-1)
             magnitude = np.abs(values)
             nonzero = magnitude[magnitude > 0.0]
+            # As above: a non-finite gradient has no condition ratio.
             condition = (
                 float(np.max(nonzero) / np.min(nonzero))
-                if nonzero.size == magnitude.size and nonzero.size
+                if (
+                    nonzero.size == magnitude.size
+                    and nonzero.size
+                    and np.all(np.isfinite(values))
+                )
                 else None
             )
             return DerivativeRecord(
