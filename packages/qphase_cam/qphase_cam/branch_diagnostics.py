@@ -2,33 +2,31 @@
 ---------------------------------------------------------
 A branch point is a solved state on a Puiseux branch of a CAM model. Assessing what a
 readout sees there needs the same handful of quantities every time: the critical mode
-and its conditioning, the canonical noise projected on that mode, the Gaussian
-soft/full intensities, the explicit and static parameter response, and the two
-second-order coefficients (the branch curvature ``eta2`` along the critical
-direction and the readout curvature ``eta_readout``).
+and its conditioning, the physicality of the state, the canonical noise projected on
+that mode, the Gaussian soft/full intensities, the explicit and static parameter
+response, and the two second-order coefficients — the branch curvature ``eta2`` along
+the critical direction and the readout curvature ``eta_readout``.
 
-This module is the one service that computes them, so a script or a postprocessor
-cannot drift from "the" definition:
+The Gaussian intensities and the parameter response are **not** re-derived here. They
+come from :func:`qphase_cam.nonlinear.ou_intensity_algebra` and
+:func:`qphase_cam.nonlinear.parameter_response`, which are the same implementations
+:func:`~qphase_cam.nonlinear.ou_intensities` and
+:func:`~qphase_cam.nonlinear.response_prediction` use; those two raise when the soft
+mode does not decay, so this service calls the cores directly and *reports* the
+condition instead of pretending the mode is stable. The mode comes from
+:func:`~qphase_cam.validity.critical_mode` with the historical ``nearest_zero`` rule,
+and the noise from the shared canonical sample-matrix covariance.
 
-* the critical mode is :func:`~qphase_cam.validity.critical_mode` with its historical
-  ``nearest_zero`` rule — no mode index, no trace shortcut, no model name;
-* the noise is the shared canonical sample-matrix covariance
-  (:mod:`qphase_cam.core.noise`);
-* the Gaussian terms are :func:`~qphase_cam.nonlinear.ou_intensities`' definitions,
-  re-derived on the state's own Jacobian and covariance rather than re-implemented
-  (the intensities are per observable, so they are evaluated from the same
-  ``projection``/``response`` the service already has);
-* the readout gradient is the observable's own record (its step and repeat check
-  travel with it), and the parameter response is a central difference in the named
-  parameter with ``relative_step`` times its magnitude;
-* both curvatures use a central difference along the critical right vector with
-  ``direction_step_relative * max(‖state‖, 1)`` — *not* the slow-manifold bilinear
-  form, which uses unit offsets.
+What is genuinely new here is only the second-order pair: both curvatures use a central
+difference along the critical right vector with
+``direction_step_relative * max(|x|, 1)``
+— *not* the unit-offset slow-manifold bilinear form.
 
-Unavailability is stated, not faked: a non-positive soft rate, a non-positive
-projected noise, a vanishing readout projection (``|projection| <= projection_floor``)
-or a singular response solve leave the dependent fields ``None`` and put the reason in
-``status``/``reason``. Nothing is clipped to zero and nothing is sorted by a NaN.
+Failures are stated, never smoothed: a non-finite state or critical state, a non-finite
+Jacobian, an unresolved mode, a state below ``physical_tolerance``, a non-positive
+projected noise and a vanishing readout projection each set ``status`` / ``reason_code``
+and leave every field they make undefined as ``None``. Nothing is clipped to zero and
+nothing is ordered by a NaN.
 """
 
 from __future__ import annotations
@@ -40,6 +38,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from .core.noise import canonical_sample_matrix_covariance
+from .nonlinear import ou_intensity_algebra, parameter_response
 from .observable import CAMObservable, DerivativeRecord
 from .outcomes import CAMOutcomeStatus
 from .validity import critical_mode
@@ -51,41 +50,53 @@ __all__ = [
 ]
 
 FAILURE_STATE = "state_not_finite"
+FAILURE_CRITICAL_STATE = "critical_state_not_finite"
 FAILURE_JACOBIAN = "jacobian_not_finite"
 FAILURE_MODE = "critical_mode_unresolved"
+FAILURE_PHYSICAL_SPECTRUM = "physical_spectrum_unreadable"
+FAILURE_PHYSICAL_EIGENVALUE = "physical_eigenvalue_not_finite"
+FAILURE_NONPHYSICAL = "nonphysical_state"
 FAILURE_RATE = "soft_mode_not_decaying"
 FAILURE_NOISE = "projected_noise_not_positive"
-FAILURE_RESPONSE = "parameter_response_unresolved"
+FAILURE_RESPONSE = "zero_frequency_response_unresolved"
 FAILURE_READOUT = "readout_not_evaluable"
 
 
 class BranchDiagnosticsConfig(BaseModel):
     """Steps and floors of one branch-point diagnostic.
 
-    ``relative_step`` is the central-difference step of the observable gradient and of
-    the explicit parameter response, relative to the parameter's own magnitude (the
-    paper chain's ``2e-6``). ``direction_step_relative`` is the step of both second
-    derivatives along the critical right vector, relative to the state norm.
-    ``projection_floor`` is the readout projection below which ``eta_readout`` has no
-    denominator.
+    ``relative_step`` is the step of the **explicit parameter response** only:
+    ``relative_step * max(1, |parameter value|)``, the same convention
+    :func:`~qphase_cam.nonlinear.response_prediction` uses. The readout *gradient* is
+    the observable's own record, with whatever step and repeat check that observable
+    carries — this config does not impose one. ``direction_step_relative`` is the step
+    of both second derivatives along the critical right vector, relative to
+    ``max(‖state‖, 1)``. ``projection_floor`` is the readout projection below which
+    ``eta_readout`` has no denominator. ``physical_tolerance`` is how far below zero
+    the state's Hermitian spectrum may go and still count as physical.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    relative_step: float = Field(default=2.0e-6, gt=0.0)
+    relative_step: float = Field(
+        default=2.0e-6,
+        gt=0.0,
+        description="Central-difference step of the explicit response",
+    )
     direction_step_relative: float = Field(default=1.0e-5, gt=0.0)
     projection_floor: float = Field(default=1.0e-14, gt=0.0)
     overlap_tolerance: float = Field(default=1.0e-10, gt=0.0)
+    physical_tolerance: float = Field(default=1.0e-9, ge=0.0)
 
 
 class BranchDiagnostics(BaseModel):
     """What one readout sees at one solved branch point.
 
-    ``status`` is ``valid`` when the mode, the noise and the readout all resolved. A
-    failure keeps the fields computed before it and states the check that stopped the
-    rest, so a partial diagnostic is never mistaken for a complete one. Every
-    ``float | None`` field is ``None`` when it is not defined rather than a NaN that a
-    caller could sort or compare.
+    ``status`` is ``valid`` only when the state is physical, the mode decays, the
+    projected noise is positive and the readout resolved. A failure keeps the fields
+    computed before it and states the check that stopped the rest, so a partial
+    diagnostic is never mistaken for a complete one. Every ``float | None`` field is
+    ``None`` when it is not defined rather than a NaN a caller could sort.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -102,13 +113,13 @@ class BranchDiagnostics(BaseModel):
     critical_mode_condition_number: float | None = None
     eigenvector_condition_number: float | None = None
 
-    # -- mode-projected noise ---------------------------------------------
+    # -- state physicality and mode-projected noise -----------------------
+    minimum_physical_eigenvalue: float | None = None
     projected_noise_intensity: float | None = None
     local_ou_sigma_x: float | None = None
     soft_coordinate: float | None = None
     rho_x: float | None = None
     eta2: float | None = None
-    minimum_physical_eigenvalue: float | None = None
 
     # -- readout -----------------------------------------------------------
     frequency: float | None = None
@@ -122,6 +133,7 @@ class BranchDiagnostics(BaseModel):
     full_response: float | None = None
     regular_response: float | None = None
     ou_snr_coefficient: float | None = None
+    gradient: DerivativeRecord | None = None
     derivative: DerivativeRecord | None = None
     method: dict[str, Any] = Field(default_factory=dict)
 
@@ -148,9 +160,10 @@ def branch_diagnostics(
 
     ``state`` is the solved branch point and ``critical_state`` the branch's critical
     state, used only for the soft coordinate ``l·(state − critical)``; without it that
-    coordinate (and ``rho_x``) stays ``None``. ``parameter`` names the scan parameter
-    the branch was continued along and ``scale`` multiplies an epsilon into its offset,
-    exactly as the candidate case records it.
+    coordinate (and ``rho_x``) stays ``None``, and a non-finite critical state is
+    reported instead of silently poisoning the coordinate. ``parameter`` names the scan
+    parameter the branch was continued along and ``scale`` multiplies an epsilon into
+    its offset, exactly as the candidate case records it.
     """
     settings = config or BranchDiagnosticsConfig()
     point = np.asarray(state, dtype=float).reshape(-1)
@@ -159,16 +172,19 @@ def branch_diagnostics(
         "service": "qphase_cam.branch_diagnostics.branch_diagnostics",
         "critical_mode_rule": "nearest_zero",
         "noise_covariance": "canonical diffusion covariance",
+        "gaussian_intensities": "qphase_cam.nonlinear.ou_intensity_algebra",
+        "parameter_response": "qphase_cam.nonlinear.parameter_response",
         "readout": observable.identity.model_dump(mode="json"),
         "parameter": parameter,
         "scale": float(scale),
+        "explicit_response_step": "relative_step * max(1, |parameter value|)",
         "relative_step": float(settings.relative_step),
         "direction_step_relative": float(settings.direction_step_relative),
         "projection_floor": float(settings.projection_floor),
+        "physical_tolerance": float(settings.physical_tolerance),
+        "gradient": "the observable's own derivative record",
         "eta2": "0.5 l·[(J(x+d r) − J(x−d r)) r] / (2d) with d = step·max(‖x‖,1)",
         "readout_curvature": "central second difference along the right vector",
-        "soft_ou": "projection^2 * projected_noise / rate^2",
-        "full_ou": "v^T Sigma v with v = g^T (-J)^{-1}",
     }
 
     def failed(
@@ -188,6 +204,14 @@ def branch_diagnostics(
         )
     if parameter not in parameter_map:
         raise ValueError(f"the parameter {parameter!r} has no value in params")
+    critical: np.ndarray | None = None
+    if critical_state is not None:
+        critical = np.asarray(critical_state, dtype=float).reshape(-1)
+        if critical.size != point.size:
+            raise ValueError(
+                f"the critical state has {critical.size} coordinates for a "
+                f"{point.size}-coordinate state"
+            )
     jacobian = np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
     if not np.all(np.isfinite(jacobian)):
         return failed(
@@ -209,45 +233,107 @@ def branch_diagnostics(
     rate = -float(np.real(eigenvalue))
     right = np.asarray(mode.right, dtype=float)
     left = np.asarray(mode.left, dtype=float)
-    matrix = np.asarray(adapter.state_matrix(point, parameter_map), dtype=complex)
-    diffusion = np.asarray(model.cam_diffusion(matrix, parameter_map), dtype=complex)
-    covariance = canonical_sample_matrix_covariance(matrix, diffusion)
-    projected_noise = float(np.real(left @ covariance @ left))
-    physical = _finite(np.min(adapter.physical_eigenvalues(point, parameter_map)))
     mode_fields: dict[str, Any] = {
         "soft_eigenvalue_real": float(np.real(eigenvalue)),
         "soft_eigenvalue_imag": float(np.imag(eigenvalue)),
         "soft_rate": rate,
         "noncritical_spectral_gap": (
-            _finite(mode.spectral_gap)
-            if np.isfinite(mode.spectral_gap)
-            else None
+            _finite(mode.spectral_gap) if np.isfinite(mode.spectral_gap) else None
         ),
         "critical_mode_condition_number": _finite(mode.condition_number),
         "eigenvector_condition_number": _finite(mode.eigenvector_condition_number),
-        "minimum_physical_eigenvalue": physical,
     }
-    # A non-positive rate or a non-positive projected noise makes the *noise scale*
-    # undefined, not the readout: the frequency, its projection and the second
-    # derivatives are still computable and are kept. Only the quantities that divide
-    # by the rate or by sigma stay None.
-    sigma: float | None = None
-    if rate > 0.0 and np.isfinite(projected_noise) and projected_noise > 0.0:
-        sigma = float(np.sqrt(projected_noise / (2.0 * rate)))
+    try:
+        spectrum = np.asarray(adapter.physical_eigenvalues(point, parameter_map))
+    except (AttributeError, TypeError, ValueError, np.linalg.LinAlgError) as exc:
+        return failed(
+            CAMOutcomeStatus.UNIDENTIFIABLE,
+            FAILURE_PHYSICAL_SPECTRUM,
+            f"the physical spectrum cannot be read at this state: {exc}",
+            **mode_fields,
+        )
+    if spectrum.size == 0 or not np.all(np.isfinite(spectrum)):
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            FAILURE_PHYSICAL_EIGENVALUE,
+            "the physical spectrum is not finite",
+            **mode_fields,
+        )
+    minimum_physical = float(np.min(spectrum))
+    mode_fields["minimum_physical_eigenvalue"] = minimum_physical
+    # A non-physical state still has an algebra: the verdict is recorded and the
+    # readout quantities are computed, because they are what a caller inspects when
+    # deciding whether a slightly negative eigenvalue matters.
+    physical_verdict: tuple[CAMOutcomeStatus, str, str] | None = None
+    if minimum_physical < -settings.physical_tolerance:
+        physical_verdict = (
+            CAMOutcomeStatus.NONPHYSICAL,
+            FAILURE_NONPHYSICAL,
+            "the state is not physical (minimum eigenvalue "
+            f"{minimum_physical:.3e} < -{settings.physical_tolerance:.1e})",
+        )
+    if critical is not None and not np.all(np.isfinite(critical)):
+        return failed(
+            CAMOutcomeStatus.NOT_CONVERGED,
+            FAILURE_CRITICAL_STATE,
+            "the critical state is not finite",
+            **mode_fields,
+        )
+    matrix = np.asarray(adapter.state_matrix(point, parameter_map), dtype=complex)
+    diffusion = np.asarray(model.cam_diffusion(matrix, parameter_map), dtype=complex)
+    covariance = canonical_sample_matrix_covariance(matrix, diffusion)
+
+    try:
+        algebra = ou_intensity_algebra(
+            adapter,
+            observable,
+            state=point,
+            params=parameter_map,
+            diffusion=covariance,
+            mode=mode,
+            jacobian=jacobian,
+            overlap_tolerance=settings.overlap_tolerance,
+        )
+    except ValueError as exc:
+        return failed(
+            CAMOutcomeStatus.UNIDENTIFIABLE,
+            FAILURE_RESPONSE,
+            str(exc),
+            **mode_fields,
+        )
+    projected_noise = algebra.projected_noise
+    noise_is_usable = bool(np.isfinite(projected_noise) and projected_noise > 0.0)
+    # A non-positive projected noise does not erase the readout: the frequency and the
+    # projection are defined, and only the noise scale and what divides by it are not.
+    sigma = algebra.sigma if noise_is_usable else None
     coordinate: float | None = None
-    if critical_state is not None:
-        critical = np.asarray(critical_state, dtype=float).reshape(-1)
+    if critical is not None:
         coordinate = float(left @ (point - critical))
     noise_fields: dict[str, Any] = {
-        "projected_noise_intensity": _finite(projected_noise),
+        "projected_noise_intensity": projected_noise,
         "local_ou_sigma_x": sigma,
         "soft_coordinate": coordinate,
         "rho_x": (
-            abs(coordinate) / sigma
-            if (coordinate is not None and sigma)
-            else None
+            abs(coordinate) / sigma if (coordinate is not None and sigma) else None
         ),
     }
+    if physical_verdict is not None:
+        status, reason_code, reason = physical_verdict
+    elif rate <= 0.0:
+        status = CAMOutcomeStatus.UNSTABLE
+        reason_code = FAILURE_RATE
+        reason = f"the soft mode does not decay (rate {rate:.3e})"
+    elif not noise_is_usable:
+        status = CAMOutcomeStatus.STOCHASTIC_INVALID
+        reason_code = FAILURE_NOISE
+        reason = (
+            "the projected noise along the critical mode is not finite and positive "
+            f"({projected_noise!r})"
+        )
+    else:
+        status = CAMOutcomeStatus.VALID
+        reason_code = None
+        reason = None
 
     # Second derivative of the drift along the critical direction: a central
     # difference of the Jacobian, *not* the unit-offset slow-manifold bilinear form.
@@ -266,100 +352,46 @@ def branch_diagnostics(
         abs(quadratic_drift) * sigma / rate if sigma is not None else None
     )
 
-    if rate <= 0.0:
-        status = CAMOutcomeStatus.UNSTABLE
-        reason_code = FAILURE_RATE
-        reason = f"the soft mode does not decay (rate {rate:.3e})"
-    elif noise_fields["projected_noise_intensity"] is None:
-        status = CAMOutcomeStatus.STOCHASTIC_INVALID
-        reason_code = FAILURE_NOISE
-        reason = (
-            "the projected noise along the critical mode is not finite and positive "
-            f"({projected_noise!r})"
-        )
-    else:
-        status = CAMOutcomeStatus.VALID
-        reason_code = None
-        reason = None
-
     try:
-        direction = np.asarray(
-            adapter.parameter_direction(parameter, float(scale)), dtype=float
+        response = parameter_response(
+            adapter,
+            observable,
+            state=point,
+            params=parameter_map,
+            parameter=parameter,
+            scale=scale,
+            relative_step=settings.relative_step,
+            jacobian=jacobian,
         )
-        drive = (
-            np.asarray(adapter.parameter_jacobian(point, parameter_map), dtype=float)
-            @ direction
-        )
-        state_response = np.linalg.solve(-jacobian, drive)
-    except (np.linalg.LinAlgError, ValueError) as exc:
+    except ValueError as exc:
         return failed(
-            CAMOutcomeStatus.UNIDENTIFIABLE,
+            status,
             FAILURE_RESPONSE,
-            f"the parameter response does not exist: {exc}",
+            str(exc),
             **mode_fields,
             **noise_fields,
         )
-    if not np.all(np.isfinite(state_response)):
-        return failed(
-            CAMOutcomeStatus.UNIDENTIFIABLE,
-            FAILURE_RESPONSE,
-            "the parameter response is not finite",
-            **mode_fields,
-            **noise_fields,
-        )
-
-    try:
-        frequency = float(observable.value(adapter, point, parameter_map))
-        record = observable.gradient(adapter, point, parameter_map)
-    except (ValueError, TypeError, FloatingPointError) as exc:
-        return failed(
-            CAMOutcomeStatus.UNIDENTIFIABLE,
-            FAILURE_READOUT,
-            f"the readout cannot be evaluated at this state: {exc}",
-            **mode_fields,
-            **noise_fields,
-        )
-    gradient = np.asarray(record.gradient, dtype=float)
-    if not np.all(np.isfinite(gradient)) or not np.isfinite(frequency):
-        return failed(
-            CAMOutcomeStatus.UNIDENTIFIABLE,
-            FAILURE_READOUT,
-            "the readout or its gradient is not finite",
-            **mode_fields,
-            **noise_fields,
-            derivative=record,
-        )
-    projection = float(gradient @ right)
-    # The Gaussian intensities divide by the rate; without a positive rate they are
-    # undefined while the projection and the raw response stay measurable.
+    projected_drive = float(left @ np.asarray(response.drive, dtype=float))
+    projection = algebra.projection
     soft_response = (
-        projection * float(left @ drive) / rate if rate > 0.0 else None
+        projection * projected_drive / rate if rate > 0.0 else None
     )
-    soft_ou = (
-        projection**2 * projected_noise / rate**2 if rate > 0.0 else None
-    )
-    try:
-        zero_frequency = np.linalg.solve(-jacobian.T, gradient)
-        full_ou = float(zero_frequency @ covariance @ zero_frequency)
-    except np.linalg.LinAlgError:
-        full_ou = None
-    parameter_value = float(parameter_map[parameter])
-    parameter_step = settings.relative_step * max(1.0, abs(parameter_value))
-    plus_params = dict(parameter_map)
-    minus_params = dict(parameter_map)
-    plus_params[parameter] = parameter_value + parameter_step
-    minus_params[parameter] = parameter_value - parameter_step
-    explicit = (
-        float(observable.value(adapter, point, plus_params))
-        - float(observable.value(adapter, point, minus_params))
-    ) / (2.0 * parameter_step)
-    full_response = explicit + float(gradient @ state_response)
+    frequency = float(observable.value(adapter, point, parameter_map))
     plus_frequency = float(
         observable.value(adapter, point + direction_step * right, parameter_map)
     )
     minus_frequency = float(
         observable.value(adapter, point - direction_step * right, parameter_map)
     )
+    if not np.isfinite(frequency) or not np.all(np.isfinite(algebra.gradient.gradient)):
+        return failed(
+            CAMOutcomeStatus.UNIDENTIFIABLE,
+            FAILURE_READOUT,
+            "the readout or its gradient is not finite",
+            **mode_fields,
+            **noise_fields,
+            gradient=algebra.gradient,
+        )
     curvature = (plus_frequency - 2.0 * frequency + minus_frequency) / (
         direction_step**2
     )
@@ -370,29 +402,36 @@ def branch_diagnostics(
         and abs(projection) > settings.projection_floor
     ):
         eta_readout = 0.5 * abs(curvature) * sigma / abs(projection)
+    full_response = response.full_response
     readout_fields: dict[str, Any] = {
         "frequency": frequency,
         "frequency_soft_projection": projection,
         "frequency_curvature": curvature,
         "eta_readout": eta_readout,
-        "soft_ou_intensity": soft_ou,
-        "full_ou_intensity": full_ou,
+        "soft_ou_intensity": (
+            algebra.soft_intensity if noise_is_usable else None
+        ),
+        "full_ou_intensity": algebra.full_intensity,
         "soft_response": soft_response,
-        "explicit_response": explicit,
+        "explicit_response": response.explicit_response,
         "full_response": full_response,
         "regular_response": (
-            full_response - soft_response if soft_response is not None else None
-        ),
-        "ou_snr_coefficient": (
-            full_response**2 / full_ou
-            if full_ou is not None and full_ou > 0.0
+            full_response - soft_response
+            if (full_response is not None and soft_response is not None)
             else None
         ),
-        "derivative": record,
+        "ou_snr_coefficient": (
+            full_response**2 / algebra.full_intensity
+            if (
+                full_response is not None
+                and np.isfinite(algebra.full_intensity)
+                and algebra.full_intensity > 0.0
+            )
+            else None
+        ),
+        "gradient": algebra.gradient,
+        "derivative": response.derivative,
     }
-    method["eta_readout"] = (
-        "0.5 |d^2 omega| sigma / |projection| when |projection| > projection_floor"
-    )
     return BranchDiagnostics(
         status=status,
         reason=reason,

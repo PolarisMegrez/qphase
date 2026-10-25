@@ -83,6 +83,8 @@ class LocalResponseValidationConfig(CAMPostprocessorConfig):
 #: quantity) is padded as NaN by the pivot, never as a number.
 DIAGNOSTIC_FIELDS = (
     "diagnostic_status",
+    "diagnostic_reason_code",
+    "diagnostic_reason",
     "soft_eigenvalue_real",
     "soft_eigenvalue_imag",
     "soft_rate",
@@ -111,8 +113,12 @@ DIAGNOSTIC_FIELDS = (
 
 def _diagnostic_fields(diagnostic: BranchDiagnostics) -> dict[str, Any]:
     """Return one diagnostic as annotation fields, ``None`` kept as "undefined"."""
-    fields: dict[str, Any] = {"diagnostic_status": diagnostic.status.value}
-    for name in DIAGNOSTIC_FIELDS[1:]:
+    fields: dict[str, Any] = {
+        "diagnostic_status": diagnostic.status.value,
+        "diagnostic_reason_code": diagnostic.reason_code or "",
+        "diagnostic_reason": diagnostic.reason or "",
+    }
+    for name in DIAGNOSTIC_FIELDS[3:]:
         fields[name] = getattr(diagnostic, name)
     return fields
 
@@ -123,8 +129,12 @@ def _undefined_diagnostic_fields() -> dict[str, Any]:
     A branch point that did not converge is not diagnosed, but its slot in the
     readout axis is kept so the sample axis stays aligned with the base fields.
     """
-    fields: dict[str, Any] = {"diagnostic_status": ""}
-    for name in DIAGNOSTIC_FIELDS[1:]:
+    fields: dict[str, Any] = {
+        "diagnostic_status": "",
+        "diagnostic_reason_code": "",
+        "diagnostic_reason": "",
+    }
+    for name in DIAGNOSTIC_FIELDS[3:]:
         fields[name] = None
     return fields
 

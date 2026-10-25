@@ -78,6 +78,8 @@ __all__ = [
     "bilinear_form",
     "manifold_drift",
     "manifold_embedding",
+    "ou_intensity_algebra",
+    "parameter_response",
     "ou_intensities",
     "reconstructed_intensity",
     "response_prediction",
@@ -1086,6 +1088,106 @@ def _failed(
     )
 
 
+class OuIntensityAlgebra(BaseModel):
+    """The Gaussian intensities of one readout, with the rate kept out of the guard.
+
+    :func:`ou_intensities` requires a decaying soft mode and raises otherwise; a
+    branch-point diagnostic has to report the same algebra on a state that does not
+    decay, so the algebra lives here once. ``soft_intensity`` is ``None`` when the
+    rate is not positive (it divides by it) and ``sigma`` is ``None`` when the rate or
+    the projected noise is not positive; ``full_intensity`` and the projection are
+    defined either way. A singular zero-frequency response still raises, because
+    there is no algebraic answer to report.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rate: float
+    projection: float
+    projected_noise: float
+    sigma: float | None = None
+    soft_intensity: float | None = None
+    full_intensity: float
+    zero_frequency_gradient: tuple[float, ...]
+    gradient: DerivativeRecord
+    method: dict[str, Any] = Field(default_factory=dict)
+
+
+def ou_intensity_algebra(
+    adapter: Any,
+    observable: CAMObservable,
+    *,
+    state: Any,
+    params: Mapping[str, Any],
+    diffusion: Any | None = None,
+    model: Any | None = None,
+    mode: CriticalMode | None = None,
+    jacobian: Any | None = None,
+    overlap_tolerance: float = 1e-10,
+) -> OuIntensityAlgebra:
+    """Return the soft/full Gaussian intensities of one readout without the guard.
+
+    ``mode``, ``diffusion`` and ``jacobian`` are optional precomputed inputs: a caller
+    that already resolved the critical mode or the canonical covariance passes them so
+    the eigenproblem and the transform are not repeated, and the returned numbers are
+    the ones :func:`ou_intensities` gives for a decaying mode.
+    """
+    point = np.asarray(state, dtype=float).reshape(-1)
+    parameter_map = dict(params or {})
+    resolved = mode or _critical(adapter, point, parameter_map, overlap_tolerance)
+    if diffusion is None:
+        if model is None or not callable(getattr(model, "cam_diffusion", None)):
+            raise ValueError(
+                "the Gaussian intensities need either the noise covariance or a model"
+            )
+        _, covariance, _ = _noise_covariance(adapter, model, point, parameter_map)
+    else:
+        covariance = np.asarray(diffusion, dtype=float)
+        if covariance.shape != (point.size, point.size):
+            raise ValueError(
+                f"the diffusion shape {covariance.shape} does not match the "
+                f"{point.size}-coordinate state"
+            )
+    matrix = (
+        np.asarray(jacobian, dtype=float)
+        if jacobian is not None
+        else np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
+    )
+    rate = -float(np.real(resolved.value))
+    record = observable.gradient(adapter, point, parameter_map)
+    gradient = np.asarray(record.gradient, dtype=float)
+    right = np.asarray(resolved.right, dtype=float)
+    left = np.asarray(resolved.left, dtype=float)
+    projection = float(gradient @ right)
+    projected_noise = projected_intensity(covariance, left, left)
+    try:
+        response = np.linalg.solve(-matrix.T, gradient)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(f"the zero-frequency response does not exist: {exc}") from exc
+    full = float(response @ covariance @ response)
+    positive = rate > 0.0 and projected_noise > 0.0
+    return OuIntensityAlgebra(
+        rate=rate,
+        projection=projection,
+        projected_noise=projected_noise,
+        sigma=(float(np.sqrt(projected_noise / (2.0 * rate))) if positive else None),
+        soft_intensity=(
+            projection**2 * projected_noise / rate**2 if rate > 0.0 else None
+        ),
+        full_intensity=full,
+        zero_frequency_gradient=tuple(float(value) for value in response),
+        gradient=record,
+        method={
+            "service": "qphase_cam.nonlinear.ou_intensity_algebra",
+            "noise_covariance": "canonical diffusion covariance",
+            "soft": "projection^2 * projected_noise / rate^2 (rate > 0)",
+            "sigma": "sqrt(projected_noise / (2 rate)) (rate > 0 and noise > 0)",
+            "full": "v^T D v with v = g^T (-J)^-1",
+            "gradient_method": record.method,
+        },
+    )
+
+
 def ou_intensities(
     adapter: Any,
     observable: CAMObservable,
@@ -1110,48 +1212,30 @@ def ou_intensities(
     lam = float(np.real(mode.value))
     if lam >= 0.0:
         raise ValueError(f"the soft mode does not decay (real part {lam:.3e})")
-    if diffusion is None:
-        if model is None or not callable(getattr(model, "cam_diffusion", None)):
-            raise ValueError(
-                "ou_intensities needs either the noise covariance or a model"
-            )
-        _, covariance, _ = _noise_covariance(adapter, model, point, parameter_map)
-    else:
-        covariance = np.asarray(diffusion, dtype=float)
-        if covariance.shape != (point.size, point.size):
-            raise ValueError(
-                f"the diffusion shape {covariance.shape} does not match the "
-                f"{point.size}-coordinate state"
-            )
-    rate = -lam
-    record = observable.gradient(adapter, point, parameter_map)
-    gradient = np.asarray(record.gradient, dtype=float)
-    right = np.asarray(mode.right, dtype=float)
-    left = np.asarray(mode.left, dtype=float)
-    projection = float(gradient @ right)
-    projected_noise = projected_intensity(covariance, left, left)
-    soft = projection**2 * projected_noise / rate**2
-    try:
-        response = np.linalg.solve(
-            -np.asarray(adapter.jacobian(point, parameter_map), dtype=float).T, gradient
-        )
-    except np.linalg.LinAlgError as exc:
-        raise ValueError(f"the zero-frequency response does not exist: {exc}") from exc
-    full = float(response @ covariance @ response)
+    algebra = ou_intensity_algebra(
+        adapter,
+        observable,
+        state=point,
+        params=parameter_map,
+        diffusion=diffusion,
+        model=model,
+        mode=mode,
+        overlap_tolerance=overlap_tolerance,
+    )
     return OuIntensities(
-        rate=rate,
-        projection=projection,
-        projected_noise=projected_noise,
-        sigma=float(np.sqrt(max(projected_noise, 0.0) / (2.0 * rate))),
-        soft_intensity=float(soft),
-        full_intensity=full,
-        zero_frequency_gradient=tuple(float(value) for value in response),
+        rate=algebra.rate,
+        projection=algebra.projection,
+        projected_noise=algebra.projected_noise,
+        sigma=float(np.sqrt(max(algebra.projected_noise, 0.0) / (2.0 * algebra.rate))),
+        soft_intensity=float(algebra.soft_intensity or 0.0),
+        full_intensity=algebra.full_intensity,
+        zero_frequency_gradient=algebra.zero_frequency_gradient,
         method={
             "service": "qphase_cam.nonlinear.ou_intensities",
             "noise_covariance": "canonical diffusion covariance",
             "soft": "projection^2 * projected_noise / rate^2",
             "full": "v^T D v with v = g^T (-J)^-1",
-            "gradient_method": record.method,
+            "gradient_method": algebra.gradient.method,
         },
     )
 
@@ -1175,6 +1259,137 @@ def reconstructed_intensity(
         if not np.isfinite(float(value)):
             raise ValueError(f"{name} must be finite; got {value!r}")
     return float(scalar_intensity) + float(full_intensity) - float(soft_intensity)
+
+
+class ParameterResponse(BaseModel):
+    """The explicit and static parameter response of one readout, unguarded.
+
+    :func:`response_prediction` requires a decaying soft mode; a branch-point
+    diagnostic has to report the same algebra on a state that does not decay, so the
+    compute lives here once and both call it. ``derivative`` is the explicit
+    central-difference record, with its step and its half-step repeat check — that
+    check is never dropped. ``state_response`` is ``None`` when the static response
+    does not exist.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    drive: tuple[float, ...]
+    state_response: tuple[float, ...] | None
+    explicit_response: float
+    full_response: float | None
+    derivative: DerivativeRecord
+    method: dict[str, Any] = Field(default_factory=dict)
+
+
+def parameter_response(
+    adapter: Any,
+    observable: CAMObservable,
+    *,
+    state: Any,
+    params: Mapping[str, Any],
+    parameter: str,
+    scale: float = 1.0,
+    relative_step: float = 2.0e-6,
+    jacobian: Any | None = None,
+) -> ParameterResponse:
+    """Return the explicit and static parameter response of one readout.
+
+    The explicit term is the central difference of the readout at a fixed state,
+    recorded as a :class:`~qphase_cam.observable.DerivativeRecord`; the static term is
+    ``gradient . (-J)^-1 drive``; ``full_response`` is their sum and is ``None`` when
+    the static response does not exist. The soft-mode term is *not* here: it divides
+    by the rate and belongs to the caller that owns the mode.
+    """
+    point = np.asarray(state, dtype=float).reshape(-1)
+    parameter_map = dict(params or {})
+    if not parameter:
+        raise ValueError("a response prediction needs the parameter name")
+    if not np.isfinite(relative_step) or relative_step <= 0.0:
+        raise ValueError(
+            f"relative_step must be finite and positive; got {relative_step}"
+        )
+    if parameter not in parameter_map:
+        raise ValueError(f"the parameter {parameter!r} has no value in params")
+    direction = np.asarray(
+        adapter.parameter_direction(parameter, float(scale)), dtype=float
+    ).reshape(-1)
+    matrix = (
+        np.asarray(jacobian, dtype=float)
+        if jacobian is not None
+        else np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
+    )
+    drive = (
+        np.asarray(adapter.parameter_jacobian(point, parameter_map), dtype=float)
+        @ direction
+    )
+    gradient = np.asarray(
+        observable.gradient(adapter, point, parameter_map).gradient, dtype=float
+    )
+    parameter_value = float(parameter_map[parameter])
+    step = relative_step * max(1.0, abs(parameter_value))
+
+    def value_at(offset: float) -> float:
+        shifted = dict(parameter_map)
+        shifted[parameter] = parameter_value + offset
+        return float(observable.value(adapter, point, shifted))
+
+    def explicit_at(width: float) -> float:
+        return (value_at(width) - value_at(-width)) / (2.0 * width)
+
+    explicit = explicit_at(step)
+    refined = explicit_at(step / 2.0)
+    denominator = abs(explicit)
+    repeat_error = (
+        float(abs(explicit - refined) / denominator)
+        if denominator > 0.0 and np.isfinite(explicit)
+        else None
+    )
+    derivative = DerivativeRecord(
+        method="central_difference",
+        order=2,
+        gradient=(float(explicit),),
+        step=(float(step),),
+        scale=(float(max(1.0, abs(parameter_value))),),
+        condition=None,
+        repeat_relative_error=repeat_error,
+        metadata={
+            "quantity": "parameter_direction_response",
+            "parameter": parameter,
+            "relative_step": float(relative_step),
+            "repeat_check": "recomputed at half the step",
+        },
+    )
+    try:
+        state_response = np.linalg.solve(-matrix, drive)
+    except np.linalg.LinAlgError:
+        state_response = None
+    full = (
+        None
+        if state_response is None
+        else float(explicit) + float(gradient @ state_response)
+    )
+    return ParameterResponse(
+        drive=tuple(float(value) for value in drive),
+        state_response=(
+            None
+            if state_response is None
+            else tuple(float(value) for value in state_response)
+        ),
+        explicit_response=float(explicit),
+        full_response=full,
+        derivative=derivative,
+        method={
+            "service": "qphase_cam.nonlinear.parameter_response",
+            "explicit": "central difference of the readout at a fixed state",
+            "static": "gradient . (-J)^-1 drive",
+            "full": "explicit + static",
+            "parameter": parameter,
+            "scale": float(scale),
+            "relative_step": float(relative_step),
+            "repeat_check": "recomputed at half the step",
+        },
+    )
 
 
 class ResponsePrediction(BaseModel):
@@ -1235,73 +1450,38 @@ def response_prediction(
         raise ValueError(f"the soft mode does not decay (rate {rate:.3e})")
     if parameter not in parameter_map:
         raise ValueError(f"the parameter {parameter!r} has no value in params")
-    direction = np.asarray(
-        adapter.parameter_direction(parameter, float(scale)), dtype=float
-    ).reshape(-1)
     jacobian = np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
-    drive = (
-        np.asarray(adapter.parameter_jacobian(point, parameter_map), dtype=float)
-        @ direction
+    response = parameter_response(
+        adapter,
+        observable,
+        state=point,
+        params=parameter_map,
+        parameter=parameter,
+        scale=scale,
+        relative_step=relative_step,
+        jacobian=jacobian,
     )
-    projected_drive = (
-        projected_intensity(np.eye(point.size) * -1.0, np.asarray(mode.left), drive)
-        * -1.0
+    if response.state_response is None or response.full_response is None:
+        raise ValueError("the static state response does not exist")
+    gradient = np.asarray(
+        observable.gradient(adapter, point, parameter_map).gradient, dtype=float
     )
-    record = observable.gradient(adapter, point, parameter_map)
-    gradient = np.asarray(record.gradient, dtype=float)
+    drive = np.asarray(response.drive, dtype=float)
+    projected_drive = float(np.asarray(mode.left, dtype=float) @ drive)
     projection = float(gradient @ np.asarray(mode.right, dtype=float))
     soft = projection * projected_drive / rate
-    try:
-        state_response = np.linalg.solve(-jacobian, drive)
-    except np.linalg.LinAlgError as exc:
-        raise ValueError(f"the static state response does not exist: {exc}") from exc
-
-    parameter_value = float(parameter_map[parameter])
-    step = relative_step * max(1.0, abs(parameter_value))
-
-    def value_at(offset: float) -> float:
-        shifted = dict(parameter_map)
-        shifted[parameter] = parameter_value + offset
-        return float(observable.value(adapter, point, shifted))
-
-    def explicit_at(width: float) -> float:
-        return (value_at(width) - value_at(-width)) / (2.0 * width)
-
-    explicit = explicit_at(step)
-    refined = explicit_at(step / 2.0)
-    denominator = abs(explicit)
-    repeat_error = (
-        float(abs(explicit - refined) / denominator)
-        if denominator > 0.0 and np.isfinite(explicit)
-        else None
-    )
-    derivative = DerivativeRecord(
-        method="central_difference",
-        order=2,
-        gradient=(float(explicit),),
-        step=(float(step),),
-        scale=(float(max(1.0, abs(parameter_value))),),
-        condition=None,
-        repeat_relative_error=repeat_error,
-        metadata={
-            "quantity": "parameter_direction_response",
-            "parameter": parameter,
-            "relative_step": float(relative_step),
-            "repeat_check": "recomputed at half the step",
-        },
-    )
-    full = float(explicit) + float(gradient @ state_response)
+    full = float(response.full_response)
     return ResponsePrediction(
         rate=rate,
         projection=projection,
         projected_drive=projected_drive,
-        drive=tuple(float(value) for value in drive),
+        drive=response.drive,
         soft_response=float(soft),
-        explicit_response=float(explicit),
-        state_response=tuple(float(value) for value in state_response),
+        explicit_response=response.explicit_response,
+        state_response=response.state_response,
         full_response=full,
         regular_response=float(full - soft),
-        derivative=derivative,
+        derivative=response.derivative,
         method={
             "service": "qphase_cam.nonlinear.response_prediction",
             "soft": "projection * projected_drive / rate",

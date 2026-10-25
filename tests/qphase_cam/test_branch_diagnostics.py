@@ -96,6 +96,18 @@ def _linear():
     )
 
 
+def _coupled():
+    """Return a readout that depends on the scan parameter, so its response is not 0."""
+    return FunctionalObservable(
+        identity=_identity("x_plus_mu", "x + mu"),
+        relative_step=2.0e-6,
+        value_fn=lambda adapter, state, params: float(
+            np.asarray(state, dtype=float).reshape(-1)[0]
+        )
+        + float((params or {}).get("mu", 0.0)),
+    )
+
+
 def _quadratic():
     return FunctionalObservable(
         identity=_identity("x_squared", "x**2"),
@@ -421,3 +433,186 @@ def test_the_default_configuration_keeps_the_annotation_unchanged(
     assert "readout" not in annotation.attributes["shared_axes"]
     assert all("readout" not in dims for dims in axes.values())
     assert "diagnostic_status" not in axes
+
+
+def test_the_service_reuses_the_public_gaussian_and_response_algebras():
+    """On a stable state the service is the public algebra, not a second definition."""
+    from qphase_cam.nonlinear import ou_intensities, response_prediction
+
+    adapter = _ToyAdapter()
+    model = _ToyModel()
+    diagnostics = branch_diagnostics(
+        adapter,
+        model,
+        _coupled(),
+        state=[X0],
+        params=PARAMS,
+        parameter="mu",
+        critical_state=[0.0],
+    )
+    gaussian = ou_intensities(
+        adapter, _coupled(), state=[X0], params=PARAMS, model=model
+    )
+    response = response_prediction(
+        adapter, _coupled(), state=[X0], params=PARAMS, parameter="mu"
+    )
+    assert diagnostics.soft_ou_intensity == gaussian.soft_intensity
+    assert diagnostics.full_ou_intensity == gaussian.full_intensity
+    assert diagnostics.projected_noise_intensity == gaussian.projected_noise
+    assert diagnostics.local_ou_sigma_x == pytest.approx(gaussian.sigma, rel=1e-15)
+    assert diagnostics.frequency_soft_projection == gaussian.projection
+    assert diagnostics.soft_response == pytest.approx(
+        response.soft_response, rel=1e-12
+    )
+    assert diagnostics.explicit_response == response.explicit_response
+    assert diagnostics.full_response == pytest.approx(
+        response.full_response, rel=1e-12
+    )
+    # The explicit response keeps its own record, with the repeat check intact.
+    assert diagnostics.derivative is not None
+    assert diagnostics.derivative.metadata["parameter"] == "mu"
+    assert diagnostics.explicit_response == pytest.approx(1.0, rel=1e-9)
+    assert diagnostics.derivative.repeat_relative_error is not None
+
+
+def test_a_non_positive_projected_noise_is_stochastic_invalid():
+    """A negative projected noise is not an intensity: no sigma, no soft OU."""
+
+    class _InvertedNoise(_ToyModel):
+        @staticmethod
+        def cam_diffusion(matrix, params=None):
+            del params
+            return -np.ones_like(np.asarray(matrix), dtype=complex)
+
+    diagnostics = branch_diagnostics(
+        _ToyAdapter(),
+        _InvertedNoise(),
+        _linear(),
+        state=[X0],
+        params=PARAMS,
+        parameter="mu",
+    )
+    assert diagnostics.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert diagnostics.reason_code == "projected_noise_not_positive"
+    assert diagnostics.projected_noise_intensity is not None
+    assert diagnostics.projected_noise_intensity <= 0.0
+    assert diagnostics.local_ou_sigma_x is None
+    assert diagnostics.soft_ou_intensity is None
+    assert diagnostics.eta2 is None
+    assert diagnostics.eta_readout is None
+    # The readout itself is still defined, and is not called valid.
+    assert diagnostics.frequency is not None
+    assert diagnostics.frequency_soft_projection is not None
+
+
+def test_an_unphysical_state_is_reported_and_keeps_its_algebra():
+    """A state below the physical tolerance is `nonphysical`, with its numbers kept."""
+
+    class _Unphysical(_ToyAdapter):
+        def physical_eigenvalues(self, vector, params=None):
+            del vector, params
+            return np.asarray([-1.0e-3])
+
+    diagnostics = branch_diagnostics(
+        _Unphysical(),
+        _ToyModel(),
+        _linear(),
+        state=[X0],
+        params=PARAMS,
+        parameter="mu",
+    )
+    assert diagnostics.status is CAMOutcomeStatus.NONPHYSICAL
+    assert diagnostics.reason_code == "nonphysical_state"
+    assert "not physical" in (diagnostics.reason or "")
+    # The algebra is still reported: only the verdict changed.
+    assert diagnostics.soft_rate is not None
+    assert diagnostics.projected_noise_intensity is not None
+    assert diagnostics.frequency is not None
+    assert diagnostics.minimum_physical_eigenvalue == pytest.approx(-1.0e-3)
+
+
+def test_an_unreadable_or_non_finite_physical_spectrum_is_not_valid():
+    class _Unreadable(_ToyAdapter):
+        def physical_eigenvalues(self, vector, params=None):
+            raise ValueError("no physical spectrum")
+
+    unreadable = branch_diagnostics(
+        _Unreadable(), _ToyModel(), _linear(), state=[X0], params=PARAMS, parameter="mu"
+    )
+    assert unreadable.status is CAMOutcomeStatus.UNIDENTIFIABLE
+    assert unreadable.reason_code == "physical_spectrum_unreadable"
+
+    class _NotFinite(_ToyAdapter):
+        def physical_eigenvalues(self, vector, params=None):
+            return np.asarray([np.nan])
+
+    not_finite = branch_diagnostics(
+        _NotFinite(), _ToyModel(), _linear(), state=[X0], params=PARAMS, parameter="mu"
+    )
+    assert not_finite.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert not_finite.reason_code == "physical_eigenvalue_not_finite"
+    assert not_finite.minimum_physical_eigenvalue is None
+
+
+def test_a_bad_critical_state_is_refused_not_passed_through():
+    with pytest.raises(ValueError, match="coordinates for a"):
+        branch_diagnostics(
+            _ToyAdapter(),
+            _ToyModel(),
+            _linear(),
+            state=[X0],
+            params=PARAMS,
+            parameter="mu",
+            critical_state=[0.0, 0.0],
+        )
+    diagnostics = branch_diagnostics(
+        _ToyAdapter(),
+        _ToyModel(),
+        _linear(),
+        state=[X0],
+        params=PARAMS,
+        parameter="mu",
+        critical_state=[np.nan],
+    )
+    assert diagnostics.status is CAMOutcomeStatus.NOT_CONVERGED
+    assert diagnostics.reason_code == "critical_state_not_finite"
+    # A NaN coordinate never reaches the result.
+    assert diagnostics.soft_coordinate is None
+    assert diagnostics.rho_x is None
+
+
+def test_the_annotation_states_why_a_readout_failed(toy_adapter, fake_solve):
+    """A failed diagnostic is readable from the product, not only as a status."""
+    del toy_adapter, fake_solve
+    product = _candidate_product()
+
+    class _Unphysical(_ToyAdapter):
+        def physical_eigenvalues(self, vector, params=None):
+            del vector, params
+            return np.asarray([-1.0e-3])
+
+    import qphase_cam.postprocessor.local_response as module
+
+    original = module.QPSGenDynamicsAdapter.from_model
+    module.QPSGenDynamicsAdapter.from_model = lambda model: _Unphysical()
+    try:
+        processor = LocalResponseValidation(
+            LocalResponseValidationConfig(
+                epsilon_min=1e-6,
+                epsilon_max=1e-4,
+                epsilon_points=3,
+                fit_points=3,
+                diagnostic_observables=(_linear(),),
+            )
+        )
+        annotation = processor.process(product, _context(_ToyModel(), product))
+    finally:
+        module.QPSGenDynamicsAdapter.from_model = original
+    statuses = np.asarray(annotation.handle("diagnostic_status").materialize())
+    codes = np.asarray(annotation.handle("diagnostic_reason_code").materialize())
+    reasons = np.asarray(annotation.handle("diagnostic_reason").materialize())
+    assert statuses.shape[-1] == 1
+    if (statuses != "").any():
+        assert set(statuses[statuses != ""]) == {"nonphysical"}
+        assert set(codes[codes != ""]) == {"nonphysical_state"}
+        assert any("not physical" in str(value) for value in reasons.ravel())
