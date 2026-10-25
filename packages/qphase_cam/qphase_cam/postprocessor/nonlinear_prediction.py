@@ -25,6 +25,7 @@ from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
 from qphase_cam.data.evidence import SourceArtifactRef
 from qphase_cam.nonlinear import (
     DEFAULT_MANIFOLD_ORDERS,
+    NoiseIntensityError,
     NonlinearManifoldConfig,
     ScalarReconstructionConfig,
     ou_intensities,
@@ -191,13 +192,8 @@ class NonlinearPrediction(CAMPostprocessor[NonlinearPredictionConfig]):
                 manifold=manifold,
                 config=self.config.reconstruction,
             )
-            gaussian = ou_intensities(
-                adapter,
-                observable,
-                state=target.vector,
-                params=target.params,
-                model=model,
-            )
+            # The response does not need the noise covariance, so it is computed
+            # first: a noise that cannot carry an intensity must not erase it.
             response = response_prediction(
                 adapter,
                 observable,
@@ -206,6 +202,29 @@ class NonlinearPrediction(CAMPostprocessor[NonlinearPredictionConfig]):
                 parameter=self.config.perturbation_parameter,
                 scale=self.config.perturbation_scale,
                 relative_step=self.config.response_relative_step,
+            )
+            # Recorded before the noise is asked for: the response is a valid number
+            # even when the covariance cannot carry an intensity.
+            numbers.update(
+                {
+                    "expected_frequency_response_full": response.full_response,
+                    "expected_frequency_response_soft": response.soft_response,
+                    "expected_frequency_response_regular": response.regular_response,
+                    "regular_response": response.regular_response,
+                }
+            )
+            gaussian = ou_intensities(
+                adapter,
+                observable,
+                state=target.vector,
+                params=target.params,
+                model=model,
+            )
+        except NoiseIntensityError as exc:
+            status = CAMOutcomeStatus.STOCHASTIC_INVALID
+            reason = str(exc)
+            return self._build(
+                identity, target, order, status, reason, numbers, validity, sources
             )
         except ValueError as exc:
             status = CAMOutcomeStatus.UNIDENTIFIABLE

@@ -41,7 +41,7 @@ from .core.noise import canonical_sample_matrix_covariance
 from .nonlinear import ou_intensity_algebra, parameter_response
 from .observable import CAMObservable, DerivativeRecord
 from .outcomes import CAMOutcomeStatus
-from .validity import critical_mode
+from .validity import critical_mode, minimum_eigenvalue
 
 __all__ = [
     "BranchDiagnostics",
@@ -58,6 +58,9 @@ FAILURE_PHYSICAL_EIGENVALUE = "physical_eigenvalue_not_finite"
 FAILURE_NONPHYSICAL = "nonphysical_state"
 FAILURE_RATE = "soft_mode_not_decaying"
 FAILURE_NOISE = "projected_noise_not_positive"
+FAILURE_NOISE_NOT_FINITE = "noise_covariance_not_finite"
+FAILURE_NOISE_NOT_PSD = "noise_covariance_not_psd"
+FAILURE_FULL_NOISE = "full_noise_intensity_not_finite"
 FAILURE_RESPONSE = "zero_frequency_response_unresolved"
 FAILURE_READOUT = "readout_not_evaluable"
 
@@ -87,6 +90,14 @@ class BranchDiagnosticsConfig(BaseModel):
     projection_floor: float = Field(default=1.0e-14, gt=0.0)
     overlap_tolerance: float = Field(default=1.0e-10, gt=0.0)
     physical_tolerance: float = Field(default=1.0e-9, ge=0.0)
+    covariance_tolerance: float = Field(
+        default=1.0e-9,
+        ge=0.0,
+        description=(
+            "How far below zero the canonical noise covariance may go and "
+            "still count as positive semidefinite"
+        ),
+    )
 
 
 class BranchDiagnostics(BaseModel):
@@ -115,6 +126,7 @@ class BranchDiagnostics(BaseModel):
 
     # -- state physicality and mode-projected noise -----------------------
     minimum_physical_eigenvalue: float | None = None
+    noise_covariance_minimum_eigenvalue: float | None = None
     projected_noise_intensity: float | None = None
     local_ou_sigma_x: float | None = None
     soft_coordinate: float | None = None
@@ -182,6 +194,7 @@ def branch_diagnostics(
         "direction_step_relative": float(settings.direction_step_relative),
         "projection_floor": float(settings.projection_floor),
         "physical_tolerance": float(settings.physical_tolerance),
+        "covariance_tolerance": float(settings.covariance_tolerance),
         "gradient": "the observable's own derivative record",
         "eta2": "0.5 l·[(J(x+d r) − J(x−d r)) r] / (2d) with d = step·max(‖x‖,1)",
         "readout_curvature": "central second difference along the right vector",
@@ -282,6 +295,23 @@ def branch_diagnostics(
     matrix = np.asarray(adapter.state_matrix(point, parameter_map), dtype=complex)
     diffusion = np.asarray(model.cam_diffusion(matrix, parameter_map), dtype=complex)
     covariance = canonical_sample_matrix_covariance(matrix, diffusion)
+    if not np.all(np.isfinite(covariance)):
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            FAILURE_NOISE_NOT_FINITE,
+            "the canonical noise covariance is not finite",
+            **mode_fields,
+        )
+    minimum_covariance, _ = minimum_eigenvalue(covariance)
+    mode_fields["noise_covariance_minimum_eigenvalue"] = float(minimum_covariance)
+    covariance_verdict: tuple[CAMOutcomeStatus, str, str] | None = None
+    if minimum_covariance < -settings.covariance_tolerance:
+        covariance_verdict = (
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            FAILURE_NOISE_NOT_PSD,
+            "the canonical noise covariance is not positive semidefinite "
+            f"(minimum eigenvalue {minimum_covariance:.3e})",
+        )
 
     try:
         algebra = ou_intensity_algebra(
@@ -319,6 +349,15 @@ def branch_diagnostics(
     }
     if physical_verdict is not None:
         status, reason_code, reason = physical_verdict
+    elif covariance_verdict is not None:
+        status, reason_code, reason = covariance_verdict
+    elif not np.isfinite(algebra.full_intensity) or algebra.full_intensity < 0.0:
+        status = CAMOutcomeStatus.STOCHASTIC_INVALID
+        reason_code = FAILURE_FULL_NOISE
+        reason = (
+            "the full-mode noise intensity is not finite and non-negative "
+            f"({algebra.full_intensity!r})"
+        )
     elif rate <= 0.0:
         status = CAMOutcomeStatus.UNSTABLE
         reason_code = FAILURE_RATE
@@ -362,10 +401,11 @@ def branch_diagnostics(
             scale=scale,
             relative_step=settings.relative_step,
             jacobian=jacobian,
+            gradient=algebra.gradient,
         )
     except ValueError as exc:
         return failed(
-            status,
+            CAMOutcomeStatus.UNIDENTIFIABLE,
             FAILURE_RESPONSE,
             str(exc),
             **mode_fields,
@@ -383,11 +423,22 @@ def branch_diagnostics(
     minus_frequency = float(
         observable.value(adapter, point - direction_step * right, parameter_map)
     )
-    if not np.isfinite(frequency) or not np.all(np.isfinite(algebra.gradient.gradient)):
+    if not all(
+        np.isfinite(value) for value in (frequency, plus_frequency, minus_frequency)
+    ):
         return failed(
             CAMOutcomeStatus.UNIDENTIFIABLE,
             FAILURE_READOUT,
-            "the readout or its gradient is not finite",
+            "the readout is not finite on the state or on its right-vector offsets",
+            **mode_fields,
+            **noise_fields,
+            gradient=algebra.gradient,
+        )
+    if not np.all(np.isfinite(algebra.gradient.gradient)):
+        return failed(
+            CAMOutcomeStatus.UNIDENTIFIABLE,
+            FAILURE_READOUT,
+            "the readout gradient is not finite",
             **mode_fields,
             **noise_fields,
             gradient=algebra.gradient,
@@ -395,6 +446,15 @@ def branch_diagnostics(
     curvature = (plus_frequency - 2.0 * frequency + minus_frequency) / (
         direction_step**2
     )
+    if not np.isfinite(curvature):
+        return failed(
+            CAMOutcomeStatus.UNIDENTIFIABLE,
+            FAILURE_READOUT,
+            f"the readout curvature is not finite ({curvature!r})",
+            **mode_fields,
+            **noise_fields,
+            gradient=algebra.gradient,
+        )
     eta_readout: float | None = None
     if (
         sigma is not None

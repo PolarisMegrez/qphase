@@ -475,8 +475,8 @@ def test_the_service_reuses_the_public_gaussian_and_response_algebras():
     assert diagnostics.derivative.repeat_relative_error is not None
 
 
-def test_a_non_positive_projected_noise_is_stochastic_invalid():
-    """A negative projected noise is not an intensity: no sigma, no soft OU."""
+def test_a_negative_noise_covariance_is_stochastic_invalid():
+    """A covariance below the PSD tolerance is reported, with its minimum eigenvalue."""
 
     class _InvertedNoise(_ToyModel):
         @staticmethod
@@ -493,16 +493,38 @@ def test_a_non_positive_projected_noise_is_stochastic_invalid():
         parameter="mu",
     )
     assert diagnostics.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert diagnostics.reason_code == "noise_covariance_not_psd"
+    assert diagnostics.noise_covariance_minimum_eigenvalue is not None
+    assert diagnostics.noise_covariance_minimum_eigenvalue < 0.0
+    assert diagnostics.soft_ou_intensity is None or diagnostics.soft_ou_intensity >= 0.0
+
+
+class _ZeroNoiseModel(_ToyModel):
+    """A PSD covariance with no noise on the critical mode at all."""
+
+    @staticmethod
+    def cam_diffusion(matrix, params=None):
+        del params
+        return np.zeros_like(np.asarray(matrix), dtype=complex)
+
+
+def test_a_zero_projection_on_a_psd_noise_is_stochastic_invalid():
+    """A PSD covariance can still leave the critical mode with no noise at all."""
+    diagnostics = branch_diagnostics(
+        _ToyAdapter(),
+        _ZeroNoiseModel(),
+        _linear(),
+        state=[X0],
+        params=PARAMS,
+        parameter="mu",
+    )
+    assert diagnostics.status is CAMOutcomeStatus.STOCHASTIC_INVALID
     assert diagnostics.reason_code == "projected_noise_not_positive"
-    assert diagnostics.projected_noise_intensity is not None
-    assert diagnostics.projected_noise_intensity <= 0.0
+    assert diagnostics.projected_noise_intensity == pytest.approx(0.0, abs=1e-15)
+    assert diagnostics.noise_covariance_minimum_eigenvalue == pytest.approx(0.0)
     assert diagnostics.local_ou_sigma_x is None
     assert diagnostics.soft_ou_intensity is None
-    assert diagnostics.eta2 is None
     assert diagnostics.eta_readout is None
-    # The readout itself is still defined, and is not called valid.
-    assert diagnostics.frequency is not None
-    assert diagnostics.frequency_soft_projection is not None
 
 
 def test_an_unphysical_state_is_reported_and_keeps_its_algebra():
@@ -616,3 +638,83 @@ def test_the_annotation_states_why_a_readout_failed(toy_adapter, fake_solve):
         assert set(statuses[statuses != ""]) == {"nonphysical"}
         assert set(codes[codes != ""]) == {"nonphysical_state"}
         assert any("not physical" in str(value) for value in reasons.ravel())
+
+
+def test_the_public_ou_intensities_refuses_a_pseudo_valid_intensity():
+    """A noise that cannot carry an intensity raises instead of a fake sigma."""
+    from qphase_cam.nonlinear import NoiseIntensityError, ou_intensities
+
+    class _ZeroNoise(_ToyModel):
+        @staticmethod
+        def cam_diffusion(matrix, params=None):
+            del params
+            return np.zeros_like(np.asarray(matrix), dtype=complex)
+
+    with pytest.raises(NoiseIntensityError, match="projected noise"):
+        ou_intensities(
+            _ToyAdapter(), _linear(), state=[X0], params=PARAMS, model=_ZeroNoise()
+        )
+
+    class _NotFinite(_ToyModel):
+        @staticmethod
+        def cam_diffusion(matrix, params=None):
+            del params
+            return np.full_like(np.asarray(matrix), np.nan, dtype=complex)
+
+    with pytest.raises(
+        NoiseIntensityError, match="full-mode noise intensity|projected noise"
+    ):
+        ou_intensities(
+            _ToyAdapter(), _linear(), state=[X0], params=PARAMS, model=_NotFinite()
+        )
+
+
+def test_the_parameter_response_refuses_a_non_finite_derivative():
+    """A non-finite explicit or static response is an error, not a NaN result."""
+    from qphase_cam.nonlinear import parameter_response
+
+    broken = FunctionalObservable(
+        identity=_identity("broken", "not-a-number"),
+        relative_step=2.0e-6,
+        value_fn=lambda adapter, state, params: float("nan"),
+    )
+    with pytest.raises(ValueError, match="not finite"):
+        parameter_response(
+            _ToyAdapter(), broken, state=[X0], params=PARAMS, parameter="mu"
+        )
+
+    zeros = FunctionalObservable(
+        identity=_identity("zero_gradient", "zero"),
+        relative_step=2.0e-6,
+        value_fn=lambda adapter, state, params: 1.0,
+        gradient_fn=lambda adapter, state, params: [float("nan")],
+    )
+    with pytest.raises(ValueError, match="gradient is not finite"):
+        parameter_response(
+            _ToyAdapter(), zeros, state=[X0], params=PARAMS, parameter="mu"
+        )
+
+
+def test_a_non_finite_readout_is_a_failure_with_a_reason():
+    """A readout that turns non-finite on an offset fails instead of reporting NaN."""
+    broken = FunctionalObservable(
+        identity=_identity("offset_blowup", "1/(x-1)"),
+        relative_step=2.0e-6,
+        value_fn=lambda adapter, state, params: (
+            float("inf")
+            if float(np.asarray(state, dtype=float).reshape(-1)[0]) > X0
+            else float(np.asarray(state, dtype=float).reshape(-1)[0])
+        ),
+    )
+    diagnostics = branch_diagnostics(
+        _ToyAdapter(), _ToyModel(), broken, state=[X0], params=PARAMS, parameter="mu"
+    )
+    assert diagnostics.status is CAMOutcomeStatus.UNIDENTIFIABLE
+    # The non-finite readout surfaces through the zero-frequency response it feeds.
+    assert diagnostics.reason_code in {
+        "readout_not_evaluable",
+        "zero_frequency_response_unresolved",
+    }
+    assert diagnostics.reason
+    assert diagnostics.frequency_curvature is None
+    assert diagnostics.eta_readout is None

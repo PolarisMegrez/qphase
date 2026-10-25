@@ -70,7 +70,10 @@ __all__ = [
     "ScalarGeneratorEvaluation",
     "NonlinearManifold",
     "NonlinearManifoldConfig",
+    "NoiseIntensityError",
     "OuIntensities",
+    "OuIntensityAlgebra",
+    "ParameterResponse",
     "ResponsePrediction",
     "ScalarGeneratorTable",
     "ScalarReconstruction",
@@ -401,6 +404,16 @@ def evaluate_generator(
         core_point_count=int(np.count_nonzero(core)),
         edge_point_count=edge_count,
     )
+
+
+class NoiseIntensityError(ValueError):
+    """The noise does not support a Gaussian intensity.
+
+    Raised when the projected noise is not finite and positive, or when the soft or
+    full intensity comes out non-finite or negative. It is a ``ValueError`` so existing
+    handlers keep raising, and it is its own type so a caller can report the failure as
+    a *stochastic* one instead of an identity problem.
+    """
 
 
 class OuIntensities(BaseModel):
@@ -1222,12 +1235,27 @@ def ou_intensities(
         mode=mode,
         overlap_tolerance=overlap_tolerance,
     )
+    if not np.isfinite(algebra.projected_noise) or algebra.projected_noise <= 0.0:
+        raise NoiseIntensityError(
+            "the projected noise along the critical mode is not finite and positive "
+            f"({algebra.projected_noise!r}); a stable OU intensity needs one"
+        )
+    if not np.isfinite(algebra.full_intensity) or algebra.full_intensity < 0.0:
+        raise NoiseIntensityError(
+            "the full-mode noise intensity is not finite and non-negative "
+            f"({algebra.full_intensity!r})"
+        )
+    soft = algebra.soft_intensity
+    if soft is None or not np.isfinite(soft) or soft < 0.0:
+        raise NoiseIntensityError(
+            f"the soft-mode noise intensity is not finite and non-negative ({soft!r})"
+        )
     return OuIntensities(
         rate=algebra.rate,
         projection=algebra.projection,
         projected_noise=algebra.projected_noise,
-        sigma=float(np.sqrt(max(algebra.projected_noise, 0.0) / (2.0 * algebra.rate))),
-        soft_intensity=float(algebra.soft_intensity or 0.0),
+        sigma=float(np.sqrt(algebra.projected_noise / (2.0 * algebra.rate))),
+        soft_intensity=float(soft),
         full_intensity=algebra.full_intensity,
         zero_frequency_gradient=algebra.zero_frequency_gradient,
         method={
@@ -1278,6 +1306,7 @@ class ParameterResponse(BaseModel):
     state_response: tuple[float, ...] | None
     explicit_response: float
     full_response: float | None
+    gradient: DerivativeRecord
     derivative: DerivativeRecord
     method: dict[str, Any] = Field(default_factory=dict)
 
@@ -1292,6 +1321,7 @@ def parameter_response(
     scale: float = 1.0,
     relative_step: float = 2.0e-6,
     jacobian: Any | None = None,
+    gradient: DerivativeRecord | None = None,
 ) -> ParameterResponse:
     """Return the explicit and static parameter response of one readout.
 
@@ -1300,6 +1330,10 @@ def parameter_response(
     ``gradient . (-J)^-1 drive``; ``full_response`` is their sum and is ``None`` when
     the static response does not exist. The soft-mode term is *not* here: it divides
     by the rate and belongs to the caller that owns the mode.
+
+    ``gradient`` is an optional precomputed record: a caller that already asked the
+    observable for its gradient passes it, so one readout is differentiated once, and
+    the record is checked against the state's coordinate count before it is used.
     """
     point = np.asarray(state, dtype=float).reshape(-1)
     parameter_map = dict(params or {})
@@ -1323,9 +1357,24 @@ def parameter_response(
         np.asarray(adapter.parameter_jacobian(point, parameter_map), dtype=float)
         @ direction
     )
-    gradient = np.asarray(
-        observable.gradient(adapter, point, parameter_map).gradient, dtype=float
+    record = (
+        gradient
+        if gradient is not None
+        else observable.gradient(adapter, point, parameter_map)
     )
+    if not isinstance(record, DerivativeRecord):
+        raise TypeError(
+            "a precomputed gradient must be a DerivativeRecord; got "
+            f"{type(record).__name__}"
+        )
+    values = np.asarray(record.gradient, dtype=float)
+    if values.size != point.size:
+        raise ValueError(
+            f"the gradient has {values.size} entries for a "
+            f"{point.size}-coordinate state"
+        )
+    if not np.all(np.isfinite(values)):
+        raise ValueError("the readout gradient is not finite")
     parameter_value = float(parameter_map[parameter])
     step = relative_step * max(1.0, abs(parameter_value))
 
@@ -1338,6 +1387,10 @@ def parameter_response(
         return (value_at(width) - value_at(-width)) / (2.0 * width)
 
     explicit = explicit_at(step)
+    if not np.isfinite(explicit):
+        raise ValueError(
+            f"the explicit parameter response is not finite ({explicit!r})"
+        )
     refined = explicit_at(step / 2.0)
     denominator = abs(explicit)
     repeat_error = (
@@ -1367,8 +1420,10 @@ def parameter_response(
     full = (
         None
         if state_response is None
-        else float(explicit) + float(gradient @ state_response)
+        else float(explicit) + float(values @ state_response)
     )
+    if full is not None and not np.isfinite(full):
+        raise ValueError(f"the full parameter response is not finite ({full!r})")
     return ParameterResponse(
         drive=tuple(float(value) for value in drive),
         state_response=(
@@ -1378,6 +1433,7 @@ def parameter_response(
         ),
         explicit_response=float(explicit),
         full_response=full,
+        gradient=record,
         derivative=derivative,
         method={
             "service": "qphase_cam.nonlinear.parameter_response",
@@ -1463,9 +1519,7 @@ def response_prediction(
     )
     if response.state_response is None or response.full_response is None:
         raise ValueError("the static state response does not exist")
-    gradient = np.asarray(
-        observable.gradient(adapter, point, parameter_map).gradient, dtype=float
-    )
+    gradient = np.asarray(response.gradient.gradient, dtype=float)
     drive = np.asarray(response.drive, dtype=float)
     projected_drive = float(np.asarray(mode.left, dtype=float) @ drive)
     projection = float(gradient @ np.asarray(mode.right, dtype=float))
