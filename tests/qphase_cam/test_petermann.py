@@ -190,7 +190,7 @@ def test_chunked_spectrum_equals_the_default_single_chunk_result():
 
 
 def test_a_failed_row_is_skipped_without_shifting_the_chunks():
-    """Only successful rows are solved, and the chunk window covers them."""
+    """A genuinely unsuccessful row is skipped and the next chunk stays aligned."""
     model = Kerr2ModeModel(
         omega_a=0.0,
         omega_b=-0.1,
@@ -199,11 +199,28 @@ def test_a_failed_row_is_skipped_without_shifting_the_chunks():
         gamma_b=1.0,
         g=0.5,
     )
-    product = _multi_row_state_product(5, model)
+    states = np.zeros((5, 1, 2, 2), dtype=complex)
+    for index in range(5):
+        states[index, 0] = [[2.0 + 0.1 * index, 0.1j], [-0.1j, 1.0 - 0.05 * index]]
+    product = _state_product(
+        states,
+        params=model.params,
+        success=np.asarray([[True], [False], [True], [True], [True]]),
+    )
+    # The successful rows are 0, 2, 3, 4; with two rows per chunk the second chunk
+    # starts at row 3, not at row 2.
     output = PetermannSpectrum(chunk_size=2).process(product, _context(model))
     values = np.asarray(output.handle("hamiltonian_eigenvalues").materialize())
     assert values.shape == (5, 2)
-    assert np.isfinite(values).all()
+    assert np.isnan(values[1]).all()
+    for index in (0, 2, 3, 4):
+        assert np.isfinite(values[index]).all(), index
+    # The solved rows are exactly the single-chunk result for those rows.
+    default = PetermannSpectrum().process(product, _context(model))
+    expected = np.asarray(default.handle("hamiltonian_eigenvalues").materialize())
+    for index in (0, 2, 3, 4):
+        np.testing.assert_allclose(values[index], expected[index], rtol=1e-12)
+    assert np.isnan(expected[1]).all()
 
 
 def test_solution_order_is_a_non_mutating_per_point_view():

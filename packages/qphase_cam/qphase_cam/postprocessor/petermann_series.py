@@ -26,7 +26,7 @@ index.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import Field
@@ -57,7 +57,7 @@ DEFAULT_TRACKING_RULE = "soft"
 
 
 class PetermannSeriesConfig(CAMPostprocessorConfig):
-    """Optional parameter axis and fit window; tracking alone needs neither."""
+    """Optional parameter axis, fit window and fit row policy."""
 
     parameter: str | None = Field(
         default=None,
@@ -71,6 +71,18 @@ class PetermannSeriesConfig(CAMPostprocessorConfig):
         default=None,
         gt=0.0,
         description="Largest |parameter - critical_value| included in the fit",
+    )
+    fit_row_policy: Literal["valid_soft", "all_finite"] = Field(
+        default="valid_soft",
+        description=(
+            "Which tracked rows the scaling fit uses. 'valid_soft' fits only rows "
+            "whose tracked mode is a valid soft mode; 'all_finite' fits every finite, "
+            "positive Petermann factor in the window, including a row whose tracked "
+            "mode is damped — the row keeps its own status, so the estimate range is "
+            "decoupled from the soft-mode claim and the damped mode is never called "
+            "a soft mode. Missing columns, non-finite values and non-positive "
+            "factors never enter either policy."
+        ),
     )
 
 
@@ -217,6 +229,19 @@ class PetermannSeries(CAMPostprocessor[PetermannSeriesConfig]):
                 if self.config.parameter
                 else "not requested"
             ),
+            "fit_row_policy": self.config.fit_row_policy,
+            "fit_row_policies": {
+                "valid_soft": (
+                    "fit only rows whose tracked mode is a valid soft mode"
+                ),
+                "all_finite": (
+                    "fit every finite positive factor in the window, including rows "
+                    "whose tracked mode is damped; the row keeps its unidentifiable "
+                    "status, so a damped tracked mode is never reported as a soft "
+                    "mode. Missing columns, non-finite values and non-positive "
+                    "factors never enter"
+                ),
+            },
         }
         fields_out: dict[str, Any] = {
             "reason": np.asarray([""], dtype=str),
@@ -358,7 +383,12 @@ class PetermannSeries(CAMPostprocessor[PetermannSeriesConfig]):
             x: list[float] = []
             y: list[float] = []
             for slot, position in enumerate(order):
-                if entry["status"][slot] != CAMOutcomeStatus.VALID.value:
+                # The fit row policy only decides which rows are *fitted*; the row's
+                # own status keeps saying whether its tracked mode is a soft mode.
+                if (
+                    self.config.fit_row_policy == "valid_soft"
+                    and entry["status"][slot] != CAMOutcomeStatus.VALID.value
+                ):
                     continue
                 factor = float(entry["factor"][slot])
                 value = self._parameter_value(parameters[position])

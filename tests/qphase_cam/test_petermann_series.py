@@ -217,6 +217,168 @@ def test_a_stable_cam_jacobian_critical_mode_is_still_valid():
     assert metadata["tracking"]["hamiltonian"] == "soft"
 
 
+def _damped_rows_product(*, rows: int = 6, distances=None):
+    """Build a spectrum whose tracked soft mode is damped in every row."""
+    distances = np.geomspace(1.0e-3, 1.0e-1, rows) if distances is None else distances
+    factors = 0.5 * distances**-0.25
+    # Every eigenvalue has a negative real part: the soft tracker keeps the seed,
+    # and the tracked row is reported as unidentifiable by design.
+    spectrum = np.stack(
+        [np.asarray([[-0.1 + 0.0j, -2.0 + 0.0j]]) for _ in range(rows)]
+    )
+    factor_field = np.stack([np.asarray([[1.0, 2.0]]) for _ in range(rows)])
+    factor_field[:, 0, 0] = factors
+    return build_annotation_product(
+        annotation_kind="petermann_spectrum",
+        target_kind="state",
+        target_identity=[f"cam:solution:d{index}" for index in range(rows)],
+        status=["valid"] * rows,
+        fields={
+            "hamiltonian_eigenvalues": spectrum.reshape(rows, 2),
+            "hamiltonian_petermann_factors": factor_field.reshape(rows, 2),
+            "parameters": np.asarray(
+                [json.dumps({"omega": 0.5 + float(value)}) for value in distances],
+                dtype=str,
+            ),
+        },
+        field_axes={
+            "hamiltonian_eigenvalues": ("mode",),
+            "hamiltonian_petermann_factors": ("mode",),
+        },
+        axes={"mode": 2},
+    )
+
+
+def test_the_default_fit_row_policy_is_valid_soft():
+    product = _damped_rows_product()
+    series = PetermannSeries(
+        parameter="omega", critical_value=0.5, inner_max=1.0
+    ).process(product, _spectrum_context(product))
+    # No damped row is a valid soft mode, so nothing is fitted by default.
+    exponent = np.asarray(series.handle("hamiltonian_fit_exponent").materialize())[0]
+    assert np.isnan(exponent)
+    assert int(
+        np.asarray(series.handle("hamiltonian_fit_point_count").materialize())[0]
+    ) == 0
+    assert np.asarray(series.handle("hamiltonian_status").materialize()).tolist() == [
+        ["unidentifiable"] * 6
+    ]
+    metadata = json.loads(
+        str(np.asarray(series.handle("method_metadata").materialize())[0])
+    )
+    assert metadata["fit_row_policy"] == "valid_soft"
+
+
+def test_the_all_finite_policy_fits_damped_rows_without_calling_them_soft():
+    product = _damped_rows_product()
+    series = PetermannSeries(
+        parameter="omega",
+        critical_value=0.5,
+        inner_max=1.0,
+        fit_row_policy="all_finite",
+    ).process(product, _spectrum_context(product))
+    exponent = np.asarray(series.handle("hamiltonian_fit_exponent").materialize())[0]
+    count = int(
+        np.asarray(series.handle("hamiltonian_fit_point_count").materialize())[0]
+    )
+    assert exponent == pytest.approx(-0.25, rel=1e-9)
+    assert count == 6
+    # The rows are still unidentifiable: the policy widens the estimate, it does
+    # not promote a damped tracked mode to a soft mode.
+    assert np.asarray(series.handle("hamiltonian_status").materialize()).tolist() == [
+        ["unidentifiable"] * 6
+    ]
+    metadata = json.loads(
+        str(np.asarray(series.handle("method_metadata").materialize())[0])
+    )
+    assert metadata["fit_row_policy"] == "all_finite"
+    assert "never reported as a soft mode" in metadata["fit_row_policies"]["all_finite"]
+
+
+def test_the_all_finite_policy_still_rejects_missing_and_nonpositive_rows():
+    rows = 4
+    distances = np.asarray([1.0e-3, 2.0e-3, 4.0e-3, 8.0e-3])
+    factors = np.asarray([[2.0, 1.0], [np.nan, 1.0], [0.0, 1.0], [-1.0, 1.0]])
+    spectrum = np.stack([np.asarray([[-0.1 + 0.0j, -2.0 + 0.0j]]) for _ in range(rows)])
+    product = build_annotation_product(
+        annotation_kind="petermann_spectrum",
+        target_kind="state",
+        target_identity=[f"cam:solution:x{index}" for index in range(rows)],
+        status=["valid"] * rows,
+        fields={
+            "hamiltonian_eigenvalues": spectrum.reshape(rows, 2),
+            "hamiltonian_petermann_factors": factors,
+            "parameters": np.asarray(
+                [json.dumps({"omega": 0.5 + float(value)}) for value in distances],
+                dtype=str,
+            ),
+        },
+        field_axes={
+            "hamiltonian_eigenvalues": ("mode",),
+            "hamiltonian_petermann_factors": ("mode",),
+        },
+        axes={"mode": 2},
+    )
+    series = PetermannSeries(
+        parameter="omega",
+        critical_value=0.5,
+        inner_max=1.0,
+        fit_row_policy="all_finite",
+    ).process(product, _spectrum_context(product))
+    # Only the one finite, positive factor enters.
+    count = int(
+        np.asarray(series.handle("hamiltonian_fit_point_count").materialize())[0]
+    )
+    assert count == 0
+    exponent = np.asarray(series.handle("hamiltonian_fit_exponent").materialize())[0]
+    assert np.isnan(exponent)
+
+
+def test_the_critical_family_is_fitted_under_both_policies():
+    rows = 6
+    distances = np.geomspace(1.0e-3, 1.0e-1, rows)
+    factors = 0.5 * distances**-0.25
+    spectrum = np.stack(
+        [np.asarray([[-0.1 + 0.0j, -2.0 + 0.0j]]) for _ in range(rows)]
+    )
+    factor_field = np.stack([np.asarray([[1.0, 2.0]]) for _ in range(rows)])
+    factor_field[:, 0, 0] = factors
+    product = build_annotation_product(
+        annotation_kind="petermann_spectrum",
+        target_kind="state",
+        target_identity=[f"cam:solution:p{index}" for index in range(rows)],
+        status=["valid"] * rows,
+        fields={
+            "cam_jacobian_eigenvalues": spectrum.reshape(rows, 2),
+            "cam_jacobian_petermann_factors": factor_field.reshape(rows, 2),
+            "parameters": np.asarray(
+                [json.dumps({"omega": 0.5 + float(value)}) for value in distances],
+                dtype=str,
+            ),
+        },
+        field_axes={
+            "cam_jacobian_eigenvalues": ("mode",),
+            "cam_jacobian_petermann_factors": ("mode",),
+        },
+        axes={"mode": 2},
+    )
+    for policy in ("valid_soft", "all_finite"):
+        series = PetermannSeries(
+            parameter="omega",
+            critical_value=0.5,
+            inner_max=1.0,
+            fit_row_policy=policy,
+        ).process(product, _spectrum_context(product))
+        exponent = np.asarray(
+            series.handle("cam_jacobian_fit_exponent").materialize()
+        )[0]
+        count = int(
+            np.asarray(series.handle("cam_jacobian_fit_point_count").materialize())[0]
+        )
+        assert exponent == pytest.approx(-0.25, rel=1e-9), policy
+        assert count == rows, policy
+
+
 def test_a_damped_soft_family_stays_unidentifiable_while_the_jacobian_does_not():
     """One row, both rules: the soft families reject it, the Jacobian does not."""
     values = np.asarray([[-0.2, -1.5]])
