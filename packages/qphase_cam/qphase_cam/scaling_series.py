@@ -264,15 +264,28 @@ def evaluate_scaling_series(
         critical_value=resolved.reference_value,
         absolute_shift=False,
     )
+    if settings.absolute_shift:
+        raise ValueError(
+            "a pre-registered scaling series is already a magnitude; its config must "
+            "set absolute_shift=False"
+        )
+
     if str(settings.parameter) != str(resolved.parameter):
         raise ValueError(
             f"the config names the control {settings.parameter!r} but the series was "
             f"measured along {resolved.parameter!r}; one series has one identity"
         )
-    if settings.absolute_shift:
+    if float(settings.critical_parameter) != float(resolved.critical_parameter):
         raise ValueError(
-            "a pre-registered scaling series is already a magnitude; its config must "
-            "set absolute_shift=False"
+            f"the config states the critical point {settings.critical_parameter!r} but "
+            f"the series records {resolved.critical_parameter!r}; the product and its "
+            "method metadata cannot disagree about it"
+        )
+    if settings.critical_value != resolved.reference_value:
+        raise ValueError(
+            f"the config states the reference value {settings.critical_value!r} but "
+            f"the series records {resolved.reference_value!r}; None means 'not "
+            "recorded' and is not interchangeable with a number"
         )
     method: dict[str, Any] = {
         **dict(resolved.method),

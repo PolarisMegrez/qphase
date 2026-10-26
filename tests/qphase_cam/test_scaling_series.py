@@ -359,3 +359,88 @@ def test_the_series_control_name_is_the_annotation_identity():
                 absolute_shift=False,
             ),
         )
+
+
+def test_an_explicit_config_cannot_disagree_with_the_series_about_the_critical_point():
+    """The critical point has one source; a conflicting config is refused."""
+    series, _ = _series()
+    response = FunctionalScalingResponse(
+        identity=_identity("abs_element", "|R_01 - R_10|"),
+        response_fn=_modulus(0, 1),
+    )
+    with pytest.raises(ValueError, match="critical point"):
+        evaluate_scaling_series(
+            response,
+            series,
+            config=ObservableScalingConfig(
+                parameter="mu",
+                critical_parameter=0.25,
+                critical_value=2.5,
+                absolute_shift=False,
+            ),
+        )
+    # The matching config builds the product whose field and metadata agree.
+    annotation = evaluate_scaling_series(
+        response,
+        series,
+        config=ObservableScalingConfig(
+            parameter="mu",
+            critical_parameter=0.5,
+            critical_value=2.5,
+            absolute_shift=False,
+        ),
+    )
+    import json
+
+    field = float(np.asarray(annotation.handle("critical_parameter").materialize())[0])
+    metadata = json.loads(
+        str(np.asarray(annotation.handle("method_metadata").materialize())[0])
+    )
+    assert field == 0.5
+    assert metadata["critical_parameter"] == 0.5
+    assert metadata["reference_value"] == 2.5
+
+
+def test_an_explicit_config_cannot_disagree_about_the_reference_value():
+    """A reference value is a number or explicitly absent, never a guess."""
+    series, _ = _series()
+    response = FunctionalScalingResponse(
+        identity=_identity("abs_element", "|R_01 - R_10|"),
+        response_fn=_modulus(0, 1),
+    )
+    with pytest.raises(ValueError, match="reference value"):
+        evaluate_scaling_series(
+            response,
+            series,
+            config=ObservableScalingConfig(
+                parameter="mu",
+                critical_parameter=0.5,
+                critical_value=1.5,
+                absolute_shift=False,
+            ),
+        )
+    # None versus a number is a disagreement, not a default.
+    with pytest.raises(ValueError, match="reference value"):
+        evaluate_scaling_series(
+            response,
+            series,
+            config=ObservableScalingConfig(
+                parameter="mu",
+                critical_parameter=0.5,
+                critical_value=None,
+                absolute_shift=False,
+            ),
+        )
+    # A series without a reference value accepts a config without one.
+    bare = series.model_copy(update={"reference_value": None})
+    annotation = evaluate_scaling_series(
+        response,
+        bare,
+        config=ObservableScalingConfig(
+            parameter="mu",
+            critical_parameter=0.5,
+            critical_value=None,
+            absolute_shift=False,
+        ),
+    )
+    assert np.isnan(np.asarray(annotation.handle("critical_value").materialize())[0])
