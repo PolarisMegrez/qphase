@@ -123,9 +123,9 @@ CAM engine 目前仅通过 `batched_newton` 支持 CuPy。VDP2、Kerr2、cross-K
 | Jacobian spectrum | 支持 | 支持 |
 | Bifurcation refinement | 支持续延拓结果 | 不支持 |
 
-`batched_newton` 在构造 `CAMResult` 时会将收敛状态转换为 NumPy 数组。因此，
-即使 Newton 迭代和 Jacobian 线性求解在 GPU 上运行，持久化和大部分后处理仍在
-CPU 上完成。
+`batched_newton` 在封装 typed `state`/`state_scan` product 时会将收敛状态转换为
+NumPy 数组。因此，即使 Newton 迭代和 Jacobian 线性求解在 GPU 上运行，持久化和
+大部分后处理仍在 CPU 上完成。
 
 ## 物理解判定
 
@@ -144,16 +144,19 @@ CPU 上完成。
 ## 结果
 
 结果使用模型规定的固定 solution 容量。`valid_mask` 与 `solution_count` 标记已填充
-slot。每个参数点默认按 `real(R[0,0])` 排序；slot 不是跨参数点的全局 branch id，
-相邻扫描点之间不隐含连续性。
+slot。存储的 slot 顺序即规范顺序、不会被改写；`solution_identity` 是"求解状态 +
+该扫描点参数"的内容摘要，永不包含 slot 编号，因此它是消费者用于关联的字段。按行
+读取用 `qphase_cam.postprocessor.state_view.state_rows`，它给出每个已填充 slot 的
+`StateRow`（`index`、`state`、`residual`、`success`、`parameters`、`identity`）；
+需要不同展示顺序时由调用方自行排序，product 本身不改动容量 slot。
 
-首选标量频率字段是 `rayleigh_frequency`。完整复 Hamiltonian 谱保存在
-`hamiltonian_eigenvalues`，其实部保存在 `mode_frequencies`；不再提供含义模糊的
-`omega` 字段。逻辑数组 shape 为
-`scan_shape + (capacity, n_modes, n_modes)`。NPZ 保存完整结果，配套 CSV 展平
-参数、slot、矩阵元、残差、频率、稳定性和物理解字段。大型结果可保存为有限数量
-的 shard；`artifact_manifest.json` 记录布局，`CAMResult.load_dataset` 会恢复相同
-的逻辑 shape。
+首选标量读出是 `RayleighObservable`（`Re Tr(HR)/Tr(R)`），单模读出是
+`DiagonalRayleighObservable`；完整复 Hamiltonian 谱取 `hamiltonian_spectrum`
+后处理 product，不再提供含义模糊的 `omega` 字段。state product 的逻辑 shape 为
+`scan_shape + (capacity, n_modes, n_modes)`：`qphase.data.load_bundle` 打开
+Artifact v4 bundle，`bundle.require("state_scan")` 返回 typed product，写入端是
+`qphase_cam.data.state.build_state_product`，读写共用同一 schema。上述后处理器的
+标注也是同一 bundle 中独立的 typed product，而不是某个结果对象上的字段。
 
 可选的 `coherence_pole_spectrum` 后处理器用于诊断闭合 CAM 关联
 
@@ -294,11 +297,15 @@ CAM/SDE 频率对应必须在明确的适用域内解释。至少应检查平稳
 seed、逐轨迹 bootstrap 不确定度和明确的等效性容差；“未能拒绝频率不同”不能作为
 严格恒等的证明。
 
-`CAMBifurcationResult` schema 3 包含 candidate table 和通过 `candidate_index`
-关联的 branch-response table。后者保存局部分支编号、`(n,k,m)`、指数分子/分母、
-扰动侧、幅度和完整状态矩阵领先系数。可通过 `to_candidate_table()`、
-`to_branch_table()` 与 `branch_view()` 读取。candidate CSV 包含规范状态坐标和数值
-诊断，branch CSV 包含标量分支诊断；完整矩阵系数保存在 NPZ。
+`candidates` product 有可变的 candidate 轴：每行保存 identity、control 取值、以
+JSON `classification`/`base_audit` 列保存的物理性与稳定性诊断，分支表放在
+`classification["scaling_signatures"]` 中（局部分支编号、`(n,k,m)`、指数分子/分母、
+扰动侧、幅度，以及每条分支的完整状态矩阵领先系数）。读取用
+`candidate_view(product)` 得到 `CandidateView`（`rows`、`branches_of`、`params_at`、
+`design_at`、`metadata_at`），`candidate_parameters`/`candidate_state` 只接受该
+view，并自己解析候选所属 case。旧对象上的 `to_candidate_table()`/`to_branch_table()`
+在运行时不复存在：调用方从 view 自建表格。candidate 与局部分支编号都不是全局
+branch id。
 
 高精度验证明确区分重根方程的 `multiplicity_residual_norm` 与高精度重建后完整
 CAM 动力学的 `verified_full_residual_norm`，并保存规范状态与搜索未知量的十进制
@@ -313,12 +320,43 @@ CAM 动力学的 `verified_full_residual_norm`，并保存规范状态与搜索�
 该量不同于 `stochastic_validity` 输出的 Jacobian 临界模条件数。
 `rayleigh_visibility < 1e-3` 标记为
 `weak_projection`，表示标量读出在有限窗口可能遮蔽状态的次线性渐近响应。验证失败
-只影响响应状态，不删除数学候选。逐点结果另存为 `*_responses.csv`。
+只影响响应状态，不删除数学候选。响应表是 bundle 中的 typed 标注 product；候选级别的
+收敛/连续/物理/稳定比例另存旁边，从而区分"恰在重根处稳定"与"整个微扰窗口内稳定"。
 
-外层 bifurcation scan 返回 `CAMBifurcationScanResult`。它保存命名 case axes、展平的
-candidate table 和 `candidate_offsets`，因此零候选与多候选 case 均可无歧义表示。
-一个逻辑 job 只生成一份 NPZ，以及配套的 `cases`、`candidates` 和可选 `branches`
-CSV，不会为每个 case 新建运行目录。
+## 公共分析接口
+
+脚本与后处理器需要的读出与估计量都是针对 typed product 的公共函数，而不是某个
+结果对象的方法：
+
+- `DiagonalRayleighObservable`（以及 `RayleighObservable`）是频率读出，其
+  `gradient` 为有限差分，步长与半步重复校验随 `DerivativeRecord` 一起返回。
+- `postprocessor.observable_scaling.ObservableScaling` 为一个读出生成预先登记的
+  标度序列（`ScalingSeries`、`evaluate_scaling_series`）；它不判断哪个指数可接受。
+- `postprocessor.nonlinear_reconstruction.NonlinearReconstruction` 沿慢流形重建平稳
+  标量问题；可选开关 `effective` 会为每个 target/order 追加 effective-drift 曲线
+  （`effective_drift_curve`）。
+- `path_information.path_information_bounds` 给出协方差的路径信息上下界，PSD 容差
+  显式声明，不修矩阵。
+- `polynomial_reconstruction.polynomial_reconstruction` 拟合物理区间、投影扩散与
+  读出多项式，并给出稠密 generator table 及其 `evaluate_generator` 求值；非物理
+  区间、非正扩散或不归一化密度都会返回带原因的 status，绝不编造数值。
+- `nonlinear.response_prediction` 与 `nonlinear.ou_intensity_algebra` /
+  `ou_intensities` 返回读出的 soft/full 高斯强度与参数响应。两者都接受
+  `critical_mode_rule`（默认 `nearest_zero`，`slowest` 取实部最大者）与
+  `critical_eigenvalue_source`（默认 `eigenvalue`，`projected` 用
+  `left @ J @ right`），因此调用方明确声明所用模态与 rate 形式，实际取值记录在
+  `method` 中。拟合公式若要复现历史 soft 定义，就显式传 `slowest` + `projected`
+  （本项目的 CLK3 链即如此）。
+
+这些接口都接受 typed product（state scan、candidate view，或 adapter + 状态）或
+纯数组；没有任何一个读取 pre-2.0 结果对象或后处理字典。
+
+外层 bifurcation scan 是带 case grid 的同一个 `candidates` product：case 轴成为
+`case_parameter.<name>` 列，`case_shape`/`case_count` 属性描述网格，`case_metadata`
+保存每个 case 自己的记录，`candidate_offsets` 让零候选与多候选 case 均可无歧义
+表示。候选所属 case 只由 `candidate_offsets` 解析
+（`CandidateView.case_flat_index`），因此 candidate 索引永不会被当作 case 索引。
+一个逻辑 job 只生成一个 bundle，不会为每个 case 新建运行目录。
 
 大型 bifurcation campaign 可以隔离普通的单 case 数值失败：
 

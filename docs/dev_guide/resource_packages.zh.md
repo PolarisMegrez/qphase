@@ -30,12 +30,16 @@ points 枚举包资产。下述目录骨架是开发与审计约定，由 contra
 profile 可组合：`qphase_sde` 声明 `base + compute + simulation`；可视化包可以只声明
 `base`，不会被强迫创建无意义的 `model.py`。
 
-- `__init__.py` 只导出版本、manifest 与稳定公共类型，禁止 eager import concrete plugins。
+- `__init__.py` 只导出版本、manifest 与稳定公共类型——即消费者可以持有的运行时 API，
+  绝不包括历史 payload 类型；禁止 eager import concrete plugins。
 - `manifest.py` 是 `ResourcePackageManifest` 的唯一声明位置。
 - `engine.py` 是 scheduler 面向该资源包的唯一执行入口。
 - `config.py` 保存资源包级公共配置与 task profile，不集中吞并 concrete plugin 配置。
 - `state.py` 定义资源包运行状态与可恢复状态协议。
-- `result.py` 定义 bundle/result adapter 与命名 data products。
+- `result.py` 定义资源包的 typed data products 及其 bundle/artifact adapter，是运行时
+  的结果表示。若资源包还保留 pre-2.0 结果类用于一次性历史导入，必须把它们隔离在显式
+  的导入边界之后（`qphase_cam` 用 `qphase_cam.data.legacy`），不得再作为运行时结果
+  呈现。
 - `errors.py` 定义稳定错误码及其到 core error report 的映射。
 - `contracts/` 保存资源包特有且公开的协议、quantity 与 capability。
 - `planning.py`（`compute`）把 resolved plugins 与输入产品编译为执行计划；

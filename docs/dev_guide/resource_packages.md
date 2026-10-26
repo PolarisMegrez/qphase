@@ -35,15 +35,20 @@ Profiles are composable: `qphase_sde` declares `base + compute + simulation`, wh
 visualization package can declare `base` alone and is not forced to create a
 meaningless `model.py`.
 
-- `__init__.py` exports only the version, the manifest and stable public types. It must
-  not eagerly import concrete plugins.
+- `__init__.py` exports only the version, the manifest and stable public types — the
+  runtime API a consumer may hold, never a historical payload type. It must not
+  eagerly import concrete plugins.
 - `manifest.py` is the single declaration site of the package's
   `ResourcePackageManifest`.
 - `engine.py` is the only execution entry point the scheduler uses for the package.
 - `config.py` holds package-level shared configuration and task profiles; it does not
   swallow concrete plugin configuration.
 - `state.py` defines the package runtime and recoverable state protocol.
-- `result.py` defines bundle/result adapters and the named data products.
+- `result.py` defines the package's typed data products and their bundle/artifact
+  adapters; it is the runtime result representation. A package that also keeps
+  pre-2.0 result classes for a one-time historical import must isolate them behind
+  an explicit import boundary (as `qphase_cam` does with
+  `qphase_cam.data.legacy`) and must not present them as runtime results.
 - `errors.py` defines stable error codes and their mapping to the core error report.
 - `contracts/` holds package-specific public protocols, quantities and capabilities.
 - `planning.py` (`compute`) compiles resolved plugins and input products into an

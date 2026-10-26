@@ -178,9 +178,9 @@ finding or CPU pseudo-arclength logic.
 | Local bifurcation response validation | Yes | No |
 | Jacobian spectrum | Yes | Yes |
 
-`batched_newton` transfers converged states back to NumPy when constructing
-`CAMResult`; persistence and most postprocessing are therefore CPU-side even
-when Newton iterations and Jacobian solves run on the GPU.
+`batched_newton` transfers converged states back to NumPy when it packs the typed
+`state`/`state_scan` product; persistence and most postprocessing are therefore
+CPU-side even when Newton iterations and Jacobian solves run on the GPU.
 
 ## Physicality
 
@@ -214,10 +214,14 @@ are sorted by `real(R[0,0])` unless the model overrides the key. A slot is not a
 global branch identifier and no continuity between neighboring scan points is
 implied.
 
-`CAMResult.solution_order()` constructs a non-mutating per-point ordering view.
-It uses `real(R[0,0])` by default, accepts a custom callable of `(state, params)`,
-and represents invalid slots with `-1`. Consumers can choose another matrix
-element or derived scalar without changing the stored canonical slots.
+The stored slot order is the canonical order and is never rewritten, and
+`solution_identity` is a content digest of the solved state and its scan point's
+parameters — never a slot index — so it is the field a consumer joins on. The
+state product is read row by row with
+`qphase_cam.postprocessor.state_view.state_rows`, which yields one `StateRow` per
+filled slot with its `index`, `state`, `residual`, `success`, `parameters` and
+`identity`. A consumer that wants a different display order sorts those rows with
+its own key; the product itself keeps the capacity slots untouched.
 
 `rayleigh_frequency` is the scalar matrix-weighted average
 `Re Tr(HR) / Tr(R)`. It is not generally a PSD peak: when `R` contains more
@@ -393,22 +397,25 @@ ordered by real part and then imaginary part, with Petermann factors reordered
 identically. Models opt into this analysis through
 `cam_bogoliubov_interaction(state, params)`.
 
-The logical array shape is `scan_shape + (capacity, n_modes, n_modes)`. NPZ
-files contain the complete fixed-capacity result, while the companion CSV
-flattens parameters, independent solution slots, Hermitian coordinates,
-residuals, frequencies, stability, and physicality fields. Large results may be
-stored as a bounded set of shards; `artifact_manifest.json` records the layout
-and `CAMResult.load_dataset` restores the same logical shape.
+A state product's logical shape is `scan_shape + (capacity, n_modes, n_modes)`,
+and the artifact stores those product columns in npz/3 chunks under an Artifact v4
+manifest; `qphase.data.load_bundle` opens the bundle and `bundle.require("state_scan")`
+returns the typed product. `qphase_cam.data.state.build_state_product` is the writer,
+so the reader and the writer share one schema. Annotations from the postprocessors
+above arrive as separate typed products of the same bundle, not as fields of a
+result object.
 
-`CAMBifurcationResult` instead has a variable candidate axis. Schema 3 stores a
-candidate table plus a branch-response table linked by `candidate_index`. The
-branch table contains local branch indices, `(n,k,m)`, exact exponent numerator
-and denominator, perturbation side, amplitude, and the complete leading state
-matrix coefficient. `to_candidate_table()`, `to_branch_table()`, and
-`branch_view()` avoid direct dependence on NPZ object internals. Candidate CSV
-includes canonical state coordinates and numerical diagnostics; branch CSV
-includes scalar branch diagnostics, while complete matrix coefficients remain
-in NPZ. Candidate and local branch indices are not global branch identifiers.
+A `candidates` product instead has a variable candidate axis. It stores one row per
+candidate with its identity, its control values, the physical and stability
+diagnostics as JSON `classification`/`base_audit` columns, and its branch table in
+`classification["scaling_signatures"]`: local branch indices, `(n,k,m)`, exact
+exponent numerator and denominator, perturbation side, amplitude, and the complete
+leading state matrix coefficient per branch. `candidate_view(product)` returns the
+`CandidateView` a consumer works with — `rows`, `branches_of`, `params_at`,
+`design_at`, `metadata_at` — and `candidate_parameters`/`candidate_state` read a
+view only. `to_candidate_table()`/`to_branch_table()`-style helpers of the
+pre-2.0 objects have no runtime equivalent: a caller builds its own table from the
+view. Candidate and local branch indices are not global branch identifiers.
 
 High-precision verification distinguishes `multiplicity_residual_norm`, the
 residual of the repeated-root equations, from `verified_full_residual_norm`, the
@@ -433,11 +440,11 @@ is distinct from the Jacobian critical-mode condition number reported by
 `rayleigh_visibility < 1e-3` is reported as `weak_projection`: the scalar readout
 may look linear over a practical finite window even when its nonzero asymptotic
 term has the same sublinear exponent as the complete state. Validation status
-never removes or reclassifies a mathematical candidate. Results are stored in
-NPZ and an additional `*_responses.csv` table. Candidate-level convergence,
-continuity, physicality, and stability fractions are stored separately in
-`*_response_summary.csv`; this distinguishes stability exactly at a multiple
-root from stability throughout the sampled perturbation window.
+never removes or reclassifies a mathematical candidate. The response table is a
+typed annotation product of the bundle; candidate-level convergence, continuity,
+physicality, and stability fractions are stored beside it, which distinguishes
+stability exactly at a multiple root from stability throughout the sampled
+perturbation window.
 
 The optional `stochastic_validity` postprocessor estimates whether finite
 sample-matrix noise is likely to mask the deterministic local response. For a
@@ -454,14 +461,50 @@ This is a regime diagnostic, not a linewidth predictor. Its noise process
 inherits the qpsgen moment closure. Every row records the representation, FPE
 exactness, moment-closure policy, and noise semantics. Unsupported augmented,
 anomalous-noise, oscillatory-critical-mode, or non-additive signatures produce
-an explicit status and do not reject the bifurcation candidate. Results are
-stored in NPZ and `*_stochastic_validity.csv`.
+an explicit status and do not reject the bifurcation candidate. They arrive as a
+typed annotation product of the bundle.
 
-An outer bifurcation scan returns `CAMBifurcationScanResult`. It stores named
-case axes, one flattened candidate table, and `candidate_offsets` so zero- and
-multi-candidate cases remain distinguishable. One NPZ and companion `cases`,
-`candidates`, and optional `branches` CSV files are written for the logical job;
-no per-case directories or Session manifest entries are created.
+## Analysis Services
+
+The readouts and estimators a script or a postprocessor needs are public
+functions over typed products, not methods of a result object:
+
+- `DiagonalRayleighObservable` (and `RayleighObservable`) is the frequency readout,
+  with a finite-difference `gradient` whose step and half-step repeat check travel
+  with the record.
+- `postprocessor.observable_scaling.ObservableScaling` produces one pre-registered
+  scaling series (`ScalingSeries`, `evaluate_scaling_series`) for a readout; it
+  never decides which exponent is admissible.
+- `postprocessor.nonlinear_reconstruction.NonlinearReconstruction` reconstructs the
+  stationary scalar problem along the slow manifold; its optional `effective` switch
+  adds the effective-drift curve (`effective_drift_curve`) per target and order.
+- `path_information.path_information_bounds` returns the path-information bounds of
+  a covariance, with an explicit PSD tolerance instead of a repaired matrix.
+- `polynomial_reconstruction.polynomial_reconstruction` fits the physical interval,
+  the projected diffusion and a readout as polynomials, and exposes the dense
+  generator table plus its `evaluate_generator` evaluation; a non-physical interval,
+  a non-positive diffusion or a density that does not normalize is a status with a
+  reason, never a fabricated number.
+- `nonlinear.response_prediction` and `nonlinear.ou_intensity_algebra` /
+  `ou_intensities` return the soft and full Gaussian intensities and the response of
+  a readout. Both take `critical_mode_rule` (`nearest_zero` by default, `slowest` for
+  the largest real part) and `critical_eigenvalue_source` (`eigenvalue` by default,
+  `projected` for `left @ J @ right`), so a caller states which mode and which rate
+  form its published definition uses instead of inheriting a hidden one; the pair
+  actually used is recorded in `method`.
+
+Every one of these takes a typed product (a state scan, a candidate view, an
+adapter plus a state) or plain arrays; none reads a pre-2.0 result object or a
+postprocessor dictionary.
+
+An outer bifurcation scan is the same `candidates` product with a case grid: the
+case axes become `case_parameter.<name>` columns, `case_shape` and `case_count`
+attributes describe the grid, `case_metadata` keeps each case's own record, and
+`candidate_offsets` keeps zero- and multi-candidate cases distinguishable. A
+candidate's case is resolved from `candidate_offsets` alone
+(`CandidateView.case_flat_index`), so no candidate index is ever read as a case
+index. The bundle is written once for the logical job; no per-case directories or
+Session manifest entries are created.
 
 Large bifurcation campaigns may isolate ordinary per-case numerical failures:
 
