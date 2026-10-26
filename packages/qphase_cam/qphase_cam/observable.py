@@ -15,11 +15,19 @@ Three pieces:
   ``gradient``. :meth:`CAMObservable.gradient` returns a
   :class:`DerivativeRecord`, so a gradient can never be used without the step,
   the coordinate scale and the repeat check that produced it.
-* Two implementations ship here: :class:`RayleighObservable` (``Re Tr(H R)/Tr(R)``
-  from the model Hamiltonian and the adapter's state matrix, no mode or model
-  hard-coded) and :class:`FunctionalObservable` (a caller-supplied value and
-  optional analytic gradient), which is enough for any other readout without a
-  new plugin registration.
+* Three implementations ship here: :class:`RayleighObservable`
+  (``Re Tr(H R)/Tr(R)`` from the model Hamiltonian and the adapter's state matrix, no
+  mode or model hard-coded), :class:`DiagonalRayleighObservable`
+  (``Re (H R)[m,m]/R[m,m]``, the frequency of one mode's amplitude) and
+  :class:`FunctionalObservable` (a caller-supplied value and optional analytic
+  gradient), which is enough for any other readout without a new plugin registration.
+
+The trace readout and the diagonal readout each own their denominator rule and never
+share one: a state matrix whose *trace* sits at rounding scale cannot normalise
+``Re Tr(H R)/Tr(R)`` at all, so :class:`RayleighObservable` refuses it by raising, while
+:class:`DiagonalRayleighObservable` reports ``NaN`` when a mode amplitude's diagonal
+element is below its own ``denominator_floor`` — a node of one mode is a real state, not
+an unusable one. Neither rule is applied to the other readout.
 
 The default gradient is a central difference with the step tied to each
 coordinate's own scale, repeated at half the step so the record can say how
@@ -41,6 +49,7 @@ __all__ = [
     "CAMObservable",
     "ChargeSector",
     "DerivativeRecord",
+    "DiagonalRayleighObservable",
     "FunctionalObservable",
     "ObservableIdentity",
     "ObservableKind",
@@ -166,15 +175,11 @@ def observable_values(
         values = np.asarray(batched(adapter, stack, params), dtype=float).reshape(-1)
         if values.size != stack.shape[0]:
             raise ValueError(
-                f"the readout returned {values.size} values for {stack.shape[0]} "
-                "states"
+                f"the readout returned {values.size} values for {stack.shape[0]} states"
             )
         return values
     return np.asarray(
-        [
-            float(observable.value(adapter, vector, params))
-            for vector in stack
-        ],
+        [float(observable.value(adapter, vector, params)) for vector in stack],
         dtype=float,
     )
 
@@ -425,6 +430,151 @@ class RayleighObservable:
 
 
 @dataclass(frozen=True)
+class DiagonalRayleighObservable:
+    """``Re (H R)[m, m] / R[m, m]``: the frequency of one mode's amplitude.
+
+    The Hamiltonian comes from the model (``cam_hamiltonian``) and the state matrix
+    from the adapter, so the readout is model-agnostic; the only mode-specific input is
+    the index ``mode``. The charge sector is zero because the readout is a frequency.
+
+    A mode amplitude can vanish — that is a node of the mode, not a broken state — so a
+    diagonal element smaller than ``denominator_floor`` is reported as ``NaN``. With
+    ``denominator_floor = 0`` the guard is skipped and the plain division keeps its own
+    semantics. Trace readouts use :class:`RayleighObservable`, whose denominator rule
+    (refusing a trace at rounding scale) is its own and is *not* shared with this class.
+    Errors from the adapter, the Hamiltonian or the model are never turned into ``NaN``.
+    """
+
+    model: Any
+    mode: int
+    name: str | None = None
+    relative_step: float = 1.0e-5
+    denominator_floor: float = 1.0e-14
+    identity: ObservableIdentity = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Fill the identity and reject an unusable model, mode or floor."""
+        if self.model is None:
+            raise ValueError(
+                "a diagonal Rayleigh observable needs a model with a Hamiltonian"
+            )
+        if not callable(getattr(self.model, "cam_hamiltonian", None)):
+            raise TypeError(
+                "a diagonal Rayleigh observable needs a model that implements "
+                "cam_hamiltonian(state, params)"
+            )
+        mode = int(self.mode)
+        if mode < 0:
+            raise ValueError(f"the mode index must be non-negative; got {mode}")
+        floor = float(self.denominator_floor)
+        if not np.isfinite(floor) or floor < 0.0:
+            raise ValueError(
+                "denominator_floor must be finite and non-negative; got "
+                f"{self.denominator_floor!r}"
+            )
+        object.__setattr__(self, "mode", mode)
+        object.__setattr__(self, "denominator_floor", floor)
+        object.__setattr__(
+            self,
+            "identity",
+            ObservableIdentity(
+                kind=ObservableKind.CARRIER,
+                sector=ChargeSector.CHARGE_ZERO,
+                name=(
+                    str(self.name)
+                    if self.name is not None
+                    else f"mode_frequency_{mode}"
+                ),
+                measurement_mapping=f"Re (H R)[{mode},{mode}] / R[{mode},{mode}]",
+            ),
+        )
+
+    def _hamiltonian(self, matrix: np.ndarray, params: Mapping[str, Any]) -> np.ndarray:
+        """Return the model Hamiltonian of one matrix or one matrix stack."""
+        hamiltonian = np.asarray(
+            self.model.cam_hamiltonian(matrix, params), dtype=complex
+        )
+        if hamiltonian.shape != matrix.shape:
+            raise ValueError(
+                f"Hamiltonian shape {hamiltonian.shape} does not match the state "
+                f"matrix shape {matrix.shape}"
+            )
+        return hamiltonian
+
+    def value(self, adapter: Any, state: Any, params: Mapping[str, Any]) -> float:
+        """Return the frequency of one mode's amplitude at one state."""
+        parameter_map = dict(params or {})
+        matrix = np.asarray(adapter.state_matrix(state, parameter_map), dtype=complex)
+        if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+            raise ValueError(f"a state matrix must be square; got shape {matrix.shape}")
+        if self.mode >= matrix.shape[0]:
+            raise ValueError(
+                f"the mode index {self.mode} is out of range for a "
+                f"{matrix.shape[0]}x{matrix.shape[1]} state matrix"
+            )
+        hamiltonian = self._hamiltonian(matrix, parameter_map)
+        product = hamiltonian @ matrix
+        denominator = matrix[self.mode, self.mode]
+        if self.denominator_floor > 0.0 and abs(denominator) < self.denominator_floor:
+            return float("nan")
+        return float(np.real(product[self.mode, self.mode] / denominator))
+
+    def values(
+        self, adapter: Any, states: Any, params: Mapping[str, Any]
+    ) -> np.ndarray:
+        """Return the frequency of one mode's amplitude for every row of a stack.
+
+        One state-matrix call and one Hamiltonian call for the whole stack when the
+        adapter and the model can answer a batch, one row at a time when they cannot:
+        the quotient and the denominator floor are the point readout's, evaluated for
+        every state at once.
+        """
+        parameter_map = dict(params or {})
+        stack = np.asarray(states, dtype=float)
+        if stack.ndim != 2:
+            raise ValueError(
+                f"a state stack must be (n, coordinates); got shape {stack.shape}"
+            )
+        matrices = _state_matrices(adapter, stack, parameter_map)
+        if getattr(self.model, "supports_batched_matrices", False):
+            hamiltonian = self._hamiltonian(matrices, parameter_map)
+        else:
+            hamiltonian = np.stack(
+                [
+                    self._hamiltonian(
+                        np.array(matrix, dtype=complex, copy=True), parameter_map
+                    )
+                    for matrix in matrices
+                ]
+            )
+        if self.mode >= matrices.shape[-1]:
+            raise ValueError(
+                f"the mode index {self.mode} is out of range for a "
+                f"{matrices.shape[-1]}x{matrices.shape[-2]} state matrix stack"
+            )
+        product = hamiltonian @ matrices
+        denominator = matrices[:, self.mode, self.mode]
+        numerator = product[:, self.mode, self.mode]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            output = np.real(numerator / denominator)
+        if self.denominator_floor > 0.0:
+            output = np.where(
+                np.abs(denominator) < self.denominator_floor, np.nan, output
+            )
+        return np.asarray(output, dtype=float)
+
+    def gradient(
+        self, adapter: Any, state: Any, params: Mapping[str, Any]
+    ) -> DerivativeRecord:
+        """Return the central-difference gradient of the mode frequency."""
+        return finite_difference_gradient(
+            lambda vector: self.value(adapter, vector, params),
+            state,
+            relative_step=self.relative_step,
+        )
+
+
+@dataclass(frozen=True)
 class FunctionalObservable:
     """A caller-supplied readout, so other measurements need no new plugin.
 
@@ -456,9 +606,9 @@ class FunctionalObservable:
                 [float(self.value_fn(adapter, state, params)) for state in states],
                 dtype=float,
             )
-        return np.asarray(
-            self.values_fn(adapter, states, params), dtype=float
-        ).reshape(-1)
+        return np.asarray(self.values_fn(adapter, states, params), dtype=float).reshape(
+            -1
+        )
 
     def gradient(
         self, adapter: Any, state: Any, params: Mapping[str, Any]

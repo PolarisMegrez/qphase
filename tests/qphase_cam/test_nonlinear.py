@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from qphase.data import load_bundle
+from qphase_cam.core.coordinates import vector_to_matrix
 from qphase_cam.core.noise import (
     canonical_hermitian_transform,
     canonical_sample_matrix_covariance,
@@ -49,7 +50,7 @@ from qphase_cam.postprocessor.base import CAMAnnotationContext
 from qphase_cam.postprocessor.nonlinear_reconstruction import (
     NonlinearReconstruction,
 )
-from qphase_cam.validity import projected_intensity
+from qphase_cam.validity import CriticalMode, projected_intensity
 
 X0 = 0.5
 IDENTITY = ObservableIdentity(
@@ -1110,3 +1111,284 @@ def test_the_integration_split_policy_is_explicit():
     assert np.argmin(np.abs(x)) == 40
     assert int(np.searchsorted(x, 0.0, side="right")) - 1 == 39
     assert nearest.scalar_intensity != default.scalar_intensity
+
+
+# --- manifold configuration: mode rule, eigenvalue source, second form -----
+
+
+class _CubicDirectionalAdapter:
+    """``rhs(v) = -v - c v³`` with its exact second directional derivative.
+
+    The Jacobian difference of :func:`bilinear_form` is ``J(v+1) - J(v) = -3c(2v+1)``
+    on this toy while the exact ``B(1,1)`` is ``-6c v``: a large, deliberate gap, not a
+    rounding difference.
+    """
+
+    moment_layout = "normal"
+
+    def __init__(self, coefficient: float = 1.0) -> None:
+        self.coefficient = float(coefficient)
+        self.directional_calls = 0
+
+    def state_matrix(self, vector, params=None):
+        del params
+        return np.asarray(vector, dtype=float).reshape(1, 1).astype(complex)
+
+    def jacobian(self, vector, params=None):
+        del params
+        value = float(np.asarray(vector, dtype=float).reshape(-1)[0])
+        return np.asarray([[-1.0 - 3.0 * self.coefficient * value**2]])
+
+    def directional(self, order, vector, params, *directions):
+        del params
+        if order != 2 or len(directions) != 2:
+            raise ValueError("this toy only implements the second derivative")
+        self.directional_calls += 1
+        value = float(np.asarray(vector, dtype=float).reshape(-1)[0])
+        first = float(np.asarray(directions[0], dtype=float).reshape(-1)[0])
+        second = float(np.asarray(directions[1], dtype=float).reshape(-1)[0])
+        return np.asarray([-6.0 * self.coefficient * value * first * second])
+
+
+def _exact_normal_form(coefficient: float, value: float, order: int) -> tuple:
+    """Return ``(drift, embeddings)`` of the toy built with its exact second form."""
+
+    def second_form(first: float, second: float) -> float:
+        return -6.0 * coefficient * value * first * second
+
+    lam = -1.0 - 3.0 * coefficient * value**2
+    embeddings = [1.0]
+    drift = [0.0, lam] + [0.0] * (order - 1)
+    for degree in range(2, order + 1):
+        nonlinear = 0.0
+        for lower in range(1, degree):
+            nonlinear += 0.5 * second_form(
+                embeddings[lower - 1], embeddings[degree - lower - 1]
+            )
+        transport = 0.0
+        for lower in range(2, degree):
+            transport += lower * embeddings[lower - 1] * drift[degree - lower + 1]
+        bordered = np.asarray([[lam - degree * lam, -1.0], [1.0, 0.0]], dtype=float)
+        solution = np.linalg.solve(bordered, np.asarray([transport - nonlinear, 0.0]))
+        embeddings.append(float(solution[0]))
+        drift[degree] = float(solution[1])
+    return drift, embeddings
+
+
+def test_the_default_manifold_configuration_is_recorded():
+    manifold = slow_manifold(_QuadraticAdapter(), [X0], {}, order=3)
+    assert manifold.method["critical_mode_rule"] == "nearest_zero"
+    assert manifold.method["critical_eigenvalue_source"] == "eigenvalue"
+    assert manifold.method["bilinear_method"] == "jacobian_difference"
+    assert manifold.method["overlap_tolerance"] == pytest.approx(1e-10)
+    assert manifold.method["bilinear_form"] == "symmetric forward Jacobian difference"
+    # The defaults are the historical numbers: drift[1] is the eigenvalue itself.
+    assert manifold.drift[1] == pytest.approx(-1.75, rel=0.0, abs=1e-15)
+    assert manifold.soft_rate == pytest.approx(-manifold.drift[1], rel=0.0, abs=0.0)
+
+
+def test_the_directional_second_form_is_the_analytic_derivative():
+    adapter = _CubicDirectionalAdapter()
+    settings = NonlinearManifoldConfig(order=3, bilinear_method="directional")
+    manifold = slow_manifold(adapter, [X0], {}, config=settings)
+    assert adapter.directional_calls > 0
+    assert manifold.method["bilinear_method"] == "directional"
+    assert manifold.method["bilinear_form"] == (
+        "adapter.directional(2, state, params, a, b)"
+    )
+    expected_drift, expected_embeddings = _exact_normal_form(1.0, X0, 3)
+    np.testing.assert_allclose(manifold.drift, expected_drift, atol=1e-14)
+    np.testing.assert_allclose(
+        [coefficient[0] for coefficient in manifold.embeddings],
+        expected_embeddings,
+        atol=1e-14,
+    )
+    # The Jacobian difference is a different second form on this toy
+    # (``-3c(2v+1) = -6`` against the exact ``-6c v = -3``), so the default path must
+    # not reproduce the exact quadratic drift.
+    default = slow_manifold(_CubicDirectionalAdapter(), [X0], {}, order=3)
+    assert default.method["bilinear_method"] == "jacobian_difference"
+    assert manifold.drift[2] == pytest.approx(-1.5, rel=1e-14)
+    assert default.drift[2] == pytest.approx(-3.0, rel=1e-14)
+
+
+def test_the_directional_method_needs_an_adapter_that_implements_it():
+    with pytest.raises(ValueError, match="directional"):
+        slow_manifold(
+            _QuadraticAdapter(),
+            [X0],
+            {},
+            order=3,
+            config=NonlinearManifoldConfig(order=3, bilinear_method="directional"),
+        )
+
+
+def _projected_mode(value: float, jacobian_value: float) -> CriticalMode:
+    """Return a mode whose eigenvalue and ``left @ J @ right`` disagree."""
+    del jacobian_value
+    return CriticalMode(
+        value=complex(value, 0.0),
+        right=np.asarray([1.0]),
+        left=np.asarray([1.0]),
+        condition_number=1.0,
+        spectral_gap=1.0,
+        eigenvector_condition_number=1.0,
+    )
+
+
+def test_the_projected_eigenvalue_can_drive_the_recursion():
+    adapter = _CubicDirectionalAdapter()
+    # J(0.5) = -1.75, so left @ J @ right = -1.75 while the passed eigenvalue is -0.5.
+    mode = _projected_mode(-0.5, -1.75)
+    as_eigenvalue = slow_manifold(
+        adapter,
+        [X0],
+        {},
+        order=3,
+        mode=mode,
+        config=NonlinearManifoldConfig(order=3),
+    )
+    as_projected = slow_manifold(
+        adapter,
+        [X0],
+        {},
+        order=3,
+        mode=mode,
+        config=NonlinearManifoldConfig(order=3, critical_eigenvalue_source="projected"),
+    )
+    assert as_eigenvalue.method["critical_eigenvalue_source"] == "eigenvalue"
+    assert as_projected.method["critical_eigenvalue_source"] == "projected"
+    # drift[1] follows the configured source; the reported eigenvalue stays the mode's.
+    assert as_eigenvalue.drift[1] == pytest.approx(-0.5, rel=0.0, abs=1e-15)
+    assert as_projected.drift[1] == pytest.approx(-1.75, rel=0.0, abs=1e-15)
+    assert as_eigenvalue.soft_rate == pytest.approx(0.5, rel=0.0, abs=1e-15)
+    assert as_projected.soft_rate == pytest.approx(1.75, rel=0.0, abs=1e-15)
+    assert as_eigenvalue.critical_eigenvalue_real == pytest.approx(-0.5)
+    assert as_projected.critical_eigenvalue_real == pytest.approx(-0.5)
+    # The projected rate enters the bordered systems as well, so the two manifolds are
+    # not the same object with a relabelled rate: their drift polynomials differ.
+    assert as_eigenvalue.drift != as_projected.drift
+    assert as_eigenvalue.method["critical_rate"] == "soft_rate = -drift[1]"
+
+
+class _RuleAdapter:
+    """Two modes whose eigenvalues are ``+0.2, -0.05, -3, -4``.
+
+    ``nearest_zero`` selects ``-0.05`` (a decaying mode) while ``slowest`` selects
+    ``+0.2`` (an unstable one), so the two rules cannot agree by accident.
+    """
+
+    moment_layout = "normal"
+
+    def state_matrix(self, vector, params=None):
+        del params
+        return np.asarray(vector_to_matrix(np.asarray(vector, dtype=float), 2))
+
+    def jacobian(self, vector, params=None):
+        del vector, params
+        return np.diag([0.2, -0.05, -3.0, -4.0])
+
+    def parameter_jacobian(self, vector, params=None):
+        del vector, params
+        return np.eye(4)
+
+
+class _RuleModel:
+    n_modes = 2
+    params = {"mu": 0.0}
+
+    @staticmethod
+    def cam_diffusion(matrix, params=None):
+        del params
+        return np.eye(np.asarray(matrix).shape[-1], dtype=complex)
+
+
+def _rule_observable() -> FunctionalObservable:
+    return FunctionalObservable(
+        identity=IDENTITY,
+        value_fn=lambda adapter, state, params: float(
+            np.asarray(state, dtype=float).reshape(-1)[0]
+        ),
+        gradient_fn=lambda adapter, state, params: [1.0, 0.0, 0.0, 0.0],
+    )
+
+
+RULE_STATE = np.asarray([1.0, 1.0, 0.0, 0.0])
+
+
+def test_the_critical_mode_rule_selects_the_mode():
+    nearest = slow_manifold(_RuleAdapter(), RULE_STATE, {}, order=3)
+    assert nearest.method["critical_mode_rule"] == "nearest_zero"
+    assert nearest.drift[1] == pytest.approx(-0.05, rel=0.0, abs=1e-15)
+    assert nearest.soft_rate == pytest.approx(0.05, rel=0.0, abs=1e-15)
+    assert np.argmax(np.abs(nearest.left)) == 1
+    with pytest.raises(ValueError, match="does not decay"):
+        slow_manifold(
+            _RuleAdapter(),
+            RULE_STATE,
+            {},
+            order=3,
+            config=NonlinearManifoldConfig(order=3, critical_mode_rule="slowest"),
+        )
+
+
+def test_the_reconstruction_uses_the_configured_mode_rule():
+    default = scalar_reconstruction(
+        _RuleAdapter(),
+        _RuleModel(),
+        _rule_observable(),
+        state=RULE_STATE,
+        params={},
+        manifold_config=NonlinearManifoldConfig(order=3),
+    )
+    assert default.status is CAMOutcomeStatus.UNCONTROLLED_APPROXIMATION
+    assert default.reason_code == "manifold_not_confining"
+    slowest = scalar_reconstruction(
+        _RuleAdapter(),
+        _RuleModel(),
+        _rule_observable(),
+        state=RULE_STATE,
+        params={},
+        manifold_config=NonlinearManifoldConfig(order=3, critical_mode_rule="slowest"),
+    )
+    # The initial critical-mode selection reads the config, so the unstable mode is
+    # selected *before* the manifold is built.
+    assert slowest.status is CAMOutcomeStatus.UNSTABLE
+    assert slowest.reason_code == "soft_mode_not_decaying"
+
+
+def test_the_reconstruction_uses_the_configured_overlap_tolerance():
+    tolerated = scalar_reconstruction(
+        _RuleAdapter(),
+        _RuleModel(),
+        _rule_observable(),
+        state=RULE_STATE,
+        params={},
+        manifold_config=NonlinearManifoldConfig(order=3, overlap_tolerance=2.0),
+    )
+    # The normalized left-right overlap is exactly 1, so a tolerance of 2 leaves the
+    # mode unresolved and the reconstruction reports that instead of guessing.
+    assert tolerated.status is CAMOutcomeStatus.UNIDENTIFIABLE
+    assert tolerated.reason_code == "manifold_unresolved"
+    default = scalar_reconstruction(
+        _RuleAdapter(),
+        _RuleModel(),
+        _rule_observable(),
+        state=RULE_STATE,
+        params={},
+        manifold_config=NonlinearManifoldConfig(order=3),
+    )
+    assert default.status is not CAMOutcomeStatus.UNIDENTIFIABLE
+
+
+def test_the_manifold_configuration_is_validated():
+    from pydantic import ValidationError
+
+    for updates in (
+        {"critical_mode_rule": "nearest"},
+        {"critical_eigenvalue_source": "spectral"},
+        {"bilinear_method": "jacobian"},
+        {"overlap_tolerance": 0.0},
+    ):
+        with pytest.raises(ValidationError):
+            NonlinearManifoldConfig(**updates)

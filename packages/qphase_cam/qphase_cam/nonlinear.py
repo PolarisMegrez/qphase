@@ -109,7 +109,27 @@ FAILURE_UNBOUNDED = "physical_region_unbounded"
 
 
 class NonlinearManifoldConfig(BaseModel):
-    """Order and finite-difference conventions of one slow manifold."""
+    """Order and finite-difference conventions of one slow manifold.
+
+    The three method switches exist so a caller can state *which* critical mode, which
+    eigenvalue source and which second-order form the manifold is built from instead of
+    relying on the historical defaults:
+
+    ``critical_mode_rule``
+        ``nearest_zero`` (the default, smallest ``|λ|``) or ``slowest`` (largest real
+        part). Both are the shared :func:`~qphase_cam.validity.critical_mode` rules.
+    ``critical_eigenvalue_source``
+        ``eigenvalue`` (the default, ``Re λ`` of the resolved mode) or ``projected``
+        (``left @ J @ right``). The two agree when the mode's left/right eigenvectors
+        are a normalised eigenpair of the state Jacobian; they differ when the caller
+        passes a mode whose vectors are not that pair — a spectral mode, for example —
+        and then the projected value is the one the recursion and the rate use.
+    ``bilinear_method``
+        ``jacobian_difference`` (the default, the symmetric forward Jacobian difference
+        of :func:`bilinear_form`) or ``directional``
+        (``adapter.directional(2, state, params, a, b)``, the exact second directional
+        derivative when the adapter provides one).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -121,6 +141,21 @@ class NonlinearManifoldConfig(BaseModel):
     )
     overlap_tolerance: float = Field(
         default=1e-10, gt=0.0, description="Minimum left-right critical overlap"
+    )
+    critical_mode_rule: Literal["nearest_zero", "slowest"] = Field(
+        default="nearest_zero",
+        description="Critical-mode selection: smallest |lambda|, or largest real part",
+    )
+    critical_eigenvalue_source: Literal["eigenvalue", "projected"] = Field(
+        default="eigenvalue",
+        description="Use Re(lambda) of the resolved mode, or left @ J @ right",
+    )
+    bilinear_method: Literal["jacobian_difference", "directional"] = Field(
+        default="jacobian_difference",
+        description=(
+            "Second-order form: symmetric forward Jacobian difference, or the "
+            "adapter's exact directional derivative"
+        ),
     )
 
 
@@ -486,14 +521,13 @@ def _critical(
     state: np.ndarray,
     params: Mapping[str, Any],
     overlap_tolerance: float,
+    rule: str = "nearest_zero",
 ) -> CriticalMode:
     """Return the critical mode of one state or raise."""
     jacobian = np.asarray(adapter.jacobian(state, params), dtype=float)
     if not np.all(np.isfinite(jacobian)):
         raise ValueError("the dynamics Jacobian is not finite")
-    mode = critical_mode(
-        jacobian, overlap_tolerance=overlap_tolerance, rule="nearest_zero"
-    )
+    mode = critical_mode(jacobian, overlap_tolerance=overlap_tolerance, rule=rule)
     if mode is None:
         raise ValueError(
             "the soft mode is unresolved (complex or overlapping left/right "
@@ -529,17 +563,51 @@ def slow_manifold(
         raise ValueError("the state must be a finite vector")
     parameter_map = dict(params or {})
     resolved_mode = mode or _critical(
-        adapter, point, parameter_map, settings.overlap_tolerance
+        adapter,
+        point,
+        parameter_map,
+        settings.overlap_tolerance,
+        settings.critical_mode_rule,
     )
-    lam = float(np.real(resolved_mode.value))
+    jacobian = np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
+    right = np.asarray(resolved_mode.right, dtype=float)
+    left = np.asarray(resolved_mode.left, dtype=float)
+    eigenvalue = float(np.real(resolved_mode.value))
+    lam = (
+        eigenvalue
+        if settings.critical_eigenvalue_source == "eigenvalue"
+        else float(left @ jacobian @ right)
+    )
     if lam >= 0.0:
         raise ValueError(
             f"the soft mode does not decay (real part {lam:.3e}); the manifold is "
             "not a stable slow manifold"
         )
-    jacobian = np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
-    right = np.asarray(resolved_mode.right, dtype=float)
-    left = np.asarray(resolved_mode.left, dtype=float)
+    if settings.bilinear_method == "directional":
+        if not callable(getattr(adapter, "directional", None)):
+            raise ValueError(
+                "bilinear_method='directional' needs an adapter that implements "
+                "directional(order, state, params, *directions)"
+            )
+
+        def second_form(first: np.ndarray, second: np.ndarray) -> np.ndarray:
+            return np.asarray(
+                adapter.directional(2, point, parameter_map, first, second),
+                dtype=float,
+            ).reshape(-1)
+
+    else:
+
+        def second_form(first: np.ndarray, second: np.ndarray) -> np.ndarray:
+            return bilinear_form(
+                adapter,
+                point,
+                parameter_map,
+                first,
+                second,
+                offset_scale=settings.bilinear_offset_scale,
+            )
+
     embeddings: list[np.ndarray] = [np.zeros_like(point), right]
     drift = np.zeros(resolved_order + 1, dtype=float)
     drift[1] = lam
@@ -547,13 +615,9 @@ def slow_manifold(
     for degree in range(2, resolved_order + 1):
         nonlinear = np.zeros_like(point)
         for lower_degree in range(1, degree):
-            nonlinear += 0.5 * bilinear_form(
-                adapter,
-                point,
-                parameter_map,
+            nonlinear += 0.5 * second_form(
                 embeddings[lower_degree],
                 embeddings[degree - lower_degree],
-                offset_scale=settings.bilinear_offset_scale,
             )
         transport = np.zeros_like(point)
         for lower_degree in range(2, degree):
@@ -612,10 +676,18 @@ def slow_manifold(
         confining=bool(drift[resolved_order] < 0.0),
         method={
             "service": "qphase_cam.nonlinear.slow_manifold",
-            "critical_mode_rule": "nearest_zero",
+            "critical_mode_rule": settings.critical_mode_rule,
+            "critical_eigenvalue_source": settings.critical_eigenvalue_source,
+            "bilinear_method": settings.bilinear_method,
+            "overlap_tolerance": float(settings.overlap_tolerance),
             "left_normalization": "left.right = 1 with a unit right vector",
-            "bilinear_form": "symmetric forward Jacobian difference",
+            "bilinear_form": (
+                "symmetric forward Jacobian difference"
+                if settings.bilinear_method == "jacobian_difference"
+                else "adapter.directional(2, state, params, a, b)"
+            ),
             "bilinear_offset_scale": float(settings.bilinear_offset_scale),
+            "critical_rate": "soft_rate = -drift[1]",
             "bordered_system": "[[J - d*lambda I, -right], [left, 0]]",
             "order": resolved_order,
             "confining_rule": "drift[order] < 0",
@@ -883,19 +955,23 @@ def scalar_reconstruction(
     diagnostics: dict[str, Any] = {}
     resolved_manifold = manifold
     if resolved_manifold is None:
+        manifold_settings = manifold_config or NonlinearManifoldConfig()
         mode: CriticalMode | None = None
         try:
             jacobian = np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
-            mode = critical_mode(jacobian, overlap_tolerance=1e-10, rule="nearest_zero")
+            # The initial selection uses the *same* configuration the manifold is
+            # built with: fixing it to nearest_zero here would silently ignore the
+            # caller's rule and overlap tolerance.
+            mode = critical_mode(
+                jacobian,
+                overlap_tolerance=manifold_settings.overlap_tolerance,
+                rule=manifold_settings.critical_mode_rule,
+            )
         except (ValueError, np.linalg.LinAlgError) as exc:
             diagnostics["manifold_error"] = str(exc)
         if mode is None:
             return _failed(
-                order=int(
-                    (manifold_config or NonlinearManifoldConfig()).order
-                    if order is None
-                    else order
-                ),
+                order=int(manifold_settings.order if order is None else order),
                 status=CAMOutcomeStatus.UNIDENTIFIABLE,
                 code=FAILURE_UNRESOLVED,
                 reason=diagnostics.get("manifold_error", "the soft mode is unresolved"),
