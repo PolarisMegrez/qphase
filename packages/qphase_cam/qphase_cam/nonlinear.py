@@ -81,6 +81,8 @@ __all__ = [
     "bilinear_form",
     "manifold_drift",
     "manifold_embedding",
+    "noise_stack",
+    "parameter_forcing",
     "ou_intensity_algebra",
     "parameter_response",
     "ou_intensities",
@@ -664,10 +666,15 @@ def _noise_covariance(
     return matrix, covariance, physical
 
 
-def _noise_stack(
+def noise_stack(
     adapter: Any, model: Any, vectors: Any, params: Mapping[str, Any]
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return the state matrices, diffusions and physical spectra of a state stack.
+
+    This is the one place that owns "ask for a batch when the adapter and the model
+    declare they can answer one, otherwise call the same single-state function row by
+    row": every service that samples a stack of states goes through it, so no second
+    copy of that policy can drift from the reconstruction's own.
 
     Both the adapter and the model are asked once for the whole stack when they
     declare they can answer a batch (``supports_batched_states`` /
@@ -763,6 +770,63 @@ def _boundary(
         accepted_limit = trial
         trial *= settings.boundary_growth
     return sign * limit, False
+
+
+def parameter_forcing(
+    adapter: Any,
+    vectors: Any,
+    params: Mapping[str, Any],
+    left: Any,
+    direction: Any,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the reduced and full parameter forcing of a state stack.
+
+    ``full`` is ``parameter_jacobian(x) · direction`` per row and ``reduced`` is that
+    vector projected on the critical left eigenvector. Both are contracted in the
+    reference evaluation's order (one matrix-vector product per row, then one dot per
+    row), so a published rate keeps its last bits, and the Jacobian is asked once for
+    the whole stack when the adapter declares it can answer a batch — the same policy
+    as :func:`noise_stack`, so a second copy of it cannot drift.
+
+    Raises
+    ------
+    ValueError
+        If the stack is not ``(n, coordinates)``, the direction has a different
+        coordinate count, or the adapter does not return one Jacobian per state.
+
+    """
+    stack = np.asarray(vectors, dtype=float)
+    if stack.ndim != 2:
+        raise ValueError(
+            f"a state stack must be (n, coordinates); got shape {stack.shape}"
+        )
+    pointer = np.asarray(left, dtype=float).reshape(-1)
+    step = np.asarray(direction, dtype=float).reshape(-1)
+    if step.size != stack.shape[1]:
+        raise ValueError(
+            f"the parameter direction has {step.size} entries for "
+            f"{stack.shape[1]} coordinates"
+        )
+    parameter_map = dict(params or {})
+    if getattr(adapter, "supports_batched_states", False):
+        jacobians = np.asarray(
+            adapter.parameter_jacobian(stack, parameter_map), dtype=float
+        )
+    else:
+        jacobians = np.stack(
+            [
+                np.asarray(adapter.parameter_jacobian(row, parameter_map), dtype=float)
+                for row in stack
+            ]
+        )
+    if jacobians.shape[:-2] != (stack.shape[0],):
+        raise ValueError(
+            f"the adapter returned parameter Jacobians of shape {jacobians.shape} "
+            f"for {stack.shape[0]} states"
+        )
+    full = np.einsum("nij,j->ni", jacobians, step, optimize=True)
+    reduced = np.einsum("i,ni->n", pointer, full, optimize=True)
+    return reduced, full
 
 
 def scalar_reconstruction(
@@ -944,7 +1008,7 @@ def scalar_reconstruction(
     # One adapter and one model call for the whole grid: the noise covariance and its
     # projection are then the batch primitives of ``core.noise``, which is the order
     # the reference evaluation uses for every grid point at once.
-    matrices, diffusions, physical_minimum = _noise_stack(
+    matrices, diffusions, physical_minimum = noise_stack(
         adapter, model, vectors, parameter_map
     )
     q = projected_noise_intensities(matrices, diffusions, left)
@@ -997,32 +1061,8 @@ def scalar_reconstruction(
     domain = {**domain, "generator_table": table}
     forcing: np.ndarray | None = None
     if parameter_direction is not None:
-        direction = np.asarray(parameter_direction, dtype=float).reshape(-1)
-        if getattr(adapter, "supports_batched_states", False):
-            jacobians = np.asarray(
-                adapter.parameter_jacobian(vectors, parameter_map), dtype=float
-            )
-        else:
-            jacobians = np.stack(
-                [
-                    np.asarray(
-                        adapter.parameter_jacobian(vector, parameter_map), dtype=float
-                    )
-                    for vector in vectors
-                ]
-            )
-        if jacobians.shape[0] != x.size:
-            raise ValueError(
-                f"the adapter returned {jacobians.shape[0]} parameter Jacobians for "
-                f"{x.size} states"
-            )
-        # The projection is one matrix-vector product per row and one dot per row,
-        # both contracted in the reference evaluation's order.
-        forcing = np.einsum(
-            "i,ni->n",
-            left,
-            np.einsum("nij,j->ni", jacobians, direction, optimize=True),
-            optimize=True,
+        forcing, _ = parameter_forcing(
+            adapter, vectors, parameter_map, left, parameter_direction
         )
     # One evaluation owns the density and every fraction derived from it; the
     # verdicts below stay the reconstruction's own.
