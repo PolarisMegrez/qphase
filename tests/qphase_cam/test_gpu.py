@@ -49,11 +49,12 @@ def test_batched_newton_numpy_cupy_agree(model_name):
         varying, second = "omega_b", -0.011
         initial = np.eye(3)
         steady_method = "root"
-    root = (
-        SteadyStateSolver(method=steady_method, initial_guess=initial, tolerance=1e-8)
-        .solve(Model(**base), NumpyBackend())
-        .solutions[0]
-    )
+    # The numeric cores, not the task runtime: solve_point/solve_batch return the
+    # raw CAMSolverOutput that this consistency check reads row by row.
+    root_output = SteadyStateSolver(
+        method=steady_method, initial_guess=initial, tolerance=1e-8
+    ).solve_point(Model(**base), NumpyBackend())
+    root = root_output.solutions[0]
     assert root.success
     batched_params = dict(base)
     batched_params[varying] = [base[varying], second]
@@ -64,14 +65,20 @@ def test_batched_newton_numpy_cupy_agree(model_name):
     }
     numpy_rows = (
         BatchedNewtonSolver(**options)
-        .solve(Model(**batched_params), NumpyBackend())
+        .solve_batch(Model(**batched_params), NumpyBackend())
         .solutions
     )
     cupy_rows = (
         BatchedNewtonSolver(**options)
-        .solve(Model(**batched_params), CuPyBackend())
+        .solve_batch(Model(**batched_params), CuPyBackend())
         .solutions
     )
+    # Two parameter points per backend, and no silently failed solve: without this
+    # an empty batch or a failed row would pass the comparison by vacuity.
+    assert len(numpy_rows) == 2
+    assert len(cupy_rows) == 2
+    assert all(solution.success for row in numpy_rows for solution in row)
+    assert all(solution.success for row in cupy_rows for solution in row)
     for numpy_row, cupy_row in zip(numpy_rows, cupy_rows, strict=True):
         assert numpy_row and cupy_row
         np.testing.assert_allclose(
