@@ -21,7 +21,7 @@ import pytest
 from qphase.backend.numpy_backend import NumpyBackend
 from qphase_cam.bifurcation_result import CAMBifurcationResult
 from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
-from qphase_cam.data import build_candidate_product
+from qphase_cam.data import build_candidate_product, import_bifurcation_result
 from qphase_cam.postprocessor.candidates import (
     candidate_parameters,
     candidate_state,
@@ -253,12 +253,12 @@ def test_a_solve_that_cannot_converge_says_so(fold_candidate):
 # --- the candidate-state service -------------------------------------------
 
 
-def test_the_candidate_state_reads_the_typed_view_and_the_legacy_result(
+def test_the_candidate_state_reads_the_imported_view_and_the_typed_view(
     fold_candidate,
 ):
     view = fold_candidate["view"]
     typed = candidate_state(view, 0)
-    # The same candidate as a legacy result: one case, one candidate per row.
+    # The same candidate through the one-time import: one case, one candidate per row.
     legacy = CAMBifurcationResult(
         states=np.asarray([view.rows[0].state]),
         state_vectors=np.asarray([view.rows[0].state_vector]),
@@ -277,15 +277,16 @@ def test_the_candidate_state_reads_the_typed_view_and_the_legacy_result(
             )
         },
     )
-    historical = candidate_state(legacy, 0)
+    imported = candidate_view(import_bifurcation_result(legacy).require("candidates"))
+    historical = candidate_state(imported, 0)
     np.testing.assert_array_equal(historical.chart_vector, typed.chart_vector)
     assert historical.decimals == typed.decimals
     np.testing.assert_array_equal(historical.vector, typed.vector)
     with pytest.raises(IndexError, match="out of bounds"):
-        candidate_state(legacy, 1)
+        candidate_state(imported, 1)
     with pytest.raises(IndexError, match="out of bounds"):
         candidate_state(view, len(view.rows))
-    with pytest.raises(TypeError, match="CandidateView or a CAMBifurcationResult"):
+    with pytest.raises(TypeError, match="CandidateView"):
         candidate_state("not a result", 0)
 
 

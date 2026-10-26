@@ -21,11 +21,16 @@ from qphase_cam.bifurcation_result import (
     CAMBifurcationScanResult,
 )
 from qphase_cam.core.coordinates import matrix_to_vector
-from qphase_cam.data import build_candidate_product
+from qphase_cam.data import (
+    build_candidate_product,
+    import_bifurcation_result,
+    import_bifurcation_scan,
+)
 from qphase_cam.postprocessor.base import CAMAnnotationContext
 from qphase_cam.postprocessor.candidates import (
     PerturbationDesign,
     candidate_parameters,
+    candidate_state,
     candidate_view,
     case_fixed_parameters,
 )
@@ -49,6 +54,18 @@ class _Model:
     params = {"omega": 0.0, "gamma": 1.0, "g": 0.1}
 
 
+def _signature_rows(count: int, signature: dict) -> np.ndarray:
+    """Return one entry per candidate, each holding that candidate's signatures.
+
+    The solver stores ``scaling_signatures`` as an object array of per-candidate
+    sequences; a plain single-signature object array would iterate as a mapping.
+    """
+    rows = np.empty(count, dtype=object)
+    for index in range(count):
+        rows[index] = [signature]
+    return rows
+
+
 def _candidates(count: int, *, controls: float = -0.5) -> CAMBifurcationResult:
     """Return ``count`` real candidate rows with a full real state tangent."""
     matrices = np.asarray(
@@ -67,10 +84,13 @@ def _candidates(count: int, *, controls: float = -0.5) -> CAMBifurcationResult:
             {
                 "epsilon_side": 1,
                 "amplitude": 1.0,
-                "leading_state_coefficient": {
-                    "real": [[1.0, 0.0], [0.0, 1.0]],
-                    "imag": [[0.0, 0.0], [0.0, 0.0]],
-                },
+                "leading_state_coefficient": [
+                    [
+                        {"real": float(value.real), "imag": float(value.imag)}
+                        for value in row
+                    ]
+                    for row in np.eye(2, dtype=complex)
+                ],
             },
         ),
     }
@@ -86,9 +106,7 @@ def _candidates(count: int, *, controls: float = -0.5) -> CAMBifurcationResult:
         method=np.asarray(["test"] * count),
         verification_digits=np.full(count, 50, dtype=np.int64),
         verification_status=np.asarray(["verified"] * count),
-        diagnostics={
-            "scaling_signatures": np.asarray([signature] * count, dtype=object)
-        },
+        diagnostics={"scaling_signatures": _signature_rows(count, signature)},
         meta={"perturbation_parameter": "omega", "perturbation_scale": 1.0},
     )
 
@@ -208,7 +226,7 @@ def test_a_single_case_scan_is_addressed_by_the_empty_index():
         scan.grid_index(1)
 
 
-def test_the_legacy_parameter_map_resolves_the_candidate_case():
+def test_an_imported_scan_resolves_the_candidate_case():
     scan = CAMBifurcationScanResult(
         case_axes={"gamma": np.asarray([0.0, 0.5])},
         case_shape=(2,),
@@ -221,9 +239,12 @@ def test_the_legacy_parameter_map_resolves_the_candidate_case():
         ),
         meta={},
     )
-    params = candidate_parameters(scan, 0, _Model())
+    # The one-time import is the only way a historical scan reaches a parameter map.
+    view = candidate_view(import_bifurcation_scan(scan).require("candidates"))
+    params = candidate_parameters(view, 0, _Model())
     # The candidate is in case 1, whose case parameters and controls win over the
-    # model-level and case-level fixed values.
+    # model-level values.
+    assert view.case_flat_index(0) == 1
     assert params["omega"] == 0.7
     assert params["gamma"] == -0.5
     assert params["g"] == 0.1
@@ -577,18 +598,30 @@ def test_an_unrecorded_side_reads_as_both():
     assert recorded.design_at(0).side == "positive"
 
 
-def test_a_single_case_result_keeps_its_legacy_parameter_map():
+def test_an_imported_single_case_result_keeps_its_parameter_map():
     result = _candidates(2)
     result.meta = {**result.meta, "fixed_params": {"omega": 5.0, "g": 0.4}}
-    params = candidate_parameters(result, 1, _Model())
-    # model.params -> the result's fixed parameters -> the candidate's controls.
+    bundle = import_bifurcation_result(result)
+    metadata = {"fixed_params": dict(bundle.provenance["legacy_meta"]["fixed_params"])}
+    view = candidate_view(bundle.require("candidates"), metadata=metadata)
+    params = candidate_parameters(view, 1, _Model())
+    # model.params -> the imported fixed parameters -> the candidate's controls.
     assert params["omega"] == pytest.approx(5.0)
     assert params["g"] == pytest.approx(0.4)
     assert params["gamma"] == pytest.approx(-0.5)
     with pytest.raises(IndexError, match="out of bounds"):
-        candidate_parameters(result, 2, _Model())
+        candidate_parameters(view, 2, _Model())
     with pytest.raises(TypeError, match="must be an integer"):
-        candidate_parameters(result, 1.5, _Model())
+        candidate_parameters(view, 1.5, _Model())
+
+
+def test_a_legacy_result_is_not_a_candidate_view():
+    """The runtime services take a typed view; the import is the boundary."""
+    result = _candidates(1)
+    with pytest.raises(TypeError, match="CandidateView"):
+        candidate_parameters(result, 0, _Model())
+    with pytest.raises(TypeError, match="CandidateView"):
+        candidate_state(result, 0)
 
 
 def test_closure_risk_uses_the_shared_case_map():

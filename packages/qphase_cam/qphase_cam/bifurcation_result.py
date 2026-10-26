@@ -1,4 +1,11 @@
-"""Serializable variable-length CAM bifurcation candidate results."""
+"""Legacy CAM bifurcation candidate results: pre-2.0 historical types only.
+
+The typed candidate product (:mod:`qphase_cam.data.candidates`) is the 2.0 runtime
+representation. These classes keep historical payloads readable so
+:func:`qphase_cam.data.legacy.import_bifurcation_result` and
+:func:`qphase_cam.data.legacy.import_bifurcation_scan` can import them once; nothing in
+the 2.0 runtime produces or consumes them.
+"""
 
 from __future__ import annotations
 

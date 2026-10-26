@@ -1,6 +1,5 @@
 """Coherent-amplitude matrix analysis for the QPhase workspace."""
 
-from .bifurcation_result import CAMBifurcationResult, CAMBifurcationScanResult
 from .errors import (
     BifurcationCapabilityError,
     JacobianUnavailableError,
@@ -14,16 +13,12 @@ from .model import (
     CAMSymbolicSpec,
     CAMVectorModel,
 )
-from .result import CAMResult
 
 __all__ = [
     "BifurcationCapabilityError",
     "CAMBifurcationModel",
-    "CAMBifurcationResult",
-    "CAMBifurcationScanResult",
     "CAMBogoliubovModel",
     "CAMModel",
-    "CAMResult",
     "CAMSymbolicSpec",
     "CAMVectorModel",
     "QPSGenCompatibilityError",

@@ -159,7 +159,6 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
         adapter = QPSGenDynamicsAdapter.from_model(model)
         view = candidate_view(product, metadata=dict(context.metadata))
         candidates = view
-        result = view
         branches = candidates.branches
         if branches.size == 0:
             self.result_metadata = {"status": "no_real_branches", "sample_count": 0}
@@ -180,7 +179,7 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
             if not bool(branches.real_branch[branch_index]):
                 continue
             candidate_index = int(branches.candidate_index[branch_index])
-            params = self._critical_params(result, candidate_index, model)
+            params = self._critical_params(view, candidate_index, model)
             design = candidates.design_at(candidate_index)
             if not design.is_resolved:
                 raise ValueError(
@@ -467,15 +466,14 @@ class LocalResponseValidation(CAMPostprocessor[LocalResponseValidationConfig]):
         )
 
     def _critical_params(
-        self, result: Any, candidate_index: int, model: Any
+        self, view: CandidateView, candidate_index: int, model: Any
     ) -> dict[str, Any]:
-        """Return the model parameters of one candidate.
+        """Return the model parameters of one candidate of the typed candidate view.
 
-        The typed path resolves the candidate through the candidate view; a
-        legacy scan result maps the candidate index to its case grid index first,
-        so a candidate is never read as if it were a case.
+        The view resolves the candidate's own case, so a candidate index is never
+        read as if it were a case index.
         """
-        return candidate_parameters(result, candidate_index, model)
+        return candidate_parameters(view, candidate_index, model)
 
     @staticmethod
     def _critical_state_decimals(candidates: Any, index: int) -> tuple[str, ...] | None:

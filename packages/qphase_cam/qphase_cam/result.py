@@ -1,4 +1,10 @@
-"""Fixed-capacity CAM result implementing QPhase's result protocol."""
+"""Fixed-capacity CAM result: a pre-2.0 historical type, not runtime API.
+
+The typed state product (:mod:`qphase_cam.data.state`) is the 2.0 runtime
+representation. This module keeps the historical ``CAMResult`` payload readable so
+:func:`qphase_cam.data.legacy.import_cam_result` can import it once; nothing in the
+2.0 runtime produces or consumes it.
+"""
 
 from __future__ import annotations
 

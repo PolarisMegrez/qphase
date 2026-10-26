@@ -279,48 +279,21 @@ def case_fixed_parameters(metadata: dict[str, Any]) -> dict[str, float]:
 
 
 def candidate_parameters(
-    result: Any, candidate_index: int, model: Any
+    view: CandidateView, candidate_index: int, model: Any
 ) -> dict[str, Any]:
-    """Return the model parameters of one candidate, typed or legacy.
+    """Return the model parameters of one candidate of a typed view.
 
-    A typed :class:`CandidateView` resolves the candidate through
-    :meth:`CandidateView.params_at`. A legacy ``CAMBifurcationScanResult`` also
-    needs the candidate index mapped to its case grid index before
-    ``params_at`` can be asked: the two index spaces are different, and passing a
-    candidate index there reads another case's parameters. A single
-    ``CAMBifurcationResult`` is one case, so it keeps its own historical order:
-    the model parameters, its recorded fixed parameters, then the candidate's
-    controls.
+    ``model.params`` is the base a caller supplies; :meth:`CandidateView.params_at`
+    adds the candidate's case values and its own controls on top.
     """
-    from ..bifurcation_result import CAMBifurcationResult, CAMBifurcationScanResult
-
+    if not isinstance(view, CandidateView):
+        raise TypeError(
+            f"candidate parameters need a CandidateView; got {type(view).__name__}"
+        )
     index = strict_index(candidate_index, what="candidate")
     params = dict(getattr(model, "params", None) or {})
-    if isinstance(result, CandidateView):
-        params.update(result.params_at(index))
-        return params
-    if isinstance(result, CAMBifurcationScanResult):
-        params.update(dict(result.candidates.meta.get("fixed_params", {})))
-        params.update(result.params_at(result.case_grid_index(index)))
-        names = tuple(result.candidates.control_names)
-        params.update(
-            zip(names, result.candidates.control_values[index], strict=True)
-        )
-        return params
-    if isinstance(result, CAMBifurcationResult):
-        total = int(len(result.control_values))
-        if index < 0 or index >= total:
-            raise IndexError(
-                f"candidate index {index} is out of bounds for {total} candidates"
-            )
-        params.update(dict(result.meta.get("fixed_params", {})))
-        names = tuple(result.control_names)
-        params.update(zip(names, result.control_values[index], strict=True))
-        return params
-    raise TypeError(
-        "candidate parameters need a CandidateView, a CAMBifurcationScanResult or "
-        f"a CAMBifurcationResult; got {type(result).__name__}"
-    )
+    params.update(view.params_at(index))
+    return params
 
 
 @dataclass(frozen=True)
@@ -356,43 +329,27 @@ def _decimal_strings(decimals: Any, index: int) -> tuple[str, ...] | None:
     return None
 
 
-def candidate_state(result: Any, candidate_index: int) -> CandidateState:
-    """Return the state of one candidate, typed or legacy.
+def candidate_state(view: CandidateView, candidate_index: int) -> CandidateState:
+    """Return the state of one candidate of a typed view.
 
-    A typed :class:`CandidateView` and a legacy ``CAMBifurcationResult`` both store
-    the chart vector and, when the branch was verified, a decimal expansion of the
-    same state. This is the one place that reads them, so a script and the
-    local-response validation cannot disagree about which state a branch starts
-    from.
+    The view stores the chart vector and, when the branch was verified, a decimal
+    expansion of the same state. This is the one place that reads them, so a script
+    and the local-response validation cannot disagree about which state a branch
+    starts from.
     """
-    from ..bifurcation_result import CAMBifurcationResult
-
-    index = strict_index(candidate_index, what="candidate")
-    if isinstance(result, CandidateView):
-        if index < 0 or index >= len(result.rows):
-            raise IndexError(
-                f"candidate index {index} is out of bounds for {len(result.rows)} "
-                "candidates"
-            )
-        chart = np.asarray(result.rows[index].state_vector, dtype=float)
-        decimals = _decimal_strings(
-            result.diagnostics.get("verified_full_state_decimal_values"), index
-        )
-    elif isinstance(result, CAMBifurcationResult):
-        total = int(len(result.state_vectors))
-        if index < 0 or index >= total:
-            raise IndexError(
-                f"candidate index {index} is out of bounds for {total} candidates"
-            )
-        chart = np.asarray(result.state_vectors[index], dtype=float)
-        decimals = _decimal_strings(
-            result.diagnostics.get("verified_full_state_decimal_values"), index
-        )
-    else:
+    if not isinstance(view, CandidateView):
         raise TypeError(
-            "a candidate state needs a CandidateView or a CAMBifurcationResult; got "
-            f"{type(result).__name__}"
+            f"a candidate state needs a CandidateView; got {type(view).__name__}"
         )
+    index = strict_index(candidate_index, what="candidate")
+    if index < 0 or index >= len(view.rows):
+        raise IndexError(
+            f"candidate index {index} is out of bounds for {len(view.rows)} candidates"
+        )
+    chart = np.asarray(view.rows[index].state_vector, dtype=float)
+    decimals = _decimal_strings(
+        view.diagnostics.get("verified_full_state_decimal_values"), index
+    )
     vector = (
         np.asarray([float(item) for item in decimals], dtype=float)
         if decimals is not None

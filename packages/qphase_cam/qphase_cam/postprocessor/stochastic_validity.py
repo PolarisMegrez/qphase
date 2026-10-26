@@ -66,7 +66,6 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
         model = context.model
         adapter = QPSGenDynamicsAdapter.from_model(model)
         view = candidate_view(product, metadata=dict(context.metadata))
-        result = view
         candidates = view
         closure = dict(candidates.meta.get("closure", adapter.closure_provenance()))
         rows: list[dict[str, Any]] = []
@@ -86,7 +85,7 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
             for branch_index in branch_indices:
                 rows.append(
                     self._evaluate_branch(
-                        result,
+                        view,
                         model,
                         adapter,
                         candidate_index,
@@ -162,14 +161,14 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
 
     def _evaluate_branch(
         self,
-        result: Any,
+        view: CandidateView,
         model: Any,
         adapter: QPSGenDynamicsAdapter,
         candidate_index: int,
         branch_index: int,
         closure: dict[str, Any],
     ) -> dict[str, Any]:
-        candidates = getattr(result, "candidates", result)
+        candidates = view
         branches = candidates.branches
         assert branches is not None
         side = int(branches.epsilon_side[branch_index])
@@ -195,7 +194,7 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
             row["status"] = "unsupported_signature"
             return row
 
-        params = self._critical_params(result, candidate_index, model)
+        params = self._critical_params(view, candidate_index, model)
         state = np.asarray(candidates.state_vectors[candidate_index], dtype=float)
         matrix = adapter.state_matrix(state, params)
         jacobian = np.asarray(adapter.jacobian(state, params), dtype=float)
@@ -315,15 +314,14 @@ class StochasticValidity(CAMPostprocessor[StochasticValidityConfig]):
 
     @staticmethod
     def _critical_params(
-        result: Any, candidate_index: int, model: Any
+        view: CandidateView, candidate_index: int, model: Any
     ) -> dict[str, Any]:
-        """Return the model parameters of one candidate.
+        """Return the model parameters of one candidate of the typed candidate view.
 
-        The typed path resolves the candidate through the candidate view; a
-        legacy scan result maps the candidate index to its case grid index first,
-        so a candidate is never read as if it were a case.
+        The view resolves the candidate's own case, so a candidate index is never
+        read as if it were a case index.
         """
-        return candidate_parameters(result, candidate_index, model)
+        return candidate_parameters(view, candidate_index, model)
 
     @staticmethod
     def _base_row(
