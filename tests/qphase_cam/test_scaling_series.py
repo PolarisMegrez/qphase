@@ -75,6 +75,7 @@ def _frobenius(adapter, state, params):
 def _series(points=12, critical=0.5, exponent=0.5):
     x = np.geomspace(1.0e-9, 1.0e-1, points)
     return scaling_series(
+        parameter="mu",
         critical_parameter=critical,
         points=[
             {
@@ -123,6 +124,7 @@ def test_the_series_keeps_the_exact_x_and_the_physical_parameter():
     assert series.parameter_values[-1] - 0.5 != series.x[-1]
     with pytest.raises(ValueError, match="strictly increasing"):
         ScalingSeries(
+            parameter="mu",
             parameter_values=(0.6, 0.5),
             x=(1.0e-3, 1.0e-4),
             response=(1.0, 2.0),
@@ -133,6 +135,7 @@ def test_the_series_keeps_the_exact_x_and_the_physical_parameter():
 
 def test_a_series_refuses_bad_and_incomplete_input():
     good = dict(
+        parameter="mu",
         parameter_values=(0.51, 0.52),
         x=(1.0e-2, 2.0e-2),
         response=(1.0, 2.0),
@@ -149,6 +152,7 @@ def test_a_series_refuses_bad_and_incomplete_input():
         ScalingSeries(**{**good, "x": (1.0e-2,)}).validated()
     with pytest.raises(ValueError, match="at least one point"):
         ScalingSeries(
+            parameter="mu",
             parameter_values=(),
             x=(),
             response=(),
@@ -200,7 +204,7 @@ def test_the_leading_normalisation_is_explicit():
         response,
         series,
         config=ObservableScalingConfig(
-            parameter="x",
+            parameter="mu",
             critical_parameter=0.5,
             critical_value=2.5,
             absolute_shift=False,
@@ -212,7 +216,7 @@ def test_the_leading_normalisation_is_explicit():
         response,
         series,
         config=ObservableScalingConfig(
-            parameter="x",
+            parameter="mu",
             critical_parameter=0.5,
             critical_value=2.5,
             absolute_shift=False,
@@ -236,7 +240,7 @@ def test_the_leading_normalisation_is_explicit():
     # The exact law makes both residuals zero; a deliberately wrong coefficient does
     # not, and the two definitions then differ.
     wrong = ObservableScalingConfig(
-        parameter="x",
+        parameter="mu",
         critical_parameter=0.5,
         critical_value=2.5,
         absolute_shift=False,
@@ -273,7 +277,7 @@ def test_a_series_refuses_a_config_that_would_shift_it_again():
             response,
             series,
             config=ObservableScalingConfig(
-                parameter="x", critical_parameter=0.5, absolute_shift=True
+                parameter="mu", critical_parameter=0.5, absolute_shift=True
             ),
         )
     with pytest.raises(TypeError, match="ObservableIdentity"):
@@ -305,3 +309,53 @@ def test_the_series_and_its_product_round_trip_through_an_artifact(tmp_path):
     )
     assert metadata["series_identity"] == series.identity(response)
     assert product.attributes["annotation_kind"] == "observable_scaling"
+
+
+def test_a_point_that_does_not_state_its_convergence_is_refused():
+    """A missing convergence flag is an error, never a silent success."""
+    x = np.geomspace(1.0e-9, 1.0e-1, 4)
+    points = [
+        {"parameter": 0.5 + float(value), "x": float(value), "response": float(value)}
+        for value in x
+    ]
+    with pytest.raises(ValueError, match="does not state whether it converged"):
+        scaling_series(parameter="mu", critical_parameter=0.5, points=points)
+    # Stating it, including a false one, is accepted here and refused by the validator.
+    stated = [dict(point, converged=index != 2) for index, point in enumerate(points)]
+    with pytest.raises(ValueError, match="did not converge"):
+        scaling_series(parameter="mu", critical_parameter=0.5, points=stated)
+
+
+def test_the_series_control_name_is_the_annotation_identity():
+    """A non-default control keeps one identity in the product and in its metadata."""
+    series, x = _series()
+    series = series.model_copy(update={"parameter": "omega_b"})
+    response = FunctionalScalingResponse(
+        identity=_identity("abs_element", "|R_01 - R_10|"),
+        response_fn=_modulus(0, 1),
+    )
+    annotation = evaluate_scaling_series(response, series)
+    import json
+
+    metadata = json.loads(
+        str(np.asarray(annotation.handle("method_metadata").materialize())[0])
+    )
+    target = str(np.asarray(annotation.handle("target_identity").materialize())[0])
+    assert metadata["series_identity"] == target
+    assert metadata["parameter"] == "omega_b"
+    # The physical parameter values are untouched and the abscissa is still the exact
+    # configured epsilon.
+    np.testing.assert_array_equal(
+        np.asarray(annotation.handle("point_x").materialize())[0], x
+    )
+    with pytest.raises(ValueError, match="one series has one identity"):
+        evaluate_scaling_series(
+            response,
+            series,
+            config=ObservableScalingConfig(
+                parameter="omega_c",
+                critical_parameter=0.5,
+                critical_value=2.5,
+                absolute_shift=False,
+            ),
+        )

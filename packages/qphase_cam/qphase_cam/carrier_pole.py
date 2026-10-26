@@ -7,9 +7,10 @@ readout frequency. It is not the closed-Hamiltonian pole of
 :mod:`qphase_cam.coherence_pole`, not a time-domain PDE solution and not a measured
 SDE spectrum.
 
-The numbers are the ones
-``scripts/tools/probe_kerr_full_3mode_stochastic_carrier_pole.py::_generator_pole``
-computes, without that script's files, model or fixed grid:
+The numbers are the ones the retired diagnostic probe's ``_generator_pole`` computed,
+without that script's files, model or fixed grid (the probe is gone; its published
+``poles.csv`` is reproduced through this service by
+``reports/phase10_verification/carrier_pole_public_check.py``):
 
 * every grid size resamples ``f``, ``q`` and ``omega`` from the source table with a
   monotone :class:`scipy.interpolate.PchipInterpolator` onto a uniform grid on the

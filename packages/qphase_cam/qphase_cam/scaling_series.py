@@ -34,6 +34,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
+from qphase.data import Dataset
 
 from .observable import ObservableIdentity
 from .postprocessor.observable_scaling import (
@@ -99,11 +100,12 @@ class FunctionalScalingResponse:
 class ScalingSeries(BaseModel):
     """One pre-registered scaling series.
 
-    ``parameter_values`` is the physical control value of every point (e.g. ``omega_b``)
-    and ``x`` the exact ``abs_epsilon`` the fit uses — the configured epsilon, not
-    ``abs(parameter − critical_parameter)``. ``response`` is the positive magnitude
-    of each point and ``converged`` its convergence flag; a series with a point that
-    did not converge is refused rather than fitted partially, because a filled
+    ``parameter`` names the physical control (e.g. ``omega_b``), ``parameter_values``
+    its value at every point and ``x`` the exact ``abs_epsilon`` the fit uses — the
+    configured epsilon, not ``abs(parameter − critical_parameter)``. ``response`` is
+    the positive magnitude of each point and ``converged`` its convergence flag; a
+    series with a point that did not converge is refused rather than fitted
+    partially, because a filled
     series is not the same thing as a complete one.
 
     ``reference_value`` is what a report quotes at the critical point and
@@ -113,6 +115,7 @@ class ScalingSeries(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    parameter: str = Field(min_length=1, description="Physical control name")
     parameter_values: tuple[float, ...]
     x: tuple[float, ...]
     response: tuple[float, ...]
@@ -159,12 +162,18 @@ class ScalingSeries(BaseModel):
             )
         return self
 
-    def identity(self, response: Any) -> str:
-        """Return the content identity of this series under one response."""
+    def identity(self, response: ScalingResponse) -> str:
+        """Return the content identity of this series under one response.
+
+        The identity covers the response's own identity, this series' physical
+        control name and every ``(x, response)`` pair, so a product's
+        ``target_identity`` and its recorded ``series_identity`` are the same string
+        by construction.
+        """
         self.validated()
         return series_identity(
             response,
-            parameter="x",
+            parameter=str(self.parameter),
             x=np.asarray(self.x, dtype=float),
             y=np.asarray(self.response, dtype=float),
         )
@@ -172,6 +181,7 @@ class ScalingSeries(BaseModel):
 
 def scaling_series(
     *,
+    parameter: str,
     critical_parameter: float,
     points: Sequence[Mapping[str, Any]],
     reference_value: float | None = None,
@@ -180,16 +190,34 @@ def scaling_series(
 ) -> ScalingSeries:
     """Return a scaling series assembled from measured points.
 
-    Each point states ``parameter`` (the physical control value), ``x`` (the exact
-    configured ``abs_epsilon``), ``response`` and ``converged``. Nothing is recomputed:
-    the caller's epsilon is the abscissa, and the response is not shifted against the
-    critical value again.
+    ``parameter`` names the physical control the points were measured along. Each
+    point states that control's value (``parameter``), the exact configured
+    ``abs_epsilon`` (``x``), the positive ``response`` and its own ``converged``
+    flag — a point that does not state its convergence is an error, never a silent
+    success. Nothing is recomputed: the caller's epsilon is the abscissa, and the
+    response is not shifted against the critical value again.
+
+    Raises
+    ------
+    ValueError
+        If a point omits ``converged``, or if the assembled series fails
+        :meth:`ScalingSeries.validated`.
+
     """
+    converged: list[bool] = []
+    for position, point in enumerate(points):
+        if "converged" not in point:
+            raise ValueError(
+                f"scaling point {position} does not state whether it converged; a "
+                "series is never filled in as if it had"
+            )
+        converged.append(bool(point["converged"]))
     return ScalingSeries(
+        parameter=str(parameter),
         parameter_values=tuple(float(point["parameter"]) for point in points),
         x=tuple(float(point["x"]) for point in points),
         response=tuple(float(point["response"]) for point in points),
-        converged=tuple(bool(point.get("converged", True)) for point in points),
+        converged=tuple(converged),
         critical_parameter=float(critical_parameter),
         reference_value=None if reference_value is None else float(reference_value),
         source=str(source),
@@ -205,11 +233,11 @@ class _IdentityOnly:
 
 
 def evaluate_scaling_series(
-    response: Any,
+    response: ScalingResponse,
     series: ScalingSeries,
     *,
     config: ObservableScalingConfig | None = None,
-) -> Any:
+) -> Dataset:
     """Fit one pre-registered series and return its typed scaling annotation.
 
     The fit is the one
@@ -218,6 +246,10 @@ def evaluate_scaling_series(
     prefixes and the window fits are the shared implementation, not a copy. The
     response's identity and mapping travel into the product's method metadata, and the
     series' reference value is recorded as a report value only.
+
+    The series' physical control name is authoritative: the default config takes it from
+    the series, and a config that names another control is refused, so the product's
+    ``target_identity`` and its recorded ``series_identity`` cannot disagree.
     """
     resolved = series.validated()
     identity = getattr(response, "identity", None)
@@ -227,11 +259,16 @@ def evaluate_scaling_series(
             f"{type(identity).__name__}"
         )
     settings = config or ObservableScalingConfig(
-        parameter="x",
+        parameter=resolved.parameter,
         critical_parameter=float(resolved.critical_parameter),
         critical_value=resolved.reference_value,
         absolute_shift=False,
     )
+    if str(settings.parameter) != str(resolved.parameter):
+        raise ValueError(
+            f"the config names the control {settings.parameter!r} but the series was "
+            f"measured along {resolved.parameter!r}; one series has one identity"
+        )
     if settings.absolute_shift:
         raise ValueError(
             "a pre-registered scaling series is already a magnitude; its config must "
