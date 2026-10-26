@@ -1,0 +1,756 @@
+{
+ "schema": "qphase.search-evidence/1",
+ "model": "vdp_2mode",
+ "status": "withdrawn_no_retained_search_conclusion",
+ "generated_at_gate": "Gate B",
+ "workspace_head_at_extraction": "23ab982153005da1afc530d52e1a866171ae2bf0",
+ "conclusion_report": null,
+ "reproducibility_contract": {
+  "goal": "reproduce the bounded scientific conclusion, not bitwise historical outputs",
+  "workflow_semantics_embedded": true,
+  "result_payloads_embedded": false,
+  "legacy_runtime_compatibility_claimed": false
+ },
+ "workflow_count": 6,
+ "workflows": [
+  {
+   "source_path": "configs/workflows/vdp_2mode/vdp_2mode_auto.yaml",
+   "sha256": "cea1330788c2990be5f92f4a96c4e9dee032eacce300c9a52906bdd05c4f3ee9",
+   "last_git_commit": "97b69d6f5674ee856d5f607dbf2c7d3e0548d7d1",
+   "normalized_workflow": {
+    "schema": "qphase.workflow/2",
+    "id": "vdp_2mode_auto",
+    "title": "Vdp 2Mode Auto",
+    "collection": "vdp_2mode",
+    "tags": [
+     "vdp_2mode"
+    ],
+    "jobs": [
+     {
+      "name": "vdp_2mode_auto_sim",
+      "save": true,
+      "engine": {
+       "sde": {
+        "t0": 0.0,
+        "t1": 5000.0,
+        "dt": 0.1,
+        "n_traj": 100,
+        "seed": 42,
+        "ic": [
+         [
+          "800.0+0.0j",
+          "0.0-800.0j"
+         ]
+        ],
+        "adaptive": false,
+        "save_stride": 20,
+        "keep_traj": false
+       }
+      },
+      "backend": {
+       "numpy": {
+        "float_dtype": "float64"
+       }
+      },
+      "integrator": {
+       "srk": {
+        "method": "heun"
+       }
+      },
+      "model": {
+       "vdp_2mode": {
+        "omega_a": 0.00251189,
+        "omega_b": 0.0,
+        "gamma_a": 2.0,
+        "gamma_b": 1.0,
+        "Gamma": 1e-05,
+        "g": 0.5
+       }
+      },
+      "analyser": {
+       "psd": {
+        "modes": [
+         0
+        ],
+        "kind": "complex",
+        "find_peaks": true
+       }
+      }
+     },
+     {
+      "name": "vdp_2mode_auto_fit",
+      "input": {
+       "from": "vdp_2mode_auto_sim",
+       "mode": "dataset"
+      },
+      "save": true,
+      "engine": {
+       "sde": {
+        "mode": "analyze"
+       }
+      },
+      "analyser": {
+       "lorentz_fitter": {
+        "scan_param": "omega_a",
+        "mode": 0,
+        "clip_by_std": true,
+        "clip_sigma": 10.0,
+        "export": [
+         "fit_results.csv",
+         "psd_merged.csv"
+        ]
+       }
+      }
+     }
+    ]
+   }
+  },
+  {
+   "source_path": "configs/workflows/vdp_2mode/vdp_2mode_bifurcation.yaml",
+   "sha256": "38928063061439e41cb4b7b2d3561c8026b5c1e0f8c1a69208c934a5b1ffe7ba",
+   "last_git_commit": "97b69d6f5674ee856d5f607dbf2c7d3e0548d7d1",
+   "normalized_workflow": {
+    "schema": "qphase.workflow/2",
+    "id": "vdp_2mode_bifurcation",
+    "title": "Vdp 2Mode Bifurcation",
+    "collection": "vdp_2mode",
+    "tags": [
+     "vdp_2mode"
+    ],
+    "jobs": [
+     {
+      "name": "vdp_2mode_bifurcation",
+      "save": true,
+      "scan": {
+       "combine": "cartesian",
+       "axes": {
+        "Gamma": {
+         "target": "model.vdp_2mode.Gamma",
+         "values": [
+          0.01,
+          0.001,
+          0.0001
+         ]
+        },
+        "g": {
+         "target": "model.vdp_2mode.g",
+         "values": [
+          0.5,
+          1.0,
+          2.0
+         ]
+        }
+       }
+      },
+      "engine": {
+       "cam": {}
+      },
+      "plugins": {
+       "backend": {
+        "numpy": {
+         "float_dtype": "float64"
+        }
+       },
+       "model": {
+        "vdp_2mode": {
+         "omega_a": 0.0,
+         "omega_b": 0.0,
+         "gamma_a": 1.0,
+         "gamma_b": 1.0,
+         "Gamma": 0.001,
+         "g": 1.0
+        }
+       },
+       "cam_solver": {
+        "bifurcation": {
+         "controls": {
+          "omega_a": {
+           "min": -2.0,
+           "max": 2.0,
+           "scale": 1.0,
+           "domain": "real"
+          },
+          "gamma_b": {
+           "min": 0.01,
+           "max": 5.0,
+           "scale": 1.0,
+           "domain": "nonnegative"
+          }
+         },
+         "perturbation": {
+          "parameter": "omega_a",
+          "scale": 1.0,
+          "side": "both"
+         },
+         "target": {
+          "equilibrium_multiplicity": {
+           "order": 3
+          }
+         },
+         "strategy": {
+          "auto": {
+           "retained_dimension": 1,
+           "max_candidates": 8,
+           "condition_limit": "1.0e11"
+          }
+         },
+         "discovery": {
+          "seeds": {
+           "samples_per_control": 9,
+           "max_starts": 4096,
+           "order_parameter_samples": 101
+          }
+         },
+         "classifier": {
+          "scaling_signature": {
+           "max_total_order": 8,
+           "coefficient_tolerance": 1e-14,
+           "max_exponent": 0.999
+          }
+         },
+         "refinement": {
+          "tolerance": 1e-11,
+          "max_iterations": 100
+         },
+         "verification": {
+          "initial_digits": 50,
+          "max_digits": 200
+         }
+        }
+       },
+       "cam_postprocessor": {
+        "local_response_validation": {
+         "epsilon_min": 1e-12,
+         "epsilon_max": 0.0001,
+         "epsilon_points": 9,
+         "precision_digits": 100,
+         "residual_tolerance": 1e-40,
+         "fit_points": 4
+        },
+        "stochastic_validity": {
+         "probe_epsilon": 0.0001
+        }
+       }
+      }
+     }
+    ]
+   }
+  },
+  {
+   "source_path": "configs/workflows/vdp_2mode/vdp_2mode_bifurcation_g.yaml",
+   "sha256": "97352b0e81b774c5d7f7271f88958625c5d25fe853aaf25a4e6e642bc03b8da0",
+   "last_git_commit": "97b69d6f5674ee856d5f607dbf2c7d3e0548d7d1",
+   "normalized_workflow": {
+    "schema": "qphase.workflow/2",
+    "id": "vdp_2mode_bifurcation_g",
+    "title": "Vdp 2Mode Bifurcation G",
+    "collection": "vdp_2mode",
+    "tags": [
+     "vdp_2mode"
+    ],
+    "jobs": [
+     {
+      "name": "vdp_2mode_bifurcation_g",
+      "save": true,
+      "scan": {
+       "combine": "cartesian",
+       "axes": {
+        "Gamma": {
+         "target": "model.vdp_2mode.Gamma",
+         "values": [
+          0.01,
+          0.001,
+          0.0001
+         ]
+        },
+        "gamma_b": {
+         "target": "model.vdp_2mode.gamma_b",
+         "values": [
+          0.5,
+          1.0,
+          2.0
+         ]
+        }
+       }
+      },
+      "engine": {
+       "cam": {}
+      },
+      "plugins": {
+       "backend": {
+        "numpy": {
+         "float_dtype": "float64"
+        }
+       },
+       "model": {
+        "vdp_2mode": {
+         "omega_a": 0.0,
+         "omega_b": 0.0,
+         "gamma_a": 1.0,
+         "gamma_b": 1.0,
+         "Gamma": 0.001,
+         "g": 1.0
+        }
+       },
+       "cam_solver": {
+        "bifurcation": {
+         "controls": {
+          "omega_a": {
+           "min": -2.0,
+           "max": 2.0,
+           "scale": 1.0,
+           "domain": "real"
+          },
+          "g": {
+           "min": 0.01,
+           "max": 5.0,
+           "scale": 1.0,
+           "domain": "nonnegative"
+          }
+         },
+         "perturbation": {
+          "parameter": "omega_a",
+          "scale": 1.0,
+          "side": "both"
+         },
+         "target": {
+          "equilibrium_multiplicity": {
+           "order": 3
+          }
+         },
+         "strategy": {
+          "reduced": {
+           "retained_dimension": 1,
+           "max_candidates": 8,
+           "condition_limit": "1.0e11"
+          }
+         },
+         "discovery": {
+          "seeds": {
+           "samples_per_control": 9,
+           "max_starts": 4096,
+           "order_parameter_samples": 101
+          }
+         },
+         "classifier": {
+          "scaling_signature": {
+           "max_total_order": 8,
+           "coefficient_tolerance": 1e-14,
+           "max_exponent": 0.999
+          }
+         },
+         "refinement": {
+          "tolerance": 1e-11,
+          "max_iterations": 100
+         },
+         "verification": {
+          "initial_digits": 50,
+          "max_digits": 200
+         }
+        }
+       },
+       "cam_postprocessor": {
+        "local_response_validation": {
+         "epsilon_min": 1e-12,
+         "epsilon_max": 0.0001,
+         "epsilon_points": 9,
+         "precision_digits": 100,
+         "residual_tolerance": 1e-40,
+         "fit_points": 4
+        },
+        "stochastic_validity": {
+         "probe_epsilon": 0.0001
+        }
+       }
+      }
+     }
+    ]
+   }
+  },
+  {
+   "source_path": "configs/workflows/vdp_2mode/vdp_2mode_bifurcation_gamma_a.yaml",
+   "sha256": "2988d8ee530429db00a1e40329b747ff83a66b2b6c590c012853c4de00db09dc",
+   "last_git_commit": "97b69d6f5674ee856d5f607dbf2c7d3e0548d7d1",
+   "normalized_workflow": {
+    "schema": "qphase.workflow/2",
+    "id": "vdp_2mode_bifurcation_gamma_a",
+    "title": "Vdp 2Mode Bifurcation Gamma A",
+    "collection": "vdp_2mode",
+    "tags": [
+     "vdp_2mode"
+    ],
+    "jobs": [
+     {
+      "name": "vdp_2mode_bifurcation_gamma_a",
+      "save": true,
+      "scan": {
+       "combine": "cartesian",
+       "axes": {
+        "Gamma": {
+         "target": "model.vdp_2mode.Gamma",
+         "values": [
+          0.01,
+          0.001,
+          0.0001
+         ]
+        },
+        "gamma_b": {
+         "target": "model.vdp_2mode.gamma_b",
+         "values": [
+          0.5,
+          1.0,
+          2.0
+         ]
+        }
+       }
+      },
+      "engine": {
+       "cam": {}
+      },
+      "plugins": {
+       "backend": {
+        "numpy": {
+         "float_dtype": "float64"
+        }
+       },
+       "model": {
+        "vdp_2mode": {
+         "omega_a": 0.0,
+         "omega_b": 0.0,
+         "gamma_a": 1.0,
+         "gamma_b": 1.0,
+         "Gamma": 0.001,
+         "g": 1.0
+        }
+       },
+       "cam_solver": {
+        "bifurcation": {
+         "controls": {
+          "omega_a": {
+           "min": -2.0,
+           "max": 2.0,
+           "scale": 1.0,
+           "domain": "real"
+          },
+          "gamma_a": {
+           "min": 0.01,
+           "max": 5.0,
+           "scale": 1.0,
+           "domain": "nonnegative"
+          }
+         },
+         "perturbation": {
+          "parameter": "omega_a",
+          "scale": 1.0,
+          "side": "both"
+         },
+         "target": {
+          "equilibrium_multiplicity": {
+           "order": 3
+          }
+         },
+         "strategy": {
+          "reduced": {
+           "retained_dimension": 1,
+           "max_candidates": 8,
+           "condition_limit": "1.0e11"
+          }
+         },
+         "discovery": {
+          "seeds": {
+           "samples_per_control": 9,
+           "max_starts": 4096,
+           "order_parameter_samples": 101
+          }
+         },
+         "classifier": {
+          "scaling_signature": {
+           "max_total_order": 8,
+           "coefficient_tolerance": 1e-14,
+           "max_exponent": 0.999
+          }
+         },
+         "refinement": {
+          "tolerance": 1e-11,
+          "max_iterations": 100
+         },
+         "verification": {
+          "initial_digits": 50,
+          "max_digits": 200
+         }
+        }
+       },
+       "cam_postprocessor": {
+        "local_response_validation": {
+         "epsilon_min": 1e-12,
+         "epsilon_max": 0.0001,
+         "epsilon_points": 9,
+         "precision_digits": 100,
+         "residual_tolerance": 1e-40,
+         "fit_points": 4
+        },
+        "stochastic_validity": {
+         "probe_epsilon": 0.0001
+        }
+       }
+      }
+     }
+    ]
+   }
+  },
+  {
+   "source_path": "configs/workflows/vdp_2mode/vdp_2mode_bifurcation_order4.yaml",
+   "sha256": "0afd34095dbf62184ef015d5343b9da019db636f97a5531a69d21b94e0432749",
+   "last_git_commit": "97b69d6f5674ee856d5f607dbf2c7d3e0548d7d1",
+   "normalized_workflow": {
+    "schema": "qphase.workflow/2",
+    "id": "vdp_2mode_bifurcation_order4",
+    "title": "Vdp 2Mode Bifurcation Order4",
+    "collection": "vdp_2mode",
+    "tags": [
+     "vdp_2mode"
+    ],
+    "jobs": [
+     {
+      "name": "vdp_2mode_bifurcation_order4",
+      "save": true,
+      "scan": {
+       "combine": "cartesian",
+       "axes": {
+        "Gamma": {
+         "target": "model.vdp_2mode.Gamma",
+         "values": [
+          0.01,
+          0.001,
+          0.0001
+         ]
+        }
+       }
+      },
+      "engine": {
+       "cam": {}
+      },
+      "plugins": {
+       "backend": {
+        "numpy": {
+         "float_dtype": "float64"
+        }
+       },
+       "model": {
+        "vdp_2mode": {
+         "omega_a": 0.0,
+         "omega_b": 0.0,
+         "gamma_a": 1.0,
+         "gamma_b": 1.0,
+         "Gamma": 0.001,
+         "g": 1.0
+        }
+       },
+       "cam_solver": {
+        "bifurcation": {
+         "controls": {
+          "omega_a": {
+           "min": -2.0,
+           "max": 2.0,
+           "scale": 1.0,
+           "domain": "real"
+          },
+          "gamma_b": {
+           "min": 0.01,
+           "max": 5.0,
+           "scale": 1.0,
+           "domain": "nonnegative"
+          },
+          "g": {
+           "min": 0.01,
+           "max": 5.0,
+           "scale": 1.0,
+           "domain": "nonnegative"
+          }
+         },
+         "perturbation": {
+          "parameter": "omega_a",
+          "scale": 1.0,
+          "side": "both"
+         },
+         "target": {
+          "equilibrium_multiplicity": {
+           "order": 4
+          }
+         },
+         "strategy": {
+          "auto": {
+           "retained_dimension": 1,
+           "max_candidates": 8,
+           "condition_limit": "1.0e11"
+          }
+         },
+         "discovery": {
+          "seeds": {
+           "samples_per_control": 9,
+           "max_starts": 4096,
+           "order_parameter_samples": 101
+          }
+         },
+         "classifier": {
+          "scaling_signature": {
+           "max_total_order": 8,
+           "coefficient_tolerance": 1e-14,
+           "max_exponent": 0.999
+          }
+         },
+         "refinement": {
+          "tolerance": 1e-11,
+          "max_iterations": 100
+         },
+         "verification": {
+          "initial_digits": 50,
+          "max_digits": 200
+         }
+        }
+       },
+       "cam_postprocessor": {
+        "local_response_validation": {
+         "epsilon_min": 1e-12,
+         "epsilon_max": 0.0001,
+         "epsilon_points": 9,
+         "precision_digits": 100,
+         "residual_tolerance": 1e-40,
+         "fit_points": 4
+        },
+        "stochastic_validity": {
+         "probe_epsilon": 0.0001
+        }
+       }
+      }
+     }
+    ]
+   }
+  },
+  {
+   "source_path": "configs/workflows/vdp_2mode/vdp_2mode_cupy.yaml",
+   "sha256": "75668447e2ca3bd06e414b71e36ba3a9df5682d1f2c0aed8495db23ef1467ccc",
+   "last_git_commit": "97b69d6f5674ee856d5f607dbf2c7d3e0548d7d1",
+   "normalized_workflow": {
+    "schema": "qphase.workflow/2",
+    "id": "vdp_2mode_cupy",
+    "title": "Vdp 2Mode Cupy",
+    "collection": "vdp_2mode",
+    "tags": [
+     "vdp_2mode"
+    ],
+    "jobs": [
+     {
+      "name": "vdp_2mode_cupy_sim",
+      "save": true,
+      "scan": {
+       "axes": {
+        "omega_a": {
+         "target": "model.vdp_2mode.omega_a",
+         "values": [
+          0.01165914,
+          0.01359356,
+          0.01584893,
+          0.0184785,
+          0.02154435,
+          0.02511886,
+          0.02928645,
+          0.03414549,
+          0.03981072,
+          0.04641589,
+          0.05411695,
+          0.06309573,
+          0.07356423,
+          0.08576959,
+          0.1
+         ]
+        }
+       }
+      },
+      "engine": {
+       "sde": {
+        "t0": 0.0,
+        "t1": 200000.0,
+        "dt": 0.1,
+        "n_traj": 100,
+        "seed": 42,
+        "ic": [
+         [
+          "800.0+0.0j",
+          "0.0-800.0j"
+         ]
+        ],
+        "adaptive": false,
+        "save_stride": 20,
+        "keep_traj": false
+       }
+      },
+      "backend": {
+       "cupy": {
+        "float_dtype": "float32",
+        "device": "cuda"
+       }
+      },
+      "integrator": {
+       "euler_maruyama": {}
+      },
+      "model": {
+       "vdp_2mode": {
+        "omega_a": 0.01165914,
+        "omega_b": 0.0,
+        "gamma_a": 2.0,
+        "gamma_b": 1.0,
+        "Gamma": 1e-05,
+        "g": 0.5
+       }
+      },
+      "analyser": {
+       "psd": {
+        "modes": [
+         0
+        ],
+        "kind": "complex",
+        "find_peaks": true
+       }
+      }
+     },
+     {
+      "name": "vdp_2mode_cupy_fit",
+      "input": {
+       "from": "vdp_2mode_cupy_sim",
+       "mode": "dataset"
+      },
+      "save": true,
+      "engine": {
+       "sde": {
+        "mode": "analyze"
+       }
+      },
+      "analyser": {
+       "lorentz_fitter": {
+        "scan_param": "omega_a",
+        "mode": 0,
+        "clip_by_std": true,
+        "clip_sigma": 10.0,
+        "export": [
+         "fit_results.csv",
+         "psd_merged.csv"
+        ]
+       }
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "search_scripts": [],
+ "machine_evidence_inventory": [
+  {
+   "path": "reports/models/vdp_2mode/attachments/gamma_1e5/vdp_2mode_gamma_1e5_frequency_comparison.csv",
+   "sha256": "8f8ac8556c2f680662edfafc11638a1f9630aeccce6d801219fa08e2affdd2f7",
+   "bytes": 10003,
+   "role": "result_table",
+   "retention": "pending_machine_evidence_reduction"
+  }
+ ]
+}

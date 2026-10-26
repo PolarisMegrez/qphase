@@ -56,12 +56,13 @@ from qphase_cam.solver.bifurcation_target import (
 
 from .test_bifurcation import TwoModeFoldModel
 
-#: One historical document that is present in the repository.
+#: A real historical VDP migration document, kept in the repository as a tracked
+#: fixture: the workspace's own ``reports/`` tree is git-ignored and is never a
+#: test input, so the file is copied here verbatim (same bytes, same schema).
 HISTORICAL_DOCUMENT = (
-    Path(__file__).resolve().parents[2]
-    / "reports"
-    / "models"
-    / "vdp_2mode"
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "search_evidence"
     / "vdp_2mode_search_evidence.json"
 )
 
@@ -1152,8 +1153,12 @@ def test_source_artifact_rejects_a_path():
         SourceArtifactRef(artifact_id="run:7")
 
 
-def test_evidence_product_rejects_a_migration_document():
-    document = import_search_evidence_document(HISTORICAL_DOCUMENT)
+def test_evidence_product_rejects_a_migration_document(tmp_path):
+    # Any migration input triggers the rejection: a minimal synthetic document
+    # keeps the case free of the historical fixture's unrelated schema details.
+    document = import_search_evidence_document(
+        _write_document(tmp_path / "evidence.json")
+    )
     with pytest.raises(TypeError, match="never becomes a product"):
         build_evidence_product(
             fragments=[document],
@@ -1432,10 +1437,13 @@ def _write_document(path: Path, **overrides) -> Path:
     return path
 
 
-def test_import_search_evidence_document_reads_the_history(tmp_path):
+def test_import_search_evidence_document_reads_the_history():
+    """The tracked VDP fixture keeps the real historical document schema covered."""
     document = import_search_evidence_document(HISTORICAL_DOCUMENT)
     assert document.document_schema == "qphase.search-evidence/1"
     assert document.model == "vdp_2mode"
+    assert document.workflow_count == 6
+    assert len(document.workflows) == 6
     assert document.workflow_count == len(document.workflows)
     assert len(document.document_sha256) == 64
     assert document.source_path.endswith("vdp_2mode_search_evidence.json")
@@ -1443,7 +1451,7 @@ def test_import_search_evidence_document_reads_the_history(tmp_path):
     assert document.reproducibility_contract["result_payloads_embedded"] is False
     assert document.is_migration_input is True
     mapping = document.workflow_by_source_path()
-    assert len(mapping) == document.workflow_count
+    assert len(mapping) == 6
     assert all(entry.normalized_workflow for entry in mapping.values())
 
 
@@ -1613,9 +1621,11 @@ def test_import_search_evidence_document_requires_missing_fields(tmp_path):
         import_search_evidence_document(tmp_path / "absent.json")
 
 
-def test_migration_input_is_not_evidence():
+def test_migration_input_is_not_evidence(tmp_path):
     """The migration input exposes no counters and no conversion API."""
-    document = import_search_evidence_document(HISTORICAL_DOCUMENT)
+    document = import_search_evidence_document(
+        _write_document(tmp_path / "evidence.json")
+    )
     for forbidden in (
         "accepted_count",
         "rejected_count",

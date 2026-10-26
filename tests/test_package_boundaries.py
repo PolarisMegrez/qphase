@@ -29,6 +29,17 @@ PACKAGES = REPO_ROOT / "packages"
 CORE_PACKAGE = "qphase"
 RESOURCE_PACKAGES = ("qphase_sde", "qphase_cam", "qphase_viz")
 OVERLAY_PACKAGE = "models"
+#: Workspace trees that only exist locally (``.gitignore``): a test that reads
+#: them passes on the author's machine and fails in a clean checkout.
+UNTRACKED_WORKSPACE_TREES = ("reports", "runs")
+#: Trees whose *literal* path may never appear in a test. ``runs`` is left out on
+#: purpose: negative cases pass ``"runs/..."`` as a rejected artifact id, and a
+#: temporary project's own ``runs`` directory is a legitimate fixture, so only the
+#: repository-rooted join form of ``runs`` is flagged.
+_LITERAL_WORKSPACE_TREES = ("reports",)
+#: Expressions whose value is the repository root rather than a temporary
+#: workspace, so a ``runs`` segment below them is the local run store.
+_REPO_ROOT_NAMES = frozenset({"REPO_ROOT", "ROOT", "REPO_DIR", "PROJECT_ROOT"})
 
 
 def _python_files(root: Path) -> list[Path]:
@@ -103,4 +114,100 @@ def test_core_test_suite_does_not_import_resource_packages():
     """
     forbidden = (*RESOURCE_PACKAGES, OVERLAY_PACKAGE)
     violations = _crossing_imports(REPO_ROOT / "tests" / "qphase", forbidden)
+    assert not violations, violations
+
+
+def _path_literal_tree(value: str) -> str | None:
+    """Return the untracked workspace tree a path literal names, if any.
+
+    Constants that contain whitespace are prose (docstrings, error messages), not
+    paths, so they are skipped; the remaining check asks whether the *first*
+    segment of a repository-relative path is one of the locally-only trees that
+    a test may not spell out in full (see ``_LITERAL_WORKSPACE_TREES``).
+    """
+    if not value or any(character.isspace() for character in value):
+        return None
+    segments = [segment for segment in value.replace("\\", "/").split("/") if segment]
+    if segments and segments[0] in _LITERAL_WORKSPACE_TREES and len(segments) > 1:
+        return segments[0]
+    return None
+
+
+def _is_repo_rooted(node: ast.AST) -> bool:
+    """Return whether an expression is anchored at the repository root.
+
+    ``__file__`` or a module-level ``REPO_ROOT``-style name anchors it; a bare
+    ``workspace``/``tmp_path`` does not, which is how a temporary project's own
+    ``runs`` directory stays legitimate.
+    """
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and (
+            child.id == "__file__" or child.id in _REPO_ROOT_NAMES
+        ):
+            return True
+    return False
+
+
+def _join_segment(node: ast.AST) -> str | None:
+    """Return the untracked tree name a path join names, if any."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _workspace_segment(node.right, _is_repo_rooted(node.left))
+    if isinstance(node, ast.Call) and node.args:
+        callee = getattr(node.func, "attr", getattr(node.func, "id", ""))
+        if callee != "join":
+            return None
+        rooted = _is_repo_rooted(node)
+        for argument in node.args:
+            found = _workspace_segment(argument, rooted)
+            if found is not None:
+                return found
+    return None
+
+
+def _workspace_segment(node: ast.AST, rooted: bool) -> str | None:
+    """Return the tree name when a constant is a bare untracked segment."""
+    if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+        return None
+    if node.value not in UNTRACKED_WORKSPACE_TREES:
+        return None
+    if node.value == "runs" and not rooted:
+        return None
+    return node.value
+
+
+def test_tests_read_no_untracked_workspace_evidence():
+    """Tests must not read the git-ignored ``reports``/``runs`` workspace trees.
+
+    A path into those trees resolves on the machine that produced the data and
+    fails in every clean checkout, which is exactly how three search-evidence
+    cases broke on CI. The scan flags two shapes, both at the exact segment
+    level so that prose, report file names and temporary workspaces are ignored:
+
+    * a string literal whose first segment is ``reports`` (a repository-relative
+      evidence path written out in full), and
+    * a ``/`` join or ``os.path.join`` with a bare ``reports``/``runs`` segment,
+      where ``runs`` is only flagged when the expression is anchored at the
+      repository root (``__file__``/``REPO_ROOT``) — a ``tmp_path`` project's
+      own ``runs`` directory is a legitimate fixture, and ``"runs/..."`` stays a
+      valid rejected artifact id in the negative cases.
+
+    Real evidence belongs in a tracked fixture under ``tests/fixtures/``.
+    """
+    violations = []
+    for path in _python_files(REPO_ROOT / "tests"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            relative = path.relative_to(REPO_ROOT)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                name = _path_literal_tree(node.value)
+                if name is not None:
+                    violations.append(
+                        f"{relative}:{node.lineno} names the untracked {name!r} tree"
+                    )
+                continue
+            name = _join_segment(node)
+            if name is not None:
+                violations.append(
+                    f"{relative}:{node.lineno} joins the untracked {name!r} tree"
+                )
     assert not violations, violations

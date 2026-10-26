@@ -1207,6 +1207,7 @@ _MIGRATED_RNG_GROUP_JOBS = [
 ]
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("workflow_path", "job_name", "batch", "group"),
     _MIGRATED_RNG_GROUP_JOBS,
@@ -1217,6 +1218,9 @@ def test_migrated_workflow_passes_real_planner_with_pinned_rng_group(
 ):
     """Migrated workflows must load into EngineConfig and pass the real SDE
     planner with the explicit batch aligned to the pinned RNG group.
+
+    The case reads tracked production workflows and drives the real planner, so
+    it belongs to the integration layer, not to the default unit selection.
     """
     doc = yaml.safe_load((_REPO_ROOT / workflow_path).read_text(encoding="utf-8"))
     job = next(j for j in doc["jobs"] if j["name"] == job_name)
