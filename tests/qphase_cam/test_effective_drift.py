@@ -24,6 +24,10 @@ reconstruction it feeds is ``valid`` and both of its boundaries are physical:
   confining manifold gets two physical boundaries. Its dependence on ``R11`` is
   what gives the noise a stable curvature, so the eigendirection average of the
   curve is not identically zero.
+
+The source is reconstructed with ``grid_points = CURVE_SIDE = 11`` and the curve with
+``coarse_points_per_side = 11``: the curve counts points per side, so its coarse grid
+is the reconstruction's own 21-point grid and the two are compared point for point.
 """
 
 from __future__ import annotations
@@ -410,6 +414,24 @@ class _CurveModel:
         return np.asarray(matrix, dtype=complex)
 
 
+class _ZeroDiffusionModel(_CurveModel):
+    """A model whose diffusion vanishes everywhere: no projected noise at all."""
+
+    @staticmethod
+    def cam_diffusion(matrix, params=None):
+        del params
+        return np.zeros(np.asarray(matrix).shape, dtype=complex)
+
+
+def _zero_readout() -> FunctionalObservable:
+    """Return a readout that is identically zero, so the intensity is exactly zero."""
+    return FunctionalObservable(
+        identity=IDENTITY,
+        value_fn=lambda adapter, state, params: 0.0,
+        gradient_fn=lambda adapter, state, params: [0.0, 0.0, 0.0, 0.0],
+    )
+
+
 def _curve_manifold() -> NonlinearManifold:
     """Return a confining manifold whose embedding is exactly ``R00 = 1 + x``."""
     return NonlinearManifold(
@@ -428,7 +450,10 @@ def _curve_manifold() -> NonlinearManifold:
     )
 
 
-def _curve_reconstruction() -> Any:
+CURVE_SIDE = 11
+
+
+def _curve_reconstruction(*, grid_points: int = CURVE_SIDE) -> Any:
     reconstruction = scalar_reconstruction(
         _CurveAdapter(),
         _CurveModel(),
@@ -437,15 +462,16 @@ def _curve_reconstruction() -> Any:
         params={},
         manifold=_curve_manifold(),
         parameter_direction=PARAMETER_DIRECTION,
-        config=ScalarReconstructionConfig(grid_points=21),
+        config=ScalarReconstructionConfig(grid_points=grid_points),
     )
     assert reconstruction.status is CAMOutcomeStatus.VALID
+    assert reconstruction.grid_points == 2 * grid_points - 1
     return reconstruction
 
 
 def _curve_config(**updates: Any) -> EffectiveDriftConfig:
     settings: dict[str, Any] = {
-        "coarse_points_per_side": 11,
+        "coarse_points_per_side": CURVE_SIDE,
         "dense_points": 41,
         "derivative_step_factor": 1.0e-3,
     }
@@ -494,12 +520,28 @@ def test_the_curve_interpolates_the_interval_and_evaluates_the_generator():
     assert curve.source_status is CAMOutcomeStatus.VALID
     assert curve.manifold == reconstruction.manifold
 
-    # The coarse grid spans the reconstruction's own boundaries and holds zero.
+    # The coarse grid is the reconstruction's own grid: one point per side counting the
+    # zero, deduplicated in the middle, so it holds 2 * side - 1 points.
     x_coarse = np.asarray(curve.coarse["x"], dtype=float)
-    assert x_coarse.size == 11
+    zero = int(np.argmin(np.abs(x_coarse)))
+    assert x_coarse.size == 2 * CURVE_SIDE - 1 == 21
+    assert x_coarse.size == reconstruction.grid_points
     assert x_coarse[0] == reconstruction.x_min
     assert x_coarse[-1] == reconstruction.x_max
-    assert x_coarse[5] == 0.0
+    assert x_coarse[zero] == 0.0
+    assert zero == CURVE_SIDE - 1
+    # The left side is one point per side from the boundary to zero, the right side the
+    # mirror, so the spacing is uniform on each half but not across zero.
+    np.testing.assert_allclose(
+        np.diff(x_coarse[: zero + 1]),
+        reconstruction.x_max / (CURVE_SIDE - 1),
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        np.diff(x_coarse[zero:]),
+        reconstruction.x_max / (CURVE_SIDE - 1),
+        atol=1e-12,
+    )
     for name in (
         "f_deterministic",
         "f_effective",
@@ -512,25 +554,32 @@ def test_the_curve_interpolates_the_interval_and_evaluates_the_generator():
         "lyapunov_residual",
         "valid",
     ):
-        assert np.asarray(curve.coarse[name]).size == 11, name
+        assert np.asarray(curve.coarse[name]).size == 21, name
     assert np.all(np.asarray(curve.coarse["valid"], dtype=bool))
+    # The curve re-uses the reconstruction's own grid point for point, not just its
+    # boundaries: the source exposes it as its generator table.
+    source_grid = reconstruction.generator_table
+    assert source_grid is not None
+    np.testing.assert_allclose(x_coarse, source_grid.x, atol=0.0)
     # The readout is along the critical coordinate, so the drift correction has no
     # critical component and the curve keeps the manifold's own drift.
     np.testing.assert_allclose(
         curve.coarse["f_effective"], curve.coarse["f_deterministic"], atol=0.0
     )
-    assert float(curve.coarse["f_effective"][5]) == 0.0
-    assert float(curve.coarse["stable_margin"][5]) == pytest.approx(4.0, rel=1e-12)
-    assert float(curve.coarse["physical_minimum"][5]) == pytest.approx(0.5, rel=1e-12)
+    assert float(curve.coarse["f_effective"][zero]) == 0.0
+    assert float(curve.coarse["stable_margin"][zero]) == pytest.approx(4.0, rel=1e-12)
+    assert float(curve.coarse["physical_minimum"][zero]) == pytest.approx(
+        0.5, rel=1e-12
+    )
     assert np.all(np.asarray(curve.coarse["q_effective"], dtype=float) > 0.0)
 
     # Centre-point closed form (see ``_curve_centre_forms``).
     q_centre, omega_centre, trace = _curve_centre_forms()
-    assert float(curve.coarse["stable_covariance_trace"][5]) == pytest.approx(
+    assert float(curve.coarse["stable_covariance_trace"][zero]) == pytest.approx(
         trace, rel=1e-12
     )
-    assert float(curve.coarse["q_effective"][5]) == pytest.approx(q_centre, rel=1e-9)
-    assert float(curve.coarse["omega_effective"][5]) == pytest.approx(
+    assert float(curve.coarse["q_effective"][zero]) == pytest.approx(q_centre, rel=1e-9)
+    assert float(curve.coarse["omega_effective"][zero]) == pytest.approx(
         omega_centre, rel=1e-9
     )
     np.testing.assert_allclose(curve.coarse["forcing"], 1.0, atol=0.0)
@@ -549,7 +598,10 @@ def test_the_curve_interpolates_the_interval_and_evaluates_the_generator():
     assert np.all(np.asarray(curve.dense["q_effective"], dtype=float) > 0.0)
     # Between two coarse points the interpolation is monotone, so the centre value
     # is reproduced exactly.
-    assert float(curve.dense["q_effective"][20]) == pytest.approx(q_centre, rel=1e-9)
+    dense_zero = int(np.argmin(np.abs(x_dense)))
+    assert float(curve.dense["q_effective"][dense_zero]) == pytest.approx(
+        q_centre, rel=1e-9
+    )
 
     evaluation = curve.evaluation
     assert evaluation is not None
@@ -590,8 +642,8 @@ def test_the_curve_interpolates_the_interval_and_evaluates_the_generator():
     assert summary["negative_boundary"] == reconstruction.x_min
     assert summary["positive_boundary"] == reconstruction.x_max
     assert summary["sigma_x"] == reconstruction.sigma
-    assert summary["valid_coarse_count"] == 11
-    assert summary["coarse_point_count"] == 11
+    assert summary["valid_coarse_count"] == 21
+    assert summary["coarse_point_count"] == 21
     assert summary["dense_point_count"] == 41
     assert summary["negative_physical_boundary"] is True
     assert summary["positive_physical_boundary"] is True
@@ -613,13 +665,15 @@ def test_the_curve_interpolates_the_interval_and_evaluates_the_generator():
     method = curve.method
     assert method["service"] == "qphase_cam.effective_drift.effective_drift_curve"
     assert method["integration_split"] == "nearest_zero"
-    assert method["coarse_points_per_side"] == 11
+    assert method["coarse_points_per_side"] == CURVE_SIDE
     assert method["dense_points"] == 41
     assert method["derivative_step_factor"] == pytest.approx(1.0e-3)
     assert method["parameter_direction"] is True
     assert method["physical_tolerance"] == pytest.approx(1.0e-9)
     assert method["stable_covariance_tolerance"] == pytest.approx(1.0e-7)
     assert method["density_normalization_raw"] == evaluation.density_normalization
+    assert method["source_valid"] is True
+    assert method["source_status"] == CAMOutcomeStatus.VALID.value
 
 
 def test_a_curve_without_a_parameter_direction_reports_no_forcing_numbers():
@@ -633,14 +687,15 @@ def test_a_curve_without_a_parameter_direction_reports_no_forcing_numbers():
         state=STATE,
         params={},
         reconstruction=reconstruction,
-        config=EffectiveDriftConfig(coarse_points_per_side=11, dense_points=41),
+        config=EffectiveDriftConfig(coarse_points_per_side=CURVE_SIDE, dense_points=41),
     )
     assert curve.status is CAMOutcomeStatus.VALID
     assert curve.method["parameter_direction"] is False
     assert curve.method["derivative_step_factor"] == pytest.approx(3.0e-7)
     q_centre, omega_centre, _ = _curve_centre_forms()
-    assert float(curve.coarse["q_effective"][5]) == pytest.approx(q_centre, rel=1e-4)
-    assert float(curve.coarse["omega_effective"][5]) == pytest.approx(
+    zero = int(np.argmin(np.abs(np.asarray(curve.coarse["x"], dtype=float))))
+    assert float(curve.coarse["q_effective"][zero]) == pytest.approx(q_centre, rel=1e-4)
+    assert float(curve.coarse["omega_effective"][zero]) == pytest.approx(
         omega_centre, rel=1e-4
     )
     # No forcing is not a zero forcing: the per-point array keeps its NaN and the
@@ -655,7 +710,8 @@ def test_a_curve_without_a_parameter_direction_reports_no_forcing_numbers():
     assert curve.summary["allan_intensity"] is not None
 
 
-def test_a_source_that_is_not_valid_is_never_reported_as_a_curve():
+def test_an_uncontrolled_source_still_yields_a_diagnostic_curve():
+    """A non-valid source with every field kept is evaluated and stays non-valid."""
     reconstruction = _curve_reconstruction()
     uncontrolled = reconstruction.model_copy(
         update={
@@ -675,15 +731,95 @@ def test_a_source_that_is_not_valid_is_never_reported_as_a_curve():
         parameter_direction=PARAMETER_DIRECTION,
         config=_curve_config(),
     )
+    # The arrays are the diagnostic the reference probe reported...
+    assert curve.generator is not None
+    assert curve.evaluation is not None
+    assert np.asarray(curve.coarse["x"]).size == 2 * CURVE_SIDE - 1
+    assert np.asarray(curve.dense["x"]).size == 41
+    assert curve.summary["allan_intensity"] is not None
+    # ... and the verdict is the source's, not a fresh one.
     assert curve.status is CAMOutcomeStatus.UNCONTROLLED_APPROXIMATION
     assert curve.source_status is CAMOutcomeStatus.UNCONTROLLED_APPROXIMATION
-    assert curve.reason_code == "source_reconstruction_not_valid"
+    assert curve.reason_code == "manifold_not_confining"
     assert "not confining" in curve.reason
+    assert "not valid" in curve.reason
+    assert curve.manifold == reconstruction.manifold
+    assert curve.method["source_valid"] is False
+    assert curve.method["source_reason_code"] == "manifold_not_confining"
+    assert curve.method["source_validity_domain"] == "not_confining"
+    # An internal failure still wins over the source's verdict, and the source status is
+    # kept separately so the two are never confused.
+    stale = effective_drift_curve(
+        _UnstableCurveAdapter(),
+        _CurveModel(),
+        _observable(),
+        state=STATE,
+        params={},
+        reconstruction=uncontrolled,
+        config=_curve_config(),
+    )
+    assert stale.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert stale.reason_code == "no_stable_interval"
+    assert stale.source_status is CAMOutcomeStatus.UNCONTROLLED_APPROXIMATION
+
+
+def test_a_source_without_boundaries_is_not_turned_into_a_curve():
+    """A source that never reached its grid reports its own verdict, not a curve."""
+    reconstruction = scalar_reconstruction(
+        _CurveAdapter(),
+        _ZeroDiffusionModel(),
+        _observable(),
+        state=STATE,
+        params={},
+        manifold=_curve_manifold(),
+        config=ScalarReconstructionConfig(grid_points=CURVE_SIDE),
+    )
+    # The failure stops before the boundaries, so there is nothing to place.
+    assert reconstruction.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert reconstruction.x_min is None and reconstruction.x_max is None
+    assert reconstruction.sigma is None
+    assert reconstruction.grid_points is None
+    curve = effective_drift_curve(
+        _CurveAdapter(),
+        _ZeroDiffusionModel(),
+        _observable(),
+        state=STATE,
+        params={},
+        reconstruction=reconstruction,
+        config=_curve_config(),
+    )
+    assert curve.status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert curve.source_status is CAMOutcomeStatus.STOCHASTIC_INVALID
+    assert curve.reason_code == "source_reconstruction_incomplete"
+    assert reconstruction.reason in curve.reason
     assert curve.generator is None
     assert curve.evaluation is None
     assert curve.coarse == {}
     assert curve.dense == {}
-    assert curve.manifold == reconstruction.manifold
+    assert curve.summary["missing_source_fields"] == [
+        "x_min",
+        "x_max",
+        "sigma",
+        "grid_points",
+    ]
+
+
+def test_an_unknown_physical_boundary_stays_unknown():
+    reconstruction = _curve_reconstruction().model_copy(
+        update={"negative_physical_boundary": None}
+    )
+    curve = effective_drift_curve(
+        _CurveAdapter(),
+        _CurveModel(),
+        _observable(),
+        state=STATE,
+        params={},
+        reconstruction=reconstruction,
+        config=_curve_config(),
+    )
+    assert curve.status is CAMOutcomeStatus.VALID
+    assert curve.summary["negative_physical_boundary"] is None
+    assert curve.summary["positive_physical_boundary"] is True
 
 
 def test_a_stable_direction_that_does_not_decay_leaves_no_interval():
@@ -724,10 +860,10 @@ def test_a_stable_interval_that_is_disconnected_is_refused():
     assert curve.source_status is CAMOutcomeStatus.VALID
     assert curve.generator is None
     assert curve.dense == {}
-    # The two ends are stable and the seven points between them are not: the curve
+    # The two ends are stable and the fifteen points between them are not: the curve
     # refuses to interpolate across the gap instead of dropping the ends.
-    assert curve.summary["valid_coarse_count"] == 4
-    assert curve.summary["invalid_inside_interval_count"] == 7
+    assert curve.summary["valid_coarse_count"] == 6
+    assert curve.summary["invalid_inside_interval_count"] == 15
     assert curve.summary["stable_margin_range"] == pytest.approx([-4.0, 4.0], abs=1e-9)
 
 
@@ -745,7 +881,7 @@ def test_a_reconstruction_without_a_two_sided_interval_raises():
             config=_curve_config(),
         )
     without_sigma = reconstruction.model_copy(update={"sigma": None})
-    with pytest.raises(ValueError, match="x_min, x_max and sigma"):
+    with pytest.raises(ValueError, match="missing sigma"):
         effective_drift_curve(
             _CurveAdapter(),
             _CurveModel(),
@@ -757,18 +893,104 @@ def test_a_reconstruction_without_a_two_sided_interval_raises():
         )
 
 
+def test_the_curve_coarse_grid_is_the_reconstruction_grid():
+    """``coarse_points_per_side`` counts one side; the default therefore holds 401."""
+    settings = EffectiveDriftConfig()
+    assert settings.coarse_points_per_side == 201
+    assert 2 * settings.coarse_points_per_side - 1 == 401
+    # A reconstruction on a different grid is a structural mismatch, not a rescale: the
+    # default 201-per-side curve refuses this 21-point reconstruction instead of quietly
+    # sampling its own grid.
+    reconstruction = _curve_reconstruction()
+    assert reconstruction.grid_points == 21
+    with pytest.raises(ValueError, match="would hold 401 points"):
+        effective_drift_curve(
+            _CurveAdapter(),
+            _CurveModel(),
+            _observable(),
+            state=STATE,
+            params={},
+            reconstruction=reconstruction,
+            config=EffectiveDriftConfig(),
+        )
+    with pytest.raises(ValueError, match="coarse_points_per_side=11"):
+        effective_drift_curve(
+            _CurveAdapter(),
+            _CurveModel(),
+            _observable(),
+            state=STATE,
+            params={},
+            reconstruction=reconstruction,
+            config=EffectiveDriftConfig(coarse_points_per_side=31, dense_points=41),
+        )
+
+
+def test_a_forced_curve_with_zero_intensity_is_not_reported_as_valid():
+    """A constant readout has no information: 0/0 must not read as a valid curve."""
+    reconstruction = scalar_reconstruction(
+        _CurveAdapter(),
+        _CurveModel(),
+        _zero_readout(),
+        state=STATE,
+        params={},
+        manifold=_curve_manifold(),
+        parameter_direction=PARAMETER_DIRECTION,
+        config=ScalarReconstructionConfig(grid_points=CURVE_SIDE),
+    )
+    assert reconstruction.status is CAMOutcomeStatus.VALID
+    assert reconstruction.scalar_intensity == 0.0
+    forced = effective_drift_curve(
+        _CurveAdapter(),
+        _CurveModel(),
+        _zero_readout(),
+        state=STATE,
+        params={},
+        reconstruction=reconstruction,
+        parameter_direction=PARAMETER_DIRECTION,
+        config=_curve_config(),
+    )
+    assert forced.status is not CAMOutcomeStatus.VALID
+    assert forced.status is CAMOutcomeStatus.UNIDENTIFIABLE
+    assert forced.reason_code == "intensity_not_positive"
+    assert forced.generator is None
+    assert forced.dense == {}
+    assert forced.summary["scalar_intensity"] == 0.0
+    assert "information rate is undefined" in forced.reason
+    # Without forcing the same zero is a real zero: no information rate is requested, so
+    # there is nothing to divide by.
+    unforced = effective_drift_curve(
+        _CurveAdapter(),
+        _CurveModel(),
+        _zero_readout(),
+        state=STATE,
+        params={},
+        reconstruction=reconstruction,
+        config=_curve_config(),
+    )
+    assert unforced.status is CAMOutcomeStatus.VALID
+    assert unforced.summary["allan_intensity"] == 0.0
+    assert unforced.summary["information_rate"] is None
+    assert unforced.summary["path_information_rate"] is None
+    assert unforced.summary["information_over_path"] is None
+
+
 def test_the_curve_configuration_is_validated():
     for updates in (
         {"coarse_points_per_side": 2},
         {"dense_points": 10},
         {"derivative_step_factor": 0.0},
+        {"derivative_step_factor": float("nan")},
+        {"derivative_step_factor": float("inf")},
         {"physical_tolerance": -1.0},
+        {"physical_tolerance": float("nan")},
+        {"physical_tolerance": float("inf")},
         {"stable_covariance_tolerance": -1.0},
+        {"stable_covariance_tolerance": float("nan")},
+        {"stable_covariance_tolerance": float("-inf")},
     ):
         with pytest.raises(ValidationError):
             EffectiveDriftConfig(**updates)
     settings = EffectiveDriftConfig()
-    assert settings.coarse_points_per_side == 201
     assert settings.dense_points == 6001
     assert settings.derivative_step_factor == pytest.approx(3.0e-7)
     # The default quadrature is the historical dense-table convention.

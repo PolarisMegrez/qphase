@@ -344,20 +344,30 @@ class EffectiveDriftConfig(BaseModel):
 
     ``coarse_points_per_side`` and ``dense_points`` are the two grids the study uses:
     the coarse grid carries the per-point stable-subspace solve and the dense grid is
-    the PCHIP interpolation the quadrature integrates. ``derivative_step_factor`` is the
-    single step of the stable eigendirection averages, ``physical_tolerance`` and
-    ``stable_covariance_tolerance`` are the curve's own selection tolerances (the source
-    reconstruction keeps its own, stricter boundary tolerances), and ``quadrature``
-    configures the dense :func:`~qphase_cam.nonlinear.evaluate_generator` only.
+    the PCHIP interpolation the quadrature integrates. The coarse grid is
+    ``coarse_points_per_side`` points per side, so it holds ``2 · side - 1`` points and
+    must match the reconstruction's own ``grid_points`` — the curve reuses that grid
+    instead of sampling a second one. ``derivative_step_factor`` is the single step of
+    the stable eigendirection averages, ``physical_tolerance`` and
+    ``stable_covariance_tolerance`` are the curve's own selection tolerances (the
+    source reconstruction keeps its own, stricter boundary tolerances), and
+    ``quadrature`` configures the dense
+    :func:`~qphase_cam.nonlinear.evaluate_generator` only.
+
+    The three float fields reject ``NaN`` and ``inf``: a non-finite step or tolerance
+    turns every comparison downstream into a silent ``False``, which would read as
+    "nothing selected" instead of "this configuration is unusable".
     """
 
     model_config = ConfigDict(extra="forbid")
 
     coarse_points_per_side: int = Field(default=201, ge=3)
     dense_points: int = Field(default=6001, ge=11)
-    derivative_step_factor: float = Field(default=3.0e-7, gt=0.0)
-    physical_tolerance: float = Field(default=1.0e-9, ge=0.0)
-    stable_covariance_tolerance: float = Field(default=1.0e-7, ge=0.0)
+    derivative_step_factor: float = Field(default=3.0e-7, gt=0.0, allow_inf_nan=False)
+    physical_tolerance: float = Field(default=1.0e-9, ge=0.0, allow_inf_nan=False)
+    stable_covariance_tolerance: float = Field(
+        default=1.0e-7, ge=0.0, allow_inf_nan=False
+    )
     quadrature: ScalarReconstructionConfig = Field(
         default_factory=lambda: ScalarReconstructionConfig(
             integration_split="nearest_zero"
@@ -371,8 +381,11 @@ class EffectiveDriftCurve(BaseModel):
     ``coarse`` holds the per-point arrays (including the invalid points' NaN and the
     validity mask), ``dense`` the interpolated table the quadrature integrates, and
     ``evaluation`` the shared stationary evaluation of that table. ``source_status`` is
-    the reconstruction's own status: a source that was not valid is never reported as a
-    valid curve.
+    the reconstruction's own status: a source that was not ``valid`` never yields a
+    ``valid`` curve. Such a source can still carry a *diagnostic* curve when it kept its
+    manifold, boundaries, width and grid — the arrays are then evaluated exactly as for
+    a valid source and the curve's own status repeats the source's verdict, which is why
+    the two statuses are reported separately.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -437,11 +450,18 @@ def effective_drift_curve(
 ) -> EffectiveDriftCurve:
     """Return the full effective-drift curve of one reconstruction.
 
-    The reconstruction supplies the manifold, the physical boundaries and the soft-mode
-    width, so the curve is the one-dimensional problem the caller already defined: this
-    function never resolves its own boundaries. A reconstruction that is not ``valid``
-    keeps its status — an uncontrolled approximation is not turned into a curve by being
-    evaluated on a finer grid.
+    The reconstruction supplies the manifold, the physical boundaries, the soft-mode
+    width *and* the coarse grid, so the curve is the one-dimensional problem the caller
+    already defined: this function never resolves its own boundaries or samples a second
+    coarse grid. ``coarse_points_per_side`` therefore has to agree with the
+    reconstruction's ``grid_points = 2 · side - 1`` and a mismatch is a caller error.
+
+    A reconstruction that is not ``valid`` never produces a ``valid`` curve. When it
+    kept the manifold, both boundaries, the width and the grid — an uncontrolled
+    approximation, say — the curve is still evaluated, because that is exactly the
+    diagnostic the reference probe reported; the curve's own status then repeats the
+    source's verdict and ``method`` records why. When those fields are missing the curve
+    cannot be placed at all, and the source's status and reason are returned unchanged.
 
     Each coarse point solves the stable subspace exactly as the reference probe does:
     ``P = I − tangent·left``, the stable basis from ``null_space(left)``, the stable
@@ -453,17 +473,27 @@ def effective_drift_curve(
 
     Without ``parameter_direction`` there is no forcing: the per-point forcing stays
     NaN (it is unavailable, not zero) and the evaluation runs unforced, so the
-    path-information rate and the stationary response are ``None``.
+    path-information rate and the stationary response are ``None``. An unforced curve
+    with a zero intensity is a real zero; a *forced* curve whose intensity is not
+    positive, or whose response, path-information rate or information rate is not
+    finite, is reported as unidentified instead of as a valid curve with NaN numbers.
     """
     settings = config or EffectiveDriftConfig()
     point = np.asarray(state, dtype=float).reshape(-1)
     parameter_map = dict(params or {})
+    source_valid = reconstruction.status is CAMOutcomeStatus.VALID
     method: dict[str, Any] = {
         "service": "qphase_cam.effective_drift.effective_drift_curve",
-        "source": "the caller's scalar_reconstruction (manifold, boundaries, sigma)",
+        "source": (
+            "the caller's scalar_reconstruction (manifold, boundaries, sigma, grid)"
+        ),
         "coarse_grid": (
             f"{settings.coarse_points_per_side} points per side from the "
             "reconstruction's boundaries, deduplicated at zero"
+        ),
+        "coarse_grid_reuse": (
+            "the coarse grid is the reconstruction's own grid: its point count must "
+            "equal 2*coarse_points_per_side - 1"
         ),
         "stable_projection": "P = I - tangent.left; stable basis = null_space(left)",
         "stable_jacobian": "B^T P J(x) B",
@@ -483,6 +513,11 @@ def effective_drift_curve(
         "physical_tolerance": float(settings.physical_tolerance),
         "stable_covariance_tolerance": float(settings.stable_covariance_tolerance),
         "parameter_direction": parameter_direction is not None,
+        "source_status": reconstruction.status.value,
+        "source_valid": source_valid,
+        "source_reason_code": reconstruction.reason_code,
+        "source_validity_domain": reconstruction.validity_domain,
+        "source_reason": reconstruction.reason,
     }
     diagnostics: dict[str, Any] = {}
     manifold = reconstruction.manifold
@@ -498,21 +533,39 @@ def effective_drift_curve(
             summary=dict(diagnostics),
         )
 
-    if reconstruction.status is not CAMOutcomeStatus.VALID:
-        return failed(
-            reconstruction.status,
-            "source_reconstruction_not_valid",
-            "the source reconstruction is not valid "
-            f"({reconstruction.status.value}: {reconstruction.reason or 'no reason'})",
-        )
     negative = reconstruction.x_min
     positive = reconstruction.x_max
     sigma = reconstruction.sigma
-    if negative is None or positive is None or sigma is None:
-        raise ValueError(
-            "a valid reconstruction must carry x_min, x_max and sigma; the curve "
-            "cannot place its grid without them"
+    grid_points = reconstruction.grid_points
+    left = np.asarray(manifold.left, dtype=float)
+    missing = [
+        name
+        for name, present in (
+            ("x_min", negative is not None),
+            ("x_max", positive is not None),
+            ("sigma", sigma is not None),
+            ("grid_points", grid_points is not None),
+            ("a critical left vector matching the state", left.size == point.size),
+            ("a manifold embedding", len(manifold.embeddings) > 0),
         )
+        if not present
+    ]
+    if missing:
+        detail = "the source reconstruction is missing " + ", ".join(missing)
+        if not source_valid:
+            # A failure that stopped before the boundaries cannot be turned into a
+            # curve, and it is not a caller error either: report the source's verdict.
+            diagnostics["missing_source_fields"] = missing
+            return failed(
+                reconstruction.status,
+                "source_reconstruction_incomplete",
+                f"{reconstruction.reason or 'the reconstruction did not resolve'}; "
+                f"{detail}, so no diagnostic curve can be placed",
+            )
+        raise ValueError(f"{detail}; the curve cannot place its grid without them")
+    # ``missing`` proved these are present; the asserts only narrow their types.
+    assert negative is not None and positive is not None and sigma is not None
+    assert grid_points is not None
     if not (negative < 0.0 < positive):
         raise ValueError(
             f"the reconstruction interval [{negative}, {positive}] does not straddle "
@@ -521,12 +574,19 @@ def effective_drift_curve(
     if not np.all(np.isfinite(point)):
         raise ValueError("the state must be finite")
 
-    left = np.asarray(manifold.left, dtype=float)
-    left_points = (int(settings.coarse_points_per_side) + 1) // 2
+    side = int(settings.coarse_points_per_side)
+    expected_points = 2 * side - 1
+    if grid_points != expected_points:
+        raise ValueError(
+            f"the curve's coarse grid would hold {expected_points} points "
+            f"({side} per side) but the reconstruction reports {grid_points}; pass "
+            f"ScalarReconstructionConfig(grid_points={side}) or set "
+            f"coarse_points_per_side={(grid_points + 1) // 2}"
+        )
     x_coarse = np.concatenate(
         (
-            np.linspace(negative, 0.0, left_points),
-            np.linspace(0.0, positive, left_points)[1:],
+            np.linspace(negative, 0.0, side),
+            np.linspace(0.0, positive, side)[1:],
         )
     )
     vectors = manifold_embedding(manifold, point, x_coarse)
@@ -717,6 +777,29 @@ def effective_drift_curve(
     omega_dense = interpolate(omega_effective)
     forcing_dense = None if direction is None else interpolate(forcing)
     stable_margin_dense = interpolate(stable_margin)
+    dense_arrays = [f_dense, q_dense, omega_dense, stable_margin_dense]
+    if forcing_dense is not None:
+        dense_arrays.append(forcing_dense)
+    if not all(np.all(np.isfinite(values)) for values in dense_arrays):
+        diagnostics["dense_interval"] = [
+            float(x_coarse[start]),
+            float(x_coarse[stop - 1]),
+        ]
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "dense_table_not_finite",
+            "the dense interpolation is not finite on the kept interval",
+        )
+    if np.any(q_dense <= 0.0):
+        diagnostics["dense_interval"] = [
+            float(x_coarse[start]),
+            float(x_coarse[stop - 1]),
+        ]
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "dense_diffusion_not_positive",
+            "the dense projected diffusion is not strictly positive",
+        )
     table = ScalarGeneratorTable(
         x=tuple(float(value) for value in x_dense),
         drift=tuple(float(value) for value in f_dense),
@@ -744,6 +827,80 @@ def effective_drift_curve(
             "dense_density_not_normalizable",
             "the dense stationary density does not normalize",
         )
+    intensity = float(evaluation.scalar_intensity)
+    # A zero intensity is a real zero for an unforced curve, but a forced curve with no
+    # intensity has no information rate at all: report it instead of dividing by zero.
+    if not np.isfinite(intensity) or intensity < 0.0:
+        diagnostics["scalar_intensity"] = evaluation.scalar_intensity
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "intensity_not_finite",
+            f"the dense scalar intensity is {evaluation.scalar_intensity!r}, not a "
+            "finite non-negative number",
+        )
+    if direction is not None and intensity <= 0.0:
+        diagnostics["scalar_intensity"] = evaluation.scalar_intensity
+        return failed(
+            CAMOutcomeStatus.UNIDENTIFIABLE,
+            "intensity_not_positive",
+            "a forced curve needs a positive scalar intensity; the dense table's is "
+            f"{evaluation.scalar_intensity!r}, so the information rate is undefined "
+            "rather than zero",
+        )
+    moments = {
+        "stationary_mean": evaluation.stationary_mean,
+        "stationary_mean_x": evaluation.stationary_mean_x,
+        "edge_mass_fraction": evaluation.edge_mass_fraction,
+        "endpoint_density_ratio": evaluation.endpoint_density_ratio,
+    }
+    non_finite_moments = [
+        name
+        for name, value in moments.items()
+        if value is None or not bool(np.isfinite(value))
+    ]
+    if non_finite_moments:
+        diagnostics["non_finite_moments"] = non_finite_moments
+        return failed(
+            CAMOutcomeStatus.STOCHASTIC_INVALID,
+            "dense_moments_not_finite",
+            "the dense stationary moments are not finite: "
+            + ", ".join(non_finite_moments),
+        )
+    information: float | None = None
+    path_information = evaluation.path_information_rate
+    if direction is not None:
+        if evaluation.stationary_response is None or not bool(
+            np.isfinite(evaluation.stationary_response)
+        ):
+            diagnostics["stationary_response"] = evaluation.stationary_response
+            return failed(
+                CAMOutcomeStatus.UNIDENTIFIABLE,
+                "stationary_response_not_finite",
+                "the forced stationary response is not finite",
+            )
+        if path_information is None or not bool(np.isfinite(path_information)):
+            diagnostics["path_information_rate"] = path_information
+            return failed(
+                CAMOutcomeStatus.UNIDENTIFIABLE,
+                "path_information_not_finite",
+                "the forced path-information rate is not finite",
+            )
+        information = float(evaluation.stationary_response) ** 2 / intensity
+        if not np.isfinite(information):
+            diagnostics["information_rate"] = information
+            return failed(
+                CAMOutcomeStatus.UNIDENTIFIABLE,
+                "information_rate_not_finite",
+                f"the information rate response²/intensity is {information!r}",
+            )
+    information_over_path: float | None = None
+    if (
+        information is not None
+        and path_information is not None
+        and np.isfinite(path_information)
+        and path_information > 0.0
+    ):
+        information_over_path = float(information / path_information)
     density = np.asarray(evaluation.density, dtype=float)
     rate = float(manifold.soft_rate)
     stable_mass = {
@@ -752,27 +909,16 @@ def effective_drift_curve(
         )
         for factor in (1.0, 3.0, 5.0, 10.0)
     }
-    information = (
-        None
-        if evaluation.stationary_response is None
-        else float(evaluation.stationary_response) ** 2
-        / float(evaluation.scalar_intensity)
-    )
-    path_information = evaluation.path_information_rate
     summary: dict[str, Any] = {
         "valid_coarse_count": int(np.count_nonzero(valid)),
         "coarse_interval": [float(x_coarse[start]), float(x_coarse[stop - 1])],
         "stationary_mean": evaluation.stationary_mean,
         "stationary_mean_x": evaluation.stationary_mean_x,
         "stationary_response": evaluation.stationary_response,
-        "allan_intensity": evaluation.scalar_intensity,
+        "allan_intensity": intensity,
         "information_rate": information,
         "path_information_rate": path_information,
-        "information_over_path": (
-            None
-            if (information is None or not path_information)
-            else float(information / path_information)
-        ),
+        "information_over_path": information_over_path,
         "edge_mass_fraction": evaluation.edge_mass_fraction,
         "endpoint_density_ratio": evaluation.endpoint_density_ratio,
         "minimum_q_effective": float(np.min(q_dense)),
@@ -783,8 +929,10 @@ def effective_drift_curve(
         "probability_stable_margin_le_10x_soft_rate": stable_mass[10.0],
         "negative_boundary": float(negative),
         "positive_boundary": float(positive),
-        "negative_physical_boundary": bool(reconstruction.negative_physical_boundary),
-        "positive_physical_boundary": bool(reconstruction.positive_physical_boundary),
+        # An unknown boundary stays unknown: ``bool(None)`` would report "not physical",
+        # which is a different statement from "the source did not determine it".
+        "negative_physical_boundary": reconstruction.negative_physical_boundary,
+        "positive_physical_boundary": reconstruction.positive_physical_boundary,
         "sigma_x": float(sigma),
         "lyapunov_residual_max": (
             float(np.nanmax(residual)) if np.any(np.isfinite(residual)) else None
@@ -819,8 +967,22 @@ def effective_drift_curve(
         "forcing": forcing_dense,
         "stable_margin": stable_margin_dense,
     }
+    # A non-valid source can still leave a complete diagnostic curve, but the curve's
+    # own status repeats the source's verdict: the arrays never upgrade the verdict.
+    status = CAMOutcomeStatus.VALID if source_valid else reconstruction.status
+    reason = None
+    reason_code = None
+    if not source_valid:
+        reason = (
+            f"diagnostic curve of a source that is not valid "
+            f"({reconstruction.status.value}): "
+            f"{reconstruction.reason or 'no reason given'}"
+        )
+        reason_code = reconstruction.reason_code or "source_reconstruction_not_valid"
     return EffectiveDriftCurve(
-        status=CAMOutcomeStatus.VALID,
+        status=status,
+        reason=reason,
+        reason_code=reason_code,
         source_status=reconstruction.status,
         manifold=manifold,
         generator=table,
