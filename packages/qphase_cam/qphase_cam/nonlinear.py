@@ -348,15 +348,20 @@ class ScalarReconstruction(BaseModel):
 class ScalarGeneratorEvaluation(BaseModel):
     """The stationary scalar problem of one generator table, evaluated.
 
-    ``density`` is the normalized stationary density on ``x`` (the table's own grid);
-    ``normalizable`` is false when the raw density integral is not finite and
-    positive, in which case the density is returned unnormalized and every derived
-    number is ``None``. ``stationary_mean`` is the readout mean and
-    ``stationary_mean_x`` the mean of ``x`` itself; ``stationary_response`` and
-    ``path_information_rate`` need a forcing vector and stay ``None`` without one.
+    ``density`` is the normalized stationary density on ``x`` (the table's own grid).
+    ``normalizable`` is the evaluation's own verdict: it is false when the density
+    integral is not finite and positive *and* when the requested numbers cannot be
+    produced from this table at all — an empty intensity core under the configured
+    density comparison, a non-finite integrand, or a non-finite intensity. In both cases
+    the density is returned as far as it was computed (unnormalized when the integral
+    itself failed) and every derived number is ``None``, with ``reason`` naming the
+    condition; it is not a claim that only the raw density integral decides it. A
+    caller that reports a status passes that reason on instead of inventing one.
 
-    ``core_point_count`` counts the grid points whose density is above the core floor
-    (the points the intensity integrand uses), ``edge_point_count`` the points of each
+    ``stationary_mean`` is the readout mean and ``stationary_mean_x`` the mean of ``x``
+    itself; ``stationary_response`` and ``path_information_rate`` need a forcing vector
+    and stay ``None`` without one. ``core_point_count`` counts the grid points whose
+    density is admitted to the intensity core, ``edge_point_count`` the points of each
     edge window the edge mass is integrated over.
     """
 
@@ -423,8 +428,12 @@ def evaluate_generator(
 
     This is a pure evaluation of a table: it never decides whether the manifold is
     confining or whether the physical region is bounded. Those verdicts belong to the
-    caller, which is why a non-normalizable density is reported through
-    ``normalizable`` instead of raising.
+    caller, which is why the evaluation reports ``normalizable=False`` with a ``reason``
+    instead of raising. That flag covers everything the requested numbers need and the
+    table does not give: a density that does not normalize, a non-positive projected
+    diffusion, an intensity core left empty by the configured comparison, a non-finite
+    integrand and a non-finite intensity. The derived numbers are then ``None``, never a
+    fabricated zero.
     """
     settings = config or ScalarReconstructionConfig()
     x = np.asarray(table.x, dtype=float)

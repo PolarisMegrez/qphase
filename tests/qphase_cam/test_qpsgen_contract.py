@@ -112,3 +112,25 @@ def test_qpsgen_adapter_numerical_and_reduction_contract():
     materialized = adapter.materialized_linear_reduction(candidate=search.candidates[0])
     assert len(plan.retained_symbols) == 1
     assert materialized.reduced_residual.rows == 1
+
+
+def test_physical_eigenvalues_accepts_a_state_stack():
+    """A stack comes back one spectrum per state, not transposed into another shape."""
+    model = VDP2ModeModel(
+        omega_a=0.1,
+        omega_b=0.0,
+        gamma_a=2.0,
+        gamma_b=0.8,
+        Gamma=0.0001,
+        g=0.5,
+    )
+    adapter = QPSGenDynamicsAdapter.from_model(model)
+    stack = np.asarray(
+        [[2.0, 1.0, 0.2, -0.1], [1.5, 0.8, 0.0, 0.0], [3.0, 2.0, 0.4, 0.3]]
+    )
+    batched = np.asarray(adapter.physical_eigenvalues(stack))
+    assert batched.shape == (stack.shape[0], adapter.state_matrix(stack).shape[-1])
+    for row, spectrum in zip(stack, batched, strict=True):
+        np.testing.assert_allclose(
+            spectrum, adapter.physical_eigenvalues(row), rtol=0.0, atol=0.0
+        )

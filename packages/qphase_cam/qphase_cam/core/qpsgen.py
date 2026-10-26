@@ -258,12 +258,19 @@ class QPSGenDynamicsAdapter:
     def physical_eigenvalues(
         self, vector: Any, params: dict[str, Any] | None = None
     ) -> np.ndarray:
+        """Return the Hermitian spectrum of one state, or of every state of a stack.
+
+        A stack is ``(n, modes, modes)`` and comes back ``(n, modes)``; the conjugate
+        transpose is taken over the two matrix axes, not over every axis, so a batch is
+        not silently transposed into a different shape.
+        """
         if self.moment_layout not in {"normal", "augmented"}:
             raise BifurcationCapabilityError(
                 f"moment layout {self.moment_layout!r} has no Hermitian PSD domain"
             )
         matrix = self.state_matrix(vector, params)
-        return np.linalg.eigvalsh((matrix + matrix.conjugate().T) / 2.0)
+        hermitian = (matrix + np.conjugate(np.swapaxes(matrix, -1, -2))) / 2.0
+        return np.linalg.eigvalsh(hermitian)
 
     def parameter_jacobian(
         self, vector: Any, params: dict[str, Any] | None = None
