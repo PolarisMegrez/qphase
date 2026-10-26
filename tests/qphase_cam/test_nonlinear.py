@@ -33,7 +33,9 @@ from qphase_cam.nonlinear import (
     manifold_drift,
     manifold_embedding,
     ou_intensities,
+    ou_intensity_algebra,
     reconstructed_intensity,
+    response_prediction,
     scalar_reconstruction,
     slow_manifold,
 )
@@ -1655,3 +1657,275 @@ def test_an_unusable_assembly_is_reported_not_turned_into_zero():
     assert reconstruction.method["intensity_integration"] == "zero_split"
     assert reconstruction.method["core_density_comparison"] == "greater_equal"
     assert reconstruction.method["edge_count_rule"] == "floor_min_one"
+
+
+# --- the critical-mode options of the Gaussian and response services -------
+
+
+class _ResponseAdapter(_QuadraticAdapter):
+    """One-mode adapter that also answers the parameter direction the response needs."""
+
+    def parameter_direction(self, name, scale=1.0):
+        del name
+        return np.asarray([float(scale)])
+
+
+class _RuleResponseAdapter(_RuleAdapter):
+    """``_RuleAdapter`` with the parameter direction the response service needs."""
+
+    def parameter_direction(self, name, scale=1.0):
+        del name
+        return np.asarray([float(scale), 0.0, 0.0, 0.0])
+
+
+def _mode_one_observable() -> FunctionalObservable:
+    """Read the coordinate the decaying mode of ``_RuleAdapter`` occupies."""
+    return FunctionalObservable(
+        identity=IDENTITY,
+        value_fn=lambda adapter, state, params: float(
+            np.asarray(state, dtype=float).reshape(-1)[1]
+        ),
+        gradient_fn=lambda adapter, state, params: [0.0, 1.0, 0.0, 0.0],
+    )
+
+
+def test_the_gaussian_and_response_services_keep_the_historical_defaults():
+    adapter = _QuadraticAdapter()
+    model = _UnitModel()
+    gaussian = ou_intensities(
+        adapter, _observable(), state=[X0], params={}, model=model
+    )
+    explicit = ou_intensities(
+        adapter,
+        _observable(),
+        state=[X0],
+        params={},
+        model=model,
+        critical_mode_rule="nearest_zero",
+        critical_eigenvalue_source="eigenvalue",
+    )
+    # The reference numbers are the pre-option ones and the explicit defaults agree.
+    assert gaussian.rate == pytest.approx(1.75, rel=1e-15)
+    assert gaussian.soft_intensity == pytest.approx(0.32653061224489793, rel=1e-12)
+    assert gaussian.sigma == pytest.approx(0.5345224838248488, rel=1e-12)
+    assert gaussian.model_dump() == explicit.model_dump()
+    assert gaussian.method["critical_mode_rule"] == "nearest_zero"
+    assert gaussian.method["critical_eigenvalue_source"] == "eigenvalue"
+    assert gaussian.method["rate"] == "-eigenvalue"
+    algebra = ou_intensity_algebra(
+        adapter, _observable(), state=[X0], params={}, model=model
+    )
+    assert algebra.rate == gaussian.rate
+    assert algebra.soft_intensity == gaussian.soft_intensity
+    assert algebra.sigma == gaussian.sigma
+    assert algebra.method["critical_eigenvalue_source"] == "eigenvalue"
+    prediction = response_prediction(
+        _ResponseAdapter(),
+        _observable(),
+        state=[X0],
+        params={"mu": 0.0},
+        parameter="mu",
+    )
+    explicit_prediction = response_prediction(
+        _ResponseAdapter(),
+        _observable(),
+        state=[X0],
+        params={"mu": 0.0},
+        parameter="mu",
+        critical_mode_rule="nearest_zero",
+        critical_eigenvalue_source="eigenvalue",
+    )
+    assert prediction.model_dump() == explicit_prediction.model_dump()
+    assert prediction.rate == pytest.approx(1.75, rel=1e-15)
+    assert prediction.method["critical_mode_rule"] == "nearest_zero"
+    assert prediction.method["critical_eigenvalue_source"] == "eigenvalue"
+    assert prediction.method["rate"] == "-eigenvalue"
+
+
+def test_the_critical_mode_rule_reaches_the_intensity_and_response_services():
+    adapter = _RuleResponseAdapter()
+    model = _RuleModel()
+    gaussian = ou_intensities(
+        adapter, _mode_one_observable(), state=RULE_STATE, params={}, model=model
+    )
+    # ``nearest_zero`` keeps the decaying mode, whichever side of zero it sits on.
+    assert gaussian.rate == pytest.approx(0.05, rel=0.0, abs=1e-15)
+    assert gaussian.method["critical_mode_rule"] == "nearest_zero"
+    unguarded = ou_intensity_algebra(
+        adapter,
+        _mode_one_observable(),
+        state=RULE_STATE,
+        params={},
+        model=model,
+        critical_mode_rule="slowest",
+    )
+    assert unguarded.rate == pytest.approx(-0.2, rel=0.0, abs=1e-15)
+    assert unguarded.soft_intensity is None
+    assert unguarded.sigma is None
+    assert unguarded.method["critical_mode_rule"] == "slowest"
+    with pytest.raises(ValueError, match="does not decay"):
+        ou_intensities(
+            adapter,
+            _mode_one_observable(),
+            state=RULE_STATE,
+            params={},
+            model=model,
+            critical_mode_rule="slowest",
+        )
+    prediction = response_prediction(
+        adapter,
+        _mode_one_observable(),
+        state=RULE_STATE,
+        params={"mu": 0.0},
+        parameter="mu",
+    )
+    assert prediction.rate == pytest.approx(0.05, rel=0.0, abs=1e-15)
+    assert prediction.projection == pytest.approx(1.0, rel=0.0, abs=1e-15)
+    assert prediction.soft_response == pytest.approx(
+        prediction.projection * prediction.projected_drive / prediction.rate, rel=1e-15
+    )
+    assert prediction.method["critical_mode_rule"] == "nearest_zero"
+    with pytest.raises(ValueError, match="does not decay"):
+        response_prediction(
+            adapter,
+            _mode_one_observable(),
+            state=RULE_STATE,
+            params={"mu": 0.0},
+            parameter="mu",
+            critical_mode_rule="slowest",
+        )
+
+
+def test_the_projected_eigenvalue_source_sets_the_rate_soft_intensity_and_sigma():
+    adapter = _QuadraticAdapter()
+    model = _UnitModel()
+    # J(X0) = -1.75 while the mode states -0.5, so the two sources cannot agree.
+    mode = _projected_mode(-0.5, -1.75)
+    by_eigenvalue = ou_intensity_algebra(
+        adapter, _observable(), state=[X0], params={}, model=model, mode=mode
+    )
+    by_projection = ou_intensity_algebra(
+        adapter,
+        _observable(),
+        state=[X0],
+        params={},
+        model=model,
+        mode=mode,
+        critical_eigenvalue_source="projected",
+    )
+    # A given mode is not re-resolved: neither rate is the state's own -1.75 eigenvalue
+    # unless the source says so.
+    assert by_eigenvalue.rate == pytest.approx(0.5, rel=0.0, abs=1e-15)
+    assert by_projection.rate == pytest.approx(1.75, rel=0.0, abs=1e-15)
+    assert by_eigenvalue.method["critical_eigenvalue_source"] == "eigenvalue"
+    assert by_projection.method["critical_eigenvalue_source"] == "projected"
+    assert by_projection.method["rate"] == "-projected"
+    # Only the rate-derived fields move; the projection, the noise and the full
+    # response do not depend on the source.
+    assert by_eigenvalue.projection == by_projection.projection
+    assert by_eigenvalue.projected_noise == by_projection.projected_noise
+    assert by_eigenvalue.full_intensity == by_projection.full_intensity
+    assert (
+        by_eigenvalue.zero_frequency_gradient == by_projection.zero_frequency_gradient
+    )
+    assert by_eigenvalue.soft_intensity == pytest.approx(
+        by_eigenvalue.projection**2 * by_eigenvalue.projected_noise / 0.5**2,
+        rel=1e-12,
+    )
+    assert by_projection.soft_intensity == pytest.approx(
+        by_projection.projection**2 * by_projection.projected_noise / 1.75**2,
+        rel=1e-12,
+    )
+    assert by_eigenvalue.sigma == pytest.approx(
+        np.sqrt(by_eigenvalue.projected_noise / (2.0 * 0.5)), rel=1e-12
+    )
+    assert by_projection.sigma == pytest.approx(
+        np.sqrt(by_projection.projected_noise / (2.0 * 1.75)), rel=1e-12
+    )
+
+
+def test_the_intensity_guard_and_the_algebra_read_one_rate_source(monkeypatch):
+    # An eigenpair makes both rate forms agree, so the mode is injected: ``Re λ``
+    # decays while ``left @ J @ right`` does not, and the two sources disagree.
+    monkeypatch.setattr(
+        "qphase_cam.nonlinear._critical",
+        lambda *args, **kwargs: _projected_mode(0.5, -1.75),
+    )
+    adapter = _QuadraticAdapter()
+    model = _UnitModel()
+    with pytest.raises(ValueError, match="does not decay"):
+        ou_intensities(adapter, _observable(), state=[X0], params={}, model=model)
+    gaussian = ou_intensities(
+        adapter,
+        _observable(),
+        state=[X0],
+        params={},
+        model=model,
+        critical_eigenvalue_source="projected",
+    )
+    assert gaussian.rate == pytest.approx(1.75, rel=0.0, abs=1e-15)
+    assert gaussian.sigma == pytest.approx(
+        np.sqrt(gaussian.projected_noise / (2.0 * 1.75)), rel=1e-12
+    )
+    assert gaussian.method["critical_eigenvalue_source"] == "projected"
+    # The unguarded algebra reports exactly the rate the guard refused, so the guard
+    # cannot be reading one form while the algebra divides by the other.
+    refused = ou_intensity_algebra(
+        adapter, _observable(), state=[X0], params={}, model=model
+    )
+    assert refused.rate == pytest.approx(-0.5, rel=0.0, abs=1e-15)
+    assert refused.soft_intensity is None
+    assert refused.sigma is None
+
+
+def test_the_response_service_uses_the_configured_rate_source(monkeypatch):
+    monkeypatch.setattr(
+        "qphase_cam.nonlinear._critical",
+        lambda *args, **kwargs: _projected_mode(-0.5, -1.75),
+    )
+    adapter = _ResponseAdapter()
+    by_eigenvalue = response_prediction(
+        adapter, _observable(), state=[X0], params={"mu": 0.0}, parameter="mu"
+    )
+    by_projection = response_prediction(
+        adapter,
+        _observable(),
+        state=[X0],
+        params={"mu": 0.0},
+        parameter="mu",
+        critical_eigenvalue_source="projected",
+    )
+    assert by_eigenvalue.rate == pytest.approx(0.5, rel=0.0, abs=1e-15)
+    assert by_projection.rate == pytest.approx(1.75, rel=0.0, abs=1e-15)
+    # The soft response divides by the rate; the explicit and full terms do not.
+    assert by_eigenvalue.soft_response == pytest.approx(
+        by_eigenvalue.projection * by_eigenvalue.projected_drive / 0.5, rel=1e-12
+    )
+    assert by_projection.soft_response == pytest.approx(
+        by_projection.projection * by_projection.projected_drive / 1.75, rel=1e-12
+    )
+    assert by_projection.explicit_response == by_eigenvalue.explicit_response
+    assert by_projection.full_response == by_eigenvalue.full_response
+    assert by_projection.regular_response == pytest.approx(
+        by_projection.full_response - by_projection.soft_response, rel=1e-12
+    )
+    assert by_projection.method["critical_eigenvalue_source"] == "projected"
+    assert by_projection.method["rate"] == "-projected"
+    # The decay guard follows the same source as well.
+    monkeypatch.setattr(
+        "qphase_cam.nonlinear._critical",
+        lambda *args, **kwargs: _projected_mode(0.5, -1.75),
+    )
+    with pytest.raises(ValueError, match="does not decay"):
+        response_prediction(
+            adapter, _observable(), state=[X0], params={"mu": 0.0}, parameter="mu"
+        )
+    accepted = response_prediction(
+        adapter,
+        _observable(),
+        state=[X0],
+        params={"mu": 0.0},
+        parameter="mu",
+        critical_eigenvalue_source="projected",
+    )
+    assert accepted.rate == pytest.approx(1.75, rel=0.0, abs=1e-15)

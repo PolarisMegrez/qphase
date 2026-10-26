@@ -663,6 +663,24 @@ def _critical(
     return mode
 
 
+def _soft_rate(mode: CriticalMode, jacobian: np.ndarray, source: str) -> float:
+    """Return the decay rate of one critical mode from the stated eigenvalue source.
+
+    ``eigenvalue`` is ``Re λ`` of the resolved mode; ``projected`` is the Rayleigh
+    form ``left @ J @ right``. The two agree for a normalised eigenpair of the state
+    Jacobian and differ when the caller hands in a mode whose vectors are not that
+    pair, so every field that divides by the rate is derived from the one source the
+    caller stated — never from one form inside a guard and another inside the algebra.
+    """
+    if source == "eigenvalue":
+        return -float(np.real(mode.value))
+    if source == "projected":
+        left = np.asarray(mode.left, dtype=float)
+        right = np.asarray(mode.right, dtype=float)
+        return -float(left @ jacobian @ right)
+    raise ValueError(f"unknown critical eigenvalue source {source!r}")
+
+
 def slow_manifold(
     adapter: Any,
     state: Any,
@@ -1438,6 +1456,8 @@ def ou_intensity_algebra(
     mode: CriticalMode | None = None,
     jacobian: Any | None = None,
     overlap_tolerance: float = 1e-10,
+    critical_mode_rule: Literal["nearest_zero", "slowest"] = "nearest_zero",
+    critical_eigenvalue_source: Literal["eigenvalue", "projected"] = "eigenvalue",
 ) -> OuIntensityAlgebra:
     """Return the soft/full Gaussian intensities of one readout without the guard.
 
@@ -1445,10 +1465,21 @@ def ou_intensity_algebra(
     that already resolved the critical mode or the canonical covariance passes them so
     the eigenproblem and the transform are not repeated, and the returned numbers are
     the ones :func:`ou_intensities` gives for a decaying mode.
+
+    ``critical_mode_rule`` selects the mode when one has to be resolved (it is unused
+    when ``mode`` is given), and ``critical_eigenvalue_source`` selects the rate the
+    soft intensity and ``sigma`` divide by. Both defaults are the historical ones, and
+    the pair actually used is recorded in ``method``.
     """
     point = np.asarray(state, dtype=float).reshape(-1)
     parameter_map = dict(params or {})
-    resolved = mode or _critical(adapter, point, parameter_map, overlap_tolerance)
+    resolved = (
+        mode
+        if mode is not None
+        else _critical(
+            adapter, point, parameter_map, overlap_tolerance, critical_mode_rule
+        )
+    )
     if diffusion is None:
         if model is None or not callable(getattr(model, "cam_diffusion", None)):
             raise ValueError(
@@ -1467,7 +1498,7 @@ def ou_intensity_algebra(
         if jacobian is not None
         else np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
     )
-    rate = -float(np.real(resolved.value))
+    rate = _soft_rate(resolved, matrix, critical_eigenvalue_source)
     record = observable.gradient(adapter, point, parameter_map)
     gradient = np.asarray(record.gradient, dtype=float)
     right = np.asarray(resolved.right, dtype=float)
@@ -1497,6 +1528,9 @@ def ou_intensity_algebra(
             "soft": "projection^2 * projected_noise / rate^2 (rate > 0)",
             "sigma": "sqrt(projected_noise / (2 rate)) (rate > 0 and noise > 0)",
             "full": "v^T D v with v = g^T (-J)^-1",
+            "rate": f"-{critical_eigenvalue_source}",
+            "critical_mode_rule": critical_mode_rule,
+            "critical_eigenvalue_source": critical_eigenvalue_source,
             "gradient_method": record.method,
         },
     )
@@ -1511,6 +1545,8 @@ def ou_intensities(
     diffusion: Any | None = None,
     model: Any | None = None,
     overlap_tolerance: float = 1e-10,
+    critical_mode_rule: Literal["nearest_zero", "slowest"] = "nearest_zero",
+    critical_eigenvalue_source: Literal["eigenvalue", "projected"] = "eigenvalue",
 ) -> OuIntensities:
     """Return the Gaussian soft- and full-mode intensities of one readout.
 
@@ -1519,13 +1555,20 @@ def ou_intensities(
     ``D`` is the canonical one (from ``diffusion`` or the model's
     ``cam_diffusion``). Both are *noise intensities*, not state variances: the
     state covariance belongs to the 10F1 assessment.
+
+    The rate in ``λ`` is the one ``critical_eigenvalue_source`` names, and the decay
+    guard is evaluated on that same rate before the algebra runs, so a caller can
+    never be told the mode decays by one form and be divided by the other.
     """
     point = np.asarray(state, dtype=float).reshape(-1)
     parameter_map = dict(params or {})
-    mode = _critical(adapter, point, parameter_map, overlap_tolerance)
-    lam = float(np.real(mode.value))
-    if lam >= 0.0:
-        raise ValueError(f"the soft mode does not decay (real part {lam:.3e})")
+    mode = _critical(
+        adapter, point, parameter_map, overlap_tolerance, critical_mode_rule
+    )
+    jacobian = np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
+    rate = _soft_rate(mode, jacobian, critical_eigenvalue_source)
+    if rate <= 0.0:
+        raise ValueError(f"the soft mode does not decay (rate {rate:.3e})")
     algebra = ou_intensity_algebra(
         adapter,
         observable,
@@ -1534,7 +1577,10 @@ def ou_intensities(
         diffusion=diffusion,
         model=model,
         mode=mode,
+        jacobian=jacobian,
         overlap_tolerance=overlap_tolerance,
+        critical_mode_rule=critical_mode_rule,
+        critical_eigenvalue_source=critical_eigenvalue_source,
     )
     if not np.isfinite(algebra.projected_noise) or algebra.projected_noise <= 0.0:
         raise NoiseIntensityError(
@@ -1564,6 +1610,9 @@ def ou_intensities(
             "noise_covariance": "canonical diffusion covariance",
             "soft": "projection^2 * projected_noise / rate^2",
             "full": "v^T D v with v = g^T (-J)^-1",
+            "rate": f"-{critical_eigenvalue_source}",
+            "critical_mode_rule": critical_mode_rule,
+            "critical_eigenvalue_source": critical_eigenvalue_source,
             "gradient_method": algebra.gradient.method,
         },
     )
@@ -1784,6 +1833,8 @@ def response_prediction(
     scale: float = 1.0,
     relative_step: float = 2.0e-6,
     overlap_tolerance: float = 1e-10,
+    critical_mode_rule: Literal["nearest_zero", "slowest"] = "nearest_zero",
+    critical_eigenvalue_source: Literal["eigenvalue", "projected"] = "eigenvalue",
 ) -> ResponsePrediction:
     """Return the soft, explicit and full parameter response of one readout.
 
@@ -1792,6 +1843,11 @@ def response_prediction(
     soft and full terms follow the reference study
     (``projection * projected_drive / rate`` and
     ``explicit + gradient . (-J)^-1 drive``).
+
+    ``critical_mode_rule`` selects the mode when one has to be resolved, and
+    ``critical_eigenvalue_source`` selects the rate the soft response divides by.
+    Both defaults are the historical ones and the pair actually used is recorded in
+    ``method``.
     """
     point = np.asarray(state, dtype=float).reshape(-1)
     parameter_map = dict(params or {})
@@ -1801,13 +1857,15 @@ def response_prediction(
         raise ValueError(
             f"relative_step must be finite and positive; got {relative_step}"
         )
-    mode = _critical(adapter, point, parameter_map, overlap_tolerance)
-    rate = -float(np.real(mode.value))
+    mode = _critical(
+        adapter, point, parameter_map, overlap_tolerance, critical_mode_rule
+    )
+    jacobian = np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
+    rate = _soft_rate(mode, jacobian, critical_eigenvalue_source)
     if rate <= 0.0:
         raise ValueError(f"the soft mode does not decay (rate {rate:.3e})")
     if parameter not in parameter_map:
         raise ValueError(f"the parameter {parameter!r} has no value in params")
-    jacobian = np.asarray(adapter.jacobian(point, parameter_map), dtype=float)
     response = parameter_response(
         adapter,
         observable,
@@ -1844,5 +1902,8 @@ def response_prediction(
             "regular": "full - soft",
             "parameter": parameter,
             "scale": float(scale),
+            "rate": f"-{critical_eigenvalue_source}",
+            "critical_mode_rule": critical_mode_rule,
+            "critical_eigenvalue_source": critical_eigenvalue_source,
         },
     )
