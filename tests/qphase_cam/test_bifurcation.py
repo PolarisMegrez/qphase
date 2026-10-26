@@ -1684,4 +1684,3 @@ def test_a_reduction_without_a_chart_cannot_name_a_path():
         reduction_path(reduction)
     named = SimpleNamespace(method="reduced_condensed", chart_id="ret:r|eq:0")
     assert reduction_path(named) == "reduced_condensed:ret:r|eq:0"
-
