@@ -28,6 +28,14 @@ reconstruction it feeds is ``valid`` and both of its boundaries are physical:
 The source is reconstructed with ``grid_points = CURVE_SIDE = 11`` and the curve with
 ``coarse_points_per_side = 11``: the curve counts points per side, so its coarse grid
 is the reconstruction's own 21-point grid and the two are compared point for point.
+
+The postprocessor tests drive the same toy through the public annotation path: the
+real ``NonlinearReconstruction`` plugin, a real ``build_state_product`` state product
+and the real ``process`` entry point, with only ``QPSGenDynamicsAdapter.from_model``
+patched to return ``_CurveAdapter``. The plugin resolves its own manifold with
+``slow_manifold``, so the row it produces is an uncontrolled approximation: that is
+the diagnostic curve the reference probe reported, and it is compared field by field
+against a curve computed directly along the same path.
 """
 
 from __future__ import annotations
@@ -37,8 +45,10 @@ from typing import Any
 import numpy as np
 import pytest
 from pydantic import ValidationError
+from qphase.data import load_bundle
 from qphase_cam.core.coordinates import vector_to_matrix
 from qphase_cam.core.noise import canonical_sample_matrix_covariance
+from qphase_cam.data import build_state_product, cam_bundle
 from qphase_cam.effective_drift import (
     EffectiveDriftConfig,
     effective_drift_correction,
@@ -46,8 +56,10 @@ from qphase_cam.effective_drift import (
 )
 from qphase_cam.nonlinear import (
     NonlinearManifold,
+    NonlinearManifoldConfig,
     ScalarReconstructionConfig,
     scalar_reconstruction,
+    slow_manifold,
 )
 from qphase_cam.observable import (
     ChargeSector,
@@ -56,6 +68,10 @@ from qphase_cam.observable import (
     ObservableKind,
 )
 from qphase_cam.outcomes import CAMOutcomeStatus
+from qphase_cam.postprocessor.base import CAMAnnotationContext
+from qphase_cam.postprocessor.nonlinear_reconstruction import (
+    NonlinearReconstruction,
+)
 
 IDENTITY = ObservableIdentity(
     kind=ObservableKind.STATE,
@@ -996,3 +1012,373 @@ def test_the_curve_configuration_is_validated():
     # The default quadrature is the historical dense-table convention.
     assert settings.quadrature.integration_split == "nearest_zero"
     assert ScalarReconstructionConfig().integration_split == "grid_zero"
+
+
+# --- the postprocessor: the optional effective field ----------------------
+
+
+class _Patch:
+    """Patch the adapter factory of the postprocessor module."""
+
+    def __init__(self, monkeypatch: Any, adapter: Any) -> None:
+        monkeypatch.setattr(
+            "qphase_cam.postprocessor.nonlinear_reconstruction."
+            "QPSGenDynamicsAdapter.from_model",
+            lambda model: adapter,
+        )
+
+
+def _state_product(*, success: bool = True) -> Any:
+    matrix = np.asarray(vector_to_matrix(STATE, 2), dtype=complex)
+    return build_state_product(
+        states=matrix.reshape(1, 1, 2, 2),
+        residuals=np.zeros((1, 1)),
+        success=np.asarray([[success]], dtype=bool),
+        valid_mask=np.ones((1, 1), dtype=bool),
+        solution_count=np.ones(1, dtype=np.int64),
+        parameters={"mu": np.asarray([0.0])},
+    )
+
+
+def _context(product: Any) -> CAMAnnotationContext:
+    return CAMAnnotationContext(
+        model=_CurveModel(), products={"state": product}, source_role="state"
+    )
+
+
+def _plugin(orders: tuple[int, ...] = (3,), **updates: Any) -> Any:
+    settings: dict[str, Any] = {
+        "orders": orders,
+        "reconstruction": ScalarReconstructionConfig(grid_points=CURVE_SIDE),
+        "observable": _observable(),
+    }
+    settings.update(updates)
+    return NonlinearReconstruction(**settings)
+
+
+def _reference_curve(order: int = 3) -> Any:
+    """Return the curve the plugin row must reproduce, along the plugin's own path."""
+    manifold = slow_manifold(
+        _CurveAdapter(),
+        STATE,
+        {"mu": 0.0},
+        order=order,
+        config=NonlinearManifoldConfig(order=order),
+    )
+    reconstruction = scalar_reconstruction(
+        _CurveAdapter(),
+        _CurveModel(),
+        _observable(),
+        state=STATE,
+        params={"mu": 0.0},
+        order=order,
+        manifold=manifold,
+        config=ScalarReconstructionConfig(grid_points=CURVE_SIDE),
+    )
+    return effective_drift_curve(
+        _CurveAdapter(),
+        _CurveModel(),
+        _observable(),
+        state=STATE,
+        params={"mu": 0.0},
+        reconstruction=reconstruction,
+        config=_curve_config(),
+    )
+
+
+def _field(annotation: Any, name: str) -> np.ndarray:
+    return np.asarray(annotation.handle(name).materialize())
+
+
+def test_the_default_annotation_has_no_effective_fields(monkeypatch):
+    _Patch(monkeypatch, _CurveAdapter())
+    product = _state_product()
+    processor = _plugin()
+    annotation = processor.process(product, _context(product))
+    names = [variable.name for variable in annotation.variables]
+    assert not [name for name in names if name.startswith("effective")]
+    assert [axis.name for axis in annotation.axes] == ["annotation", "order"]
+    assert not [
+        name
+        for name in annotation.attributes["field_axes"]
+        if name.startswith("effective")
+    ]
+    # Nothing is added to either metadata block, so the default annotation is what it
+    # was before the option existed.
+    assert "effective" not in processor.result_metadata
+    assert "effective" not in str(_field(annotation, "method_metadata")[0])
+    assert _field(annotation, "order_status").tolist() == [
+        ["uncontrolled_approximation"]
+    ]
+    assert np.isfinite(_field(annotation, "scalar_intensity")).all()
+
+
+def test_the_enabled_curve_is_emitted_per_order(monkeypatch):
+    _Patch(monkeypatch, _CurveAdapter())
+    product = _state_product()
+    processor = _plugin(orders=(3, 5), effective=_curve_config())
+    annotation = processor.process(product, _context(product))
+    assert _field(annotation, "order").tolist() == [[3, 5]]
+    # The plugin resolves its own manifold, which does not confine this toy: the row is
+    # an uncontrolled approximation and the curve repeats that instead of upgrading it.
+    assert _field(annotation, "status").tolist() == ["uncontrolled_approximation"]
+    assert _field(annotation, "order_status").tolist() == [
+        ["uncontrolled_approximation", "unidentifiable"]
+    ]
+    assert _field(annotation, "order_reason_code").tolist() == [
+        ["manifold_not_confining", "manifold_unresolved"]
+    ]
+    assert _field(annotation, "effective_status").tolist() == [
+        ["uncontrolled_approximation", "unidentifiable"]
+    ]
+    assert _field(annotation, "effective_reason_code").tolist() == [
+        ["manifold_not_confining", "manifold_unresolved"]
+    ]
+    assert "not valid" in _field(annotation, "effective_reason")[0][0]
+
+    # Axes: one coarse point per side counting zero, and the dense table's own count.
+    shared = annotation.attributes["shared_axes"]
+    assert shared["order"] == 2
+    assert shared["effective_coarse_point"] == 2 * CURVE_SIDE - 1 == 21
+    assert shared["effective_dense_point"] == 41
+    assert {axis.name: axis.size for axis in annotation.axes} == {
+        "annotation": 1,
+        "order": 2,
+        "effective_coarse_point": 21,
+        "effective_dense_point": 41,
+    }
+    field_axes = annotation.attributes["field_axes"]
+    for name in ("effective_x", "effective_forcing", "effective_valid"):
+        assert field_axes[name] == ["order", "effective_coarse_point"], name
+    for name in ("effective_dense_x", "effective_density"):
+        assert field_axes[name] == ["order", "effective_dense_point"], name
+    assert annotation.attributes["ragged"] is False
+    # The typed schema names the same axes, so a consumer reads them off the product.
+    dims = {variable.name: variable.dims for variable in annotation.variables}
+    assert dims["effective_x"] == (
+        "annotation",
+        "order",
+        "effective_coarse_point",
+    )
+    assert dims["effective_dense_x"] == (
+        "annotation",
+        "order",
+        "effective_dense_point",
+    )
+    assert dims["effective_status"] == ("annotation", "order")
+    assert dims["effective_valid_coarse_count"] == ("annotation", "order")
+
+    # The values are the curve's own: coarse and dense, point for point.
+    curve = _reference_curve(3)
+    assert curve.status is CAMOutcomeStatus.UNCONTROLLED_APPROXIMATION
+    coarse_columns = {
+        "effective_x": "x",
+        "effective_f_deterministic": "f_deterministic",
+        "effective_f_effective": "f_effective",
+        "effective_q_effective": "q_effective",
+        "effective_omega_effective": "omega_effective",
+        "effective_stable_covariance_trace": "stable_covariance_trace",
+        "effective_stable_margin": "stable_margin",
+        "effective_physical_minimum": "physical_minimum",
+        "effective_lyapunov_residual": "lyapunov_residual",
+    }
+    for name, key in coarse_columns.items():
+        np.testing.assert_allclose(_field(annotation, name)[0, 0], curve.coarse[key])
+    dense_columns = {
+        "effective_dense_x": "x",
+        "effective_density": "density",
+        "effective_f_effective_dense": "f_effective",
+        "effective_q_effective_dense": "q_effective",
+        "effective_omega_effective_dense": "omega_effective",
+        "effective_stable_margin_dense": "stable_margin",
+    }
+    for name, key in dense_columns.items():
+        np.testing.assert_allclose(_field(annotation, name)[0, 0], curve.dense[key])
+    assert _field(annotation, "effective_valid")[0, 0].all()
+    # The coarse grid spans the reconstruction's own boundaries.
+    coarse_x = _field(annotation, "effective_x")[0, 0]
+    assert coarse_x[0] == _field(annotation, "x_min")[0, 0]
+    assert coarse_x[-1] == _field(annotation, "x_max")[0, 0]
+
+    # Summary scalars, with NaN for what the curve did not produce.
+    assert int(_field(annotation, "effective_valid_coarse_count")[0, 0]) == 21
+    for name, key in (
+        ("effective_stationary_mean", "stationary_mean"),
+        ("effective_stationary_mean_x", "stationary_mean_x"),
+        ("effective_allan_intensity", "allan_intensity"),
+        ("effective_edge_mass_fraction", "edge_mass_fraction"),
+        ("effective_endpoint_density_ratio", "endpoint_density_ratio"),
+        ("effective_minimum_q_effective", "minimum_q_effective"),
+        ("effective_minimum_stable_margin", "minimum_stable_margin"),
+        ("effective_lyapunov_residual_max", "lyapunov_residual_max"),
+        (
+            "effective_probability_stable_margin_le_1x_soft_rate",
+            "probability_stable_margin_le_1x_soft_rate",
+        ),
+        (
+            "effective_probability_stable_margin_le_3x_soft_rate",
+            "probability_stable_margin_le_3x_soft_rate",
+        ),
+        (
+            "effective_probability_stable_margin_le_5x_soft_rate",
+            "probability_stable_margin_le_5x_soft_rate",
+        ),
+        (
+            "effective_probability_stable_margin_le_10x_soft_rate",
+            "probability_stable_margin_le_10x_soft_rate",
+        ),
+    ):
+        assert float(_field(annotation, name)[0, 0]) == pytest.approx(
+            curve.summary[key], rel=1e-12
+        ), name
+    assert _field(annotation, "effective_interval_min")[0, 0] == pytest.approx(
+        curve.summary["coarse_interval"][0], rel=0.0, abs=0.0
+    )
+    assert _field(annotation, "effective_interval_max")[0, 0] == pytest.approx(
+        curve.summary["coarse_interval"][1], rel=0.0, abs=0.0
+    )
+    # No forcing was requested, so the forced numbers and the dense forcing vector are
+    # unavailable rather than zero.
+    assert np.isnan(_field(annotation, "effective_information_rate")[0, 0])
+    assert np.isnan(_field(annotation, "effective_path_information_rate")[0, 0])
+    assert np.isnan(_field(annotation, "effective_forcing")[0, 0]).all()
+    assert np.isnan(_field(annotation, "effective_forcing_dense")[0, 0]).all()
+
+    # Order 5 has no curve at all: unavailable values, not a shorter array.
+    assert int(_field(annotation, "effective_valid_coarse_count")[0, 1]) == -1
+    assert np.isnan(_field(annotation, "effective_x")[0, 1]).all()
+    assert np.isnan(_field(annotation, "effective_dense_x")[0, 1]).all()
+    assert not _field(annotation, "effective_valid")[0, 1].any()
+    assert np.isnan(_field(annotation, "effective_stationary_mean")[0, 1])
+
+    # Method and result metadata name the configuration, the curve's own method and the
+    # source verdict.
+    metadata = str(_field(annotation, "method_metadata")[0])
+    for needle in (
+        "nearest_zero",
+        "stable_projection",
+        "source_status",
+        "source_valid",
+        "uncontrolled_approximation",
+        "coarse_points_per_side",
+    ):
+        assert needle in metadata, needle
+    curve_metadata = processor.result_metadata["effective"]
+    assert curve_metadata["enabled"] is True
+    assert curve_metadata["coarse_points_per_side"] == CURVE_SIDE
+    assert curve_metadata["coarse_point_count"] == 21
+    assert curve_metadata["dense_points"] == 41
+    assert curve_metadata["integration_split"] == "nearest_zero"
+    assert curve_metadata["config"]["quadrature"]["integration_split"] == "nearest_zero"
+
+
+def test_the_effective_columns_round_trip_through_an_artifact(monkeypatch, tmp_path):
+    _Patch(monkeypatch, _CurveAdapter())
+    product = _state_product()
+    annotation = _plugin(effective=_curve_config()).process(product, _context(product))
+    cam_bundle({"nonlinear_reconstruction": annotation}).save_dataset(
+        tmp_path, layout="single", shard_target_bytes=4096
+    )
+    restored = load_bundle(tmp_path).require("nonlinear_reconstruction")
+    for name in (
+        "effective_x",
+        "effective_q_effective",
+        "effective_valid",
+        "effective_dense_x",
+        "effective_density",
+        "effective_valid_coarse_count",
+        "effective_minimum_stable_margin",
+    ):
+        np.testing.assert_allclose(
+            np.asarray(restored.handle(name).materialize(), dtype=float),
+            np.asarray(annotation.handle(name).materialize(), dtype=float),
+            equal_nan=True,
+        )
+    # The status column is text, so it is compared as one.
+    assert (
+        _field(restored, "effective_status").tolist()
+        == _field(annotation, "effective_status").tolist()
+    )
+    assert [axis.name for axis in restored.axes] == [
+        "annotation",
+        "order",
+        "effective_coarse_point",
+        "effective_dense_point",
+    ]
+
+
+def test_a_curve_failure_caps_the_row_status(monkeypatch):
+    _Patch(monkeypatch, _UnstableCurveAdapter())
+    product = _state_product()
+    annotation = _plugin(effective=_curve_config()).process(product, _context(product))
+    # The curve's internal failure is not hidden by the source's own verdict...
+    assert _field(annotation, "status").tolist() == ["stochastic_invalid"]
+    assert _field(annotation, "order_status").tolist() == [["stochastic_invalid"]]
+    assert _field(annotation, "order_reason_code").tolist() == [["no_stable_interval"]]
+    assert _field(annotation, "effective_status").tolist() == [["stochastic_invalid"]]
+    assert _field(annotation, "effective_reason_code").tolist() == [
+        ["no_stable_interval"]
+    ]
+    assert "reconstruction:" in _field(annotation, "order_reason")[0][0]
+    # The base reconstruction's verdict stays visible in the method block, so capping
+    # the row status does not erase what the source said.
+    metadata = str(_field(annotation, "method_metadata")[0])
+    assert "uncontrolled_approximation" in metadata
+    assert "no_stable_interval" in metadata
+    assert "source_valid" in metadata
+    # ... and every array is unavailable instead of being an older success.
+    assert np.isnan(_field(annotation, "effective_x")).all()
+    assert np.isnan(_field(annotation, "effective_dense_x")).all()
+    assert not _field(annotation, "effective_valid").any()
+    assert int(_field(annotation, "effective_valid_coarse_count")[0, 0]) == -1
+
+
+def test_an_unconverged_target_has_no_curve(monkeypatch):
+    _Patch(monkeypatch, _CurveAdapter())
+    product = _state_product(success=False)
+    annotation = _plugin(effective=_curve_config()).process(product, _context(product))
+    assert _field(annotation, "status").tolist() == ["not_converged"]
+    assert _field(annotation, "effective_status").tolist() == [["not_converged"]]
+    assert _field(annotation, "effective_reason_code").tolist() == [["not_converged"]]
+    assert np.isnan(_field(annotation, "effective_x")).all()
+    assert np.isnan(_field(annotation, "effective_dense_x")).all()
+    assert not _field(annotation, "effective_valid").any()
+    assert int(_field(annotation, "effective_valid_coarse_count")[0, 0]) == -1
+    assert np.isnan(_field(annotation, "effective_stationary_mean")).all()
+
+
+def test_the_effective_grid_must_match_the_reconstruction():
+    with pytest.raises(ValueError, match="coarse_points_per_side"):
+        NonlinearReconstruction(
+            orders=(3,),
+            reconstruction=ScalarReconstructionConfig(grid_points=CURVE_SIDE),
+            effective=EffectiveDriftConfig(
+                coarse_points_per_side=CURVE_SIDE + 2, dense_points=41
+            ),
+        )
+    # The matching pair is accepted, and the mismatch says what the coarse grid is.
+    NonlinearReconstruction(
+        orders=(3,),
+        reconstruction=ScalarReconstructionConfig(grid_points=CURVE_SIDE),
+        effective=EffectiveDriftConfig(
+            coarse_points_per_side=CURVE_SIDE, dense_points=41
+        ),
+    )
+
+
+def test_the_effective_grid_is_checked_before_any_computation(monkeypatch):
+    def explode(model: Any) -> Any:
+        raise AssertionError("the adapter factory must not be reached")
+
+    monkeypatch.setattr(
+        "qphase_cam.postprocessor.nonlinear_reconstruction."
+        "QPSGenDynamicsAdapter.from_model",
+        explode,
+    )
+    product = _state_product()
+    processor = _plugin(effective=_curve_config())
+    # A config assigned after construction skips the validator, so ``process`` must
+    # refuse the mismatch itself, before it asks for an adapter.
+    processor.config.reconstruction = ScalarReconstructionConfig(grid_points=5)
+    with pytest.raises(ValueError, match="coarse_points_per_side"):
+        processor.process(product, _context(product))
