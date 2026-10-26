@@ -1392,3 +1392,204 @@ def test_the_manifold_configuration_is_validated():
     ):
         with pytest.raises(ValidationError):
             NonlinearManifoldConfig(**updates)
+
+
+# --- explicit stationary-quadrature options --------------------------------
+
+
+def _quadrature_table(points: int = 121) -> ScalarGeneratorTable:
+    """Return an asymmetric table whose grid does not contain zero."""
+    left = np.linspace(-2.0, -0.1, points // 2)
+    right = np.linspace(0.05, 1.0, points - points // 2)
+    x = np.concatenate((left, right))
+    drift = -0.1 * x - 0.02 * x**3
+    diffusion = 0.4 * np.exp(-0.3 * x) + 0.05
+    readout = 1.0 + 0.2 * x - 0.05 * x**2
+    return ScalarGeneratorTable(
+        x=tuple(float(value) for value in x),
+        drift=tuple(float(value) for value in drift),
+        diffusion=tuple(float(value) for value in diffusion),
+        readout=tuple(float(value) for value in readout),
+    )
+
+
+def _flat_density_table(points: int = 41) -> ScalarGeneratorTable:
+    """Return a table whose stationary density is exactly constant."""
+    x = np.linspace(-2.0, 1.0, points)
+    return ScalarGeneratorTable(
+        x=tuple(float(value) for value in x),
+        drift=tuple(0.0 for _ in x),
+        diffusion=tuple(1.0 for _ in x),
+        readout=tuple(float(value) for value in x),
+    )
+
+
+def _density_from_table(
+    table: ScalarGeneratorTable,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return ``(x, diffusion, density)`` of one table, computed here."""
+    from scipy.integrate import cumulative_trapezoid
+
+    x = np.asarray(table.x, dtype=float)
+    drift = np.asarray(table.drift, dtype=float)
+    diffusion = np.asarray(table.diffusion, dtype=float)
+    potential = cumulative_trapezoid(2.0 * drift / diffusion, x, initial=0.0)
+    log_density = potential - np.log(diffusion)
+    log_density -= float(np.max(log_density))
+    density = np.exp(np.clip(log_density, -745.0, 0.0))
+    return x, diffusion, density / float(np.trapezoid(density, x))
+
+
+def test_the_centered_cdf_assembly_matches_the_historical_formula():
+    from scipy.integrate import cumulative_trapezoid
+
+    table = _quadrature_table()
+    settings = ScalarReconstructionConfig(
+        intensity_integration="centered_cdf",
+        core_density_comparison="greater",
+        edge_count_rule="ceil_min_two",
+        density_floor_relative=1.0e-14,
+    )
+    evaluation = evaluate_generator(table, config=settings)
+    assert evaluation.normalizable is True
+    x, diffusion, density = _density_from_table(table)
+    readout = np.asarray(table.readout, dtype=float)
+    mean = float(np.trapezoid(readout * density, x))
+    cumulative = cumulative_trapezoid((readout - mean) * density, x, initial=0.0)
+    distribution = cumulative_trapezoid(density, x, initial=0.0)
+    cumulative = cumulative - distribution * cumulative[-1]
+    retained = density > float(np.max(density)) * 1.0e-14
+    expected = float(
+        4.0
+        * np.trapezoid(
+            cumulative[retained] ** 2 / (diffusion[retained] * density[retained]),
+            x[retained],
+        )
+    )
+    assert evaluation.scalar_intensity == pytest.approx(expected, rel=1e-13)
+    assert evaluation.core_point_count == int(np.count_nonzero(retained))
+    assert evaluation.edge_point_count == max(2, int(np.ceil(0.02 * x.size)))
+    # Both assemblies integrate the same functional of the same density, so on a smooth
+    # table they agree to quadrature accuracy; the edge window is what differs.
+    default = evaluate_generator(table)
+    assert default.scalar_intensity == pytest.approx(
+        evaluation.scalar_intensity, rel=1e-12
+    )
+    assert default.edge_point_count == max(1, int(0.02 * x.size))
+    assert default.edge_point_count != evaluation.edge_point_count
+
+
+def test_the_default_assembly_is_unchanged():
+    from scipy.integrate import cumulative_trapezoid
+
+    table = _quadrature_table()
+    implicit = evaluate_generator(table)
+    explicit = evaluate_generator(table, config=ScalarReconstructionConfig())
+    assert implicit.scalar_intensity == explicit.scalar_intensity
+    assert implicit.core_point_count == explicit.core_point_count
+    assert implicit.edge_point_count == explicit.edge_point_count
+    assert implicit.edge_mass_fraction == explicit.edge_mass_fraction
+    assert implicit.endpoint_density_ratio == explicit.endpoint_density_ratio
+    x, diffusion, density = _density_from_table(table)
+    readout = np.asarray(table.readout, dtype=float)
+    mean = float(np.trapezoid(readout * density, x))
+    weighted = (readout - mean) * density
+    h_left = cumulative_trapezoid(weighted, x, initial=0.0)
+    h_right = -cumulative_trapezoid(weighted[::-1], x[::-1], initial=0.0)[::-1]
+    zero_index = int(np.searchsorted(x, 0.0, side="right")) - 1
+    integrated = np.where(np.arange(x.size) <= zero_index, h_left, h_right)
+    core = density >= float(np.max(density)) * 1.0e-13
+    integrand = np.zeros_like(x)
+    integrand[core] = 4.0 * integrated[core] ** 2 / (diffusion[core] * density[core])
+    assert implicit.scalar_intensity == pytest.approx(
+        float(np.trapezoid(integrand, x)), rel=1e-13
+    )
+    assert implicit.core_point_count == int(np.count_nonzero(core))
+    assert implicit.edge_point_count == max(1, int(0.02 * x.size))
+
+
+def test_the_density_comparison_and_the_edge_rule_switch():
+    # A flat density makes ``>=`` and ``>`` differ exactly: with the floor at the peak,
+    # ``greater_equal`` keeps every point and ``greater`` keeps none.
+    flat = _flat_density_table()
+    shared = {
+        "intensity_integration": "centered_cdf",
+        "density_floor_relative": 1.0,
+        "edge_count_rule": "ceil_min_two",
+    }
+    inclusive = evaluate_generator(
+        flat,
+        config=ScalarReconstructionConfig(
+            core_density_comparison="greater_equal", **shared
+        ),
+    )
+    strict = evaluate_generator(
+        flat,
+        config=ScalarReconstructionConfig(core_density_comparison="greater", **shared),
+    )
+    assert inclusive.normalizable is True
+    assert inclusive.core_point_count == len(flat.x)
+    assert inclusive.scalar_intensity > 0.0
+    assert strict.normalizable is False
+    assert strict.scalar_intensity is None
+    assert strict.reason is not None and "core" in strict.reason
+    # The edge window is its own switch: floor_min_one against ceil_min_two.
+    table = _quadrature_table()
+    shared = {"intensity_integration": "centered_cdf", "density_floor_relative": 1e-14}
+    one = evaluate_generator(
+        table,
+        config=ScalarReconstructionConfig(edge_count_rule="floor_min_one", **shared),
+    )
+    two = evaluate_generator(
+        table,
+        config=ScalarReconstructionConfig(edge_count_rule="ceil_min_two", **shared),
+    )
+    n = len(table.x)
+    assert one.edge_point_count == max(1, int(0.02 * n))
+    assert two.edge_point_count == max(2, int(np.ceil(0.02 * n)))
+    assert one.edge_point_count != two.edge_point_count
+    assert one.edge_mass_fraction != pytest.approx(two.edge_mass_fraction, rel=1e-9)
+
+
+def test_an_unusable_assembly_is_reported_not_turned_into_zero():
+    x = np.linspace(-1.0, 1.0, 201)
+    steep = ScalarGeneratorTable(
+        x=tuple(float(value) for value in x),
+        drift=tuple(float(-1.0e7 * value) for value in x),
+        diffusion=tuple(1.0 for _ in x),
+        readout=tuple(float(value) for value in x),
+    )
+    evaluation = evaluate_generator(
+        steep, config=ScalarReconstructionConfig(intensity_integration="centered_cdf")
+    )
+    assert evaluation.normalizable is False
+    assert evaluation.scalar_intensity is None
+    assert evaluation.reason is not None
+    assert "core" in evaluation.reason
+    overflow = ScalarGeneratorTable(
+        x=tuple(float(value) for value in x),
+        drift=tuple(1.0e308 * float(value) for value in x),
+        diffusion=tuple(1.0 for _ in x),
+        readout=tuple(0.0 for _ in x),
+    )
+    with np.errstate(over="ignore", invalid="ignore"):
+        empty = evaluate_generator(overflow)
+    assert empty.normalizable is False
+    assert empty.scalar_intensity is None
+    assert empty.reason is not None
+    assert "normalize" in empty.reason
+    # A reconstruction records the three options it used.
+    reconstruction = scalar_reconstruction(
+        _QuadraticAdapter(),
+        _BoundedModel(),
+        _observable(),
+        state=[X0],
+        params={},
+        order=3,
+        manifold=_confining_manifold(),
+        config=ScalarReconstructionConfig(grid_points=51),
+    )
+    assert reconstruction.status is CAMOutcomeStatus.VALID
+    assert reconstruction.method["intensity_integration"] == "zero_split"
+    assert reconstruction.method["core_density_comparison"] == "greater_equal"
+    assert reconstruction.method["edge_count_rule"] == "floor_min_one"

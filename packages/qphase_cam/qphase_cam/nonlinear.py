@@ -43,6 +43,7 @@ the kernel never guesses which correction the caller wants.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -224,6 +225,32 @@ class ScalarReconstructionConfig(BaseModel):
             "on a grid that contains zero and differ on one that does not"
         ),
     )
+    intensity_integration: Literal["zero_split", "centered_cdf"] = Field(
+        default="zero_split",
+        description=(
+            "How the intensity integral is assembled. 'zero_split' (the default) "
+            "switches between the left and right antiderivative as "
+            "``integration_split`` says; 'centered_cdf' subtracts the density-weighted "
+            "total from the cumulative integral (the historical CLK3 convention) and "
+            "ignores ``integration_split``"
+        ),
+    )
+    core_density_comparison: Literal["greater_equal", "greater"] = Field(
+        default="greater_equal",
+        description=(
+            "How a grid point is admitted to the intensity core: "
+            "'greater_equal' keeps ``density >= peak * density_floor_relative`` (the "
+            "default), 'greater' keeps ``>`` (the CLK3 convention)"
+        ),
+    )
+    edge_count_rule: Literal["floor_min_one", "ceil_min_two"] = Field(
+        default="floor_min_one",
+        description=(
+            "How many grid points each edge window holds: 'floor_min_one' takes "
+            "``max(1, int(edge_fraction * n))`` (the default), 'ceil_min_two' takes "
+            "``max(2, ceil(edge_fraction * n))`` (the CLK3 convention)"
+        ),
+    )
 
 
 class ScalarGeneratorTable(BaseModel):
@@ -349,6 +376,31 @@ class ScalarGeneratorEvaluation(BaseModel):
     minimum_projected_diffusion: float
     core_point_count: int = 0
     edge_point_count: int = 0
+    reason: str | None = None
+
+
+def _not_evaluable(
+    x: np.ndarray,
+    density: np.ndarray,
+    normalization: float,
+    minimum_diffusion: float,
+    reason: str,
+) -> ScalarGeneratorEvaluation:
+    """Return the evaluation of a table that cannot be evaluated.
+
+    The derived numbers stay ``None`` — an unusable table has no intensity, not an
+    intensity of zero — and ``normalizable`` is false, so a caller reports the failure
+    through its own status instead of a valid result carrying NaN. ``reason`` says which
+    condition stopped the evaluation.
+    """
+    return ScalarGeneratorEvaluation(
+        x=tuple(float(value) for value in x),
+        density=tuple(float(value) for value in density),
+        density_normalization=float(normalization),
+        normalizable=False,
+        minimum_projected_diffusion=float(minimum_diffusion),
+        reason=reason,
+    )
 
 
 def evaluate_generator(
@@ -379,6 +431,16 @@ def evaluate_generator(
     f = np.asarray(table.drift, dtype=float)
     q = np.asarray(table.diffusion, dtype=float)
     omega = np.asarray(table.readout, dtype=float)
+    if np.any(q <= 0.0):
+        # ``ScalarGeneratorTable`` already refuses a non-positive diffusion; this is the
+        # guard for a table constructed around that contract.
+        return _not_evaluable(
+            x,
+            np.full(x.size, np.nan),
+            0.0,
+            float(np.min(q)),
+            "the projected diffusion is not positive on the grid",
+        )
     potential = cumulative_trapezoid(2.0 * f / q, x, initial=0.0)
     log_density = potential - np.log(q)
     log_density -= float(np.max(log_density))
@@ -386,12 +448,12 @@ def evaluate_generator(
     normalization = float(np.trapezoid(density, x))
     minimum_diffusion = float(np.min(q))
     if not np.isfinite(normalization) or normalization <= 0.0:
-        return ScalarGeneratorEvaluation(
-            x=tuple(float(value) for value in x),
-            density=tuple(float(value) for value in density),
-            density_normalization=normalization,
-            normalizable=False,
-            minimum_projected_diffusion=minimum_diffusion,
+        return _not_evaluable(
+            x,
+            density,
+            normalization,
+            minimum_diffusion,
+            f"the stationary density does not normalize (integral {normalization!r})",
         )
     density = density / normalization
     path_information: float | None = None
@@ -412,24 +474,80 @@ def evaluate_generator(
         response = float(np.trapezoid(centered * stationary_score * density, x))
         stationary_response = response if np.isfinite(response) else None
     weighted = centered * density
-    h_left = cumulative_trapezoid(weighted, x, initial=0.0)
-    h_right = -cumulative_trapezoid(weighted[::-1], x[::-1], initial=0.0)[::-1]
-    # The integral switches from the left to the right antiderivative at x = 0. The
-    # default split is the grid index of zero (the reconstruction's own half-grid
-    # layout); the historical probe's dense table split at the grid point nearest zero,
-    # which is what ``integration_split="nearest_zero"`` selects.
-    if settings.integration_split == "nearest_zero":
-        zero_index = int(np.argmin(np.abs(x)))
-    else:
-        zero_index = int(np.searchsorted(x, 0.0, side="right")) - 1
-    integrated = np.where(np.arange(x.size) <= zero_index, h_left, h_right)
     floor = float(np.max(density)) * settings.density_floor_relative
-    core = density >= floor
-    integrand = np.zeros_like(x)
-    integrand[core] = 4.0 * integrated[core] ** 2 / (q[core] * density[core])
-    intensity = float(np.trapezoid(integrand, x))
+    if settings.core_density_comparison == "greater":
+        core = density > floor
+    else:
+        core = density >= floor
+    if not np.all(np.isfinite(weighted)):
+        return _not_evaluable(
+            x,
+            density,
+            normalization,
+            minimum_diffusion,
+            "the weighted readout is not finite",
+        )
+    if settings.intensity_integration == "centered_cdf":
+        # The historical CLK3 assembly: the density-weighted cumulative integral,
+        # recentred so its total is zero, then integrated over the core only. A core
+        # that cannot be integrated is reported, not turned into an intensity of zero.
+        if np.count_nonzero(core) < 2:
+            return _not_evaluable(
+                x,
+                density,
+                normalization,
+                minimum_diffusion,
+                "no intensity core survives the density floor",
+            )
+        cumulative = cumulative_trapezoid(weighted, x, initial=0.0)
+        distribution = cumulative_trapezoid(density, x, initial=0.0)
+        cumulative = cumulative - distribution * cumulative[-1]
+        repeated = cumulative[core] ** 2 / (q[core] * density[core])
+        if not np.all(np.isfinite(repeated)):
+            return _not_evaluable(
+                x,
+                density,
+                normalization,
+                minimum_diffusion,
+                "the intensity integrand is not finite",
+            )
+        intensity = float(4.0 * np.trapezoid(repeated, x[core]))
+    else:
+        h_left = cumulative_trapezoid(weighted, x, initial=0.0)
+        h_right = -cumulative_trapezoid(weighted[::-1], x[::-1], initial=0.0)[::-1]
+        # The integral switches from the left to the right antiderivative at x = 0. The
+        # default split is the grid index of zero (the reconstruction's own half-grid
+        # layout); the historical probe's dense table split at the grid point nearest
+        # zero, which is what ``integration_split="nearest_zero"`` selects.
+        if settings.integration_split == "nearest_zero":
+            zero_index = int(np.argmin(np.abs(x)))
+        else:
+            zero_index = int(np.searchsorted(x, 0.0, side="right")) - 1
+        integrated = np.where(np.arange(x.size) <= zero_index, h_left, h_right)
+        integrand = np.zeros_like(x)
+        integrand[core] = 4.0 * integrated[core] ** 2 / (q[core] * density[core])
+        if not np.all(np.isfinite(integrand)):
+            return _not_evaluable(
+                x,
+                density,
+                normalization,
+                minimum_diffusion,
+                "the intensity integrand is not finite",
+            )
+        intensity = float(np.trapezoid(integrand, x))
+    if not np.isfinite(intensity) or intensity < 0.0:
+        return _not_evaluable(
+            x,
+            density,
+            normalization,
+            minimum_diffusion,
+            f"the intensity is {intensity!r}",
+        )
     count = x.size
-    edge_count = max(1, int(settings.edge_fraction * count))
+    if settings.edge_count_rule == "ceil_min_two":
+        edge_count = max(2, int(math.ceil(settings.edge_fraction * count)))
+    else:
+        edge_count = max(1, int(settings.edge_fraction * count))
     edge_mass = float(
         np.trapezoid(density[:edge_count], x[:edge_count])
         + np.trapezoid(density[-edge_count:], x[-edge_count:])
@@ -950,6 +1068,9 @@ def scalar_reconstruction(
         "density": "pi ~ exp(int 2f/q) / q, normalized on the physical grid",
         "intensity": "4 (int (omega - mean) pi)^2 / (q pi) summed over the core",
         "integration_split": settings.integration_split,
+        "intensity_integration": settings.intensity_integration,
+        "core_density_comparison": settings.core_density_comparison,
+        "edge_count_rule": settings.edge_count_rule,
         "readout": observable.identity.model_dump(mode="json"),
     }
     diagnostics: dict[str, Any] = {}
@@ -1158,10 +1279,15 @@ def scalar_reconstruction(
     diagnostics["core_point_count"] = evaluation.core_point_count
     diagnostics["edge_point_count"] = evaluation.edge_point_count
     if not evaluation.normalizable:
+        reason = (
+            "the stationary density does not normalize (integral "
+            f"{evaluation.density_normalization!r})"
+        )
+        if evaluation.reason is not None:
+            reason = f"the generator table cannot be evaluated: {evaluation.reason}"
         return report(
             CAMOutcomeStatus.STOCHASTIC_INVALID,
-            "the stationary density does not normalize (integral "
-            f"{evaluation.density_normalization!r})",
+            reason,
             code=FAILURE_NOT_NORMALIZABLE,
             updates=domain,
         )
