@@ -1394,6 +1394,68 @@ def test_the_manifold_configuration_is_validated():
             NonlinearManifoldConfig(**updates)
 
 
+def test_the_embedding_assembly_states_the_arithmetic_order():
+    """The default is the progressive order; ``terms_first`` is sum-then-shift."""
+    manifold = NonlinearManifold(
+        order=2,
+        soft_rate=1.0,
+        critical_eigenvalue_real=-1.0,
+        critical_eigenvalue_imag=0.0,
+        noncritical_spectral_gap=None,
+        right=(1.0, 0.0),
+        left=(1.0, 0.0),
+        embeddings=((1.0, 0.5), (1.0e-3, -2.0)),
+        drift=(0.0, -1.0, 0.0),
+        maximum_bordered_condition=1.0,
+        confining=True,
+        method={"service": "test fixture"},
+    )
+    state = np.asarray([1.0e6, -2.0])
+    x = np.asarray([1.0e6, -3.0])
+    implicit = manifold_embedding(manifold, state, x)
+    progressive = manifold_embedding(manifold, state, x, assembly="progressive")
+    assert np.array_equal(implicit, progressive)
+    # The pre-existing call, written out: start from the state, add every term.
+    expected = np.broadcast_to(state, (x.size, state.size)).copy()
+    for degree, coefficient in enumerate(manifold.embeddings, start=1):
+        expected += x[:, None] ** degree * np.asarray(coefficient)[None, :]
+    assert np.array_equal(progressive, expected)
+    # The historical order: sum the terms from zero, then add the state.
+    terms = np.zeros((x.size, state.size))
+    for degree, coefficient in enumerate(manifold.embeddings, start=1):
+        terms += x[:, None] ** degree * np.asarray(coefficient)[None, :]
+    assert np.array_equal(
+        manifold_embedding(manifold, state, x, assembly="terms_first"),
+        state[None, :] + terms,
+    )
+    with pytest.raises(ValueError, match="unknown embedding assembly"):
+        manifold_embedding(manifold, state, x, assembly="nonsense")
+
+
+def test_the_two_assemblies_can_be_told_apart():
+    """A cancellation shows the two orders are not the same arithmetic."""
+    manifold = NonlinearManifold(
+        order=2,
+        soft_rate=1.0,
+        critical_eigenvalue_real=-1.0,
+        critical_eigenvalue_imag=0.0,
+        noncritical_spectral_gap=None,
+        right=(1.0,),
+        left=(1.0,),
+        embeddings=((1.0e8,), (-1.0,)),
+        drift=(0.0, -1.0, 0.0),
+        maximum_bordered_condition=1.0,
+        confining=True,
+        method={"service": "test fixture"},
+    )
+    state = np.asarray([1.0])
+    x = np.asarray([1.0e8])
+    # progressive: (1 + 1e16) loses the 1, then -1e16 cancels to zero.
+    # terms_first: (1e16 - 1e16) cancels first, then the state remains.
+    assert manifold_embedding(manifold, state, x)[0, 0] == 0.0
+    assert manifold_embedding(manifold, state, x, assembly="terms_first")[0, 0] == 1.0
+
+
 # --- explicit stationary-quadrature options --------------------------------
 
 

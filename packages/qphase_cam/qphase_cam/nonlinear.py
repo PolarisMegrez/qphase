@@ -822,10 +822,32 @@ def slow_manifold(
     )
 
 
-def manifold_embedding(manifold: NonlinearManifold, state: Any, x: Any) -> np.ndarray:
-    """Return the full state of the manifold coordinate ``x`` (one row per value)."""
+def manifold_embedding(
+    manifold: NonlinearManifold,
+    state: Any,
+    x: Any,
+    *,
+    assembly: Literal["progressive", "terms_first"] = "progressive",
+) -> np.ndarray:
+    """Return the full state of the manifold coordinate ``x`` (one row per value).
+
+    ``assembly`` states the *arithmetic order* of the same polynomial, not a different
+    polynomial: ``progressive`` (the default) starts from the reference state and
+    accumulates ``x**d · e_d`` term by term, which is what every existing caller does;
+    ``terms_first`` accumulates the terms from zero and adds the reference state last,
+    the order the historical polynomial fits used. The two are algebraically identical
+    and can differ in the last bit — a caller that reproduces an older table asks for
+    the older order instead of inheriting this one.
+    """
+    if assembly not in ("progressive", "terms_first"):
+        raise ValueError(f"unknown embedding assembly {assembly!r}")
     point = np.asarray(state, dtype=float).reshape(-1)
     values = np.atleast_1d(np.asarray(x, dtype=float)).reshape(-1)
+    if assembly == "terms_first":
+        terms = np.zeros((values.size, point.size), dtype=float)
+        for degree, coefficient in enumerate(manifold.embeddings, start=1):
+            terms += values[:, None] ** degree * np.asarray(coefficient)[None, :]
+        return point[None, :] + terms
     output = np.broadcast_to(point, (values.size, point.size)).copy()
     for degree, coefficient in enumerate(manifold.embeddings, start=1):
         output += values[:, None] ** degree * np.asarray(coefficient)[None, :]

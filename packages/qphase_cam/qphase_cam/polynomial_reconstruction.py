@@ -25,7 +25,7 @@ never clamped and the interval is never silently narrowed.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -78,6 +78,15 @@ class PolynomialReconstructionConfig(BaseModel):
     own (``centered_cdf`` intensity, ``greater`` density comparison, ``ceil_min_two``
     edge window, ``density_floor_relative = 1e-14``), and its ``integration_split`` has
     no effect on that intensity assembly.
+
+    ``embedding_assembly`` states the arithmetic order of the embedding the fits sample.
+    ``manifold_embedding`` adds the polynomial terms to the reference state one by one
+    (its own ``progressive`` default), while the historical polynomial fits summed the
+    terms first and added the state last; the polynomial is the same and the additions
+    differ in order, so the two can differ in the last bit. This module defaults to
+    ``terms_first`` because its tables are the historical ones, and every sampled state
+    it builds — the physical scan, the fit interval and the local readout interval —
+    uses the configured order.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -87,6 +96,16 @@ class PolynomialReconstructionConfig(BaseModel):
     physical_tolerance: float = Field(default=1.0e-10, ge=0.0)
     fit_points: int = Field(default=81, ge=3)
     dense_points: int = Field(default=100001, ge=11)
+    embedding_assembly: Literal["progressive", "terms_first"] = Field(
+        default="terms_first",
+        description=(
+            "Arithmetic order of the sampled manifold embedding: 'terms_first' (the "
+            "default here) sums the polynomial terms from zero and adds the reference "
+            "state last, the historical fits' convention; 'progressive' is "
+            "manifold_embedding's own default and starts from the state. Algebraically "
+            "identical, last-bit different"
+        ),
+    )
     quadrature: ScalarReconstructionConfig = Field(default_factory=_clk3_quadrature)
 
 
@@ -192,7 +211,9 @@ def _physical_interval(
     """
     half_width = float(settings.physical_half_width) * float(sigma)
     axis = np.linspace(-half_width, half_width, int(settings.physical_scan_points))
-    vectors = manifold_embedding(manifold, point, axis)
+    vectors = manifold_embedding(
+        manifold, point, axis, assembly=settings.embedding_assembly
+    )
     minima = _physical_minima(adapter, vectors, params)
     physical = minima >= -float(settings.physical_tolerance)
     center = int(np.argmin(np.abs(axis)))
@@ -278,6 +299,7 @@ def polynomial_reconstruction(
             f"diffusion degree {2 * order} on the whole interval, readout degree "
             f"{order} on the local interval, both in x/sigma"
         ),
+        "embedding_assembly": settings.embedding_assembly,
         "diffusion_error": "max|pred - values| / max(|values[0]|, 1)",
         "frequency_error": "max|pred - local| / max(ptp(local), eps)",
         "dense_grid": f"{int(settings.dense_points)} points on the physical interval",
@@ -360,7 +382,9 @@ def polynomial_reconstruction(
 
     # 2. The two polynomial fits on that interval.
     sample = np.linspace(lower, upper, int(settings.fit_points))
-    vectors = manifold_embedding(manifold, point, sample)
+    vectors = manifold_embedding(
+        manifold, point, sample, assembly=settings.embedding_assembly
+    )
     diffusion_values: list[float] = []
     frequency_values: list[float] = []
     matrices: list[np.ndarray] = []
@@ -413,7 +437,9 @@ def polynomial_reconstruction(
     )
     local_points = max(MINIMUM_LOCAL_POINTS, 2 * order + 5)
     local_sample = np.linspace(-local_extent, local_extent, local_points)
-    local_vectors = manifold_embedding(manifold, point, local_sample)
+    local_vectors = manifold_embedding(
+        manifold, point, local_sample, assembly=settings.embedding_assembly
+    )
     local_frequency = np.asarray(
         [
             float(observable.value(adapter, vector, parameter_map))

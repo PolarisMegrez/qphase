@@ -15,10 +15,12 @@ from typing import Any
 import numpy as np
 import pytest
 from pydantic import ValidationError
+from qphase_cam.core.noise import canonical_sample_matrix_covariance
 from qphase_cam.nonlinear import (
     NonlinearManifold,
     ScalarReconstructionConfig,
     evaluate_generator,
+    manifold_embedding,
     slow_manifold,
 )
 from qphase_cam.outcomes import CAMOutcomeStatus
@@ -30,6 +32,7 @@ from qphase_cam.polynomial_reconstruction import (
     PolynomialReconstructionConfig,
     polynomial_reconstruction,
 )
+from qphase_cam.validity import projected_intensity
 
 from tests.qphase_cam import test_effective_drift as curve_toy
 from tests.qphase_cam import test_nonlinear as one_mode
@@ -411,6 +414,142 @@ def test_the_integration_split_does_not_touch_the_centred_assembly():
     )
     assert first.summary["scalar"] == second.summary["scalar"]
     assert second.method["quadrature_config"]["integration_split"] == "nearest_zero"
+
+
+def _quadratic_diagonal_manifold() -> NonlinearManifold:
+    """Return a manifold with a linear and a quadratic term in the critical axis.
+
+    ``R00 = 1 + x - x²`` keeps the state physical for ``|x| <= 1.618``, and the two
+    embeddings have the same magnitude, so the two assembly orders multiply into
+    different last bits instead of cancelling to the same answer.
+    """
+    return NonlinearManifold(
+        order=2,
+        soft_rate=1.0,
+        critical_eigenvalue_real=-1.0,
+        critical_eigenvalue_imag=0.0,
+        noncritical_spectral_gap=None,
+        right=(1.0, 0.0, 0.0, 0.0),
+        left=(1.0, 0.0, 0.0, 0.0),
+        embeddings=((1.0, 0.0, 0.0, 0.0), (0.0, -1.0, 0.0, 0.0)),
+        drift=(0.0, -1.0, 0.0),
+        maximum_bordered_condition=1.0,
+        confining=True,
+        method={"service": "test fixture"},
+    )
+
+
+def _assembled(manifold, state, values, assembly):
+    return manifold_embedding(manifold, state, values, assembly=assembly)
+
+
+def test_every_sampled_state_uses_the_configured_embedding_assembly():
+    """The scan, the fits and the local readout all follow ``embedding_assembly``."""
+    adapter = curve_toy._CurveAdapter()
+    model = curve_toy._CurveModel()
+    manifold = _quadratic_diagonal_manifold()
+    sigma = 0.5
+    small = dict(
+        physical_half_width=3.0,
+        physical_scan_points=401,
+        fit_points=21,
+        dense_points=201,
+    )
+    results = {}
+    for assembly in ("terms_first", "progressive"):
+        config = PolynomialReconstructionConfig(embedding_assembly=assembly, **small)
+        result = polynomial_reconstruction(
+            adapter,
+            model,
+            curve_toy._observable(),
+            state=curve_toy.STATE,
+            params={},
+            manifold=manifold,
+            sigma=sigma,
+            config=config,
+        )
+        assert result.status is CAMOutcomeStatus.VALID
+        assert result.method["embedding_assembly"] == assembly
+        # The physical scan: rebuild it here with the same assembly and compare.
+        half_width = small["physical_half_width"] * sigma
+        axis = np.linspace(-half_width, half_width, small["physical_scan_points"])
+        matrices = np.stack(
+            [
+                np.asarray(adapter.state_matrix(vector, {}), dtype=complex)
+                for vector in _assembled(manifold, curve_toy.STATE, axis, assembly)
+            ]
+        )
+        hermitian = (matrices + np.conjugate(np.swapaxes(matrices, -1, -2))) / 2.0
+        physical = np.min(np.linalg.eigvalsh(hermitian), axis=1) >= -1.0e-10
+        center = int(np.argmin(np.abs(axis)))
+        lower_index = center
+        upper_index = center
+        while lower_index > 0 and physical[lower_index - 1]:
+            lower_index -= 1
+        while upper_index + 1 < axis.size and physical[upper_index + 1]:
+            upper_index += 1
+        assert result.lower == float(axis[lower_index])
+        assert result.upper == float(axis[upper_index])
+        # The fit interval: refit the diffusion from the same assembly and compare.
+        sample = np.linspace(result.lower, result.upper, small["fit_points"])
+        vectors = _assembled(manifold, curve_toy.STATE, sample, assembly)
+        diffusion = []
+        frequency = []
+        for vector in vectors:
+            matrix = np.asarray(adapter.state_matrix(vector, {}), dtype=complex)
+            noise = np.asarray(model.cam_diffusion(matrix, {}), dtype=complex)
+            covariance = canonical_sample_matrix_covariance(matrix, noise)
+            diffusion.append(
+                projected_intensity(covariance, manifold.left, manifold.left)
+            )
+            frequency.append(curve_toy._observable().value(adapter, vector, {}))
+        expected_diffusion = np.polynomial.polynomial.polyfit(
+            sample / sigma, diffusion, 2 * manifold.order
+        )
+        np.testing.assert_allclose(
+            result.diffusion_coefficients, expected_diffusion, rtol=0.0, atol=0.0
+        )
+        # The local readout interval has its own grid; refit it the same way.
+        extent = min(0.2 * sigma, 0.1 * abs(result.lower), 0.1 * abs(result.upper))
+        local = np.linspace(-extent, extent, max(17, 2 * manifold.order + 5))
+        local_vectors = _assembled(manifold, curve_toy.STATE, local, assembly)
+        local_frequency = [
+            curve_toy._observable().value(adapter, vector, {})
+            for vector in local_vectors
+        ]
+        expected_frequency = np.polynomial.polynomial.polyfit(
+            local / sigma, local_frequency, manifold.order
+        )
+        np.testing.assert_allclose(
+            result.frequency_coefficients, expected_frequency, rtol=0.0, atol=0.0
+        )
+        results[assembly] = result
+    # The module's own default is the historical order, not manifold_embedding's.
+    default = polynomial_reconstruction(
+        adapter,
+        model,
+        curve_toy._observable(),
+        state=curve_toy.STATE,
+        params={},
+        manifold=manifold,
+        sigma=sigma,
+        config=PolynomialReconstructionConfig(**small),
+    )
+    assert default.method["embedding_assembly"] == "terms_first"
+    assert (
+        default.diffusion_coefficients == results["terms_first"].diffusion_coefficients
+    )
+    assert (
+        default.frequency_coefficients == results["terms_first"].frequency_coefficients
+    )
+    assert default.summary["scalar"] == results["terms_first"].summary["scalar"]
+
+
+def test_the_polynomial_default_is_the_historical_embedding_order():
+    settings = PolynomialReconstructionConfig()
+    assert settings.embedding_assembly == "terms_first"
+    with pytest.raises(ValidationError):
+        PolynomialReconstructionConfig(embedding_assembly="nonsense")
 
 
 def test_the_structural_inputs_are_validated():
