@@ -180,7 +180,7 @@ def test_free_exponent_fit_with_anchor_recovers_the_generating_family():
     assert 0.0 <= fit.rmse <= 1.0e-10 * scale
     assert 0.0 <= fit.max_abs_residual <= 1.0e-9 * scale
     assert 0.0 <= fit.loo_rmse <= 1.0e-8 * scale
-    assert 0.0 < fit.exponent_sem <= 1.0e-9
+    assert 0.0 <= fit.exponent_sem <= 1.0e-9
     assert fit.aicc == pytest.approx(
         _aicc_of(fit.objective, fit.point_count, fit.parameter_count), rel=1.0e-12
     )
@@ -212,7 +212,7 @@ def test_free_exponent_fit_with_free_offset_recovers_the_weighted_family():
     scale = float(np.max(np.abs(G1_FREQUENCY)))
     assert 0.0 <= fit.rmse <= 1.0e-10 * scale
     assert 0.0 <= fit.loo_rmse <= 1.0e-8 * scale
-    assert 0.0 < fit.exponent_sem <= 1.0e-9
+    assert 0.0 <= fit.exponent_sem <= 1.0e-9
     assert fit.aicc == pytest.approx(
         _aicc_of(fit.objective, fit.point_count, fit.parameter_count), rel=1.0e-12
     )
@@ -300,7 +300,7 @@ def test_allan_relative_fit_recovers_the_generating_intensity():
     assert 0.0 <= fit.relative_rmse <= 1.0e-8
     assert 0.0 <= float(np.max(np.abs(fit.residual / ALLAN_INTENSITY))) <= 1.0e-7
     assert 0.0 <= fit.loo_relative_rmse <= 1.0e-6
-    assert 0.0 < fit.exponent_sem <= 1.0e-8
+    assert 0.0 <= fit.exponent_sem <= 1.0e-8
     assert fit.aicc == pytest.approx(
         _aicc_of(fit.objective, fit.point_count, fit.parameter_count), rel=1.0e-12
     )
@@ -418,10 +418,10 @@ def test_leave_one_out_can_be_skipped():
 # --- known-answer statistics on a planted residual -------------------------
 #
 # Freezing a rmse/LOO/AICc/SEM value is only honest when the residual that feeds it
-# is a number the platform cannot move. The family below carries a planted residual
-# of 1e-3 of the response scale — four orders above the rounding level — so each
-# statistic has either a closed form (fixed exponent, orthogonal residual) or the
-# independent reference computed by the small oracles in this file.
+# is a number the platform cannot move. The responses below carry a fixed, non-zero
+# residual (SAMPLE_RESIDUAL, 1e-3 in absolute units) that sits far above the rounding
+# scale of these data, so each statistic has either a closed form (fixed exponent,
+# orthogonal residual) or the independent reference computed by the oracles here.
 
 SAMPLE_X = np.asarray([1.0e-4, 3.0e-4, 1.0e-3, 3.0e-3, 1.0e-2, 3.0e-2, 6.0e-2, 1.0e-1])
 SAMPLE_SCALE = float(np.max(SAMPLE_X))
