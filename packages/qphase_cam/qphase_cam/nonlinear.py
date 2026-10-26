@@ -44,7 +44,7 @@ the kernel never guesses which correction the caller wants.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from pydantic import (
@@ -175,6 +175,17 @@ class ScalarReconstructionConfig(BaseModel):
         default=1e-13,
         gt=0.0,
         description="Density floor of the intensity integrand, relative to its peak",
+    )
+    integration_split: Literal["grid_zero", "nearest_zero"] = Field(
+        default="grid_zero",
+        description=(
+            "Where the intensity integral switches from the left to the right "
+            "antiderivative. 'grid_zero' (the default) uses the grid index at x = 0, "
+            "which is exact for the reconstruction's own half-grid layout; "
+            "'nearest_zero' uses the grid point nearest x = 0, the convention the "
+            "historical effective-drift probe used for its dense table. The two agree "
+            "on a grid that contains zero and differ on one that does not"
+        ),
     )
 
 
@@ -366,9 +377,14 @@ def evaluate_generator(
     weighted = centered * density
     h_left = cumulative_trapezoid(weighted, x, initial=0.0)
     h_right = -cumulative_trapezoid(weighted[::-1], x[::-1], initial=0.0)[::-1]
-    # The integral switches from the left to the right antiderivative at x = 0, which
-    # is the split of the two half grids the reconstruction builds.
-    zero_index = int(np.searchsorted(x, 0.0, side="right")) - 1
+    # The integral switches from the left to the right antiderivative at x = 0. The
+    # default split is the grid index of zero (the reconstruction's own half-grid
+    # layout); the historical probe's dense table split at the grid point nearest zero,
+    # which is what ``integration_split="nearest_zero"`` selects.
+    if settings.integration_split == "nearest_zero":
+        zero_index = int(np.argmin(np.abs(x)))
+    else:
+        zero_index = int(np.searchsorted(x, 0.0, side="right")) - 1
     integrated = np.where(np.arange(x.size) <= zero_index, h_left, h_right)
     floor = float(np.max(density)) * settings.density_floor_relative
     core = density >= floor
@@ -786,6 +802,7 @@ def scalar_reconstruction(
         "quadrature": "stationary cumulative trapezoid (no time-domain PDE)",
         "density": "pi ~ exp(int 2f/q) / q, normalized on the physical grid",
         "intensity": "4 (int (omega - mean) pi)^2 / (q pi) summed over the core",
+        "integration_split": settings.integration_split,
         "readout": observable.identity.model_dump(mode="json"),
     }
     diagnostics: dict[str, Any] = {}

@@ -1080,3 +1080,33 @@ def test_the_annotation_round_trips_through_an_artifact(monkeypatch, tmp_path):
         1,
         1,
     )
+
+
+def test_the_integration_split_policy_is_explicit():
+    """Split at the nearest point to zero, or at the index of zero."""
+    # An asymmetric grid that does not contain zero: the two splits land on different
+    # points, so the integral switches antiderivative at a different place.
+    x = np.concatenate((np.linspace(-2.0, -0.1, 40), np.linspace(0.05, 1.0, 20)))
+    drift = -0.1 * x - 0.02 * x**3
+    diffusion = 0.5 * np.exp(-0.3 * x) + 0.1
+    readout = 1.0 + 0.2 * x
+    table = ScalarGeneratorTable(
+        x=tuple(float(value) for value in x),
+        drift=tuple(float(value) for value in drift),
+        diffusion=tuple(float(value) for value in diffusion),
+        readout=tuple(float(value) for value in readout),
+    )
+    default = evaluate_generator(table)
+    nearest = evaluate_generator(
+        table, config=ScalarReconstructionConfig(integration_split="nearest_zero")
+    )
+    explicit_grid_zero = evaluate_generator(
+        table, config=ScalarReconstructionConfig(integration_split="grid_zero")
+    )
+    # The default is the grid-zero policy, unchanged.
+    assert default.scalar_intensity == explicit_grid_zero.scalar_intensity
+    # The policies differ on this grid: the nearest point to zero is at index 40
+    # (x=0.05) while searchsorted places the split at index 39 (x=-0.1).
+    assert np.argmin(np.abs(x)) == 40
+    assert int(np.searchsorted(x, 0.0, side="right")) - 1 == 39
+    assert nearest.scalar_intensity != default.scalar_intensity
