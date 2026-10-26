@@ -11,8 +11,8 @@ scalar Langevin problem along it — for **any** model and **any** readout:
 * the critical mode, its left/right normalization and the canonical noise
   covariance are the shared 10F1/10F2a objects, not a private copy.
 
-The definitions are the ones
-``scripts/tools/evaluate_kerr_full_3mode_nonlinear_cam.py`` uses:
+The definitions are the ones the historical
+``scripts/tools/evaluate_kerr_full_3mode_nonlinear_cam.py`` evaluation used:
 
 * the second-order form is a symmetric forward difference of the Jacobian,
   ``B(a,b) = ½[(J(x+a) − J(x))b + (J(x+b) − J(x))a]``;
@@ -788,11 +788,17 @@ def parameter_forcing(
     the whole stack when the adapter declares it can answer a batch — the same policy
     as :func:`noise_stack`, so a second copy of it cannot drift.
 
+    ``direction`` lives in the adapter's **parameter** space (``parameter_direction``
+    returns one entry per model parameter), while the Jacobian maps that space onto the
+    canonical coordinates; the two counts are therefore independent and only the
+    Jacobian's own parameter axis is checked.
+
     Raises
     ------
     ValueError
-        If the stack is not ``(n, coordinates)``, the direction has a different
-        coordinate count, or the adapter does not return one Jacobian per state.
+        If the stack is not ``(n, coordinates)``, the adapter does not return one
+        Jacobian per state, or the direction does not match the Jacobian's parameter
+        axis.
 
     """
     stack = np.asarray(vectors, dtype=float)
@@ -802,10 +808,10 @@ def parameter_forcing(
         )
     pointer = np.asarray(left, dtype=float).reshape(-1)
     step = np.asarray(direction, dtype=float).reshape(-1)
-    if step.size != stack.shape[1]:
+    if pointer.size != stack.shape[1]:
         raise ValueError(
-            f"the parameter direction has {step.size} entries for "
-            f"{stack.shape[1]} coordinates"
+            f"the projection has {pointer.size} entries for {stack.shape[1]} "
+            "coordinates"
         )
     parameter_map = dict(params or {})
     if getattr(adapter, "supports_batched_states", False):
@@ -823,6 +829,11 @@ def parameter_forcing(
         raise ValueError(
             f"the adapter returned parameter Jacobians of shape {jacobians.shape} "
             f"for {stack.shape[0]} states"
+        )
+    if jacobians.shape[-1] != step.size:
+        raise ValueError(
+            f"the parameter direction has {step.size} entries for the Jacobian's "
+            f"{jacobians.shape[-1]} parameter axis"
         )
     full = np.einsum("nij,j->ni", jacobians, step, optimize=True)
     reduced = np.einsum("i,ni->n", pointer, full, optimize=True)

@@ -361,7 +361,7 @@ def test_an_indefinite_covariance_is_reported_not_clamped():
     assert bounds.minimum_relative_eigenvalue is None
 
 
-def test_the_parameter_direction_must_match_the_state():
+def test_the_parameter_direction_must_match_the_jacobian():
     adapter, model, reconstruction = _two_mode_reconstruction()
     with pytest.raises(ValueError, match="parameter direction has"):
         path_information_bounds(
@@ -381,6 +381,50 @@ def test_the_parameter_direction_must_match_the_state():
             reconstruction=reconstruction,
             parameter_direction=np.asarray([1.0, 0.0, 0.0, float("nan")]),
         )
+
+
+class _WideParameterAdapter(curve_toy._CurveAdapter):
+    """A parameter Jacobian with more parameters than canonical coordinates.
+
+    ``parameter_direction`` lives in the adapter's parameter space (one entry per model
+    parameter), which the Jacobian maps onto the coordinates, so the two counts are
+    independent: the direction has five entries and the state four coordinates.
+    """
+
+    def parameter_jacobian(self, vector: Any, params: Any = None) -> np.ndarray:
+        del params
+        value = np.asarray(vector, dtype=float).reshape(-1)
+        base = np.eye(4) + 0.1 * value[:, None] * np.ones((1, 4))
+        return np.hstack([base, 0.05 * value[:, None]])
+
+
+def test_a_parameter_space_direction_is_not_a_coordinate_vector():
+    adapter = _WideParameterAdapter()
+    model = curve_toy._CurveModel()
+    direction = np.asarray([1.0, 0.5, 0.25, 0.125, 0.0625])
+    reconstruction = scalar_reconstruction(
+        adapter,
+        model,
+        curve_toy._observable(),
+        state=curve_toy.STATE,
+        params={},
+        manifold=curve_toy._curve_manifold(),
+        parameter_direction=direction,
+        config=ScalarReconstructionConfig(grid_points=TWO_MODE_GRID),
+    )
+    assert reconstruction.status is CAMOutcomeStatus.VALID
+    bounds = path_information_bounds(
+        adapter,
+        model,
+        state=curve_toy.STATE,
+        params={},
+        reconstruction=reconstruction,
+        parameter_direction=direction,
+    )
+    assert bounds.status is CAMOutcomeStatus.VALID
+    assert bounds.method["parameter_direction"] == [float(value) for value in direction]
+    assert bounds.reduced == reconstruction.path_information_rate
+    assert bounds.full is not None and bounds.full > bounds.reduced
 
 
 def test_the_default_integration_split_stays_grid_zero():

@@ -118,10 +118,11 @@ def path_information_bounds(
     and the readout, so this function never resolves its own domain: a reconstruction
     that stopped before its grid cannot be bounded at all and says so.
 
-    ``parameter_direction`` is the state-space direction of the driven parameter, e.g.
-    ``adapter.parameter_direction(name, scale)``; the reduced forcing is
-    ``left · parameter_jacobian(x) · direction`` and the full one is the same vector
-    before the projection.
+    ``parameter_direction`` is the parameter-space direction of the driven parameter,
+    e.g. ``adapter.parameter_direction(name, scale)`` — one entry per model parameter,
+    which the parameter Jacobian maps onto the canonical coordinates. The reduced
+    forcing is ``left · parameter_jacobian(x) · direction`` and the full one is the same
+    vector before the projection.
 
     The full bound is ``∫ Fᵀ Σ_full(x)⁻¹ F π(x) dx`` with the canonical
     ``Σ_full(x)`` and the density and reduced rate of the shared
@@ -200,11 +201,6 @@ def path_information_bounds(
         raise ValueError("the state must be finite")
     if not np.all(np.isfinite(direction)):
         raise ValueError("the parameter direction must be finite")
-    if direction.size != point.size:
-        raise ValueError(
-            f"the parameter direction has {direction.size} entries for a "
-            f"{point.size}-coordinate state"
-        )
     left = np.asarray(manifold.left, dtype=float)
     if left.size != point.size:
         raise ValueError(
