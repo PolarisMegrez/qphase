@@ -59,7 +59,7 @@ jobs:
         run: uv sync --no-dev --group dev-cpu
 
       - name: Run unit tests
-        run: uv run pytest -m "unit and not gpu"
+        run: uv run pytest -m "unit and not gpu and not slow"
 
   integration:
     # Cross-component suite on one interpreter; slow cases stay in `slow`.
@@ -84,6 +84,7 @@ jobs:
 
   e2e:
     # CLI / workflow end-to-end suite; blocking on pushes to the main branches.
+    # Slow cases are excluded here and run once in `slow`.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name == 'push'
@@ -102,7 +103,7 @@ jobs:
         run: uv sync --no-dev --group dev-cpu
 
       - name: Run end-to-end tests
-        run: uv run pytest -m "e2e and not gpu"
+        run: uv run pytest -m "e2e and not gpu and not slow"
 
   slow:
     # Long-running regression sweep: pushes only, never on pull requests.

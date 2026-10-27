@@ -33,15 +33,28 @@ def cuda_available() -> bool:
 
 
 def pytest_collection_modifyitems(items):
-    """Assign the ``unit`` marker to tests without an explicit layer marker."""
+    """Assign the ``unit`` marker to tests without an explicit layer marker.
+
+    Layer and device detection read real pytest markers, never keyword
+    strings: a path segment such as ``tests/qphase_sde/e2e/`` puts the ``e2e``
+    keyword on every item below it, and a directory name must not be mistaken
+    for a layer declaration. ``gpu`` and ``slow`` stay orthogonal to the layer:
+    they never replace a layer marker, but they do suppress the automatic
+    ``unit``, so a layer-less GPU case stays in the GPU lane and is skipped
+    when no device is present.
+    """
+
+    def has_marker(item, name: str) -> bool:
+        return item.get_closest_marker(name) is not None
+
     gpu_available = (
-        cuda_available() if any("gpu" in item.keywords for item in items) else True
+        cuda_available() if any(has_marker(item, "gpu") for item in items) else True
     )
     skip_gpu = pytest.mark.skip(reason="CUDA runtime/device not available")
     for item in items:
-        if not any(marker in item.keywords for marker in _LAYER_MARKERS):
+        if not any(has_marker(item, marker) for marker in _LAYER_MARKERS):
             item.add_marker(pytest.mark.unit)
-        if "gpu" in item.keywords and not gpu_available:
+        if has_marker(item, "gpu") and not gpu_available:
             item.add_marker(skip_gpu)
 
 

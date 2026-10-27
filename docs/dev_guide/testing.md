@@ -21,8 +21,10 @@ layer it belongs to, so a fast gate and a full sweep select from the same tree.
 Two rules keep the grid consistent:
 
 - Tests without any layer marker are marked `unit` automatically
-  (`tests/conftest.py::pytest_collection_modifyitems`). Explicitly marking a
-  file `integration`/`e2e` therefore *removes* it from the fast gate.
+  (`tests/conftest.py::pytest_collection_modifyitems`). Only real pytest
+  markers count: a directory or module name such as `tests/qphase_sde/e2e/` is
+  not a layer declaration. Explicitly marking a file `integration`/`e2e`
+  therefore *removes* it from the fast gate.
 - `gpu` and `slow` are orthogonal to the layer. A GPU case inside an
   integration file carries `@pytest.mark.gpu` per test, not per file, and a
   spawn-worker case adds `slow` on top.
@@ -32,8 +34,8 @@ Two rules keep the grid consistent:
 `tests/conftest.py::cuda_available()` is the single device probe of the suite:
 it returns whether CuPy can reach at least one CUDA device. It is used twice:
 
-- the `gpu` marker gate skips every case whose collected keywords contain
-  `gpu` when no device exists;
+- the `gpu` marker gate skips every case carrying the `gpu` marker when no
+  device exists;
 - per-test `@pytest.mark.skipif(not cuda_available(), ...)` guards cases that
   need a device even when the marker is missing.
 
@@ -43,12 +45,12 @@ from `tests.conftest` instead.
 ## Local selection
 
 ```bash
-pytest -m "unit and not gpu"                          # fast gate
-pytest -m "integration and not gpu and not slow"      # integration layer
-pytest -m "e2e and not gpu"                           # CLI / workflow runs
-pytest -m "slow and not gpu"                          # long regression sweep
-pytest -m "not gpu"                                   # everything CPU-runnable
-pytest                                                # the whole tree
+pytest -m "unit and not gpu and not slow"         # fast gate
+pytest -m "integration and not gpu and not slow"  # integration layer
+pytest -m "e2e and not gpu and not slow"          # CLI / workflow runs
+pytest -m "slow and not gpu"                      # long regression sweep
+pytest -m "not gpu"                               # everything CPU-runnable
+pytest                                            # the whole tree
 ```
 
 ## CI jobs
@@ -57,9 +59,9 @@ pytest                                                # the whole tree
 
 | Job | Selection | Interpreter | Timeout |
 | :-- | :-- | :-- | :-- |
-| `test` | `-m "unit and not gpu"` | 3.11 / 3.12 / 3.13 / 3.14 | 20 min |
+| `test` | `-m "unit and not gpu and not slow"` | 3.11 / 3.12 / 3.13 / 3.14 | 20 min |
 | `integration` | `-m "integration and not gpu and not slow"` | 3.13 | 45 min |
-| `e2e` | `-m "e2e and not gpu"` (push only, blocking) | 3.13 | 30 min |
+| `e2e` | `-m "e2e and not gpu and not slow"` (push only, blocking) | 3.13 | 30 min |
 | `slow` | `-m "slow and not gpu"` (push only) | 3.13 | 60 min |
 | `lint` | `ruff check .` and `mypy packages` | 3.13 | 15 min |
 
