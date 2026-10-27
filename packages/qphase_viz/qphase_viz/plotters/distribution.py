@@ -469,16 +469,32 @@ class DistributionPlotter(PlotterProtocol):
                 raise ValueError(
                     "scan_coordinates requires an explicit scan_tolerance"
                 )
+            limit = float(spec.scan_tolerance)
+            if not np.isfinite(limit):
+                raise ValueError(f"scan_tolerance {limit!r} is not finite")
+            if limit <= 0.0:
+                raise ValueError(f"scan_tolerance {limit!r} must be positive")
+            finite = np.isfinite(coordinates)
+            if not np.all(finite):
+                bad = int(np.flatnonzero(~finite)[0])
+                raise ValueError(
+                    f"scan point {bad} has a non-finite coordinate "
+                    f"{float(coordinates[bad])!r}; scan_coordinates needs finite "
+                    "stored coordinates"
+                )
             selected = []
             for value in spec.scan_coordinates:
-                distance = np.abs(coordinates - float(value))
+                target = float(value)
+                if not np.isfinite(target):
+                    raise ValueError(f"scan coordinate {target!r} is not finite")
+                distance = np.abs(coordinates - target)
                 index = int(np.argmin(distance))
-                if float(distance[index]) > float(spec.scan_tolerance):
+                if float(distance[index]) > limit:
                     raise ValueError(
                         f"scan coordinate {value!r} is "
                         f"{float(distance[index]):.6g} away from the nearest "
                         f"point {float(coordinates[index]):.6g} "
-                        f"(tolerance {spec.scan_tolerance:.6g})"
+                        f"(tolerance {limit:.6g})"
                     )
                 if index not in selected:
                     selected.append(index)

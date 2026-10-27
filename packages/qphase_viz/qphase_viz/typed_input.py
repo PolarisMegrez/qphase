@@ -33,9 +33,15 @@ def select_product(
     role: str | None = None,
     kind: DataKind | None = None,
     quantity: str | None = None,
+    quantity_field: str | None = None,
     fields: tuple[str, ...] = (),
 ) -> Dataset:
-    """Select one product by stable role, then by typed schema facets."""
+    """Select one product by stable role, then by typed schema facets.
+
+    ``quantity`` matches a quantity declared on *any* variable. ``quantity_field``
+    pins that quantity to one named variable instead, so a product that happens
+    to declare the quantity on a sibling variable cannot satisfy the request.
+    """
     bundle, products = bundle_products(data)
     descriptor = getattr(bundle, "bundle_descriptor", None)
     roles = getattr(descriptor, "product_roles", {})
@@ -47,14 +53,26 @@ def select_product(
                 raise ValueError(
                     f"bundle role {role!r} references missing product {name!r}"
                 )
-            if _matches(product, kind=kind, quantity=quantity, fields=fields):
+            if _matches(
+                product,
+                kind=kind,
+                quantity=quantity,
+                quantity_field=quantity_field,
+                fields=fields,
+            ):
                 return product
             raise TypeError(f"bundle role {role!r} does not satisfy plot requirements")
 
     matches = [
         product
         for product in products.values()
-        if _matches(product, kind=kind, quantity=quantity, fields=fields)
+        if _matches(
+            product,
+            kind=kind,
+            quantity=quantity,
+            quantity_field=quantity_field,
+            fields=fields,
+        )
     ]
     if not matches:
         raise ProductNotFoundError(
@@ -129,6 +147,7 @@ def _matches(
     *,
     kind: DataKind | None,
     quantity: str | None,
+    quantity_field: str | None,
     fields: tuple[str, ...],
 ) -> bool:
     if kind is not None and product.kind is not kind:
@@ -136,6 +155,9 @@ def _matches(
     variables = {variable.name: variable for variable in product.variables}
     if not set(fields) <= set(variables):
         return False
-    return quantity is None or any(
-        variable.quantity == quantity for variable in variables.values()
-    )
+    if quantity is None:
+        return True
+    if quantity_field is not None:
+        variable = variables.get(quantity_field)
+        return variable is not None and variable.quantity == quantity
+    return any(variable.quantity == quantity for variable in variables.values())

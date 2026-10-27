@@ -68,6 +68,7 @@ class SpectralScanPlotter(PlotterProtocol):
             role="primary_spectrum",
             kind=DataKind.SPECTRAL,
             quantity=SpectralQuantity.POWER_SPECTRAL_DENSITY.value,
+            quantity_field="psd",
             fields=("axis", "psd"),
         )
         frequency, psd, modes = self._materialize(product)
@@ -237,9 +238,26 @@ class SpectralScanPlotter(PlotterProtocol):
                 "scan_coordinates requires an explicit scan_tolerance"
             )
         limit = float(tolerance)
+        if not np.isfinite(limit):
+            raise ValueError(f"scan_tolerance {limit!r} is not finite")
+        if limit <= 0.0:
+            raise ValueError(f"scan_tolerance {limit!r} must be positive")
+        # ``np.argmin`` treats a NaN distance as the minimum, so a non-finite
+        # stored coordinate would silently redirect the selection to it.
+        finite = np.isfinite(coordinates)
+        if not np.all(finite):
+            bad = int(np.flatnonzero(~finite)[0])
+            raise ValueError(
+                f"scan point {bad} has a non-finite coordinate "
+                f"{float(coordinates[bad])!r}; scan_coordinates needs finite "
+                "stored coordinates"
+            )
         selected: list[int] = []
         for value in requested:
-            distance = np.abs(coordinates - float(value))
+            target = float(value)
+            if not np.isfinite(target):
+                raise ValueError(f"scan coordinate {target!r} is not finite")
+            distance = np.abs(coordinates - target)
             index = int(np.argmin(distance))
             if float(distance[index]) > limit:
                 raise ValueError(

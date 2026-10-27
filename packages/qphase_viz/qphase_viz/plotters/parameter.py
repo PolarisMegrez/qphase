@@ -118,7 +118,12 @@ class ParameterEvolutionPlotter(PlotterProtocol):
             editable=spec.editable,
             overrides=spec.style_overrides,
         )
-        with styled_figure(options, figsize=spec.figsize, dpi=spec.dpi) as (fig, ax):
+        with styled_figure(
+            options,
+            figsize=spec.figsize,
+            dpi=spec.dpi,
+            constrained_layout=spec.constrained_layout,
+        ) as (fig, ax):
             self._draw_metric(ax, x, y, spec)
             apply_axes_style(
                 ax,

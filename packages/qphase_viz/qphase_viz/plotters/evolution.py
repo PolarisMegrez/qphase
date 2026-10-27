@@ -79,7 +79,12 @@ class TimeSeriesPlotter(PlotterProtocol):
             overrides=spec.style_overrides,
         )
 
-        with styled_figure(options, figsize=spec.figsize, dpi=spec.dpi) as (fig, ax):
+        with styled_figure(
+            options,
+            figsize=spec.figsize,
+            dpi=spec.dpi,
+            constrained_layout=spec.constrained_layout,
+        ) as (fig, ax):
             # Data transformation
             for ch in spec.channels:
                 y_ch = y[:, :, ch]  # (N, T)

@@ -71,6 +71,7 @@ class PowerSpectrumPlotter(PlotterProtocol):
                 role="primary_spectrum",
                 kind=DataKind.SPECTRAL,
                 quantity=SpectralQuantity.POWER_SPECTRAL_DENSITY.value,
+                quantity_field="psd",
                 fields=("axis", "psd"),
             )
         except ProductNotFoundError as exc:
@@ -122,7 +123,12 @@ class PowerSpectrumPlotter(PlotterProtocol):
             overrides=spec.style_overrides,
         )
         ylabel = "PSD [V**2/Hz]"
-        with styled_figure(options, figsize=spec.figsize, dpi=spec.dpi) as (fig, ax):
+        with styled_figure(
+            options,
+            figsize=spec.figsize,
+            dpi=spec.dpi,
+            constrained_layout=spec.constrained_layout,
+        ) as (fig, ax):
             for ch in channels:
                 if ch in available_modes:
                     idx = available_modes.index(ch)

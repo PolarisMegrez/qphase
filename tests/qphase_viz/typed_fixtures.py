@@ -17,9 +17,11 @@ from qphase.data import (
     ARTIFACT_SCHEMA_VERSION,
     AxisRole,
     AxisSchema,
+    BundleDescriptor,
     CoordinateSchema,
     DataKind,
     Dataset,
+    GenericDataBundle,
     ProductSchema,
     SpectralDataset,
     SpectralQuantity,
@@ -29,6 +31,7 @@ from qphase.data import (
     load_products,
     save_products,
 )
+from qphase.data.store import GENERIC_BUNDLE_ADAPTER_ID, GENERIC_BUNDLE_TYPE_ID
 
 N_TRAJ = 3
 N_TIME = 64
@@ -447,6 +450,26 @@ def restored(bundle: VizTestBundle, path: Path) -> VizTestBundle:
     )
 
 
+def role_bundle(
+    products: Mapping[str, Dataset], roles: Mapping[str, str]
+) -> GenericDataBundle:
+    """Bundle exposing ``bundle_descriptor.product_roles`` like an artifact.
+
+    The generic bundle carries the persisted descriptor, so the role-first
+    product selection of the plotters is exercised, not just the facet match.
+    """
+    return GenericDataBundle(
+        products,
+        BundleDescriptor(
+            type_id=GENERIC_BUNDLE_TYPE_ID,
+            adapter_id=GENERIC_BUNDLE_ADAPTER_ID,
+            descriptor_schema=GENERIC_BUNDLE_TYPE_ID,
+            product_roles=dict(roles),
+        ),
+        metadata={"graph_ready": True},
+    )
+
+
 #: Scan values of the multi-point fixtures below.
 SCAN_POINTS = (0.1, 0.2, 0.3, 0.4, 0.5)
 
@@ -534,6 +557,52 @@ def spectral_scan_bundle() -> VizTestBundle:
     """Multi-point bundle carrying a per-scan PSD product."""
     return VizTestBundle(
         {"psd": spectral_scan_dataset()},
+        axes={"omega": np.asarray(SCAN_POINTS, dtype=float)},
+        shape=(len(SCAN_POINTS),),
+    )
+
+
+def _swap_spectral_quantities(product: Dataset) -> Dataset:
+    """Rebuild a PSD product with the quantities on the wrong variables.
+
+    ``axis`` carries ``power_spectral_density`` and ``psd`` carries
+    ``frequency``, so a product that declares the PSD quantity somewhere
+    accepts it while a check pinned to the ``psd`` variable does not.
+    """
+    variables = []
+    for variable in product.schema.variables:
+        if variable.name == "axis":
+            quantity = SpectralQuantity.POWER_SPECTRAL_DENSITY.value
+        elif variable.name == "psd":
+            quantity = "frequency"
+        else:
+            variables.append(variable)
+            continue
+        variables.append(variable.model_copy(update={"quantity": quantity}))
+    arrays = {
+        variable.name: np.asarray(product.handle(variable.name).materialize())
+        for variable in product.schema.variables
+    }
+    schema = product.schema.model_copy(update={"variables": variables})
+    return SpectralDataset.from_arrays(schema, arrays, owner="test.viz")
+
+
+def swapped_quantity_spectral_dataset(
+    *, scan_values: tuple[float, ...] = SCAN_POINTS
+) -> Dataset:
+    """Multi-point PSD product whose quantities belong to other variables."""
+    return _swap_spectral_quantities(spectral_scan_dataset(scan_values=scan_values))
+
+
+def swapped_quantity_spectrum_bundle() -> VizTestBundle:
+    """Single-point bundle whose PSD quantity is declared on ``axis``."""
+    return VizTestBundle({"psd": _swap_spectral_quantities(spectrum_dataset())})
+
+
+def swapped_quantity_spectral_scan_bundle() -> VizTestBundle:
+    """Multi-point bundle whose PSD quantity is declared on ``axis``."""
+    return VizTestBundle(
+        {"psd": swapped_quantity_spectral_dataset()},
         axes={"omega": np.asarray(SCAN_POINTS, dtype=float)},
         shape=(len(SCAN_POINTS),),
     )

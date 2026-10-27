@@ -7,15 +7,20 @@ from typing import Any
 
 import numpy as np
 import pytest
+import qphase_viz.plotters.spectral_scan as spectral_scan_module
 from qphase.data import SpectralDataset
 from qphase_viz.plotters.spectral_scan import SpectralScanPlotter
 from qphase_viz.styles import RenderOptions
+from qphase_viz.typed_input import ProductNotFoundError
 
 from tests.qphase_viz.typed_fixtures import (
     SCAN_POINTS,
     VizTestBundle,
     restored,
+    role_bundle,
     spectral_scan_bundle,
+    spectral_scan_dataset,
+    swapped_quantity_spectral_scan_bundle,
 )
 
 
@@ -207,8 +212,6 @@ def test_unknown_colormap_is_rejected(tmp_path):
 
 def _line_colours(monkeypatch, tmp_path: Path, **spec) -> list[Any]:
     """Render one figure and return the colours of the plotted curves."""
-    import qphase_viz.plotters.spectral_scan as spectral_scan_module
-
     captured: dict[str, list[Any]] = {}
 
     def fake_save(fig, output_dir, filename, format):
@@ -253,3 +256,76 @@ def test_tolerance_must_be_positive():
                 }
             ]
         )
+
+
+# --- non-finite scan selection ---------------------------------------------
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_scan_coordinate_request_is_rejected(tmp_path, value):
+    with pytest.raises(ValueError, match="is not finite"):
+        _plotter(scan_coordinates=[value], scan_tolerance=0.02).plot(
+            spectral_scan_bundle(), tmp_path, "svg"
+        )
+
+
+def test_non_finite_stored_coordinate_is_rejected_even_on_an_exact_match(tmp_path):
+    """A NaN distance is the argmin, so the exact match must not paper over it."""
+    scan_values = (0.1, float("nan"), 0.3)
+    bundle = VizTestBundle(
+        {"psd": spectral_scan_dataset(scan_values=scan_values)},
+        axes={"omega": np.asarray(scan_values, dtype=float)},
+        shape=(len(scan_values),),
+    )
+
+    with pytest.raises(ValueError, match="non-finite coordinate"):
+        _plotter(scan_coordinates=[0.3], scan_tolerance=1e-12).plot(
+            bundle, tmp_path, "svg"
+        )
+
+
+def test_non_finite_tolerance_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="is not finite"):
+        _plotter(scan_coordinates=[0.19], scan_tolerance=float("inf")).plot(
+            spectral_scan_bundle(), tmp_path, "svg"
+        )
+
+
+def test_constrained_layout_defaults_on_for_the_scan_panels(tmp_path, monkeypatch):
+    """Positive control: the multi-panel path keeps its own default."""
+    captured: dict[str, bool] = {}
+
+    def fake_save(fig, output_dir, filename, format):
+        captured["constrained_layout"] = bool(fig.get_constrained_layout())
+        return tmp_path / "stub.png"
+
+    monkeypatch.setattr(spectral_scan_module, "save_figure", fake_save)
+    _plotter().plot(spectral_scan_bundle(), tmp_path, "png")
+
+    assert captured["constrained_layout"]
+
+
+# --- PSD quantity must sit on the ``psd`` variable --------------------------
+
+
+def test_psd_quantity_on_a_sibling_variable_is_rejected(tmp_path):
+    with pytest.raises(ProductNotFoundError, match="no typed product matches"):
+        _plotter().plot(swapped_quantity_spectral_scan_bundle(), tmp_path, "svg")
+
+
+def test_role_product_with_the_psd_quantity_elsewhere_is_rejected(tmp_path):
+    bundle = role_bundle(
+        {"psd": swapped_quantity_spectral_scan_bundle().products["psd"]},
+        {"primary_spectrum": "psd"},
+    )
+
+    with pytest.raises(TypeError, match="does not satisfy plot requirements"):
+        _plotter().plot(bundle, tmp_path, "svg")
+
+
+def test_scan_plotter_accepts_the_correct_product_through_a_role(tmp_path):
+    bundle = role_bundle({"psd": spectral_scan_dataset()}, {"primary_spectrum": "psd"})
+
+    files = _plotter(scan_indices=[0]).plot(bundle, tmp_path, "svg")
+
+    assert "omega=0.1" in _svg(files[0])

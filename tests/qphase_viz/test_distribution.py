@@ -345,6 +345,45 @@ def test_missing_scan_parameter_is_rejected(tmp_path):
         )
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_scan_coordinate_request_is_rejected(tmp_path, value):
+    with pytest.raises(ValueError, match="is not finite"):
+        _plotter(
+            scan_coordinates=[value],
+            scan_tolerance=0.02,
+            bins=10,
+            bin_width=None,
+        ).plot(distribution_bundle(), tmp_path, "png")
+
+
+def test_non_finite_stored_coordinate_is_rejected_even_on_an_exact_match(tmp_path):
+    """A NaN distance is the argmin, so the exact match must not paper over it."""
+    scan_values = (0.1, float("nan"), 0.3)
+    bundle = VizTestBundle(
+        {"estimates": distribution_dataset(scan_values=scan_values)},
+        axes={"omega": np.asarray(scan_values, dtype=float)},
+        shape=(len(scan_values),),
+    )
+
+    with pytest.raises(ValueError, match="non-finite coordinate"):
+        _plotter(
+            scan_coordinates=[0.3],
+            scan_tolerance=1e-12,
+            bins=10,
+            bin_width=None,
+        ).plot(bundle, tmp_path, "png")
+
+
+def test_non_finite_tolerance_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="is not finite"):
+        _plotter(
+            scan_coordinates=[0.11],
+            scan_tolerance=float("inf"),
+            bins=10,
+            bin_width=None,
+        ).plot(distribution_bundle(), tmp_path, "png")
+
+
 def test_histogram_density_formula(tmp_path, monkeypatch):
     captured = _capture(monkeypatch, tmp_path)
 

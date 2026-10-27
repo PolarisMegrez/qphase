@@ -83,9 +83,15 @@ def styled_figure(
     *,
     figsize: tuple[float, float],
     dpi: int,
+    constrained_layout: bool = False,
 ) -> Iterator[tuple[Figure, Axes]]:
     """Yield a single styled ``(figure, axes)`` pair and always close it."""
-    with styled_subplots(options, figsize=figsize, dpi=dpi) as (fig, axes):
+    with styled_subplots(
+        options,
+        figsize=figsize,
+        dpi=dpi,
+        constrained_layout=constrained_layout,
+    ) as (fig, axes):
         yield fig, axes[0, 0]
 
 
