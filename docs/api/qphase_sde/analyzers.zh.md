@@ -304,7 +304,8 @@ tracking 保留代价最低的 `tracking_path_count` 条纯数据路径，并用
 真实快速频移对连续性代价的影响。严格候选满足相对峰高、尺度支持和曲率门槛；属于
 与最优路径代价相差不超过 `tracking_max_cost_delta` 的高峰候选会标记为
 `continuity_rescued`。若两类均为空，则恰好保留一个证据分数最高的
-`fallback_low_confidence` 候选。候选 CSV 明确保存保留层级、路径排名和最佳路径代价差；
+`fallback_low_confidence` 候选。typed `<label>.candidates` product 的候选行明确保存
+保留层级、路径排名和最佳路径代价差；
 这些字段只定义可供下游关联的候选，不使用或暗示任何模型目标。
 
 输出分别记录局部峰位传播误差、跨平滑尺度漂移、曲率及其显著性、基于 PSD SEM 的

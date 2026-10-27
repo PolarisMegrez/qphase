@@ -7,9 +7,9 @@ physical parameters of ``vdp_2mode.yaml`` but fixes:
 * ``omega_a = 0.00251189``
 
 The simulation is analyzed by ``analyser.psd`` and then fed into
-``analyser.lorentz_fitter`` in analyze mode. The fit results CSV must contain
-the peak position, peak height (``amplitude`` / ``peak_intensity``), linewidth
-(FWHM), and ``R2``.
+``analyser.lorentz_fitter`` in analyze mode. The typed ``lorentz_fitter``
+product exposes the peak position (``center``), peak height (``amplitude`` /
+``peak_intensity``), linewidth (FWHM), and ``R2`` as fit-row fields.
 """
 
 from __future__ import annotations
