@@ -49,13 +49,15 @@ NUMERICS_MODULES = (
 )
 
 #: The root-level assets the manifest must declare besides its plugin classes.
-#: ``prediction`` is Phase 10 work and is deliberately absent.
+#: ``prediction`` is the service Phase 10 added to validate frozen CAM
+#: predictions against restored SDE observations.
 EXPECTED_EXTRA_ASSETS = (
     ("analyser_config", "module"),
     ("estimators", "directory"),
     ("graph", "module"),
     ("numerics", "directory"),
     ("planning", "directory"),
+    ("prediction", "module"),
     ("products", "module"),
 )
 
@@ -536,8 +538,8 @@ def test_manifest_declares_existing_extra_assets():
     """Every declared extra asset exists and the retired ``math`` is gone.
 
     The manifest is the authoritative asset inventory, so the declaration and
-    the tree must agree in both directions for the six current assets. Phase 10
-    adds ``prediction`` separately; it is not asserted here.
+    the tree must agree in both directions for the seven current assets, including
+    the ``prediction`` validation service Phase 10 added.
     """
     declared = tuple(
         sorted((asset.path, asset.kind) for asset in MANIFEST.extra_assets)

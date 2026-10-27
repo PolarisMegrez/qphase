@@ -205,6 +205,13 @@ MANIFEST = ResourcePackageManifest(
             "ProductGraph.",
         ),
         ResourceAssetDeclaration(
+            path="prediction",
+            kind="module",
+            visibility="public",
+            purpose="Validates a frozen CAM prediction against restored SDE "
+            "observations.",
+        ),
+        ResourceAssetDeclaration(
             path="products",
             kind="module",
             visibility="private",
