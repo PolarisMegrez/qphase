@@ -101,6 +101,24 @@ def test_system_config_rejects_retired_key_in_explicit_path(tmp_path):
         store.load(config_path=override_path)
 
 
+@pytest.mark.parametrize("entrypoint", ["default_config", "load"])
+def test_system_config_rejects_retired_key_in_package_defaults(tmp_path, entrypoint):
+    """Packaged defaults ship with the release, so they stay strict too."""
+    package_path = tmp_path / "defaults.yaml"
+    package_path.write_text(
+        "auto_save_results: true\nparameter_scan: {}\n", encoding="utf-8"
+    )
+    store = SystemConfigStore(
+        package_default_path=package_path,
+        site_path=tmp_path / "missing-site.yaml",
+        user_path=tmp_path / "missing-user.yaml",
+        environ={},
+    )
+
+    with pytest.raises(QPhaseConfigError, match="Extra inputs are not permitted"):
+        getattr(store, entrypoint)()
+
+
 def test_system_config_ignores_retired_user_key_with_warning(tmp_path, caplog):
     """A stale user override is tolerated: warn, drop the key, keep loading."""
     package_path = tmp_path / "defaults.yaml"

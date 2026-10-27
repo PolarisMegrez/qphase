@@ -279,7 +279,11 @@ class SystemConfigStore:
     def _require_known_top_level_keys(
         self, payload: Mapping[str, Any], path: Path
     ) -> None:
-        """Reject unknown top-level keys in an explicitly named policy file."""
+        """Reject unknown top-level keys in a strict policy input.
+
+        Strict inputs are the packaged defaults and an explicitly named
+        ``config_path``; machine-local layers take the tolerant path instead.
+        """
         unknown = sorted(set(payload) - set(SystemConfig.model_fields))
         if unknown:
             raise QPhaseConfigError(
@@ -317,7 +321,9 @@ class SystemConfigStore:
             if path is None:
                 resource = ilr.files("qphase.core").joinpath("system.yaml")
                 path = Path(str(resource))
-            return self._load_mapping(path)
+            payload = self._load_mapping(path)
+            self._require_known_top_level_keys(payload, path)
+            return payload
         except QPhaseConfigError:
             raise
         except Exception as exc:
