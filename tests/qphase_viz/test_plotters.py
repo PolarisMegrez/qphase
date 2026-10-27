@@ -5,11 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 import qphase_viz.plotters.evolution as evolution_module
 import qphase_viz.plotters.parameter as parameter_module
 import qphase_viz.plotters.phase as phase_module
 import qphase_viz.plotters.spectrum as spectrum_module
+from qphase.data import TimeSeriesDataset
 from qphase_viz.plotters.evolution import TimeSeriesPlotter
 from qphase_viz.plotters.parameter import ParameterEvolutionPlotter
 from qphase_viz.plotters.phase import PhasePlanePlotter
@@ -26,6 +28,7 @@ from tests.qphase_viz.typed_fixtures import (
     spectrum_scan_bundle,
     swapped_quantity_spectrum_bundle,
     trajectory_bundle,
+    trajectory_dataset,
 )
 
 
@@ -286,3 +289,67 @@ def test_power_spectrum_accepts_the_correct_product_through_a_role(tmp_path):
     )
 
     _assert_files_generated(files, tmp_path)
+
+
+def _known_mean_bundle(offsets: tuple[float, ...]) -> VizTestBundle:
+    """Trajectory bundle whose channel 0 is ``time ramp + offset`` per path."""
+    source = trajectory_dataset(scan_values=(0.1,))
+    alpha = np.asarray(source.handle("alpha").materialize(), dtype=np.complex128).copy()
+    ramp = np.arange(alpha.shape[2], dtype=float)
+    for index, offset in enumerate(offsets):
+        alpha[0, index, :, 0] = ramp + offset
+        alpha[0, index, :, 1] = 0.0
+    arrays = {
+        variable.name: (
+            alpha
+            if variable.name == "alpha"
+            else np.asarray(source.handle(variable.name).materialize())
+        )
+        for variable in source.variables
+    }
+    dataset = TimeSeriesDataset.from_arrays(source.schema, arrays, owner="test.viz")
+    return VizTestBundle({"trajectories": dataset})
+
+
+def _band_from_axes(ax) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-x lower/upper edges of the single ``fill_between`` band in *ax*."""
+    vertices = ax.collections[0].get_paths()[0].vertices
+    x = np.unique(vertices[:, 0])
+    lower = np.array([vertices[vertices[:, 0] == value, 1].min() for value in x])
+    upper = np.array([vertices[vertices[:, 0] == value, 1].max() for value in x])
+    return x, lower, upper
+
+
+def test_mean_trajectory_band_is_one_population_standard_deviation(
+    tmp_path, monkeypatch
+):
+    """The band is mean ± std(ddof=0) over trajectories, not an SEM."""
+    captured: dict[str, Any] = {}
+
+    def fake_save(fig, output_dir, filename, format):
+        captured["axes"] = fig.axes[0]
+        return tmp_path / "stub.png"
+
+    monkeypatch.setattr(evolution_module, "save_figure", fake_save)
+    TimeSeriesPlotter(
+        plots=[{"channels": [0], "transform": "real", "trajectories": "mean"}]
+    ).plot(_known_mean_bundle((-4.0, 0.0, 4.0)), tmp_path, "png")
+
+    ax = captured["axes"]
+    (line,) = ax.lines
+    time = np.asarray(line.get_xdata(), dtype=float)
+    mean = np.asarray(line.get_ydata(), dtype=float)
+    # Trajectory k holds ``sample index + offset``, and the offsets -4, 0, +4
+    # average out, so the mean line is the sample-index ramp itself.
+    np.testing.assert_allclose(mean, np.arange(mean.size, dtype=float))
+
+    x, lower, upper = _band_from_axes(ax)
+    # ``np.std`` defaults to the population standard deviation (ddof=0).
+    population_std = float(np.std([-4.0, 0.0, 4.0]))
+    np.testing.assert_allclose(x, time)
+    np.testing.assert_allclose(upper, mean + population_std)
+    np.testing.assert_allclose(lower, mean - population_std)
+    # An SEM band (std / sqrt(3)) or a mean confidence interval would be
+    # narrower than the population standard deviation drawn here.
+    sem = population_std / np.sqrt(3.0)
+    assert not np.allclose(upper - lower, 2.0 * sem)

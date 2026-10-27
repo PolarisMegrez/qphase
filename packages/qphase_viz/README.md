@@ -16,7 +16,11 @@ stable bundle role, data kind, quantity, and required fields.
     - **Log/Linear Scaling**: Flexible axis options.
 - **Time Series**:
     - **Trajectory Evolution**: Plot stochastic paths and averages.
-    - **Confidence Intervals**: Visualize variance/std-dev.
+    - **Mean ± One Population Standard Deviation**: `trajectories: mean`
+      draws the per-time mean of the transformed trajectories with a band of
+      one population standard deviation over trajectories (`np.std`,
+      `ddof=0`). The band is **not** a standard error of the mean and **not** a
+      confidence interval for the mean.
 
 ## Installation
 
