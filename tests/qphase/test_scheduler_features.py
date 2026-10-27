@@ -390,3 +390,93 @@ def test_upstream_products_satisfying_profile_input_pass(temp_project):
 
     assert [result.job_name for result in results] == ["source", "sink"]
     assert all(result.success for result in results)
+
+
+def test_job_save_appears_in_the_progress_stream_and_writes_the_manifest(temp_project):
+    """A real save is visible as a persistence stage and produces the Artifact.
+
+    The engine emits no progress of its own, so the only work in this job is the
+    logical Artifact save: the snapshot stream must still show it, and the
+    manifest must exist afterwards. This is the sequence a CLI/GUI consumer sees.
+    """
+    import numpy as np
+    from qphase.core.progress import ProgressSnapshot
+    from qphase.data import (
+        AxisRole,
+        AxisSchema,
+        DataKind,
+        ProductSchema,
+        StatisticsDataset,
+        VariableSchema,
+    )
+
+    class StatisticsSourceEngine:
+        class Config(BaseModel):
+            pass
+
+        config_schema = Config
+        name = "statistics_source"
+
+        def __init__(self, config=None, **kwargs):
+            del config, kwargs
+
+        def run(self, data=None, **kwargs):
+            del data, kwargs
+            schema = ProductSchema(
+                kind=DataKind.STATISTICS,
+                axes=[AxisSchema(name="candidate", role=AxisRole.INDEX, size=2)],
+                variables=[
+                    VariableSchema(
+                        name="rank",
+                        dtype="int64",
+                        value_domain="real",
+                        dims=("candidate",),
+                    )
+                ],
+            )
+            dataset = StatisticsDataset.from_arrays(
+                schema, {"rank": np.array([1, 2])}, owner="engine.statistics_source"
+            )
+            return _ProductsResult({"table": dataset})
+
+    registry.register(
+        "engine", "statistics_source", StatisticsSourceEngine, overwrite=True
+    )
+    snapshots: list[ProgressSnapshot] = []
+    try:
+        workflow = WorkflowSpec(
+            schema="qphase.workflow/2",
+            id="persistence-progress",
+            title="Persistence progress",
+            jobs=[JobConfig(name="table", engine={"statistics_source": {}}, save=True)],
+        )
+        scheduler = Scheduler(
+            system_config=SystemConfig(),
+            project=temp_project,
+            on_progress=snapshots.append,
+        )
+        results = scheduler.run(workflow)
+    finally:
+        registry._tables.get("engine", {}).pop("statistics_source", None)
+
+    assert [result.status for result in results] == ["completed"]
+    assert (results[0].job_dir / "artifact_manifest.json").is_file()
+
+    stages = [(snapshot.kind, snapshot.stage) for snapshot in snapshots]
+    persistence = [
+        index for index, (_, stage) in enumerate(stages) if stage == "persistence"
+    ]
+    assert len(persistence) == 3, stages
+    completed_job = next(
+        index for index, (kind, _) in enumerate(stages) if kind == "job_completed"
+    )
+    # The save is the scheduler's step after the engine returns, and the stream
+    # keeps that order: the job reports completion, then the Artifact is written.
+    assert persistence[0] == completed_job + 1
+    opened, advanced, closed = (snapshots[index] for index in persistence)
+    assert opened.message and "table" in opened.message
+    assert (opened.total, opened.unit) == (1.0, "artifact")
+    assert advanced.completed == 1.0
+    assert (closed.completed, closed.total, closed.unit) == (1.0, 1.0, "artifact")
+    assert closed.fraction == 1.0
+    assert closed.job_name == "table"

@@ -122,7 +122,14 @@ class ResultRouter:
         *,
         context: ExecutionContext | None = None,
     ) -> None:
-        """Expose one result to downstream jobs and optionally persist it."""
+        """Expose one result to downstream jobs and optionally persist it.
+
+        A save reported through the job's ``ExecutionContext`` opens the
+        ``persistence`` progress stage, so a consumer sees the Artifact write as
+        work instead of a silent gap between "engine finished" and "job done".
+        The router still owns data-flow policy only: persisting is the scheduler's
+        step, never the engine's.
+        """
         output_alias = job.output or job.name
         job_results[job.name] = output_result
         if job.output:
@@ -145,7 +152,18 @@ class ResultRouter:
         save_path = job_dir / save_name
         try:
             if context is not None:
-                context.artifacts.save_result(output_result, save_name)
+                # Only a real save opens the stage: the logical Artifact save is the
+                # step that turns a finished result into evidence, and it can be the
+                # slowest part of a small job. A failed save leaves the stage at 0,
+                # so the counter never claims work that did not happen.
+                with context.progress.stage(
+                    "persistence",
+                    total=1,
+                    unit="artifact",
+                    message=f"saving {save_name}",
+                ) as stage:
+                    context.artifacts.save_result(output_result, save_name)
+                    stage.advance(1)
             else:
                 output_result.save(save_path)
             log.debug("Job '%s' result saved to %s", job.name, save_path)
