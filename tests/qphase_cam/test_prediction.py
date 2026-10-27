@@ -516,3 +516,26 @@ def test_the_schema_declares_the_prediction_product():
 def test_the_postprocessor_config_rejects_unknown_fields():
     with pytest.raises(ValidationError):
         NonlinearPredictionConfig(perturbation_parameter="mu", unknown_option=1)
+
+
+def test_the_postprocessor_declares_the_product_it_publishes(monkeypatch):
+    """The declared output must be the product ``process`` actually returns.
+
+    A postprocessor states its own ``output_products``; the annotation default is
+    only right for producers that really publish an annotation.
+    """
+    from qphase_cam.data import CAM_PREDICTION_DECLARATION
+
+    _Patch(monkeypatch, _Adapter())
+    product = _product()
+    declared = NonlinearPrediction.output_products
+    assert [item.name for item in declared] == ["prediction"]
+    assert declared == (CAM_PREDICTION_DECLARATION,)
+    prediction_product = NonlinearPrediction(
+        orders=(3,), perturbation_parameter="mu"
+    ).process(product, _context(product))
+    assert prediction_product.attributes["product"] == declared[0].name
+    assert prediction_product.attributes["table"] == declared[0].quantity
+    assert prediction_product.schema.kind is declared[0].kind
+    variables = sorted(variable.name for variable in prediction_product.variables)
+    assert variables == sorted(declared[0].fields)

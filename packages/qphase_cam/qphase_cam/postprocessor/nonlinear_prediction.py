@@ -20,8 +20,10 @@ from typing import Any, ClassVar
 
 import numpy as np
 from pydantic import ConfigDict, Field
+from qphase.data import ProductDeclaration
 
 from qphase_cam.core.qpsgen import QPSGenDynamicsAdapter
+from qphase_cam.data import CAM_PREDICTION_DECLARATION
 from qphase_cam.data.evidence import SourceArtifactRef
 from qphase_cam.nonlinear import (
     DEFAULT_MANIFOLD_ORDERS,
@@ -85,6 +87,11 @@ class NonlinearPrediction(CAMPostprocessor[NonlinearPredictionConfig]):
         "Immutable O3/O5/O7 predictions of one readout's intensity and response"
     )
     config_schema: ClassVar[type[NonlinearPredictionConfig]] = NonlinearPredictionConfig
+    #: This producer publishes a prediction product, not an annotation, so it
+    #: states its own declared output instead of inheriting the annotation default.
+    output_products: ClassVar[tuple[ProductDeclaration, ...]] = (
+        CAM_PREDICTION_DECLARATION,
+    )
 
     annotation_kind: ClassVar[str] = "prediction"
     accepted_product_roles: ClassVar[tuple[str, ...]] = (

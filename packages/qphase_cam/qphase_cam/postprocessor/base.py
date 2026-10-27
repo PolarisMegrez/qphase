@@ -1,10 +1,13 @@
 """Public base class for CAM postprocessor plugins.
 
-A postprocessor is an *annotation producer*: it reads one typed product and
-writes one annotation product attached to that product's identities. Phase 10D2
-replaces the old ``accepted_result_kinds`` / ``process(result, model, backend) ->
-dict`` contract with this typed one, so no result object or postprocess dictionary
-survives between the solver and an annotation.
+A postprocessor is a *typed derived-product producer*: it reads one typed product
+and writes one product declared by ``output_products``, derived from the product it
+read. An annotation attached to that product's identities is the common form — it
+is the default declaration below — but a postprocessor that publishes something
+else (a prediction, for example) states its own declaration instead of inheriting
+it. Phase 10D2 replaces the old ``accepted_result_kinds`` / ``process(result, model,
+backend) -> dict`` contract with this typed one, so no result object or postprocess
+dictionary survives between the solver and the derived product.
 
 The declarations below are static: the engine selects a postprocessor by the
 product role it annotates and by the model/backend it requires, and the tests
