@@ -8,9 +8,10 @@ readout frequency. It is not the closed-Hamiltonian pole of
 SDE spectrum.
 
 The numbers are the ones the retired diagnostic probe's ``_generator_pole`` computed,
-without that script's files, model or fixed grid (the probe is gone; its published
-``poles.csv`` is reproduced through this service by
-``reports/phase10_verification/carrier_pole_public_check.py``):
+without that script's files, model or fixed grid: the probe is gone, and its published
+``poles.csv`` is reproduced through this service, with the stable numeric comparison
+recorded in
+``reports/models/kerr_full_3mode/frequency_search_20260904/phase10_evidence/comparisons/carrier_pole_public_check.json``:
 
 * every grid size resamples ``f``, ``q`` and ``omega`` from the source table with a
   monotone :class:`scipy.interpolate.PchipInterpolator` onto a uniform grid on the
