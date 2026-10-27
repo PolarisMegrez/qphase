@@ -40,15 +40,11 @@ from qphase_sde.observer.base import (
     Observer,
     ObserverContext,
     ObserverDecision,
-    ObserverTriggeredError,
 )
-
-FirstPassageTriggeredError = ObserverTriggeredError
 
 __all__ = [
     "FirstPassageObserver",
     "FirstPassageObserverConfig",
-    "FirstPassageTriggeredError",
 ]
 
 

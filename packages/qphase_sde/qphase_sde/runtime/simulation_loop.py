@@ -354,12 +354,10 @@ def run_sde(
     use_adaptive = False
     noise_spec = None
     adaptive_rng = None
-    # Ensure config is not None (use default if None)
+    # The engine facade resolves the configuration before it enters the
+    # runtime; a configuration-less engine is rejected there, never defaulted
+    # here.
     config = engine.config
-    if config is None:  # pragma: no cover - the engine always configures
-        from qphase_sde.engine import EngineConfig
-
-        config = EngineConfig()
     if (
         config.adaptive
         and hasattr(integrator, "supports_adaptive_step")

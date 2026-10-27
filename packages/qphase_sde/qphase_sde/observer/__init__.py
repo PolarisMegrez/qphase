@@ -11,8 +11,8 @@ Public API
 ``Observer`` : Base class for observers.
 ``ObserverContext`` : Run-scoped context handed to observers at initialize.
 ``ObserverDecision`` : Structured whole-batch control-flow request.
-``ObserverTriggeredError`` : Generic observer failure.
-``FirstPassageTriggeredError`` : Compatibility alias for observer failures.
+``ObserverTriggeredError`` : Generic observer failure, including first-passage
+``fail_job`` requests.
 ``FirstPassageObserver`` : Online first-passage observer.
 ``FirstPassageObserverConfig`` : Configuration for the first-passage observer.
 """
@@ -27,13 +27,11 @@ from .base import (
 from .first_passage import (
     FirstPassageObserver,
     FirstPassageObserverConfig,
-    FirstPassageTriggeredError,
 )
 
 __all__ = [
     "FirstPassageObserver",
     "FirstPassageObserverConfig",
-    "FirstPassageTriggeredError",
     "Observer",
     "ObserverContext",
     "ObserverDecision",

@@ -3,10 +3,11 @@
 import numpy as np
 import pytest
 from qphase.backend.numpy_backend import NumpyBackend, NumpyConfig
-from qphase_sde.engine import Engine, EngineConfig, TrajectoryDivergenceError
+from qphase_sde.engine import Engine, EngineConfig
 from qphase_sde.integrator.base import ChunkStepResult
 from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 from qphase_sde.runtime.rng import _GroupedRNG, draw_standard_normal_into
+from qphase_sde.runtime.simulation_loop import TrajectoryDivergenceError
 
 pytestmark = pytest.mark.integration
 

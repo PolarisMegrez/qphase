@@ -9,8 +9,13 @@ concrete plugins or CuPy, and ``contracts`` must never depend on ``runtime``.
 
 It also freezes the layering direction between the package's own layers, as a
 static AST scan (never by importing): ``contracts`` and ``numerics`` are leaf
-layers, ``runtime`` and ``estimators`` drive plugins without importing the
-analyser layer, and no analyser reaches into another analyser's classes.
+layers, the plugin-class layers sit below ``analyser`` and consume only
+``contracts``/``numerics``/``model`` without knowing each other, ``runtime``
+may drive ``integrator``/``observer`` plugins but never imports ``analyser``,
+``estimators`` or ``engine``, and no analyser imports or constructs another
+analyser family's class. The cross-analyser scan resolves module-form imports
+and constructor calls statically; dynamically resolved construction is out of
+its scope.
 """
 
 import ast
@@ -43,9 +48,41 @@ NUMERICS_MODULES = (
     "spectral",
 )
 
+#: The root-level assets the manifest must declare besides its plugin classes.
+#: ``prediction`` is Phase 10 work and is deliberately absent.
+EXPECTED_EXTRA_ASSETS = (
+    ("analyser_config", "module"),
+    ("estimators", "directory"),
+    ("graph", "module"),
+    ("numerics", "directory"),
+    ("planning", "directory"),
+    ("products", "module"),
+)
+
+#: Package roots every plugin-class layer may never import: the analyser
+#: layer, the orchestration layers (``planning``/``products``/``graph``/
+#: ``runtime``), the ``engine`` facade and the typed ``result`` bundle.
+#: Plugins consume only ``contracts``, ``numerics`` and ``model``.
+_PLUGIN_UPPER_FORBIDDEN = frozenset(
+    {"analyser", "engine", "graph", "planning", "products", "result", "runtime"}
+)
+
+#: Plugins do not know each other: each plugin-class layer also forbids the
+#: other two plugin layers. Relations inside one layer (its own ``base``
+#: protocol and sibling implementations) stay legal.
+_PLUGIN_PEER_FORBIDDEN = {
+    "integrator": frozenset({"estimators", "observer"}),
+    "observer": frozenset({"estimators", "integrator"}),
+    "estimators": frozenset({"integrator", "observer"}),
+}
+
 #: Layer -> package roots it may never import. ``contracts`` is the bottom
 #: layer; ``numerics`` sits next to it and may keep using ``contracts``;
-#: ``runtime`` and ``estimators`` may use both but never the analyser layer.
+#: ``analyser`` sits below the orchestration layers, so it may use
+#: ``products``/``result`` but never ``planning``/``graph``/``runtime``.
+#: ``runtime`` (orchestration) may drive ``integrator``/``observer`` plugins
+#: and use ``planning``/``products``/``result``, but never imports
+#: ``analyser``, ``estimators`` or the ``engine`` facade.
 LAYER_FORBIDDEN_IMPORTS = {
     "contracts": frozenset(
         {
@@ -74,17 +111,33 @@ LAYER_FORBIDDEN_IMPORTS = {
             "runtime",
         }
     ),
-    "runtime": frozenset({"analyser"}),
-    "estimators": frozenset({"analyser"}),
+    "integrator": _PLUGIN_UPPER_FORBIDDEN | _PLUGIN_PEER_FORBIDDEN["integrator"],
+    "observer": _PLUGIN_UPPER_FORBIDDEN | _PLUGIN_PEER_FORBIDDEN["observer"],
+    "estimators": _PLUGIN_UPPER_FORBIDDEN | _PLUGIN_PEER_FORBIDDEN["estimators"],
+    "analyser": frozenset({"engine", "graph", "planning", "runtime"}),
+    "runtime": frozenset({"analyser", "engine", "estimators"}),
 }
 
 #: Submodules of ``analyser/`` that hold shared machinery rather than one
-#: analyser family: importing the base class from ``base`` is how every
-#: analyser is written.
-ANALYSER_SHARED_MODULES = frozenset({"base"})
+#: analyser family: importing the base class from ``base`` and helpers from
+#: these modules is how every analyser is written.
+ANALYSER_SHARED_MODULES = frozenset(
+    {
+        "_shared",
+        "allan_statistics",
+        "base",
+        "frequency_orientation",
+        "sampled_signal",
+        "spectral_input",
+        "typed_reducer",
+    }
+)
 
 #: Entry-point namespaces reserved by the core registry, not plugin classes.
 _RESERVED_NAMESPACES = frozenset({"engine", "resource"})
+
+#: One scanned source file: ``(module, source, is_package)``.
+_SourceUnit = tuple[str, str, bool]
 
 
 def _module_name(path: Path) -> str:
@@ -95,17 +148,22 @@ def _module_name(path: Path) -> str:
     return ".".join(parts)
 
 
-def _imported_modules(path: Path) -> list[str]:
-    """Every absolute module path *path* imports, resolved from its location."""
-    return [target for target, _ in _imported_names(path)]
+def _source_unit(path: Path) -> _SourceUnit:
+    """Return the scanned unit for one source file."""
+    return (
+        _module_name(path),
+        path.read_text(encoding="utf-8"),
+        path.name == "__init__.py",
+    )
 
 
-def _imported_names(path: Path) -> list[tuple[str, list[str]]]:
-    """Every import of *path* as ``(absolute module, imported names)``."""
-    module = _module_name(path)
-    base = module if path.name == "__init__.py" else module.rsplit(".", 1)[0]
+def _imports_from_source(
+    module: str, source: str, is_package: bool
+) -> list[tuple[str, list[str]]]:
+    """Every import of one unit as ``(absolute module, imported names)``."""
+    base = module if is_package else module.rsplit(".", 1)[0]
     imported: list[tuple[str, list[str]]] = []
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+    for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
             imported.extend((alias.name, [alias.name]) for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
@@ -124,12 +182,50 @@ def _layer_modules(layer: str) -> list[Path]:
     return sorted((SDE_ROOT / layer).rglob("*.py"))
 
 
+def _units_of(layer: str) -> list[_SourceUnit]:
+    return [_source_unit(path) for path in _layer_modules(layer)]
+
+
+def _layer_import_offenders(layer: str, units: list[_SourceUnit]) -> list[str]:
+    """Cross-layer imports of *units* that the *layer* rule forbids."""
+    forbidden = LAYER_FORBIDDEN_IMPORTS[layer]
+    offenders = []
+    for module, source, is_package in units:
+        for target, _ in _imports_from_source(module, source, is_package):
+            if not target.startswith("qphase_sde."):
+                continue
+            top = target.split(".")[1]
+            if top in forbidden:
+                offenders.append(f"{module} -> {target}")
+    return offenders
+
+
 def _analyser_family(module: str) -> str | None:
     """First component after ``qphase_sde.analyser``, or None if outside it."""
     parts = module.split(".")
     if len(parts) < 3 or parts[1] != "analyser":
         return None
     return parts[2]
+
+
+def _foreign_analyser_family(origin: str, family: str | None) -> str | None:
+    """Return the other analyser family *origin* belongs to, if any."""
+    other = _analyser_family(origin)
+    if other is None or other == family or other in ANALYSER_SHARED_MODULES:
+        return None
+    return other
+
+
+def _dotted_name(node: ast.AST) -> str | None:
+    """Reconstruct a dotted ``a.b.c`` expression, or None if not one."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
 
 
 def test_old_root_modules_are_gone():
@@ -216,22 +312,140 @@ def test_layer_does_not_import_upper_layers(layer):
     """Each layer may only import from the layers beneath it.
 
     ``contracts`` is the bottom layer, ``numerics`` may use ``contracts``, and
-    both are read-only to everyone else. ``runtime`` and ``estimators`` drive
-    plugins through their protocols, so neither may import the analyser layer.
-    The scan is static: it reads the import statements and never imports the
-    modules under test.
+    both are read-only to everyone else. The plugin-class layers
+    (``integrator``/``observer``/``estimators``) consume only
+    ``contracts``/``numerics``/``model``: they must not import the analyser
+    layer, the orchestration layers, ``result`` or each other. ``runtime`` may
+    drive integrator/observer plugins and use ``planning``/``products``/
+    ``result``, but never the analyser layer, the estimators layer or the
+    ``engine`` facade. The scan is static: it reads the import statements and
+    never imports the modules under test.
     """
-    forbidden = LAYER_FORBIDDEN_IMPORTS[layer]
-    offenders = []
-    for path in _layer_modules(layer):
-        module = _module_name(path)
-        for target in _imported_modules(path):
-            if not target.startswith("qphase_sde."):
-                continue
-            top = target.split(".")[1]
-            if top in forbidden:
-                offenders.append(f"{module} -> {target}")
+    offenders = _layer_import_offenders(layer, _units_of(layer))
     assert not offenders, f"{layer}/ imports upper layers: {offenders}"
+
+
+@pytest.mark.parametrize(
+    ("layer", "source"),
+    [
+        # The engine facade is the top layer: nothing may import it upwards.
+        ("analyser", "from qphase_sde.engine import Engine\n"),
+        ("runtime", "from qphase_sde.engine import EngineConfig\n"),
+        # Plugin classes sit below the analyser layer and orchestration.
+        ("integrator", "from qphase_sde.analyser.psd import PsdAnalyser\n"),
+        ("observer", "import qphase_sde.products\n"),
+        ("estimators", "from qphase_sde.planning import build_execution_plan\n"),
+        # Plugins do not know each other.
+        ("integrator", "from qphase_sde.observer.base import Observer\n"),
+        # The typed result bundle is orchestration, not a plugin dependency.
+        ("observer", "from qphase_sde.result import SDEDataBundle\n"),
+        # Runtime drives integrator/observer, not the estimators layer.
+        (
+            "runtime",
+            "from qphase_sde.estimators.spectral_estimator import PsdEstimate\n",
+        ),
+    ],
+)
+def test_layer_rule_flags_upper_layer_imports(layer, source):
+    """The layer rule is known to fail on an upward or cross-plugin import."""
+    unit = (f"qphase_sde.{layer}.trap", source, False)
+    assert _layer_import_offenders(layer, [unit])
+
+
+def _resolved_imports(
+    module: str, source: str, is_package: bool
+) -> list[tuple[ast.ImportFrom, str]]:
+    """Every ``from`` import of one unit paired with its absolute target."""
+    base = module if is_package else module.rsplit(".", 1)[0]
+    resolved = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.level:
+            parts = base.split(".")
+            parts = parts[: len(parts) - (node.level - 1)]
+            target = ".".join(parts + ([node.module] if node.module else []))
+        else:
+            target = node.module or ""
+        resolved.append((node, target))
+    return resolved
+
+
+def _is_analyser_module(name: str) -> bool:
+    """Whether *name* is a root-level module or subpackage of ``analyser/``."""
+    target = SDE_ROOT / "analyser" / name
+    return target.with_suffix(".py").is_file() or target.is_dir()
+
+
+def _analyser_import_offenders(units: list[_SourceUnit]) -> list[str]:
+    """Cross-family analyser imports of *units* (module or class form)."""
+    offenders = []
+    for module, source, is_package in units:
+        family = _analyser_family(module)
+        if family is None:
+            continue
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if _foreign_analyser_family(alias.name, family):
+                        offenders.append(f"{module} imports module {alias.name}")
+        for node, target in _resolved_imports(module, source, is_package):
+            if not target.startswith("qphase_sde.analyser"):
+                continue
+            for alias in node.names:
+                if target == "qphase_sde.analyser":
+                    # ``from qphase_sde.analyser import psd`` names a submodule;
+                    # re-exported classes/configs are checked as symbols below.
+                    if _is_analyser_module(alias.name):
+                        candidate = f"{target}.{alias.name}"
+                        if _foreign_analyser_family(candidate, family):
+                            offenders.append(f"{module} imports module {candidate}")
+                elif alias.name.endswith("Analyser") and alias.name != "Analyser":
+                    if _foreign_analyser_family(target, family):
+                        offenders.append(f"{module} -> {target}.{alias.name}")
+    return offenders
+
+
+def _analyser_construction_offenders(units: list[_SourceUnit]) -> list[str]:
+    """Find calls in *units* that construct another analyser family's class.
+
+    The scan resolves local bindings introduced by ``import ... as`` and
+    ``from ... import ...`` and checks the constructed callee's family. It is
+    static, so a constructor reached through ``getattr`` or an opaque factory
+    is out of scope.
+    """
+    offenders = []
+    for module, source, is_package in units:
+        family = _analyser_family(module)
+        if family is None:
+            continue
+        bindings: dict[str, str] = {}
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.asname:
+                        bindings[alias.asname] = alias.name
+        for node, target in _resolved_imports(module, source, is_package):
+            for alias in node.names:
+                if alias.name.endswith("Analyser") and alias.name != "Analyser":
+                    bindings[alias.asname or alias.name] = f"{target}.{alias.name}"
+                elif target == "qphase_sde.analyser" and _is_analyser_module(
+                    alias.name
+                ):
+                    bindings[alias.asname or alias.name] = f"{target}.{alias.name}"
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.Call):
+                continue
+            dotted = _dotted_name(node.func)
+            if dotted is None:
+                continue
+            head, _, rest = dotted.partition(".")
+            origin = f"{bindings[head]}.{rest}" if head in bindings else dotted
+            leaf = origin.rsplit(".", 1)[-1]
+            if leaf.endswith("Analyser") and leaf != "Analyser":
+                if _foreign_analyser_family(origin, family):
+                    offenders.append(f"{module} constructs {origin}")
+    return offenders
 
 
 def test_analysers_do_not_import_each_others_classes():
@@ -239,23 +453,64 @@ def test_analysers_do_not_import_each_others_classes():
 
     Sharing the class would make one plugin's behaviour depend on another's
     implementation; sharing a config model is the sanctioned form (a carrier
-    that configures an inline ridge is the existing example). ``base`` and a
-    module's own family are excluded, and the scan is static.
+    that configures an inline ridge is the existing example). A whole-module
+    import of another analyser family is the same dependency in module form.
+    ``base``/``_shared`` and the other shared helper modules are excluded, and
+    the scan is static.
     """
-    offenders = []
-    for path in _layer_modules("analyser"):
-        module = _module_name(path)
-        family = _analyser_family(module)
-        if family is None:
-            continue
-        for target, names in _imported_names(path):
-            other = _analyser_family(target)
-            if other is None or other == family or other in ANALYSER_SHARED_MODULES:
-                continue
-            for name in names:
-                if name.endswith("Analyser") and name != "Analyser":
-                    offenders.append(f"{module} -> {target}.{name}")
+    offenders = _analyser_import_offenders(_units_of("analyser"))
     assert not offenders, f"analysers import each other's classes: {offenders}"
+
+
+def test_analysers_do_not_construct_each_others_analysers():
+    """No analyser constructs another analyser family's class directly.
+
+    Cross-analyser data flow belongs on typed ProductGraph edges, not on a
+    direct constructor call. The scan resolves module aliases and from-imported
+    classes; dynamic construction through ``getattr`` is out of its scope.
+    """
+    offenders = _analyser_construction_offenders(_units_of("analyser"))
+    assert not offenders, f"analysers construct each other: {offenders}"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import qphase_sde.analyser.spectral_ridge\n",
+        (
+            "import qphase_sde.analyser.spectral_ridge as ridge\n"
+            "ridge.SpectralRidgeAnalyser()\n"
+        ),
+        (
+            "from qphase_sde.analyser.spectral_ridge import SpectralRidgeAnalyser\n"
+            "SpectralRidgeAnalyser()\n"
+        ),
+        (
+            "import qphase_sde\n"
+            "qphase_sde.analyser.spectral_ridge.SpectralRidgeAnalyser()\n"
+        ),
+        "from qphase_sde.analyser import spectral_ridge\n",
+    ],
+)
+def test_cross_analyser_rule_flags_module_and_construction(source):
+    """The cross-family rule is known to fail on module form and constructor use."""
+    unit = ("qphase_sde.analyser.trap", source, False)
+    assert _analyser_import_offenders([unit]) or _analyser_construction_offenders(
+        [unit]
+    )
+
+
+def test_cross_analyser_rule_allows_shared_modules_and_configs():
+    """Shared helpers, the base class and config models stay importable."""
+    source = (
+        "from qphase_sde.analyser.base import Analyser\n"
+        "from qphase_sde.analyser.frequency_orientation import orientation_metadata\n"
+        "from qphase_sde.analyser.spectral_ridge import SpectralRidgeConfig\n"
+        "SpectralRidgeConfig()\n"
+    )
+    unit = ("qphase_sde.analyser.trap", source, False)
+    assert _analyser_import_offenders([unit]) == []
+    assert _analyser_construction_offenders([unit]) == []
 
 
 def test_manifest_is_valid_and_declares_one_engine():
@@ -275,6 +530,28 @@ def test_manifest_is_valid_and_declares_one_engine():
     # Exactly one engine entry point, matching the manifest declaration.
     assert set(engine_points) == {MANIFEST.engine.entry_point}
     assert engine_points[MANIFEST.engine.entry_point] == MANIFEST.engine.target
+
+
+def test_manifest_declares_existing_extra_assets():
+    """Every declared extra asset exists and the retired ``math`` is gone.
+
+    The manifest is the authoritative asset inventory, so the declaration and
+    the tree must agree in both directions for the six current assets. Phase 10
+    adds ``prediction`` separately; it is not asserted here.
+    """
+    declared = tuple(
+        sorted((asset.path, asset.kind) for asset in MANIFEST.extra_assets)
+    )
+    assert declared == EXPECTED_EXTRA_ASSETS
+    assert "math" not in {asset.path for asset in MANIFEST.extra_assets}
+    assert all(asset.purpose for asset in MANIFEST.extra_assets)
+
+    for asset in MANIFEST.extra_assets:
+        target = SDE_ROOT / asset.path
+        if asset.kind == "directory":
+            assert target.is_dir(), asset.path
+        else:
+            assert (SDE_ROOT / f"{asset.path}.py").is_file(), asset.path
 
 
 def test_manifest_plugin_namespaces_match_entry_points():

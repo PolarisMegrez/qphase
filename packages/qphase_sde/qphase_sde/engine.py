@@ -42,12 +42,9 @@ from qphase_sde.runtime.typed_execution import (
 )
 from qphase_sde.state import TrajectorySet
 
-__all__ = ["Engine", "EngineConfig", "TrajectoryDivergenceError"]
+__all__ = ["Engine", "EngineConfig"]
 
 log = logging.getLogger(__name__)
-
-
-TrajectoryDivergenceError = simulation_loop.TrajectoryDivergenceError
 
 
 class EngineConfig(BaseModel):
@@ -213,9 +210,9 @@ class EngineConfig(BaseModel):
 class Engine(EngineBase):
     """SDE simulation engine with dependency injection support.
 
-    The Engine class provides both high-level simulation methods and
-    dependency injection capabilities. All simulation logic is implemented
-    in this class for better maintainability and testability.
+    The Engine class is a thin facade: it assembles the resolved
+    configuration and plugin instances, builds the execution plan and
+    delegates the integration pass to ``runtime.simulation_loop``.
 
     Parameters
     ----------

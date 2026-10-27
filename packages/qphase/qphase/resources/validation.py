@@ -235,6 +235,12 @@ def validate_source_layout(
     allowed_modules.update(profile_required_modules(profiles))
     declared_asset_paths = {a.path for a in manifest.extra_assets}
     for asset in manifest.extra_assets:
+        if asset.kind != "module":
+            continue
+        # A module asset may be declared with or without its ``.py`` suffix.
+        stem = asset.path[: -len(".py")] if asset.path.endswith(".py") else asset.path
+        allowed_modules.add(f"{stem}.py")
+    for asset in manifest.extra_assets:
         target = root / asset.path
         exists = (
             target.is_dir()

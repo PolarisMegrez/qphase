@@ -14,7 +14,7 @@ from qphase_sde.integrator.euler_maruyama import EulerMaruyama
 from qphase_sde.observer import (
     FirstPassageObserver,
     FirstPassageObserverConfig,
-    FirstPassageTriggeredError,
+    ObserverTriggeredError,
 )
 from qphase_sde.planning import build_execution_plan
 
@@ -475,7 +475,7 @@ def test_stop_batch_truncates_output():
 def test_fail_job_raises_with_trajectory_ids_and_times():
     engine = _engine(LinearGrowthModel(), _observer(action="fail_job"), ic=[[0.0]])
 
-    with pytest.raises(FirstPassageTriggeredError) as excinfo:
+    with pytest.raises(ObserverTriggeredError) as excinfo:
         engine.run()
 
     message = str(excinfo.value)

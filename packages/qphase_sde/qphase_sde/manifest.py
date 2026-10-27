@@ -170,10 +170,46 @@ MANIFEST = ResourcePackageManifest(
     compatibility=CompatibilityRange(qphase_core=">=2.0a0,<3.0"),
     extra_assets=[
         ResourceAssetDeclaration(
-            path="math",
+            path="numerics",
             kind="directory",
             visibility="public",
-            purpose="Backend-neutral numerical operations (coordinates, transforms).",
+            purpose="Backend-neutral numerical kernels (coordinates, transforms, "
+            "spectral and carrier estimators).",
+        ),
+        ResourceAssetDeclaration(
+            path="analyser_config",
+            kind="module",
+            visibility="public",
+            purpose="Expands analyser config payloads into their typed config "
+            "models before compiler validation.",
+        ),
+        ResourceAssetDeclaration(
+            path="estimators",
+            kind="directory",
+            visibility="public",
+            purpose="Spectral estimator, peak finder, peak tracker and "
+            "coherence-frequency plugin classes.",
+        ),
+        ResourceAssetDeclaration(
+            path="planning",
+            kind="directory",
+            visibility="public",
+            purpose="Execution-plan construction, time-grid resolution and "
+            "workspace planning for one job.",
+        ),
+        ResourceAssetDeclaration(
+            path="graph",
+            kind="module",
+            visibility="public",
+            purpose="Compiles analyser declarations into the compiler-frozen "
+            "ProductGraph.",
+        ),
+        ResourceAssetDeclaration(
+            path="products",
+            kind="module",
+            visibility="private",
+            purpose="Typed product assembly helpers shared by the orchestration "
+            "layer and analysers.",
         ),
     ],
 )

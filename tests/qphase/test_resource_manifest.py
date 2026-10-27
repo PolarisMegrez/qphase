@@ -9,6 +9,7 @@ from qphase.core.registry import DiscoveryService, RegistryCenter
 from qphase.resources import (
     AssetOrigin,
     EntryPointDescriptor,
+    ResourceAssetDeclaration,
     ResourcePackageManifest,
     ResourceProfile,
     classify_origin,
@@ -104,7 +105,8 @@ def _build_tree(root: Path, manifest: ResourcePackageManifest) -> None:
         if asset.kind == "directory":
             (root / asset.path).mkdir(parents=True, exist_ok=True)
         else:
-            (root / f"{asset.path}.py").write_text("", encoding="utf-8")
+            suffix = "" if asset.path.endswith(".py") else ".py"
+            (root / f"{asset.path}{suffix}").write_text("", encoding="utf-8")
 
 
 def test_sde_manifest_fixture_roundtrip_and_validation():
@@ -391,6 +393,59 @@ def test_validate_source_layout_detects_problems(tmp_path):
         "missing-plugin-class-module",
         "undeclared-directory",
     }
+
+
+def _manifest_with_asset(path: str, kind: str) -> ResourcePackageManifest:
+    """Return a minimal (CAM) manifest extended with one extra asset."""
+    manifest = _load_fixture("cam_minimal.json")
+    return manifest.model_copy(
+        update={
+            "extra_assets": [
+                ResourceAssetDeclaration(path=path, kind=kind, purpose="test asset")
+            ]
+        }
+    )
+
+
+@pytest.mark.parametrize("path", ["graph", "graph.py"])
+def test_validate_source_layout_accepts_declared_module_asset(tmp_path, path):
+    """A declared module asset is not reported as an undeclared root module.
+
+    Both declaration spellings name the same ``graph.py`` file, so a graph
+    module must never show up as ``undeclared-module`` once declared.
+    """
+    manifest = _manifest_with_asset(path, "module")
+    root = tmp_path / "qphase_cam"
+    root.mkdir()
+    _build_tree(root, manifest)
+
+    assert (root / "graph.py").is_file()
+    assert validate_source_layout(manifest, root) == []
+
+
+def test_validate_source_layout_still_reports_missing_module_asset(tmp_path):
+    """A declared module asset that does not exist is still a missing asset."""
+    manifest = _manifest_with_asset("graph", "module")
+    root = tmp_path / "qphase_cam"
+    root.mkdir()
+    _build_tree(root, manifest)
+    (root / "graph.py").unlink()
+
+    issues = validate_source_layout(manifest, root)
+    assert "missing-asset" in {issue.code for issue in issues}
+    assert "undeclared-module" not in {issue.code for issue in issues}
+
+
+def test_validate_source_layout_still_reports_undeclared_module(tmp_path):
+    """Declaring one module asset does not whitelist other root modules."""
+    manifest = _manifest_with_asset("graph", "module")
+    root = tmp_path / "qphase_cam"
+    root.mkdir()
+    _build_tree(root, manifest)
+    (root / "utils.py").write_text("", encoding="utf-8")
+
+    codes = {issue.code for issue in validate_source_layout(manifest, root)}
+    assert "undeclared-module" in codes
 
 
 def test_load_manifest_object_accepts_multiple_providers():
